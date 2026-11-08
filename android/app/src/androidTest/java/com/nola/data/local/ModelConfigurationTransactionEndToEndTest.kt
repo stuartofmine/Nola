@@ -50,8 +50,8 @@ class ModelConfigurationTransactionEndToEndTest {
         try {
             AndroidApplicationRuntime(context, database).use { runtime ->
                 val configuration = AndroidModelConfiguration(runtime)
-                val firstSource = """{"schemaVersion":2,"endpointID":"first-endpoint","endpointName":"First","baseURL":"https://first.invalid/v1","endpointEnabled":true,"endpointOrder":0,"modelEnabled":true,"modelOrder":0,"priority":70,"capabilities":["chat"],"wireProtocol":"responses"}"""
-                val secondSource = """{"schemaVersion":2,"endpointID":"second-endpoint","endpointName":"Second","baseURL":"https://second.invalid/v1","endpointEnabled":true,"endpointOrder":1,"modelEnabled":true,"modelOrder":0,"priority":40,"capabilities":["chat"],"wireProtocol":"chat_completions"}"""
+                val firstSource = """{"schemaVersion":1,"endpointID":"first-endpoint","endpointName":"First","baseURL":"https://first.invalid/v1","endpointEnabled":true,"endpointOrder":0,"modelEnabled":true,"modelOrder":0,"priority":70,"capabilities":["chat"],"wireProtocol":"responses"}"""
+                val secondSource = """{"schemaVersion":1,"endpointID":"second-endpoint","endpointName":"Second","baseURL":"https://second.invalid/v1","endpointEnabled":true,"endpointOrder":1,"modelEnabled":true,"modelOrder":0,"priority":40,"capabilities":["chat"],"wireProtocol":"chat_completions"}"""
                 runtime.upsertModelProfile(CanonicalModelProfile(
                     id = "first-model", displayName = "First model", provider = "openai-compatible",
                     modelName = "shared-name", runtime = "remote", sourceJson = firstSource,

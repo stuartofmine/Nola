@@ -138,7 +138,7 @@ nonisolated struct IOSCommittedRunContextUsage: Codable, Equatable, Sendable {
             guard let parsed = UInt64(value), String(parsed) == value else { return false }
             return !positive || parsed > 0
         }
-        guard protocol_version == 3, identity == owner, admission.identity == owner,
+        guard protocol_version == 1, identity == owner, admission.identity == owner,
               usage.measurement?.isValid ?? true, usage.prompt_cache_measurement?.isValid ?? true,
               usage.prompt_cache_diagnostic == nil || usage.prompt_cache_measurement != nil,
               decimal(attempt_sequence),
@@ -184,7 +184,7 @@ nonisolated struct IOSRunObservation: Decodable, Sendable {
         }
         if let seal = terminal_seal {
             guard recovery == "terminal", seal.identity == admission.identity,
-                  seal.protocol_version == 2, status == "sealed",
+                  seal.protocol_version == 1, status == "sealed",
                   seal.result.run_id == run_id,
                   seal.result.conversation_id == conversation_id else {
                 throw IOSApplicationRuntimeError.rejected("Run observation terminal identity mismatch")

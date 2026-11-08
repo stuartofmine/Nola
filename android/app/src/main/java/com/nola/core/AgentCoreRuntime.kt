@@ -21,16 +21,16 @@ internal object AgentCoreNative {
         get() = loaded && runCatching { nativeIntelligenceAbiVersion() == 1 }.getOrDefault(false)
 
     val isToolPolicyAvailable: Boolean
-        get() = loaded && runCatching { nativeToolPolicyAbiVersion() == 2 }.getOrDefault(false)
+        get() = loaded && runCatching { nativeToolPolicyAbiVersion() == 1 }.getOrDefault(false)
 
     val isPromptComposerAvailable: Boolean
         get() = loaded && runCatching { nativePromptComposerAbiVersion() == 1 }.getOrDefault(false)
 
     val isMemorySelectionAvailable: Boolean
-        get() = loaded && runCatching { nativeMemorySelectionAbiVersion() == 4 }.getOrDefault(false)
+        get() = loaded && runCatching { nativeMemorySelectionAbiVersion() == 1 }.getOrDefault(false)
 
     val isLifecycleHookRegistryAvailable: Boolean
-        get() = loaded && runCatching { nativeLifecycleHookAbiVersion() == 4 }.getOrDefault(false)
+        get() = loaded && runCatching { nativeLifecycleHookAbiVersion() == 1 }.getOrDefault(false)
 
     val isApplicationAvailable: Boolean
         get() = loaded && runCatching {
@@ -38,7 +38,7 @@ internal object AgentCoreNative {
         }.getOrDefault(false)
 
     // Match the single shipped Application command contract, never a raw Core ABI.
-    internal fun supportsApplicationContract(abi: Int, protocol: Int): Boolean = abi == 1 && protocol == 54
+    internal fun supportsApplicationContract(abi: Int, protocol: Int): Boolean = abi == 1 && protocol == 1
 
     external fun nativeMobileMcpRetain(handle: Long): Long
     external fun nativeMobileMcpHost(handle: Long, input: ByteArray): ByteArray?

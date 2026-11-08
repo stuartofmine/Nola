@@ -568,7 +568,7 @@ nonisolated final class IOSCanonicalAgentApplication: @unchecked Sendable {
         ]))
         if result == .null { return nil }
         let seal = try JSONDecoder().decode(IOSAssistantRunTerminalSeal.self, from: JSONEncoder().encode(result))
-        guard seal.protocol_version == 2,
+        guard seal.protocol_version == 1,
               seal.identity.conversation_id == descriptor.conversationID,
               seal.identity.run_id == descriptor.runID,
               seal.identity.assistant_message_id == descriptor.identity.assistantMessageID,

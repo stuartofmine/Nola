@@ -508,7 +508,7 @@ pub(crate) fn configure_models(
     {
         let entry = catalog.get(*key).ok_or("model catalog entry disappeared")?;
         let (capabilities, basis) = effective_capabilities(&current.document, entry);
-        let source = json!({"schemaVersion":2,"connectionID":id,"endpointID":id,
+        let source = json!({"schemaVersion":1,"connectionID":id,"endpointID":id,
             "endpointName":connection.display_name,"baseURL":connection.base_url,
             "wireProtocol":entry.protocol.as_str(),"endpointEnabled":connection.enabled,
             "accountID":connection.account_id,"sourceKind":connection.source,"catalogKey":key,"modelEnabled":true,

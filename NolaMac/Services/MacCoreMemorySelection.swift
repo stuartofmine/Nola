@@ -271,7 +271,7 @@ nonisolated struct MacCoreMemorySelectionPlan: Codable, Equatable, Sendable {
 extension MacPersonalIntelligenceCore {
     nonisolated static var isMemorySelectionAvailable: Bool {
 #if canImport(NolaCore)
-        nola_core_memory_selection_abi_version() == 4
+        nola_core_memory_selection_abi_version() == 1
 #else
         false
 #endif

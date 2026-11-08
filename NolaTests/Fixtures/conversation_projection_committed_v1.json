@@ -1,6 +1,6 @@
 {
   "type": "conversation_projection_committed_v1",
-  "protocol_version": 2,
+  "protocol_version": 1,
   "session_id": "contract-conversation-1",
   "submission_id": "MixedCase-Remote-Run",
   "source_host_id": "contract-host-1",

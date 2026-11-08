@@ -998,7 +998,7 @@ CREATE TABLE store_metadata(
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
-INSERT INTO store_metadata(key,value) VALUES ('schema_epoch','8');
+INSERT INTO store_metadata(key,value) VALUES ('schema_epoch','1');
 CREATE TABLE command_receipts(
     client_id TEXT NOT NULL,
     request_id TEXT NOT NULL,

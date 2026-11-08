@@ -72,7 +72,7 @@ public enum AgentCoreToolCatalog {
         case .hybrid: routes = ["device", "agent_host"]
         }
         let input = AgentCoreToolPolicyInput(
-            schemaVersion: 2,
+            schemaVersion: 1,
             platform: "ios",
             runtime: AgentCoreRuntimeCapabilityManifest(
                 routes: routes,

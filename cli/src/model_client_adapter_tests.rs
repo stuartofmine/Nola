@@ -5,7 +5,7 @@ fn configured_store(root: &std::path::Path) -> NolaStore {
     let store = NolaStore::open(&root.join("canonical.sqlite")).unwrap();
     store.upsert_model_profile(nola_application::ModelProfile {
         id:"adapter-model".into(),display_name:"Fixture".into(),model_name:"upstream-model".into(),provider:"openai-compatible".into(),runtime:"remote".into(),
-        source_json:json!({"schemaVersion":2,"endpointID":"fixture-endpoint","baseURL":"https://fixture.invalid/v1","wireProtocol":"responses","executionCapabilities":{"toolCalls":false,"imageInput":false,"reasoning":false,"samplingParameters":false}}).to_string(),
+        source_json:json!({"schemaVersion":1,"endpointID":"fixture-endpoint","baseURL":"https://fixture.invalid/v1","wireProtocol":"responses","executionCapabilities":{"toolCalls":false,"imageInput":false,"reasoning":false,"samplingParameters":false}}).to_string(),
         parameters_json:json!({"maxContextLength":16000}).to_string(),selected:true,enabled:true,revision:1,created_at_ms:1,updated_at_ms:1,deleted_at_ms:None,
     }).unwrap();
     store

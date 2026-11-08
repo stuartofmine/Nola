@@ -4,7 +4,7 @@ import XCTest
 
 final class MacPermissionInstructionTests: XCTestCase {
     func testOnceOnlyEligibilityIsRequiredAndSurvivesNativeEnvelopeDecoding() throws {
-        var object: [String: Any] = ["type":"permission_request", "protocol_version":4,
+        var object: [String: Any] = ["type":"permission_request", "protocol_version":1,
             "allow_conversation":false,"request_id":"opaque","nonce":"nonce","host_id":"host",
             "client_id":"client","session_id":"conversation","tool_name":"opaque-executor","args":[:]]
         func decode() throws -> MacLocalAgentEvent? {
@@ -21,7 +21,7 @@ final class MacPermissionInstructionTests: XCTestCase {
 
     func testReaskedEnvelopePreservesGuidanceAndOriginalArguments() throws {
         let object: [String: Any] = [
-            "type": "permission_request", "allow_conversation": true, "protocol_version": 4, "request_id": "reasked", "nonce": "new-nonce",
+            "type": "permission_request", "allow_conversation": true, "protocol_version": 1, "request_id": "reasked", "nonce": "new-nonce",
             "host_id": "host", "client_id": "client", "session_id": "conversation",
             "tool_name": "write_file", "args": ["path": "/original"],
             "permission_instructions": [["permission_request_id": "original", "instruction": "Use a preview <first>."]]

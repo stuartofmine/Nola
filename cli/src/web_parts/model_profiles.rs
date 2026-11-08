@@ -459,7 +459,7 @@ fn replace_remote_model_catalog(store: &NolaStore, body: &Value) -> Result<Value
             }
             let mut source = previous.map(|profile| serde_json::from_str::<Value>(&profile.source_json))
                 .transpose().map_err(|_| "invalid stored model source")?
-                .unwrap_or_else(|| json!({"schemaVersion":2}));
+                .unwrap_or_else(|| json!({"schemaVersion":1}));
             let source_map = source.as_object_mut().ok_or("invalid stored model source")?;
             for (key, value) in [
                 ("endpointID", json!(id)), ("endpointName", json!(name)), ("baseURL", json!(base_url)),
@@ -1732,7 +1732,7 @@ mod model_profile_web_tests {
         let original = nola_application::ModelProfile {
             id:"fixture".into(), display_name:"Fixture".into(), model_name:"model".into(),
             provider:"openai-compatible".into(), runtime:"remote".into(),
-            source_json:json!({"schemaVersion":2, "endpointID":"endpoint", "wireProtocol":"responses",
+            source_json:json!({"schemaVersion":1, "endpointID":"endpoint", "wireProtocol":"responses",
                 "executionCapabilities":{"toolCalls":false,"imageInput":false,"reasoning":true,"samplingParameters":true}}).to_string(),
             parameters_json:json!({"temperature":0.7,"maxOutputTokens":16384,"showThinking":true}).to_string(),
             selected:true, enabled:true, revision:0, created_at_ms:1, updated_at_ms:1, deleted_at_ms:None,

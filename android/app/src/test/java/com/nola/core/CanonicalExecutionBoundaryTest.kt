@@ -7,7 +7,7 @@ import org.junit.Test
 class CanonicalExecutionBoundaryTest {
     @Test
     fun executionRequiresBothApplicationAbiAndTheShippedCommandProtocol() {
-        assertTrue(AgentCoreNative.supportsApplicationContract(1, 54))
+        assertTrue(AgentCoreNative.supportsApplicationContract(1, 1))
         assertFalse(AgentCoreNative.supportsApplicationContract(2, 54))
         assertFalse(AgentCoreNative.supportsApplicationContract(1, 52))
         assertFalse(AgentCoreNative.supportsApplicationContract(1, 53))

@@ -23,7 +23,7 @@ nonisolated struct MacCoreDataSourceResolutionInput: Encodable, Sendable {
         contract: [String: MacCoreDataSourceJSON]?,
         now: String? = nil
     ) {
-        self.schemaVersion = 2
+        self.schemaVersion = 1
         self.sourceID = sourceID
         self.policy = policy
         self.conversationOverride = conversationOverride
@@ -81,7 +81,7 @@ nonisolated struct MacCoreDataSourceResolution: Decodable, Equatable, Sendable {
 nonisolated enum MacCoreDataSourceResolver {
     static var isAvailable: Bool {
 #if canImport(NolaCore)
-        nola_core_data_source_abi_version() == 3
+        nola_core_data_source_abi_version() == 1
 #else
         false
 #endif

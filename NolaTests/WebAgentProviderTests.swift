@@ -30,7 +30,7 @@ final class WebAgentProviderTests: XCTestCase {
     func testDelegatedPermissionTransportDoesNotRequireOrInventParentTrace() {
         var envelope: [String: Any] = [
             "type": "permission_request", "task_id": "child-task",
-            "protocol_version": 4, "allow_conversation": false,
+            "protocol_version": 1, "allow_conversation": false,
             "id": "child-request", "tool_name": "bash",
             "nonce": "challenge", "host_id": "host", "client_id": "client",
             "session_id": "parent", "canonical_run_id": "parent-run",
@@ -45,7 +45,7 @@ final class WebAgentProviderTests: XCTestCase {
         XCTAssertFalse(request.allowConversation)
         envelope["protocol_version"] = 3
         guard case .error? = WebAgentProvider.parseSSEObject(envelope) else { return XCTFail("Reject wrong protocol") }
-        envelope["protocol_version"] = 4
+        envelope["protocol_version"] = 1
         envelope.removeValue(forKey: "allow_conversation")
         guard case .error? = WebAgentProvider.parseSSEObject(envelope) else { return XCTFail("Do not infer eligibility") }
     }
@@ -225,7 +225,7 @@ final class WebAgentProviderTests: XCTestCase {
     func testParsePermissionRequiredToolResultAndRequest() throws {
         let requestEvent = WebAgentProvider.parseSSEObject(traced([
             "type": "permission_request", "allow_conversation": true,
-            "protocol_version": 4,
+            "protocol_version": 1,
             "id": "call_disk",
             "name": "disk_usage",
             "match": "broad:/",
@@ -250,7 +250,7 @@ final class WebAgentProviderTests: XCTestCase {
     }
 
     func testPermissionInstructionEnvelopeKeepsOriginalArgumentsAndRejectsMalformedRecords() throws {
-        var object: [String: Any] = ["type": "permission_request", "allow_conversation": true, "protocol_version":  4, "id": "new-request", "name": "write_file",
+        var object: [String: Any] = ["type": "permission_request", "allow_conversation": true, "protocol_version":  1, "id": "new-request", "name": "write_file",
             "args": ["path": "/original"],
             "permission_instructions": [["permission_request_id": "old-request", "instruction": "Preview first."]]]
         func parse(_ value: [String: Any]) -> WebAgentStreamEvent? {
@@ -951,7 +951,7 @@ final class WebAgentProviderTests: XCTestCase {
 
     func testParsesScopedV2ContextUsageWithoutTrace() throws {
         let event = WebAgentProvider.parseSSEObject([
-            "protocol_version": 2,
+            "protocol_version": 1,
             "type": "context_usage",
             "session_id": "session-1",
             "source_host_id": "host-1",
@@ -980,7 +980,7 @@ final class WebAgentProviderTests: XCTestCase {
     func testRemovedFullSessionProjectionCannotSupplyConversationState() throws {
         let cursor: UInt64 = 675_868_731_199_239_600
         let event = WebAgentProvider.parseSSEObject([
-            "protocol_version": 2,
+            "protocol_version": 1,
             "type": "core_session_projection_updated",
             "session_id": "session-1",
             "source_host_id": "host-1",
@@ -999,7 +999,7 @@ final class WebAgentProviderTests: XCTestCase {
 
     func testRemoteHostRejectsNestedCoreLifecycleEnvelope() throws {
         let event = WebAgentProvider.parseSSEObject([
-            "protocol_version": 2,
+            "protocol_version": 1,
             "session_id": "session-1",
             "cursor": ["sequence": 1],
             "revision": 1,
@@ -1020,7 +1020,7 @@ final class WebAgentProviderTests: XCTestCase {
 
     func testParsesUntracedCoreCapabilityProjection() throws {
         let event = WebAgentProvider.parseSSEObject([
-            "protocol_version": 2,
+            "protocol_version": 1,
             "type": "core_capabilities_activated",
             "session_id": "session-1",
             "turn_id": "turn-1",
@@ -1039,7 +1039,7 @@ final class WebAgentProviderTests: XCTestCase {
 
     func testParsesUntracedCorePermissionProjection() throws {
         let event = WebAgentProvider.parseSSEObject([
-            "protocol_version": 2,
+            "protocol_version": 1,
             "type": "core_permission_projection_updated",
             "session_id": "session-1",
             "turn_id": "turn-1",
@@ -1059,7 +1059,7 @@ final class WebAgentProviderTests: XCTestCase {
 
     func testParsesUntracedCoreMemoryRuntimeProjection() throws {
         let event = WebAgentProvider.parseSSEObject([
-            "protocol_version": 2,
+            "protocol_version": 1,
             "type": "core_memory_runtime_projection_updated",
             "session_id": "session-1",
             "turn_id": "turn-1",
@@ -1201,10 +1201,10 @@ extension WebAgentProviderTests {
     func testHostPermissionWireVersionFourAndHardCutRejectsOldIdentityAndSSE() throws {
         // Literal 4 is the Rust HOST_PERMISSION_PROTOCOL_VERSION contract, not a
         // fixture derived from the Swift value under test.
-        XCTAssertEqual(WebAgentProvider.hostPermissionProtocolVersion, 4)
-        let identity = Data(#"{"host_identity":{"id":"rust-host","permission_protocol_version":4}}"#.utf8)
+        XCTAssertEqual(WebAgentProvider.hostPermissionProtocolVersion, 1)
+        let identity = Data(#"{"host_identity":{"id":"rust-host","permission_protocol_version":1}}"#.utf8)
         let settings = try JSONDecoder().decode(WebAgentProvider.HostAgentSettings.self, from: identity)
-        XCTAssertEqual(settings.host_identity?.permission_protocol_version, 4)
+        XCTAssertEqual(settings.host_identity?.permission_protocol_version, 1)
         for old in [1, 2, 3] {
             let data = Data("{\"host_identity\":{\"id\":\"rust-host\",\"permission_protocol_version\":\(old)}}".utf8)
             XCTAssertThrowsError(try JSONDecoder().decode(WebAgentProvider.HostAgentSettings.self, from: data))
@@ -1217,7 +1217,7 @@ extension WebAgentProviderTests {
             return try WebAgentProvider.parseSSEPayload(String(decoding: data, as: UTF8.self), token: "test")
         }
         guard case .permissionRequest(let request, _)? = try event(version: 4) else { return XCTFail("Expected Rust v4 permission request") }
-        XCTAssertEqual(request.protocolVersion, 4)
+        XCTAssertEqual(request.protocolVersion, 1)
         XCTAssertEqual(request.id, "request-3")
         for version: Any? in [nil, 1, 2, 3, "4"] {
             guard case .error? = try event(version: version) else { return XCTFail("Unsupported permission wire must fail closed: \(String(describing: version))") }

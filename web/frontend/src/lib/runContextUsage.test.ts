@@ -36,7 +36,7 @@ test('estimated occupancy and persisted cache diagnostics retain distinct reques
     assert.throws(() => parseRunContextUsage({ ...value, usage: { ...value.usage, prompt_cache_measurement: null } }, admission), /source request/);
 });
 async function record(event = '9007199254740993', used = '64000', at = admission): Promise<CommittedRunContextUsage> {
-    const value = { protocol_version: 3 as const, identity: at.identity, admission: at, event_sequence: event,
+    const value = { protocol_version: 1 as const, identity: at.identity, admission: at, event_sequence: event,
         attempt_sequence: '0', run_cache_usage: null,
         usage: { measurement: null, prompt_cache_measurement: null, prompt_cache_diagnostic: null,
             used_tokens: used, context_window_tokens: '128000', prompt_token_limit: '120000', estimated: false } };
@@ -100,7 +100,7 @@ test('cold history uses the actual sealed root and only reads that exact committ
     const transport = async (body: Record<string, unknown>) => {
         calls.push(body);
         return { source_host_id: 'host', result: body.operation === 'terminal_seal'
-            ? { protocol_version: 2, identity, admission, seal_digest: 'c'.repeat(64), result: {
+            ? { protocol_version: 1, identity, admission, seal_digest: 'c'.repeat(64), result: {
                 result_id: 'result', conversation_id: 'conversation', run_id: 'run', originating_submission_id: 'run',
                 input: { watermark: '1', applications_digest: 'd'.repeat(64) }, decided_at_revision: '2',
                 decision_event_cursor: '3', requirement_revision: '1', evidence_frontier: '2',

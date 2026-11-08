@@ -93,7 +93,7 @@ final class MacMarkdownParserTests: XCTestCase {
     @MainActor
     func testNativeReviewMarkdownAndFolderConsentVisualFixture() throws {
         XCTAssertNotEqual(MacToolPresentationPolicy.displayTitle(for: "workspace_access"), "workspace_access")
-        let request = MacRemotePermissionRequest(id: "folder", allowConversation: true, protocolVersion: 4, nonce: "nonce",
+        let request = MacRemotePermissionRequest(id: "folder", allowConversation: true, protocolVersion: 1, nonce: "nonce",
             hostID: "local", clientID: "mac", sessionID: "fixture", toolName: "workspace_access",
             arguments: #"{"root":"/Users/example/Desktop/paper-project"}"#,
             reason: "读取论文素材并在授权目录内准备编译环境。", message: "Confirm", expiresAt: nil)

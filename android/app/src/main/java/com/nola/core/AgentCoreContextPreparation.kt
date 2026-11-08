@@ -9,8 +9,8 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 
-const val AGENT_CORE_CONTEXT_SCHEMA_VERSION = 2
-const val AGENT_CORE_CONTEXT_ABI_VERSION = 2
+const val AGENT_CORE_CONTEXT_SCHEMA_VERSION = 1
+const val AGENT_CORE_CONTEXT_ABI_VERSION = 1
 
 @Serializable
 data class AgentCoreContextPrepareBudget(

@@ -405,7 +405,7 @@
           "host_id": "canonical-fixture-host",
           "model_schema_digest": "0213762f15ec1562573b495f25e22fe0ef583df4fa40d297e14e6901e129ddfb",
           "projection_digest": "706392735301dcb29de13ff0fc7aebcbf124f8709166bd13b1543454ef32af04",
-          "schema_version": 2
+          "schema_version": 1
         },
         "context_component_count": 0,
         "context_item_count": 0,
@@ -1916,7 +1916,7 @@
           "host_id": "canonical-fixture-host",
           "model_schema_digest": "0213762f15ec1562573b495f25e22fe0ef583df4fa40d297e14e6901e129ddfb",
           "projection_digest": "706392735301dcb29de13ff0fc7aebcbf124f8709166bd13b1543454ef32af04",
-          "schema_version": 2
+          "schema_version": 1
         },
         "context_component_count": 0,
         "context_item_count": 0,

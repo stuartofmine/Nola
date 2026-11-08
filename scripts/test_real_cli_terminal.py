@@ -353,7 +353,7 @@ def main() -> int:
     provider_trace, provider_ready = root / "provider.ndjson", root / "provider-ready.json"
     (root / "model-execution.json").write_text(json.dumps(declaration, indent=2) + "\n")
     probe = terminal = oracle = None
-    metrics = {"schemaVersion": 2, "passed": False}
+    metrics = {"schemaVersion": 1, "passed": False}
     audit, error = {}, None
     def interrupted(signum, _frame):
         raise RuntimeError(f"terminal validation interrupted by signal {signum}")

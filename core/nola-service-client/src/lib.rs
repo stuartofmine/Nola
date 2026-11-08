@@ -2064,7 +2064,7 @@ mod tests {
     // by Application tests that export an actual committed Task promotion.
     fn wire_task_admission() -> nola_protocol::AgentTaskAdmission {
         nola_protocol::AgentTaskAdmission {
-            protocol_version: 2,
+            protocol_version: 1,
             task_id: "task".into(),
             predecessor_task_id: None,
             parent_conversation_id: "parent".into(),

@@ -26,7 +26,7 @@ class AgentCoreContextPrepareInstrumentedTest {
         )
 
         assertNotNull(output)
-        assertEquals(2, output?.schemaVersion)
+        assertEquals(1, output?.schemaVersion)
         assertEquals("ready", output?.action)
         assertNotNull(output?.metrics)
         assertNotNull(output?.payloadDigest)

@@ -8,16 +8,16 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class HostPermissionEventTest {
-    private fun event(): SseEvent.PermissionRequest = decodeSsePayload("""{"type":"permission_request", "allow_conversation": true,"id":"p2","tool_name":"write_file","args":{"path":"original"},"protocol_version": 4,"nonce":"nonce2","host_id":"host","client_id":"client","session_id":"session","expires_at":200,"permission_instructions":[{"permission_request_id":"p1","instruction":"Keep format"}]}""", null) as SseEvent.PermissionRequest
+    private fun event(): SseEvent.PermissionRequest = decodeSsePayload("""{"type":"permission_request", "allow_conversation": true,"id":"p2","tool_name":"write_file","args":{"path":"original"},"protocol_version": 1,"nonce":"nonce2","host_id":"host","client_id":"client","session_id":"session","expires_at":200,"permission_instructions":[{"permission_request_id":"p1","instruction":"Keep format"}]}""", null) as SseEvent.PermissionRequest
 
-    @Test fun currentV4SseEntersProductionUiTransitionAndSendsTypedCustom() {
+    @Test fun currentV1SseEntersProductionUiTransitionAndSendsTypedCustom() {
         val state = acceptHostPermissionEvent(ChatUiState(conversationId = "session"), event(), "session", "host", "client", 100)!!
         val request = state.permissionRequest!!
         assertEquals("p2", request.id)
-        assertEquals(4, request.protocolVersion)
+        assertEquals(1, request.protocolVersion)
         assertEquals("p1", request.permissionInstructions.single().permissionRequestId)
         val wire = MobileCrypto.decryptJsonObject(MobileCrypto.encryptJson(hostPermissionInstructionPayload(request, "Keep encoding"), "fixture-token"), "fixture-token")
-        assertEquals(4, wire["protocol_version"]!!.jsonPrimitive.int)
+        assertEquals(1, wire["protocol_version"]!!.jsonPrimitive.int)
         assertEquals("p2", wire["request_id"]!!.jsonPrimitive.content)
         assertEquals("nonce2", wire["nonce"]!!.jsonPrimitive.content)
         val resolution = wire["resolution"]!!.jsonObject
@@ -29,7 +29,7 @@ class HostPermissionEventTest {
 
     @Test fun wrongIdentityExpiredOrOldProtocolCannotClearSuccessorUi() {
         val successor = acceptHostPermissionEvent(ChatUiState(conversationId = "session"), event(), "session", "host", "client", 100)!!
-        val invalid = listOf(event().copy(id = "p1", permissionInstructions = emptyList()), event().copy(hostId = "other"), event().copy(clientId = "other"), event().copy(sessionId = "other"), event().copy(expiresAt = 99), event().copy(protocolVersion = 1), event().copy(protocolVersion = 2), event().copy(protocolVersion = 3), event().copy(protocolVersion = 5), event().copy(nonce = ""))
+        val invalid = listOf(event().copy(id = "p1", permissionInstructions = emptyList()), event().copy(hostId = "other"), event().copy(clientId = "other"), event().copy(sessionId = "other"), event().copy(expiresAt = 99), event().copy(protocolVersion = 0), event().copy(protocolVersion = 2), event().copy(protocolVersion = 3), event().copy(protocolVersion = 5), event().copy(nonce = ""))
         invalid.forEach { old ->
             // Explicit rejection is required; identical-request deduplication
             // must not let a legal version pass a supposed negative case.

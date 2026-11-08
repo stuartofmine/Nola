@@ -1,4 +1,4 @@
-> **单版本约束：更新不提供旧接口兼容、数据迁移、双读双写或自动重建。格式不匹配明确拒绝，保留原数据。**
+> 兼容基线与后续升级规则见 [版本兼容策略](VERSION_COMPATIBILITY.md)。
 
 # 软件更新与发布架构
 
@@ -78,7 +78,7 @@ CLI 更新入口在模型配置解析前；`--source` 仅用于用户明确指�
 
 `sign_update_feed.py` 使用离线 OpenSSL Ed25519 私钥，对实际包计算大小和 digest，不复制/输出私钥；输出不覆盖现有 feed。Rust `verify_feed` 工具在上传前校验签名和完整合同。先上传平台签名后的完整包到 draft Release，再验证每个目标，发布 Release 后最后提交签名 feed；保留分发包供人工恢复程序，数据格式不匹配时仍不转换旧数据。密钥轮换需要现有信任链能验证的新应用发行包，当前不支持靠网络 feed 添加任意新信任根。
 
-公开发布目标为 `stuartofmine/Nola`；源码和签名 feed 位于公开 main，二进制包位于 Releases。源文件已配置公开公钥和 raw.githubusercontent.com feed URL；实际上线结果以本轮验收记录为准。发布私钥不进入仓库，自动续签需要 GitHub Actions Secret。首次只发布真实完成验证的目标，没有包的其他平台显示 unavailable，而非误报最新。Cloudflare 更新分发的准备代码已经移除，独立账户/推送后端不受影响。
+公开发布目标为 `stuartofmine/Nola`；源码和签名 feed 位于公开 main，二进制包位于 Releases。源文件已配置公开公钥和 raw.githubusercontent.com feed URL；实际上线结果以本轮验收记录为准。发布私钥不进入仓库，自动续签需要 GitHub Actions Secret。首次只发布真实完成验证的目标，没有包的其他平台显示 unavailable，而非误报最新。Cloudflare 更新分发的准备代码已经移除；现行客户端不依赖独立 Backend。
 
 发布步骤见 [release/README](../../../release/README.md)，逐端结果见[本轮验收](../../当前任务/SOFTWARE_UPDATE_ACCEPTANCE_20261108.md)。
 

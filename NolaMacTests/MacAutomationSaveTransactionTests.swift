@@ -66,7 +66,7 @@ final class MacAutomationSaveTransactionTests: XCTestCase {
         let identity = MacAssistantJournalIdentity(source_store_epoch: "fixture", conversation_id: "conversation", run_id: "run", assistant_message_id: "assistant")
         let result = try JSONDecoder().decode(MacRunResult.self, from: JSONSerialization.data(withJSONObject: macRunResultFixture("blocked")))
         let digest = String(repeating: "a", count: 64)
-        let seal = MacAssistantRunTerminalSeal(protocol_version: 2, admission: .init(identity: identity, sequence: "1", record_digest: digest), identity: identity,
+        let seal = MacAssistantRunTerminalSeal(protocol_version: 1, admission: .init(identity: identity, sequence: "1", record_digest: digest), identity: identity,
             core_session_id: "core", transition_id: "transition", checkpoint_revision: "1", core_revision: "1", event_cursor: "1", result: result, result_digest: digest,
             completed_at_ms: 1, entry_count: "0", heads_count: "0", child_receipt_count: "0", manifest_digest: digest, seal_digest: digest)
         let receipt = MacAutomationExecutionReceipt(binding: .init(occurrenceID: "occurrence", definitionRevision: 1, conversationID: "conversation", submissionID: "submission", runID: "run", invocationConfigDigest: digest, boundAtMs: 0), terminal: seal, reconciledAtMs: 1, notificationID: "notification")

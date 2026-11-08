@@ -23,7 +23,7 @@ public nonisolated struct AgentCoreDataSourceResolutionInput: Encodable, Sendabl
         contract: [String: AgentCoreDataSourceJSON]?,
         now: String? = nil
     ) {
-        self.schemaVersion = 2
+        self.schemaVersion = 1
         self.sourceID = sourceID
         self.policy = policy
         self.conversationOverride = conversationOverride
@@ -81,7 +81,7 @@ public nonisolated struct AgentCoreDataSourceResolution: Decodable, Equatable, S
 public nonisolated enum AgentCoreDataSourceResolver {
     public static var isAvailable: Bool {
 #if canImport(NolaCore)
-        nola_core_data_source_abi_version() == 3
+        nola_core_data_source_abi_version() == 1
 #else
         false
 #endif

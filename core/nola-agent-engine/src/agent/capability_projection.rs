@@ -13,7 +13,7 @@ use super::host::{
     HostLease,
 };
 
-pub const TURN_CAPABILITY_PROJECTION_SCHEMA_VERSION: u32 = 2;
+pub const TURN_CAPABILITY_PROJECTION_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AgentTurnCapabilityProjection {

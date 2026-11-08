@@ -1378,7 +1378,7 @@ mod tests {
         let artifact = snapshot.join("model.gguf");
         fs::write(&artifact, b"verified dynamic fixture").unwrap();
         let catalog = json!({
-            "schemaVersion": 2,
+            "schemaVersion": 1,
             "models": [{
                 "id": "publisher-model",
                 "name": "Publisher Model",

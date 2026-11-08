@@ -188,13 +188,13 @@ final class AgentCoreToolCatalogTests: XCTestCase {
     }
 
     func testSharedToolPolicyABIIsAvailable() {
-        XCTAssertEqual(AgentCoreToolPolicyResolver.toolPolicyABIVersion, 2)
+        XCTAssertEqual(AgentCoreToolPolicyResolver.toolPolicyABIVersion, 1)
     }
 
     func testSharedGoldenFixtureResolvesThroughProductionABI() throws {
         let fixtureURL = try XCTUnwrap(
             Bundle(for: Self.self).url(
-                forResource: "tool_policy_v2_golden",
+                forResource: "tool_policy_v1_golden",
                 withExtension: "json"
             )
         )
@@ -207,7 +207,7 @@ final class AgentCoreToolCatalogTests: XCTestCase {
             JSONSerialization.data(withJSONObject: input, options: [.sortedKeys])
         )
 
-        XCTAssertEqual(output.schemaVersion, 2)
+        XCTAssertEqual(output.schemaVersion, 1)
         XCTAssertEqual(output.enabledTools.map(\.toolId), expected["enabled_tool_ids"] as? [String])
         let expectedDisabled = try XCTUnwrap(expected["disabled_tools"] as? [[String: Any]])
         XCTAssertEqual(output.disabledTools.map(\.toolId), expectedDisabled.compactMap { $0["tool_id"] as? String })

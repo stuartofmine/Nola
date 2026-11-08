@@ -183,7 +183,7 @@ mod settlement_fence_tests {
 }
 
 impl StoreError {
-    pub fn requires_recreation(&self) -> bool {
+    pub fn is_schema_incompatible(&self) -> bool {
         matches!(self, Self::IncompatibleSchema)
     }
 }
@@ -197,7 +197,7 @@ impl Display for StoreError {
             Self::Invariant(message) => write!(formatter, "Store invariant failed: {message}"),
             Self::IncompatibleSchema => write!(
                 formatter,
-                "Store invariant failed: database does not use the current canonical schema; recreate it instead of migrating"
+                "Unsupported database format. The database has been preserved; open it with a matching Nola version or use a documented upgrade path. No automatic reset is performed."
             ),
         }
     }

@@ -20,7 +20,7 @@ export function terminalFixture(turn: ChatTurn, status: 'completed' | 'cancelled
         input: { watermark: '1', applications_digest: 'e'.repeat(64) },
         decided_at_revision: '9007199254740993', decision_event_cursor: '9007199254740994',
         requirement_revision: '1', evidence_frontier: '9007199254740992', value };
-    const seal = { protocol_version: 2, identity, core_session_id: 'core', transition_id: 'transition',
+    const seal = { protocol_version: 1, identity, core_session_id: 'core', transition_id: 'transition',
         checkpoint_revision: '9007199254740993', core_revision: '9007199254740993', event_cursor: '9007199254740994',
         result, result_digest: 'f'.repeat(64),
         completed_at_ms: 1234, entry_count: '1', heads_count: '1', child_receipt_count: '0',

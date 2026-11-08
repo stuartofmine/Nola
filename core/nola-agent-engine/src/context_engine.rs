@@ -14,8 +14,8 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 
-pub const CONTEXT_ENGINE_SCHEMA_VERSION: u32 = 2;
-pub const CONTEXT_ENGINE_ABI_VERSION: u32 = 2;
+pub const CONTEXT_ENGINE_SCHEMA_VERSION: u32 = 1;
+pub const CONTEXT_ENGINE_ABI_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]

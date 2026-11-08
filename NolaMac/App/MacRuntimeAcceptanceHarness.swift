@@ -1293,7 +1293,7 @@ enum MacRuntimeAcceptanceHarness {
         let profileID = "acceptance-model"
         let account = "acceptance-model-credential"
         let source: [String: Any] = [
-            "schemaVersion": 2, "endpointID": "acceptance-endpoint",
+            "schemaVersion": 1, "endpointID": "acceptance-endpoint",
             "endpointName": "Isolated acceptance", "baseURL": original.baseURL.absoluteString,
             "endpointEnabled": true, "endpointOrder": 0, "modelEnabled": true, "modelOrder": 0,
             "priority": 100, "capabilities": ["chat"],

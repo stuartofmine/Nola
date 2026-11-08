@@ -85,7 +85,7 @@ class AgentCoreToolCatalogTest {
             identity = identity,
             resultEgressAuthorization = authorization(identity),
             resolver = AgentCoreToolPolicyResolver { input ->
-                assertEquals(2, input.schemaVersion)
+                assertEquals(1, input.schemaVersion)
                 assertEquals(identity, input.expectedIdentity)
                 assertEquals(identity.sessionId, input.runtime.sessionId)
                 assertEquals(listOf("agent_host", "device"), input.runtime.routes)
@@ -282,7 +282,7 @@ class AgentCoreToolCatalogTest {
         candidate: AndroidAgentToolCandidate,
         capability: String
     ): AgentCoreToolPolicyOutput = AgentCoreToolPolicyOutput(
-        schemaVersion = 2,
+        schemaVersion = 1,
         platform = "android",
         policyDigest = "a".repeat(64),
         manifestDigest = "b".repeat(64),

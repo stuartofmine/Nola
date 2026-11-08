@@ -39,7 +39,7 @@ nonisolated struct MacRemoteRunObservation: Decodable, Sendable {
         }
         if let seal = terminal_seal {
             guard recovery == .terminal, seal.identity == admission.identity,
-                  seal.protocol_version == 2, status == "sealed",
+                  seal.protocol_version == 1, status == "sealed",
                   seal.result.run_id == run_id,
                   seal.result.conversation_id == conversation_id else { throw MacRemoteHostError.invalidResponse }
         } else {

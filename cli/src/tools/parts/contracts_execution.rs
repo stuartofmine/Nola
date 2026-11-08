@@ -4071,7 +4071,8 @@ fn automatic_file_preimage_checkpoint(
             }
         }
         let manifest = json!({
-            "version": if resource_scoped { 2 } else { 1 },
+            "version": 1,
+            "resource_scoped": resource_scoped,
             "kind": "file_preimage",
             "tool_call_id": request.id,
             "capability_id": request.name,
@@ -4168,7 +4169,7 @@ fn file_preimage_checkpoint_action(
         }
     };
     let version = manifest.get("version").and_then(Value::as_u64);
-    if !matches!(version, Some(1 | 2))
+    if version != Some(1)
         || manifest.get("kind").and_then(Value::as_str) != Some("file_preimage")
     {
         return error_with_display(
@@ -4176,6 +4177,9 @@ fn file_preimage_checkpoint_action(
             "File recovery checkpoint is invalid; no files were changed".to_string(),
         );
     }
+    let Some(resource_scoped) = manifest.get("resource_scoped").and_then(Value::as_bool) else {
+        return error("File preimage resource scope is missing".into());
+    };
     let manifest_root = manifest.get("root").and_then(Value::as_str).unwrap_or("");
     if Path::new(manifest_root) != root || checkpoint.root != root {
         return error_with_display(
@@ -4234,7 +4238,7 @@ fn file_preimage_checkpoint_action(
             "File recovery checkpoint is invalid; no files were changed".to_string(),
         );
     };
-    if entries.is_empty() || (version == Some(2) && entries.len() > 100) {
+    if entries.is_empty() || (resource_scoped && entries.len() > 100) {
         return error_with_display(
             "File preimage manifest is empty".to_string(),
             "File recovery checkpoint is invalid; no files were changed".to_string(),
@@ -4261,9 +4265,9 @@ fn file_preimage_checkpoint_action(
             Ok(path) => path,
             Err(outcome) => return outcome,
         };
-        // v2 stores each declared resource's own authorized root. The
+        // Resource-scoped checkpoints store each resource's authorized root. The
         // checkpoint owner/root is bookkeeping, not a grant for its entries.
-        let resource_root = if version == Some(2) {
+        let resource_root = if resource_scoped {
             let Some(raw) = entry.get("resource_root").and_then(Value::as_str) else {
                 return error("File preimage resource root is missing".to_string());
             };
@@ -4281,7 +4285,7 @@ fn file_preimage_checkpoint_action(
             root.to_path_buf()
         };
         let target = resource_root.join(&relative_path);
-        if version == Some(2) {
+        if resource_scoped {
             if entry.get("path").and_then(Value::as_str).map(Path::new)
                 != Some(target.as_path())
             {
@@ -4301,7 +4305,7 @@ fn file_preimage_checkpoint_action(
         }
         let parent = match target.parent().and_then(|path| path.canonicalize().ok()) {
             Some(parent) if parent.starts_with(&resource_root)
-                && (version != Some(2) || Some(parent.as_path()) == target.parent()) => parent,
+                && (!resource_scoped || Some(parent.as_path()) == target.parent()) => parent,
             _ => {
                 return error_with_display(
                     format!(
@@ -4424,7 +4428,7 @@ fn file_preimage_checkpoint_action(
             }
         };
         restore_entries.push(RestoreEntry {
-            relative: if version == Some(2) { target.to_string_lossy().into_owned() }
+            relative: if resource_scoped { target.to_string_lossy().into_owned() }
                 else { relative_raw.to_string() },
             target,
             backup,

@@ -278,7 +278,7 @@ fn health_remains_responsive_while_another_client_holds_a_partial_frame() {
 
     let mut stalled = UnixStream::connect(&socket).expect("open partial request connection");
     stalled
-        .write_all(br#"{"protocol_version":2,"request_id":"partial""#)
+        .write_all(br#"{"protocol_version":1,"request_id":"partial""#)
         .expect("write partial request");
     stalled.flush().expect("flush partial request");
 

@@ -198,7 +198,7 @@ import Foundation
                                             contextUsage: IOSCommittedRunContextUsage? = nil) async throws -> Bool {
         let seal: IOSAssistantRunTerminalSeal? = try await provider.journalRequest(.terminalSeal(conversationID: conversationID, runID: runID))
         guard let seal else { return false }
-        guard seal.protocol_version == 2,
+        guard seal.protocol_version == 1,
               seal.identity.conversation_id == conversationID, seal.identity.run_id == runID,
               seal.result.conversation_id == conversationID, seal.result.run_id == runID,
               seal.identity.assistant_message_id == assistantID,

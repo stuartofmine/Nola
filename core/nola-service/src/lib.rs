@@ -567,7 +567,7 @@ mod unix {
             // A valid administrative cancellation has no admitted child Run
             // result; transport rejection must not depend on an invalid receipt.
             let terminal = serde_json::json!({
-                "protocol_version":2,"admission":admission,"authority_revision":2,
+                "protocol_version":1,"admission":admission,"authority_revision":2,
                 "receipt_id":"receipt","status":"cancelled","input_watermark":1,
                 "completion_watermark":1,"result_ref":null,"run_result":null,
                 "result_digest":null,"ended_at_ms":2,"guidance_results":[],

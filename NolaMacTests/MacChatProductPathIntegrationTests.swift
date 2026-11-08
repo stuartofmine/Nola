@@ -742,7 +742,7 @@ private func coreTurnCompletedMacAgentEvent(
     revision: Int
 ) throws -> MacLocalAgentEvent {
     let object: [String: Any] = [
-        "protocol_version": 2,
+        "protocol_version": 1,
         "session_id": conversationID,
         "cursor": ["sequence": revision],
         "revision": revision,

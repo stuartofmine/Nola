@@ -188,7 +188,7 @@ private fun decodeCoreProjectionHint(envelope: kotlinx.serialization.json.JsonOb
         "core_memory_runtime_projection_updated" -> "memory_runtime_projection"
         else -> return null
     }
-    require(envelope["protocol_version"]?.jsonPrimitive?.contentOrNull == "2")
+    require(envelope["protocol_version"]?.jsonPrimitive?.contentOrNull == "1")
     val conversation = requireNotNull(envelope["session_id"]?.jsonPrimitive?.contentOrNull).also { require(it.isNotBlank()) }
     if (type == "core_capabilities_activated") {
         require(envelope[payload] is kotlinx.serialization.json.JsonArray)

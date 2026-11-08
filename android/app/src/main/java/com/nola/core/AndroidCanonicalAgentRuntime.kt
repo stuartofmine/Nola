@@ -104,7 +104,7 @@ internal fun loadAndroidCanonicalTerminalSeal(
     val result = seal.getValue("result").jsonObject
     val resultDigest = seal.string("result_digest")
     val digest = seal.string("seal_digest")
-    require(seal["protocol_version"]?.jsonPrimitive?.intOrNull == 2 &&
+    require(seal["protocol_version"]?.jsonPrimitive?.intOrNull == 1 &&
         identity.string("conversation_id") == descriptor.conversationId &&
         identity.string("run_id") == descriptor.submissionId &&
         identity.string("assistant_message_id") == descriptor.assistantMessageId &&

@@ -112,7 +112,7 @@ private fun sealDataSourceValidationContract(
     recipe: com.nola.domain.model.DataSourceReadRecipe
 ): DataSourceValidationContract {
     val pending = contract.copy(
-        connectorVersion = contract.connectorVersion.coerceAtLeast(2),
+        connectorVersion = contract.connectorVersion,
         readRecipe = recipe,
         validationDigest = null
     )

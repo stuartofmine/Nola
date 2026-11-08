@@ -9,7 +9,7 @@ final class MacPermissionPresentationIdentityTests: XCTestCase {
         instructions: [MacPermissionInstruction] = [], reason: String = "Review",
         expiresAt: Int64? = 100
     ) -> MacRemotePermissionRequest {
-        MacRemotePermissionRequest(id: id, allowConversation: true, protocolVersion: 4, nonce: nonce,
+        MacRemotePermissionRequest(id: id, allowConversation: true, protocolVersion: 1, nonce: nonce,
             hostID: host, clientID: client, sessionID: session, toolName: "write_file",
             arguments: #"{"path":"/workspace/example"}"#,
             permissionInstructions: instructions, callID: call, reason: reason,

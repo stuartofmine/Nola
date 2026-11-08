@@ -31,7 +31,7 @@ final class MacLocalAgentCredentialGateTests: XCTestCase {
                   endpointEnabled: Bool = true, deleted: Bool = false,
                   endpoint: String = "https://fixture.invalid/v1", model: String = "upstream-model",
                   wireProtocol: String = "chat_completions") throws {
-            let source: [String: Any] = ["schemaVersion": 2, "endpointID": "endpoint",
+            let source: [String: Any] = ["schemaVersion": 1, "endpointID": "endpoint",
                 "endpointName": "Fixture", "baseURL": endpoint,
                 "endpointEnabled": endpointEnabled, "endpointOrder": 0, "modelEnabled": true,
                 "modelOrder": 0, "priority": 100, "capabilities": ["chat"],

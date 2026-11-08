@@ -148,7 +148,7 @@ mod incremental_compaction_tests {
         let cfg = super::effect_delivery_start_barrier_tests::test_llm("http://127.0.0.1:1/v1".into());
         let identity = crate::llm::request_configuration_identity(&cfg);
         let make_request = |body: Value| {
-            let value = json!({"version":2, "configuration_identity":identity,
+            let value = json!({"version":1, "configuration_identity":identity,
                 "route_identity":crate::llm::model_route_identity(&cfg),
                 "started_at_unix":std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
                 "completed_response":[], "body":body,

@@ -27,7 +27,7 @@ class RemoteConversationObserverTest {
             put("recovery", recovery); put("admission", admission)
             put("terminal_seal", if (terminal) buildJsonObject {
                 put("identity", identity); put("admission", admission); put("seal_digest", "b".repeat(64))
-                put("protocol_version", 2); put("core_session_id", "core"); put("transition_id", "terminal")
+                put("protocol_version", 1); put("core_session_id", "core"); put("transition_id", "terminal")
                 put("checkpoint_revision", "2"); put("core_revision", "2"); put("event_cursor", "9")
                 put("completed_at_ms", 2); put("entry_count", "1"); put("heads_count", "1"); put("child_receipt_count", "0")
                 put("manifest_digest", "c".repeat(64)); put("result_digest", "d".repeat(64))
@@ -190,7 +190,7 @@ class RemoteConversationObserverTest {
     }
 
     @Test fun originalPermissionNonceEntersExistingUiAndResolutionContractAfterColdRead() {
-        val permission = Json.parseToJsonElement("""{"type":"permission_request", "allow_conversation": true,"id":"original-permission","canonical_run_id":"durable-run","tool_name":"write_file","protocol_version": 4,"nonce":"original-nonce","host_id":"host","client_id":"client","session_id":"conversation","expires_at":200,"permission_instructions":[]}""").jsonObject
+        val permission = Json.parseToJsonElement("""{"type":"permission_request", "allow_conversation": true,"id":"original-permission","canonical_run_id":"durable-run","tool_name":"write_file","protocol_version": 1,"nonce":"original-nonce","host_id":"host","client_id":"client","session_id":"conversation","expires_at":200,"permission_instructions":[]}""").jsonObject
         val base = response()
         val value = base.getValue("result").jsonObject
         val observed = decodeRemoteRunObservation(JsonObject(base + ("result" to JsonObject(value +

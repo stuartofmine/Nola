@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-pub const AGENT_TASK_ADMISSION_VERSION: u16 = 2;
+pub const AGENT_TASK_ADMISSION_VERSION: u16 = 1;
 pub const AGENT_TASK_ADMISSION_MAX_BYTES: usize = 32 * 1024;
 
 /// One Store-authored guidance outcome, transported only by trusted Host IPC.
@@ -97,7 +97,7 @@ pub struct AgentTaskTerminalGuidance {
 impl AgentTaskTerminalProjection {
     pub fn validate(&self) -> Result<(), String> {
         self.admission.validate()?;
-        if self.protocol_version != 2 || self.authority_revision < 2 || self.receipt_id.trim().is_empty()
+        if self.protocol_version != 1 || self.authority_revision < 2 || self.receipt_id.trim().is_empty()
             || !matches!(self.status.as_str(), "sealed" | "failed" | "cancelled")
             || self.input_watermark < self.admission.input_watermark
             || self.input_watermark.is_some_and(|value| value < 0)
@@ -285,7 +285,7 @@ mod tests {
         // Pure DTO integrity coverage: execution authority still requires the
         // real Store exporter and original-Application trusted import.
         let mut terminal = AgentTaskTerminalProjection {
-            protocol_version: 2, admission: fact.clone(), authority_revision: 3,
+            protocol_version: 1, admission: fact.clone(), authority_revision: 3,
             receipt_id: "receipt".into(), status: "failed".into(),
             run_result: None, result_digest: None,
             input_watermark: Some(9), completion_watermark: Some(9),

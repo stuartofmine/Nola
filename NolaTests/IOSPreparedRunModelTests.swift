@@ -99,7 +99,7 @@ struct IOSPreparedRunModelTests {
             Issue.record("Missing admitted Host binding")
             return
         }
-        #expect(fields["version"] == .number(8))
+        #expect(fields["version"] == .number(1))
         #expect(route["siwc_account"] == .null)
         #expect(fields["output_admission"] == prepared.outputAdmission)
         #expect(route["model"] == .string(configuration.model))

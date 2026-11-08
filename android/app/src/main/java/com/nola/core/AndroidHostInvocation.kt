@@ -8,7 +8,7 @@ import java.net.URI
 import java.security.MessageDigest
 import kotlinx.serialization.json.*
 
-internal const val ANDROID_HOST_INVOCATION_BINDING_VERSION = 8
+internal const val ANDROID_HOST_INVOCATION_BINDING_VERSION = 1
 
 internal fun invocationSha256(value: String): String = MessageDigest.getInstance("SHA-256")
     .digest(value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it.toInt() and 255) }

@@ -126,7 +126,7 @@ def emit_state(path, lock, task_id, status, completed, total, started, attempts,
     speed = int(completed / elapsed)
     remaining = max(total - completed, 0) if total else None
     value = {
-        "schemaVersion": 2,
+        "schemaVersion": 1,
         "taskID": task_id,
         "status": status,
         "downloadedBytes": completed,
@@ -436,7 +436,7 @@ def main():
         os.replace(staging, snapshot_dir)
 
         record = {
-            "schemaVersion": 2,
+            "schemaVersion": 1,
             "taskID": task_id,
             "id": model_id,
             "name": selected.get("name") or selected.get("repo_id") or plan.get("model"),
@@ -461,7 +461,7 @@ def main():
         catalog_lock = root / ".catalog.lock"
         acquire_lock(catalog_lock, task_id)
         try:
-            catalog = load_object(catalog_path) if catalog_path.exists() else {"schemaVersion": 2, "models": []}
+            catalog = load_object(catalog_path) if catalog_path.exists() else {"schemaVersion": 1, "models": []}
             models = [item for item in catalog.get("models", []) if isinstance(item, dict) and item.get("id") != model_id]
             models.append(record)
             catalog["schemaVersion"] = 2

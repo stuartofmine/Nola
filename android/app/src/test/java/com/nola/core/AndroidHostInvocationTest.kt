@@ -48,7 +48,7 @@ class AndroidHostInvocationTest {
             put("context_window", buildJsonObject { put("reserved_output_tokens", 1024) })
         }
         val identity = bindAndroidInvocation(model, config)
-        assertEquals(8, identity.getValue("version").jsonPrimitive.int)
+        assertEquals(1, identity.getValue("version").jsonPrimitive.int)
         assertEquals(identity, bindAndroidInvocation(model, canonicalInvocationJson(config).jsonObject))
         assertNotEquals(identity, bindAndroidInvocation(model,
             JsonObject(config + ("permission_rules" to JsonArray(listOf(JsonPrimitive("changed")))))))

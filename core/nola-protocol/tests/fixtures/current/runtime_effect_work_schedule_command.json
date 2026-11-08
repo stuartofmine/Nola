@@ -1,5 +1,5 @@
 {
-  "protocol_version": 53,
+  "protocol_version": 1,
   "request_id": "runtime-schedule-request-1",
   "client_id": "runtime-supervisor-1",
   "command": {

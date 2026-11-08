@@ -235,7 +235,7 @@ final class MacConversationConfigurationTests: XCTestCase {
         try port.upsertModelProfile(MacCanonicalModelProfile(
             id: "deepseek", displayName: "DeepSeek", provider: "openai-compatible",
             modelName: "deepseek-flash", runtime: "remote",
-            sourceJSON: #"{"schemaVersion":2,"endpointID":"endpoint","endpointName":"DeepSeek","baseURL":"https://api.example.invalid/chat/completions","endpointEnabled":true,"endpointOrder":0,"modelEnabled":true,"modelOrder":0,"priority":100,"capabilities":["chat"],"executionCapabilities":{"toolCalls":false,"imageInput":false,"reasoning":true,"samplingParameters":false,"samplingRequiresNoReasoning":false,"chatOutputTokenField":"auto"},"reasoning":{"control":"automatic","responses":true,"budgets":[1024,4096,8192],"efforts":[],"outputLimit":16384}}"#,
+            sourceJSON: #"{"schemaVersion":1,"endpointID":"endpoint","endpointName":"DeepSeek","baseURL":"https://api.example.invalid/chat/completions","endpointEnabled":true,"endpointOrder":0,"modelEnabled":true,"modelOrder":0,"priority":100,"capabilities":["chat"],"executionCapabilities":{"toolCalls":false,"imageInput":false,"reasoning":true,"samplingParameters":false,"samplingRequiresNoReasoning":false,"chatOutputTokenField":"auto"},"reasoning":{"control":"automatic","responses":true,"budgets":[1024,4096,8192],"efforts":[],"outputLimit":16384}}"#,
             parametersJSON: String(decoding: try JSONEncoder().encode(ModelParameters.webAlignedCloudDefaults), as: UTF8.self), selected: true, enabled: true, revision: 1,
             createdAtMs: 1, updatedAtMs: 1, deletedAtMs: nil
         ))

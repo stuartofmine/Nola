@@ -13,7 +13,7 @@ final class MacVisualAcceptanceContractTests: XCTestCase {
         try FileManager.default.createDirectory(at: artifact, withIntermediateDirectories: true)
         let receipt = root.appendingPathComponent("receipt.json")
         let payload: [String: Any] = [
-            "schema_version": 2,
+            "schema_version": 1,
             "artifact_path": artifact.path,
             "artifact_kind": "application_window_sequence",
             "observer": "visual-reviewer",
@@ -54,7 +54,7 @@ final class MacVisualAcceptanceContractTests: XCTestCase {
         }
         let receipt = root.appendingPathComponent("receipt.json")
         let payload: [String: Any] = [
-            "schema_version": 2,
+            "schema_version": 1,
             "artifact_path": artifact.path,
             "artifact_kind": "application_window_sequence",
             "observer": "visual-reviewer",

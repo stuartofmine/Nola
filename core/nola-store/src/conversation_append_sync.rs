@@ -4,7 +4,7 @@ use super::*;
 use nola_domain::CanonicalBodyReference;
 use serde::{Deserialize, Serialize};
 
-const APPEND_PUBLICATION_SCHEMA_VERSION: u32 = 2;
+const APPEND_PUBLICATION_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]

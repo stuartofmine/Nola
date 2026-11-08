@@ -16,14 +16,14 @@ class AgentCoreDataSourceResolutionTest {
                 now = "2026-08-05T00:00:00Z",
             )
         ).decodeToString()
-        assertTrue(encoded.contains("\"schemaVersion\":2"))
+        assertTrue(encoded.contains("\"schemaVersion\":1"))
         assertTrue(encoded.contains("\"sourceId\":\"calendar\""))
         assertTrue(encoded.contains("\"policy\":\"askWhenRelevant\""))
 
         val decoded = AgentCoreDataSourceResolver.decodeOutput(
-            """{"schemaVersion":2,"enabled":false,"usable":false,"shouldRequestConsent":true,"shouldRefresh":false,"reason":"consent_required"}""".encodeToByteArray()
+            """{"schemaVersion":1,"enabled":false,"usable":false,"shouldRequestConsent":true,"shouldRefresh":false,"reason":"consent_required"}""".encodeToByteArray()
         )
-        assertEquals(2, decoded.schemaVersion)
+        assertEquals(1, decoded.schemaVersion)
         assertFalse(decoded.enabled)
         assertFalse(decoded.usable)
         assertTrue(decoded.shouldRequestConsent)

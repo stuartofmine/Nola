@@ -76,7 +76,7 @@ final class MacAgentHostDecoderCooperativeTests: XCTestCase {
     func testDistinctCoreSessionWitnessValidatesEveryCoreFamilyWithoutRewritingIdentity() throws {
         let conversation = "canonical-conversation"
         let core = "actual-core-session"
-        let common: [String: Any] = ["protocol_version": 2, "session_id": core,
+        let common: [String: Any] = ["protocol_version": 1, "session_id": core,
             "turn_id": "owned-run", "cursor": 1, "revision": 1]
         let payloads: [[String: Any]] = [
             ["type": "core_task_updated", "task_projection_revision": 1,
@@ -104,7 +104,7 @@ final class MacAgentHostDecoderCooperativeTests: XCTestCase {
             XCTAssertTrue(MacAgentHostRuntime.decode(line: line, conversationID: conversation,
                 controlSessionID: conversation)?.isError == true, "Authenticated control identity is not a Core witness")
         }
-        let permission = #"{"type":"permission_request", "allow_conversation": true,"protocol_version":4,"request_id":"permission","nonce":"nonce","host_id":"host","client_id":"client","session_id":"canonical-conversation","tool_name":"write_file"}"#
+        let permission = #"{"type":"permission_request", "allow_conversation": true,"protocol_version":1,"request_id":"permission","nonce":"nonce","host_id":"host","client_id":"client","session_id":"canonical-conversation","tool_name":"write_file"}"#
         let accepted = try XCTUnwrap(MacAgentHostRuntime.decode(line: permission,
             conversationID: conversation, coreSessionID: core, controlSessionID: conversation))
         XCTAssertEqual(accepted.permissionRequest?.sessionID, conversation,

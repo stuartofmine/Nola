@@ -361,7 +361,7 @@ nonisolated public struct AgentCoreSkillRuntimeUpdateEnvelope: Codable, Equatabl
     public static func decode(from value: AgentCoreJSONValue) -> Self? {
         guard let data = try? JSONEncoder().encode(value),
               let envelope = try? JSONDecoder().decode(Self.self, from: data),
-              envelope.protocolVersion == 2,
+              envelope.protocolVersion == 1,
               envelope.type == "core_skill_runtime_updated" else { return nil }
         return envelope
     }
@@ -389,7 +389,7 @@ nonisolated public struct AgentCoreCapabilityActivationEnvelope: Codable, Equata
         guard let data = try? JSONEncoder().encode(value),
               let envelope = try? JSONDecoder().decode(Self.self, from: data),
               envelope.type == "core_capabilities_activated",
-              envelope.protocolVersion == 2,
+              envelope.protocolVersion == 1,
               !envelope.sessionID.isEmpty,
               !envelope.source.isEmpty,
               !envelope.capabilityIDs.isEmpty,
@@ -471,7 +471,7 @@ nonisolated public struct AgentCoreSkillRuntimeProjectionReducer: Sendable {
         expectedTurnID: String? = nil
     ) -> AgentCoreSkillRuntimeApplyResult {
         guard envelope.type == "core_skill_runtime_updated",
-              envelope.protocolVersion == 2,
+              envelope.protocolVersion == 1,
               !expectedSessionID.isEmpty,
               envelope.sessionID == expectedSessionID,
               projection.sessionID == nil || projection.sessionID == envelope.sessionID,

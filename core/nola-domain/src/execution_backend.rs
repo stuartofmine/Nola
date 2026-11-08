@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const EXECUTION_BACKEND_SCHEMA_VERSION: u32 = 3;
+pub const EXECUTION_BACKEND_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionBackendModelDescriptor {

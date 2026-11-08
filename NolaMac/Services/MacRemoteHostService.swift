@@ -448,7 +448,7 @@ nonisolated struct MacRemotePermissionRequest: Identifiable, Hashable, Sendable 
             sessionID: sessionID, requestID: id, nonce: nonce, callID: callID)
     }
 
-    static let supportedProtocolVersion = 4
+    static let supportedProtocolVersion = 1
     let id: String
     let allowConversation: Bool
     let callID: String?
@@ -1892,7 +1892,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
             guard let decoded = UInt64(value), String(decoded) == value else { return nil }
             return decoded
         }
-        guard seal.protocol_version == 2,
+        guard seal.protocol_version == 1,
               seal.identity.conversation_id == conversationID, seal.identity.run_id == runID,
               !seal.core_session_id.isEmpty, !seal.transition_id.isEmpty,
               seal.result.run_id == runID, seal.result.conversation_id == conversationID,

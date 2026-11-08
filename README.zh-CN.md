@@ -1,170 +1,93 @@
-> **单版本开发约束：Nola 仅有一个未发布的内部开发版本。只保留当前架构、接口、协议和数据格式；删除旧版本兼容层、旧字段别名、双读/双写、兼容回退及历史数据迁移/转换代码，不为旧接口保留实现。文中历史兼容或数据转换计划不再执行，历史记录不构成保留旧实现的要求。不匹配的协议或存储格式明确拒绝；不得自动删除、重建或改写用户数据。当前版本的会话恢复、事务回滚和外部服务协议适配不属于旧版本兼容。**
-
 # Nola
 
-[公开源码](https://github.com/stuartofmine/Nola) · [发行包](https://github.com/stuartofmine/Nola/releases)
+本地优先的个人 AI 助理，包含 macOS、iOS、Android、Windows、Web 与终端客户端。
 
-当前为开发预览。首次二进制预览提供 macOS Apple Silicon CLI 完整包；其他原生客户端可从源码构建，不能将未发布的平台包视为可用。更新信息有签名校验，安装不会迁移或重建用户数据。参见[发布说明](release/README.md)。
+[English](README.md) · [公开源码](https://github.com/stuartofmine/Nola) · [下载](https://github.com/stuartofmine/Nola/releases) · [文档](Doc/README.md)
 
-Nola 是一个 **local-first（本地优先）** 的个人智能助理系统。
+## 功能
 
-> English version: [`README.md`](README.md)
+Nola 将对话、模型连接、本地工作区、工具执行、记忆和长任务放在同一个应用中。各端使用共享 Rust 运行时，分别负责界面、系统权限和生命周期。模型请求使用用户配置的连接；各端支持的本地模型运行时独立管理。
 
-## 产品方向
+CLI 可以通过带认证的本地 HTTP 服务，为 Web 和远程客户端提供 Host 能力。
 
-Nola 围绕三个核心方向设计：
+## 下载
 
-- **数据源驱动**：对话可显式使用文档、网页、系统数据、健康摘要和本地工作区作为上下文。
-- **自优化**：上下文规划、模型路由、检索和执行策略自动适配，不再向用户暴露过时的固定步数配置。
-- **长期个人智能**：稳定偏好与长期记忆会被自动总结、去重，并支持本地优先的查看和管理。
+1.0.0 开发预览提供 **macOS Apple Silicon 完整 CLI 包**。请保留 CLI、Agent Host、服务、Web 资源和浏览器运行时的完整目录结构。此包尚未进行 Apple Developer ID 公证。其他平台暂未发布安装包，可从源码构建。
 
-Chat 是产品的主界面。Agent 工具、数据源、记忆和自动化都服务于对话，而不是彼此割裂的独立模块。
+只下载[发行页](https://github.com/stuartofmine/Nola/releases)列出的制品。解压后在目录中运行：
+
+```sh
+./nola --version
+./nola --help
+./nola web --host 127.0.0.1 --port 5001
+```
+
+开始对话前，先配置模型连接并选择已声明的模型。凭据只保存在本地配置或平台凭据存储中，不应提交到源码仓库。
 
 ## 架构
 
-| 组件 | 技术栈 | 说明 |
-|---|---|---|
-| iOS (`Nola/`) | SwiftUI | 移动端聊天、HealthKit/系统数据、通知、记忆与本地模型 |
-| macOS (`NolaMac/`) | SwiftUI/AppKit | 原生桌面聊天、本机/宿主机切换、工作区、工具与已下载模型 |
-| Android (`android/`) | Kotlin/Compose + Hilt | 移动端聊天、Health Connect、平台权限与共享 Agent Runtime |
-| 共享核心 (`core/`) | Rust + C ABI/JNI | 确定性的 Agent 状态、权限、工具协议与上下文规划 |
-| Web (`web/`) + CLI (`cli/`) | Rust CLI 后端 + Jinja 模板/静态资源 | 独立的本地控制台、自动化宿主与开发者 CLI |
-| Backend (`backend/`) | Cloudflare Worker + D1 | OAuth 中继、订阅与用量、模型中转、通知 |
+| 组件 | 实现 | 职责 |
+| --- | --- | --- |
+| macOS · `NolaMac/` | SwiftUI / AppKit | 原生桌面客户端与平台 Host 集成 |
+| iOS · `Nola/` | SwiftUI | 移动客户端与 iOS 系统能力 |
+| Android · `android/` | Kotlin / Compose | 移动客户端、JNI 集成与 Android 系统能力 |
+| Windows · `windows/` | 桌面原生壳 + Web UI | 桌面客户端与受控本地 Host 集成 |
+| Web · `web/frontend/` | Svelte / TypeScript | 由 Rust Host 提供服务的浏览器界面 |
+| CLI · `cli/` | Rust | 终端客户端、Agent Host 与本地 HTTP 服务 |
+| Core · `core/` | Rust、C ABI / JNI | 领域契约、Agent 执行、Application Service、持久化与 Host 接口 |
+| Apple 共享代码 · `Shared/` | Swift | 共用展示组件与协议代码 |
 
-macOS App 不是 CLI 的外壳。普通原生聊天不会启动 CLI 进程；CLI/Web 作为终端工作流和宿主机自动化入口独立存在。
+各原生客户端拥有自己的界面；macOS App 不是 CLI 的外壳。对话和持久运行状态由本地 Application Service 与 Store 管理。远程 Host 访问需要认证和明确授权。
 
-## 仓库结构
+## 从源码运行
 
-```text
-.
-├── backend/                # 后端服务
-├── android/                # Android Compose 客户端
-├── cli/                    # Rust CLI 与 Rust Web 后端
-├── core/      # 共享 Rust Agent Core 与原生构建脚本
-├── Nola/                   # iOS 客户端
-├── NolaMac/                # 原生 macOS 客户端
-├── NolaTests/              # iOS 单元测试
-├── NolaUITests/            # iOS UI 测试
-├── NolaMacTests/           # macOS 单元、契约与视觉测试
-├── web/                    # Web 模板、静态资源与原生宿主辅助程序
-├── Doc/                    # 文档
-├── dev.sh                  # 开发启动脚本（默认热重载）
-└── deploy.sh               # 发布脚本
+需要稳定版 Rust 和 Node.js 24 或更新版本。Apple 客户端需要 Xcode；Android 还需要 JDK 21、Android SDK/NDK、Rust Android targets 和 `cargo-ndk`；Windows 需要对应的原生工具链。
+
+在仓库根目录执行：
+
+```sh
+npm --prefix web/frontend ci
+npm --prefix web/frontend run build
+cargo build --locked -p nola_cli -p nola_service --bins
+./target/debug/nola --help
+./target/debug/nola web --host 127.0.0.1 --port 5001 --web-root "$PWD/web"
 ```
 
-## 本地开发
+也可运行 `./dev.sh` 执行上述本地构建与启动，使用 `WEB_HOST`、`WEB_PORT` 设置监听地址。
 
-### 环境要求
+模型可在 Web/原生客户端设置中配置，也可使用 `nola model apply-config /absolute/path/to/config.json`。`llm.default_model` 必须引用同一份配置中声明的连接和模型。
 
-- Node.js + npm
-- Rust 工具链（`rustup` + `cargo`）
-- iOS/macOS 开发需要 macOS 与 Xcode
-- Android 原生构建需要 JDK 21、Android SDK、Android NDK 与 `cargo-ndk`
-- 后端、Web 与 CLI 开发需要 macOS/Linux Shell 环境
+CLI 交互中，按 `Ctrl+V` 添加剪贴板图片，也可粘贴图片的绝对路径。图片分析需要模型声明图片输入能力。权限拒绝后，用 `/allow` 查看会话权限；配置中的显式拒绝规则和操作系统权限需要在各自来源处修改，然后明确要求重试。
 
-### 启动开发环境
+## 测试
 
-```bash
-./dev.sh
-```
+按修改范围运行相应检查：
 
-默认行为：
-- 后端使用 Worker `dev` 模式并自动热重载
-- Web 默认由 Rust CLI 后端提供服务
-
-常用开关：
-
-```bash
-NOLA_LAN=0 ./dev.sh
-BACKEND_PORT=8000 WEB_PORT=5001 ./dev.sh
-```
-
-### CLI 交互
-
-CLI 交互中，复制图片后按 `Ctrl+V` 添加图片附件（macOS 终端同样使用此快捷键），也可单独粘贴图片的绝对路径。发送前可删除图片占位符以移除附件。图片能否被模型分析取决于所选模型声明的图片输入能力。
-
-权限拒绝后，用 `/allow` 查看本会话的权限设置；配置中的显式 `deny` 规则需修改对应配置，系统权限需在操作系统中授予。调整后明确要求重试。底部缓存命中率表示最近一次模型请求，`—` 表示服务端未上报完整数据。
-
-### 原生端构建与测试
-
-iOS 测试脚本会自动选择可用模拟器、限制并行 worker 数，并且只清理由本次运行创建的 XCTest 克隆。
-
-```bash
+```sh
+cargo test --locked -p nola_domain -p nola_protocol -p nola_store -p nola_update_host
+npm --prefix web/frontend run check
+npm --prefix web/frontend test
+./scripts/test_mac_layers.sh contracts
 ./scripts/run_client_tests.sh
-# 可选：PARALLEL_TEST_WORKERS=8 ./scripts/run_client_tests.sh
-xcodebuild test -project Nola.xcodeproj -scheme NolaMac \
-  -destination 'platform=macOS'
+(cd android && ./gradlew test)
 ```
 
-Android 会为所有支持的 ABI 构建 Rust 静态库。构建脚本会自动查找 `cargo` 和 NDK，不依赖某台机器的绝对路径。
+Apple 测试脚本使用隔离的 Test 输出目录，macOS Debug 构建保留配置的签名身份。Android 设备测试需要已启动的模拟器或明确选定的设备。契约测试不等于真实模型或各平台安装验收；结果和已知限制见[验收记录](Doc/当前任务/V1_REISSUE_ACCEPTANCE_20261109.md)。
 
-```bash
-rustup target add aarch64-linux-android armv7-linux-androideabi \
-  i686-linux-android x86_64-linux-android
-cargo install cargo-ndk --locked
-cd android
-./gradlew test
-./gradlew assembleDebugAndroidTest
-./gradlew connectedDebugAndroidTest   # 需要已启动的模拟器或真机
-```
+## 版本与兼容
 
-共享核心与后端检查：
+**本次重新发布的 1.0.0 是首个受支持基线**。Nola 自有协议、ABI、数据库格式与 epoch 均从 **1** 开始，不保留此前开发格式的兼容实现。应用版本/build 与契约版本分别管理；外部标准协议沿用其自身的版本标识。
 
-```bash
-cd core && cargo test --quiet
-cd backend && npm run typecheck
-cd backend && python -m pytest -q
-```
+从本次发布起，后续版本必须维护已发布接口和用户数据的兼容性。协议变更需要明确协商，数据变更需要可验证、可回滚的迁移。未知格式明确拒绝，不自动删除或重建用户数据。详见[版本兼容策略](Doc/软件架构设计/总体设计/VERSION_COMPATIBILITY.md)。
 
-## 当前平台行为
+## 更新与发布
 
-- **附件**：iOS 与 macOS 在本地提取支持的文档文本。DOCX 支持正文、表格、页眉、页脚、脚注和尾注。附件内容只作为参考上下文，不会自行触发用户命令。
-- **健康数据**：iOS 直接读取 HealthKit，Data Tab 与详情页共享同一份健康快照，并响应 HealthKit observer 的变化。macOS 只有在收到 iPhone 同步摘要后才显示健康数据。
-- **Agent Runtime**：iOS 与 Android 使用共享 Rust command/event 协议；操作系统授权、沙箱文件、UI 和生命周期仍由各平台负责。
-- **生成产物**：XCFramework、静态库、JNI 动态库、日志和本地数据库均为构建产物，不应提交到仓库。
+源码与签名更新信息托管在 GitHub，完整包通过 GitHub Releases 分发。客户端检查 Ed25519 签名、平台、数据格式、文件长度和 SHA-256。检查更新和安装交接均由用户明确操作。GitHub Actions 每周续签更新信息。
 
-## Release 发布
+维护者操作见[发布说明](release/README.md)。不要提交凭据、签名材料、数据库、日志或生成的构建产物。
 
-`deploy.sh` 默认会先校验环境，再执行 `wrangler deploy` 发布 release 版本。
+## 参与贡献
 
-```bash
-export nola_backend_env='{"SERVER_JWT_SECRET":"..."}'  # 需完整 JSON
-export CLOUDFLARE_API_TOKEN=xxx
-./deploy.sh
-```
+[贡献指南](CONTRIBUTING.md) · [行为准则](CODE_OF_CONDUCT.md) · [安全策略](SECURITY.md)
 
-可选参数：
-
-```bash
-DEPLOY_RUN_TESTS=1 ./deploy.sh
-DEPLOY_RUN_TYPECHECK=0 ./deploy.sh
-./deploy.sh --env production
-```
-
-## 文档
-
-- 文档总入口：[软件架构、UI、当前任务与历史任务](Doc/README.md)
-- 接口文档（中文）：[`Doc/软件架构设计/模块/01-领域与协议/API.zh-CN.md`](Doc/软件架构设计/模块/01-领域与协议/API.zh-CN.md)
-- API docs (EN): [`Doc/软件架构设计/模块/01-领域与协议/API.md`](Doc/软件架构设计/模块/01-领域与协议/API.md)
-- 需求说明：[`Doc/软件架构设计/总体设计/REQUIREMENTS.md`](Doc/软件架构设计/总体设计/REQUIREMENTS.md)
-- 软件设计：[`Doc/软件架构设计/总体设计/SOFTWARE_DESIGN.md`](Doc/软件架构设计/总体设计/SOFTWARE_DESIGN.md)
-- Core / Host 分层架构：[`Doc/软件架构设计/总体设计/CORE_HOST_ARCHITECTURE.md`](Doc/软件架构设计/总体设计/CORE_HOST_ARCHITECTURE.md)
-- 移动端共享 Agent Core：[`Doc/软件架构设计/模块/13-客户端投影/MOBILE_SHARED_CORE.md`](Doc/软件架构设计/模块/13-客户端投影/MOBILE_SHARED_CORE.md)
-- 变更记录：[`Doc/历史任务/实施与审计/CHANGELOG.md`](Doc/历史任务/实施与审计/CHANGELOG.md)
-
-## 社区协作
-
-- 贡献指南：[`CONTRIBUTING.md`](CONTRIBUTING.md)
-- 行为准则：[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
-- 安全策略：[`SECURITY.md`](SECURITY.md)
-
-## 许可证
-
-本项目采用 **Apache License 2.0** 许可证。  
-完整条款见 [`LICENSE`](LICENSE)。
-
-## 配置说明
-
-- 后端仅从 `nola_backend_env`（或 `NOLA_BACKEND_ENV`）JSON 读取配置
-- Web 本地配置示例见 `web/.env.example`
-- 不要提交生产密钥
+项目采用 [Apache-2.0](LICENSE) 许可证。

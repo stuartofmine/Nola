@@ -120,7 +120,7 @@ final class AgentCoreSkillRuntimeProjectionTests: XCTestCase {
     }
 
     private static func envelope(_ update: String, cursor: Int) -> String {
-        #"{"protocol_version":2,"type":"core_skill_runtime_updated","session_id":"session-1","turn_id":"turn-1","cursor":\#(cursor),"revision":\#(cursor),"skill_runtime_revision":\#(cursor),"update":\#(update)}"#
+        #"{"protocol_version":1,"type":"core_skill_runtime_updated","session_id":"session-1","turn_id":"turn-1","cursor":\#(cursor),"revision":\#(cursor),"skill_runtime_revision":\#(cursor),"update":\#(update)}"#
     }
 
     private static func decode(_ json: String) throws -> AgentCoreSkillRuntimeUpdateEnvelope {
@@ -128,18 +128,18 @@ final class AgentCoreSkillRuntimeProjectionTests: XCTestCase {
     }
 
     private static func started(cursor: Int, eventRevision: Int, runtimeRevision: Int) -> String {
-        #"{"protocol_version":2,"type":"core_skill_runtime_updated","session_id":"session-1","turn_id":"turn-1","cursor":\#(cursor),"revision":\#(eventRevision),"skill_runtime_revision":\#(runtimeRevision),"update":{"type":"started","run":{"run_id":"run-1","owner":{"session_id":"session-1","parent_turn_id":"turn-1","child_turn_id":null},"descriptor":{"skill_id":"documents","version":"1","display_name":"Documents","instructions_ref":"builtin://documents#sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","instructions_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","execution_contract":{"schemaVersion":1,"progressSteps":[{"id":"draft","title":"Draft","required":true}],"artifacts":[{"id":"report","mediaType":"text/plain","required":true,"description":"Report"}],"verifiers":[{"id":"check","description":"Check bytes","method":"host_check","required":true}],"resumePoints":["review"]},"required_tools":[],"default_mode":"inline"},"mode":"inline","status":"running","budget":{"max_model_turns":8,"max_tool_calls":32,"max_elapsed_millis":300000},"usage":{"model_turns":0,"tool_calls":0,"elapsed_millis":0},"missing_tools":[],"catalog_revision":1,"result_ref":null,"failure":null,"current_progress_step":"draft","completed_progress_steps":[],"artifacts":{},"verifications":{},"resume_point":null}}}"#
+        #"{"protocol_version":1,"type":"core_skill_runtime_updated","session_id":"session-1","turn_id":"turn-1","cursor":\#(cursor),"revision":\#(eventRevision),"skill_runtime_revision":\#(runtimeRevision),"update":{"type":"started","run":{"run_id":"run-1","owner":{"session_id":"session-1","parent_turn_id":"turn-1","child_turn_id":null},"descriptor":{"skill_id":"documents","version":"1","display_name":"Documents","instructions_ref":"builtin://documents#sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","instructions_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","execution_contract":{"schemaVersion":1,"progressSteps":[{"id":"draft","title":"Draft","required":true}],"artifacts":[{"id":"report","mediaType":"text/plain","required":true,"description":"Report"}],"verifiers":[{"id":"check","description":"Check bytes","method":"host_check","required":true}],"resumePoints":["review"]},"required_tools":[],"default_mode":"inline"},"mode":"inline","status":"running","budget":{"max_model_turns":8,"max_tool_calls":32,"max_elapsed_millis":300000},"usage":{"model_turns":0,"tool_calls":0,"elapsed_millis":0},"missing_tools":[],"catalog_revision":1,"result_ref":null,"failure":null,"current_progress_step":"draft","completed_progress_steps":[],"artifacts":{},"verifications":{},"resume_point":null}}}"#
     }
 
     private static func usage(cursor: Int, eventRevision: Int, runtimeRevision: Int, turns: Int = 1, calls: Int = 1, elapsed: Int = 10) -> String {
-        #"{"protocol_version":2,"type":"core_skill_runtime_updated","session_id":"session-1","turn_id":"turn-1","cursor":\#(cursor),"revision":\#(eventRevision),"skill_runtime_revision":\#(runtimeRevision),"update":{"type":"usage_updated","run_id":"run-1","usage":{"model_turns":\#(turns),"tool_calls":\#(calls),"elapsed_millis":\#(elapsed)}}}"#
+        #"{"protocol_version":1,"type":"core_skill_runtime_updated","session_id":"session-1","turn_id":"turn-1","cursor":\#(cursor),"revision":\#(eventRevision),"skill_runtime_revision":\#(runtimeRevision),"update":{"type":"usage_updated","run_id":"run-1","usage":{"model_turns":\#(turns),"tool_calls":\#(calls),"elapsed_millis":\#(elapsed)}}}"#
     }
 
     private static func completed(cursor: Int, eventRevision: Int, runtimeRevision: Int) -> String {
-        #"{"protocol_version":2,"type":"core_skill_runtime_updated","session_id":"session-1","turn_id":"turn-1","cursor":\#(cursor),"revision":\#(eventRevision),"skill_runtime_revision":\#(runtimeRevision),"update":{"type":"completed","run_id":"run-1","result_ref":"artifact://report"}}"#
+        #"{"protocol_version":1,"type":"core_skill_runtime_updated","session_id":"session-1","turn_id":"turn-1","cursor":\#(cursor),"revision":\#(eventRevision),"skill_runtime_revision":\#(runtimeRevision),"update":{"type":"completed","run_id":"run-1","result_ref":"artifact://report"}}"#
     }
 
     private static func resumed(cursor: Int, eventRevision: Int, runtimeRevision: Int) -> String {
-        #"{"protocol_version":2,"type":"core_skill_runtime_updated","session_id":"session-1","turn_id":"turn-1","cursor":\#(cursor),"revision":\#(eventRevision),"skill_runtime_revision":\#(runtimeRevision),"update":{"type":"resumed","run_id":"run-1","catalog_revision":2}}"#
+        #"{"protocol_version":1,"type":"core_skill_runtime_updated","session_id":"session-1","turn_id":"turn-1","cursor":\#(cursor),"revision":\#(eventRevision),"skill_runtime_revision":\#(runtimeRevision),"update":{"type":"resumed","run_id":"run-1","catalog_revision":2}}"#
     }
 }

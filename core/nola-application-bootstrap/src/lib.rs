@@ -78,7 +78,7 @@ pub fn open_with_policy_diagnosed(
     reject_obviously_non_sqlite_file(path).map_err(other_failure)?;
     let store = match NolaStore::open(path) {
         Ok(store) => store,
-        Err(error) if error.requires_recreation() => match &policy {
+        Err(error) if error.is_schema_incompatible() => match &policy {
             ApplicationPersistencePolicy::RequireCurrent => {
                 return Err(ApplicationOpenFailure {
                     kind: ApplicationOpenFailureKind::IncompatibleStore,

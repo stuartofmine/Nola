@@ -2,9 +2,11 @@
 
 唯一公开项目：[stuartofmine/Nola](https://github.com/stuartofmine/Nola)。源码在 `main`，完整安装包放在 GitHub Releases，签名更新信息位于 `release/feed.json`，客户端匿名下载。
 
-`update-source.json` 是随程序编译的当前 version/build、渠道、公开 feed URL 与 Ed25519 公钥。私钥只保存在发布者本机或 GitHub Actions Secret，不进入源码和安装包。更新不依赖 Cloudflare；项目的独立账户/推送后端仍可使用 Cloudflare。
+`update-source.json` 是随程序编译的当前 version/build、渠道、公开 feed URL 与 Ed25519 公钥。私钥只保存在发布者本机或 GitHub Actions Secret，不进入源码和安装包。源码、签名信息与安装包统一通过 GitHub 分发。
 
 首次发布以真实完成构建和验收的平台为准；未提供目标包的端显示“暂无更新包”，不能用其他平台的包代替。
+
+本次重新发布的 1.0.0 以协议/ABI/数据库格式及 epoch 全部为 1 建立首个兼容基线。此前开发制品由本次重发替代，不提供其数据转换；后续兼容规则见 [版本兼容策略](../Doc/软件架构设计/总体设计/VERSION_COMPATIBILITY.md)。
 
 ## 当前版本与公开源码
 

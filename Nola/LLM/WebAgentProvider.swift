@@ -607,7 +607,7 @@ public struct WebAgentTaskProjectionEvent: Sendable {
 typealias WebAgentStreamLoader = @Sendable (URLRequest) async throws -> WebAgentTransportResponse
 
 public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding, WebAgentEventStreaming, @unchecked Sendable {
-    nonisolated public static let hostPermissionProtocolVersion = 4
+    nonisolated public static let hostPermissionProtocolVersion = 1
 
     private static let defaultMaxIterations = 0
 
@@ -1582,7 +1582,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         guard let seal else {
             throw IOSApplicationRuntimeError.rejected("The Host stream ended without a durable terminal seal. The original Run remains recoverable.")
         }
-        guard seal.protocol_version == 2, seal.identity == identity,
+        guard seal.protocol_version == 1, seal.identity == identity,
               seal.admission.identity == identity,
               expectedSealDigest.map({ $0 == seal.seal_digest }) ?? true,
               seal.result.run_id == identity.run_id,
@@ -2905,7 +2905,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         }
         if let type = object["type"] as? String,
            ["turn_completed", "turn_failed", "turn_cancelled"].contains(type),
-           object["protocol_version"] as? Int == 2,
+           object["protocol_version"] as? Int == 1,
            object["event"] == nil,
            let terminal = AgentCoreTurnTerminalEnvelope.decodeHost(from: object) {
             return .coreTurnTerminal(terminal, trace: AgentTraceAdapter.decodeNestedTrace(from: object))
@@ -2945,7 +2945,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
                 }
                 return .coreMemoryRuntimeProjectionUpdated(value)
             case "context_usage":
-                guard object["protocol_version"] as? Int == 2,
+                guard object["protocol_version"] as? Int == 1,
                       let data = try? JSONSerialization.data(withJSONObject: object),
                       let projection = try? JSONDecoder().decode(
                         HostAgentContextUsageProjection.self,

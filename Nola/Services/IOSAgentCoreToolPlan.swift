@@ -241,7 +241,7 @@ public extension AgentCoreToolCatalog {
             resultEgressGrants: egressGrants
         )
         let output = try AgentCoreToolPolicyResolver.resolveToolPolicy(input)
-        guard output.schemaVersion == 2 else {
+        guard output.schemaVersion == 1 else {
             throw AgentCoreToolPolicyError.invalidPlan("Core returned a non-v2 tool plan.")
         }
         return .init(

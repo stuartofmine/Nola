@@ -611,7 +611,7 @@ fn resume_snapshot_reads_goal_tasks_permissions_and_effects_from_one_cold_view()
         serde_json::from_value(value).expect("decode resume snapshot");
     let snapshot = snapshot.expect("resumable snapshot");
 
-    assert_eq!(snapshot.snapshot_version, 2);
+    assert_eq!(snapshot.snapshot_version, 1);
     assert_eq!(snapshot.projection.conversation_id, "resume-session");
     assert_eq!(snapshot.projection.store_revision, 1);
     assert_eq!(snapshot.runtime_tasks.len(), 2);

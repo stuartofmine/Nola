@@ -716,7 +716,7 @@ nonisolated struct MacCoreSkillRuntimeUpdateEnvelope: Codable, Equatable, Sendab
         skillRuntimeRevision = try values.decode(UInt64.self, forKey: .skillRuntimeRevision)
         update = try values.decode(MacCoreSkillRuntimeEvent.self, forKey: .update)
 
-        guard protocolVersion == 2,
+        guard protocolVersion == 1,
               type == "core_skill_runtime_updated",
               !sessionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               cursor > 0,
@@ -815,7 +815,7 @@ nonisolated struct MacCoreCapabilityActivationEnvelope: Codable, Equatable, Send
         let normalizedCapabilities = capabilityIDs.map {
             $0.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        guard protocolVersion == 2,
+        guard protocolVersion == 1,
               type == "core_capabilities_activated",
               !sessionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               turnID.map({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) ?? true,

@@ -41,7 +41,7 @@
   },
   "events": [
     {
-      "protocol_version": 2,
+      "protocol_version": 1,
       "type": "core_task_updated",
       "session_id": "conversation-task-contract",
       "turn_id": "turn-task-contract",
@@ -84,7 +84,7 @@
       }
     },
     {
-      "protocol_version": 2,
+      "protocol_version": 1,
       "type": "core_task_updated",
       "session_id": "conversation-task-contract",
       "turn_id": "turn-task-contract",

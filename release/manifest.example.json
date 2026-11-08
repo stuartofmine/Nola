@@ -5,8 +5,8 @@
     "build": 2,
     "issued_at": 0,
     "expires_at": 0,
-    "store_schema": 83,
-    "store_epoch": 8,
+    "store_schema": 1,
+    "store_epoch": 1,
     "notes": "Replace with plain-text release notes.",
     "targets": [
         {

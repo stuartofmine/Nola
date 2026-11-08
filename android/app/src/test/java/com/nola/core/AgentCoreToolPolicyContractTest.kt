@@ -27,7 +27,7 @@ class AgentCoreToolPolicyContractTest {
             inputElement.toString()
         )
 
-        assertEquals(2, input.schemaVersion)
+        assertEquals(1, input.schemaVersion)
         assertEquals(1_000_000L, input.nowMs)
         assertEquals("ios-device-1", input.expectedIdentity.hostId)
         assertEquals(1L, input.runtime.manifestVersion)
@@ -70,7 +70,7 @@ class AgentCoreToolPolicyContractTest {
 
         val decoded = AgentCoreToolPolicyCodec.decode(output.toString().encodeToByteArray())
         requireNotNull(decoded)
-        assertEquals(2, decoded.schemaVersion)
+        assertEquals(1, decoded.schemaVersion)
         assertEquals("ios", decoded.platform)
         assertEquals(64, decoded.policyDigest.length)
         assertEquals("device_read_file", decoded.enabledTools.single().toolId)
@@ -81,7 +81,7 @@ class AgentCoreToolPolicyContractTest {
     private fun sharedFixture(): File {
         val workingDirectory = System.getProperty("user.dir") ?: "."
         return generateSequence(File(workingDirectory).canonicalFile) { it.parentFile }
-            .map { root -> File(root, "core/fixtures/tool_policy_v2_golden.json") }
+            .map { root -> File(root, "core/fixtures/tool_policy_v1_golden.json") }
             .firstOrNull(File::isFile)
             ?: error("Shared Core tool policy fixture is missing")
     }

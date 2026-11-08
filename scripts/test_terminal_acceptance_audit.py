@@ -44,7 +44,7 @@ def fixture(tmp_path, monkeypatch):
     action("formal_seal", runs=copy.deepcopy(runs))
     paths = [root / name for name in ("raw", "frames", "actions", "metrics", "audit", "database")]
     paths[0].write_bytes(b"capture")
-    metrics = {"schemaVersion": 2, "passed": True, "sourceConfigurationModified": False,
+    metrics = {"schemaVersion": 1, "passed": True, "sourceConfigurationModified": False,
                "secretCleanupSucceeded": True, "retainedEvidenceContainsSecret": False}
     live = {"runs": runs, "formalServiceRead": True}
 

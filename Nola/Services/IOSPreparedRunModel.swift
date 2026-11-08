@@ -42,7 +42,7 @@ nonisolated struct IOSPreparedHostInvocation: Sendable {
         let digest = SHA256.hash(data: try encoder.encode(executionPolicy))
             .map { String(format: "%02x", $0) }.joined()
         return .object([
-            "version": .number(8), "primary": route, "fallbacks": .array([]),
+            "version": .number(1), "primary": route, "fallbacks": .array([]),
             "generation": generation, "output_admission": outputAdmission,
             "execution_policy_sha256": .string(digest),
         ])
@@ -110,7 +110,7 @@ struct IOSPreparedRunModel {
     static func recover(hostInvocation: AgentCoreJSONValue, contextBudget: AgentCoreJSONValue,
         using store: IOSApplicationRuntime, credentials: IOSCloudCredentialOwner = .shared) throws -> IOSPreparedRunModel {
         guard case .object(let binding) = hostInvocation,
-              binding["version"] == .number(8),
+              binding["version"] == .number(1),
               case .array(let fallbacks)? = binding["fallbacks"], fallbacks.isEmpty,
               case .object(let route)? = binding["primary"],
               let generation = binding["generation"], let output = binding["output_admission"] else {
@@ -169,7 +169,7 @@ struct IOSPreparedRunModel {
     /// Fresh execution reconstructs only model facts, never an old Run or its budget/policy.
     static func reconstitute(_ frozen: AppleFrozenResendModel<AgentCoreJSONValue>, using store: IOSApplicationRuntime,
         credentials: IOSCloudCredentialOwner = .shared) throws -> IOSPreparedRunModel {
-        guard frozen.version == 8, case .array(let fallbacks) = frozen.fallbacks, fallbacks.isEmpty,
+        guard frozen.version == 1, case .array(let fallbacks) = frozen.fallbacks, fallbacks.isEmpty,
               case .object(let route) = frozen.primary else {
             throw IOSApplicationRuntimeError.rejected("Unsupported original model route for edited resend")
         }

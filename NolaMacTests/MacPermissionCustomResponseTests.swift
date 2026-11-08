@@ -6,7 +6,7 @@ import XCTest
 final class MacPermissionCustomResponseTests: XCTestCase {
     private func request(_ id: String = "pending", records: [MacPermissionInstruction] = []) -> MacRemotePermissionRequest {
         MacRemotePermissionRequest(
-            id: id, allowConversation: true, protocolVersion: 4, nonce: "nonce-\(id)", hostID: "host", clientID: "client",
+            id: id, allowConversation: true, protocolVersion: 1, nonce: "nonce-\(id)", hostID: "host", clientID: "client",
             sessionID: "conversation", toolName: "write_file", arguments: #"{"path":"/original","content":"same"}"#,
             permissionInstructions: records, reason: "Confirm", message: "Confirm", expiresAt: nil)
     }

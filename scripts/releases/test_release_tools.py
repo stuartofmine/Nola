@@ -50,7 +50,7 @@ class SigningTests(unittest.TestCase):
             self.assertEqual(len(base64.b64decode(public)),32)
             source={'schema_version':1,'version':'1.0.1','build':2,'channel':'internal','feed_url':'https://updates.example.com/feed.json','public_key':public}
             (root/'source.json').write_text(json.dumps(source));(root/'Nola.zip').write_bytes(b'package')
-            manifest={**{key:source[key] for key in ['schema_version','version','build','channel']},'issued_at':1,'expires_at':2,'store_schema':83,'store_epoch':8,'notes':'fixture','targets':[{'target':'cli-macos-aarch64','artifact':{'kind':'archive','url':'https://updates.example.com/Nola.zip','filename':'Nola.zip'}}]}
+            manifest={**{key:source[key] for key in ['schema_version','version','build','channel']},'issued_at':1,'expires_at':2,'store_schema':1,'store_epoch':1,'notes':'fixture','targets':[{'target':'cli-macos-aarch64','artifact':{'kind':'archive','url':'https://updates.example.com/Nola.zip','filename':'Nola.zip'}}]}
             (root/'manifest.json').write_text(json.dumps(manifest))
             command=base+['sign','--openssl',openssl,'--private-key',str(key),'--source',str(root/'source.json'),'--manifest',str(root/'manifest.json'),'--artifact-dir',str(root),'--output',str(root/'feed.json')]
             subprocess.run(command,check=True,capture_output=True)

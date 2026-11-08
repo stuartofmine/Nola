@@ -1,16 +1,14 @@
-> **单版本开发约束：Nola 仅有一个未发布的内部开发版本。只保留当前架构、接口、协议和数据格式；删除旧版本兼容层、旧字段别名、双读/双写、兼容回退及历史数据迁移/转换代码，不为旧接口保留实现。文中历史兼容或数据转换计划不再执行，历史记录不构成保留旧实现的要求。不匹配的协议或存储格式明确拒绝；不得自动删除、重建或改写用户数据。当前版本的会话恢复、事务回滚和外部服务协议适配不属于旧版本兼容。**
+> **发布兼容约束：重新发布的 Nola 1.0.0 是首个受支持基线，Nola 自有协议、ABI 与数据库格式/epoch 从 1 开始；此前开发格式不保留兼容或转换代码。从本次发布起，后续版本须维护已发布接口与数据兼容，破坏性变更必须有明确版本协商、升级说明及回归测试；数据库迁移必须可验证、可回滚并保护原始数据。未知或不支持的格式明确拒绝，不得自动删除、重建或静默改写用户数据。外部服务标准协议沿用其自身版本。**
 
 # Repository Guidelines
 
 ## Project Structure & Module Organization
 
-Nola is a local-first personal AI assistant with several clients and shared services. `Nola/` contains the SwiftUI iOS app, with UI in `Nola/UI/`, services in `Nola/Services/`, LLM code in `Nola/LLM/`, assets in `Nola/Assets.xcassets/`, and localization in `*.lproj/`. `NolaMac/` contains the native SwiftUI/AppKit macOS app; its tests live in `NolaMacTests/`. iOS unit tests live in `NolaTests/`; UI tests live in `NolaUITests/`. `backend/worker/` is the primary Cloudflare Worker + D1 backend; `backend/app/` contains the Python backend implementation. `cli/` provides the independent Rust CLI and Rust Web backend. `web/` contains templates/static assets plus native host helpers, and `android/` is the Kotlin/Compose client. Shared TypeScript/Bazel modules are under `modules/`; the Rust FFI core is `core/`. Docs are in `Doc/`.
+Nola is a local-first personal AI assistant with several clients and shared services. `Nola/` contains the SwiftUI iOS app, with UI in `Nola/UI/`, services in `Nola/Services/`, LLM code in `Nola/LLM/`, assets in `Nola/Assets.xcassets/`, and localization in `*.lproj/`. `NolaMac/` contains the native SwiftUI/AppKit macOS app; its tests live in `NolaMacTests/`. iOS unit tests live in `NolaTests/`; UI tests live in `NolaUITests/`. `cli/` provides the independent Rust CLI and Rust Web Host. `web/` contains templates/static assets plus native host helpers, and `android/` is the Kotlin/Compose client. Shared TypeScript/Bazel modules are under `modules/`; the Rust FFI core is `core/`. Docs are in `Doc/`.
 
 ## Build, Test, and Development Commands
 
-- `./dev.sh`: start the local backend and web development stack with reload.
-- `cd backend && npm run typecheck`: run the Worker TypeScript check used by CI.
-- `cd backend && python -m pytest -q`: run backend Python tests.
+- Build the Svelte assets and start `nola web` for the local Web client.
 - `cd core && cargo test --quiet`: run Rust core tests.
 - `cd core && cargo build --release`: build Rust library artifacts.
 - `cd android && ./gradlew test`: run Android unit tests when Android code changes.
@@ -36,15 +34,15 @@ Do not ask for approval again for ordinary builds or tests. Use isolated test
 databases and fixtures; this authorization does not permit deleting user data,
 changing production credentials, or polling locked physical iOS devices.
 
-Place iOS Swift tests in `NolaTests/` or `NolaUITests/` and macOS tests in `NolaMacTests/`, with names ending in `Tests.swift`. Backend tests live in `backend/tests/` and `backend/tests_integration/` using `test_*.py`. Android JVM tests live in `android/app/src/test/`; device/Compose tests live in `android/app/src/androidTest/`. Rust CLI/Web tests can stay inline under `#[cfg(test)]` in `cli/`. Add tests for behavior changes, API contracts, scheduling, persistence, streaming message order, and FFI boundaries.
+Place iOS Swift tests in `NolaTests/` or `NolaUITests/` and macOS tests in `NolaMacTests/`, with names ending in `Tests.swift`. Android JVM tests live in `android/app/src/test/`; device/Compose tests live in `android/app/src/androidTest/`. Rust CLI/Web tests can stay inline under `#[cfg(test)]` in `cli/`. Add tests for behavior changes, API contracts, scheduling, persistence, streaming message order, and FFI boundaries.
 
 ## Commit & Pull Request Guidelines
 
-Git history uses Conventional Commit-style prefixes, especially `feat:`. Keep commits focused and descriptive, for example `feat: add chat thinking parser` or `fix: handle OAuth relay errors`. PRs should include a summary, validation commands, linked issues when relevant, screenshots for UI changes, docs updates for user-facing behavior, and removed-interface notes. Update all current callers together; never add old-version shims or data converters.
+Git history uses Conventional Commit-style prefixes, especially `feat:`. Keep commits focused and descriptive, for example `feat: add chat thinking parser` or `fix: handle OAuth relay errors`. PRs should include a summary, validation commands, linked issues when relevant, screenshots for UI changes, docs updates for user-facing behavior, and removed-interface notes. Update current callers together; preserve the reissued 1.0.0 compatibility baseline and test any subsequent versioned adapters or data migrations.
 
 ## Security & Configuration Tips
 
-Do not commit production secrets, local databases, generated logs, `.env` files, or provisioning material. Backend configuration is loaded from `nola_backend_env` or `NOLA_BACKEND_ENV` JSON; local web examples start from `web/.env.example`. Treat LAN mode and native-browser tokens as local-trust features.
+Do not commit production secrets, local databases, generated logs, `.env` files, or provisioning material. Treat LAN mode and native-browser tokens as local-trust features.
 
 ## Agent Routing Guardrails
 

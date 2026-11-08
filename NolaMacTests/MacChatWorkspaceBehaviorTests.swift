@@ -1228,7 +1228,7 @@ final class MacChatWorkspaceBehaviorTests: XCTestCase {
     func testAgentHostRejectsNestedCoreLifecycleEnvelope() throws {
         let event = try XCTUnwrap(
             MacAgentHostRuntime.decode(
-                line: #"{"protocol_version":2,"session_id":"core-parts","cursor":{"sequence":7},"revision":9,"event":{"type":"part_updated","turn_id":"turn-1","projection_revision":3,"update":{"type":"text_replaced","part_id":"text-1"},"part":{"kind":"text","id":"text-1","message_id":"assistant-1","turn_id":"turn-1","text":"authoritative","is_complete":false}}}"#,
+                line: #"{"protocol_version":1,"session_id":"core-parts","cursor":{"sequence":7},"revision":9,"event":{"type":"part_updated","turn_id":"turn-1","projection_revision":3,"update":{"type":"text_replaced","part_id":"text-1"},"part":{"kind":"text","id":"text-1","message_id":"assistant-1","turn_id":"turn-1","text":"authoritative","is_complete":false}}}"#,
                 conversationID: "core-parts"
             )
         )
@@ -4107,7 +4107,7 @@ final class MacChatWorkspaceBehaviorTests: XCTestCase {
     func testCoreContextResponseDecodesPromptLimitAndArchiveRequest() throws {
         let json = #"""
         {
-          "schema_version":2,
+          "schema_version":1,
           "action":"summary_required",
           "messages":[],
           "tools":[],
@@ -4145,7 +4145,7 @@ final class MacChatWorkspaceBehaviorTests: XCTestCase {
         """#
 
         let response = try XCTUnwrap(MacContextCore.decodeResponse(Data(json.utf8)))
-        XCTAssertEqual(response.schemaVersion, 2)
+        XCTAssertEqual(response.schemaVersion, 1)
         XCTAssertEqual(response.payloadDigest, String(repeating: "a", count: 64))
         XCTAssertEqual(response.metrics.promptTokenLimit, 12_000)
         XCTAssertEqual(response.metrics.totalPromptTokens, 8_000)

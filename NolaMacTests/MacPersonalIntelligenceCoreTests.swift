@@ -368,7 +368,7 @@ final class MacAgentHostEventContractTests: XCTestCase {
     func testCoreToolPolicyConsumesSharedGoldenFixture() throws {
         let fixtureURL = try XCTUnwrap(
             Bundle(for: Self.self).url(
-                forResource: "tool_policy_v2_golden",
+                forResource: "tool_policy_v1_golden",
                 withExtension: "json"
             )
         )
@@ -382,7 +382,7 @@ final class MacAgentHostEventContractTests: XCTestCase {
             JSONSerialization.data(withJSONObject: input, options: [.sortedKeys])
         )
 
-        XCTAssertEqual(output.schemaVersion, 2)
+        XCTAssertEqual(output.schemaVersion, 1)
         XCTAssertEqual(output.enabledTools.map(\.toolId), expected["enabled_tool_ids"] as? [String])
         let expectedDisabled = try XCTUnwrap(expected["disabled_tools"] as? [[String: Any]])
         XCTAssertEqual(output.disabledTools.map(\.toolId), expectedDisabled.compactMap { $0["tool_id"] as? String })
@@ -404,7 +404,7 @@ final class MacAgentHostEventContractTests: XCTestCase {
 
         XCTAssertEqual(plan.identity, .init(hostId: "local", clientId: "mac", sessionId: "local-session"))
         XCTAssertTrue(plan.sourceManifestId.hasPrefix("mac-local:"))
-        XCTAssertEqual(plan.output.schemaVersion, 2)
+        XCTAssertEqual(plan.output.schemaVersion, 1)
         XCTAssertEqual(plan.output.manifestValidUntilMs, nowMs + 300_000)
         XCTAssertEqual(plan.output.policyDigest.count, 64)
         XCTAssertEqual(plan.output.manifestDigest.count, 64)

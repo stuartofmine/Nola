@@ -21,7 +21,7 @@ class PermissionInstructionSubmissionTests {
     }
 
     @Test fun remoteEncryptedTransportPreservesIdentityAndTypedInstruction() {
-        val request = HostAgentPermissionRequest(true, "p1", "write_file", args = mapOf("path" to "original"), nonce = "nonce", hostId = "host", clientId = "client", sessionId = "session", protocolVersion = 4)
+        val request = HostAgentPermissionRequest(true, "p1", "write_file", args = mapOf("path" to "original"), nonce = "nonce", hostId = "host", clientId = "client", sessionId = "session", protocolVersion = 1)
         val payload = hostPermissionInstructionPayload(request, "Preserve encoding")
         val wire = MobileCrypto.decryptJsonObject(MobileCrypto.encryptJson(payload, "fixture-token"), "fixture-token")
         assertEquals("p1", wire["request_id"]!!.jsonPrimitive.content)

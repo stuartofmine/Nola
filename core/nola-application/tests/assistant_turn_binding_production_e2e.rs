@@ -527,7 +527,7 @@ fn copy_and_replay_pending_sync(source: &mut NolaStore, receiver: &mut NolaStore
     while let Some(change) = source.pending_sync_changes(1).unwrap().into_iter().next() {
         if change.entity_type == "conversation_append" {
             let payload: serde_json::Value = serde_json::from_str(&change.payload_json).unwrap();
-            assert_eq!(payload["schema_version"], 2);
+            assert_eq!(payload["schema_version"], 1);
             append_kinds.push(
                 payload["kind"]["kind"]
                     .as_str()

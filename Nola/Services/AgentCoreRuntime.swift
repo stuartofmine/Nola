@@ -601,7 +601,7 @@ nonisolated public struct AgentCoreTaskEventEnvelope: Equatable, Sendable {
     public static func decodeHost(from value: AgentCoreJSONValue) -> Self? {
         guard case .object(let envelope) = value,
               envelope["event"] == nil,
-              unsigned(envelope["protocol_version"]) == 2,
+              unsigned(envelope["protocol_version"]) == 1,
               case .string("core_task_updated")? = envelope["type"],
               case .string(let sessionId)? = envelope["session_id"],
               case .string(let turnId)? = envelope["turn_id"],
@@ -1187,7 +1187,7 @@ nonisolated public struct AgentCoreContextPrepareInput: Codable, Sendable, Equat
     public var summaryResult: AgentCoreContextSummaryResult?
 
     public init(
-        schemaVersion: Int = 2,
+        schemaVersion: Int = 1,
         messages: [AgentCoreContextPrepareMessage],
         tools: [AgentCoreJSONValue] = [],
         platform: AgentCoreContextPlatform = .unknown,
@@ -1365,7 +1365,7 @@ nonisolated public struct AgentCoreContextPrepareResponse: Codable, Sendable, Eq
     }
 
     public init(
-        schemaVersion: Int = 2,
+        schemaVersion: Int = 1,
         action: String,
         messages: [AgentCoreContextPrepareMessage],
         tools: [AgentCoreJSONValue] = [],
@@ -1456,7 +1456,7 @@ nonisolated public enum AgentCoreContextEngine {
         _ input: AgentCoreContextPlanInput
     ) -> AgentCoreContextPlan? {
 #if canImport(NolaCore)
-        guard nola_core_context_engine_abi_version() == 2 else { return nil }
+        guard nola_core_context_engine_abi_version() == 1 else { return nil }
         guard let data = try? JSONEncoder().encode(input) else { return nil }
         let pointer = data.withUnsafeBytes { bytes in
             nola_core_context_plan(
@@ -1480,7 +1480,7 @@ nonisolated public enum AgentCoreContextEngine {
         _ input: AgentCoreContextPrepareInput
     ) -> AgentCoreContextPrepareResponse? {
 #if canImport(NolaCore)
-        guard nola_core_context_engine_abi_version() == 2 else { return nil }
+        guard nola_core_context_engine_abi_version() == 1 else { return nil }
         guard let data = try? JSONEncoder().encode(input) else { return nil }
         let pointer = data.withUnsafeBytes { bytes in
             nola_core_context_prepare(

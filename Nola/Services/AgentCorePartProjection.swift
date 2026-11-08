@@ -117,7 +117,7 @@ nonisolated public struct AgentCoreTurnTerminalEnvelope: Decodable, Equatable, S
               object["event"] == nil,
               let data = try? JSONSerialization.data(withJSONObject: object),
               let wire = try? JSONDecoder().decode(HostWire.self, from: data),
-              wire.protocolVersion == 2 else { return nil }
+              wire.protocolVersion == 1 else { return nil }
         let status: Status
         switch wire.type {
         case "turn_completed": status = .completed

@@ -8,8 +8,8 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 
-const val AGENT_CORE_DATA_SOURCE_SCHEMA_VERSION = 2
-const val AGENT_CORE_DATA_SOURCE_ABI_VERSION = 3
+const val AGENT_CORE_DATA_SOURCE_SCHEMA_VERSION = 1
+const val AGENT_CORE_DATA_SOURCE_ABI_VERSION = 1
 
 @Serializable
 data class AgentCoreDataSourceResolutionInput(

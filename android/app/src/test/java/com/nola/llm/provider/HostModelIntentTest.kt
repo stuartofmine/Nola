@@ -15,7 +15,7 @@ class HostModelIntentTest {
 
     @Test fun configProjectionFreezesOnlyHostProfileIdentityAndRevision() {
         val decoded = Json { ignoreUnknownKeys = true }.decodeFromString<AgentSettingsResponse>("""
-            {"host_identity":{"id":"source","permission_protocol_version":4},
+            {"host_identity":{"id":"source","permission_protocol_version":1},
              "model_profiles":[{"profile_id":"configured-model","revision":7,"display_name":"Model","model_name":"upstream"}],
              "default_chat_model_resolution":{"kind":"resolved","profile_id":"configured-model","origin":"default"}}
         """.trimIndent())

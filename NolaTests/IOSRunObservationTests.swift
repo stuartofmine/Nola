@@ -155,7 +155,7 @@ private actor PermissionGETAttemptCounter {
     func testObservedContextRecordIsBoundToAdmissionAndPreservesDecimalSequence() throws {
         var wire = Self.object()
         let admission = try XCTUnwrap(wire["admission"] as? [String: Any])
-        var usage: [String: Any] = ["protocol_version": 3, "identity": admission["identity"]!, "admission": admission,
+        var usage: [String: Any] = ["protocol_version": 1, "identity": admission["identity"]!, "admission": admission,
             "attempt_sequence": "0", "run_cache_usage": NSNull(),
             "event_sequence": "9007199254740993", "record_digest": String(repeating: "b", count: 64),
             "usage": ["measurement": NSNull(), "prompt_cache_measurement": NSNull(), "prompt_cache_diagnostic": NSNull(),

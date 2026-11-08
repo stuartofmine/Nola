@@ -7,7 +7,7 @@ export type ChatTurnOutcome = 'pending' | 'uncertain' | 'rejected' | RunResultVa
 export interface ChatTurnOwner { conversationId: string; generation: number; hostId: string; clientId: string }
 export interface ChatTurnIdentity { submissionId: string; userMessageId: string; assistantMessageId: string }
 export interface TurnPermission {
-    protocol_version: 4; allow_conversation: boolean; nonce: string; request_id: string; host_id: string; client_id: string;
+    protocol_version: 1; allow_conversation: boolean; nonce: string; request_id: string; host_id: string; client_id: string;
     session_id: string; tool_name: string; expires_at: number;
 }
 export interface ChatTurn {
@@ -101,12 +101,12 @@ export function reduceChatTurn(state: ChatTurn, action: ChatTurnAction): ChatTur
         case 'permission_pending': {
             const value = action.challenge;
             if (state.phase === 'cancel_requested') return { state, ignored: 'phase' };
-            if (!object(value) || value.protocol_version !== 4 || typeof value.allow_conversation !== 'boolean' || !counter(action.nowSeconds) || !counter(value.expires_at) || value.expires_at <= action.nowSeconds
+            if (!object(value) || value.protocol_version !== 1 || typeof value.allow_conversation !== 'boolean' || !counter(action.nowSeconds) || !counter(value.expires_at) || value.expires_at <= action.nowSeconds
                 || !['nonce', 'request_id', 'host_id', 'client_id', 'session_id', 'tool_name'].every(key => validId(value[key], 512))) return { state, ignored: 'invalid' };
             if (value.host_id !== state.owner.hostId || value.client_id !== state.permissionClientId || value.session_id !== state.owner.conversationId) return { state, ignored: 'owner' };
             if (state.permission && state.permission.nonce !== value.nonce) return { state, ignored: 'permission' };
             // Store only ownership fields, not arbitrary event objects or mutable UI payloads.
-            const permission: TurnPermission = { protocol_version: 4, allow_conversation: value.allow_conversation, nonce: value.nonce as string, request_id: value.request_id as string,
+            const permission: TurnPermission = { protocol_version: 1, allow_conversation: value.allow_conversation, nonce: value.nonce as string, request_id: value.request_id as string,
                 host_id: value.host_id as string, client_id: value.client_id as string, session_id: value.session_id as string,
                 tool_name: value.tool_name as string, expires_at: value.expires_at };
             if (state.permission && JSON.stringify(state.permission) !== JSON.stringify(permission)) return { state, ignored: 'permission' };

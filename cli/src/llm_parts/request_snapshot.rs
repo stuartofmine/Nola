@@ -177,7 +177,7 @@ impl PreparedModelRequest {
     pub(crate) fn durable_value(&self) -> Value {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default().as_secs();
-        json!({"version":2, "configuration_identity":request_configuration_identity(&self.config),
+        json!({"version":1, "configuration_identity":request_configuration_identity(&self.config),
             "route_identity":super::responses::model_route_identity(&self.config),
             "effective":{"provider":self.config.provider,"output_field":self.config.chat_output_token_field,
                 "output":self.config.max_output_tokens, "temperature":self.config.temperature,
@@ -192,7 +192,7 @@ impl PreparedModelRequest {
     }
 
     pub(crate) fn restore(value: &Value, config: &LlmConfig) -> Option<Self> {
-        if value["version"] != 2 { return None; }
+        if value["version"] != 1 { return None; }
         // Keep the direct configuration candidate for snapshots captured before
         // candidate expansion, then resolve any actual admitted fallback route.
         // Full identity verification below still fences changed credentials.

@@ -199,7 +199,7 @@ fn exercise_multi_owner_terminal(empty_segment: bool) {
         },
     };
     let mut seal = AssistantRunTerminalSeal {
-        protocol_version: 2,
+        protocol_version: 1,
         identity: root.clone(),
         core_session_id: "core-not-conversation".into(),
         transition_id: "terminal".into(),

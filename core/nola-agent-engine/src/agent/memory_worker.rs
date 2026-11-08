@@ -18,7 +18,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 
-pub const MEMORY_WORKER_PLAN_SCHEMA_VERSION: u32 = 2;
+pub const MEMORY_WORKER_PLAN_SCHEMA_VERSION: u32 = 1;
 const MAX_TRANSCRIPT_ITEMS: usize = 160;
 const MAX_TRANSCRIPT_CHARS: usize = 120_000;
 const MAX_SELECTED_RECORDS: usize = 80;
@@ -905,7 +905,7 @@ mod tests {
 
         assert_eq!(plan.ownership_token, "lease-token");
         assert_eq!(plan.input_watermark, "turn-1");
-        assert_eq!(plan.schema_version, 2);
+        assert_eq!(plan.schema_version, 1);
         assert_eq!(
             plan.response_schema["properties"]["type"]["const"],
             "extraction"

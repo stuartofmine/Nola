@@ -1,4 +1,4 @@
-> **单版本开发约束：Nola 仅有一个未发布的内部开发版本。只保留当前架构、接口、协议和数据格式；删除旧版本兼容层、旧字段别名、双读/双写、兼容回退及历史数据迁移/转换代码，不为旧接口保留实现。文中历史兼容或数据转换计划不再执行，历史记录不构成保留旧实现的要求。不匹配的协议或存储格式明确拒绝；不得自动删除、重建或改写用户数据。当前版本的会话恢复、事务回滚和外部服务协议适配不属于旧版本兼容。**
+> **发布兼容约束：重新发布的 Nola 1.0.0 是首个受支持基线，Nola 自有协议、ABI 与数据库格式/epoch 从 1 开始；此前开发格式不保留兼容或转换代码。从本次发布起，后续版本须维护已发布接口与数据兼容，破坏性变更必须有明确版本协商、升级说明及回归测试；数据库迁移必须可验证、可回滚并保护原始数据。未知或不支持的格式明确拒绝，不得自动删除、重建或静默改写用户数据。外部服务标准协议沿用其自身版本。**
 
 # Nola 需求说明书（重写精简版）
 
@@ -331,7 +331,7 @@ Trace 呈现契约。
 11. `REQ-ARCH-011`：客户端不得读取或写入 `*.checkpoint.json`、`*.context.json` 等文件恢复产品会话。活动 checkpoint 只能通过 Application 写入 canonical Store，并且不能作为完整消息事实源。
 12. `REQ-ARCH-012`：数据源首次添加必须执行真实读取验证，保存类型化 ReadRecipe、内容格式与验证状态。一次性原始响应不得默认进入 checkpoint、消息或日志；只有显式 Snapshot/Blob 和最终提交的 Message Part 可以按其产品语义持久化。
 13. `REQ-ARCH-013`：Shell、Python、Xcode 与 E2E 必须通过 `cargo metadata` 发现 Rust target directory，不得硬编码 workspace 下的 `target/debug` 或 `target/release` 路径。
-14. `REQ-ARCH-014`：上线前不保留旧协议兼容。删除旧入口时必须同时删除 decoder、writer、reader、迁移/回退逻辑和测试 fixture；未知或已删除命令必须在写入前失败。
+14. `REQ-ARCH-014`：以重新发布的 1.0.0 为受支持基线；后续协议/数据变更须维护已发布版本兼容，提供协商、可恢复迁移与旧版回归夹具。此前开发格式不支持，未知命令必须在写入前失败。
 15. `REQ-ARCH-015`：每个提取后的 Application port 必须具备 Rust 与原生绑定序列化 fixture、未知字段/旧命令拒绝测试、幂等重放、冲突/租约、冷启动恢复测试；参与 Agent 路由的端口还必须通过真实 LLM 多轮测试。
 16. `REQ-ARCH-016`：可见交互验收必须同时提供真实运行日志和人工视觉证据。每张截图必须实际打开检查，每段录屏必须从头到尾观看；OCR、文件存在、退出码或单元测试不能替代视觉验收。
 17. `REQ-ARCH-017`：branch、rebase 与 revert 必须从不可变 Message/AgentItem ledger 和显式 ownership 重建 canonical Part projection。禁止提交“transcript 非空但 projection 为空”的 checkpoint；冷启动后的 Part 身份、顺序、状态和归属必须与操作前一致。

@@ -38,7 +38,7 @@ class AndroidCanonicalAgentRuntimeRecoveryTest {
             "evidence_frontier":"7","value":{"kind":"answered","answer_part_refs":["answer"]}
         }""").jsonObject
         val seal = JsonObject(mapOf(
-            "protocol_version" to JsonPrimitive(2), "identity" to identity,
+            "protocol_version" to JsonPrimitive(1), "identity" to identity,
             "admission" to JsonObject(mapOf("identity" to identity, "sequence" to JsonPrimitive("1"),
                 "record_digest" to JsonPrimitive("b".repeat(64)))),
             "core_session_id" to JsonPrimitive("distinct-core"), "result" to result,

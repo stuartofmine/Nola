@@ -1,4 +1,4 @@
-> **单版本开发约束：Nola 仅有一个未发布的内部开发版本。只保留当前架构、接口、协议和数据格式；删除旧版本兼容层、旧字段别名、双读/双写、兼容回退及历史数据迁移/转换代码，不为旧接口保留实现。文中历史兼容或数据转换计划不再执行，历史记录不构成保留旧实现的要求。不匹配的协议或存储格式明确拒绝；不得自动删除、重建或改写用户数据。当前版本的会话恢复、事务回滚和外部服务协议适配不属于旧版本兼容。**
+> **发布兼容约束：重新发布的 Nola 1.0.0 是首个受支持基线，Nola 自有协议、ABI 与数据库格式/epoch 从 1 开始；此前开发格式不保留兼容或转换代码。从本次发布起，后续版本须维护已发布接口与数据兼容，破坏性变更必须有明确版本协商、升级说明及回归测试；数据库迁移必须可验证、可回滚并保护原始数据。未知或不支持的格式明确拒绝，不得自动删除、重建或静默改写用户数据。外部服务标准协议沿用其自身版本。**
 
 # 客户端、传输和投影契约
 
@@ -331,7 +331,7 @@ Core reducer 的直接 fixture 应位于 Rust 层；原生纵向 fixture 必须�
 不能仅将调用点改名或把旧接口留作 fallback。纯值接口保留各自所有者，不因共享文件名而误删。
 
 Swift 已移除可变 `AgentCoreV2Runtime` 与无消费者裸 dispatch/recovery envelope。纯上下文函数由
-`AgentCoreContextEngine` 核 context ABI 2，纯策略由 `AgentCoreToolPolicyResolver` 核 policy ABI 2；
+`AgentCoreContextEngine` 核 context ABI 1，纯策略由 `AgentCoreToolPolicyResolver` 核 policy ABI 1；
 执行入口可用性及打开数据库由 `IOSApplicationRuntime` 同时核 Application ABI 1 与服务协议 49。
 PersonalIntelligence 只核自己的 ABI 1，不借裸 Core 或 Application 的版本号。
 原 Swift reducer 权限往返 fixture 已改为隔离 Application 数据库，保留同资源会话授权重用、

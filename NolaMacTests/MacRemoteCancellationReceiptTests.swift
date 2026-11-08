@@ -721,7 +721,7 @@ nonisolated final class CancellationJournalHTTPServer: @unchecked Sendable {
                     JSONSerialization.data(withJSONObject: ["type":"local_assistant_run_terminal_seal",
                         "conversation_id":"conversation", "run_id":run])))
                 let permissions: [[String: Any]] = mode == "cold_observe" && seal == nil ? [[
-                    "type":"permission_request", "allow_conversation": true, "protocol_version": 4, "id":"cold-request", "request_id":"cold-request",
+                    "type":"permission_request", "allow_conversation": true, "protocol_version": 1, "id":"cold-request", "request_id":"cold-request",
                     "nonce":"original-cold-nonce", "host_id":"fixture-host", "client_id":input["client_id"]!,
                     "session_id":"conversation", "canonical_run_id":run, "call_id":"call", "tool_name":"web_search",
                     "expires_at":Int64(Date().timeIntervalSince1970) + 300, "safe_review_text":"Review this search",

@@ -223,7 +223,7 @@ struct MacCoreContextResponse: Codable, Equatable {
 
 enum MacContextCore {
     private struct ProviderEnvelope: Encodable {
-        let schemaVersion = 2
+        let schemaVersion = 1
         let payloadDigest: String
         let messages: [MacCoreContextMessage]
         let tools: [MacCoreJSONValue]
@@ -247,7 +247,7 @@ enum MacContextCore {
     }
 
     private struct Request: Encodable {
-        let schemaVersion = 2
+        let schemaVersion = 1
         let platform = "macos"
         let messages: [MacCoreContextMessage]
         let tools: [MacCoreJSONValue]
@@ -277,7 +277,7 @@ enum MacContextCore {
         summaryResult: MacCoreContextSummaryResult? = nil
     ) -> MacCoreContextResponse? {
 #if canImport(NolaCore)
-        guard nola_core_context_engine_abi_version() == 2 else { return nil }
+        guard nola_core_context_engine_abi_version() == 1 else { return nil }
         let request = Request(
             messages: messages,
             tools: tools,
@@ -312,7 +312,7 @@ enum MacContextCore {
     }
 
     static func providerEnvelopeJSON(_ response: MacCoreContextResponse) -> String? {
-        guard response.schemaVersion == 2, response.action == "ready",
+        guard response.schemaVersion == 1, response.action == "ready",
               let data = try? JSONEncoder().encode(
                 ProviderEnvelope(
                     payloadDigest: response.payloadDigest,
@@ -326,7 +326,7 @@ enum MacContextCore {
     }
 
     static func flattenedPrompt(_ response: MacCoreContextResponse) -> String? {
-        guard response.schemaVersion == 2, response.action == "ready" else { return nil }
+        guard response.schemaVersion == 1, response.action == "ready" else { return nil }
         return response.messages.map { "[\($0.role)]\n\($0.content)" }.joined(separator: "\n\n")
     }
 
@@ -344,7 +344,7 @@ enum MacContextCore {
             messages: [userMessage],
             components: components,
             contextWindowTokens: contextWindowTokens
-        ), response.schemaVersion == 2, response.action == "ready" {
+        ), response.schemaVersion == 1, response.action == "ready" {
             return response.messages.filter {
                 $0.role.caseInsensitiveCompare("system") == .orderedSame
                     && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

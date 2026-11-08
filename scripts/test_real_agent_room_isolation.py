@@ -27,7 +27,7 @@ from test_real_cli_commit_followup import assert_completed_turn
 
 def command(sock, value):
     value = dict(value)
-    envelope = {"protocol_version": 53, "request_id": str(uuid.uuid4()),
+    envelope = {"protocol_version": 1, "request_id": str(uuid.uuid4()),
                 "client_id": "room-isolation-acceptance", "expected_revision": None,
                 "command": {"type": value.pop("type"), "arguments": value}}
     with socket.socket(socket.AF_UNIX) as connection:

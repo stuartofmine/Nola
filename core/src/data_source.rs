@@ -14,7 +14,7 @@ use std::ffi::CString;
 use std::os::raw::c_char;
 use std::ptr;
 
-pub const DATA_SOURCE_ABI_VERSION: u32 = 3;
+pub const DATA_SOURCE_ABI_VERSION: u32 = 1;
 
 pub use nola_domain::data_source::{DataSourceReadMethod, DataSourceReadRecipe, DataSourceAccessPolicy, DataSourceValidationState, DataSourceContract, DATA_SOURCE_SCHEMA_VERSION};
 

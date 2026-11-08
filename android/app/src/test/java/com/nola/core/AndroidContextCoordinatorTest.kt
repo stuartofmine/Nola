@@ -153,7 +153,7 @@ class AndroidContextCoordinatorTest {
 
     private fun readyOutput(messages: List<kotlinx.serialization.json.JsonObject>, tools: List<kotlinx.serialization.json.JsonElement>) =
         AgentCoreContextPrepareOutput(
-            schemaVersion = 2,
+            schemaVersion = 1,
             action = "ready",
             messages = messages,
             tools = tools,
@@ -162,7 +162,7 @@ class AndroidContextCoordinatorTest {
         )
 
     private fun summaryRequiredOutput(digest: String) = AgentCoreContextPrepareOutput(
-        schemaVersion = 2,
+        schemaVersion = 1,
         action = "summary_required",
         messages = listOf(message("m2", "new")),
         payloadDigest = "summary-payload",
@@ -178,7 +178,7 @@ class AndroidContextCoordinatorTest {
     )
 
     private fun cannotFitOutput(reason: String) = AgentCoreContextPrepareOutput(
-        schemaVersion = 2,
+        schemaVersion = 1,
         action = "cannot_fit",
         messages = emptyList(),
         payloadDigest = "cannot-fit",

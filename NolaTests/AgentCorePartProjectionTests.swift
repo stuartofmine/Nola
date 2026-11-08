@@ -74,7 +74,7 @@ import XCTest
 
     func testWebProviderParsesCanonicalCoreTurnTerminalWithoutTraceRequirement() throws {
         let object: [String: Any] = [
-            "protocol_version": 2,
+            "protocol_version": 1,
             "type": "turn_failed",
             "session_id": "session-1",
             "turn_id": "turn-1",

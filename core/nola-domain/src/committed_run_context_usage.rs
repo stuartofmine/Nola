@@ -44,7 +44,7 @@ impl CommittedRunContextUsage {
         ))
         .map_err(|e| e.to_string())?;
         let mut hash = Sha256::new();
-        hash.update(b"NOLA-RUN-CONTEXT-USAGE-V3");
+        hash.update(b"NOLA-RUN-CONTEXT-USAGE-V1");
         hash.update((bytes.len() as u64).to_be_bytes());
         hash.update(bytes);
         AssistantDigest::parse_hex(&format!("{:x}", hash.finalize())).map_err(|e| e.to_string())
@@ -74,7 +74,7 @@ impl CommittedRunContextUsage {
             }
         }
         self.identity.validate().map_err(|e| e.to_string())?;
-        if self.protocol_version != 3
+        if self.protocol_version != 1
             || self.admission.identity != self.identity
             || self.admission.sequence.0 == 0
             || self.event_sequence.0 == 0

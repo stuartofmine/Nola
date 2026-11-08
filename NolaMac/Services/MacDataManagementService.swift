@@ -83,7 +83,7 @@ nonisolated struct MacDataBackupPreview: Sendable {
 
 nonisolated enum MacDataBackupCodec {
     static let format = "com.gaojc.Nola.mac.backup"
-    static let version = 3
+    static let version = 1
 
     static func encode(_ backup: MacDataBackup) throws -> Data {
         let encoder = JSONEncoder()

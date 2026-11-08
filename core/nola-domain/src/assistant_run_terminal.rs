@@ -61,7 +61,7 @@ pub struct AssistantRunTerminalSeal {
 pub fn terminal_manifest_digest(
     entries: &[AssistantRunTerminalManifestEntry],
 ) -> Result<AssistantDigest, String> {
-    digest(b"NOLA-RUN-TERMINAL-MANIFEST-V2", entries)
+    digest(b"NOLA-RUN-TERMINAL-MANIFEST-V1", entries)
 }
 
 pub fn terminal_manifest_canonical_bytes(
@@ -125,7 +125,7 @@ impl<'a> TerminalManifestValidator<'a> {
     pub fn new(seal: &'a AssistantRunTerminalSeal, json_bytes: u64) -> Result<Self, String> {
         seal.validate()?;
         let mut hash = Sha256::new();
-        hash.update(b"NOLA-RUN-TERMINAL-MANIFEST-V2");
+        hash.update(b"NOLA-RUN-TERMINAL-MANIFEST-V1");
         hash.update(json_bytes.to_be_bytes());
         hash.update(b"[");
         Ok(Self {
@@ -243,7 +243,7 @@ impl AssistantRunTerminalSeal {
     }
     pub fn computed_digest(&self) -> Result<AssistantDigest, String> {
         digest(
-            b"NOLA-RUN-TERMINAL-SEAL-V2",
+            b"NOLA-RUN-TERMINAL-SEAL-V1",
             &(
                 self.protocol_version,
                 &self.identity,
@@ -265,7 +265,7 @@ impl AssistantRunTerminalSeal {
     pub fn validate(&self) -> Result<(), String> {
         self.identity.validate().map_err(|e| e.to_string())?;
         self.result.validate()?;
-        if self.protocol_version != 2
+        if self.protocol_version != 1
             || self.result.run_id != self.identity.run_id
             || self.result.conversation_id != self.identity.conversation_id
             || self.result.computed_digest()? != self.result_digest
@@ -352,7 +352,7 @@ mod streaming_tests {
             value: crate::run_result::RunResultValue::Answered { answer_part_refs: vec!["text".into()] },
         };
         let mut seal = AssistantRunTerminalSeal {
-            protocol_version: 2,
+            protocol_version: 1,
             identity: identity.clone(),
             core_session_id: "core".into(),
             transition_id: "terminal".into(),
@@ -378,7 +378,7 @@ mod streaming_tests {
         for damage in ["version", "result", "core_revision", "owner"] {
             let mut changed=seal.clone();
             match damage {
-                "version" => changed.protocol_version=1,
+                "version" => changed.protocol_version=2,
                 "result" => changed.result.result_id="substituted".into(),
                 "core_revision" => changed.core_revision=JournalNumber(0),
                 _ => changed.result.run_id="another-run".into(),

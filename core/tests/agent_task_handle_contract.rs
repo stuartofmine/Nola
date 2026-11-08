@@ -517,7 +517,7 @@ fn reconcile_owned_task(task: nola_core::agent::task::TaskHandle, result_ref: &s
         "value":{"kind":"answered","answer_part_refs":["answer"]}
     })).unwrap();
     let fact = nola_core::agent::task::TaskTerminalReconciliation {
-        protocol_version:2, authority_revision:2, ended_at_ms:21_600_000,
+        protocol_version:1, authority_revision:2, ended_at_ms:21_600_000,
         result_digest:Some(result.computed_digest().unwrap()), run_result:Some(result),
         admission:nola_domain::agent_task_admission::AgentTaskAdmission {
             predecessor_task_id: None,

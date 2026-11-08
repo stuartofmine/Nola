@@ -78,7 +78,7 @@ actor IOSRunToolPlanSession {
             conversation: original.conversation, userPolicy: original.userPolicy,
             scopedGrants: scoped, resultEgressGrants: grants)
         let output = try AgentCoreToolPolicyResolver.resolveToolPolicy(input)
-        guard output.schemaVersion == 2 else { throw AgentCoreToolPolicyError.invalidResponse }
+        guard output.schemaVersion == 1 else { throw AgentCoreToolPolicyError.invalidResponse }
         receipt = .init(output: output, expectedIdentity: receipt.expectedIdentity,
             authorizationSnapshot: state.authorizations, isForeground: state.isForeground,
             scopedGrants: scoped, resultEgressGrants: grants, originalIntent: original)

@@ -8,7 +8,7 @@ import type { RunResult } from './runResult.ts';
 export type TerminalMessageState = 'completed' | 'failed' | 'cancelled';
 
 export interface TerminalSeal {
-    protocol_version: 2; identity: JournalIdentity; core_session_id: string; transition_id: string;
+    protocol_version: 1; identity: JournalIdentity; core_session_id: string; transition_id: string;
     checkpoint_revision: string; core_revision: string; event_cursor: string; result: RunResult; result_digest: string;
     completed_at_ms: number; entry_count: string; heads_count: string; child_receipt_count: string;
     manifest_digest: string; seal_digest: string;
@@ -66,7 +66,7 @@ export async function readTerminal(
     };
     const raw = await request({ operation: 'terminal_seal', conversation_id: owner.conversationId, run_id: runId });
     if (raw === null) return null;
-    if (!object(raw) || raw.protocol_version !== 2 || !id(raw.core_session_id) || !id(raw.transition_id)
+    if (!object(raw) || raw.protocol_version !== 1 || !id(raw.core_session_id) || !id(raw.transition_id)
         || !hash(raw.result_digest) || !hash(raw.manifest_digest) || !hash(raw.seal_digest)
         || !Number.isSafeInteger(raw.completed_at_ms) || (raw.completed_at_ms as number) < 0) throw new Error('Invalid terminal seal');
     const sealIdentity = parseJournalCursor({ identity: raw.identity, sequence: '0', record_digest: raw.seal_digest }).identity;

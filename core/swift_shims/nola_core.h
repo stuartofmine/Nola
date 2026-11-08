@@ -106,12 +106,12 @@ char* nola_core_context_plan(const unsigned char* input_json, size_t input_len);
 uint32_t nola_core_context_engine_abi_version(void);
 char* nola_core_context_prepare(const unsigned char* input_json, size_t input_len);
 // Data-source access, validation-contract sealing, and freshness resolution
-// (ABI v3/schema v2). Hosts retain all source I/O and secret material.
+// (ABI v1/schema v1). Hosts retain all source I/O and secret material.
 uint32_t nola_core_data_source_abi_version(void);
 char* nola_core_data_source_resolve(const unsigned char* input_json, size_t input_len);
 char* nola_core_data_source_seal_contract(const unsigned char* input_json, size_t input_len);
 // Trusted observation-only lifecycle Hook registry, planner, and execution
-// projection (ABI v3/schema v1). The output
+// projection (ABI v1/schema v1). The output
 // never authorizes I/O and cannot mutate or block an Agent operation.
 uint32_t nola_core_lifecycle_hook_abi_version(void);
 char* nola_core_lifecycle_hook_build_registry(const unsigned char* input_json, size_t input_len);
@@ -129,7 +129,7 @@ char* nola_core_compose_agent_prompt_json(const unsigned char* input_json, size_
 // deliberately cannot authorize Skill, MCP, tool, or data-source execution.
 uint32_t nola_core_resource_access_abi_version(void);
 char* nola_core_resource_access_evaluate_json(const unsigned char* input_json, size_t input_len);
-// Platform-aware tool catalog and policy resolver (ABI/schema v2).
+// Platform-aware tool catalog and policy resolver (ABI/schema v1).
 // Runtime JSON reports handler identity, schema, route, availability, and a fresh
 // capability manifest. Core owns capability, risk, permission, and egress policy.
 uint32_t nola_core_tool_policy_abi_version(void);

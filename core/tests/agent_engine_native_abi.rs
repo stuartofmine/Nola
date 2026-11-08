@@ -15,7 +15,7 @@ fn pure_feature_adapters_preserve_versioned_json_contracts() {
     assert_eq!(decode(nola_core::context_engine::nola_core_context_prepare(context.as_ptr(), context.len()))["schema_version"],
         nola_core::context_engine::CONTEXT_ENGINE_SCHEMA_VERSION);
     let policy = serde_json::to_vec(&nola_core::tool_policy::ToolPolicyInput::default()).unwrap();
-    assert_eq!(decode(nola_core::tool_policy::nola_core_tool_policy_resolve(policy.as_ptr(), policy.len()))["schema_version"], 2);
+    assert_eq!(decode(nola_core::tool_policy::nola_core_tool_policy_resolve(policy.as_ptr(), policy.len()))["schema_version"], 1);
     let hooks = serde_json::to_vec(&nola_core::lifecycle_hooks::LifecycleHookRegistryInput::default()).unwrap();
     let output = decode(nola_core::lifecycle_hooks::nola_core_lifecycle_hook_build_registry(hooks.as_ptr(), hooks.len()));
     assert_eq!(output["schemaVersion"], nola_core::lifecycle_hooks::LIFECYCLE_HOOK_SCHEMA_VERSION);

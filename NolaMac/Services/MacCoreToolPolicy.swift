@@ -173,7 +173,7 @@ nonisolated struct MacCoreScopedGrant: Codable, Equatable, Sendable {
 }
 
 nonisolated struct MacCoreToolPolicyInput: Codable, Equatable, Sendable {
-    let schemaVersion = 2
+    let schemaVersion = 1
     let platform = "macos"
     let nowMs: Int64
     let expectedIdentity: MacCoreToolIdentity
@@ -494,7 +494,7 @@ nonisolated enum MacCoreToolPolicy {
     static func resolveOutputJSON(_ data: Data) throws -> MacCoreToolPolicyOutput {
 #if canImport(NolaCore)
         let version = nola_core_tool_policy_abi_version()
-        guard version == 2 else { throw MacCoreToolPolicyError.incompatibleABI(version) }
+        guard version == 1 else { throw MacCoreToolPolicyError.incompatibleABI(version) }
         let pointer = data.withUnsafeBytes { bytes in
             nola_core_tool_policy_resolve(bytes.bindMemory(to: UInt8.self).baseAddress, bytes.count)
         }
@@ -502,7 +502,7 @@ nonisolated enum MacCoreToolPolicy {
         defer { nola_core_free_c_string(pointer) }
         guard let raw = String(validatingUTF8: pointer),
               let output = decodeOutput(Data(raw.utf8)),
-              output.schemaVersion == 2 else { throw MacCoreToolPolicyError.invalidResponse }
+              output.schemaVersion == 1 else { throw MacCoreToolPolicyError.invalidResponse }
         return output
 #else
         throw MacCoreToolPolicyError.unavailable

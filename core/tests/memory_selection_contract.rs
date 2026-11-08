@@ -326,7 +326,7 @@ fn json_c_abi_matches_native_memory_selection_plan() {
     let expected = select_memories(selection_input.clone());
     let json = serde_json::to_vec(&selection_input).expect("serialize selection input");
 
-    assert_eq!(nola_core_memory_selection_abi_version(), 4);
+    assert_eq!(nola_core_memory_selection_abi_version(), 1);
     let output = nola_core_memory_select_json(json.as_ptr(), json.len());
     assert!(!output.is_null());
     let output_json = unsafe { CStr::from_ptr(output) }.to_bytes();

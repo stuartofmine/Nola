@@ -3,7 +3,7 @@ package com.nola.data.remote.dto
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-const val HOST_PERMISSION_PROTOCOL_VERSION = 4
+const val HOST_PERMISSION_PROTOCOL_VERSION = 1
 
 @Serializable
 data class AuthResponse(

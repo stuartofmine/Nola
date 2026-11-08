@@ -1493,7 +1493,7 @@ impl Emitter {
             _ => return,
         };
         self.json_line(json!({
-            "protocol_version": 2,
+            "protocol_version": 1,
             "type": event_type,
             "session_id": envelope.session_id,
             "turn_id": envelope.turn_id,
@@ -1517,7 +1517,7 @@ impl Emitter {
             return;
         }
         self.json_line(json!({
-            "protocol_version": 2,
+            "protocol_version": 1,
             "type": "core_task_updated",
             "session_id": envelope.session_id,
             "turn_id": envelope.turn_id,
@@ -1538,7 +1538,7 @@ impl Emitter {
             return;
         }
         self.json_line(json!({
-            "protocol_version": 2,
+            "protocol_version": 1,
             "type": "core_skill_runtime_updated",
             "session_id": envelope.session_id,
             "turn_id": envelope.turn_id,
@@ -1559,7 +1559,7 @@ impl Emitter {
             return;
         }
         self.json_line(json!({
-            "protocol_version": 2,
+            "protocol_version": 1,
             "type": "core_capabilities_activated",
             "session_id": envelope.session_id,
             "turn_id": envelope.turn_id,
@@ -1585,7 +1585,7 @@ impl Emitter {
             return;
         }
         self.json_line(json!({
-            "protocol_version": 2,
+            "protocol_version": 1,
             "type": "core_permission_projection_updated",
             "session_id": session_id,
             "turn_id": turn_id,
@@ -1656,7 +1656,7 @@ impl Emitter {
             return;
         }
         self.json_line(json!({
-            "protocol_version": 2,
+            "protocol_version": 1,
             "type": "core_memory_runtime_projection_updated",
             "session_id": session_id,
             "turn_id": turn_id,
@@ -2010,7 +2010,7 @@ impl Emitter {
         llm::log_local_debug_payload("tool_use", &debug_payload);
         if self.json {
             if self.next_trace.is_some() {
-                self.json_line(json!({"protocol_version": 2, "type": "agent_trace"}));
+                self.json_line(json!({"protocol_version": 1, "type": "agent_trace"}));
             }
         } else {
             if is_internal_control_tool(&request.name) {

@@ -116,7 +116,7 @@ pub(crate) fn normalize_unambiguous_schema_scalars(schema: &Value, value: &mut V
         _ => false,
     }
 }
-pub const ACTIVE_SOP_RUNS_COMPONENT_ID: &str = "nola-active-sop-runs-v2";
+pub const ACTIVE_SOP_RUNS_COMPONENT_ID: &str = "nola-active-sop-runs-v1";
 pub const ACTIVE_SOP_RUNS_CONTRACT_ID: &str = "nola.active_sop_runs.v2";
 
 /// Use one transport normalization boundary before inspecting reserved

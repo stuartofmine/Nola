@@ -41,7 +41,7 @@ final class MacAgentCapabilityEndToEndTests: XCTestCase {
         let environment = MacAppEnvironment(applicationSupportRoot: workspace.appendingPathComponent("ApplicationSupport"),
             cachesRoot: workspace.appendingPathComponent("Caches"))
         let port = try MacApplicationPort(databaseURL: environment.databaseURL)
-        let source: [String: Any] = ["schemaVersion": 2, "endpointID": "cold-endpoint",
+        let source: [String: Any] = ["schemaVersion": 1, "endpointID": "cold-endpoint",
             "endpointName": "Cold fixture", "baseURL": server.endpoint, "endpointEnabled": true,
             "endpointOrder": 0, "modelEnabled": true, "modelOrder": 0, "priority": 100,
             "capabilities": ["chat"], "wireProtocol": "chat_completions", "credentialAccount": "cold-key"]
@@ -725,7 +725,7 @@ final class MacAgentCapabilityEndToEndTests: XCTestCase {
         let endpoint = try XCTUnwrap(environment["NOLA_REAL_LLM_ENDPOINT"])
         let model = try XCTUnwrap(environment["NOLA_REAL_LLM_MODEL"])
         let apiKey = try XCTUnwrap(environment["NOLA_REAL_LLM_API_KEY"])
-        let source: [String: Any] = ["schemaVersion": 2, "endpointID": "wait-endpoint",
+        let source: [String: Any] = ["schemaVersion": 1, "endpointID": "wait-endpoint",
             "endpointName": "Wait acceptance", "baseURL": endpoint, "endpointEnabled": true,
             "endpointOrder": 0, "modelEnabled": true, "modelOrder": 0, "priority": 100,
             "capabilities": ["chat"], "wireProtocol": "chat_completions", "credentialAccount": "wait-key"]
@@ -1282,7 +1282,7 @@ final class MacAgentCapabilityEndToEndTests: XCTestCase {
         let request = MacRemotePermissionRequest(
             id: "permission-request",
             allowConversation: true,
-            protocolVersion: 4,
+            protocolVersion: 1,
             nonce: "permission-nonce",
             hostID: "local",
             clientID: "mac",

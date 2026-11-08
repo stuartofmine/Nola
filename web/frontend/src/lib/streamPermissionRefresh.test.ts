@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createChatTurn, reduceChatTurn} from './chatTurn.ts';
 import {refreshStreamPermissions} from './streamPermissionRefresh.ts';
 const owner={conversationId:'c',hostId:'h',clientId:'client',generation:1};
-const first={protocol_version:4,allow_conversation:false,nonce:'first',request_id:'call1',host_id:'h',client_id:'client',session_id:'c',canonical_run_id:'run',tool_name:'render_ui',expires_at:Math.floor(Date.now()/1000)+100};
+const first={protocol_version:1,allow_conversation:false,nonce:'first',request_id:'call1',host_id:'h',client_id:'client',session_id:'c',canonical_run_id:'run',tool_name:'render_ui',expires_at:Math.floor(Date.now()/1000)+100};
 const second={...first,nonce:'second',request_id:'call73',safe_review_text:'expected revision 2'};
 const start=()=>{let turn=reduceChatTurn(createChatTurn(owner,'run'),{type:'run_bound',owner,runId:'run'}).state;turn=reduceChatTurn(turn,{type:'permission_pending',owner,challenge:first,nowSeconds:0}).state;return reduceChatTurn(turn,{type:'permission_acknowledged',owner,nonce:first.nonce}).state;};
 const observation=(permissions:unknown[])=>({source_host_id:'h',conversation_id:'c',client_id:'client',goal_control:null,result:{protocol_version:1,conversation_id:'c',client_id:'client',run_id:'run',assistant_message_id:'run:assistant',status:'running',worker:{state:'running',generation:'1'},recovery:'observe',admission:null,terminal_seal:null,permissions,can_submit:false,submission_receipt:null,goal_execution:null,context_usage:null}});

@@ -386,7 +386,7 @@ final class MacCanonicalConversationRepository {
         var knowledge: MacConversationKnowledge?
 
         init(conversation: MacConversation, knowledge: MacConversationKnowledge?) {
-            version = 2
+            version = 1
             isPinned = conversation.isPinned
             promptTemplateID = conversation.promptTemplateID
             promptTemplateSelectionIsExplicit = conversation.promptTemplateSelectionIsExplicit
@@ -481,7 +481,7 @@ final class MacCanonicalConversationRepository {
         }
         // Sparse cross-client settings need only presentation defaults. Invalid
         // execution intent must propagate, never become an empty configuration.
-        if object["version"] == nil { object["version"] = 2 }
+        if object["version"] == nil { object["version"] = 1 }
         if object["isPinned"] == nil { object["isPinned"] = false }
         object.removeValue(forKey: "browserSnapshot")
         for (canonical, local) in Self.configurationKeyAliases {

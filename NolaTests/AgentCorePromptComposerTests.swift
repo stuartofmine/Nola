@@ -47,7 +47,7 @@ final class AgentCorePromptComposerTests: XCTestCase {
         ])
         let userQuery = "Explain the result, without changing this query."
         let envelope: [String: Any] = [
-            "schema_version": 3,
+            "schema_version": 1,
             "payload_digest": "digest",
             "system_prompt": composition.rendered,
             "messages": [
@@ -78,7 +78,7 @@ final class AgentCorePromptComposerTests: XCTestCase {
     func testCorePreparedModelInputDoesNotFallBackToSummarizationWithoutEmbeddedMessage() throws {
         let provider = Self.requestBuilderProvider
         let envelope: [String: Any] = [
-            "schema_version": 3,
+            "schema_version": 1,
             "system_prompt": "Use the supplied tools when needed.",
             "messages": [["role": "user", "content": "Create a document"]],
             "tools": [[

@@ -27,7 +27,7 @@ fn fact()->TaskTerminalReconciliation {
         "decided_at_revision":"4","decision_event_cursor":"5","requirement_revision":"0","evidence_frontier":"5",
         "value":{"kind":"answered","answer_part_refs":["answer"]}
     })).unwrap();
-    TaskTerminalReconciliation {protocol_version:2,authority_revision:2,ended_at_ms:100,
+    TaskTerminalReconciliation {protocol_version:1,authority_revision:2,ended_at_ms:100,
         result_digest:Some(run_result.computed_digest().unwrap()),run_result:Some(run_result),
         admission:nola_domain::agent_task_admission::AgentTaskAdmission {
             predecessor_task_id: None,

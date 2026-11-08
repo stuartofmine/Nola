@@ -42,7 +42,7 @@ class AgentCoreContextPrepareContractTest {
         )
 
         val root = json.parseToJsonElement(bytes.decodeToString()).jsonObject
-        assertEquals("2", root.getValue("schema_version").jsonPrimitive.content)
+        assertEquals("1", root.getValue("schema_version").jsonPrimitive.content)
         assertEquals("android", root.getValue("platform").jsonPrimitive.content)
         assertNotNull(root["components"])
         assertNotNull(root["messages"])
@@ -54,7 +54,7 @@ class AgentCoreContextPrepareContractTest {
         val output = AgentCoreContextPreparation.decodeOutput(
             """
             {
-              "schema_version": 2,
+              "schema_version": 1,
               "action": "summary_required",
               "messages": [{"id":"m1","role":"user","content":"hello","future_field":{"x":1}}],
               "tools": [{"name":"search"}],

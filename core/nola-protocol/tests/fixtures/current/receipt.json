@@ -1,5 +1,5 @@
 {
-  "protocol_version": 53,
+  "protocol_version": 1,
   "request_id": "request-1",
   "client_id": "mac-1",
   "received_at": "2026-09-04T10:00:00Z",

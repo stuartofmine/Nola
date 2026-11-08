@@ -1,5 +1,5 @@
 {
-  "protocol_version": 53,
+  "protocol_version": 1,
   "request_id": "unknown-effect-resolution-request-1",
   "client_id": "operator-client-1",
   "command": {

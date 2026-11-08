@@ -1854,7 +1854,7 @@ private fun composeAttachmentPrompt(text: String, attachments: List<AndroidChatA
 
 private const val MESSAGE_ATTACHMENTS_META_KEY = "nola.attachments"
 private const val MESSAGE_DISPLAY_TEXT_META_KEY = "nola.displayMessage"
-private const val MESSAGE_ATTACHMENTS_PAYLOAD_PREFIX = "nola-attachments-v2\n"
+private const val MESSAGE_ATTACHMENTS_PAYLOAD_PREFIX = "nola-attachments-v1\n"
 
 internal fun attachmentMessageMeta(
     displayText: String,

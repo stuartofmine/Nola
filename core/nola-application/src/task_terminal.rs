@@ -78,7 +78,7 @@ pub(crate) fn export_projection<R: RuntimeTaskRepository + ?Sized>(
         });
     }
     let projection = AgentTaskTerminalProjection {
-        protocol_version: 2, admission, authority_revision: authority.authority_revision,
+        protocol_version: 1, admission, authority_revision: authority.authority_revision,
         receipt_id: receipt.receipt_id, status: receipt.status, input_watermark: receipt.input_watermark,
         completion_watermark: receipt.completion_watermark, result_ref: receipt.result_ref,
         run_result: receipt.journal_result.as_ref().map(|result| result.seal.result.clone()),

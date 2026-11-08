@@ -50,7 +50,7 @@ internal class RemoteJournalSummary(private val host: String, private val conver
             && identity.journalString("assistant_message_id") == "$submission:assistant")
         if (hint != null) require(hint["seal_digest"] == seal["seal_digest"])
         run = candidate; bound = true
-        require(seal.getValue("protocol_version").jsonPrimitive.content == "2")
+        require(seal.getValue("protocol_version").jsonPrimitive.content == "1")
         val result = seal.getValue("result").jsonObject
         require(result.journalString("conversation_id") == conversation && result.journalString("run_id") == candidate &&
             result.getValue("value").jsonObject.journalString("kind") == "answered") {

@@ -6,7 +6,7 @@ use nola_domain::core_event::{CoreEventEnvelope, EventCursor};
 
 // Canonical executable-call signatures exclude authorization metadata and use
 // schema-normalized arguments. Old recovery ledgers cannot be reinterpreted.
-pub const AGENT_CHECKPOINT_SCHEMA_VERSION: u32 = 32;
+pub const AGENT_CHECKPOINT_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CoreCheckpoint<S> {

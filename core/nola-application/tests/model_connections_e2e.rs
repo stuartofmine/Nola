@@ -573,7 +573,7 @@ fn route_changes_invalidate_capabilities_and_stale_discovery_is_rejected() {
     let source: Value =
         serde_json::from_str(&store.list_model_profiles().unwrap()[0].source_json).unwrap();
     assert_eq!(source["executionCapabilityBasis"], "protocol_agent_baseline");
-    assert_eq!(source["schemaVersion"], 2);
+    assert_eq!(source["schemaVersion"], 1);
     assert_eq!(source["executionCapabilities"]["toolCalls"], true);
 }
 

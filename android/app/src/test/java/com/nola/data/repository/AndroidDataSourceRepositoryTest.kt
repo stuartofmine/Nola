@@ -226,7 +226,7 @@ class AndroidDataSourceRepositoryTest {
     }
 
     private fun coreProjection(usable: Boolean) = AgentCoreDataSourceResolution(
-        schemaVersion = 2,
+        schemaVersion = 1,
         enabled = usable,
         usable = usable,
         shouldRequestConsent = false,

@@ -685,7 +685,7 @@ final class MacAssistantJournalTransportTests: XCTestCase {
         let digest = String(repeating: "a", count: 64)
         let result = try JSONDecoder().decode(MacRunResult.self,
             from: JSONSerialization.data(withJSONObject: macRunResultFixture("answered")))
-        let seal = MacAssistantRunTerminalSeal(protocol_version: 2,
+        let seal = MacAssistantRunTerminalSeal(protocol_version: 1,
             admission: .init(identity: owner, sequence: "3", record_digest: digest), identity: owner,
             core_session_id: "different-core-session", transition_id: "terminal-transition",
             checkpoint_revision: "18446744073709551615", core_revision: "9007199254740992", event_cursor: "9007199254740993",
@@ -942,7 +942,7 @@ final class MacAssistantJournalTransportTests: XCTestCase {
         XCTAssertFalse(displayed.contains("protocol_version"))
         XCTAssertTrue(displayed.contains("9007199254740993"))
         XCTAssertTrue(displayed.contains("18446744073709551615"))
-        XCTAssertThrowsError(try input.display(#"{"protocol_version":2,"value":{}}"#, complete: true))
+        XCTAssertThrowsError(try input.display(#"{"protocol_version":1,"value":{}}"#, complete: true))
         XCTAssertThrowsError(try input.display(#"{"protocol_version":1,"resources":[]}"#, complete: true))
         XCTAssertThrowsError(try input.display("{", complete: true))
         let resources = try MacJournalBodyPresentation.toolField("tool_resources")

@@ -62,7 +62,7 @@ class AndroidFrozenToolPlanTest {
                 assertEquals(schema, advertised.schema)
                 assertTrue(input.resultEgressGrants.isEmpty())
                 val tool = AgentCoreResolvedTool("render_ui", "render_ui", enabled, "device", "none", "none", "granted", "low", false, "", schema)
-                AgentCoreToolPolicyOutput(2, "android", "policy", "manifest", input.runtime.expiresAtMs,
+                AgentCoreToolPolicyOutput(1, "android", "policy", "manifest", input.runtime.expiresAtMs,
                     enabledTools = if (enabled) listOf(tool) else emptyList(), disabledTools = if (enabled) emptyList() else listOf(tool))
             })
         val allowed = resolved(true)

@@ -3,7 +3,7 @@
 use rusqlite::Connection;
 
 pub(crate) const SCHEMA_VERSION: i64 = 1;
-pub(crate) const EXTRACTOR_VERSION: &str = "nola-native-arborium-v5";
+pub(crate) const EXTRACTOR_VERSION: &str = "nola-native-arborium-v1";
 
 pub(crate) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
     connection.execute_batch(

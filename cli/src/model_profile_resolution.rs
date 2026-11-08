@@ -53,7 +53,7 @@ mod session_override_tests {
     fn siwc_profile_cannot_become_an_api_key_or_inherit_another_owner() {
         let profile = nola_application::ModelProfile {id:"fixture-siwc".into(),display_name:"Fixture".into(),
             provider:"nola-chatgpt".into(),model_name:"fixture".into(),runtime:"remote".into(),
-            source_json:json!({"schemaVersion":2,"connectionID":"fixture-connection","endpointID":"fixture-connection",
+            source_json:json!({"schemaVersion":1,"connectionID":"fixture-connection","endpointID":"fixture-connection",
                 "accountID":"fixture-account","sourceKind":"nola_chatgpt","baseURL":"https://api.openai.com/v1",
                 "wireProtocol":"siwc_responses","capabilities":["chat"],
                 "executionCapabilities":nola_application::ModelExecutionCapabilities::default(),"reasoning":null}).to_string(),

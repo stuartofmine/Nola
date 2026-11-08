@@ -354,7 +354,7 @@ def main() -> int:
     explicit_slice = bool(args.scenario or args.platform)
     scope_requires_coverage = effective_suite in {"smoke", "full"} and not explicit_slice
     report = {
-        "schemaVersion": 2,
+        "schemaVersion": 1,
         "suite": (
             f"{effective_suite}-filtered"
             if explicit_slice and effective_suite in {"smoke", "full"}

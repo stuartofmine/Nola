@@ -3,20 +3,20 @@ import XCTest
 
 final class MacApplicationProtocolContractTests: XCTestCase {
     func testCurrentLinkedContractIsAcceptedWithoutOpeningStore() throws {
-        XCTAssertEqual(MacApplicationServiceClient.protocolVersion, 52)
-        try MacApplicationServiceClient.validateLinkedContract(abiVersion: 1, serviceProtocol: 52)
+        XCTAssertEqual(MacApplicationServiceClient.protocolVersion, 1)
+        try MacApplicationServiceClient.validateLinkedContract(abiVersion: 1, serviceProtocol: 1)
     }
 
     func testOlderOrNewerFrameworkCannotSelectClientWireProtocol() {
-        for version in [UInt32(0), 51, 53, UInt32.max] {
+        for version in [UInt32(0), 2, 54, UInt32.max] {
             XCTAssertThrowsError(try MacApplicationServiceClient.validateLinkedContract(
                 abiVersion: 1, serviceProtocol: version))
         }
         for abi in [UInt32(0), 2, UInt32.max] {
             XCTAssertThrowsError(try MacApplicationServiceClient.validateLinkedContract(
-                abiVersion: abi, serviceProtocol: 52))
+                abiVersion: abi, serviceProtocol: 1))
         }
-        XCTAssertEqual(MacApplicationServiceClient.protocolVersion, 52,
+        XCTAssertEqual(MacApplicationServiceClient.protocolVersion, 1,
             "Rejected linked frameworks must not mutate the expected client protocol")
     }
 }

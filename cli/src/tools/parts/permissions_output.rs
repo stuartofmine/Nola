@@ -2336,7 +2336,7 @@ pub(crate) fn session_permission_rule(request: &ToolRequest) -> String {
     let permission = nola_core::agent::policy::permission_name_for_tool(&request.name);
     let resource = session_permission_resource(request);
     let mut rule = json!({
-        "version": 3,
+        "version": 1,
         "tool": request.name,
         "permission": permission.clone(),
         "resource": resource,
@@ -2356,7 +2356,7 @@ pub(crate) fn session_permission_rule_matches(rule: &str, request: &ToolRequest)
     };
     // Version 3 binds every rule to its exact capability. Old family-wide
     // rules must not silently acquire this narrower meaning on replay.
-    if rule.get("version").and_then(Value::as_u64) != Some(3)
+    if rule.get("version").and_then(Value::as_u64) != Some(1)
         || rule.get("tool").and_then(Value::as_str) != Some(request.name.as_str()) {
         return false;
     }
@@ -2740,7 +2740,7 @@ mod scoped_permission_tests {
         let mut value: Value = serde_json::from_str(&rule).unwrap();
         value["version"] = json!(2);
         assert!(!session_permission_rule_matches(&value.to_string(), &approved));
-        value["version"] = json!(3);
+        value["version"] = json!(1);
         value.as_object_mut().unwrap().remove("tool");
         assert!(!session_permission_rule_matches(&value.to_string(), &approved));
         assert!(!session_permission_rule_matches(&rule,

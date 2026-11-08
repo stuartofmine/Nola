@@ -37,23 +37,11 @@ pub use conversation_transcript::{
 };
 pub use transcript::{TranscriptMessageInput, TranscriptPartInput};
 
-// The protocol version is part of the local socket name. Bump it whenever a
-// persistent service built against an older storage/runtime contract must not
-// be reused by a newly built client.
-// Version 28 removes token-only permission transitions and adds the exact
-// suspension/attempt reads needed by permission continuation recovery.
-// Older services must not run new workers under their earlier contract.
-// Version 33 returns exact assistant journal publication cursors from committed
-// Application outcomes; an older service cannot supply that result contract.
-// Version 34 adds authenticated remote journal ingestion and schema 39 bindings.
-// Version 35 adds record-scoped remote content staging (schema 40).
-// Version 36 exposes exact-record content reads, including intermediate roots.
-// Version 37 exposes receiver-owned resumable content requirements.
-// Version 38 exposes proven receiver watermarks for bounded client catch-up.
-// Version 39 requires source publication to admit JSON-sized record batches.
-// Version 49 requires typed permission-resolution receipts rather than booleans.
-// All shipped clients reject another version; there is no compatibility decoder.
-pub const APPLICATION_SERVICE_PROTOCOL_VERSION: u32 = 54;
+// Reissued 1.0.0 establishes protocol 1 as the first supported release baseline.
+// Future incompatible changes require explicit negotiation and compatibility tests.
+// The protocol identity remains part of the local socket name, preventing reuse
+// of an incompatible persistent service. Development-era formats are unsupported.
+pub const APPLICATION_SERVICE_PROTOCOL_VERSION: u32 = 1;
 pub const APPLICATION_SERVICE_MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 pub const COMMAND_MAX_CONTROL_BYTES: usize = 256 * 1024;
 pub const EVENT_MAX_CONTROL_BYTES: usize = 64 * 1024;

@@ -127,7 +127,7 @@ class AndroidAssistantJournal(private val execute: (JsonObject) -> JsonElement) 
             response.getValue("result").takeUnless { it == JsonNull }?.jsonObject ?: return
         }
         require(committed["identity"] == identity)
-        require(committed["protocol_version"]?.jsonPrimitive?.content == "3") { "Unsupported committed context usage format" }
+        require(committed["protocol_version"]?.jsonPrimitive?.content == "1") { "Unsupported committed context usage format" }
         val recordAdmission = committed.getValue("admission").jsonObject
         require(recordAdmission["identity"] == identity)
         receiveAdmissions(turn, remote, current, recordAdmission)
@@ -327,7 +327,7 @@ class AndroidAssistantJournal(private val execute: (JsonObject) -> JsonElement) 
         val raw = query(journalRequest("terminal_seal") { put("conversation_id", turn.conversationId); put("run_id", run) })
         if (raw == JsonNull) return null
         val seal = raw.jsonObject; val identity = seal.getValue("identity").jsonObject
-        require(seal.getValue("protocol_version").jsonPrimitive.content == "2")
+        require(seal.getValue("protocol_version").jsonPrimitive.content == "1")
         val result = seal.getValue("result").jsonObject
         require(result.journalString("conversation_id") == turn.conversationId && result.journalString("run_id") == run)
         require(result.hasValidRunResultStructure()) { "Invalid terminal business result structure" }

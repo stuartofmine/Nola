@@ -547,7 +547,7 @@ nonisolated final class MacAppleChatConfigurationStore: @unchecked Sendable {
 
     private static let provider = "openai-compatible"
     private static let runtime = "remote"
-    private static let schemaVersion = 2
+    private static let schemaVersion = 1
     private static let healthSettingKey = "mac.remote-model.health.v1"
     private let keychainService = "com.gaojc.Nola.mac.chat-model"
     private let applicationPort: MacApplicationPort

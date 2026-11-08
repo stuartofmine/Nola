@@ -423,7 +423,7 @@ final class MacBuiltInSkillEndToEndTests: XCTestCase {
         XCTAssertTrue(activityStore.entries.isEmpty)
 
         let executionPort = try MacApplicationPort(databaseURL: isolatedEnvironment.databaseURL)
-        let profileSource: [String: Any] = ["schemaVersion": 2, "endpointID": "automation-fixture-endpoint",
+        let profileSource: [String: Any] = ["schemaVersion": 1, "endpointID": "automation-fixture-endpoint",
             "endpointName": "Automation fixture", "baseURL": mockServer.endpoint, "endpointEnabled": true,
             "endpointOrder": 0, "modelEnabled": true, "modelOrder": 0, "priority": 100,
             "capabilities": ["chat"], "wireProtocol": "chat_completions", "credentialAccount": "automation-fixture-key",

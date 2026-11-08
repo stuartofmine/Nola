@@ -9,7 +9,7 @@ const result = { protocol_version: 1, conversation_id: 'conversation', client_id
     admission: null, terminal_seal: null, permissions: [], can_submit: false, submission_receipt: null, goal_execution: null, context_usage: null };
 test('Room observation exposes only the exact member execution permission', async () => {
     const roomOwner = { ...owner, clientId: 'room:room-a' };
-    const permission = { protocol_version: 4, allow_conversation: true, nonce: 'nonce', request_id: 'request',
+    const permission = { protocol_version: 1, allow_conversation: true, nonce: 'nonce', request_id: 'request',
         host_id: owner.hostId, client_id: roomOwner.clientId, session_id: owner.conversationId,
         canonical_run_id: 'run', expires_at: Date.now() / 1000 + 60, safe_review_text: 'Write the selected file' };
     const observation = { ...result, client_id: roomOwner.clientId, recovery: 'observe',
@@ -39,7 +39,7 @@ test('absence requests explicit recovery and never permits new input', () => {
 });
 test('unknown generation cannot replay a permission nonce', () => {
     assert.throws(() => parseRunObservation({ source_host_id: 'host', conversation_id: owner.conversationId, client_id: owner.clientId, goal_control: null, result: { ...result,
-        worker: { state: 'unknown', generation: '9007199254740993' }, permissions: [{ protocol_version: 4, allow_conversation: true,
+        worker: { state: 'unknown', generation: '9007199254740993' }, permissions: [{ protocol_version: 1, allow_conversation: true,
             nonce: 'nonce', request_id: 'request', host_id: 'host', client_id: 'client', session_id: 'conversation',
             canonical_run_id: 'run', expires_at: Date.now() / 1000 + 60 }] } }, owner));
 });

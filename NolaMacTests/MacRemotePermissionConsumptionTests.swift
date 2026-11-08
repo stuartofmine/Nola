@@ -235,7 +235,7 @@ final class MacRemotePermissionConsumptionTests: XCTestCase {
         defer { model.presentationDidDetach(); model.selectedConversationID = nil }
         let sourcePort = try MacApplicationPort(databaseURL: source.databaseURL)
         let baseline = try XCTUnwrap(sourcePort.loadConversationMetadata(source.conversationID)?.configurationRevision)
-        let pending = MacRemotePermissionRequest(id: "policy-pending", allowConversation: true, protocolVersion: 4, nonce: "policy-live-nonce",
+        let pending = MacRemotePermissionRequest(id: "policy-pending", allowConversation: true, protocolVersion: 1, nonce: "policy-live-nonce",
             hostID: "fixture-host", clientID: "fixture-client", sessionID: source.conversationID,
             toolName: "web_search", arguments: "", callID: "policy-call", reason: "Fixture permission",
             message: "Confirm fixture", expiresAt: Int64(Date().timeIntervalSince1970) + 300)
@@ -476,7 +476,7 @@ final class MacRemotePermissionConsumptionTests: XCTestCase {
         let admission = try JSONDecoder().decode(MacRunMessageAdmissionCursor.self, from: source.source.execute(
             commandData: JSONSerialization.data(withJSONObject: ["type":"local_run_message_admission_head",
                 "conversation_id":source.conversationID, "run_id":source.runID])))
-        let request = MacRemotePermissionRequest(id: "cold-request", allowConversation: true, protocolVersion: 4, nonce: "original-live-nonce",
+        let request = MacRemotePermissionRequest(id: "cold-request", allowConversation: true, protocolVersion: 1, nonce: "original-live-nonce",
             hostID: "fixture-host", clientID: "fixture-client", sessionID: source.conversationID,
             toolName: "web_search", arguments: "", callID: "call", reason: "Review original operation",
             message: "Confirm", expiresAt: Int64(Date().timeIntervalSince1970) + 300)

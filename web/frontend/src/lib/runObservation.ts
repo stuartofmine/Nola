@@ -62,7 +62,7 @@ export function parseRunObservation(value: unknown, owner: RunObservationOwner, 
     }
     const admission = result.admission === null ? null : parseJournalCursor(result.admission);
     if (object(result.terminal_seal)) {
-        if (result.status !== 'sealed' || result.recovery !== 'terminal' || result.terminal_seal.protocol_version !== 2)
+        if (result.status !== 'sealed' || result.recovery !== 'terminal' || result.terminal_seal.protocol_version !== 1)
             throw new Error('Invalid terminal observation');
         parseRunResult(result.terminal_seal.result, owner.conversationId, result.run_id as string);
     } else if (result.status === 'sealed' || result.recovery === 'terminal' || result.can_submit) {
@@ -73,7 +73,7 @@ export function parseRunObservation(value: unknown, owner: RunObservationOwner, 
     for (const permission of result.permissions) {
         if (!object(permission) || permission.host_id !== owner.hostId || permission.client_id !== (result.goal_execution ? 'web-goal' : owner.clientId)
             || permission.session_id !== owner.conversationId || permission.canonical_run_id !== result.run_id
-            || !id(permission.nonce) || !id(permission.request_id) || permission.protocol_version !== 4 || typeof permission.allow_conversation !== 'boolean'
+            || !id(permission.nonce) || !id(permission.request_id) || permission.protocol_version !== 1 || typeof permission.allow_conversation !== 'boolean'
             || typeof permission.expires_at !== 'number' || permission.expires_at <= Date.now() / 1000
             || result.worker.state !== 'running') throw new Error('Invalid observed permission owner');
     }

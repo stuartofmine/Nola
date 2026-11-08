@@ -8,7 +8,7 @@ pub use nola_host_protocol::{
     HostPermissionAuthorizationDecision, HostPermissionIntervention, HostPermissionResolution,
 };
 
-pub const HOST_PERMISSION_PROTOCOL_VERSION: u32 = 4;
+pub const HOST_PERMISSION_PROTOCOL_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HostPermissionChallenge {

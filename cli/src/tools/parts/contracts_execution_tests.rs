@@ -706,7 +706,7 @@ mod host_capability_availability_tests {
     const SKILL_NAMES: &[&str] = &["Skill", "skill_invoke", "skill_update", "skill_skip"];
 
     #[test]
-    fn pure_availability_preserves_default_and_invalid_manifest_semantics() {
+    fn pure_availability_keeps_defaults_only_without_a_manifest_and_rejects_invalid_manifests() {
         for manifest in [
             None,
             Some("invalid JSON"),
@@ -723,13 +723,13 @@ mod host_capability_availability_tests {
                 "browser_open",
                 "grep",
             ]) {
-                assert!(enabled.enabled(name), "default changed for {name}");
+                assert_eq!(enabled.enabled(name), manifest.is_none(), "invalid manifest must fail closed for {name}");
             }
             let no_configured_skills = HostCapabilityAvailability::from_captured(false, manifest);
             for name in SKILL_NAMES {
                 assert!(!no_configured_skills.enabled(name));
             }
-            assert!(no_configured_skills.enabled("grep"));
+            assert_eq!(no_configured_skills.enabled("grep"), manifest.is_none());
         }
     }
 

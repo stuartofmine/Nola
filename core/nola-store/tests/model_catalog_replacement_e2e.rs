@@ -11,7 +11,7 @@ fn profile(id: &str, selected: bool, enabled: bool) -> StoredModelProfile {
         provider: "openai-compatible".into(),
         model_name: id.into(),
         runtime: "remote".into(),
-        source_json: r#"{"schemaVersion":2,"endpointID":"fixture","baseURL":"https://example.invalid/v1"}"#.into(),
+        source_json: r#"{"schemaVersion":1,"endpointID":"fixture","baseURL":"https://example.invalid/v1"}"#.into(),
         parameters_json: "{}".into(),
         selected,
         enabled,

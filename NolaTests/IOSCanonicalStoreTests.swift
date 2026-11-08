@@ -18,7 +18,7 @@ struct IOSCanonicalDataSourceReadStateTests {
 
     @Test
     func committedContentReferenceAndReadTimesSurviveDecoding() throws {
-        let data = Data(#"{"status":"ready","content_reference":{"uri":"file:///cache/read.txt","mime_type":"text/plain","byte_count":9000000000,"content_version":"v2"},"observed_at_ms":2000,"schema_version":2,"record_count":3,"requested_at_ms":1000,"completed_at_ms":3000}"#.utf8)
+        let data = Data(#"{"status":"ready","content_reference":{"uri":"file:///cache/read.txt","mime_type":"text/plain","byte_count":9000000000,"content_version":"v2"},"observed_at_ms":2000,"schema_version":1,"record_count":3,"requested_at_ms":1000,"completed_at_ms":3000}"#.utf8)
         let state = try JSONDecoder().decode(IOSCanonicalDataSourceReadState.self, from: data)
         #expect(state.contentReference?.byteCount == 9_000_000_000)
         #expect(state.contentReference?.uri == "file:///cache/read.txt")
@@ -27,7 +27,7 @@ struct IOSCanonicalDataSourceReadStateTests {
         #expect(state.observedAtMs == 2000)
         #expect(state.requestedAtMs == 1000)
         #expect(state.completedAtMs == 3000)
-        #expect(state.schemaVersion == 2)
+        #expect(state.schemaVersion == 1)
         #expect(state.recordCount == 3)
     }
 

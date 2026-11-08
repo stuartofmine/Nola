@@ -2807,7 +2807,7 @@ fn host_policy_context_components_with_skills(
     let runtime_environment = host_runtime_environment_facts(config, &repository_context);
     let mut policy_fragments = vec![
         prompt_fragment(
-            "nola-host-surface-identity-v2",
+            "nola-host-surface-identity-v1",
             AgentPromptLayer::Identity,
             AgentPromptTrust::HostFact,
             true,
@@ -2836,7 +2836,7 @@ fn host_policy_context_components_with_skills(
     }
     if let Some(execution_policy) = host_prompts.execution_policy {
         policy_fragments.push(prompt_fragment(
-            "nola-host-surface-workflow-v2",
+            "nola-host-surface-workflow-v1",
             AgentPromptLayer::ExecutionPolicy,
             AgentPromptTrust::HostInstruction,
             true,

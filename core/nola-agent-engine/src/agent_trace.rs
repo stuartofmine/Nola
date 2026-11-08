@@ -1908,7 +1908,7 @@ mod tests {
         let mut context = AgentTraceContext::new("conversation-1", None);
         let event = context
             .project_external_event(&json!({
-                "protocol_version": 2,
+                "protocol_version": 1,
                 "type": "external_session_started",
                 "execution_backend": "codex",
                 "external_session_id": "thread-42",

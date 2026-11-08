@@ -507,7 +507,7 @@ impl NolaStore {
             return Err(invalid("context usage root admission is incomplete"));
         }
         let mut record = CommittedRunContextUsage {
-            protocol_version: 3,
+            protocol_version: 1,
             identity: identity.clone(),
             admission: declaration.cursor,
             event_sequence: JournalNumber(u64::try_from(sequence).map_err(invalid)?),

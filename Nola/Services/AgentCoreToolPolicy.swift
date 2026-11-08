@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // File Overview:
-// - Purpose: Typed Swift binding for the shared Core tool-policy ABI v2.
+// - Purpose: Typed Swift binding for the shared Core tool-policy ABI v1.
 // - Security: Core owns tool metadata and returns an identity-bound, expiring plan receipt.
 
 import Foundation
@@ -289,7 +289,7 @@ nonisolated public struct AgentCoreToolPolicyInput: Codable, Equatable, Sendable
     public let resultEgressGrants: [AgentCoreResultEgressGrant]
 
     public init(
-        schemaVersion: Int = 2,
+        schemaVersion: Int = 1,
         platform: String,
         nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1_000),
         expectedIdentity: AgentCoreExpectedIdentity? = nil,
@@ -460,7 +460,7 @@ nonisolated public enum AgentCoreToolPolicyResolver {
     public static func resolveToolPolicyJSON(_ data: Data) throws -> AgentCoreToolPolicyOutput {
 #if canImport(NolaCore)
         let version = nola_core_tool_policy_abi_version()
-        guard version == 2 else { throw AgentCoreToolPolicyError.incompatibleABI(version) }
+        guard version == 1 else { throw AgentCoreToolPolicyError.incompatibleABI(version) }
         let pointer = data.withUnsafeBytes { bytes in
             nola_core_tool_policy_resolve(
                 bytes.bindMemory(to: UInt8.self).baseAddress,

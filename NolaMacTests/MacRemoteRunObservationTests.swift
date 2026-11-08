@@ -61,7 +61,7 @@ final class MacRemoteRunObservationTests: XCTestCase {
     func testContextUsageMustHaveTheSameAdmittedRootAndEpoch() throws {
         let valid = try fixture { value in
             let admission = value["admission"] as! [String: Any]
-            value["context_usage"] = ["protocol_version": 3, "identity": admission["identity"]!,
+            value["context_usage"] = ["protocol_version": 1, "identity": admission["identity"]!,
                 "attempt_sequence": "1", "run_cache_usage": NSNull(),
                 "admission": admission, "event_sequence": "9007199254740993",
                 "record_digest": String(repeating: "a", count: 64),

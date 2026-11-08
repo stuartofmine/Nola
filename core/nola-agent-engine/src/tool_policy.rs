@@ -12,8 +12,8 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-pub const TOOL_POLICY_SCHEMA_VERSION: u32 = 2;
-pub const TOOL_POLICY_ABI_VERSION: u32 = 2;
+pub const TOOL_POLICY_SCHEMA_VERSION: u32 = 1;
+pub const TOOL_POLICY_ABI_VERSION: u32 = 1;
 const MAX_MANIFEST_TTL_MS: u64 = 300_000;
 const MAX_CLOCK_SKEW_MS: u64 = 30_000;
 
@@ -1093,20 +1093,20 @@ mod tests {
     }
 
     #[test]
-    fn pure_policy_returns_v2_contract() {
+    fn pure_policy_returns_v1_contract() {
         let mut input = input(ToolPlatform::Cli);
         input.runtime.tools = vec![tool("read_file", ToolRoute::AgentHost)];
         let bytes = serde_json::to_vec(&input).unwrap();
         let decoded: ToolPolicyInput = serde_json::from_slice(&bytes).unwrap();
         let output = resolve_tool_policy(&decoded);
-        assert_eq!(output.schema_version, 2);
+        assert_eq!(output.schema_version, 1);
         assert_eq!(output.enabled_tools[0].tool_id, "read_file");
     }
 
     #[test]
-    fn shared_v2_golden_fixture_matches_core_receipt() {
+    fn shared_v1_golden_fixture_matches_core_receipt() {
         let fixture: Value =
-            serde_json::from_str(include_str!("../../fixtures/tool_policy_v2_golden.json")).unwrap();
+            serde_json::from_str(include_str!("../../fixtures/tool_policy_v1_golden.json")).unwrap();
         let input: ToolPolicyInput = serde_json::from_value(fixture["input"].clone()).unwrap();
         let output = resolve_tool_policy(&input);
         let expected = &fixture["expected"];

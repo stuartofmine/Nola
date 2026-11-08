@@ -492,7 +492,7 @@ def aggregate(manifest_path: Path, roots: list[Path]) -> dict[str, Any]:
         if isinstance(attempt.get("diagnostic_interpretation"), dict)
     )
     return {
-        "schema_version": 2,
+        "schema_version": 1,
         "benchmark": manifest.get("name", "terminal-bench"),
         "variant": manifest.get("variant"),
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),

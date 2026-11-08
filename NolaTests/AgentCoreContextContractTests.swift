@@ -98,7 +98,7 @@ final class AgentCoreContextContractTests: XCTestCase {
         let data = try JSONEncoder().encode(input)
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         let messages = try XCTUnwrap(object["messages"] as? [[String: Any]])
-        XCTAssertEqual(object["schema_version"] as? Int, 2)
+        XCTAssertEqual(object["schema_version"] as? Int, 1)
         XCTAssertEqual(object["platform"] as? String, "ios")
         XCTAssertEqual(object["mode"] as? String, "normal")
         XCTAssertEqual((object["components"] as? [[String: Any]])?.count, 0)
@@ -112,7 +112,7 @@ final class AgentCoreContextContractTests: XCTestCase {
     func testContextPrepareResponseDecodesArchiveIDsAndIgnoresExtensions() throws {
         let json = #"""
         {
-          "schema_version":2,
+          "schema_version":1,
           "action":"summary_required",
           "messages":[],
           "tools":[],
@@ -152,7 +152,7 @@ final class AgentCoreContextContractTests: XCTestCase {
 
         let response = try JSONDecoder().decode(AgentCoreContextPrepareResponse.self, from: Data(json.utf8))
         XCTAssertEqual(response.action, "summary_required")
-        XCTAssertEqual(response.schemaVersion, 2)
+        XCTAssertEqual(response.schemaVersion, 1)
         XCTAssertEqual(response.payloadDigest, String(repeating: "a", count: 64))
         XCTAssertEqual(response.metrics.promptTokenLimit, 12_000)
         XCTAssertEqual(response.metrics.totalPromptTokens, 10_000)

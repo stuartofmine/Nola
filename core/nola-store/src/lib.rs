@@ -200,8 +200,8 @@ pub use protocol_journal::*;
 pub use skill_selection::SkillInstructionSelection;
 pub use transcript_search::StoredTranscriptMatch;
 
-pub const STORE_SCHEMA_EPOCH: i64 = 8;
-pub const STORE_SCHEMA_VERSION: i64 = 83;
+pub const STORE_SCHEMA_EPOCH: i64 = 1;
+pub const STORE_SCHEMA_VERSION: i64 = 1;
 mod assistant_journal;
 mod run_message_admission;
 mod committed_run_context_usage;

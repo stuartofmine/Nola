@@ -4,7 +4,7 @@ use serde::{Deserialize,Serialize};
 use serde_json::Value;
 use chrono::{DateTime, Duration, Utc};
 use sha2::{Digest,Sha256};
-pub const DATA_SOURCE_SCHEMA_VERSION: u32 = 2;
+pub const DATA_SOURCE_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

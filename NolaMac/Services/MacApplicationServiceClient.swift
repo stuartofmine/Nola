@@ -152,7 +152,7 @@ nonisolated final class MacApplicationQueryCancellation: @unchecked Sendable {
 }
 
 nonisolated final class MacApplicationServiceClient: @unchecked Sendable {
-    static let protocolVersion = 54
+    static let protocolVersion = 1
     static let applicationABIVersion: UInt32 = 1
     #if !canImport(NolaCore)
     #error("NolaMac requires NolaCore.framework for its Application Service protocol identity")

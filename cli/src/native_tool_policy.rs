@@ -92,7 +92,7 @@ mod tests {
     #[test]
     fn receipt_cannot_add_tools_or_change_original_policy() {
         let input: nola_core::tool_policy::ToolPolicyInput = serde_json::from_value(serde_json::json!({
-            "schema_version":2,"platform":"macos","now_ms":1000,
+            "schema_version":1,"platform":"macos","now_ms":1000,
             "expected_identity":{"host_id":"local","client_id":"mac","session_id":"session"},
             "runtime":{"manifest_id":"test","manifest_version":1,"issued_at_ms":1,"expires_at_ms":60000,
                 "host_id":"local","client_id":"mac","session_id":"session","routes":["agent_host"],

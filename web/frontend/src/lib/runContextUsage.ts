@@ -10,7 +10,7 @@ export interface PromptCacheUsage {
     hit_rate_bps: number | null; is_compaction: boolean;
 }
 export interface CommittedRunContextUsage {
-    protocol_version: 3; identity: JournalIdentity; admission: JournalCursor; event_sequence: string;
+    protocol_version: 1; identity: JournalIdentity; admission: JournalCursor; event_sequence: string;
     attempt_sequence: string;
     run_cache_usage: (PromptCacheUsage & { reported_requests: number; unreported_requests: number }) | null;
     usage: { measurement: ContextMeasurement | null; prompt_cache_measurement: ContextMeasurement | null;
@@ -99,7 +99,7 @@ export function parseCumulativeCacheUsage(raw: unknown): CommittedRunContextUsag
 
 export function parseRunContextUsage(value: unknown, admission: JournalCursor): CommittedRunContextUsage {
     if (!object(value) || !fields(value, ['protocol_version', 'identity', 'admission', 'event_sequence', 'attempt_sequence', 'run_cache_usage', 'usage', 'record_digest']) ||
-        value.protocol_version !== 3 || !object(value.identity) || !fields(value.identity, ['source_store_epoch', 'conversation_id', 'run_id', 'assistant_message_id']) ||
+        value.protocol_version !== 1 || !object(value.identity) || !fields(value.identity, ['source_store_epoch', 'conversation_id', 'run_id', 'assistant_message_id']) ||
         !object(value.admission) || !fields(value.admission, ['identity', 'sequence', 'record_digest']) ||
         !object(value.admission.identity) || !fields(value.admission.identity, ['source_store_epoch', 'conversation_id', 'run_id', 'assistant_message_id']) || !object(value.usage) ||
         !fields(value.usage, ['measurement', 'prompt_cache_measurement', 'prompt_cache_diagnostic', ...(Object.hasOwn(value.usage, 'cache_usage') ? ['cache_usage'] : []), 'used_tokens', 'context_window_tokens', 'prompt_token_limit', 'estimated']) ||
@@ -119,7 +119,7 @@ export function parseRunContextUsage(value: unknown, admission: JournalCursor): 
     if (event === '0') throw new Error('Context usage has no committed event');
     const used = journalNumber(value.usage.used_tokens), window = journalNumber(value.usage.context_window_tokens), prompt = journalNumber(value.usage.prompt_token_limit);
     if (BigInt(prompt) > BigInt(window)) throw new Error('Context prompt limit exceeds its window');
-    return { protocol_version: 3, identity: identityWire(recordIdentity), admission: cursorWire(bound), event_sequence: event,
+    return { protocol_version: 1, identity: identityWire(recordIdentity), admission: cursorWire(bound), event_sequence: event,
         attempt_sequence: attempt, run_cache_usage: cache,
         usage: usageWire({ ...value.usage, used_tokens: used, context_window_tokens: window, prompt_token_limit: prompt,
             estimated: value.usage.estimated } as CommittedRunContextUsage['usage']),
@@ -130,7 +130,7 @@ export function parseRunContextUsage(value: unknown, admission: JournalCursor): 
 export async function contextUsageDigest(value: Omit<CommittedRunContextUsage, 'record_digest'>): Promise<string> {
     const bytes = new TextEncoder().encode(JSON.stringify([value.protocol_version, identityWire(value.identity), cursorWire(value.admission),
         value.event_sequence, value.attempt_sequence, parseCumulativeCacheUsage(value.run_cache_usage), usageWire(value.usage)]));
-    const tag = new TextEncoder().encode('NOLA-RUN-CONTEXT-USAGE-V3');
+    const tag = new TextEncoder().encode('NOLA-RUN-CONTEXT-USAGE-V1');
     const input = new Uint8Array(tag.length + 8 + bytes.length); input.set(tag);
     new DataView(input.buffer).setBigUint64(tag.length, BigInt(bytes.length), false); input.set(bytes, tag.length + 8);
     return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', input)), byte => byte.toString(16).padStart(2, '0')).join('');
@@ -204,7 +204,7 @@ export async function readHistoricalRunContextUsage(owner: ChatTurnOwner, member
     if (member.identity.conversation_id !== owner.conversationId) throw new Error('Historical context conversation changed');
     const seal = await query({ operation: 'terminal_seal', conversation_id: owner.conversationId, run_id: member.identity.run_id });
     if (seal === undefined || seal === null) return null;
-    if (!object(seal) || seal.protocol_version !== 2 ||
+    if (!object(seal) || seal.protocol_version !== 1 ||
         !object(seal.identity) || typeof seal.seal_digest !== 'string' || !/^[0-9a-f]{64}$/.test(seal.seal_digest)) throw new Error('Invalid historical context seal');
     parseRunResult(seal.result, owner.conversationId, member.identity.run_id);
     const admission = parseJournalCursor(seal.admission);

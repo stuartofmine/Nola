@@ -161,7 +161,7 @@ nonisolated final class MacAssistantJournalTestFixture: @unchecked Sendable {
                 "max_output_tokens": NSNull(), "max_total_tokens": NSNull()]],
             "preference": ["explicit": outputTokens]])
         let binding: [String: Any] = [
-            "version": 8, "primary": route, "fallbacks": [],
+            "version": 1, "primary": route, "fallbacks": [],
             "generation": ["temperature": 0, "top_p": 1, "max_output_tokens": outputTokens,
                 "max_retries": 0, "parallel_tool_calls": false, "reasoning_selection": NSNull(),
                 "reasoning_tier": "balanced",

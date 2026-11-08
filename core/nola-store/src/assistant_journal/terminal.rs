@@ -269,7 +269,7 @@ pub(super) fn freeze(
     }
     let manifest_digest = terminal_manifest_digest(&entries).map_err(invalid)?;
     let mut seal = AssistantRunTerminalSeal {
-        protocol_version: 2,
+        protocol_version: 1,
         identity: AssistantJournalIdentity {
             source_store_epoch: epoch,
             conversation_id: conversation.clone(),

@@ -395,7 +395,7 @@ fn non_current_database_is_rejected_without_migration_or_mutation() {
     let error = NolaStore::open(&database).expect_err("old schemas must not be migrated");
     assert!(error
         .to_string()
-        .contains("recreate it instead of migrating"));
+        .contains("No automatic reset is performed."));
 
     let connection = rusqlite::Connection::open(&database).unwrap();
     let row: String = connection

@@ -57,7 +57,7 @@ data class DataSourceReadRecipe(
 data class DataSourceValidationContract(
     val sourceId: String,
     val connectorId: String = "android.http",
-    val connectorVersion: Int = 2,
+    val connectorVersion: Int = 1,
     val readerDescription: String,
     val format: String,
     val schemaFields: List<String> = emptyList(),
@@ -71,7 +71,7 @@ data class DataSourceValidationContract(
     val validationDigest: String? = null
 ) {
     val isUsable: Boolean
-        get() = connectorVersion >= 2 &&
+        get() = connectorVersion == 1 &&
             validationState != DataSourceValidationState.Failed &&
             readRecipe?.isUsable == true &&
             !validationDigest.isNullOrBlank()

@@ -1,5 +1,5 @@
 {
-  "protocol_version": 53,
+  "protocol_version": 1,
   "request_id": "request-1",
   "client_id": "mac-1",
   "expected_revision": 42,

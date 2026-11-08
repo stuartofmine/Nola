@@ -49,7 +49,7 @@ public struct CorePreparedOutboundPayload {
     }
 
     private struct ProviderEnvelope: Encodable {
-        let schemaVersion = 3
+        let schemaVersion = 1
         let payloadDigest: String
         let systemPrompt: String
         let messages: [AgentCoreContextPrepareMessage]
@@ -67,7 +67,7 @@ public struct CorePreparedOutboundPayload {
         response: AgentCoreContextPrepareResponse,
         contextComponents: [AgentCoreContextComponent] = []
     ) throws {
-        guard response.schemaVersion == 2 else {
+        guard response.schemaVersion == 1 else {
             throw ContextOutboundPreparationError.invalidCoreAction("schema_\(response.schemaVersion)")
         }
         guard response.action == "ready" else {

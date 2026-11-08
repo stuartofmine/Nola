@@ -117,7 +117,7 @@ data class AgentCoreResultEgressGrant(
 
 @Serializable
 data class AgentCoreToolPolicyInput(
-    @SerialName("schema_version") val schemaVersion: Int = 2,
+    @SerialName("schema_version") val schemaVersion: Int = 1,
     val platform: String = "android",
     @SerialName("now_ms") val nowMs: Long,
     @SerialName("expected_identity") val expectedIdentity: AgentCoreRuntimeIdentity,
@@ -511,7 +511,7 @@ internal object AndroidAgentToolPolicyPlanner {
         )
         val output = runCatching { resolver.resolve(input) }.getOrNull()
             ?: return AgentCoreAndroidToolPlan.empty()
-        if (output.schemaVersion != 2 || output.platform != "android" ||
+        if (output.schemaVersion != 1 || output.platform != "android" ||
             output.policyDigest.isBlank() || output.manifestDigest.isBlank() ||
             output.manifestValidUntilMs != expiresAtMs || output.manifestValidUntilMs <= nowMs
         ) {

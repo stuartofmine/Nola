@@ -46,7 +46,7 @@ final class MacCancellationCLIEndToEndTests: XCTestCase {
                     "max_output_tokens": NSNull(), "max_total_tokens": NSNull()]],
                 "preference": "default"])
             let binding: [String: Any] = [
-                "version": 8, "primary": route, "fallbacks": [],
+                "version": 1, "primary": route, "fallbacks": [],
                 "generation": ["temperature": 0, "top_p": 0, "max_output_tokens": 16384,
                     "max_retries": 2, "parallel_tool_calls": NSNull(), "reasoning_selection": NSNull(),
                     "reasoning_tier": "balanced",

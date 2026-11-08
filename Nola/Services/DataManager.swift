@@ -33,7 +33,7 @@ public final class DataManager {
         
         var exportData: [String: Any] = [:]
         exportData["exportDate"] = ISO8601DateFormatter().string(from: Date())
-        exportData["version"] = "2.0"
+        exportData["version"] = "1"
         
         // Export UserDefaults data (excluding sensitive keys)
         let defaults = UserDefaults.standard

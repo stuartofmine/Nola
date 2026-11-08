@@ -134,7 +134,7 @@ final class MacRuntimeAcceptancePermissionFixtureTests: XCTestCase {
     }
 
     private func challenge(callID: String = "canonical-call") -> MacRemotePermissionRequest {
-        .init(id: "canonical-request", allowConversation: true, protocolVersion: 4, nonce: "fixture-nonce", hostID: "fixture-host",
+        .init(id: "canonical-request", allowConversation: true, protocolVersion: 1, nonce: "fixture-nonce", hostID: "fixture-host",
               clientID: "fixture-client", sessionID: "fixture-session", toolName: "fixture.overwrite",
               arguments: "{}", callID: callID, reason: "fixture", message: "fixture", expiresAt: nil)
     }

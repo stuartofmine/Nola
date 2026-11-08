@@ -31,7 +31,7 @@ fn unsupported_nonzero_versions_are_rejected_without_changing_stored_facts() {
         (schema, facts)
     };
     let original = snapshot(&sql);
-    for version in [1, 27, 54, 62, 63, 64, 65, 66, 73, 74, crate::STORE_SCHEMA_VERSION + 1] {
+    for version in [83, 27, 54, 62, 63, 64, 65, 66, 73, 74, crate::STORE_SCHEMA_VERSION + 1] {
         sql.pragma_update(None,"user_version",version).unwrap();
         assert!(matches!(NolaStore::open(&path), Err(StoreError::IncompatibleSchema)), "version {version}");
         assert_eq!(sql.query_row("PRAGMA user_version", [], |row| row.get::<_,i64>(0)).unwrap(),version);

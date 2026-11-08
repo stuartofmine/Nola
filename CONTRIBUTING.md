@@ -1,4 +1,4 @@
-> **单版本开发约束：Nola 仅有一个未发布的内部开发版本。只保留当前架构、接口、协议和数据格式；删除旧版本兼容层、旧字段别名、双读/双写、兼容回退及历史数据迁移/转换代码，不为旧接口保留实现。文中历史兼容或数据转换计划不再执行，历史记录不构成保留旧实现的要求。不匹配的协议或存储格式明确拒绝；不得自动删除、重建或改写用户数据。当前版本的会话恢复、事务回滚和外部服务协议适配不属于旧版本兼容。**
+> **发布兼容约束：重新发布的 Nola 1.0.0 是首个受支持基线，Nola 自有协议、ABI 与数据库格式/epoch 从 1 开始；此前开发格式不保留兼容或转换代码。从本次发布起，后续版本须维护已发布接口与数据兼容，破坏性变更必须有明确版本协商、升级说明及回归测试；数据库迁移必须可验证、可回滚并保护原始数据。未知或不支持的格式明确拒绝，不得自动删除、重建或静默改写用户数据。外部服务标准协议沿用其自身版本。**
 
 # Contributing to Nola
 
@@ -10,15 +10,18 @@ Thanks for your interest in contributing.
 2. Start local development services:
 
 ```bash
-./dev.sh
+npm --prefix web/frontend ci
+npm --prefix web/frontend run build
+cargo build --locked -p nola_cli -p nola_service --bins
+./target/debug/nola web --host 127.0.0.1 --port 5001 --web-root "$PWD/web"
 ```
 
 3. Run checks before opening a PR:
 
 ```bash
-cd backend && npm run typecheck
-cd backend && python -m pytest -q
-cd core && cargo test --quiet
+cargo test --locked -p nola_domain -p nola_protocol -p nola_store -p nola_update_host
+npm --prefix web/frontend run check
+npm --prefix web/frontend test
 ```
 
 ## Pull request guidelines

@@ -4,7 +4,7 @@ import { ChatPermissionSubmission, parseChatPermission, permissionDecision, perm
 import { chatPermissionMessages } from './locales/chatPermissions.ts';
 import { createServer } from 'vite';
 
-const raw = { protocol_version: 4, allow_conversation: true, nonce: 'nonce', request_id: 'request', host_id: 'host', client_id: 'client', session_id: 'session', tool_name: 'any_tool', expires_at: 200 };
+const raw = { protocol_version: 1, allow_conversation: true, nonce: 'nonce', request_id: 'request', host_id: 'host', client_id: 'client', session_id: 'session', tool_name: 'any_tool', expires_at: 200 };
 const challenge = () => parseChatPermission(raw)!;
 const mock = (handler: (body: string) => Promise<Response>) => ((_: unknown, options: RequestInit) => handler(String(options.body))) as typeof fetch;
 const receipt = (nonce = raw.nonce) => new Response(JSON.stringify({ accepted: true, nonce }), { status: 200 });
@@ -22,7 +22,7 @@ test('parses exact v4 identity and rejects unsupported/malformed challenges', ()
 
 test('wire response preserves every identity field without client-generated grants', () => {
     const body = permissionDecision(challenge(), 'allow_conversation', '', 1000);
-    assert.deepEqual(body, { protocol_version: 4, nonce: 'nonce', request_id: 'request', host_id: 'host', client_id: 'client', session_id: 'session', tool_name: 'any_tool', resolution: { type: 'authorization', decision: 'allow_conversation' } });
+    assert.deepEqual(body, { protocol_version: 1, nonce: 'nonce', request_id: 'request', host_id: 'host', client_id: 'client', session_id: 'session', tool_name: 'any_tool', resolution: { type: 'authorization', decision: 'allow_conversation' } });
     assert.deepEqual(permissionDecision(challenge(), 'return_to_composer', '', 1000).resolution, { type: 'intervention', intervention: { type: 'return_to_composer' } });
     assert.throws(() => permissionDecision(challenge(), 'invented' as never, '', 1000));
 });

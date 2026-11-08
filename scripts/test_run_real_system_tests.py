@@ -49,7 +49,7 @@ def test_explicit_scenario_selection_is_not_hidden_by_default_smoke_suite():
 def test_invalid_or_duplicate_matrix_is_rejected(tmp_path):
     invalid = tmp_path / "matrix.json"
     invalid.write_text(json.dumps({
-        "schemaVersion": 6,
+        "schemaVersion": 1,
         "contracts": {"contract": {"requiredAssertions": ["passed"], "validators": [], "requiredObservationKinds": []}},
         "scenarios": [
             {"id": "same", "contractId": "contract", "platforms": ["cli"], "layer": "system", "command": "true", "timeoutSeconds": 1, "execution": {"runtime":"native-process","productionCode":True,"productEntrypoint":True,"realProvider":False,"realPersistence":False,"realUI":False,"semanticJudge":False,"isolation":"temporary-profile"}},
@@ -67,7 +67,7 @@ def test_invalid_or_duplicate_matrix_is_rejected(tmp_path):
 def test_product_ui_scenario_without_ui_boundary_is_rejected(tmp_path):
     invalid = tmp_path / "matrix.json"
     invalid.write_text(json.dumps({
-        "schemaVersion": 6,
+        "schemaVersion": 1,
         "contracts": {"contract": {"requiredAssertions": ["passed"], "validators": [], "requiredObservationKinds": []}},
         "scenarios": [{
             "id": "fake-ui",
@@ -97,7 +97,7 @@ def test_product_ui_scenario_without_ui_boundary_is_rejected(tmp_path):
 def test_schema_six_contract_without_validators_is_rejected(tmp_path):
     invalid = tmp_path / "matrix.json"
     invalid.write_text(json.dumps({
-        "schemaVersion": 6,
+        "schemaVersion": 1,
         "contracts": {"contract": {"requiredAssertions": ["passed"], "requiredObservationKinds": []}},
         "scenarios": [],
     }))

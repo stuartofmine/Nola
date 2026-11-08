@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MEMORY_SELECTION_ABI_VERSION: u32 = 4;
+pub const MEMORY_SELECTION_ABI_VERSION: u32 = 1;
 /// A caller that omits an explicit model budget still receives a bounded
 /// projection. Exact budgets and tokenizer counts can be supplied for the active model.
 pub const DEFAULT_MEMORY_INPUT_TOKEN_BUDGET: u32 = 2_048;

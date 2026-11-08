@@ -4,7 +4,7 @@
 import Foundation
 
 nonisolated enum MacVisualAcceptanceContract {
-    static let schemaVersion = 2
+    static let schemaVersion = 1
     static let conversationCheckpoints: Set<String> = [
         "assistant_shell",
         "active_reasoning",

@@ -1465,7 +1465,7 @@ mod tests {
             },
             ContextComponent {
                 kind: ContextComponentKind::System,
-                id: "nola-active-sop-runs-v2".to_string(),
+                id: "nola-active-sop-runs-v1".to_string(),
                 content: serde_json::json!("STARTED_SOP_EVIDENCE"),
                 source: None,
             },
@@ -1491,7 +1491,7 @@ mod tests {
             },
             AgentItem::Message {
                 id: ItemId::from_string(
-                    "nola-context-component-system-nola-active-sop-runs-v2".to_string(),
+                    "nola-context-component-system-nola-active-sop-runs-v1".to_string(),
                 ),
                 role: AgentRole::System,
                 content: "STARTED_SOP_EVIDENCE".to_string(),

@@ -20,7 +20,7 @@ fn fresh_store_records_current_schema_epoch() {
         )
         .unwrap();
     assert_eq!(stored_epoch, STORE_SCHEMA_EPOCH);
-    assert_eq!(stored_epoch, 8);
+    assert_eq!(stored_epoch, 1);
 }
 
 #[test]
@@ -43,7 +43,7 @@ fn previous_epoch_store_is_rejected_without_rewriting_data() {
         Ok(_) => panic!("previous epoch store must be rejected"),
         Err(error) => error,
     };
-    assert!(error.requires_recreation());
+    assert!(error.is_schema_incompatible());
 
     let connection = Connection::open(&database).unwrap();
     let stored_epoch: String = connection
@@ -57,4 +57,18 @@ fn previous_epoch_store_is_rejected_without_rewriting_data() {
         stored_epoch, previous_epoch.to_string(),
         "failed open must not rewrite the old store"
     );
+}
+
+#[test]
+fn reissued_baseline_is_one_and_development_format_is_preserved_on_rejection() {
+    assert_eq!(nola_store::STORE_SCHEMA_VERSION, 1);
+    assert_eq!(nola_store::STORE_SCHEMA_EPOCH, 1);
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("unsupported-development.sqlite");
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection.execute_batch("PRAGMA application_id=1313823809; PRAGMA user_version=83; CREATE TABLE valuable(content TEXT); INSERT INTO valuable VALUES('keep this data');").unwrap();
+    drop(connection);
+    let original = std::fs::read(&path).unwrap();
+    assert!(nola_store::NolaStore::open(&path).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), original);
 }

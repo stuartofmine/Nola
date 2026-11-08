@@ -44,7 +44,7 @@ final class MacEditedResendTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let port = try MacApplicationPort(databaseURL: root.appendingPathComponent("experts.db"))
         for id in ["original", "changed"] {
-            let source: [String: Any] = ["schemaVersion": 2, "endpointID": "fixture-endpoint", "endpointName": "Fixture",
+            let source: [String: Any] = ["schemaVersion": 1, "endpointID": "fixture-endpoint", "endpointName": "Fixture",
                 "baseURL": "https://fixture.invalid/v1", "endpointEnabled": true, "endpointOrder": 0,
                 "modelEnabled": true, "modelOrder": 0, "priority": 100, "capabilities": ["chat"],
                 "wireProtocol": "chat_completions", "credentialAccount": "fixture-account"]
@@ -108,7 +108,7 @@ final class MacEditedResendTests: XCTestCase {
             reasoningPreference: "automatic", modelParameters: .webAlignedCloudDefaults, wireProtocol: .chatCompletions,
             permissionMode: .cautious, databaseURLOverride: port.databaseURL, appEnvironment: environment, applicationPort: port)
         request.editedResendOperationID = operation
-        request.editedResendModel = .init(version: 8, primary: route, fallbacks: .array([]), generation: .object([
+        request.editedResendModel = .init(version: 1, primary: route, fallbacks: .array([]), generation: .object([
             "max_retries": .number(1), "parallel_tool_calls": .null, "reasoning_selection": .null,
             "reasoning_tier": .string("balanced"), "sampling_override": .bool(false), "generation_options": .object([:]),
             "temperature": .number(0.2), "top_p": .number(0.8), "max_output_tokens": .number(2000),

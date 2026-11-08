@@ -72,7 +72,7 @@ private nonisolated final class JournalRuntimeStore: ConversationRemoteTurnStore
         catch {}
         let foreignOwner = IOSAssistantJournalIdentity(source_store_epoch: accepted.identity.source_store_epoch,
             conversation_id: conversation, run_id: "another-run", assistant_message_id: identity.assistantMessageID)
-        let foreign = IOSCommittedRunContextUsage(protocol_version: 3, identity: foreignOwner,
+        let foreign = IOSCommittedRunContextUsage(protocol_version: 1, identity: foreignOwner,
             admission: accepted.admission, event_sequence: accepted.event_sequence,
             attempt_sequence: accepted.attempt_sequence, run_cache_usage: accepted.run_cache_usage, usage: accepted.usage,
             record_digest: accepted.record_digest)
@@ -83,7 +83,7 @@ private nonisolated final class JournalRuntimeStore: ConversationRemoteTurnStore
     func testContextRecordDecimalPrecisionAndOwnerValidation() throws {
         let owner = IOSAssistantJournalIdentity(source_store_epoch: "epoch", conversation_id: "conversation", run_id: "run", assistant_message_id: "assistant")
         let admission = IOSRunMessageAdmissionCursor(identity: owner, sequence: "1", record_digest: String(repeating: "a", count: 64))
-        let value = IOSCommittedRunContextUsage(protocol_version: 3, identity: owner, admission: admission,
+        let value = IOSCommittedRunContextUsage(protocol_version: 1, identity: owner, admission: admission,
             event_sequence: "9007199254740993", attempt_sequence: "9007199254740994", run_cache_usage: nil,
             usage: .init(used_tokens: "9007199254740993",
                 context_window_tokens: "18446744073709551615", prompt_token_limit: "18446744073709551614", estimated: false),

@@ -1,6 +1,6 @@
 {
   "input": {
-    "schema_version": 2,
+    "schema_version": 1,
     "platform": "ios",
     "now_ms": 1000000,
     "expected_identity": {
@@ -132,7 +132,7 @@
       }
     ],
     "receipt": {
-      "schema_version": 2,
+      "schema_version": 1,
       "platform": "ios",
       "manifest_valid_until_ms": 1060000,
       "enabled_tool": {

@@ -34,7 +34,7 @@ class AndroidAssistantJournalTest {
     @Test fun contextHintFetchesExactAdmittedRecordAndPassesOpaqueCountersToCore() = runTest {
         val admission = cursor plusJson mapOf("sequence" to JsonPrimitive("1"))
         val usage = buildJsonObject {
-            put("protocol_version", 3); put("identity", identity); put("admission", admission)
+            put("protocol_version", 1); put("identity", identity); put("admission", admission)
             put("attempt_sequence", "1"); put("run_cache_usage", JsonNull)
             put("event_sequence", "9007199254740993"); put("record_digest", "c".repeat(64))
             put("usage", buildJsonObject {
@@ -112,7 +112,7 @@ class AndroidAssistantJournalTest {
     private fun owner() = AndroidJournalTurn("host", "conversation", "submission", "submission:assistant")
     private fun response(result: JsonElement) = buildJsonObject { put("source_host_id", "host"); put("result", result) }
     private fun terminalSeal(admission: JsonObject) = buildJsonObject {
-        put("protocol_version", 2); put("identity", identity); put("admission", admission)
+        put("protocol_version", 1); put("identity", identity); put("admission", admission)
         put("core_session_id", "core"); put("transition_id", "terminal-transition")
         put("checkpoint_revision", "2"); put("core_revision", "2"); put("event_cursor", "9")
         put("completed_at_ms", 2); put("entry_count", "1"); put("heads_count", "1"); put("child_receipt_count", "0")

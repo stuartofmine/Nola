@@ -2,7 +2,7 @@ import { apiResponse } from './api.ts';
 
 export type PermissionChoice = 'allow_once' | 'allow_conversation' | 'deny' | 'provide_instruction' | 'return_to_composer';
 export interface ChatPermissionChallenge {
-    protocol_version: 4;
+    protocol_version: 1;
     allow_conversation: boolean;
     nonce: string; request_id: string; host_id: string; client_id: string; session_id: string; tool_name: string;
     expires_at: number;
@@ -13,13 +13,13 @@ const object = (value: unknown): value is Record<string, unknown> => !!value && 
 const bytes = (value: string) => new TextEncoder().encode(value).length;
 
 export function parseChatPermission(value: unknown): ChatPermissionChallenge | null {
-    if (!object(value) || value.protocol_version !== 4 || typeof value.allow_conversation !== 'boolean' || !Number.isSafeInteger(value.expires_at)
+    if (!object(value) || value.protocol_version !== 1 || typeof value.allow_conversation !== 'boolean' || !Number.isSafeInteger(value.expires_at)
         || Number(value.expires_at) <= 0 || !identityFields.every(key => typeof value[key] === 'string' && value[key] !== '')) return null;
     const instructions = value.permission_instructions ?? [];
     if (!Array.isArray(instructions) || instructions.length > 16 || !instructions.every(entry => object(entry)
         && Object.keys(entry).sort().join(',') === 'instruction,permission_request_id'
         && typeof entry.instruction === 'string' && typeof entry.permission_request_id === 'string')) return null;
-    return { protocol_version: 4, allow_conversation: value.allow_conversation, ...Object.fromEntries(identityFields.map(key => [key, value[key]])),
+    return { protocol_version: 1, allow_conversation: value.allow_conversation, ...Object.fromEntries(identityFields.map(key => [key, value[key]])),
         expires_at: Number(value.expires_at), permission_instructions: instructions.map(entry => ({ ...entry })) } as ChatPermissionChallenge;
 }
 

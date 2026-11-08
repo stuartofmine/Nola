@@ -10,8 +10,8 @@ use crate::{HostSecretPurpose, HostSecretSource, EMPTY_CREDENTIAL_SHA256};
 // structural identity only: cold reconstruction still needs a trusted local
 // resolver with live revocation checks. Ephemeral secrets cannot be rebuilt
 // from this snapshot alone; a Host may independently obtain and verify them.
-pub const HOST_INVOCATION_BINDING_VERSION: u32 = 8;
-pub const HOST_OUTPUT_ADMISSION_VERSION: u32 = 6;
+pub const HOST_INVOCATION_BINDING_VERSION: u32 = 1;
+pub const HOST_OUTPUT_ADMISSION_VERSION: u32 = 1;
 
 /// Opaque Host-private reconstruction material, authenticated by the owning
 /// canonical Run configuration. The reference itself grants no authority.
@@ -686,7 +686,7 @@ mod tests {
         old.version = 3;
         assert!(old.validate().is_err());
         old.version = HOST_INVOCATION_BINDING_VERSION;
-        old.output_admission.version = 1;
+        old.output_admission.version = 99;
         assert!(old.validate().is_err());
     }
 
@@ -843,7 +843,7 @@ mod tests {
         changed.output_admission.version = 0;
         assert!(changed.validate().is_err());
         let mut changed = binding();
-        changed.version = 1;
+        changed.version = 99;
         assert!(changed.validate().is_err());
         let mut encoded = serde_json::to_value(binding()).unwrap();
         encoded.as_object_mut().unwrap().remove("output_admission");

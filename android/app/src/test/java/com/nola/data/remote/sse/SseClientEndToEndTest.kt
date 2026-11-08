@@ -30,7 +30,7 @@ class SseClientEndToEndTest {
         for ((type, payload) in publications) {
             // These Host publications have no trace; a UInt64 cursor is not
             // narrowed to signed Long just to consume a control hint.
-            val frame = """{"type":"$type","protocol_version":2,"session_id":"conversation","cursor":18446744073709551615,$payload}"""
+            val frame = """{"type":"$type","protocol_version":1,"session_id":"conversation","cursor":18446744073709551615,$payload}"""
             val hint = decodeSsePayload(frame, null) as SseEvent.CoreProjectionHint
             assertEquals("conversation", hint.conversationId)
             assertEquals(type, hint.type)
@@ -40,9 +40,9 @@ class SseClientEndToEndTest {
             assertEquals(hint, decodeSsePayload(Json.encodeToString(com.nola.data.remote.mobile_crypto.EncryptedEnvelope.serializer(), encrypted), "synthetic-test-token"))
             assertTrue(decodeSsePayload("""{"type":"assistant_journal_committed_v1","session_id":"conversation","through":{}}""", null) is SseEvent.AssistantJournal)
             kotlin.test.assertFails { decodeSsePayload(frame.replace("\"session_id\":\"conversation\",", ""), null) }
-            kotlin.test.assertFails { decodeSsePayload(frame.replace("\"protocol_version\":2", "\"protocol_version\":1"), null) }
+            kotlin.test.assertFails { decodeSsePayload(frame.replace("\"protocol_version\":1", "\"protocol_version\":2"), null) }
         }
-        kotlin.test.assertFails { decodeSsePayload("""{"type":"core_permission_projection_updated","protocol_version":2,"session_id":"conversation"}""", null) }
+        kotlin.test.assertFails { decodeSsePayload("""{"type":"core_permission_projection_updated","protocol_version":1,"session_id":"conversation"}""", null) }
     }
 
     @org.junit.Test
@@ -68,13 +68,13 @@ class SseClientEndToEndTest {
 
     @Test
     fun obsoleteFlattenedPartMirrorIsRejectedInsteadOfBecomingContent() {
-        val payload = """{"protocol_version":2,"type":"core_part_updated","session_id":"conversation-1","turn_id":"turn-1","cursor":1,"revision":1,"projection_revision":1,"message_id":"assistant-1","part_id":"part-1","update":{"type":"created","part_id":"part-1"},"part":{"kind":"text","id":"part-1","message_id":"assistant-1","turn_id":"turn-1","text":"canonical","is_complete":false}}"""
+        val payload = """{"protocol_version":1,"type":"core_part_updated","session_id":"conversation-1","turn_id":"turn-1","cursor":1,"revision":1,"projection_revision":1,"message_id":"assistant-1","part_id":"part-1","update":{"type":"created","part_id":"part-1"},"part":{"kind":"text","id":"part-1","message_id":"assistant-1","turn_id":"turn-1","text":"canonical","is_complete":false}}"""
         kotlin.test.assertFails { decodeSsePayload(payload, null) }
     }
 
     @Test
     fun rejectsNestedCoreLifecycleOnHostTransport() {
-        val payload = """{"protocol_version":2,"session_id":"conversation-1","cursor":{"sequence":1},"revision":1,"event":{"type":"part_updated","turn_id":"turn-1","projection_revision":1,"update":{"type":"created","part_id":"part-1"},"part":{"kind":"text","id":"part-1","message_id":"assistant-1","turn_id":"turn-1","text":"old wire"}}}"""
+        val payload = """{"protocol_version":1,"session_id":"conversation-1","cursor":{"sequence":1},"revision":1,"event":{"type":"part_updated","turn_id":"turn-1","projection_revision":1,"update":{"type":"created","part_id":"part-1"},"part":{"kind":"text","id":"part-1","message_id":"assistant-1","turn_id":"turn-1","text":"old wire"}}}"""
         var failure: Throwable? = null
         try {
             decodeSsePayload(payload, null)

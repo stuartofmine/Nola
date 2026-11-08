@@ -8,7 +8,7 @@ export function editedFixture() {
         {operationId:'11111111-1111-4111-8111-111111111111',targetId:'22222222-2222-4222-8222-222222222222',createdAtMs:100});
     const p=draft.input;
     const envelope:EditedResendEnvelope={host_id:'host',client_id:'client',prepared:{input:{...p},source:{conversation_id:'source',message_id:'source-user',run_id:'old-run',assistant_message_id:'old-assistant',
-        body_sha256:'a'.repeat(64),invocation_config_sha256:'b'.repeat(64),model:{version:8,model_capability:{profile_id:"fixture",revision:1,direct_tool_capability_ids:[]},primary:{kind:'http'},fallbacks:[],generation:{},output_admission:{}}},
+        body_sha256:'a'.repeat(64),invocation_config_sha256:'b'.repeat(64),model:{version:1,model_capability:{profile_id:"fixture",revision:1,direct_tool_capability_ids:[]},primary:{kind:'http'},fallbacks:[],generation:{},output_admission:{}}},
         run_id:p.operation_id,user_message_id:`${p.operation_id}:user`,assistant_message_id:`${p.operation_id}:assistant`,admitted_run_id:null},
         target:{id:p.target_conversation_id,title:p.title,revision:1,configuration_revision:1}};
     const turn=createChatTurn({hostId:'host',clientId:'client',conversationId:p.target_conversation_id,generation:1},

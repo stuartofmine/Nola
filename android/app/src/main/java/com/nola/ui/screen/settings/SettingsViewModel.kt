@@ -186,7 +186,7 @@ class SettingsViewModel @Inject constructor(
             val metadata = """
                 Nola Android user-initiated export
                 created_at=${Date()}
-                format_version=2
+                format_version=1
                 includes=conversation database, memory profile, model parameters, safe preferences
                 excludes=stored service access tokens, model API keys, Keystore material, secure preferences, client UUID, WAL/SHM files, structured MCP URL credentials
                 redactions=See redactions.json. Free-text content is preserved and is not scanned or rewritten.

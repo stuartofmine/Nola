@@ -61,7 +61,7 @@
     }
   },
   "ios_projection": {
-    "protocol_version": 2,
+    "protocol_version": 1,
     "type": "core_capabilities_activated",
     "session_id": "conversation-a",
     "turn_id": "turn-a",
@@ -71,7 +71,7 @@
     "capability_ids": ["web_search", "web_fetch"]
   },
   "mac_projection": {
-    "protocol_version": 2,
+    "protocol_version": 1,
     "type": "core_capabilities_activated",
     "session_id": "conversation-a",
     "turn_id": "turn-a",
@@ -81,7 +81,7 @@
     "capability_ids": ["web_search", "web_fetch"]
   },
   "cli_projection": {
-    "protocol_version": 2,
+    "protocol_version": 1,
     "type": "core_capabilities_activated",
     "session_id": "conversation-a",
     "turn_id": "turn-a",

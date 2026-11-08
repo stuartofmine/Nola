@@ -744,7 +744,7 @@ private nonisolated struct IOSCanonicalMessageWriteResult: Decodable {
 
 nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
     static let expectedABI: UInt32 = 1
-    static let expectedServiceProtocol: UInt32 = 54
+    static let expectedServiceProtocol: UInt32 = 1
     static var isAvailable: Bool {
         #if canImport(NolaCore)
         nola_core_application_abi_version() == expectedABI

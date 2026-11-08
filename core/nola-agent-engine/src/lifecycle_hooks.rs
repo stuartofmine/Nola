@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const LIFECYCLE_HOOK_SCHEMA_VERSION: u32 = 2;
-pub const LIFECYCLE_HOOK_ABI_VERSION: u32 = 4;
+pub const LIFECYCLE_HOOK_SCHEMA_VERSION: u32 = 1;
+pub const LIFECYCLE_HOOK_ABI_VERSION: u32 = 1;
 const MAX_RULES: usize = 128;
 const MAX_HANDLER_BINDINGS: usize = 128;
 const MAX_MATCHER_TOOL_NAMES: usize = 64;

@@ -162,7 +162,7 @@ class ConversationKnowledgePersistenceEndToEndTest {
         try {
             val source = runtime.prepareContextCompaction(conversation.id)
             val input = kotlinx.serialization.json.Json.parseToJsonElement("""{
-                "schema_version":2,"mode":"force_summary", "messages":[
+                "schema_version":1,"mode":"force_summary", "messages":[
                     {"id":"fabricated-old","role":"user","content":"${"evidence ".repeat(1200)}"},
                     {"id":"fabricated-answer","role":"assistant","content":"${"observed ".repeat(1200)}"},
                     {"id":"latest","role":"user","content":"continue"}],

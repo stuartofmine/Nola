@@ -328,7 +328,7 @@ final class ChatManagerTests: XCTestCase {
         let seal = try XCTUnwrap(recovered.committedTerminalSeal(coreSessionID: coreID))
         // A readable reply does not turn the denied requested inspection into
         // success. Preserve Core's permission blocker across cold recovery.
-        XCTAssertEqual(seal.protocol_version, 2)
+        XCTAssertEqual(seal.protocol_version, 1)
         XCTAssertEqual(seal.result.value.kind, .blocked)
         let blocked = try object(seal.result.value.payload)
         XCTAssertEqual(try object(XCTUnwrap(blocked["reason"]))["code"], .string("permission.denied"))
@@ -495,7 +495,7 @@ final class ChatManagerTests: XCTestCase {
     func testCoreProviderEnvelopePreservesCanonicalHistoryWithoutPromptReplacement() throws {
         let json = #"""
         {
-          "schema_version":2,
+          "schema_version":1,
           "action":"ready",
           "messages":[
             {"id":"m1","role":"user","content":"打开设置"},
@@ -540,7 +540,7 @@ final class ChatManagerTests: XCTestCase {
         let messages = try XCTUnwrap(envelope["messages"] as? [[String: Any]])
         let tools = try XCTUnwrap(envelope["tools"] as? [[String: Any]])
 
-        XCTAssertEqual(envelope["schema_version"] as? Int, 3)
+        XCTAssertEqual(envelope["schema_version"] as? Int, 1)
         XCTAssertEqual(envelope["system_prompt"] as? String, "composed policy")
         XCTAssertEqual(messages.compactMap { $0["role"] as? String }, ["user", "assistant", "user"])
         XCTAssertEqual(messages.compactMap { $0["content"] as? String }, ["打开设置", "已经打开。", "继续"])

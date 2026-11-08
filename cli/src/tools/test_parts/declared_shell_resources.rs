@@ -281,7 +281,8 @@ fn shell_creates_new_directory_outside_cwd_and_replays_exact_observed_outputs() 
     first.artifacts[0].validate().unwrap();
     let checkpoint = checkpoint_for(&request, &ctx);
     let manifest: Value = serde_json::from_str(&checkpoint.status).unwrap();
-    assert_eq!(manifest["version"], 2);
+    assert_eq!(manifest["version"], 1);
+    assert_eq!(manifest["resource_scoped"], true);
     assert_eq!(manifest["entries"].as_array().unwrap().len(), 1);
     assert_eq!(
         manifest["entries"][0]["resource_root"],

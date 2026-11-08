@@ -173,7 +173,7 @@ pub fn load_resume_snapshot<S: ResumeSnapshotRepository + ConsistentReadReposito
             ResumeAction::ResumeGoal
         };
         Ok(Some(ResumeSnapshot {
-            snapshot_version: 2,
+            snapshot_version: 1,
             requested_at_ms,
             projection,
             active_run,

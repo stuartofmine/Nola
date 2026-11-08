@@ -35,7 +35,7 @@ final class MacCoreSkillRuntimeContractTests: XCTestCase {
             "resource_uri": "artifact://report", "version": "v1", "check_kind": "postcondition", "predicate": "report is complete"]]
     }
 
-    private func decode(_ update: [String: Any], protocolVersion: Int = 2) throws -> MacCoreSkillRuntimeUpdateEnvelope {
+    private func decode(_ update: [String: Any], protocolVersion: Int = 1) throws -> MacCoreSkillRuntimeUpdateEnvelope {
         try JSONDecoder().decode(MacCoreSkillRuntimeUpdateEnvelope.self, from: JSONSerialization.data(withJSONObject: [
             "protocol_version": protocolVersion, "type": "core_skill_runtime_updated", "session_id": "session",
             "turn_id": "turn", "cursor": 1, "revision": 1, "skill_runtime_revision": 1, "update": update]))
@@ -72,7 +72,7 @@ final class MacCoreSkillRuntimeContractTests: XCTestCase {
             let restored = try JSONDecoder().decode(MacCoreSkillRuntimeUpdateEnvelope.self,
                 from: JSONEncoder().encode(envelope))
             XCTAssertEqual(restored, envelope)
-            XCTAssertThrowsError(try decode(event, protocolVersion: 3))
+            XCTAssertThrowsError(try decode(event, protocolVersion: 2))
         }
     }
 

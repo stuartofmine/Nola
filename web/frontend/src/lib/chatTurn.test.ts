@@ -8,7 +8,7 @@ import { terminalFixture } from './assistantTerminal.fixture.ts';
 
 const owner = { conversationId: 'conversation', hostId: 'host', clientId: 'browser-test', generation: 3 };
 const start = () => createChatTurn(owner, 'submission');
-const permission = { protocol_version: 4, allow_conversation: true, nonce: 'nonce', request_id: 'request', host_id: owner.hostId, client_id: owner.clientId, session_id: owner.conversationId, tool_name: 'file.write', expires_at: 200 };
+const permission = { protocol_version: 1, allow_conversation: true, nonce: 'nonce', request_id: 'request', host_id: owner.hostId, client_id: owner.clientId, session_id: owner.conversationId, tool_name: 'file.write', expires_at: 200 };
 test('journal and Core trace cannot replace an admitted submission receipt', () => {
     const state = start(); const fixture = terminalFixture(state);
     const event = { type: 'assistant_journal_committed_v1', source_host_id: owner.hostId, session_id: owner.conversationId,

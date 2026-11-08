@@ -91,7 +91,7 @@ fun decodeRemoteRunObservation(response: JsonObject, hostId: String, clientId: S
     require(recovery != RemoteRunRecovery.Terminal || (status == "sealed" && seal != null))
     if (seal != null) {
         require(status == "sealed" && recovery == RemoteRunRecovery.Terminal)
-        require(seal.getValue("protocol_version").jsonPrimitive.content == "2")
+        require(seal.getValue("protocol_version").jsonPrimitive.content == "1")
         val result = seal.getValue("result").jsonObject
         require(result.requiredText("conversation_id") == key.conversationId &&
             result.requiredText("run_id") == key.runId)
