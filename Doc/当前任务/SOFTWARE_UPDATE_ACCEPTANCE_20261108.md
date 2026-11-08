@@ -2,9 +2,9 @@
 
 ## 当前状态：改用公开 GitHub 分发
 
-维护者已同意使用 `stuartofmine/Nola` 公开仓库。以下早期 Cloudflare 准备记录仅保留为过程证据，已撤销本轮新增的 Worker 更新路由和 R2 绑定；现行方案不依赖 Cloudflare 更新托管。客户端源现已配置公开 GitHub raw feed 和本机生成的 Ed25519 公钥，真实发布与匿名下载结果将在完成后补充。首包范围为 macOS Apple Silicon 完整 CLI，其他平台未提供包时显示 unavailable。
+维护者已同意使用 `stuartofmine/Nola` 公开仓库。以下早期 Cloudflare 准备记录仅保留为过程证据，已撤销本轮新增的 Worker 更新路由和 R2 绑定；现行方案不依赖 Cloudflare 更新托管。客户端源已配置公开 GitHub raw feed 和 Ed25519 公钥；实际 Release、匿名下载、真实 Rust 下载链路及 GitHub Actions 自动续签均已验证，详见下节。首包范围为 macOS Apple Silicon 完整 CLI，其他平台未提供包时显示 unavailable。
 
-源码公开采用独立初始历史的审查快照，不推送原私有仓库历史，不复制证书、签名密钥、数据库、日志或构建目录。现有 GitHub 凭据写入 Actions Secret 返回 403；维护者将自行添加 NOLA_UPDATE_SIGNING_KEY，确认存在并完成工作流验证之前不宣称自动续签已启用。
+源码公开采用独立初始历史的审查快照，不推送原私有仓库历史，不复制证书、签名密钥、数据库、日志或构建目录。现有 GitHub 凭据写入 Actions Secret 返回 403；维护者已自行配置正确名称的 NOLA_UPDATE_SIGNING_KEY。真实 Actions 工作流已完成续签并推送，自动每周续签现已启用。
 
 ## 首次公开发布
 
@@ -17,7 +17,7 @@
 - 匿名线上验收通过：`activate_source.py --dry-run` 使用公开 raw feed，经 Rust 验签并完整下载实际 183 MB Release 包核对 SHA-256；真实 Release CLI 在损坏的项目配置下返回 up_to_date，未创建会话数据库。
 - 临时隔离发布夹具模拟较低 build，使用真实 Rust Host 完成线上 check/recheck、GitHub 有限重定向、流式下载、长度/哈希和原子写文件；macOS GUI 缺包返回 unavailable。夹具不修改已安装版本，也不执行下载的包；临时例程已删除。证据 `nola-rust-live-download-8oz15ql8/probe.log`。
 - 公开仓库 CI 尚非全绿：Linux 更新合同通过；首次在线本地化检查将 Swift 动态拼接 key 前缀误认为完整 key，已修正提取器并加回归测试。10 项检查器测试及 iOS/Android/Web 质量检查通过，不添加虚假翻译 key 或关闭检查。Mac 质量审计另发现大量原有缺失翻译（9700 项），未作为本次发布修复范围，不能宣称全平台本地化完整。macOS 更新 job 被取消，Windows job 仍运行。
-- 维护者已更正 Secret 名称并经元数据确认。手动 dispatch API 返回 403（当前发布凭据缺少 Actions 写权限），配置变更触发验收与每周续签使用 GitHub 自身受限 contents:write token；正在实际验收，不改变客户端权限。
+- 真实自动续签通过：https://github.com/stuartofmine/Nola/actions/runs/42496279148 ，结果 success。GitHub bot 提交 `b7f653b` 仅改 feed；新签名由本地当前 Rust 验证器接受，逐字段比较确认只有 issued_at/expires_at 变化，版本/目标/包摘要不变。后续每周自动续签已启用。手动 dispatch API 的 403 已记录，工作流通过自身配置变更触发完成首次实跑。
 
 ## 早期实现与验证记录
 
