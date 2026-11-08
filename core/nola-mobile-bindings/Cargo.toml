@@ -1,0 +1,33 @@
+[package]
+name = "nola_mobile_bindings"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "nola_mobile_bindings"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+nola_update_host = { path = "../nola-update-host" }
+nola_mcp_host = { path = "../nola-mcp-host" }
+nola_runtime_driver = { path = "../nola-runtime-driver" }
+nola_host_protocol = { path = "../nola-host-protocol" }
+nola_application_bootstrap = { path = "../nola-application-bootstrap" }
+nola_kernel = { path = "../nola-kernel" }
+nola_domain = { path = "../nola-domain" }
+nola_core = { path = ".." }
+nola_application = { path = "../nola-application" }
+nola_protocol = { path = "../nola-protocol" }
+nola_model_runtime_host = { path = "../nola-model-runtime-host" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.4", features = ["v4"] }
+directories = "5.0"
+md5 = "0.7"
+libc = "0.2"
+
+[dev-dependencies]
+nola_store = { path = "../nola-store" }
+rusqlite = { version = "0.31", features = ["bundled"] }
+tempfile = "3.12"

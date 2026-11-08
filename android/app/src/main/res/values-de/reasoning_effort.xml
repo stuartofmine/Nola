@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="reasoning_effort_title">Denkaufwand</string>
+    <string name="reasoning_effort_automatic">Anbietervorgabe</string>
+    <string name="reasoning_effort_none">Kein</string>
+    <string name="reasoning_effort_minimal">Minimal</string>
+    <string name="reasoning_effort_low">Niedrig</string>
+    <string name="reasoning_effort_medium">Mittel</string>
+    <string name="reasoning_effort_high">Hoch</string>
+    <string name="reasoning_effort_xhigh">Sehr hoch</string>
+    <string name="reasoning_effort_max">Maximum</string>
+</resources>

@@ -1,0 +1,22 @@
+<resources>
+    <string name="room_sent_to">You → %1$s</string>
+    <string name="room_stop">Stop</string>
+    <string name="room_agent_name">Agent name</string>
+    <string name="room_create_agent">Create agent</string>
+    <string name="room_controls">Model and permissions</string>
+    <string name="room_send">Send</string>
+    <string name="room_title">Agent chats</string>
+    <string name="room_back">Back</string>
+    <string name="room_members">Members</string>
+    <string name="room_name">Chat name</string>
+    <string name="room_create">Create chat</string>
+    <string name="room_independent_context">Independent context</string>
+    <string name="room_left">Left · history retained</string>
+    <string name="room_leave">Remove</string>
+    <string name="room_add">Add an agent</string>
+    <string name="room_no_agents">No agents configured yet.</string>
+    <string name="room_choose_recipient">Send to…</string>
+    <string name="room_member_count">%1$d agents · Members</string>
+    <string name="room_message_placeholder">Message</string>
+    <string name="room_needs_attention">Needs attention</string>
+</resources>

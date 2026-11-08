@@ -1,0 +1,64 @@
+[workspace]
+resolver = "2"
+members = [
+    "core",
+    "core/nola-application",
+    "core/nola-application-bootstrap",
+    "core/nola-domain",
+    "core/nola-kernel",
+    "core/nola-agent-engine",
+    "core/nola-code-memory",
+    "core/nola-code-mode-host",
+    "core/nola-credential-host",
+    "core/nola-host-protocol",
+    "core/nola-mobile-bindings",
+    "core/nola-model-runtime-host",
+    "core/nola-mcp-host",
+    "core/nola-measurement",
+    "core/nola-protocol",
+    "core/nola-plugin-host",
+    "core/nola-runtime-driver",
+    "core/nola-runtime-supervisor",
+    "core/nola-service",
+    "core/nola-service-client",
+    "core/nola-store",
+    "core/nola-store-port",
+    "core/nola-update-host",
+    "cli",
+]
+exclude = ["cli/vendor/tiny_http"]
+
+[patch.crates-io]
+# The Web Host streams channel-backed SSE bodies. The audited local patch
+# flushes each body read instead of buffering short replies until 8 KiB.
+tiny_http = { path = "cli/vendor/tiny_http" }
+
+[profile.release]
+opt-level = 2
+debug = 0
+strip = "debuginfo"
+split-debuginfo = "off"
+incremental = false
+
+# Everyday builds omit debug information and incremental object caches.
+# Cargo fingerprints still reuse unchanged dependencies and build outputs.
+[profile.dev]
+debug = 0
+strip = "debuginfo"
+split-debuginfo = "off"
+incremental = false
+
+[profile.test]
+debug = 0
+strip = "debuginfo"
+split-debuginfo = "off"
+incremental = false
+
+# Explicit opt-in for LLDB variable inspection, isolated from ordinary builds:
+# cargo build --profile dev-debug (or NOLA_BUILD_PROFILE=dev-debug in Xcode).
+[profile.dev-debug]
+inherits = "dev"
+debug = "full"
+strip = "none"
+split-debuginfo = "packed"
+incremental = false

@@ -1,0 +1,18 @@
+[package]
+name = "nola_update_host"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nola_store = { path = "../nola-store" }
+base64 = "0.21"
+hex = "0.4"
+ring = "0.17"
+reqwest = { version = "0.11", default-features = false, features = ["blocking", "rustls-tls-webpki-roots"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+tempfile = "3"
+url = "2.5"
+
+[dev-dependencies]

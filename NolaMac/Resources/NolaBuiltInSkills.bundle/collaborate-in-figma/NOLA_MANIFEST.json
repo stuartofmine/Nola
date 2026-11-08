@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "id": "collaborate-in-figma",
+  "delivery": "built-in",
+  "category": {
+    "id": "design-presentations",
+    "name": "Design & Presentations",
+    "name_zh": "设计与演示"
+  },
+  "source": {
+    "project": "Nola",
+    "license": "Apache-2.0"
+  },
+  "status": "stable",
+  "platforms": [
+    "macos",
+    "cli-web"
+  ],
+  "required_tools": [
+    "Skill"
+  ],
+  "optional_tools": [
+    "tool_search",
+    "chrome_native_status",
+    "chrome_native_open_page",
+    "chrome_native_dom_snapshot",
+    "chrome_native_screenshot",
+    "chrome_native_click",
+    "chrome_native_type_text",
+    "read_file",
+    "write_file",
+    "bash"
+  ],
+  "runtime_dependencies": [
+    "python3 (standard library)"
+  ],
+  "permissions": [
+    "figma.read",
+    "figma.write.confirm",
+    "browser.session.confirm",
+    "filesystem.write.confirm"
+  ],
+  "secrets": [],
+  "validation": [
+    "scripts/audit_snapshot.py --validate-only",
+    "changed node before-and-after comparison",
+    "tool:read_file reopen the degraded Markdown advisory as the final validation when structured snapshot validation is unavailable"
+  ],
+  "recommended_handoffs": [
+    "extract-image-text",
+    "review-documents"
+  ],
+  "execution_contract": {
+    "schemaVersion": 1,
+    "progressSteps": [
+      {
+        "id": "inspect",
+        "title": "Inspect inputs and constraints",
+        "required": true
+      },
+      {
+        "id": "execute",
+        "title": "Produce the requested outcome",
+        "required": true
+      },
+      {
+        "id": "verify",
+        "title": "Verify the outcome with evidence",
+        "required": true
+      }
+    ],
+    "artifacts": [
+      {
+        "id": "figma-change-record",
+        "mediaType": "application/json",
+        "required": false,
+        "description": "Stable reference to the final requested outcome or its persisted receipt"
+      }
+    ],
+    "verifiers": [
+      {
+        "id": "completion-audit",
+        "method": "model_judgment",
+        "description": "Record real evidence for the applicable completion checks: scripts/audit_snapshot.py --validate-only; changed node before-and-after comparison; tool:read_file reopen the degraded Markdown advisory as the final validation when structured snapshot validation is unavailable",
+        "required": true
+      }
+    ],
+    "resumePoints": [
+      "after-inspect",
+      "after-execute",
+      "after-verify"
+    ]
+  }
+}

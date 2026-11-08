@@ -1,0 +1,11 @@
+load("@valdi//bzl/valdi:valdi_module.bzl", "valdi_module")
+
+valdi_module(
+    name = "nola_bindings",
+    srcs = glob([
+        "src/**/*.ts",
+    ]),
+    android_class_path = "com.nola.bindings",
+    ios_module_name = "NolaBindingsModule",
+    visibility = ["//visibility:public"],
+)

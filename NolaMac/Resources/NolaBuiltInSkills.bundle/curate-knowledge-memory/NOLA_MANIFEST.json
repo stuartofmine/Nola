@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "id": "curate-knowledge-memory",
+  "delivery": "built-in",
+  "category": {
+    "id": "knowledge-research",
+    "name": "Knowledge & Research",
+    "name_zh": "知识与研究"
+  },
+  "source": {
+    "project": "Nola",
+    "license": "Apache-2.0"
+  },
+  "status": "stable",
+  "platforms": [
+    "macos",
+    "cli-web"
+  ],
+  "required_tools": [
+    "Skill"
+  ],
+  "optional_tools": [
+    "memory_search",
+    "memory_save"
+  ],
+  "runtime_dependencies": [],
+  "permissions": [
+    "memory.internal",
+    "memory.sensitive.confirm"
+  ],
+  "secrets": [],
+  "validation": [
+    "canonical save receipt meaning and scope check",
+    "representative recall query when recall, reconciliation, deletion, or scope isolation is requested"
+  ],
+  "recommended_handoffs": [],
+  "execution_contract": {
+    "schemaVersion": 1,
+    "progressSteps": [],
+    "artifacts": [],
+    "verifiers": [],
+    "resumePoints": []
+  }
+}

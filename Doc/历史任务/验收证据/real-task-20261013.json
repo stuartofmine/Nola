@@ -1,0 +1,18 @@
+{
+  "scope": "Isolated Mac Test runtime tasks; provider transport intervals, not UI or TTFT",
+  "selection": "Model requests within the main conversation Run interval; separate cancellation probe excluded. Failed unsealed Run bounded by the next probe Run start.",
+  "cache_denominator": "Sum of observed input_tokens; numerator sum of input_tokens_details.cached_tokens. All selected requests have usage.",
+  "caveats": [
+    "Different tasks and builds; not an A/B experiment or percentile baseline",
+    "Provider durations include transport and output generation, not just inference",
+    "Run elapsed minus provider durations is not pure tool execution time",
+    "Reasoning capability false omits reasoning control; it does not prove server reasoning is disabled",
+    "Build time and separate cancellation probe are excluded"
+  ],
+  "samples": [
+    {"artifact": "/tmp/nola-mac-coding.XXr1Sm", "status": "running_after_failure", "run_ms": null, "requests": 14, "provider_ms": 80134.55, "input_tokens": 452834, "cached_tokens": 258304, "cache_ratio": 0.5704, "first_request_ms": 1877.45},
+    {"artifact": "/tmp/nola-mac-coding.fZy6qS", "status": "sealed", "run_ms": 85263, "requests": 7, "provider_ms": 81351.11, "input_tokens": 235071, "cached_tokens": 120832, "cache_ratio": 0.5140, "first_request_ms": 58605.30, "first_request_reasoning_bytes": 47100, "first_request_output_tokens": 11971},
+    {"artifact": "/tmp/nola-mac-executable.IJh0JD", "status": "sealed_without_answer", "run_ms": 15921, "requests": 4, "provider_ms": 13947.79, "input_tokens": 80243, "cached_tokens": 63616, "cache_ratio": 0.7928, "first_request_ms": 1932.88},
+    {"artifact": "/tmp/nola-mac-executable.ZiqAyv", "status": "sealed_with_answer", "run_ms": 10968, "requests": 4, "provider_ms": 8938.93, "input_tokens": 81260, "cached_tokens": 50048, "cache_ratio": 0.6159, "first_request_ms": 3955.95}
+  ]
+}

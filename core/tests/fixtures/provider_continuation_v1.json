@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "committed": {
+    "provider_namespace": "openai-compatible.chat-completions",
+    "model_id": "test-model",
+    "response_id": "chatcmpl-reasoning-1",
+    "state": {
+      "reasoning_content": "opaque reasoning fixture",
+      "previous_response_id": "chatcmpl-reasoning-1",
+      "vendor_extension": {
+        "revision": 7,
+        "signature": "preserve-exactly"
+      }
+    },
+    "integrity_kind": "vendor-signed-v7",
+    "compaction_policy": "clear_on_compaction"
+  },
+  "unknown_provider": {
+    "provider_namespace": "vendor.example.future",
+    "model_id": "future-model",
+    "response_id": "response-future-1",
+    "state": {
+      "binary_envelope": "AAECAwQ=",
+      "nested": [1, {"future": true}]
+    },
+    "integrity_kind": "future-integrity-v9",
+    "compaction_policy": "preserve"
+  }
+}

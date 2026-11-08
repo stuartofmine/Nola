@@ -1,0 +1,4 @@
+interface:
+  display_name: "Organize Files"
+  short_description: "Safely classify and organize files"
+  default_prompt: "Organize these files without losing or overwriting anything."

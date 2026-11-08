@@ -1,0 +1,106 @@
+[
+  {
+    "command": "ls {workspace}/cli && echo \"---\" && ls {workspace}/cli/src",
+    "ordinary_read": true
+  },
+  {
+    "command": "wc -l {workspace}/cli/src/terminal_ui.rs {workspace}/cli/src/terminal_document.rs {workspace}/cli/src/terminal_frames.rs {workspace}/cli/src/composer.rs {workspace}/cli/src/terminal_journal_presentation.rs {workspace}/cli/src/runtime_output.rs",
+    "ordinary_read": true
+  },
+  {
+    "command": "'/usr/bin/grep' -n -E '^(pub |pub\\(crate) )?(async )?fn |^impl |^struct |^pub\\(crate\\) struct |^enum ' {workspace}/cli/src/terminal_ui.rs",
+    "ordinary_read": true
+  },
+  {
+    "command": "'/usr/bin/grep' -rn 'interactive_input_bar\\|INTERACTIVE_PROMPT_PREFIX\\|INTERACTIVE_LABEL\\|INTERACTIVE_RESET\\|interactive_color_enabled' {workspace}/cli/src --include='*.rs' | '/usr/bin/grep' -v 'terminal_ui.rs'",
+    "ordinary_read": true
+  },
+  {
+    "command": "'/usr/bin/grep' -rn 'interactive_input_bar\\|fn interactive_color_enabled\\|INTERACTIVE_INPUT' {workspace}/cli/src/main_parts {workspace}/cli/src/lib.rs {workspace}/cli/src/main.rs 2>/dev/null | '/usr/bin/head' -40",
+    "ordinary_read": true
+  },
+  {
+    "command": "'/usr/bin/grep' -n 'deferred_history\\|fn push_transcript\\|fn write_transcript\\|fn flush_history\\|fn append_history\\|fn history_line' {workspace}/cli/src/terminal_ui.rs | '/usr/bin/head' -40",
+    "ordinary_read": true
+  },
+  {
+    "command": "'/usr/bin/grep' -n 'commit_history\\|HistoryCommitted\\|user_history_after_assistant\\|UserHistoryQueued' {workspace}/cli/src/agent_parts/emitter.rs | '/usr/bin/head' -40",
+    "ordinary_read": true
+  },
+  {
+    "command": "'/usr/bin/grep' -rn 'commit_history' {workspace}/cli/src --include='*.rs' | '/usr/bin/head' -30",
+    "ordinary_read": true
+  },
+  {
+    "command": "'/usr/bin/grep' -n 'pub(crate) fn queue_user_history_after_assistant' -A 8 {workspace}/cli/src/terminal_ui.rs; '/usr/bin/grep' -n 'fn agent_terminal_columns\\|fn truncate_display_value\\|fn terminal_color_enabled' {workspace}/cli/src/agent_parts/emitter.rs | '/usr/bin/head'",
+    "ordinary_read": true
+  },
+  {
+    "command": "'/usr/bin/grep' -n 'INTERACTIVE_COMPOSER_BG\\|INTERACTIVE_USER_HISTORY_BG' {workspace}/cli/src -r --include='*.rs'; '/usr/bin/grep' -n 'pub(crate) use\\|pub use' {workspace}/cli/src/lib.rs | '/usr/bin/grep' -i 'interactive\\|bootstrap\\|INTERACTIVE' | '/usr/bin/head' -20",
+    "ordinary_read": true
+  },
+  {
+    "command": "'/usr/bin/grep' -n 'INTERACTIVE' {workspace}/cli/src/lib.rs | '/usr/bin/head' -30; echo '==='; '/usr/bin/grep' -n 'fn agent_terminal_columns\\|fn truncate_display_value\\|fn terminal_color_enabled\\|use crate::' {workspace}/cli/src/agent_parts/emitter.rs | '/usr/bin/head' -20",
+    "ordinary_read": true
+  },
+  {
+    "command": "'/usr/bin/grep' -n 'fn interactive_session_replay_user_line' -A 25 {workspace}/cli/src/main_parts/interactive.rs | '/usr/bin/head' -40; echo '==='; '/usr/bin/grep' -n 'fn display_width' {workspace}/cli/src/main_parts/*.rs {workspace}/cli/src/*.rs | '/usr/bin/head'",
+    "ordinary_read": false
+  },
+  {
+    "command": "'/usr/bin/grep' -n 'interactive_session_replay_user_line\\|fn truncate_display_width_tail\\|use crate::main_parts::bootstrap::\\|use super::bootstrap::\\|mod bootstrap\\|mod interactive\\|mod commands' {workspace}/cli/src/main_parts/interactive.rs {workspace}/cli/src/main_parts.rs {workspace}/cli/src/main_parts/mod.rs 2>/dev/null | '/usr/bin/head' -30",
+    "ordinary_read": true
+  },
+  {
+    "command": "'/usr/bin/grep' -n 'agent_terminal_columns\\|truncate_display_value\\|terminal_color_enabled' {workspace}/cli/src/agent_parts/emitter.rs | '/usr/bin/head' -10; echo '==='; '/usr/bin/grep' -rn 'fn agent_terminal_columns\\|fn truncate_display_value\\|fn terminal_color_enabled' {workspace}/cli/src --include='*.rs' | '/usr/bin/head'",
+    "ordinary_read": true
+  },
+  {
+    "command": "'/usr/bin/grep' -n 'INTERACTIVE_COMPOSER_BG\\|INTERACTIVE_ACCENT\\|INTERACTIVE_VALUE\\|INTERACTIVE_RESET\\|INTERACTIVE_DIM' {workspace}/cli/src/terminal_ui.rs | '/usr/bin/head' -20; echo '==='; '/usr/bin/grep' -n 'INTERACTIVE_COMPOSER_BG\\|INTERACTIVE_ACCENT\\|INTERACTIVE_VALUE\\|INTERACTIVE_RESET\\|INTERACTIVE_DIM\\|interactive_color_enabled\\|truncate_display_width_tail\\|display_width' {workspace}/cli/src/main_parts/interactive.rs | '/usr/bin/head' -15; echo '==='; '/usr/bin/grep' -n 'INTERACTIVE_ACCENT\\|INTERACTIVE_VALUE\\|INTERACTIVE_RESET\\|terminal_color_enabled' {workspace}/cli/src/agent_parts/rendering.rs | '/usr/bin/head' -8",
+    "ordinary_read": true
+  },
+  {
+    "command": "'/usr/bin/grep' -n 'mod \\|^use ' {workspace}/cli/src/main_parts.rs 2>/dev/null | '/usr/bin/head' -20; echo '==='; '/usr/bin/grep' -rn 'fn interactive_session_replay_user_line' {workspace}/cli/src --include='*.rs'",
+    "ordinary_read": true
+  },
+  {
+    "command": "'/usr/bin/grep' -n 'mod bootstrap\\|mod interactive\\|mod commands\\|include!\\|path *=' {workspace}/cli/src/main.rs {workspace}/cli/src/lib.rs 2>/dev/null | '/usr/bin/head' -30; echo '==='; '/usr/bin/grep' -n 'INTERACTIVE_ACCENT\\|INTERACTIVE_VALUE\\|INTERACTIVE_RESET\\|INTERACTIVE_DIM\\|INTERACTIVE_LABEL\\|INTERACTIVE_COMPOSER_BG\\|INTERACTIVE_PROMPT_PREFIX\\|interactive_color_enabled' {workspace}/cli/src/main.rs {workspace}/cli/src/lib.rs 2>/dev/null | '/usr/bin/head' -30",
+    "ordinary_read": true
+  },
+  {
+    "command": "'/usr/bin/grep' -n 'fn truncate_display_width_tail' -A 20 {workspace}/cli/src/main_parts/commands.rs | '/usr/bin/head' -30; echo '==='; '/usr/bin/grep' -n 'fn display_width' -A 12 {workspace}/cli/src/main_parts/bootstrap.rs | '/usr/bin/head' -18",
+    "ordinary_read": true
+  },
+  {
+    "command": "'/usr/bin/grep' -n 'fn truncate_display_width(' -A 25 {workspace}/cli/src/main_parts/commands.rs | '/usr/bin/head' -32; echo '==='; '/usr/bin/grep' -n 'fn interactive_session_replay_user_line' -A 20 {workspace}/cli/src/main_parts/bootstrap.rs | '/usr/bin/head' -26",
+    "ordinary_read": true
+  },
+  {
+    "command": "'/usr/bin/grep' -n 'fn truncate_display_value' -A 22 {workspace}/cli/src/agent_parts/rendering.rs; echo '==='; '/usr/bin/grep' -n 'fn agent_terminal_columns' -A 14 {workspace}/cli/src/agent_parts/rendering.rs; echo '==='; '/usr/bin/grep' -n 'fn terminal_color_enabled' -A 10 {workspace}/cli/src/agent_parts/rendering.rs; echo '==='; '/usr/bin/grep' -n 'INTERACTIVE_ACCENT\\|INTERACTIVE_VALUE\\|INTERACTIVE_RESET' {workspace}/cli/src/agent_parts/rendering.rs | '/usr/bin/head' -5; echo '==='; '/usr/bin/grep' -n 'mod agent_parts\\|mod rendering\\|mod emitter\\|include!' {workspace}/cli/src/lib.rs | '/usr/bin/head' -30",
+    "ordinary_read": true
+  },
+  {
+    "command": "'/usr/bin/grep' -n 'fn truncate_display_width(' {workspace}/cli/src/main_parts/commands.rs; echo '==='; '/usr/bin/grep' -n 'fn truncate_display_width_tail' {workspace}/cli/src/main_parts/commands.rs; echo '==='; '/usr/bin/grep' -n 'fn display_width' {workspace}/cli/src/main_parts/bootstrap.rs; echo '==='; '/usr/bin/grep' -n 'fn terminal_columns' {workspace}/cli/src/main_parts/commands.rs; echo '==='; '/usr/bin/grep' -n 'fn interactive_color_enabled' {workspace}/cli/src/main_parts/commands.rs; echo '==='; '/usr/bin/grep' -n 'fn unicode_char_width' {workspace}/cli/src/main_parts/commands.rs {workspace}/cli/src/main_parts/bootstrap.rs",
+    "ordinary_read": true
+  },
+  {
+    "command": "'/usr/bin/grep' -n 'fn agent_terminal_columns\\|fn truncate_display_value\\|fn terminal_color_enabled\\|fn display_width' {workspace}/cli/src/agent_parts/rendering.rs; echo '==='; '/usr/bin/grep' -n 'INTERACTIVE_ACCENT\\|INTERACTIVE_VALUE\\|INTERACTIVE_RESET' {workspace}/cli/src/agent_parts/rendering.rs | '/usr/bin/head' -5; echo '==='; '/usr/bin/grep' -n 'mod emitter\\|mod rendering\\|include!' {workspace}/cli/src/agent_parts.rs {workspace}/cli/src/agent_parts/mod.rs 2>/dev/null | '/usr/bin/head' -10",
+    "ordinary_read": true
+  },
+  {
+    "command": "'/usr/bin/grep' -n 'INTERACTIVE_ACCENT\\|INTERACTIVE_VALUE\\|INTERACTIVE_RESET\\|INTERACTIVE_COMPOSER_BG' {workspace}/cli/src/agent_parts/emitter.rs | '/usr/bin/head' -10; echo '==='; '/usr/bin/grep' -n 'agent_parts' {workspace}/cli/src/lib.rs | '/usr/bin/head' -10",
+    "ordinary_read": true
+  },
+  {
+    "command": "'/usr/bin/grep' -n 'fn truncate_display_width(\\|fn truncate_display_width_tail(\\|fn display_width(\\|fn strip_ansi_sequences(\\|fn unicode_char_width(\\|fn terminal_columns(\\|fn interactive_color_enabled(' {workspace}/cli/src/main_parts/bootstrap.rs {workspace}/cli/src/main_parts/interactive.rs {workspace}/cli/src/main_parts/room_interactive.rs {workspace}/cli/src/main_parts/tests.rs",
+    "ordinary_read": true
+  },
+  {
+    "command": "'/usr/bin/grep' -n 'INTERACTIVE_ACCENT\\|INTERACTIVE_VALUE\\|INTERACTIVE_RESET\\|INTERACTIVE_COMPOSER_BG\\|INTERACTIVE_PROMPT_PREFIX\\|interactive_color_enabled\\|fn terminal_columns\\|fn display_width\\|fn truncate_display_width' {workspace}/cli/src/lib.rs | '/usr/bin/head' -30; echo '==='; '/usr/bin/grep' -n 'pub(crate) use\\|pub use' {workspace}/cli/src/lib.rs | '/usr/bin/head' -30",
+    "ordinary_read": true
+  },
+  {
+    "command": "'/usr/bin/grep' -n 'fn truncate_display_width(\\|fn truncate_display_width_tail(\\|fn terminal_columns(\\|fn interactive_color_enabled(\\|fn unicode_char_width(\\|fn display_width(\\|fn strip_ansi_sequences(' {workspace}/cli/src/lib.rs {workspace}/cli/src/main.rs 2>/dev/null; echo '==='; '/usr/bin/sed' -n '120,160p' {workspace}/cli/src/lib.rs",
+    "ordinary_read": true
+  }
+]

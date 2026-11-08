@@ -1,0 +1,9 @@
+/* Localized Info.plist strings */
+"CFBundleDisplayName" = "Nola";
+"CFBundleName" = "Nola";
+"NSContactsUsageDescription" = "Nola は連絡先にアクセスして誕生日情報を読み取り、重要な日付を通知するために使用します。すべてのデータはこのデバイス上でローカルに処理され、サーバーへアップロードされることはありません。";
+"NSCalendarsUsageDescription" = "Nola は、概要の作成と承認した操作のためにカレンダーを使用します。特定の結果をペアリング済みホストと共有することを明示的に承認しない限り、カレンダーデータはこのデバイスに残ります。";
+"NSRemindersUsageDescription" = "Nola はリマインダーにアクセスして、請求書の支払いなど今後のタスクを検出し、重要な項目を見逃さないようにするために使用します。すべてのデータはこのデバイス上でローカルに処理され、サーバーへアップロードされることはありません。";
+"NSHealthShareUsageDescription" = "Nola は、薬とアクティビティに関するパーソナライズされたインサイトを表示するために HealthKit の読み取りアクセスを必要とします。処理はすべてデバイス上で行われ、プライバシーを尊重します。";
+"NSHealthUpdateUsageDescription" = "Nola は、傾向を追跡し対応するヘルスサービスとインサイトを共有できるよう、概要指標を記録するために HealthKit の書き込みアクセスを必要とします。";
+"NSLocalNetworkUsageDescription" = "Nola Web host モデルを選択した場合、Nola はローカルネットワーク上のセルフホスト Web サービスに接続します。";

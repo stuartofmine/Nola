@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="chat_permission_state_saving">Cambiando permisos…</string>
+    <string name="chat_permission_state_saved">Permisos guardados</string>
+    <string name="chat_permission_state_pending">Guardados; esperando la tarea actual</string>
+    <string name="chat_permission_state_checking">Comprobando los permisos de la tarea…</string>
+    <string name="chat_permission_state_active">Activos para la tarea actual</string>
+    <string name="chat_permission_state_failed">Guardado sin confirmar. La selección se conserva para reintentar.</string>
+    <string name="chat_context_estimated_request">Estimación de la próxima solicitud</string>
+    <string name="chat_context_measured_request">Contexto medido de la solicitud</string>
+    <string name="chat_cache_conversation_rate">Tasa de aciertos de caché de la conversación</string>
+    <string name="chat_cache_request_identity">Solicitud: %1$s</string>
+    <string name="chat_cache_coverage">Informadas: %1$d · Sin informar: %2$d</string>
+</resources>

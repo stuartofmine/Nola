@@ -1,0 +1,13 @@
+[package]
+name = "nola_credential_host"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+libc = "0.2"
+rusqlite = { version = "0.31", features = ["bundled"] }
+sha2 = "0.10"
+url = "2.5"
+
+[dev-dependencies]
+tempfile = "3"

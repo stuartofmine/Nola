@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="chat_permission_state_saving">Berechtigungen werden geändert…</string>
+    <string name="chat_permission_state_saved">Berechtigungen gespeichert</string>
+    <string name="chat_permission_state_pending">Gespeichert; wartet auf laufende Aufgabe</string>
+    <string name="chat_permission_state_checking">Aufgabenberechtigungen werden geprüft…</string>
+    <string name="chat_permission_state_active">Für laufende Aufgabe aktiv</string>
+    <string name="chat_permission_state_failed">Speichern nicht bestätigt. Die Auswahl bleibt für einen erneuten Versuch erhalten.</string>
+    <string name="chat_context_estimated_request">Schätzung der nächsten Anfrage</string>
+    <string name="chat_context_measured_request">Gemessener Anfragekontext</string>
+    <string name="chat_cache_conversation_rate">Cache-Trefferrate der Unterhaltung</string>
+    <string name="chat_cache_request_identity">Anfrage: %1$s</string>
+    <string name="chat_cache_coverage">Gemeldet: %1$d · Nicht gemeldet: %2$d</string>
+</resources>

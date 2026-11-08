@@ -1,0 +1,10 @@
+// SPDX-License-Identifier: Apache-2.0
+"reasoning.effort.title" = "Denkaufwand";
+"reasoning.effort.automatic" = "Anbietervorgabe";
+"reasoning.effort.none" = "Kein";
+"reasoning.effort.minimal" = "Minimal";
+"reasoning.effort.low" = "Niedrig";
+"reasoning.effort.medium" = "Mittel";
+"reasoning.effort.high" = "Hoch";
+"reasoning.effort.xhigh" = "Sehr hoch";
+"reasoning.effort.max" = "Maximum";

@@ -1,0 +1,4 @@
+module NolaCore {
+    header "nola_core.h"
+    export *
+}

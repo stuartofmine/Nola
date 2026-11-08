@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="historical_details">Historical details</string>
+    <string name="historical_unavailable">Historical content is unavailable or changed. Reopen its details.</string>
+    <string name="historical_limited">Some original fields remain unloaded because this detail view has a size limit.</string>
+    <string name="historical_field_deferred">Original field not loaded</string>
+    <string name="historical_reload">Reload / Retry</string>
+</resources>

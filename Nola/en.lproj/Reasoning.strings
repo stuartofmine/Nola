@@ -1,0 +1,10 @@
+// SPDX-License-Identifier: Apache-2.0
+"reasoning.effort.title" = "Thinking effort";
+"reasoning.effort.automatic" = "Provider default";
+"reasoning.effort.none" = "None";
+"reasoning.effort.minimal" = "Minimal";
+"reasoning.effort.low" = "Low";
+"reasoning.effort.medium" = "Medium";
+"reasoning.effort.high" = "High";
+"reasoning.effort.xhigh" = "Extra high";
+"reasoning.effort.max" = "Maximum";

@@ -1,0 +1,4 @@
+# The repository root ignores Markdown documentation by default. Terminal-Bench
+# task instructions and reviewer notes are executable benchmark inputs.
+!README.md
+!**/*.md

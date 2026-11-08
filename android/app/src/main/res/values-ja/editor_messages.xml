@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="intelligence_editor_save_failed">変更結果を確認できません。下書きはここに残っています。再試行する前に編集内容を控え、この項目を閉じて開き直し、最新の内容を確認してください。</string>
+    <string name="intelligence_profile_load_failed">最新のデータを読み込めません。既存のデータは変更されていません。編集する前に再試行してください。</string>
+</resources>

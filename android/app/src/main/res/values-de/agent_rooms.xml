@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="room_sent_to">Du → %1$s</string>
+    <string name="room_stop">Stoppen</string>
+    <string name="room_agent_name">Agent-Name</string>
+    <string name="room_create_agent">Agent erstellen</string>
+    <string name="room_controls">Modell und Berechtigungen</string>
+    <string name="room_send">Senden</string>
+    <string name="room_title">Agentengespräche</string>
+    <string name="room_back">Zurück</string>
+    <string name="room_members">Mitglieder</string>
+    <string name="room_name">Gesprächsname</string>
+    <string name="room_create">Gespräch erstellen</string>
+    <string name="room_independent_context">Unabhängiger Kontext</string>
+    <string name="room_left">Verlassen · Verlauf behalten</string>
+    <string name="room_leave">Entfernen</string>
+    <string name="room_add">Agent hinzufügen</string>
+    <string name="room_no_agents">Noch keine Agenten eingerichtet.</string>
+    <string name="room_choose_recipient">Senden an…</string>
+    <string name="room_member_count">%1$d Agenten · Mitglieder</string>
+    <string name="room_message_placeholder">Nachricht</string>
+    <string name="room_needs_attention">Handlungsbedarf</string>
+</resources>

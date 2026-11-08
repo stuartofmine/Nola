@@ -1,0 +1,4 @@
+interface:
+  display_name: "Conduct Deep Research"
+  short_description: "Research with reliable cited sources"
+  default_prompt: "Research this question using reliable current sources."

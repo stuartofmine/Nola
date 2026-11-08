@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="chat_permission_state_saving">Switching permissions…</string>
+    <string name="chat_permission_state_saved">Permissions saved</string>
+    <string name="chat_permission_state_pending">Saved; waiting for the running task</string>
+    <string name="chat_permission_state_checking">Checking task permissions…</string>
+    <string name="chat_permission_state_active">Active for the running task</string>
+    <string name="chat_permission_state_failed">Save not confirmed. Your selection is retained for retry.</string>
+    <string name="chat_context_estimated_request">Estimated next request</string>
+    <string name="chat_context_measured_request">Measured request context</string>
+    <string name="chat_cache_conversation_rate">Conversation cache hit rate</string>
+    <string name="chat_cache_request_identity">Request: %1$s</string>
+    <string name="chat_cache_coverage">Reported: %1$d · Unreported: %2$d</string>
+</resources>

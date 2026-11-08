@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <plurals name="chat_pending_permission_review">
+        <item quantity="one">%1$d ausstehende Genehmigung · %2$s prüfen</item>
+        <item quantity="other">%1$d ausstehende Genehmigungen · %2$s prüfen</item>
+    </plurals>
+</resources>

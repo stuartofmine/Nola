@@ -1,0 +1,747 @@
+{
+  "changes": {
+    "base_revision": 1,
+    "catalog_digest": "79d76c69ad4717d68a96f4ce017698c9996e78f74b8c52209e9145bfcb43f8d5",
+    "identity": {
+      "generation": 1,
+      "owner": {
+        "authority_id": "fixture-host",
+        "context_id": "fixture-context",
+        "conversation_id": "fixture-conversation",
+        "message_id": "fixture-message",
+        "originating_run_id": "fixture-run",
+        "part_id": "fixture-part",
+        "participant_id": "fixture-assistant"
+      },
+      "surface_id": "shared-form"
+    },
+    "phase": "ready",
+    "removed_instance_ids": [],
+    "revision": 2,
+    "root_instance_id": "node_b738d25741629c31e50f76a261ac1429d2e10b51d065ca9ce3d76335b3047fe7",
+    "summary": "Shared A2UI form\n共同验收\nName\nLanguage\nConfirm\nSubmit",
+    "upserted_nodes": [
+      {
+        "actions": {},
+        "bindings": {},
+        "component": "Text",
+        "component_id": "echo",
+        "instance_id": "node_1fdb421a5027b19daf8b0908636f31b85bc273d736b34883c5bea46c9128b48f",
+        "props": {
+          "text": "共同验收"
+        },
+        "slots": {},
+        "validation_errors": []
+      },
+      {
+        "actions": {},
+        "bindings": {
+          "value": "/name"
+        },
+        "component": "TextField",
+        "component_id": "name",
+        "instance_id": "node_2fdbed27790810546f8a6dee17b9af4c04c0f0bd4d59f7c8bc5c30a67e65ccee",
+        "props": {
+          "label": "Name",
+          "value": "共同验收"
+        },
+        "slots": {},
+        "validation_errors": []
+      },
+      {
+        "actions": {},
+        "bindings": {
+          "value": "/languages"
+        },
+        "component": "ChoicePicker",
+        "component_id": "choice",
+        "instance_id": "node_76ff3d71f456e2dfe94b8b44eccd3b1a99d4f77bc43340ab432317ba16632abd",
+        "props": {
+          "label": "Language",
+          "options": [
+            {
+              "label": "中文",
+              "value": "zh"
+            },
+            {
+              "label": "English",
+              "value": "en"
+            }
+          ],
+          "value": [
+            "zh"
+          ],
+          "variant": "mutuallyExclusive"
+        },
+        "slots": {},
+        "validation_errors": []
+      },
+      {
+        "actions": {},
+        "bindings": {
+          "value": "/confirmed"
+        },
+        "component": "CheckBox",
+        "component_id": "consent",
+        "instance_id": "node_85db34571ef3a978c1b17fb0d7414743ce066203275bf581766e767d2f85f3fe",
+        "props": {
+          "label": "Confirm",
+          "value": true
+        },
+        "slots": {},
+        "validation_errors": []
+      }
+    ]
+  },
+  "edited_snapshot": {
+    "catalog_digest": "79d76c69ad4717d68a96f4ce017698c9996e78f74b8c52209e9145bfcb43f8d5",
+    "catalog_id": "https://nola.app/a2ui/v0.9.1/catalog.json",
+    "identity": {
+      "generation": 1,
+      "owner": {
+        "authority_id": "fixture-host",
+        "context_id": "fixture-context",
+        "conversation_id": "fixture-conversation",
+        "message_id": "fixture-message",
+        "originating_run_id": "fixture-run",
+        "part_id": "fixture-part",
+        "participant_id": "fixture-assistant"
+      },
+      "surface_id": "shared-form"
+    },
+    "nodes": {
+      "node_07c627037fa9c2b3cf9544ecbbb9f5ad139f3449281e9238f45fdc5a7d646f4d": {
+        "actions": {},
+        "bindings": {},
+        "component": "Text",
+        "component_id": "title",
+        "instance_id": "node_07c627037fa9c2b3cf9544ecbbb9f5ad139f3449281e9238f45fdc5a7d646f4d",
+        "props": {
+          "text": "Shared A2UI form"
+        },
+        "slots": {},
+        "validation_errors": []
+      },
+      "node_0a530be4d4d0de5088a456d239c79e90359a6b0e710a7bafd5e85572bc9b4ca3": {
+        "actions": {
+          "action": {
+            "action_id": "action",
+            "instance_id": "node_0a530be4d4d0de5088a456d239c79e90359a6b0e710a7bafd5e85572bc9b4ca3"
+          }
+        },
+        "bindings": {},
+        "component": "Button",
+        "component_id": "submit",
+        "instance_id": "node_0a530be4d4d0de5088a456d239c79e90359a6b0e710a7bafd5e85572bc9b4ca3",
+        "props": {},
+        "slots": {
+          "child": [
+            "node_2742c2d53b108ff2ab9c059940fe8a708e99e0ddbc17df454a392669c7f106aa"
+          ]
+        },
+        "validation_errors": []
+      },
+      "node_1fdb421a5027b19daf8b0908636f31b85bc273d736b34883c5bea46c9128b48f": {
+        "actions": {},
+        "bindings": {},
+        "component": "Text",
+        "component_id": "echo",
+        "instance_id": "node_1fdb421a5027b19daf8b0908636f31b85bc273d736b34883c5bea46c9128b48f",
+        "props": {
+          "text": "共同验收"
+        },
+        "slots": {},
+        "validation_errors": []
+      },
+      "node_2742c2d53b108ff2ab9c059940fe8a708e99e0ddbc17df454a392669c7f106aa": {
+        "actions": {},
+        "bindings": {},
+        "component": "Text",
+        "component_id": "submit-label",
+        "instance_id": "node_2742c2d53b108ff2ab9c059940fe8a708e99e0ddbc17df454a392669c7f106aa",
+        "props": {
+          "text": "Submit"
+        },
+        "slots": {},
+        "validation_errors": []
+      },
+      "node_2fdbed27790810546f8a6dee17b9af4c04c0f0bd4d59f7c8bc5c30a67e65ccee": {
+        "actions": {},
+        "bindings": {
+          "value": "/name"
+        },
+        "component": "TextField",
+        "component_id": "name",
+        "instance_id": "node_2fdbed27790810546f8a6dee17b9af4c04c0f0bd4d59f7c8bc5c30a67e65ccee",
+        "props": {
+          "label": "Name",
+          "value": "共同验收"
+        },
+        "slots": {},
+        "validation_errors": []
+      },
+      "node_76ff3d71f456e2dfe94b8b44eccd3b1a99d4f77bc43340ab432317ba16632abd": {
+        "actions": {},
+        "bindings": {
+          "value": "/languages"
+        },
+        "component": "ChoicePicker",
+        "component_id": "choice",
+        "instance_id": "node_76ff3d71f456e2dfe94b8b44eccd3b1a99d4f77bc43340ab432317ba16632abd",
+        "props": {
+          "label": "Language",
+          "options": [
+            {
+              "label": "中文",
+              "value": "zh"
+            },
+            {
+              "label": "English",
+              "value": "en"
+            }
+          ],
+          "value": [
+            "zh"
+          ],
+          "variant": "mutuallyExclusive"
+        },
+        "slots": {},
+        "validation_errors": []
+      },
+      "node_85db34571ef3a978c1b17fb0d7414743ce066203275bf581766e767d2f85f3fe": {
+        "actions": {},
+        "bindings": {
+          "value": "/confirmed"
+        },
+        "component": "CheckBox",
+        "component_id": "consent",
+        "instance_id": "node_85db34571ef3a978c1b17fb0d7414743ce066203275bf581766e767d2f85f3fe",
+        "props": {
+          "label": "Confirm",
+          "value": true
+        },
+        "slots": {},
+        "validation_errors": []
+      },
+      "node_b738d25741629c31e50f76a261ac1429d2e10b51d065ca9ce3d76335b3047fe7": {
+        "actions": {},
+        "bindings": {},
+        "component": "Column",
+        "component_id": "root",
+        "instance_id": "node_b738d25741629c31e50f76a261ac1429d2e10b51d065ca9ce3d76335b3047fe7",
+        "props": {},
+        "slots": {
+          "children": [
+            "node_07c627037fa9c2b3cf9544ecbbb9f5ad139f3449281e9238f45fdc5a7d646f4d",
+            "node_1fdb421a5027b19daf8b0908636f31b85bc273d736b34883c5bea46c9128b48f",
+            "node_2fdbed27790810546f8a6dee17b9af4c04c0f0bd4d59f7c8bc5c30a67e65ccee",
+            "node_76ff3d71f456e2dfe94b8b44eccd3b1a99d4f77bc43340ab432317ba16632abd",
+            "node_85db34571ef3a978c1b17fb0d7414743ce066203275bf581766e767d2f85f3fe",
+            "node_0a530be4d4d0de5088a456d239c79e90359a6b0e710a7bafd5e85572bc9b4ca3"
+          ]
+        },
+        "validation_errors": []
+      }
+    },
+    "phase": "ready",
+    "revision": 2,
+    "root_instance_id": "node_b738d25741629c31e50f76a261ac1429d2e10b51d065ca9ce3d76335b3047fe7",
+    "summary": "Shared A2UI form\n共同验收\nName\nLanguage\nConfirm\nSubmit"
+  },
+  "fixture_version": 1,
+  "historical_snapshot": {
+    "catalog_digest": "79d76c69ad4717d68a96f4ce017698c9996e78f74b8c52209e9145bfcb43f8d5",
+    "catalog_id": "https://nola.app/a2ui/v0.9.1/catalog.json",
+    "identity": {
+      "generation": 1,
+      "owner": {
+        "authority_id": "fixture-host",
+        "context_id": "fixture-context",
+        "conversation_id": "fixture-conversation",
+        "message_id": "fixture-message",
+        "originating_run_id": "fixture-run",
+        "part_id": "fixture-part",
+        "participant_id": "fixture-assistant"
+      },
+      "surface_id": "shared-form"
+    },
+    "nodes": {
+      "node_07c627037fa9c2b3cf9544ecbbb9f5ad139f3449281e9238f45fdc5a7d646f4d": {
+        "actions": {},
+        "bindings": {},
+        "component": "Text",
+        "component_id": "title",
+        "instance_id": "node_07c627037fa9c2b3cf9544ecbbb9f5ad139f3449281e9238f45fdc5a7d646f4d",
+        "props": {
+          "disabled": true,
+          "text": "Shared A2UI form"
+        },
+        "slots": {},
+        "validation_errors": []
+      },
+      "node_0a530be4d4d0de5088a456d239c79e90359a6b0e710a7bafd5e85572bc9b4ca3": {
+        "actions": {},
+        "bindings": {},
+        "component": "Button",
+        "component_id": "submit",
+        "instance_id": "node_0a530be4d4d0de5088a456d239c79e90359a6b0e710a7bafd5e85572bc9b4ca3",
+        "props": {
+          "disabled": true
+        },
+        "slots": {
+          "child": [
+            "node_2742c2d53b108ff2ab9c059940fe8a708e99e0ddbc17df454a392669c7f106aa"
+          ]
+        },
+        "validation_errors": []
+      },
+      "node_1fdb421a5027b19daf8b0908636f31b85bc273d736b34883c5bea46c9128b48f": {
+        "actions": {},
+        "bindings": {},
+        "component": "Text",
+        "component_id": "echo",
+        "instance_id": "node_1fdb421a5027b19daf8b0908636f31b85bc273d736b34883c5bea46c9128b48f",
+        "props": {
+          "disabled": true,
+          "text": "共同验收"
+        },
+        "slots": {},
+        "validation_errors": []
+      },
+      "node_2742c2d53b108ff2ab9c059940fe8a708e99e0ddbc17df454a392669c7f106aa": {
+        "actions": {},
+        "bindings": {},
+        "component": "Text",
+        "component_id": "submit-label",
+        "instance_id": "node_2742c2d53b108ff2ab9c059940fe8a708e99e0ddbc17df454a392669c7f106aa",
+        "props": {
+          "disabled": true,
+          "text": "Submit"
+        },
+        "slots": {},
+        "validation_errors": []
+      },
+      "node_2fdbed27790810546f8a6dee17b9af4c04c0f0bd4d59f7c8bc5c30a67e65ccee": {
+        "actions": {},
+        "bindings": {},
+        "component": "TextField",
+        "component_id": "name",
+        "instance_id": "node_2fdbed27790810546f8a6dee17b9af4c04c0f0bd4d59f7c8bc5c30a67e65ccee",
+        "props": {
+          "disabled": true,
+          "label": "Name",
+          "value": "共同验收"
+        },
+        "slots": {},
+        "validation_errors": []
+      },
+      "node_76ff3d71f456e2dfe94b8b44eccd3b1a99d4f77bc43340ab432317ba16632abd": {
+        "actions": {},
+        "bindings": {},
+        "component": "ChoicePicker",
+        "component_id": "choice",
+        "instance_id": "node_76ff3d71f456e2dfe94b8b44eccd3b1a99d4f77bc43340ab432317ba16632abd",
+        "props": {
+          "disabled": true,
+          "label": "Language",
+          "options": [
+            {
+              "label": "中文",
+              "value": "zh"
+            },
+            {
+              "label": "English",
+              "value": "en"
+            }
+          ],
+          "value": [
+            "zh"
+          ],
+          "variant": "mutuallyExclusive"
+        },
+        "slots": {},
+        "validation_errors": []
+      },
+      "node_85db34571ef3a978c1b17fb0d7414743ce066203275bf581766e767d2f85f3fe": {
+        "actions": {},
+        "bindings": {},
+        "component": "CheckBox",
+        "component_id": "consent",
+        "instance_id": "node_85db34571ef3a978c1b17fb0d7414743ce066203275bf581766e767d2f85f3fe",
+        "props": {
+          "disabled": true,
+          "label": "Confirm",
+          "value": true
+        },
+        "slots": {},
+        "validation_errors": []
+      },
+      "node_b738d25741629c31e50f76a261ac1429d2e10b51d065ca9ce3d76335b3047fe7": {
+        "actions": {},
+        "bindings": {},
+        "component": "Column",
+        "component_id": "root",
+        "instance_id": "node_b738d25741629c31e50f76a261ac1429d2e10b51d065ca9ce3d76335b3047fe7",
+        "props": {
+          "disabled": true
+        },
+        "slots": {
+          "children": [
+            "node_07c627037fa9c2b3cf9544ecbbb9f5ad139f3449281e9238f45fdc5a7d646f4d",
+            "node_1fdb421a5027b19daf8b0908636f31b85bc273d736b34883c5bea46c9128b48f",
+            "node_2fdbed27790810546f8a6dee17b9af4c04c0f0bd4d59f7c8bc5c30a67e65ccee",
+            "node_76ff3d71f456e2dfe94b8b44eccd3b1a99d4f77bc43340ab432317ba16632abd",
+            "node_85db34571ef3a978c1b17fb0d7414743ce066203275bf581766e767d2f85f3fe",
+            "node_0a530be4d4d0de5088a456d239c79e90359a6b0e710a7bafd5e85572bc9b4ca3"
+          ]
+        },
+        "validation_errors": []
+      }
+    },
+    "phase": "read_only",
+    "revision": 2,
+    "root_instance_id": "node_b738d25741629c31e50f76a261ac1429d2e10b51d065ca9ce3d76335b3047fe7",
+    "summary": "Shared A2UI form\n共同验收\nName\nLanguage\nConfirm\nSubmit"
+  },
+  "identity": {
+    "generation": 1,
+    "owner": {
+      "authority_id": "fixture-host",
+      "context_id": "fixture-context",
+      "conversation_id": "fixture-conversation",
+      "message_id": "fixture-message",
+      "originating_run_id": "fixture-run",
+      "part_id": "fixture-part",
+      "participant_id": "fixture-assistant"
+    },
+    "surface_id": "shared-form"
+  },
+  "initial_snapshot": {
+    "catalog_digest": "79d76c69ad4717d68a96f4ce017698c9996e78f74b8c52209e9145bfcb43f8d5",
+    "catalog_id": "https://nola.app/a2ui/v0.9.1/catalog.json",
+    "identity": {
+      "generation": 1,
+      "owner": {
+        "authority_id": "fixture-host",
+        "context_id": "fixture-context",
+        "conversation_id": "fixture-conversation",
+        "message_id": "fixture-message",
+        "originating_run_id": "fixture-run",
+        "part_id": "fixture-part",
+        "participant_id": "fixture-assistant"
+      },
+      "surface_id": "shared-form"
+    },
+    "nodes": {
+      "node_07c627037fa9c2b3cf9544ecbbb9f5ad139f3449281e9238f45fdc5a7d646f4d": {
+        "actions": {},
+        "bindings": {},
+        "component": "Text",
+        "component_id": "title",
+        "instance_id": "node_07c627037fa9c2b3cf9544ecbbb9f5ad139f3449281e9238f45fdc5a7d646f4d",
+        "props": {
+          "text": "Shared A2UI form"
+        },
+        "slots": {},
+        "validation_errors": []
+      },
+      "node_0a530be4d4d0de5088a456d239c79e90359a6b0e710a7bafd5e85572bc9b4ca3": {
+        "actions": {
+          "action": {
+            "action_id": "action",
+            "instance_id": "node_0a530be4d4d0de5088a456d239c79e90359a6b0e710a7bafd5e85572bc9b4ca3"
+          }
+        },
+        "bindings": {},
+        "component": "Button",
+        "component_id": "submit",
+        "instance_id": "node_0a530be4d4d0de5088a456d239c79e90359a6b0e710a7bafd5e85572bc9b4ca3",
+        "props": {},
+        "slots": {
+          "child": [
+            "node_2742c2d53b108ff2ab9c059940fe8a708e99e0ddbc17df454a392669c7f106aa"
+          ]
+        },
+        "validation_errors": []
+      },
+      "node_1fdb421a5027b19daf8b0908636f31b85bc273d736b34883c5bea46c9128b48f": {
+        "actions": {},
+        "bindings": {},
+        "component": "Text",
+        "component_id": "echo",
+        "instance_id": "node_1fdb421a5027b19daf8b0908636f31b85bc273d736b34883c5bea46c9128b48f",
+        "props": {
+          "text": "Seed"
+        },
+        "slots": {},
+        "validation_errors": []
+      },
+      "node_2742c2d53b108ff2ab9c059940fe8a708e99e0ddbc17df454a392669c7f106aa": {
+        "actions": {},
+        "bindings": {},
+        "component": "Text",
+        "component_id": "submit-label",
+        "instance_id": "node_2742c2d53b108ff2ab9c059940fe8a708e99e0ddbc17df454a392669c7f106aa",
+        "props": {
+          "text": "Submit"
+        },
+        "slots": {},
+        "validation_errors": []
+      },
+      "node_2fdbed27790810546f8a6dee17b9af4c04c0f0bd4d59f7c8bc5c30a67e65ccee": {
+        "actions": {},
+        "bindings": {
+          "value": "/name"
+        },
+        "component": "TextField",
+        "component_id": "name",
+        "instance_id": "node_2fdbed27790810546f8a6dee17b9af4c04c0f0bd4d59f7c8bc5c30a67e65ccee",
+        "props": {
+          "label": "Name",
+          "value": "Seed"
+        },
+        "slots": {},
+        "validation_errors": []
+      },
+      "node_76ff3d71f456e2dfe94b8b44eccd3b1a99d4f77bc43340ab432317ba16632abd": {
+        "actions": {},
+        "bindings": {
+          "value": "/languages"
+        },
+        "component": "ChoicePicker",
+        "component_id": "choice",
+        "instance_id": "node_76ff3d71f456e2dfe94b8b44eccd3b1a99d4f77bc43340ab432317ba16632abd",
+        "props": {
+          "label": "Language",
+          "options": [
+            {
+              "label": "中文",
+              "value": "zh"
+            },
+            {
+              "label": "English",
+              "value": "en"
+            }
+          ],
+          "value": [
+            "en"
+          ],
+          "variant": "mutuallyExclusive"
+        },
+        "slots": {},
+        "validation_errors": []
+      },
+      "node_85db34571ef3a978c1b17fb0d7414743ce066203275bf581766e767d2f85f3fe": {
+        "actions": {},
+        "bindings": {
+          "value": "/confirmed"
+        },
+        "component": "CheckBox",
+        "component_id": "consent",
+        "instance_id": "node_85db34571ef3a978c1b17fb0d7414743ce066203275bf581766e767d2f85f3fe",
+        "props": {
+          "label": "Confirm",
+          "value": false
+        },
+        "slots": {},
+        "validation_errors": []
+      },
+      "node_b738d25741629c31e50f76a261ac1429d2e10b51d065ca9ce3d76335b3047fe7": {
+        "actions": {},
+        "bindings": {},
+        "component": "Column",
+        "component_id": "root",
+        "instance_id": "node_b738d25741629c31e50f76a261ac1429d2e10b51d065ca9ce3d76335b3047fe7",
+        "props": {},
+        "slots": {
+          "children": [
+            "node_07c627037fa9c2b3cf9544ecbbb9f5ad139f3449281e9238f45fdc5a7d646f4d",
+            "node_1fdb421a5027b19daf8b0908636f31b85bc273d736b34883c5bea46c9128b48f",
+            "node_2fdbed27790810546f8a6dee17b9af4c04c0f0bd4d59f7c8bc5c30a67e65ccee",
+            "node_76ff3d71f456e2dfe94b8b44eccd3b1a99d4f77bc43340ab432317ba16632abd",
+            "node_85db34571ef3a978c1b17fb0d7414743ce066203275bf581766e767d2f85f3fe",
+            "node_0a530be4d4d0de5088a456d239c79e90359a6b0e710a7bafd5e85572bc9b4ca3"
+          ]
+        },
+        "validation_errors": []
+      }
+    },
+    "phase": "ready",
+    "revision": 1,
+    "root_instance_id": "node_b738d25741629c31e50f76a261ac1429d2e10b51d065ca9ce3d76335b3047fe7",
+    "summary": "Shared A2UI form\nSeed\nName\nLanguage\nConfirm\nSubmit"
+  },
+  "interaction": {
+    "action": {
+      "action_id": "action",
+      "instance_id": "node_0a530be4d4d0de5088a456d239c79e90359a6b0e710a7bafd5e85572bc9b4ca3"
+    },
+    "edits": [
+      {
+        "binding": "value",
+        "instance_id": "node_2fdbed27790810546f8a6dee17b9af4c04c0f0bd4d59f7c8bc5c30a67e65ccee",
+        "type": "set",
+        "value": "共同验收"
+      },
+      {
+        "binding": "value",
+        "instance_id": "node_76ff3d71f456e2dfe94b8b44eccd3b1a99d4f77bc43340ab432317ba16632abd",
+        "type": "set",
+        "value": [
+          "zh"
+        ]
+      },
+      {
+        "binding": "value",
+        "instance_id": "node_85db34571ef3a978c1b17fb0d7414743ce066203275bf581766e767d2f85f3fe",
+        "type": "set",
+        "value": true
+      }
+    ],
+    "expected_surface_revision": 1,
+    "identity": {
+      "generation": 1,
+      "owner": {
+        "authority_id": "fixture-host",
+        "context_id": "fixture-context",
+        "conversation_id": "fixture-conversation",
+        "message_id": "fixture-message",
+        "originating_run_id": "fixture-run",
+        "part_id": "fixture-part",
+        "participant_id": "fixture-assistant"
+      },
+      "surface_id": "shared-form"
+    }
+  },
+  "resolved_event": {
+    "context": {
+      "confirmed": true,
+      "languages": [
+        "zh"
+      ],
+      "name": "共同验收"
+    },
+    "name": "submit_form",
+    "sourceComponentId": "submit",
+    "surfaceId": "shared-form"
+  },
+  "wire_input": {
+    "expected_revision": 0,
+    "messages": [
+      {
+        "createSurface": {
+          "catalogId": "https://nola.app/a2ui/v0.9.1/catalog.json",
+          "sendDataModel": true,
+          "surfaceId": "shared-form"
+        },
+        "version": "v0.9.1"
+      },
+      {
+        "updateComponents": {
+          "components": [
+            {
+              "children": [
+                "title",
+                "echo",
+                "name",
+                "choice",
+                "consent",
+                "submit"
+              ],
+              "component": "Column",
+              "id": "root"
+            },
+            {
+              "component": "Text",
+              "id": "title",
+              "text": "Shared A2UI form"
+            },
+            {
+              "component": "Text",
+              "id": "echo",
+              "text": {
+                "path": "/name"
+              }
+            },
+            {
+              "component": "TextField",
+              "id": "name",
+              "label": "Name",
+              "value": {
+                "path": "/name"
+              }
+            },
+            {
+              "component": "ChoicePicker",
+              "id": "choice",
+              "label": "Language",
+              "options": [
+                {
+                  "label": "中文",
+                  "value": "zh"
+                },
+                {
+                  "label": "English",
+                  "value": "en"
+                }
+              ],
+              "value": {
+                "path": "/languages"
+              },
+              "variant": "mutuallyExclusive"
+            },
+            {
+              "component": "CheckBox",
+              "id": "consent",
+              "label": "Confirm",
+              "value": {
+                "path": "/confirmed"
+              }
+            },
+            {
+              "action": {
+                "event": {
+                  "context": {
+                    "confirmed": {
+                      "path": "/confirmed"
+                    },
+                    "languages": {
+                      "path": "/languages"
+                    },
+                    "name": {
+                      "path": "/name"
+                    }
+                  },
+                  "name": "submit_form"
+                }
+              },
+              "child": "submit-label",
+              "component": "Button",
+              "id": "submit"
+            },
+            {
+              "component": "Text",
+              "id": "submit-label",
+              "text": "Submit"
+            }
+          ],
+          "surfaceId": "shared-form"
+        },
+        "version": "v0.9.1"
+      },
+      {
+        "updateDataModel": {
+          "surfaceId": "shared-form",
+          "value": {
+            "confirmed": false,
+            "languages": [
+              "en"
+            ],
+            "name": "Seed"
+          }
+        },
+        "version": "v0.9.1"
+      }
+    ]
+  }
+}

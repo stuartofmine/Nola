@@ -1,0 +1,70 @@
+import Foundation
+
+struct Projection: Decodable {
+    let contractVersion: UInt32
+    let revision: UInt64
+    let messages: [Message]
+
+    enum CodingKeys: String, CodingKey {
+        case revision, messages
+        case contractVersion = "contract_version"
+    }
+}
+
+struct Message: Decodable {
+    let role: String
+    let parts: [Part]
+}
+
+struct Part: Decodable {
+    let kind: String
+    let partID: String
+    let markdown: String?
+
+    enum CodingKeys: String, CodingKey {
+        case kind, markdown
+        case partID = "part_id"
+    }
+}
+
+func fail(_ message: String) -> Never {
+    FileHandle.standardError.write(Data((message + "\n").utf8))
+    exit(1)
+}
+
+guard CommandLine.arguments.count == 2 else { fail("usage: harness <session-show.json>") }
+let data = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1]))
+guard let payload = MacSessionShowPayloadDecoder.decode(data) else {
+    fail("production Mac session-show decoder rejected CLI output")
+}
+let roles = payload.messages.map(\.role)
+let contents = payload.messages.map(\.content)
+guard roles == ["user", "assistant", "user", "assistant"],
+      contents == ["First question", "First final", "Second question", "Second final"] else {
+    fail("canonical messages were not preserved: \(Array(zip(roles, contents)))")
+}
+guard !contents.contains(where: { $0.contains("WRONG TRACE CONTENT") }) else {
+    fail("diagnostic Trace overrode canonical Message/Part content")
+}
+guard payload.traceRunObjects.count == 1 else {
+    fail("diagnostic Trace was not available independently")
+}
+guard let projectionData = payload.conversationProjectionData,
+      let projection = try? JSONDecoder().decode(Projection.self, from: projectionData) else {
+    fail("canonical conversation projection was not decoded")
+}
+guard projection.contractVersion == 1 else { fail("unexpected projection contract version") }
+let assistantParts = projection.messages
+    .filter { $0.role == "assistant" }
+    .flatMap(\.parts)
+let assistantText = assistantParts
+    .filter { $0.kind == "text" }
+    .compactMap(\.markdown)
+guard assistantText == ["First final", "Second final"] else {
+    fail("canonical Part projection changed: \(assistantText)")
+}
+let partIDs = Set(assistantParts.map(\.partID))
+guard partIDs.contains("r1"), partIDs.contains("t1") else {
+    fail("reasoning or tool Part is missing from the projection")
+}
+print("Mac canonical session projection process E2E passed")

@@ -1,0 +1,35 @@
+[package]
+name = "nola-code-memory"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+arborium = { version = "=2.18.2", default-features = false, features = [
+    "lang-asciidoc", "lang-asm", "lang-awk", "lang-bash", "lang-batch",
+    "lang-c", "lang-c-sharp", "lang-cmake", "lang-cpp", "lang-css",
+    "lang-dart", "lang-diff", "lang-dockerfile", "lang-dot", "lang-elisp",
+    "lang-fish", "lang-gitattributes", "lang-glsl", "lang-go", "lang-graphql",
+    "lang-hcl", "lang-hlsl", "lang-html", "lang-ini", "lang-java",
+    "lang-jinja2", "lang-jq", "lang-jsdoc", "lang-json", "lang-lua",
+    "lang-make", "lang-markdown", "lang-matlab", "lang-meson", "lang-ninja",
+    "lang-nix", "lang-objc", "lang-perl", "lang-php", "lang-powershell",
+    "lang-proto", "lang-query", "lang-r", "lang-regex", "lang-ruby",
+    "lang-scss", "lang-solidity", "lang-sql", "lang-ssh-config",
+    "lang-starlark", "lang-svelte", "lang-textproto", "lang-toml", "lang-vim",
+    "lang-verilog", "lang-vue", "lang-x86asm", "lang-xml", "lang-yaml", "lang-zsh",
+] }
+ignore = "0.4.33"
+regex = "1.10"
+rusqlite = { version = "0.31", features = ["bundled", "functions"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+tree-sitter-javascript = "0.25.0"
+tree-sitter-kotlin-ng = "1.1.0"
+tree-sitter-python = "0.25.0"
+tree-sitter-rust = "0.24.2"
+tree-sitter-swift = "0.7.3"
+tree-sitter-typescript = "0.23.2"
+
+[dev-dependencies]
+tempfile = "3.12"

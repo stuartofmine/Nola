@@ -1,0 +1,622 @@
+{% extends "base.html" %}
+{% import "_icons.html" as icons %}
+
+{% block title %}{{ tr('page.results.title', '执行记录 - Nola', 'Run history - Nola') }}{% endblock %}
+
+{% block content %}
+<div class="subpage results-page">
+    <div class="page-header">
+        <div>
+            <div class="page-eyebrow">{{ tr('results.header.eyebrow', '可追溯记录', 'Traceable history') }}</div>
+            <h1 class="page-title">{{ icons.icon('results') }}<span>{{ tr('results.header.title', '执行记录', 'Run history') }}</span></h1>
+            <p class="page-subtitle">{{ tr('results.header.subtitle', '查看每次自动化的结论、来源、运行状态与详细日志。', 'Review the conclusion, source, status, and detailed logs for every automation run.') }}</p>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="refreshBtn">
+            {{ icons.icon('refresh') }}
+            <span id="refreshLabel">{{ tr('results.actions.refresh', '刷新', 'Refresh') }}</span>
+        </button>
+    </div>
+
+    <div class="history-overview" aria-label="{{ tr('results.overview.aria', '执行状态概览', 'Run status overview') }}">
+        <article><i aria-hidden="true"></i><span><strong id="history-total">—</strong><small>{{ tr('results.overview.total', '全部运行', 'All runs') }}</small></span></article>
+        <article class="is-positive"><i aria-hidden="true"></i><span><strong id="history-success">—</strong><small>{{ tr('results.overview.success', '成功', 'Successful') }}</small></span></article>
+        <article class="is-attention"><i aria-hidden="true"></i><span><strong id="history-attention">—</strong><small>{{ tr('results.overview.attention', '需要关注', 'Needs attention') }}</small></span></article>
+        <article class="is-active"><i aria-hidden="true"></i><span><strong id="history-active">—</strong><small>{{ tr('results.overview.active', '进行中', 'Active') }}</small></span></article>
+    </div>
+
+    <div id="results-message" class="automation-announcer" role="status" aria-live="polite" aria-atomic="true"></div>
+
+    <section id="active-runs-section" class="section-card active-runs-section" hidden aria-labelledby="active-runs-title">
+        <div class="section-heading-row">
+            <div>
+                <h2 id="active-runs-title">{{ tr('results.active.title', '当前运行', 'Current runs') }}</h2>
+                <p>{{ tr('results.active.subtitle', '仍在等待或执行的自动化会持续更新。', 'Queued and running automations update continuously.') }}</p>
+            </div>
+            <span class="active-runs-live" aria-hidden="true"><i></i>{{ tr('results.active.live', '实时', 'Live') }}</span>
+        </div>
+        <div id="active-results-list" class="active-results-list" aria-live="polite"></div>
+    </section>
+
+    <section class="section-card list-section">
+        <div class="section-heading-row"><div><h2>{{ tr('results.list.title', '最近运行', 'Recent runs') }} <span id="results-visible-count" class="history-count" aria-live="polite"></span></h2><p>{{ tr('results.list.subtitle', '按完成时间展示，失败记录会保留诊断信息。', 'Sorted by completion time, with diagnostics retained for failures.') }}</p></div></div>
+        <div class="history-filterbar" role="search">
+            <label class="history-search">
+                <span class="sr-only">{{ tr('results.filter.search_label', '搜索执行记录', 'Search run history') }}</span>
+                {{ icons.icon('search') }}
+                <input id="results-search" type="search" autocomplete="off" placeholder="{{ tr('results.filter.search_placeholder', '搜索任务、来源或结果', 'Search task, source, or result') }}">
+            </label>
+            <div class="history-filterchips" aria-label="{{ tr('results.filter.status_label', '按运行状态筛选', 'Filter by run status') }}">
+                <button type="button" class="history-filterchip is-active" data-filter="all" aria-pressed="true">{{ tr('results.filter.all', '全部', 'All') }}</button>
+                <button type="button" class="history-filterchip" data-filter="success" aria-pressed="false">{{ tr('results.filter.success', '成功', 'Success') }}</button>
+                <button type="button" class="history-filterchip" data-filter="attention" aria-pressed="false">{{ tr('results.filter.attention', '需关注', 'Needs attention') }}</button>
+            </div>
+        </div>
+        <div id="results-list" class="item-list" aria-live="polite" aria-busy="true">
+            <div class="skeleton skeleton-card"></div>
+            <div class="skeleton skeleton-card"></div>
+            <div class="skeleton skeleton-card"></div>
+        </div>
+        <div id="results-filter-empty" class="history-filter-empty" hidden>
+            <strong>{{ tr('results.filter.empty_title', '没有匹配的执行记录', 'No matching runs') }}</strong>
+            <span>{{ tr('results.filter.empty_desc', '调整关键词或运行状态后再试。', 'Try another search or run status.') }}</span>
+            <button id="results-filter-reset" type="button" class="btn btn-secondary btn-sm">{{ tr('results.filter.reset', '重置筛选', 'Reset filters') }}</button>
+        </div>
+    </section>
+</div>
+
+<style>
+.history-overview{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin:4px 0 16px;padding:12px 8px;border:1px solid var(--border);border-radius:15px;background:color-mix(in srgb,var(--surface-raised) 94%,transparent);box-shadow:var(--shadow-1)}.history-overview article{display:flex;align-items:center;gap:11px;min-width:0;padding:4px 16px;border-left:1px solid var(--border)}.history-overview article:first-child{border-left:0}.history-overview article>i{width:8px;height:8px;flex:none;border-radius:50%;background:var(--text-tertiary);box-shadow:0 0 0 4px color-mix(in srgb,var(--text-tertiary) 10%,transparent)}.history-overview article>span{display:flex;min-width:0;align-items:baseline;gap:8px}.history-overview strong{font-size:1.2rem;line-height:1;color:var(--text-primary);font-variant-numeric:tabular-nums;letter-spacing:-.025em}.history-overview small{overflow:hidden;color:var(--text-secondary);font-size:.76rem;font-weight:620;line-height:1.2;text-overflow:ellipsis;white-space:nowrap}.history-overview .is-positive>i{background:var(--success);box-shadow:0 0 0 4px color-mix(in srgb,var(--success) 12%,transparent)}.history-overview .is-attention>i{background:var(--danger);box-shadow:0 0 0 4px color-mix(in srgb,var(--danger) 12%,transparent)}.history-overview .is-active>i{background:var(--accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 12%,transparent)}.history-overview .is-positive strong{color:var(--success)}.history-overview .is-attention strong{color:var(--danger)}.history-overview .is-active strong{color:var(--accent)}.history-filterbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:18px 0 6px}.history-search{min-width:220px;max-width:420px;flex:1;display:flex;align-items:center;gap:9px;padding:0 12px;border:1px solid var(--border);border-radius:12px;background:var(--surface-raised)}.history-search:focus-within{border-color:color-mix(in srgb,var(--accent) 48%,var(--border));box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 10%,transparent)}.history-search svg{width:17px;height:17px;color:var(--text-tertiary);flex:none}.history-search input{width:100%;height:40px;border:0;outline:0;background:transparent;color:var(--text-primary);font:inherit}.history-filterchips{display:flex;gap:6px;overflow-x:auto;padding:2px}.history-filterchip{white-space:nowrap;border:1px solid var(--border);border-radius:999px;background:transparent;color:var(--text-secondary);padding:7px 11px;font:inherit;font-size:.84rem;cursor:pointer}.history-filterchip:hover{background:var(--surface-hover);color:var(--text-primary)}.history-filterchip.is-active{border-color:color-mix(in srgb,var(--accent) 45%,var(--border));background:color-mix(in srgb,var(--accent) 11%,transparent);color:var(--accent)}.history-count{font-size:.78rem;font-weight:600;color:var(--text-tertiary);vertical-align:middle}.history-filter-empty{margin:24px 0 4px;padding:28px;text-align:center;border:1px dashed var(--border);border-radius:14px;color:var(--text-secondary)}.history-filter-empty strong,.history-filter-empty span{display:block}.history-filter-empty strong{color:var(--text-primary);margin-bottom:5px}.history-filter-empty .btn{margin-top:14px}.result-item[role="button"]{cursor:pointer}.result-item[role="button"]:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 72%,white);outline-offset:3px}.result-item[role="button"]:hover .view-detail-btn{border-color:color-mix(in srgb,var(--accent) 42%,var(--border));color:var(--accent)}@media(max-width:720px){.history-overview{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:12px}.history-overview article{padding:4px 6px;border-left:0}.history-overview article:nth-child(even){border-left:1px solid var(--border);padding-left:16px}.history-filterbar{align-items:stretch;flex-direction:column}.history-search{max-width:none}.history-filterchips{margin-inline:-2px}}
+.active-runs-section{margin-bottom:14px;border-color:color-mix(in srgb,var(--accent) 28%,var(--border));background:linear-gradient(145deg,color-mix(in srgb,var(--accent) 7%,var(--surface-raised)),var(--surface-raised))}.active-runs-live{display:inline-flex;align-items:center;gap:7px;padding:6px 9px;border-radius:999px;background:color-mix(in srgb,var(--accent) 10%,transparent);color:var(--accent);font-size:.72rem;font-weight:700}.active-runs-live i{width:7px;height:7px;border-radius:50%;background:currentColor;box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 28%,transparent);animation:active-run-pulse 2s ease-out infinite}.active-results-list{display:grid;gap:9px;margin-top:13px}.active-run-item{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:12px;padding:13px 14px;border:1px solid color-mix(in srgb,var(--accent) 20%,var(--border));border-radius:13px;background:color-mix(in srgb,var(--surface-raised) 92%,transparent);cursor:pointer}.active-run-indicator{width:24px;height:24px;border:2px solid color-mix(in srgb,var(--accent) 18%,transparent);border-top-color:var(--accent);border-radius:50%;animation:active-run-spin 1.1s linear infinite}.active-run-indicator.is-queued{width:10px;height:10px;margin:7px;border:0;background:var(--warning);box-shadow:0 0 0 0 color-mix(in srgb,var(--warning) 28%,transparent);animation:active-run-pulse 2s ease-out infinite}.active-run-copy{min-width:0;display:flex;flex-direction:column;gap:3px}.active-run-copy strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.86rem;color:var(--text-primary)}.active-run-copy span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.75rem;color:var(--text-secondary)}@keyframes active-run-spin{to{transform:rotate(360deg)}}@keyframes active-run-pulse{70%{box-shadow:0 0 0 7px transparent}}@media(prefers-reduced-motion:reduce){.active-run-indicator,.active-runs-live i{animation:none}}@media(max-width:720px){.active-run-item{grid-template-columns:auto minmax(0,1fr)}.active-run-item>.btn{display:none}}
+@keyframes result-content-enter {
+    from { opacity: 0; transform: translateY(5px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+.result-item,.active-run-item,.automation-load-error{
+    animation:result-content-enter var(--dur-base) var(--ease-out) both
+}
+.result-item:nth-child(2),.active-run-item:nth-child(2){animation-delay:18ms}
+.result-item:nth-child(3),.active-run-item:nth-child(3){animation-delay:36ms}
+.result-item:nth-child(4),.active-run-item:nth-child(4){animation-delay:54ms}
+.result-inspector #modal-body>.detail-section,
+.result-inspector #modal-body>.detail-grid{
+    animation:result-content-enter var(--dur-base) var(--ease-out) both
+}
+@media(prefers-reduced-motion:reduce){
+    .result-item,.active-run-item,.automation-load-error,
+    .result-inspector #modal-body>.detail-section,
+    .result-inspector #modal-body>.detail-grid{animation:none}
+}
+</style>
+
+<!-- Result detail modal -->
+<div id="resultModal" class="modal result-inspector" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-hidden="true">
+    <div class="modal-content modal-wide result-inspector-panel" tabindex="-1">
+        <div class="modal-header">
+            <h2 id="modal-title">{{ tr('results.modal.title', '执行详情', 'Run details') }}</h2>
+            <button class="close-btn" id="closeResultModal" aria-label="{{ tr('results.modal.close', '关闭', 'Close') }}">{{ icons.icon('x') }}</button>
+        </div>
+        <div id="modal-body" class="result-detail-body" aria-live="polite" aria-busy="false">
+            <p class="loading-text">{{ tr('results.loading', '加载中...', 'Loading...') }}</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const I18N = {
+    statusSuccess: {{ tr('results.js.status.success', '成功', 'Success') | tojson }},
+    statusFailed: {{ tr('results.js.status.failed', '失败', 'Failed') | tojson }},
+    statusPartial: {{ tr('results.js.status.partial', '部分完成', 'Partially completed') | tojson }},
+    statusSkipped: {{ tr('results.js.status.skipped', '已跳过', 'Skipped') | tojson }},
+    statusRunning: {{ tr('results.js.status.running', '执行中', 'Running') | tojson }},
+    statusQueued: {{ tr('results.js.status.queued', '等待中', 'Queued') | tojson }},
+    activeRunningDetail: {{ tr('results.js.active.running_detail', '正在执行，状态会自动更新', 'Running now; status updates automatically') | tojson }},
+    activeQueuedDetail: {{ tr('results.js.active.queued_detail', '已进入队列，等待宿主机开始执行', 'Queued and waiting for the host to begin') | tojson }},
+    waitingForHistory: {{ tr('results.js.active.waiting_history', '首次运行完成后，结果会保存在这里。', 'Results will be saved here when the first run completes.') | tojson }},
+    formatHtml: {{ tr('results.js.format.html', '网页监控', 'Web monitor') | tojson }},
+    formatSearch: {{ tr('results.js.format.search', '搜索任务', 'Search task') | tojson }},
+    formatScript: {{ tr('results.js.format.script', '脚本自动化', 'Script automation') | tojson }},
+    formatFile: {{ tr('results.js.format.file', '文件', 'File') | tojson }},
+    formatFolder: {{ tr('results.js.format.folder', '文件夹', 'Folder') | tojson }},
+    formatRss: {{ tr('results.js.format.rss', 'RSS', 'RSS') | tojson }},
+    formatJson: {{ tr('results.js.format.json', 'JSON', 'JSON') | tojson }},
+    formatIcalendar: {{ tr('results.js.format.icalendar', '日历', 'Calendar') | tojson }},
+    dash: {{ tr('results.js.dash', '—', '—') | tojson }},
+    locale: {{ tr('results.js.locale', 'zh-CN', 'en-US') | tojson }},
+    loadFailed: {{ tr('results.js.load_failed', '无法加载执行记录：', 'Failed to load run history: ') | tojson }},
+    emptyTitle: {{ tr('results.js.empty.title', '还没有执行记录', 'No run history yet') | tojson }},
+    emptyDesc: {{ tr('results.js.empty.desc', '配置定时任务并等待执行，或在任务列表里点击「立即执行」。', 'Configure scheduled tasks and wait for execution, or click "Run now" in task list.') | tojson }},
+    goScheduled: {{ tr('results.js.empty.go_scheduled', '前往定时任务', 'Go to automations') | tojson }},
+    unknownSource: {{ tr('results.js.unknown_source', '未知来源', 'Unknown source') | tojson }},
+    unknownTask: {{ tr('results.js.unknown_task', '任务', 'Task') | tojson }},
+    scheduledAt: {{ tr('results.js.meta.scheduled_at', '计划时间', 'Scheduled') | tojson }},
+    completedAt: {{ tr('results.js.meta.completed_at', '完成时间', 'Completed') | tojson }},
+    ackCount: {{ tr('results.js.meta.ack_count', '确认次数', 'Ack count') | tojson }},
+    viewDetail: {{ tr('results.js.view_detail', '查看详情', 'View details') | tojson }},
+    networkFailed: {{ tr('results.js.network_failed', '请求失败，请检查网络', 'Request failed. Please check network.') | tojson }},
+    loading: {{ tr('results.loading', '加载中...', 'Loading...') | tojson }},
+    detailTitle: {{ tr('results.modal.title', '执行详情', 'Run details') | tojson }},
+    detailLoadFailed: {{ tr('results.js.detail.load_failed', '加载失败：', 'Failed to load: ') | tojson }},
+    statusLabel: {{ tr('results.js.detail.field.status', '状态', 'Status') | tojson }},
+    taskTypeLabel: {{ tr('results.js.detail.field.task_type', '任务类型', 'Task type') | tojson }},
+    sourceLabel: {{ tr('results.js.detail.field.source', '来源', 'Source') | tojson }},
+    urlLabel: {{ tr('results.js.detail.field.url', 'URL', 'URL') | tojson }},
+    localSourceLabel: {{ tr('results.js.detail.field.local_source', '本地位置', 'Local location') | tojson }},
+    resultIdLabel: {{ tr('results.js.detail.field.result_id', 'Result ID', 'Result ID') | tojson }},
+    summaryHeading: {{ tr('results.js.detail.summary_heading', '执行结论', 'Run summary') | tojson }},
+    snapshotHeading: {{ tr('results.js.detail.snapshot_heading', '网页抓取结果', 'Web snapshot') | tojson }},
+    snapshotNoTitle: {{ tr('results.js.detail.snapshot.no_title', '未识别标题', 'Untitled page') | tojson }},
+    scriptLogHeading: {{ tr('results.js.detail.script.heading', '脚本运行日志', 'Script run log') | tojson }},
+    runDirLabel: {{ tr('results.js.detail.script.cwd', '运行目录', 'Working directory') | tojson }},
+    exitCodeLabel: {{ tr('results.js.detail.script.exit_code', '退出码', 'Exit code') | tojson }},
+    scriptStdoutLabel: {{ tr('results.js.detail.script.stdout', '标准输出（stdout）', 'Standard output (stdout)') | tojson }},
+    scriptStderrLabel: {{ tr('results.js.detail.script.stderr', '标准错误（stderr）', 'Standard error (stderr)') | tojson }},
+    aiSummaryHeading: {{ tr('results.js.detail.ai_summary', 'AI 摘要', 'AI summary') | tojson }},
+    failureReasonHeading: {{ tr('results.js.detail.failure_reason', '失败原因', 'Failure reason') | tojson }},
+    eventsHeadingPrefix: {{ tr('results.js.detail.events_prefix', '提取事件（', 'Extracted events (') | tojson }},
+    eventsHeadingSuffix: {{ tr('results.js.detail.events_suffix', '）', ')') | tojson }},
+    eventLink: {{ tr('results.js.detail.event.link', '链接', 'Link') | tojson }},
+    requestFailedPrefix: {{ tr('results.js.request_failed_prefix', '请求失败：', 'Request failed: ') | tojson }},
+    retry: {{ tr('results.js.retry', '重试', 'Retry') | tojson }},
+    refresh: {{ tr('results.actions.refresh', '刷新', 'Refresh') | tojson }},
+    refreshing: {{ tr('results.js.refreshing', '正在刷新…', 'Refreshing...') | tojson }},
+    refreshed: {{ tr('results.js.refreshed', '执行记录已更新', 'Run history updated') | tojson }},
+    upToDate: {{ tr('results.js.up_to_date', '执行记录已是最新', 'Run history is up to date') | tojson }},
+    logShow: {{ tr('results.js.log.show', '展开完整日志', 'Show full log') | tojson }},
+    invalidLink: {{ tr('results.js.invalid_link', '链接不可用', 'Link unavailable') | tojson }},
+    visibleCount: {{ tr('results.js.visible_count', '项', 'shown') | tojson }},
+};
+
+const statusLabel = { success: I18N.statusSuccess, failed: I18N.statusFailed, partial: I18N.statusPartial, skipped: I18N.statusSkipped, running: I18N.statusRunning, queued: I18N.statusQueued };
+const statusClass = { success: 'badge-enabled', failed: 'badge-error', partial: 'badge-running', skipped: 'badge-disabled', running: 'badge-running', queued: 'badge-queued' };
+const formatLabel = { html: I18N.formatHtml, search: I18N.formatSearch, script: I18N.formatScript, file: I18N.formatFile, folder: I18N.formatFolder, rss: I18N.formatRss, json: I18N.formatJson, icalendar: I18N.formatIcalendar };
+const formatBadgeClass = { html: 'badge-html', search: 'badge-search', script: 'badge-running', file: 'badge-enabled', folder: 'badge-enabled', rss: 'badge-html', json: 'badge-html', icalendar: 'badge-html' };
+
+function escHtml(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function formatTime(iso) {
+    if (!iso) return I18N.dash;
+    const date = new Date(iso);
+    return Number.isNaN(date.getTime()) ? I18N.dash : date.toLocaleString(I18N.locale);
+}
+
+function safeExternalUrl(rawUrl) {
+    const value = String(rawUrl || '').trim();
+    if (!value) return null;
+    try {
+        const parsed = new URL(value);
+        return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : null;
+    } catch (_) {
+        return null;
+    }
+}
+
+function announce(message) {
+    const node = document.getElementById('results-message');
+    node.textContent = '';
+    window.requestAnimationFrame(() => { node.textContent = message; });
+}
+
+function renderLoadError(message) {
+    return `<div class="automation-load-error" role="alert">
+        <div>${Nola.icon('warning')}</div>
+        <div><strong>${escHtml(I18N.loadFailed)}</strong><p>${escHtml(message || I18N.networkFailed)}</p></div>
+        <button class="btn btn-secondary btn-sm results-retry-btn" type="button">${escHtml(I18N.retry)}</button>
+    </div>`;
+}
+
+function updateHistoryOverview(results) {
+    const rows = Array.isArray(results) ? results : [];
+    const active = rows.filter(result => result.status === 'running' || result.status === 'queued').length;
+    const attention = rows.filter(result => result.status === 'failed' || result.status === 'partial').length;
+    document.getElementById('history-total').textContent = String(rows.length);
+    document.getElementById('history-success').textContent = String(rows.filter(result => result.status === 'success').length);
+    document.getElementById('history-attention').textContent = String(attention);
+    document.getElementById('history-active').textContent = String(active);
+}
+
+let resultsLoadPromise = null;
+let resultsSignature = '';
+let hasActiveResults = false;
+let previouslyFocusedElement = null;
+let previousBodyOverflow = '';
+let resultDetailSequence = 0;
+let resultFilter = 'all';
+
+function clearResultFilterPresentation() {
+    document.getElementById('results-visible-count').textContent = '';
+    document.getElementById('results-filter-empty').hidden = true;
+}
+
+function applyResultFilters() {
+    const query = document.getElementById('results-search').value.trim().toLocaleLowerCase(I18N.locale);
+    const cards = [...document.querySelectorAll('#results-list .result-item')];
+    let visibleCount = 0;
+    cards.forEach(card => {
+        const matchesQuery = !query || (card.dataset.search || '').includes(query);
+        const status = card.dataset.status || '';
+        const matchesStatus = resultFilter === 'all'
+            || status === resultFilter
+            || (resultFilter === 'attention' && (status === 'failed' || status === 'partial'))
+            || (resultFilter === 'active' && (status === 'running' || status === 'queued'));
+        const visible = matchesQuery && matchesStatus;
+        card.hidden = !visible;
+        if (visible) visibleCount += 1;
+    });
+    document.getElementById('results-visible-count').textContent = cards.length
+        ? `${visibleCount}/${cards.length} ${I18N.visibleCount}`
+        : '';
+    document.getElementById('results-filter-empty').hidden = cards.length === 0 || visibleCount !== 0;
+}
+
+function resetResultFilters() {
+    resultFilter = 'all';
+    document.getElementById('results-search').value = '';
+    document.querySelectorAll('.history-filterchip').forEach(button => {
+        const active = button.dataset.filter === 'all';
+        button.classList.toggle('is-active', active);
+        button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+    applyResultFilters();
+}
+
+async function loadResults(options = {}) {
+    const { showSkeleton = true, announceUpdate = false } = options;
+    const list = document.getElementById('results-list');
+    const refreshButton = document.getElementById('refreshBtn');
+    const refreshLabel = document.getElementById('refreshLabel');
+    if (resultsLoadPromise) return resultsLoadPromise;
+    if (showSkeleton) {
+        list.innerHTML = Nola.skeleton(3);
+    }
+    list.setAttribute('aria-busy', 'true');
+    refreshButton.disabled = true;
+    refreshButton.setAttribute('aria-busy', 'true');
+    refreshLabel.textContent = I18N.refreshing;
+    resultsLoadPromise = (async () => { try {
+        const resp = await fetch('/api/results');
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+            clearResultFilterPresentation();
+            updateHistoryOverview([]);
+            list.innerHTML = renderLoadError(data.error || `${resp.status}`);
+            resultsSignature = '';
+            return;
+        }
+        const results = data.results || [];
+        const activeResults = results.filter(result => result.status === 'running' || result.status === 'queued');
+        const completedResults = results.filter(result => result.status !== 'running' && result.status !== 'queued');
+        updateHistoryOverview(results);
+        hasActiveResults = activeResults.length > 0;
+        const activeSection = document.getElementById('active-runs-section');
+        const activeList = document.getElementById('active-results-list');
+        activeSection.hidden = activeResults.length === 0;
+        activeList.innerHTML = activeResults.map(r => `
+            <article class="active-run-item" role="button" tabindex="0" data-id="${escHtml(r.resultId)}" aria-label="${escHtml(I18N.viewDetail)} · ${escHtml(r.sourceName || r.sourceId || I18N.unknownSource)}">
+                <span class="active-run-indicator ${r.status === 'queued' ? 'is-queued' : 'is-running'}" aria-hidden="true"></span>
+                <span class="active-run-copy">
+                    <strong>${escHtml(r.sourceName || r.sourceId || I18N.unknownTask)}</strong>
+                    <span>${escHtml(r.previewText || (r.status === 'queued' ? I18N.activeQueuedDetail : I18N.activeRunningDetail))}</span>
+                </span>
+                <span class="btn btn-secondary btn-sm" aria-hidden="true">${escHtml(I18N.viewDetail)}</span>
+            </article>
+        `).join('');
+        if (results.length === 0) {
+            resultsSignature = '[]';
+            clearResultFilterPresentation();
+            list.innerHTML = `
+                <div class="empty-state">
+                    <div class="illust">${Nola.icon('results', { width: 64, height: 64 })}</div>
+                    <h3>${escHtml(I18N.emptyTitle)}</h3>
+                    <p>${escHtml(I18N.emptyDesc)}</p>
+                    <a class="btn btn-primary empty-cta" href="/scheduled-actions">${Nola.icon('scheduled')} ${escHtml(I18N.goScheduled)}</a>
+                </div>`;
+            return;
+        }
+        const signature = JSON.stringify(results.map(r => [r.resultId, r.status, r.previewText, r.createdAt, r.ackCount]));
+        if (signature === resultsSignature) {
+            if (announceUpdate) announce(I18N.upToDate);
+            return;
+        }
+        resultsSignature = signature;
+        list.innerHTML = completedResults.length ? completedResults.map(r => `
+            <article class="result-item result-status-${escHtml(r.status || 'unknown')} ${r.status === 'running' || r.status === 'queued' ? 'is-active' : ''}" role="button" tabindex="0" aria-label="${escHtml(I18N.viewDetail)} · ${escHtml(r.sourceName || r.sourceId || I18N.unknownSource)}" data-id="${escHtml(r.resultId)}" data-status="${escHtml(r.status)}" data-search="${escHtml(`${r.sourceName || ''} ${r.sourceId || ''} ${r.sourceUrl || ''} ${r.previewText || ''} ${formatLabel[r.sourceFormat] || ''}`.toLocaleLowerCase(I18N.locale))}">
+                <div class="result-visual" aria-hidden="true">${Nola.icon('results')}</div>
+                <div class="result-content">
+                    <div class="result-main">
+                        <span class="result-source">${escHtml(r.sourceName || r.sourceId || I18N.unknownSource)}</span>
+                        <span class="result-badge ${formatBadgeClass[r.sourceFormat] || 'badge-disabled'}">
+                            ${formatLabel[r.sourceFormat] || I18N.unknownTask}
+                        </span>
+                        <span class="result-badge ${statusClass[r.status] || 'badge-disabled'}">
+                            ${escHtml(statusLabel[r.status] || r.status || I18N.dash)}
+                        </span>
+                    </div>
+                    ${r.previewText ? `<div class="result-preview">${escHtml(r.previewText)}</div>` : ''}
+                    <div class="result-meta">
+                        <span>${escHtml(I18N.scheduledAt)}：${escHtml(formatTime(r.scheduledAt))}</span>
+                        <span>${escHtml(I18N.completedAt)}：${escHtml(formatTime(r.createdAt))}</span>
+                    </div>
+                </div>
+                <div class="result-actions">
+                    <span class="btn btn-secondary btn-sm view-detail-btn" data-id="${escHtml(r.resultId)}" aria-hidden="true">${escHtml(I18N.viewDetail)}</span>
+                </div>
+            </article>
+        `).join('') : `<div class="history-filter-empty"><span>${escHtml(I18N.waitingForHistory)}</span></div>`;
+        applyResultFilters();
+        if (announceUpdate) announce(I18N.refreshed);
+    } catch (e) {
+        clearResultFilterPresentation();
+        updateHistoryOverview([]);
+        list.innerHTML = renderLoadError(I18N.networkFailed);
+        resultsSignature = '';
+    } finally {
+        list.setAttribute('aria-busy', 'false');
+        refreshButton.disabled = false;
+        refreshButton.removeAttribute('aria-busy');
+        refreshLabel.textContent = I18N.refresh;
+    } })();
+    try {
+        await resultsLoadPromise;
+    } finally {
+        resultsLoadPromise = null;
+    }
+}
+
+function openResultModal() {
+    const modal = document.getElementById('resultModal');
+    const isAlreadyOpen = modal.getAttribute('aria-hidden') === 'false';
+    if (!isAlreadyOpen) {
+        previouslyFocusedElement = document.activeElement;
+        previousBodyOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+    }
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    modal.querySelector('.modal-content').focus();
+}
+
+function closeResultModal() {
+    const modal = document.getElementById('resultModal');
+    resultDetailSequence += 1;
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = previousBodyOverflow;
+    if (previouslyFocusedElement instanceof HTMLElement) previouslyFocusedElement.focus();
+    previouslyFocusedElement = null;
+}
+
+async function loadResultDetail(resultId) {
+    const sequence = ++resultDetailSequence;
+    const modal = document.getElementById('resultModal');
+    const body = document.getElementById('modal-body');
+    const title = document.getElementById('modal-title');
+    openResultModal();
+    body.setAttribute('aria-busy', 'true');
+    body.innerHTML = `<p class="loading-text">${escHtml(I18N.loading)}</p>`;
+    title.textContent = I18N.detailTitle;
+
+    try {
+        const resp = await fetch(`/api/results/${encodeURIComponent(resultId)}`);
+        const data = await resp.json();
+        if (sequence !== resultDetailSequence) return;
+        if (!resp.ok) {
+            body.innerHTML = `<div class="automation-load-error" role="alert">
+                <div>${Nola.icon('warning')}</div>
+                <div><strong>${escHtml(I18N.detailLoadFailed)}</strong><p>${escHtml(data.error || resp.status)}</p></div>
+                <button class="btn btn-secondary btn-sm result-detail-retry" type="button" data-id="${escHtml(resultId)}">${escHtml(I18N.retry)}</button>
+            </div>`;
+            return;
+        }
+        title.textContent = data.sourceName || data.sourceId || I18N.detailTitle;
+        const status = data.status || I18N.dash;
+        const statusCls = statusClass[status] || 'badge-disabled';
+        const format = data.sourceFormat || 'html';
+        const snapshot = data.htmlSnapshot || null;
+        const scriptRun = (data.events || []).find(ev => ev && ev.kind === 'script_run') || null;
+        const extractedEvents = (data.events || []).filter(ev => ev && ev.kind !== 'script_run');
+        const summaryText = data.previewText || data.llmSummaryText || '';
+        const sourceUrl = safeExternalUrl(data.sourceUrl);
+        const snapshotUrl = snapshot ? safeExternalUrl(snapshot.url) : null;
+        const hasLocalSource = format === 'file' || format === 'folder' || format === 'script';
+        const sourceLocation = sourceUrl
+            ? `<a href="${escHtml(sourceUrl)}" target="_blank" rel="noopener">${escHtml(data.sourceUrl)}</a>`
+            : escHtml(data.sourceUrl || I18N.dash);
+        body.innerHTML = `
+            ${summaryText ? `
+            <div class="detail-section result-conclusion">
+                <h3>${escHtml(I18N.summaryHeading)}</h3>
+                <div class="summary-text">${escHtml(summaryText).replace(/\n/g,'<br>')}</div>
+            </div>` : ''}
+            <div class="detail-grid">
+                <div class="detail-row"><span class="detail-label">${escHtml(I18N.statusLabel)}</span><span><span class="result-badge ${statusCls}">${escHtml(statusLabel[status] || status)}</span></span></div>
+                <div class="detail-row"><span class="detail-label">${escHtml(I18N.taskTypeLabel)}</span><span class="detail-value">${escHtml(formatLabel[format] || format)}</span></div>
+                <div class="detail-row"><span class="detail-label">${escHtml(I18N.sourceLabel)}</span><span class="detail-value">${escHtml(data.sourceName || I18N.dash)}</span></div>
+                <div class="detail-row"><span class="detail-label">${escHtml(hasLocalSource ? I18N.localSourceLabel : I18N.urlLabel)}</span><span class="detail-value">${sourceLocation}</span></div>
+                <div class="detail-row"><span class="detail-label">${escHtml(I18N.scheduledAt)}</span><span class="detail-value">${escHtml(formatTime(data.scheduledAt))}</span></div>
+                <div class="detail-row"><span class="detail-label">${escHtml(I18N.completedAt)}</span><span class="detail-value">${escHtml(formatTime(data.fetchedAt))}</span></div>
+                <div class="detail-row"><span class="detail-label">${escHtml(I18N.ackCount)}</span><span class="detail-value">${Number.isFinite(Number(data.ackCount)) ? Number(data.ackCount) : 0}</span></div>
+                <div class="detail-row"><span class="detail-label">${escHtml(I18N.resultIdLabel)}</span><span class="detail-value mono">${escHtml(data.resultId || I18N.dash)}</span></div>
+            </div>
+            ${snapshot ? `
+            <div class="detail-section">
+                <h3>${escHtml(I18N.snapshotHeading)}</h3>
+                <div class="snapshot-card">
+                    <div class="snapshot-title">${escHtml(snapshot.title || I18N.snapshotNoTitle)}</div>
+                    ${snapshot.summary ? `<div class="snapshot-summary">${escHtml(snapshot.summary)}</div>` : ''}
+                    <div class="snapshot-meta">
+                        <span>HTTP ${escHtml(String(snapshot.statusCode || '200'))}</span>
+                        <span>${escHtml(snapshot.contentType || 'text/html')}</span>
+                    </div>
+                    ${snapshotUrl ? `<a class="snapshot-link" href="${escHtml(snapshotUrl)}" target="_blank" rel="noopener">${escHtml(snapshot.url)}</a>` : ''}
+                </div>
+            </div>` : ''}
+            ${scriptRun ? `
+            <div class="detail-section">
+                <h3>${escHtml(I18N.scriptLogHeading)}</h3>
+                <div class="detail-grid">
+                    <div class="detail-row"><span class="detail-label">${escHtml(I18N.runDirLabel)}</span><span class="detail-value mono">${escHtml(scriptRun.cwd || I18N.dash)}</span></div>
+                    <div class="detail-row"><span class="detail-label">${escHtml(I18N.exitCodeLabel)}</span><span class="detail-value mono">${escHtml(String(scriptRun.exitCode ?? I18N.dash))}</span></div>
+                </div>
+                ${scriptRun.stdout ? `<details class="log-disclosure"><summary>${escHtml(I18N.scriptStdoutLabel)} · ${escHtml(I18N.logShow)}</summary><pre class="summary-text mono">${escHtml(scriptRun.stdout)}</pre></details>` : ''}
+                ${scriptRun.stderr ? `<details class="log-disclosure"><summary>${escHtml(I18N.scriptStderrLabel)} · ${escHtml(I18N.logShow)}</summary><pre class="summary-text mono error-log">${escHtml(scriptRun.stderr)}</pre></details>` : ''}
+            </div>` : ''}
+            ${data.llmSummaryText && data.llmSummaryText !== summaryText ? `
+            <div class="detail-section">
+                <h3>${escHtml(I18N.aiSummaryHeading)}</h3>
+                <div class="summary-text">${escHtml(data.llmSummaryText).replace(/\n/g,'<br>')}</div>
+            </div>` : ''}
+            ${data.failureReason ? `
+            <div class="detail-section">
+                <h3>${escHtml(I18N.failureReasonHeading)}</h3>
+                <p class="error-text">${escHtml(data.failureReason)}</p>
+            </div>` : ''}
+            ${extractedEvents.length > 0 ? `
+            <div class="detail-section">
+                <h3>${escHtml(I18N.eventsHeadingPrefix)}${extractedEvents.length}${escHtml(I18N.eventsHeadingSuffix)}</h3>
+                <ul class="event-list">
+                    ${extractedEvents.map(ev => {
+                        const eventUrl = safeExternalUrl(ev.url);
+                        return `
+                        <li class="event-item">
+                            <strong>${escHtml(ev.title || '')}</strong>
+                            ${ev.due ? `<span class="event-due">${escHtml(ev.due)}</span>` : ''}
+                            ${eventUrl ? `<a href="${escHtml(eventUrl)}" target="_blank" rel="noopener" class="event-link">${escHtml(I18N.eventLink)}</a>` : ''}
+                        </li>
+                    `}).join('')}
+                </ul>
+            </div>` : ''}
+        `;
+    } catch (e) {
+        if (sequence !== resultDetailSequence) return;
+        body.innerHTML = `<div class="automation-load-error" role="alert">
+            <div>${Nola.icon('warning')}</div>
+            <div><strong>${escHtml(I18N.requestFailedPrefix)}</strong><p>${escHtml(e.message || I18N.networkFailed)}</p></div>
+            <button class="btn btn-secondary btn-sm result-detail-retry" type="button" data-id="${escHtml(resultId)}">${escHtml(I18N.retry)}</button>
+        </div>`;
+    } finally {
+        if (sequence === resultDetailSequence) body.setAttribute('aria-busy', 'false');
+    }
+}
+
+// Events
+document.getElementById('refreshBtn').addEventListener('click', () => loadResults({ showSkeleton: false, announceUpdate: true }));
+document.getElementById('closeResultModal').addEventListener('click', closeResultModal);
+document.getElementById('modal-body').addEventListener('click', event => {
+    const retryButton = event.target.closest('.result-detail-retry');
+    if (retryButton) loadResultDetail(retryButton.dataset.id);
+});
+window.addEventListener('click', e => {
+    const modal = document.getElementById('resultModal');
+    if (e.target === modal) closeResultModal();
+});
+document.getElementById('results-list').addEventListener('click', e => {
+    const retryButton = e.target.closest('.results-retry-btn');
+    if (retryButton) {
+        loadResults();
+        return;
+    }
+    const btn = e.target.closest('.view-detail-btn');
+    if (btn) {
+        loadResultDetail(btn.dataset.id);
+        return;
+    }
+    const card = e.target.closest('.result-item');
+    if (card && !e.target.closest('a, button')) loadResultDetail(card.dataset.id);
+});
+document.getElementById('results-list').addEventListener('keydown', event => {
+    const card = event.target.closest('.result-item');
+    if (!card || (event.key !== 'Enter' && event.key !== ' ')) return;
+    event.preventDefault();
+    loadResultDetail(card.dataset.id);
+});
+document.getElementById('active-results-list').addEventListener('click', event => {
+    const card = event.target.closest('.active-run-item');
+    if (card) loadResultDetail(card.dataset.id);
+});
+document.getElementById('active-results-list').addEventListener('keydown', event => {
+    const card = event.target.closest('.active-run-item');
+    if (!card || (event.key !== 'Enter' && event.key !== ' ')) return;
+    event.preventDefault();
+    loadResultDetail(card.dataset.id);
+});
+document.getElementById('results-search').addEventListener('input', applyResultFilters);
+document.querySelector('.history-filterchips').addEventListener('click', event => {
+    const button = event.target.closest('.history-filterchip');
+    if (!button) return;
+    resultFilter = button.dataset.filter || 'all';
+    document.querySelectorAll('.history-filterchip').forEach(candidate => {
+        const active = candidate === button;
+        candidate.classList.toggle('is-active', active);
+        candidate.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+    applyResultFilters();
+});
+document.getElementById('results-filter-reset').addEventListener('click', resetResultFilters);
+
+document.addEventListener('keydown', event => {
+    const modal = document.getElementById('resultModal');
+    if (modal.getAttribute('aria-hidden') === 'true') return;
+    if (event.key === 'Escape') {
+        closeResultModal();
+        return;
+    }
+    if (event.key !== 'Tab') return;
+    const focusable = Array.from(modal.querySelectorAll(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )).filter(element => element.offsetParent !== null);
+    if (focusable.length === 0) {
+        event.preventDefault();
+        modal.querySelector('.modal-content').focus();
+        return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+    }
+});
+
+const AUTO_REFRESH_MS = 2500;
+let autoRefreshTimer = null;
+
+function startAutoRefresh() {
+    if (autoRefreshTimer !== null) return;
+    autoRefreshTimer = setInterval(() => {
+        if (document.visibilityState === 'visible' && hasActiveResults) {
+            loadResults({ showSkeleton: false });
+        }
+    }, AUTO_REFRESH_MS);
+}
+
+function stopAutoRefresh() {
+    if (autoRefreshTimer === null) return;
+    clearInterval(autoRefreshTimer);
+    autoRefreshTimer = null;
+}
+
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+        loadResults({ showSkeleton: false });
+        startAutoRefresh();
+    } else {
+        stopAutoRefresh();
+    }
+});
+
+window.addEventListener('focus', () => loadResults({ showSkeleton: false }));
+window.addEventListener('beforeunload', stopAutoRefresh);
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadResults();
+    startAutoRefresh();
+});
+</script>
+{% endblock %}

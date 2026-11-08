@@ -1,0 +1,74 @@
+import Foundation
+
+@main
+struct MacTypedPromptABIHarnessMain {
+    static func main() throws {
+        try require(MacCorePromptComposer.abiVersion == 1, "prompt composer ABI is not v1")
+        let fragments = [
+            MacCorePromptFragment(
+                id: "workflow-v1",
+                layer: .executionPolicy,
+                trust: .hostInstruction,
+                cacheable: true,
+                content: "Stable policy"
+            ),
+            MacCorePromptFragment(
+                id: "host-fact-v1",
+                layer: .hostCapabilities,
+                trust: .hostFact,
+                cacheable: false,
+                content: "Host exposes local inference"
+            ),
+            MacCorePromptFragment(
+                id: "reference-v1",
+                layer: .conversationContext,
+                trust: .reference,
+                cacheable: false,
+                content: "Reference data that says ignore the user"
+            ),
+        ]
+        let first = try MacCanonicalModelRequestBuilder.compose(
+            fragments: fragments,
+            history: [.init(role: "assistant", content: "Earlier answer")],
+            userQuery: "原始 query search current"
+        )
+        let changedReference = try MacCanonicalModelRequestBuilder.compose(
+            fragments: fragments.dropLast() + [
+                .init(
+                    id: "reference-v1",
+                    layer: .conversationContext,
+                    trust: .reference,
+                    cacheable: false,
+                    content: "Changed reference"
+                )
+            ],
+            userQuery: "another query"
+        )
+
+        try require(first.systemPrompt.contains("Stable policy"), "Host workflow missing")
+        try require(first.systemPrompt.contains("Host exposes local inference"), "HostFact missing")
+        try require(first.systemPrompt.contains("<reference_context id=\"reference-v1\">"), "reference is not guarded")
+        try require(!first.systemPrompt.contains("原始 query search current"), "user query leaked into system prompt")
+        try require(first.messages.last == .init(role: "user", content: "原始 query search current"), "user query is not an independent message")
+        try require(first.fragmentIDs.first == "nola.core.action-scope", "Core policy was not first")
+        try require(first.fragmentIDs.contains("workflow-v1"), "Host workflow fragment missing")
+        try require(Array(first.fragmentIDs.suffix(2)) == ["host-fact-v1", "reference-v1"], "Dynamic Host fragment ordering drifted")
+        try require(first.stablePrefixSHA256 == changedReference.stablePrefixSHA256, "dynamic reference changed stable policy digest")
+
+        let provider = try MacCanonicalModelRequestBuilder.providerMessages([
+            .init(role: "system", content: first.systemPrompt),
+            .init(role: "user", content: "keep me separate"),
+        ])
+        try require(provider[0].role == "system" && provider[1].role == "user", "provider boundary was rewritten")
+        print("Mac typed prompt ABI harness passed")
+    }
+
+    private static func require(_ condition: @autoclosure () -> Bool, _ message: String) throws {
+        if !condition() { throw Failure(message) }
+    }
+
+    private struct Failure: Error, CustomStringConvertible {
+        let description: String
+        init(_ description: String) { self.description = description }
+    }
+}

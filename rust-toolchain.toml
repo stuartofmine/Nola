@@ -1,0 +1,9 @@
+[toolchain]
+# Use the shared stable installation rather than duplicating its multi-platform
+# standard libraries under a second version-named toolchain. Installed: 1.99.0.
+channel = "stable"
+profile = "minimal"
+# Native Release stripping uses rust-objcopy and its host-local LLVM library.
+# Keep that official component available instead of disabling stripping or
+# patching rustup-managed library paths in build scripts.
+components = ["rustfmt", "clippy", "llvm-tools"]

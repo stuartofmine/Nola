@@ -1,0 +1,13 @@
+{
+  "protocol_version": 53,
+  "request_id": "runtime-schedule-request-1",
+  "client_id": "runtime-supervisor-1",
+  "command": {
+    "type": "load_runtime_effect_work_schedule",
+    "arguments": {
+      "conversation_ids": ["conversation-1"],
+      "now_ms": 1735689600000,
+      "limit": 16
+    }
+  }
+}

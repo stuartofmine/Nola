@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="permission_add_instruction">Anweisung hinzufügen</string>
+    <string name="permission_instruction_label">Zusätzliche Anweisung</string>
+    <string name="permission_instruction_limit">Füge Hinweise für diesen Vorgang hinzu. Vor der Ausführung musst du ihn weiterhin genehmigen.</string>
+    <string name="permission_send_instruction">Anweisung senden</string>
+    <string name="permission_instruction_history_full">Der Anweisungsverlauf ist voll. Genehmige den Vorgang ausdrücklich oder lehne ihn ab, um fortzufahren.</string>
+</resources>

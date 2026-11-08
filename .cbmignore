@@ -1,0 +1,3 @@
+# Local build and test artifacts are not product source.
+.artifacts/
+

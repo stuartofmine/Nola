@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "id": "assist-email",
+  "delivery": "built-in",
+  "category": {
+    "id": "communication",
+    "name": "Communication",
+    "name_zh": "沟通协作"
+  },
+  "source": {
+    "project": "Nola",
+    "license": "Apache-2.0"
+  },
+  "status": "stable",
+  "platforms": [
+    "macos",
+    "cli-web"
+  ],
+  "required_tools": [
+    "Skill"
+  ],
+  "optional_tools": [
+    "tool_search",
+    "read_file",
+    "write_file",
+    "bash"
+  ],
+  "runtime_dependencies": [
+    "python3 (standard library)"
+  ],
+  "permissions": [
+    "email.read",
+    "email.draft",
+    "email.send.confirm",
+    "filesystem.write"
+  ],
+  "secrets": [],
+  "validation": [
+    "scripts/compose_draft.py --validate-only",
+    "provider message identifier after send"
+  ],
+  "recommended_handoffs": [
+    "review-documents",
+    "plan-schedule-tasks",
+    "curate-knowledge-memory"
+  ],
+  "execution_contract": {
+    "schemaVersion": 1,
+    "progressSteps": [
+      {
+        "id": "inspect",
+        "title": "Inspect inputs and constraints",
+        "required": true
+      },
+      {
+        "id": "execute",
+        "title": "Produce the requested outcome",
+        "required": true
+      },
+      {
+        "id": "verify",
+        "title": "Verify the outcome with evidence",
+        "required": true
+      }
+    ],
+    "artifacts": [
+      {
+        "id": "draft-or-send-receipt",
+        "mediaType": "message/rfc822",
+        "required": false,
+        "description": "Stable reference to the final requested outcome or its persisted receipt"
+      }
+    ],
+    "verifiers": [
+      {
+        "id": "completion-audit",
+        "method": "model_judgment",
+        "description": "Record real evidence for the applicable completion checks: scripts/compose_draft.py --validate-only; provider message identifier after send",
+        "required": true
+      }
+    ],
+    "resumePoints": [
+      "after-inspect",
+      "after-execute",
+      "after-verify"
+    ]
+  }
+}

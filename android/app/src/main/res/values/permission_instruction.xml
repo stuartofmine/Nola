@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="permission_add_instruction">Add instruction</string>
+    <string name="permission_instruction_label">Additional instruction</string>
+    <string name="permission_instruction_limit">Add guidance for this operation. You will still need to approve it before it runs.</string>
+    <string name="permission_send_instruction">Send instruction</string>
+    <string name="permission_instruction_history_full">Instruction history is full. Explicitly approve or deny to continue.</string>
+</resources>

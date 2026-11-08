@@ -1,0 +1,10 @@
+// SPDX-License-Identifier: Apache-2.0
+"reasoning.effort.title" = "Esfuerzo de razonamiento";
+"reasoning.effort.automatic" = "Valor del proveedor";
+"reasoning.effort.none" = "Ninguno";
+"reasoning.effort.minimal" = "Mínimo";
+"reasoning.effort.low" = "Bajo";
+"reasoning.effort.medium" = "Medio";
+"reasoning.effort.high" = "Alto";
+"reasoning.effort.xhigh" = "Muy alto";
+"reasoning.effort.max" = "Máximo";

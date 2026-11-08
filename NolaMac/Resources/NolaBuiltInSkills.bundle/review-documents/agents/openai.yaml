@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review Documents"
+  short_description: "Review and compare important documents"
+  default_prompt: "Review this document and identify important issues."

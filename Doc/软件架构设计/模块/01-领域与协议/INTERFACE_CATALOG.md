@@ -1,0 +1,618 @@
+# 当前接口源码索引
+
+核对：2026-11-08，从当前源码声明重新提取。本索引是导航，不是执行授权、API 稳定性或运行验收证明。固定路由元组、Worker 直接 dispatch 与顶层 command tag 是三种不同统计口径；原生 ABI 和子命令还需阅读相应类型。
+
+## Rust Host 固定路由
+
+来源：`cli/src/web_parts/routes.rs` 中字面量 `(&Method, path)` 分支。早期 if/matches! 分派、动态 suffix、已配对移动加密 payload 与其他 handler 分流不包含在这个固定元组清单里；不能把“未列出”解释为接口不存在。认证与方法限制以实际分支及 handler 为准。
+
+| 方法 | 路径 | 源码 |
+| --- | --- | --- |
+| GET | `/api/health` | [route](../../../../cli/src/web_parts/routes.rs#L714) |
+| HEAD | `/api/health` | [route](../../../../cli/src/web_parts/routes.rs#L714) |
+| GET | `/api/models` | [route](../../../../cli/src/web_parts/routes.rs#L735) |
+| HEAD | `/api/models` | [route](../../../../cli/src/web_parts/routes.rs#L735) |
+| GET | `/api/model-profiles` | [route](../../../../cli/src/web_parts/routes.rs#L738) |
+| HEAD | `/api/model-profiles` | [route](../../../../cli/src/web_parts/routes.rs#L738) |
+| GET | `/api/expert-prompt-templates` | [route](../../../../cli/src/web_parts/routes.rs#L741) |
+| HEAD | `/api/expert-prompt-templates` | [route](../../../../cli/src/web_parts/routes.rs#L741) |
+| POST | `/api/model-profiles` | [route](../../../../cli/src/web_parts/routes.rs#L744) |
+| POST | `/api/model-profiles/catalog` | [route](../../../../cli/src/web_parts/routes.rs#L747) |
+| POST | `/api/model-profiles/catalog/replace` | [route](../../../../cli/src/web_parts/routes.rs#L750) |
+| GET | `/api/local-store` | [route](../../../../cli/src/web_parts/routes.rs#L753) |
+| HEAD | `/api/local-store` | [route](../../../../cli/src/web_parts/routes.rs#L753) |
+| GET | `/api/me` | [route](../../../../cli/src/web_parts/routes.rs#L756) |
+| HEAD | `/api/me` | [route](../../../../cli/src/web_parts/routes.rs#L756) |
+| GET | `/api/tasks` | [route](../../../../cli/src/web_parts/routes.rs#L769) |
+| HEAD | `/api/tasks` | [route](../../../../cli/src/web_parts/routes.rs#L769) |
+| POST | `/api/tasks` | [route](../../../../cli/src/web_parts/routes.rs#L772) |
+| GET | `/api/agent/skill-settings-review` | [route](../../../../cli/src/web_parts/routes.rs#L775) |
+| POST | `/api/agent/skill-settings-review` | [route](../../../../cli/src/web_parts/routes.rs#L776) |
+| GET | `/api/agent/settings` | [route](../../../../cli/src/web_parts/routes.rs#L783) |
+| HEAD | `/api/agent/settings` | [route](../../../../cli/src/web_parts/routes.rs#L783) |
+| GET | `/api/assistant/memory-default` | [route](../../../../cli/src/web_parts/routes.rs#L786) |
+| HEAD | `/api/assistant/memory-default` | [route](../../../../cli/src/web_parts/routes.rs#L786) |
+| PUT | `/api/assistant/memory-default` | [route](../../../../cli/src/web_parts/routes.rs#L789) |
+| POST | `/api/agent/settings` | [route](../../../../cli/src/web_parts/routes.rs#L797) |
+| GET | `/api/assistant/retrieval-default` | [route](../../../../cli/src/web_parts/routes.rs#L800) |
+| HEAD | `/api/assistant/retrieval-default` | [route](../../../../cli/src/web_parts/routes.rs#L800) |
+| PUT | `/api/assistant/retrieval-default` | [route](../../../../cli/src/web_parts/routes.rs#L803) |
+| GET | `/api/messaging-channel-worker` | [route](../../../../cli/src/web_parts/routes.rs#L811) |
+| HEAD | `/api/messaging-channel-worker` | [route](../../../../cli/src/web_parts/routes.rs#L812) |
+| PUT | `/api/messaging-channel-worker` | [route](../../../../cli/src/web_parts/routes.rs#L818) |
+| GET | `/api/messaging-channels` | [route](../../../../cli/src/web_parts/routes.rs#L828) |
+| HEAD | `/api/messaging-channels` | [route](../../../../cli/src/web_parts/routes.rs#L828) |
+| PUT | `/api/messaging-channels` | [route](../../../../cli/src/web_parts/routes.rs#L834) |
+| GET | `/api/agent/permission_rules` | [route](../../../../cli/src/web_parts/routes.rs#L844) |
+| HEAD | `/api/agent/permission_rules` | [route](../../../../cli/src/web_parts/routes.rs#L845) |
+| POST | `/api/agent/permission_rules` | [route](../../../../cli/src/web_parts/routes.rs#L848) |
+| POST | `/api/agent/host-permission/decision` | [route](../../../../cli/src/web_parts/routes.rs#L851) |
+| GET | `/api/agent/tools` | [route](../../../../cli/src/web_parts/routes.rs#L854) |
+| HEAD | `/api/agent/tools` | [route](../../../../cli/src/web_parts/routes.rs#L854) |
+| GET | `/api/native-browser/status` | [route](../../../../cli/src/web_parts/routes.rs#L857) |
+| HEAD | `/api/native-browser/status` | [route](../../../../cli/src/web_parts/routes.rs#L858) |
+| POST | `/api/native-browser/command` | [route](../../../../cli/src/web_parts/routes.rs#L861) |
+| POST | `/api/native-browser/host/poll` | [route](../../../../cli/src/web_parts/routes.rs#L864) |
+| POST | `/api/native-browser/host/result` | [route](../../../../cli/src/web_parts/routes.rs#L867) |
+| POST | `/api/mobile/login` | [route](../../../../cli/src/web_parts/routes.rs#L870) |
+| POST | `/api/mobile/web-handoff` | [route](../../../../cli/src/web_parts/routes.rs#L873) |
+| GET | `/api/web/session` | [route](../../../../cli/src/web_parts/routes.rs#L876) |
+| HEAD | `/api/web/session` | [route](../../../../cli/src/web_parts/routes.rs#L876) |
+| POST | `/api/web/login` | [route](../../../../cli/src/web_parts/routes.rs#L879) |
+| POST | `/api/web/logout` | [route](../../../../cli/src/web_parts/routes.rs#L882) |
+| POST | `/api/mobile/transport/tailcat` | [route](../../../../cli/src/web_parts/routes.rs#L885) |
+| GET | `/api/mobile/me` | [route](../../../../cli/src/web_parts/routes.rs#L888) |
+| HEAD | `/api/mobile/me` | [route](../../../../cli/src/web_parts/routes.rs#L888) |
+| GET | `/api/mobile/agent/settings` | [route](../../../../cli/src/web_parts/routes.rs#L891) |
+| HEAD | `/api/mobile/agent/settings` | [route](../../../../cli/src/web_parts/routes.rs#L892) |
+| POST | `/api/mobile/agent/tool-plan/prepare` | [route](../../../../cli/src/web_parts/routes.rs#L895) |
+| POST | `/api/mobile/agent/tool-plan/read` | [route](../../../../cli/src/web_parts/routes.rs#L896) |
+| POST | `/api/agent/tool-plan/prepare` | [route](../../../../cli/src/web_parts/routes.rs#L897) |
+| POST | `/api/agent/tool-plan/read` | [route](../../../../cli/src/web_parts/routes.rs#L898) |
+| POST | `/api/mobile/attachments/parse` | [route](../../../../cli/src/web_parts/routes.rs#L899) |
+| POST | `/api/mobile/auxiliary/prepare` | [route](../../../../cli/src/web_parts/routes.rs#L902) |
+| POST | `/api/mobile/agent-rooms` | [route](../../../../cli/src/web_parts/routes.rs#L905) |
+| POST | `/api/mobile/auxiliary/invoke` | [route](../../../../cli/src/web_parts/routes.rs#L906) |
+| POST | `/api/mobile/auxiliary/admit` | [route](../../../../cli/src/web_parts/routes.rs#L909) |
+| POST | `/api/mobile/auxiliary/inspect` | [route](../../../../cli/src/web_parts/routes.rs#L912) |
+| POST | `/api/mobile/auxiliary/cancel` | [route](../../../../cli/src/web_parts/routes.rs#L915) |
+| POST | `/api/mobile/chat/agent/v2/resume` | [route](../../../../cli/src/web_parts/routes.rs#L918) |
+| POST | `/api/mobile/chat/agent/v2/observe` | [route](../../../../cli/src/web_parts/routes.rs#L921) |
+| POST | `/api/mobile/chat/agent/v2/configuration` | [route](../../../../cli/src/web_parts/routes.rs#L924) |
+| POST | `/api/mobile/chat/agent/v2/submission-frontier` | [route](../../../../cli/src/web_parts/routes.rs#L927) |
+| POST | `/api/mobile/chat/agent/v2/context/compact` | [route](../../../../cli/src/web_parts/routes.rs#L930) |
+| POST | `/api/mobile/chat/agent/v2/submission` | [route](../../../../cli/src/web_parts/routes.rs#L933) |
+| POST | `/api/chat/agent/v2/submission` | [route](../../../../cli/src/web_parts/routes.rs#L936) |
+| POST | `/api/chat/agent/v2/observe` | [route](../../../../cli/src/web_parts/routes.rs#L939) |
+| POST | `/api/chat/agent/v2/task/recovery` | [route](../../../../cli/src/web_parts/routes.rs#L942) |
+| POST | `/api/chat/agent/v2/recovery` | [route](../../../../cli/src/web_parts/routes.rs#L945) |
+| POST | `/api/chat/agent/v2/resume` | [route](../../../../cli/src/web_parts/routes.rs#L948) |
+| POST | `/api/mobile/chat/agent/v2/stream` | [route](../../../../cli/src/web_parts/routes.rs#L951) |
+| POST | `/api/mobile/chat/agent/v2/traces` | [route](../../../../cli/src/web_parts/routes.rs#L954) |
+| POST | `/api/mobile/chat/agent/v2/ui/changes` | [route](../../../../cli/src/web_parts/routes.rs#L957) |
+| POST | `/api/mobile/chat/agent/v2/ui/preview` | [route](../../../../cli/src/web_parts/routes.rs#L960) |
+| POST | `/api/mobile/chat/agent/v2/ui/revision` | [route](../../../../cli/src/web_parts/routes.rs#L963) |
+| POST | `/api/mobile/chat/agent/v2/ui/queued-input/cancel` | [route](../../../../cli/src/web_parts/routes.rs#L966) |
+| POST | `/api/mobile/chat/agent/v2/ui/queued-input` | [route](../../../../cli/src/web_parts/routes.rs#L969) |
+| POST | `/api/mobile/chat/agent/v2/ui/interactions` | [route](../../../../cli/src/web_parts/routes.rs#L972) |
+| POST | `/api/mobile/chat/agent/v2/ui/surfaces` | [route](../../../../cli/src/web_parts/routes.rs#L975) |
+| POST | `/api/mobile/chat/agent/v2/journal` | [route](../../../../cli/src/web_parts/routes.rs#L978) |
+| POST | `/api/mobile/chat/agent/v2/execution-selection` | [route](../../../../cli/src/web_parts/routes.rs#L981) |
+| POST | `/api/mobile/chat/agent/v2/progress` | [route](../../../../cli/src/web_parts/routes.rs#L984) |
+| POST | `/api/mobile/chat/agent/v2/goal` | [route](../../../../cli/src/web_parts/routes.rs#L987) |
+| POST | `/api/chat/agent/v2/journal` | [route](../../../../cli/src/web_parts/routes.rs#L990) |
+| POST | `/api/mobile/chat/agent/v2/cancel` | [route](../../../../cli/src/web_parts/routes.rs#L993) |
+| POST | `/api/mobile/chat/agent/v2/task/cancel/receipt` | [route](../../../../cli/src/web_parts/routes.rs#L996) |
+| POST | `/api/mobile/chat/agent/v2/task/cancel` | [route](../../../../cli/src/web_parts/routes.rs#L999) |
+| POST | `/api/mobile/chat/agent/v2/task/message` | [route](../../../../cli/src/web_parts/routes.rs#L1002) |
+| POST | `/api/mobile/chat/agent/v2/task/events` | [route](../../../../cli/src/web_parts/routes.rs#L1005) |
+| POST | `/api/mobile/chat/agent/v2/permission` | [route](../../../../cli/src/web_parts/routes.rs#L1008) |
+| POST | `/api/mobile/chat/agent/v2/device-tool` | [route](../../../../cli/src/web_parts/routes.rs#L1011) |
+| POST | `/api/chat/expert-messages/admit` | [route](../../../../cli/src/web_parts/routes.rs#L1014) |
+| POST | `/api/chat/edited-expert-resend/prepare` | [route](../../../../cli/src/web_parts/routes.rs#L1015) |
+| POST | `/api/chat/edited-resend/prepare` | [route](../../../../cli/src/web_parts/routes.rs#L1016) |
+| POST | `/api/chat/agent/v2/stream` | [route](../../../../cli/src/web_parts/routes.rs#L1019) |
+| POST | `/api/chat/agent/v2/cancel` | [route](../../../../cli/src/web_parts/routes.rs#L1022) |
+| POST | `/api/chat/agent/v2/task/cancel/receipt` | [route](../../../../cli/src/web_parts/routes.rs#L1025) |
+| POST | `/api/chat/agent/v2/task/cancel` | [route](../../../../cli/src/web_parts/routes.rs#L1028) |
+| POST | `/api/chat/agent/v2/task/message/receipt` | [route](../../../../cli/src/web_parts/routes.rs#L1031) |
+| POST | `/api/mobile/chat/agent/v2/task/message/receipt` | [route](../../../../cli/src/web_parts/routes.rs#L1034) |
+| POST | `/api/chat/agent/v2/task/message` | [route](../../../../cli/src/web_parts/routes.rs#L1037) |
+| GET | `/api/scheduled-actions` | [route](../../../../cli/src/web_parts/routes.rs#L1040) |
+| HEAD | `/api/scheduled-actions` | [route](../../../../cli/src/web_parts/routes.rs#L1040) |
+| POST | `/api/scheduled-actions` | [route](../../../../cli/src/web_parts/routes.rs#L1043) |
+| GET | `/api/automation-skills` | [route](../../../../cli/src/web_parts/routes.rs#L1046) |
+| HEAD | `/api/automation-skills` | [route](../../../../cli/src/web_parts/routes.rs#L1046) |
+| POST | `/api/activity` | [route](../../../../cli/src/web_parts/routes.rs#L1049) |
+| POST | `/api/activity/detail` | [route](../../../../cli/src/web_parts/routes.rs#L1055) |
+| GET | `/api/results` | [route](../../../../cli/src/web_parts/routes.rs#L1065) |
+| HEAD | `/api/results` | [route](../../../../cli/src/web_parts/routes.rs#L1065) |
+| GET | `/api/documents/search` | [route](../../../../cli/src/web_parts/routes.rs#L1068) |
+| HEAD | `/api/documents/search` | [route](../../../../cli/src/web_parts/routes.rs#L1068) |
+| GET | `/api/workspace/today` | [route](../../../../cli/src/web_parts/routes.rs#L1071) |
+| HEAD | `/api/workspace/today` | [route](../../../../cli/src/web_parts/routes.rs#L1071) |
+| GET | `/api/home` | [route](../../../../cli/src/web_parts/routes.rs#L1074) |
+| HEAD | `/api/home` | [route](../../../../cli/src/web_parts/routes.rs#L1074) |
+| POST | `/api/memory` | [route](../../../../cli/src/web_parts/routes.rs#L1077) |
+| GET | `/api/memory` | [route](../../../../cli/src/web_parts/routes.rs#L1088) |
+| HEAD | `/api/memory` | [route](../../../../cli/src/web_parts/routes.rs#L1088) |
+| GET | `/api/data-sources` | [route](../../../../cli/src/web_parts/routes.rs#L1096) |
+| HEAD | `/api/data-sources` | [route](../../../../cli/src/web_parts/routes.rs#L1096) |
+| POST | `/api/data-sources` | [route](../../../../cli/src/web_parts/routes.rs#L1099) |
+| GET | `/api/data-sources/usage` | [route](../../../../cli/src/web_parts/routes.rs#L1102) |
+| HEAD | `/api/data-sources/usage` | [route](../../../../cli/src/web_parts/routes.rs#L1102) |
+| GET | `/favicon.ico` | [route](../../../../cli/src/web_parts/routes.rs#L1105) |
+| HEAD | `/favicon.ico` | [route](../../../../cli/src/web_parts/routes.rs#L1105) |
+| GET | `/apple-touch-icon.png` | [route](../../../../cli/src/web_parts/routes.rs#L1108) |
+| HEAD | `/apple-touch-icon.png` | [route](../../../../cli/src/web_parts/routes.rs#L1109) |
+| GET | `/apple-touch-icon-precomposed.png` | [route](../../../../cli/src/web_parts/routes.rs#L1110) |
+| HEAD | `/apple-touch-icon-precomposed.png` | [route](../../../../cli/src/web_parts/routes.rs#L1111) |
+| POST | `test` | [route](../../../../cli/src/web_parts/routes.rs#L1133) |
+| GET | `queued-input` | [route](../../../../cli/src/web_parts/routes.rs#L1141) |
+| HEAD | `queued-input` | [route](../../../../cli/src/web_parts/routes.rs#L1141) |
+| POST | `queued-input/cancel` | [route](../../../../cli/src/web_parts/routes.rs#L1142) |
+| POST | `ui-surface-changes` | [route](../../../../cli/src/web_parts/routes.rs#L1143) |
+| POST | `ui-surface-preview` | [route](../../../../cli/src/web_parts/routes.rs#L1144) |
+| POST | `ui-surface-revision` | [route](../../../../cli/src/web_parts/routes.rs#L1145) |
+| POST | `ui-interactions` | [route](../../../../cli/src/web_parts/routes.rs#L1146) |
+| GET | `ui-surfaces` | [route](../../../../cli/src/web_parts/routes.rs#L1147) |
+| HEAD | `ui-surfaces` | [route](../../../../cli/src/web_parts/routes.rs#L1147) |
+| GET | `edited-expert-resend` | [route](../../../../cli/src/web_parts/routes.rs#L1148) |
+| HEAD | `edited-expert-resend` | [route](../../../../cli/src/web_parts/routes.rs#L1148) |
+| GET | `edited-resend` | [route](../../../../cli/src/web_parts/routes.rs#L1150) |
+| HEAD | `edited-resend` | [route](../../../../cli/src/web_parts/routes.rs#L1150) |
+| GET | `workspace-review` | [route](../../../../cli/src/web_parts/routes.rs#L1152) |
+| HEAD | `workspace-review` | [route](../../../../cli/src/web_parts/routes.rs#L1152) |
+| GET | `context-usage` | [route](../../../../cli/src/web_parts/routes.rs#L1155) |
+| HEAD | `context-usage` | [route](../../../../cli/src/web_parts/routes.rs#L1155) |
+| GET | `configuration` | [route](../../../../cli/src/web_parts/routes.rs#L1158) |
+| HEAD | `configuration` | [route](../../../../cli/src/web_parts/routes.rs#L1158) |
+| PATCH | `configuration` | [route](../../../../cli/src/web_parts/routes.rs#L1161) |
+| GET | `messages` | [route](../../../../cli/src/web_parts/routes.rs#L1165) |
+| HEAD | `messages` | [route](../../../../cli/src/web_parts/routes.rs#L1165) |
+| POST | `admit-user-message` | [route](../../../../cli/src/web_parts/routes.rs#L1168) |
+| GET | `browser` | [route](../../../../cli/src/web_parts/routes.rs#L1169) |
+| HEAD | `browser` | [route](../../../../cli/src/web_parts/routes.rs#L1169) |
+| POST | `browser/switch-page` | [route](../../../../cli/src/web_parts/routes.rs#L1172) |
+| POST | `resources` | [route](../../../../cli/src/web_parts/routes.rs#L1179) |
+| GET | `resources` | [route](../../../../cli/src/web_parts/routes.rs#L1182) |
+| HEAD | `resources` | [route](../../../../cli/src/web_parts/routes.rs#L1182) |
+| POST | `truncate` | [route](../../../../cli/src/web_parts/routes.rs#L1208) |
+| POST | `branch` | [route](../../../../cli/src/web_parts/routes.rs#L1211) |
+| GET | `historical-part` | [route](../../../../cli/src/web_parts/routes.rs#L1212) |
+| HEAD | `historical-part` | [route](../../../../cli/src/web_parts/routes.rs#L1212) |
+| GET | `export` | [route](../../../../cli/src/web_parts/routes.rs#L1215) |
+| HEAD | `export` | [route](../../../../cli/src/web_parts/routes.rs#L1215) |
+| GET | `context` | [route](../../../../cli/src/web_parts/routes.rs#L1218) |
+| HEAD | `context` | [route](../../../../cli/src/web_parts/routes.rs#L1218) |
+| GET | `recall` | [route](../../../../cli/src/web_parts/routes.rs#L1221) |
+| HEAD | `recall` | [route](../../../../cli/src/web_parts/routes.rs#L1221) |
+| GET | `goal` | [route](../../../../cli/src/web_parts/routes.rs#L1224) |
+| HEAD | `goal` | [route](../../../../cli/src/web_parts/routes.rs#L1224) |
+| GET | `user-input-waits` | [route](../../../../cli/src/web_parts/routes.rs#L1227) |
+| HEAD | `user-input-waits` | [route](../../../../cli/src/web_parts/routes.rs#L1227) |
+| POST | `user-input-waits/respond` | [route](../../../../cli/src/web_parts/routes.rs#L1230) |
+| GET | `plan` | [route](../../../../cli/src/web_parts/routes.rs#L1233) |
+| HEAD | `plan` | [route](../../../../cli/src/web_parts/routes.rs#L1233) |
+| POST | `goal` | [route](../../../../cli/src/web_parts/routes.rs#L1236) |
+| GET | `traces` | [route](../../../../cli/src/web_parts/routes.rs#L1239) |
+| HEAD | `traces` | [route](../../../../cli/src/web_parts/routes.rs#L1239) |
+| PATCH | `session-memory` | [route](../../../../cli/src/web_parts/routes.rs#L1242) |
+| GET | `session-memory` | [route](../../../../cli/src/web_parts/routes.rs#L1245) |
+| HEAD | `session-memory` | [route](../../../../cli/src/web_parts/routes.rs#L1245) |
+| POST | `compact` | [route](../../../../cli/src/web_parts/routes.rs#L1251) |
+| GET | `memory/search` | [route](../../../../cli/src/web_parts/routes.rs#L1252) |
+| HEAD | `memory/search` | [route](../../../../cli/src/web_parts/routes.rs#L1252) |
+| POST | `approve-script` | [route](../../../../cli/src/web_parts/routes.rs#L1281) |
+| POST | `run-now` | [route](../../../../cli/src/web_parts/routes.rs#L1282) |
+| GET | `/` | [route](../../../../cli/src/web_parts/routes.rs#L1349) |
+| HEAD | `/` | [route](../../../../cli/src/web_parts/routes.rs#L1349) |
+| GET | `/models` | [route](../../../../cli/src/web_parts/routes.rs#L1350) |
+| HEAD | `/models` | [route](../../../../cli/src/web_parts/routes.rs#L1351) |
+| GET | `/model-test` | [route](../../../../cli/src/web_parts/routes.rs#L1352) |
+| HEAD | `/model-test` | [route](../../../../cli/src/web_parts/routes.rs#L1353) |
+| GET | `/capabilities` | [route](../../../../cli/src/web_parts/routes.rs#L1354) |
+| HEAD | `/capabilities` | [route](../../../../cli/src/web_parts/routes.rs#L1355) |
+| GET | `/activity` | [route](../../../../cli/src/web_parts/routes.rs#L1356) |
+| HEAD | `/activity` | [route](../../../../cli/src/web_parts/routes.rs#L1357) |
+| GET | `/results` | [route](../../../../cli/src/web_parts/routes.rs#L1358) |
+| HEAD | `/results` | [route](../../../../cli/src/web_parts/routes.rs#L1359) |
+| GET | `/dashboard` | [route](../../../../cli/src/web_parts/routes.rs#L1360) |
+| HEAD | `/dashboard` | [route](../../../../cli/src/web_parts/routes.rs#L1361) |
+| GET | `/data-sources` | [route](../../../../cli/src/web_parts/routes.rs#L1362) |
+| HEAD | `/data-sources` | [route](../../../../cli/src/web_parts/routes.rs#L1363) |
+| GET | `/settings` | [route](../../../../cli/src/web_parts/routes.rs#L1364) |
+| HEAD | `/settings` | [route](../../../../cli/src/web_parts/routes.rs#L1365) |
+| GET | `/scheduled-actions` | [route](../../../../cli/src/web_parts/routes.rs#L1366) |
+| HEAD | `/scheduled-actions` | [route](../../../../cli/src/web_parts/routes.rs#L1367) |
+| GET | `/rooms` | [route](../../../../cli/src/web_parts/routes.rs#L1368) |
+| HEAD | `/rooms` | [route](../../../../cli/src/web_parts/routes.rs#L1369) |
+| GET | `/workspace-review` | [route](../../../../cli/src/web_parts/routes.rs#L1370) |
+| HEAD | `/workspace-review` | [route](../../../../cli/src/web_parts/routes.rs#L1371) |
+| GET | `/today` | [route](../../../../cli/src/web_parts/routes.rs#L1372) |
+| HEAD | `/today` | [route](../../../../cli/src/web_parts/routes.rs#L1373) |
+| GET | `/conversations` | [route](../../../../cli/src/web_parts/routes.rs#L1374) |
+| HEAD | `/conversations` | [route](../../../../cli/src/web_parts/routes.rs#L1375) |
+| GET | `/chat` | [route](../../../../cli/src/web_parts/routes.rs#L1376) |
+| HEAD | `/chat` | [route](../../../../cli/src/web_parts/routes.rs#L1377) |
+| GET | `/login` | [route](../../../../cli/src/web_parts/routes.rs#L1378) |
+| HEAD | `/login` | [route](../../../../cli/src/web_parts/routes.rs#L1379) |
+| GET | `/register` | [route](../../../../cli/src/web_parts/routes.rs#L1395) |
+| HEAD | `/register` | [route](../../../../cli/src/web_parts/routes.rs#L1395) |
+| POST | `/login` | [route](../../../../cli/src/web_parts/routes.rs#L1396) |
+| POST | `/register` | [route](../../../../cli/src/web_parts/routes.rs#L1397) |
+| POST | `/logout` | [route](../../../../cli/src/web_parts/routes.rs#L1398) |
+| POST | `/settings/password` | [route](../../../../cli/src/web_parts/routes.rs#L1399) |
+| POST | `/link-backend` | [route](../../../../cli/src/web_parts/routes.rs#L1406) |
+| POST | `/api/assistant-journal` | [route](../../../../cli/src/web_parts/routes.rs#L1862) |
+| POST | `download` | [route](../../../../cli/src/web_parts/routes.rs#L2021) |
+| POST | `start` | [route](../../../../cli/src/web_parts/routes.rs#L2028) |
+| POST | `select` | [route](../../../../cli/src/web_parts/routes.rs#L2041) |
+| POST | `stop` | [route](../../../../cli/src/web_parts/routes.rs#L2048) |
+| POST | `configuration` | [route](../../../../cli/src/web_parts/routes.rs#L2054) |
+| DELETE | `installation` | [route](../../../../cli/src/web_parts/routes.rs#L2081) |
+
+### 前置与动态分派
+
+连接/账户/来源管理、模型导入、移动传输、会话/任务 suffix 等由同文件前置分支及 handler 处理，不能按固定元组数量推导覆盖率。重点检查 [Host 路由](../../../../cli/src/web_parts/routes.rs)、[会话/流处理](../../../../cli/src/web_parts/streaming_state.rs)与[运行时语义](CURRENT_RUNTIME_INTERFACES.md)。
+
+## Worker 路由
+
+来源：`backend/worker/src/index.ts` 的 `request.method` 直接 dispatch。保留源码条件，避免把 prefix/includes/regex 写成不存在的严格路径模板。OPTIONS、认证和下游代理还有各自边界。
+
+| 方法 | 实际匹配条件 | handler |
+| --- | --- | --- |
+| GET | `path === "/healthz"` | [health](../../../../backend/worker/src/index.ts#L682) |
+| GET | `path === "/v1/channels"` | [listMessagingChannels](../../../../backend/worker/src/index.ts#L683) |
+| PUT | `path === "/v1/channels"` | [saveMessagingChannel](../../../../backend/worker/src/index.ts#L684) |
+| POST | `path === "/v1/channels/inbox/claim"` | [claimMessagingChannelMessage](../../../../backend/worker/src/index.ts#L685) |
+| POST | `/^\/v1\/channels\/inbox\/\d+\/complete$/.test(path)` | [completeMessagingChannelMessage](../../../../backend/worker/src/index.ts#L686) |
+| POST | `/^\/v1\/channels\/inbox\/\d+\/renew$/.test(path)` | [renewMessagingChannelMessage](../../../../backend/worker/src/index.ts#L687) |
+| POST | `/^\/v1\/channels\/inbox\/\d+\/progress$/.test(path)` | [progressMessagingChannelMessage](../../../../backend/worker/src/index.ts#L688) |
+| POST | `/^\/v1\/channels\/inbox\/\d+\/fail$/.test(path)` | [failMessagingChannelMessage](../../../../backend/worker/src/index.ts#L689) |
+| GET | `path.startsWith("/v1/channels/webhook/whatsapp/")` | [verifyWhatsAppWebhook](../../../../backend/worker/src/index.ts#L690) |
+| GET | `path.startsWith("/v1/channels/webhook/wechat_official/")` | [verifyWeChatOfficialWebhook](../../../../backend/worker/src/index.ts#L691) |
+| GET | `path.startsWith("/v1/channels/webhook/we_com/")` | [verifyWeComWebhook](../../../../backend/worker/src/index.ts#L692) |
+| POST | `path.startsWith("/v1/channels/webhook/")` | [receiveMessagingWebhook](../../../../backend/worker/src/index.ts#L693) |
+| GET | `path === "/admin/outbox/dlq/count"` | [adminDlqCount](../../../../backend/worker/src/index.ts#L694) |
+| POST | `path === "/admin/outbox/dlq/replay"` | [adminDlqReplay](../../../../backend/worker/src/index.ts#L695) |
+| GET | `path === "/search/serper"` | [serperSearch](../../../../backend/worker/src/index.ts#L697) |
+| POST | `path === "/v1/auth/register"` | [authRegister](../../../../backend/worker/src/index.ts#L699) |
+| POST | `path === "/v1/auth/login"` | [authLogin](../../../../backend/worker/src/index.ts#L700) |
+| GET | `path === "/v1/auth/me"` | [authMe](../../../../backend/worker/src/index.ts#L701) |
+| POST | `path === "/api/mobile/login"` | [mobileLogin](../../../../backend/worker/src/index.ts#L702) |
+| GET | `path === "/api/mobile/me"` | [mobileMe](../../../../backend/worker/src/index.ts#L703) |
+| GET | `path === "/api/mobile/agent/settings"` | [mobileAgentSettings](../../../../backend/worker/src/index.ts#L704) |
+| POST | `path === "/api/mobile/attachments/parse"` | [mobileAttachmentParse](../../../../backend/worker/src/index.ts#L705) |
+| GET | `path === "/v1/agent/settings"` | [agentSettingsGet](../../../../backend/worker/src/index.ts#L707) |
+| POST | `path === "/v1/agent/settings"` | [agentSettingsPost](../../../../backend/worker/src/index.ts#L708) |
+| GET | `path === "/v1/agent/permission_rules"` | [permissionRulesGet](../../../../backend/worker/src/index.ts#L709) |
+| POST | `path === "/v1/agent/permission_rules"` | [permissionRulesPost](../../../../backend/worker/src/index.ts#L710) |
+| DELETE | `path.startsWith("/v1/agent/permission_rules/")` | [permissionRulesDelete](../../../../backend/worker/src/index.ts#L711) |
+| GET | `path === "/v1/agent/tools"` | [agentToolsList](../../../../backend/worker/src/index.ts#L712) |
+| GET | `path === "/v1/models"` | [listModels](../../../../backend/worker/src/index.ts#L714) |
+| POST | `path === "/v1/chat/completions"` | [chatCompletions](../../../../backend/worker/src/index.ts#L715) |
+| GET | `path === "/v1/chat/conversations"` | [listChatConversations](../../../../backend/worker/src/index.ts#L717) |
+| POST | `path === "/v1/chat/conversations"` | [createChatConversation](../../../../backend/worker/src/index.ts#L718) |
+| GET | `path.includes("/v1/chat/conversations/") && path.endsWith("/messages")` | [listChatMessages](../../../../backend/worker/src/index.ts#L719) |
+| POST | `path.includes("/v1/chat/conversations/") && path.endsWith("/messages")` | [addChatMessage](../../../../backend/worker/src/index.ts#L720) |
+| PATCH | `path.startsWith("/v1/chat/conversations/")` | [updateChatConversation](../../../../backend/worker/src/index.ts#L721) |
+| DELETE | `path.startsWith("/v1/chat/conversations/")` | [deleteChatConversation](../../../../backend/worker/src/index.ts#L722) |
+| POST | `path === "/v1/sync/replicas"` | [pushCanonicalReplicas](../../../../backend/worker/src/index.ts#L726) |
+| GET | `path === "/v1/sync/replicas"` | [pullCanonicalReplicas](../../../../backend/worker/src/index.ts#L727) |
+| POST | `path === "/v1/devices/register"` | [registerDevice](../../../../backend/worker/src/index.ts#L729) |
+| POST | `path === "/v1/sources/sync"` | [syncSources](../../../../backend/worker/src/index.ts#L730) |
+| GET | `path === "/v1/sources"` | [listSources](../../../../backend/worker/src/index.ts#L731) |
+| DELETE | `path.startsWith("/v1/sources/")` | [deleteSource](../../../../backend/worker/src/index.ts#L732) |
+| POST | `path.startsWith("/v1/sources/") && path.endsWith("/run_now")` | [runSourceNow](../../../../backend/worker/src/index.ts#L733) |
+| GET | `path === "/v1/results"` | [listResults](../../../../backend/worker/src/index.ts#L734) |
+| GET | `path === "/v1/notifications"` | [listNotifications](../../../../backend/worker/src/index.ts#L735) |
+| GET | `path === "/v1/notifications/unread_count"` | [notificationUnreadCount](../../../../backend/worker/src/index.ts#L736) |
+| POST | `path === "/v1/notifications/read_all"` | [markAllNotificationsRead](../../../../backend/worker/src/index.ts#L737) |
+| POST | `path.startsWith("/v1/notifications/") && path.endsWith("/read")` | [markNotificationRead](../../../../backend/worker/src/index.ts#L738) |
+| GET | `path.startsWith("/v1/results/")` | [getResult](../../../../backend/worker/src/index.ts#L739) |
+| POST | `path.startsWith("/v1/results/") && path.endsWith("/ack")` | [ackResult](../../../../backend/worker/src/index.ts#L740) |
+| POST | `path === "/v1/debug/push/silent"` | [debugPushSilent](../../../../backend/worker/src/index.ts#L741) |
+| POST | `path === "/v1/debug/push/alert"` | [debugPushAlert](../../../../backend/worker/src/index.ts#L742) |
+| POST | `path === "/v1/debug/apns/validate_device"` | [debugApnsValidateDevice](../../../../backend/worker/src/index.ts#L743) |
+| GET | `path === "/v1/debug/apns/status"` | [debugApnsStatus](../../../../backend/worker/src/index.ts#L744) |
+| GET | `path.startsWith("/v1/debug/push/client/")` | [debugPushClient](../../../../backend/worker/src/index.ts#L745) |
+
+## Application 顶层命令 tag
+
+直接提取 `ApplicationCommand` 的 `CommandMetadata::wire_command_name` 映射并核对顶层 variant 集合。它们不是 HTTP 路径；mutating 命令继续走准入、幂等与事务。Model/Memory/Skill/MCP 等嵌套命令由各自枚举定义。
+
+| Rust variant | wire tag | 源码 |
+| --- | --- | --- |
+| `ArchiveDirectoryRevision` | `archive_directory_revision` | [definition](../../../../core/nola-application/src/application_command.rs#L1578) |
+| `BeginArchiveRestore` | `begin_archive_restore` | [definition](../../../../core/nola-application/src/application_command.rs#L1579) |
+| `ArchiveRestoreProgress` | `archive_restore_progress` | [definition](../../../../core/nola-application/src/application_command.rs#L1580) |
+| `StageArchiveManifest` | `stage_archive_manifest` | [definition](../../../../core/nola-application/src/application_command.rs#L1581) |
+| `CommitArchiveRestore` | `commit_archive_restore` | [definition](../../../../core/nola-application/src/application_command.rs#L1582) |
+| `PublishUploadedTranscript` | `publish_uploaded_transcript` | [definition](../../../../core/nola-application/src/application_command.rs#L1583) |
+| `BeginContentUpload` | `begin_content_upload` | [definition](../../../../core/nola-application/src/application_command.rs#L1584) |
+| `AppendContentChunk` | `append_content_chunk` | [definition](../../../../core/nola-application/src/application_command.rs#L1585) |
+| `ContentUploadProgress` | `content_upload_progress` | [definition](../../../../core/nola-application/src/application_command.rs#L1586) |
+| `SealContentUpload` | `seal_content_upload` | [definition](../../../../core/nola-application/src/application_command.rs#L1587) |
+| `CancelContentUpload` | `cancel_content_upload` | [definition](../../../../core/nola-application/src/application_command.rs#L1588) |
+| `ReadContentUploadChunk` | `read_content_upload_chunk` | [definition](../../../../core/nola-application/src/application_command.rs#L1589) |
+| `PutConversationPdfResource` | `put_conversation_pdf_resource` | [definition](../../../../core/nola-application/src/application_command.rs#L1590) |
+| `ReadConversationResource` | `read_conversation_resource` | [definition](../../../../core/nola-application/src/application_command.rs#L1591) |
+| `ListConversationResources` | `list_conversation_resources` | [definition](../../../../core/nola-application/src/application_command.rs#L1592) |
+| `DeleteConversationResource` | `delete_conversation_resource` | [definition](../../../../core/nola-application/src/application_command.rs#L1593) |
+| `BeginAssistantTurn` | `begin_assistant_turn` | [definition](../../../../core/nola-application/src/application_command.rs#L1594) |
+| `PromoteQueuedAssistantTurn` | `promote_queued_assistant_turn` | [definition](../../../../core/nola-application/src/application_command.rs#L1595) |
+| `BeginQueuedUserTurn` | `begin_queued_user_turn` | [definition](../../../../core/nola-application/src/application_command.rs#L1596) |
+| `ListOpenUserInputWaits` | `list_open_user_input_waits` | [definition](../../../../core/nola-application/src/application_command.rs#L1597) |
+| `ListOwnedTaskUserInputWaits` | `list_owned_task_user_input_waits` | [definition](../../../../core/nola-application/src/application_command.rs#L1598) |
+| `LoadUserInputWait` | `load_user_input_wait` | [definition](../../../../core/nola-application/src/application_command.rs#L1599) |
+| `RespondToConversationWait` | `respond_to_conversation_wait` | [definition](../../../../core/nola-application/src/application_command.rs#L1600) |
+| `BeginTaskAssistantTurn` | `begin_task_assistant_turn` | [definition](../../../../core/nola-application/src/application_command.rs#L1601) |
+| `BeginAutomationAssistantTurn` | `begin_automation_assistant_turn` | [definition](../../../../core/nola-application/src/application_command.rs#L1602) |
+| `ObserveAutomationExecution` | `observe_automation_execution` | [definition](../../../../core/nola-application/src/application_command.rs#L1603) |
+| `ListPendingAutomationExecutions` | `list_pending_automation_executions` | [definition](../../../../core/nola-application/src/application_command.rs#L1604) |
+| `ReconcileAutomationExecution` | `reconcile_automation_execution` | [definition](../../../../core/nola-application/src/application_command.rs#L1605) |
+| `ObserveAutomationWorker` | `observe_automation_worker` | [definition](../../../../core/nola-application/src/application_command.rs#L1606) |
+| `AckAutomationNotification` | `ack_automation_notification` | [definition](../../../../core/nola-application/src/application_command.rs#L1607) |
+| `BeginMaintenanceTurn` | `begin_maintenance_turn` | [definition](../../../../core/nola-application/src/application_command.rs#L1608) |
+| `QueryClaimableMemoryJobs` | `query_claimable_memory_jobs` | [definition](../../../../core/nola-application/src/application_command.rs#L1609) |
+| `BuildMemoryWorkerPlan` | `build_memory_worker_plan` | [definition](../../../../core/nola-application/src/application_command.rs#L1610) |
+| `LoadCommittedHostRequests` | `load_committed_host_requests` | [definition](../../../../core/nola-application/src/application_command.rs#L1611) |
+| `InspectRunProcessOwners` | `inspect_run_process_owners` | [definition](../../../../core/nola-application/src/application_command.rs#L1612) |
+| `ValidateRunProcessObservations` | `validate_run_process_observations` | [definition](../../../../core/nola-application/src/application_command.rs#L1613) |
+| `LoadRunDeliveryOwnership` | `load_run_delivery_ownership` | [definition](../../../../core/nola-application/src/application_command.rs#L1614) |
+| `LoadRunIdentity` | `load_run_identity` | [definition](../../../../core/nola-application/src/application_command.rs#L1615) |
+| `StepGoal` | `step_goal` | [definition](../../../../core/nola-application/src/application_command.rs#L1616) |
+| `StartGoalExecution` | `start_goal_execution` | [definition](../../../../core/nola-application/src/application_command.rs#L1617) |
+| `PrepareGoalControlIntent` | `prepare_goal_control_intent` | [definition](../../../../core/nola-application/src/application_command.rs#L1618) |
+| `PrepareGoalExecution` | `prepare_goal_execution` | [definition](../../../../core/nola-application/src/application_command.rs#L1619) |
+| `LoadGoalExecutionBinding` | `load_goal_execution_binding` | [definition](../../../../core/nola-application/src/application_command.rs#L1620) |
+| `LoadHostExecutionState` | `load_host_execution_state` | [definition](../../../../core/nola-application/src/application_command.rs#L1621) |
+| `LoadConversationTaskProjectionV1` | `load_conversation_task_projection_v1` | [definition](../../../../core/nola-application/src/application_command.rs#L1622) |
+| `ClaimApplicationControlRequests` | `claim_application_control_requests` | [definition](../../../../core/nola-application/src/application_command.rs#L1623) |
+| `ImportHostTaskCancellation` | `import_host_task_cancellation` | [definition](../../../../core/nola-application/src/application_command.rs#L1624) |
+| `PrepareDelegatedTask` | `prepare_delegated_task` | [definition](../../../../core/nola-application/src/application_command.rs#L1625) |
+| `CaptureMobileDelegationConfiguration` | `capture_mobile_delegation_configuration` | [definition](../../../../core/nola-application/src/application_command.rs#L1626) |
+| `LoadMobileTaskChildConfiguration` | `load_mobile_task_child_configuration` | [definition](../../../../core/nola-application/src/application_command.rs#L1627) |
+| `LoadMobileTaskWakePlan` | `load_mobile_task_wake_plan` | [definition](../../../../core/nola-application/src/application_command.rs#L1628) |
+| `InspectMobilePermissionRequest` | `inspect_mobile_permission_request` | [definition](../../../../core/nola-application/src/application_command.rs#L1629) |
+| `InspectMobileMcpRequest` | `inspect_mobile_mcp_request` | [definition](../../../../core/nola-application/src/application_command.rs#L1630) |
+| `PrepareMobileTaskGuidance` | `prepare_mobile_task_guidance` | [definition](../../../../core/nola-application/src/application_command.rs#L1631) |
+| `ObserveMobileTask` | `observe_mobile_task` | [definition](../../../../core/nola-application/src/application_command.rs#L1632) |
+| `ApplyPendingTaskNotice` | `apply_pending_task_notice` | [definition](../../../../core/nola-application/src/application_command.rs#L1633) |
+| `PrepareMobileDelegatedTask` | `prepare_mobile_delegated_task` | [definition](../../../../core/nola-application/src/application_command.rs#L1634) |
+| `AdmitMobileTaskChild` | `admit_mobile_task_child` | [definition](../../../../core/nola-application/src/application_command.rs#L1635) |
+| `ExecuteTaskCancellationForEffect` | `execute_task_cancellation_for_effect` | [definition](../../../../core/nola-application/src/application_command.rs#L1636) |
+| `ClaimCommittedHostRequests` | `claim_committed_host_requests` | [definition](../../../../core/nola-application/src/application_command.rs#L1637) |
+| `HeartbeatEffectDelivery` | `heartbeat_effect_delivery` | [definition](../../../../core/nola-application/src/application_command.rs#L1638) |
+| `ResolveUnknownEffectRecovery` | `resolve_unknown_effect_recovery` | [definition](../../../../core/nola-application/src/application_command.rs#L1639) |
+| `InspectOwnedTaskRecovery` | `inspect_owned_task_recovery` | [definition](../../../../core/nola-application/src/application_command.rs#L1640) |
+| `ResolveOwnedTaskRecovery` | `resolve_owned_task_recovery` | [definition](../../../../core/nola-application/src/application_command.rs#L1641) |
+| `LoadRuntimeEffectWorkSchedule` | `load_runtime_effect_work_schedule` | [definition](../../../../core/nola-application/src/application_command.rs#L1642) |
+| `PrepareRunEffectRecovery` | `prepare_run_effect_recovery` | [definition](../../../../core/nola-application/src/application_command.rs#L1643) |
+| `ActiveRun` | `active_run` | [definition](../../../../core/nola-application/src/application_command.rs#L1644) |
+| `ReduceAndAcceptHostResponse` | `reduce_and_accept_host_response` | [definition](../../../../core/nola-application/src/application_command.rs#L1645) |
+| `ReduceAndCommitActiveSubmission` | `reduce_and_commit_active_submission` | [definition](../../../../core/nola-application/src/application_command.rs#L1646) |
+| `RequestRunCancellation` | `request_run_cancellation` | [definition](../../../../core/nola-application/src/application_command.rs#L1647) |
+| `LoadRunCancellationDeliveryFacts` | `load_run_cancellation_delivery_facts` | [definition](../../../../core/nola-application/src/application_command.rs#L1648) |
+| `ClaimCancellationHostRequests` | `claim_cancellation_host_requests` | [definition](../../../../core/nola-application/src/application_command.rs#L1649) |
+| `ReduceAndCommitIdleSubmission` | `reduce_and_commit_idle_submission` | [definition](../../../../core/nola-application/src/application_command.rs#L1650) |
+| `RevertConversation` | `revert_conversation` | [definition](../../../../core/nola-application/src/application_command.rs#L1651) |
+| `CreateConversationBranch` | `create_conversation_branch` | [definition](../../../../core/nola-application/src/application_command.rs#L1652) |
+| `PrepareRemoteSubmission` | `prepare_remote_submission` | [definition](../../../../core/nola-application/src/application_command.rs#L1653) |
+| `AbandonPreparedRemoteSubmission` | `abandon_prepared_remote_submission` | [definition](../../../../core/nola-application/src/application_command.rs#L1654) |
+| `AdoptObservedRemoteRun` | `adopt_observed_remote_run` | [definition](../../../../core/nola-application/src/application_command.rs#L1655) |
+| `ObserveSubmissionFrontier` | `observe_submission_frontier` | [definition](../../../../core/nola-application/src/application_command.rs#L1656) |
+| `ObservedSourceSubmissionReceipt` | `observed_source_submission_receipt` | [definition](../../../../core/nola-application/src/application_command.rs#L1657) |
+| `BindRemoteSubmissionRequest` | `bind_remote_submission_request` | [definition](../../../../core/nola-application/src/application_command.rs#L1658) |
+| `ReadRemoteSubmissionIntent` | `read_remote_submission_intent` | [definition](../../../../core/nola-application/src/application_command.rs#L1659) |
+| `ReadAdmittedRemoteRunIdentity` | `read_admitted_remote_run_identity` | [definition](../../../../core/nola-application/src/application_command.rs#L1660) |
+| `ReadRemoteSubmissionRequest` | `read_remote_submission_request` | [definition](../../../../core/nola-application/src/application_command.rs#L1661) |
+| `RegisterSourceSubmission` | `register_source_submission` | [definition](../../../../core/nola-application/src/application_command.rs#L1662) |
+| `ReadSourceSubmissionReceipt` | `read_source_submission_receipt` | [definition](../../../../core/nola-application/src/application_command.rs#L1663) |
+| `CancelSourceSubmission` | `cancel_source_submission` | [definition](../../../../core/nola-application/src/application_command.rs#L1664) |
+| `CancelRejectedQueuedUiAction` | `cancel_rejected_queued_ui_action` | [definition](../../../../core/nola-application/src/application_command.rs#L1665) |
+| `RejectSourceSubmission` | `reject_source_submission` | [definition](../../../../core/nola-application/src/application_command.rs#L1666) |
+| `AcceptRemoteSubmissionReceipt` | `accept_remote_submission_receipt` | [definition](../../../../core/nola-application/src/application_command.rs#L1667) |
+| `CanonicalRunTerminal` | `canonical_run_terminal` | [definition](../../../../core/nola-application/src/application_command.rs#L1668) |
+| `ReadAssistantJournal` | `read_assistant_journal` | [definition](../../../../core/nola-application/src/application_command.rs#L1669) |
+| `LocalAssistantJournalHead` | `local_assistant_journal_head` | [definition](../../../../core/nola-application/src/application_command.rs#L1670) |
+| `LocalRunAssistantJournalHeads` | `local_run_assistant_journal_heads` | [definition](../../../../core/nola-application/src/application_command.rs#L1671) |
+| `LocalAssistantRunTerminalSeal` | `local_assistant_run_terminal_seal` | [definition](../../../../core/nola-application/src/application_command.rs#L1672) |
+| `LocalRunMessageAdmissionHead` | `local_run_message_admission_head` | [definition](../../../../core/nola-application/src/application_command.rs#L1673) |
+| `LocalRunContextUsage` | `local_run_context_usage` | [definition](../../../../core/nola-application/src/application_command.rs#L1674) |
+| `AcceptRemoteRunContextUsage` | `accept_remote_run_context_usage` | [definition](../../../../core/nola-application/src/application_command.rs#L1675) |
+| `ReadRunMessageAdmissions` | `read_run_message_admissions` | [definition](../../../../core/nola-application/src/application_command.rs#L1676) |
+| `RunMessageAdmissionReceptionState` | `run_message_admission_reception_state` | [definition](../../../../core/nola-application/src/application_command.rs#L1677) |
+| `ReceiveRunMessageAdmissions` | `receive_run_message_admissions` | [definition](../../../../core/nola-application/src/application_command.rs#L1680) |
+| `BeginReceiveAssistantRunTerminal` | `begin_receive_assistant_run_terminal` | [definition](../../../../core/nola-application/src/application_command.rs#L1681) |
+| `StageAssistantRunTerminalManifest` | `stage_assistant_run_terminal_manifest` | [definition](../../../../core/nola-application/src/application_command.rs#L1682) |
+| `CommitReceivedAssistantRunTerminal` | `commit_received_assistant_run_terminal` | [definition](../../../../core/nola-application/src/application_command.rs#L1685) |
+| `ReadLocalAssistantRunTerminalManifest` | `read_local_assistant_run_terminal_manifest` | [definition](../../../../core/nola-application/src/application_command.rs#L1688) |
+| `OpenAssistantJournalSnapshot` | `open_assistant_journal_snapshot` | [definition](../../../../core/nola-application/src/application_command.rs#L1691) |
+| `ReleaseAssistantJournalSnapshot` | `release_assistant_journal_snapshot` | [definition](../../../../core/nola-application/src/application_command.rs#L1692) |
+| `ReadAssistantJournalRange` | `read_assistant_journal_range` | [definition](../../../../core/nola-application/src/application_command.rs#L1693) |
+| `ReadAssistantJournalParts` | `read_assistant_journal_parts` | [definition](../../../../core/nola-application/src/application_command.rs#L1694) |
+| `ReadAssistantJournalPartChanges` | `read_assistant_journal_part_changes` | [definition](../../../../core/nola-application/src/application_command.rs#L1695) |
+| `ReadAssistantJournalManifest` | `read_assistant_journal_manifest` | [definition](../../../../core/nola-application/src/application_command.rs#L1696) |
+| `ReadAssistantJournalChunk` | `read_assistant_journal_chunk` | [definition](../../../../core/nola-application/src/application_command.rs#L1697) |
+| `ReadAssistantJournalRecordChunk` | `read_assistant_journal_record_chunk` | [definition](../../../../core/nola-application/src/application_command.rs#L1698) |
+| `ReceiveAssistantJournalRecord` | `receive_assistant_journal_record` | [definition](../../../../core/nola-application/src/application_command.rs#L1699) |
+| `StageAssistantJournalContent` | `stage_assistant_journal_content` | [definition](../../../../core/nola-application/src/application_command.rs#L1700) |
+| `NextAssistantJournalContent` | `next_assistant_journal_content` | [definition](../../../../core/nola-application/src/application_command.rs#L1701) |
+| `AssistantJournalReceptionState` | `assistant_journal_reception_state` | [definition](../../../../core/nola-application/src/application_command.rs#L1702) |
+| `InspectRunRecovery` | `inspect_run_recovery` | [definition](../../../../core/nola-application/src/application_command.rs#L1703) |
+| `InspectUnknownEffectRecovery` | `inspect_unknown_effect_recovery` | [definition](../../../../core/nola-application/src/application_command.rs#L1704) |
+| `LoadExactRunInvocation` | `load_exact_run_invocation` | [definition](../../../../core/nola-application/src/application_command.rs#L1705) |
+| `ValidateRunRecoveryAuthority` | `validate_run_recovery_authority` | [definition](../../../../core/nola-application/src/application_command.rs#L1706) |
+| `ValidateMobileRunRecoveryAuthority` | `validate_mobile_run_recovery_authority` | [definition](../../../../core/nola-application/src/application_command.rs#L1707) |
+| `EncodeHostWorkerIdentity` | `encode_host_worker_identity` | [definition](../../../../core/nola-application/src/application_command.rs#L1708) |
+| `InspectCancellationProcessOwners` | `inspect_cancellation_process_owners` | [definition](../../../../core/nola-application/src/application_command.rs#L1709) |
+| `ValidateCancellationProcessObservations` | `validate_cancellation_process_observations` | [definition](../../../../core/nola-application/src/application_command.rs#L1710) |
+| `AuxiliaryInvocation` | `auxiliary_invocation` | [definition](../../../../core/nola-application/src/application_command.rs#L1711) |
+| `LoadAuxiliaryOperation` | `load_auxiliary_operation` | [definition](../../../../core/nola-application/src/application_command.rs#L1712) |
+| `LoadAuxiliarySourceSlot` | `load_auxiliary_source_slot` | [definition](../../../../core/nola-application/src/application_command.rs#L1713) |
+| `ListConversationAuxiliarySources` | `list_conversation_auxiliary_sources` | [definition](../../../../core/nola-application/src/application_command.rs#L1714) |
+| `ListRecoverableRuns` | `list_recoverable_runs` | [definition](../../../../core/nola-application/src/application_command.rs#L1715) |
+| `CreateConversation` | `create_conversation` | [definition](../../../../core/nola-application/src/application_command.rs#L1716) |
+| `AdmitConversationUserMessage` | `admit_conversation_user_message` | [definition](../../../../core/nola-application/src/application_command.rs#L1717) |
+| `AgentRoom` | `agent_room` | [definition](../../../../core/nola-application/src/application_command.rs#L1718) |
+| `ImportConversationTranscript` | `import_conversation_transcript` | [definition](../../../../core/nola-application/src/application_command.rs#L1719) |
+| `EditConversationMessage` | `edit_conversation_message` | [definition](../../../../core/nola-application/src/application_command.rs#L1720) |
+| `DeleteConversationMessage` | `delete_conversation_message` | [definition](../../../../core/nola-application/src/application_command.rs#L1721) |
+| `SubmitUiInteraction` | `submit_ui_interaction` | [definition](../../../../core/nola-application/src/application_command.rs#L1722) |
+| `ExecuteUiTool` | `execute_ui_tool` | [definition](../../../../core/nola-application/src/application_command.rs#L1723) |
+| `ReadUiSurface` | `read_ui_surface` | [definition](../../../../core/nola-application/src/application_command.rs#L1724) |
+| `PreviewUiSurface` | `preview_ui_surface` | [definition](../../../../core/nola-application/src/application_command.rs#L1725) |
+| `ReadUiSurfaceChanges` | `read_ui_surface_changes` | [definition](../../../../core/nola-application/src/application_command.rs#L1726) |
+| `ReadUiSurfaceRevision` | `read_ui_surface_revision` | [definition](../../../../core/nola-application/src/application_command.rs#L1727) |
+| `ListUiSurfaces` | `list_ui_surfaces` | [definition](../../../../core/nola-application/src/application_command.rs#L1728) |
+| `ReadUiAuthority` | `read_ui_authority` | [definition](../../../../core/nola-application/src/application_command.rs#L1729) |
+| `ReadUiCapability` | `read_ui_capability` | [definition](../../../../core/nola-application/src/application_command.rs#L1730) |
+| `StepCompactionSummary` | `step_compaction_summary` | [definition](../../../../core/nola-application/src/application_command.rs#L1731) |
+| `EvaluateCompactionMaintenance` | `evaluate_compaction_maintenance` | [definition](../../../../core/nola-application/src/application_command.rs#L1732) |
+| `Context` | `context` | [definition](../../../../core/nola-application/src/application_command.rs#L1733) |
+| `PatchConversationConfiguration` | `patch_conversation_configuration` | [definition](../../../../core/nola-application/src/application_command.rs#L1734) |
+| `SelectConversationExecution` | `select_conversation_execution` | [definition](../../../../core/nola-application/src/application_command.rs#L1735) |
+| `ReadPermissionConfiguration` | `read_permission_configuration` | [definition](../../../../core/nola-application/src/application_command.rs#L1736) |
+| `SetConversationPermission` | `set_conversation_permission` | [definition](../../../../core/nola-application/src/application_command.rs#L1737) |
+| `PatchConversationMetadata` | `patch_conversation_metadata` | [definition](../../../../core/nola-application/src/application_command.rs#L1738) |
+| `LoadConversation` | `load_conversation` | [definition](../../../../core/nola-application/src/application_command.rs#L1739) |
+| `LoadConversationMetadata` | `load_conversation_metadata` | [definition](../../../../core/nola-application/src/application_command.rs#L1740) |
+| `LoadConversationExportPage` | `load_conversation_export_page` | [definition](../../../../core/nola-application/src/application_command.rs#L1741) |
+| `LoadCompactionLineage` | `load_compaction_lineage` | [definition](../../../../core/nola-application/src/application_command.rs#L1742) |
+| `ReadHistoricalPart` | `read_historical_part` | [definition](../../../../core/nola-application/src/application_command.rs#L1743) |
+| `ReadConversationPartDerivation` | `read_conversation_part_derivation` | [definition](../../../../core/nola-application/src/application_command.rs#L1744) |
+| `ReadConversationToolSources` | `read_conversation_tool_sources` | [definition](../../../../core/nola-application/src/application_command.rs#L1745) |
+| `ReadConversationToolSourceRange` | `read_conversation_tool_source_range` | [definition](../../../../core/nola-application/src/application_command.rs#L1746) |
+| `ReadCodeCellObservation` | `read_code_cell_observation` | [definition](../../../../core/nola-application/src/application_command.rs#L1747) |
+| `ReadCodeCellHistoryForEffect` | `read_code_cell_history_for_effect` | [definition](../../../../core/nola-application/src/application_command.rs#L1748) |
+| `ReadConversationExportRange` | `read_conversation_export_range` | [definition](../../../../core/nola-application/src/application_command.rs#L1749) |
+| `ReadConversationTextRange` | `read_conversation_text_range` | [definition](../../../../core/nola-application/src/application_command.rs#L1750) |
+| `SearchConversationText` | `search_conversation_text` | [definition](../../../../core/nola-application/src/application_command.rs#L1751) |
+| `QueryCanonicalHistory` | `query_canonical_history` | [definition](../../../../core/nola-application/src/application_command.rs#L1752) |
+| `LoadConversationProjectionV1` | `load_conversation_projection_v1` | [definition](../../../../core/nola-application/src/application_command.rs#L1753) |
+| `PreviewExpertTemplateCapture` | `preview_expert_template_capture` | [definition](../../../../core/nola-application/src/application_command.rs#L1754) |
+| `AdmitExpertConversationMessage` | `admit_expert_conversation_message` | [definition](../../../../core/nola-application/src/application_command.rs#L1755) |
+| `PrepareEditedExpertResend` | `prepare_edited_expert_resend` | [definition](../../../../core/nola-application/src/application_command.rs#L1756) |
+| `LoadPreparedExpertResend` | `load_prepared_expert_resend` | [definition](../../../../core/nola-application/src/application_command.rs#L1757) |
+| `LoadExpertMessageManifest` | `load_expert_message_manifest` | [definition](../../../../core/nola-application/src/application_command.rs#L1758) |
+| `LoadExpertChildInstructions` | `load_expert_child_instructions` | [definition](../../../../core/nola-application/src/application_command.rs#L1759) |
+| `PrepareEditedResend` | `prepare_edited_resend` | [definition](../../../../core/nola-application/src/application_command.rs#L1760) |
+| `LoadPreparedEditedResend` | `load_prepared_edited_resend` | [definition](../../../../core/nola-application/src/application_command.rs#L1761) |
+| `LoadEditedResendHostMaterial` | `load_edited_resend_host_material` | [definition](../../../../core/nola-application/src/application_command.rs#L1762) |
+| `AttestEditedResendHostPolicy` | `attest_edited_resend_host_policy` | [definition](../../../../core/nola-application/src/application_command.rs#L1763) |
+| `ListActivity` | `list_activity` | [definition](../../../../core/nola-application/src/application_command.rs#L1764) |
+| `LoadActivityDetail` | `load_activity_detail` | [definition](../../../../core/nola-application/src/application_command.rs#L1765) |
+| `LoadTodayFacts` | `load_today_facts` | [definition](../../../../core/nola-application/src/application_command.rs#L1766) |
+| `LoadConversationContextUsageV1` | `load_conversation_context_usage_v1` | [definition](../../../../core/nola-application/src/application_command.rs#L1767) |
+| `LoadConversationPermissionProjectionV1` | `load_conversation_permission_projection_v1` | [definition](../../../../core/nola-application/src/application_command.rs#L1768) |
+| `LoadConversationProjectionPageV1` | `load_conversation_projection_page_v1` | [definition](../../../../core/nola-application/src/application_command.rs#L1771) |
+| `LoadConversationSourceOwner` | `load_conversation_source_owner` | [definition](../../../../core/nola-application/src/application_command.rs#L1772) |
+| `LoadTaskChildConversationWindow` | `load_task_child_conversation_window` | [definition](../../../../core/nola-application/src/application_command.rs#L1773) |
+| `LoadConversationProjectionWindowV1` | `load_conversation_projection_window_v1` | [definition](../../../../core/nola-application/src/application_command.rs#L1774) |
+| `LoadConversationProjectionWindowUpdateV1` | `load_conversation_projection_window_update_v1` | [definition](../../../../core/nola-application/src/application_command.rs#L1777) |
+| `LoadConversationTailSnapshotV1` | `load_conversation_tail_snapshot_v1` | [definition](../../../../core/nola-application/src/application_command.rs#L1780) |
+| `LoadConversationSettings` | `load_conversation_settings` | [definition](../../../../core/nola-application/src/application_command.rs#L1781) |
+| `ListConversations` | `list_conversations` | [definition](../../../../core/nola-application/src/application_command.rs#L1782) |
+| `RenameConversation` | `rename_conversation` | [definition](../../../../core/nola-application/src/application_command.rs#L1783) |
+| `DeleteConversation` | `delete_conversation` | [definition](../../../../core/nola-application/src/application_command.rs#L1784) |
+| `UpsertPermissionGrant` | `upsert_permission_grant` | [definition](../../../../core/nola-application/src/application_command.rs#L1785) |
+| `EffectivePermissionGrants` | `effective_permission_grants` | [definition](../../../../core/nola-application/src/application_command.rs#L1786) |
+| `ListPermissionGrants` | `list_permission_grants` | [definition](../../../../core/nola-application/src/application_command.rs#L1787) |
+| `RevokePermissionGrant` | `revoke_permission_grant` | [definition](../../../../core/nola-application/src/application_command.rs#L1788) |
+| `Skill` | `skill` | [definition](../../../../core/nola-application/src/application_command.rs#L1789) |
+| `Mcp` | `mcp` | [definition](../../../../core/nola-application/src/application_command.rs#L1790) |
+| `Plugin` | `plugin` | [definition](../../../../core/nola-application/src/application_command.rs#L1791) |
+| `DataSource` | `data_source` | [definition](../../../../core/nola-application/src/application_command.rs#L1792) |
+| `DocumentSource` | `document_source` | [definition](../../../../core/nola-application/src/application_command.rs#L1793) |
+| `Memory` | `memory` | [definition](../../../../core/nola-application/src/application_command.rs#L1794) |
+| `Model` | `model` | [definition](../../../../core/nola-application/src/application_command.rs#L1795) |
+| `ResolveModelReasoning` | `resolve_model_reasoning` | [definition](../../../../core/nola-application/src/application_command.rs#L1796) |
+| `QueryAutomationOccurrences` | `query_automation_occurrences` | [definition](../../../../core/nola-application/src/application_command.rs#L1797) |
+| `ResolveRemoteModelProfile` | `resolve_remote_model_profile` | [definition](../../../../core/nola-application/src/application_command.rs#L1798) |
+| `ReconcileRoomRouting` | `reconcile_room_routing` | [definition](../../../../core/nola-application/src/application_command.rs#L1799) |
+| `ResolveChatModel` | `resolve_chat_model` | [definition](../../../../core/nola-application/src/application_command.rs#L1800) |
+| `ResolveEffectiveModelParameters` | `resolve_effective_model_parameters` | [definition](../../../../core/nola-application/src/application_command.rs#L1801) |
+| `AdmitHostOutput` | `admit_host_output` | [definition](../../../../core/nola-application/src/application_command.rs#L1802) |
+| `ConversationPlan` | `conversation_plan` | [definition](../../../../core/nola-application/src/application_command.rs#L1803) |
+| `RuntimeTask` | `runtime_task` | [definition](../../../../core/nola-application/src/application_command.rs#L1804) |
+| `RecoverExpiredAgentTask` | `recover_expired_agent_task` | [definition](../../../../core/nola-application/src/application_command.rs#L1805) |
+| `ClaimAgentTaskFair` | `claim_agent_task_fair` | [definition](../../../../core/nola-application/src/application_command.rs#L1806) |
+| `ExportAgentTaskAdmission` | `export_agent_task_admission` | [definition](../../../../core/nola-application/src/application_command.rs#L1807) |
+| `ImportHostAgentTaskAdmission` | `import_host_agent_task_admission` | [definition](../../../../core/nola-application/src/application_command.rs#L1808) |
+| `ExportAgentTaskTerminalProjection` | `export_agent_task_terminal_projection` | [definition](../../../../core/nola-application/src/application_command.rs#L1809) |
+| `ImportHostAgentTaskTerminalProjection` | `import_host_agent_task_terminal_projection` | [definition](../../../../core/nola-application/src/application_command.rs#L1810) |
+| `ExportAgentTaskGuidanceProjection` | `export_agent_task_guidance_projection` | [definition](../../../../core/nola-application/src/application_command.rs#L1811) |
+| `ImportHostAgentTaskGuidanceProjection` | `import_host_agent_task_guidance_projection` | [definition](../../../../core/nola-application/src/application_command.rs#L1812) |
+| `SopRun` | `sop_run` | [definition](../../../../core/nola-application/src/application_command.rs#L1813) |
+| `WorkStepTransaction` | `work_step_transaction` | [definition](../../../../core/nola-application/src/application_command.rs#L1814) |
+| `PermissionRequest` | `permission_request` | [definition](../../../../core/nola-application/src/application_command.rs#L1815) |
+| `Automation` | `automation` | [definition](../../../../core/nola-application/src/application_command.rs#L1816) |
+| `EnqueueAgentCommand` | `enqueue_agent_command` | [definition](../../../../core/nola-application/src/application_command.rs#L1817) |
+| `EnqueueTaskTerminalReconciliation` | `enqueue_task_terminal_reconciliation` | [definition](../../../../core/nola-application/src/application_command.rs#L1818) |
+| `LoadTaskGuidanceReceipt` | `load_task_guidance_receipt` | [definition](../../../../core/nola-application/src/application_command.rs#L1821) |
+| `SubmitTaskGuidance` | `submit_task_guidance` | [definition](../../../../core/nola-application/src/application_command.rs#L1822) |
+| `ApplyTaskGuidance` | `apply_task_guidance` | [definition](../../../../core/nola-application/src/application_command.rs#L1823) |
+| `ApplyActivePermissionPolicy` | `apply_active_permission_policy` | [definition](../../../../core/nola-application/src/application_command.rs#L1824) |
+| `PeekAgentCommand` | `peek_agent_command` | [definition](../../../../core/nola-application/src/application_command.rs#L1825) |
+| `ClaimNextAgentCommand` | `claim_next_agent_command` | [definition](../../../../core/nola-application/src/application_command.rs#L1826) |
+| `LeasedAgentCommands` | `leased_agent_commands` | [definition](../../../../core/nola-application/src/application_command.rs#L1827) |
+| `ReleaseAgentCommandLease` | `release_agent_command_lease` | [definition](../../../../core/nola-application/src/application_command.rs#L1828) |
+| `AcknowledgeAgentCommand` | `acknowledge_agent_command` | [definition](../../../../core/nola-application/src/application_command.rs#L1829) |
+| `RecordAgentTrace` | `record_agent_trace` | [definition](../../../../core/nola-application/src/application_command.rs#L1830) |
+| `LoadExactRunTraceReplay` | `load_exact_run_trace_replay` | [definition](../../../../core/nola-application/src/application_command.rs#L1831) |
+| `TraceEventsAfter` | `trace_events_after` | [definition](../../../../core/nola-application/src/application_command.rs#L1832) |
+| `TraceRunsForConversation` | `trace_runs_for_conversation` | [definition](../../../../core/nola-application/src/application_command.rs#L1833) |
+| `LatestTraceId` | `latest_trace_id` | [definition](../../../../core/nola-application/src/application_command.rs#L1834) |
+| `RecoverOrphanedRuns` | `recover_orphaned_runs` | [definition](../../../../core/nola-application/src/application_command.rs#L1835) |
+| `RecoverObservedOrphanedRun` | `recover_observed_orphaned_run` | [definition](../../../../core/nola-application/src/application_command.rs#L1836) |
+| `RecoverExpiredRunDeliveries` | `recover_expired_run_deliveries` | [definition](../../../../core/nola-application/src/application_command.rs#L1837) |
+| `SaveWorkspaceCheckpoint` | `save_workspace_checkpoint` | [definition](../../../../core/nola-application/src/application_command.rs#L1838) |
+| `ListWorkspaceCheckpoints` | `list_workspace_checkpoints` | [definition](../../../../core/nola-application/src/application_command.rs#L1839) |
+| `DeleteWorkspaceCheckpoint` | `delete_workspace_checkpoint` | [definition](../../../../core/nola-application/src/application_command.rs#L1840) |
+| `AcquireSessionRunLease` | `acquire_session_run_lease` | [definition](../../../../core/nola-application/src/application_command.rs#L1841) |
+| `GetSessionRunLease` | `get_session_run_lease` | [definition](../../../../core/nola-application/src/application_command.rs#L1842) |
+| `ListSessionRunLeases` | `list_session_run_leases` | [definition](../../../../core/nola-application/src/application_command.rs#L1843) |
+| `ReleaseSessionRunLease` | `release_session_run_lease` | [definition](../../../../core/nola-application/src/application_command.rs#L1844) |
+| `PutProductSetting` | `put_product_setting` | [definition](../../../../core/nola-application/src/application_command.rs#L1845) |
+| `PutProductSettingChecked` | `put_product_setting_checked` | [definition](../../../../core/nola-application/src/application_command.rs#L1846) |
+| `PersistPreparedHostToolPlan` | `persist_prepared_host_tool_plan` | [definition](../../../../core/nola-application/src/application_command.rs#L1847) |
+| `ReadPreparedHostToolPlan` | `read_prepared_host_tool_plan` | [definition](../../../../core/nola-application/src/application_command.rs#L1848) |
+| `GetProductSetting` | `get_product_setting` | [definition](../../../../core/nola-application/src/application_command.rs#L1849) |
+| `ListReadableExpertTemplates` | `list_readable_expert_templates` | [definition](../../../../core/nola-application/src/application_command.rs#L1850) |
+| `DeleteProductSetting` | `delete_product_setting` | [definition](../../../../core/nola-application/src/application_command.rs#L1851) |
+| `PendingSyncChanges` | `pending_sync_changes` | [definition](../../../../core/nola-application/src/application_command.rs#L1852) |
+| `ResolveSyncChange` | `resolve_sync_change` | [definition](../../../../core/nola-application/src/application_command.rs#L1853) |
+| `GetSyncCursor` | `get_sync_cursor` | [definition](../../../../core/nola-application/src/application_command.rs#L1854) |
+| `SaveSyncCursor` | `save_sync_cursor` | [definition](../../../../core/nola-application/src/application_command.rs#L1855) |
+| `ApplyRemoteSyncPage` | `apply_remote_sync_page` | [definition](../../../../core/nola-application/src/application_command.rs#L1856) |
+| `LoadCheckpoint` | `load_checkpoint` | [definition](../../../../core/nola-application/src/application_command.rs#L1857) |
+| `LoadSessionProjection` | `load_session_projection` | [definition](../../../../core/nola-application/src/application_command.rs#L1858) |
+| `LoadGoalControlObservation` | `load_goal_control_observation` | [definition](../../../../core/nola-application/src/application_command.rs#L1859) |
+| `LoadGoalExecutionOwner` | `load_goal_execution_owner` | [definition](../../../../core/nola-application/src/application_command.rs#L1860) |
+| `LoadSessionGoalProjection` | `load_session_goal_projection` | [definition](../../../../core/nola-application/src/application_command.rs#L1861) |
+| `FindResumableGoalSession` | `find_resumable_goal_session` | [definition](../../../../core/nola-application/src/application_command.rs#L1862) |
+| `LoadResumeSnapshot` | `load_resume_snapshot` | [definition](../../../../core/nola-application/src/application_command.rs#L1863) |
+| `AcknowledgeResumeSnapshot` | `acknowledge_resume_snapshot` | [definition](../../../../core/nola-application/src/application_command.rs#L1864) |
+
+## 领域用例与平台桥接
+
+| 边界 | 当前源码入口 | 核对要求 |
+| --- | --- | --- |
+| 模型连接、账户、catalog、profile与探测 | [源码](../../../../core/nola-application/src/model.rs#L1) | ModelCommand；导入/配置CAS与实际探测分开，profile和credential不混为一个对象 |
+| 会话模型解析 | [源码](../../../../core/nola-application/src/model_profile_resolution.rs#L1) | 按冻结配置解析，不能用客户端当前选中值恢复旧Run |
+| 记忆 | [源码](../../../../core/nola-application/src/memory.rs#L1) | MemoryCommand；Replace/Commit/Recall/Delete，namespace与commit intent由明确类型表达 |
+| Skill | [源码](../../../../core/nola-application/src/skill.rs#L1) | SkillCommand；来源/版本与加载结果保留原身份 |
+| 插件 | [源码](../../../../core/nola-application/src/plugin.rs#L1) | PluginCommand；Install/SetEnabled/Remove使用revision，安装启用不授予工具执行权 |
+| 会话配置 | [源码](../../../../core/nola-application/src/conversation_configuration.rs#L1) | SelectConversationExecutionInput及配置patch；字段未设置与显式清空分开 |
+| Room分派 | [源码](../../../../core/nola-application/src/agent_room.rs#L1) | 当前实现仍有独立Room用例，不能因目标Conversation统一而在文档宣布已删除 |
+| 工具catalog | [源码](../../../../core/nola-agent-engine/src/tool_catalog.rs#L1) | 模型选择schema工具；Core按具体调用授权，不以自然语言关键词选工具 |
+| 上下文与压缩 | [源码](../../../../core/nola-agent-engine/src/agent/runtime/compaction_driver.rs#L1) | Core维护压缩推进；Host仅执行物理模型请求，客户端不自行生成另一份摘要 |
+| 移动Application C ABI | [源码](../../../../core/nola-mobile-bindings/src/lib.rs#L1) | open/free/execute与last_open_error；同canonical数据库共享embedded runtime及准入锁 |
+| 移动持久提交 | [源码](../../../../core/nola-mobile-bindings/src/submission.rs#L1) | application_submit；FFI调用返回不取代业务终态 |
+| 移动child pump | [源码](../../../../core/nola-mobile-bindings/src/child_pump.rs#L1) | 已准入child执行与恢复；本地权威与远程镜像严格分开 |
+
+
+
+当前提取：243 个固定 Rust 路由元组、55 条 Worker 直接 dispatch、271 个顶层 wire tag。数字只描述提取集合，不包含所有动态路由或运行路径。

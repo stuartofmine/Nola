@@ -1,0 +1,79 @@
+{
+  "name": "nola-windows",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Native Windows shell for the Nola CLI Web Host",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "npm run build && electron .",
+    "native:x64:cpu": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-native.ps1 -Architecture x64 -Backend cpu",
+    "native:x64:vulkan": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-native.ps1 -Architecture x64 -Backend vulkan",
+    "native:x64:cuda": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-native.ps1 -Architecture x64 -Backend cuda",
+    "native:arm64:cpu": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-native.ps1 -Architecture arm64 -Backend cpu",
+    "stage:native:x64": "node scripts/stage-native.mjs --arch x64",
+    "stage:native:arm64": "node scripts/stage-native.mjs --arch arm64",
+    "dist:x64": "npm run build && npm run native:x64:cpu && electron-builder --win nsis --x64 --config.directories.output=release/cpu",
+    "dist:x64:vulkan": "npm run build && npm run native:x64:vulkan && electron-builder --win nsis --x64 --config.directories.output=release/vulkan",
+    "dist:x64:cuda": "npm run build && npm run native:x64:cuda && electron-builder --win nsis --x64 --config.directories.output=release/cuda",
+    "dist:arm64": "npm run build && npm run native:arm64:cpu && electron-builder --win nsis --arm64 --config.directories.output=release/arm64",
+    "test:e2e": "playwright test",
+    "test:unit": "node --test unit/*.test.cjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@playwright/test": "^1.62.0",
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
+    "typescript": "^7.0.2"
+  },
+  "build": {
+    "appId": "com.nola.assistant.windows",
+    "productName": "Nola",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/bin",
+        "to": "bin"
+      },
+      {
+        "from": "resources/licenses",
+        "to": "licenses"
+      },
+      {
+        "from": "native-lock.json",
+        "to": "native-lock.json"
+      },
+      {
+        "from": "resources/native-runtime.json",
+        "to": "native-runtime.json"
+      },
+      {
+        "from": "../web",
+        "to": "web"
+      }
+    ],
+    "win": {
+      "icon": "../web/app/static/nola-icon.png",
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "Nola-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Nola",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

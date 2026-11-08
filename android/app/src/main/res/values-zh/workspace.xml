@@ -1,0 +1,15 @@
+<resources>
+    <string name="workspace_title">工作区</string>
+    <string name="workspace_sources">资料</string>
+    <string name="workspace_memory">长期记忆</string>
+    <string name="workspace_plans">计划</string>
+    <string name="workspace_records">活动</string>
+    <string name="composer_commands">指令</string>
+    <string name="composer_command_invalid">指令或参数无效，输入 / 查看可用指令。</string>
+    <string name="composer_command_no_run">没有正在执行的任务。</string>
+    <string name="workspace_knowledge">知识点</string>
+    <string name="workspace_knowledge_empty">还没有保存的会话知识点。</string>
+    <string name="workspace_knowledge_failed">无法加载会话知识点，请重试。</string>
+    <string name="workspace_knowledge_open">打开原对话</string>
+    <string name="tab_information_short">信息</string>
+</resources>

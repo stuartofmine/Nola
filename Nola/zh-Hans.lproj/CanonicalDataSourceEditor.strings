@@ -1,0 +1,4 @@
+"editor.edit" = "编辑数据源";
+"editor.add" = "添加数据源";
+"editor.validate" = "验证数据源";
+"editor.reopen_required" = "请重新打开此数据源后再保存，以便检查其最新版本。";

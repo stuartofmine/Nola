@@ -1,0 +1,16 @@
+[
+  {
+    "id": "acetaminophen",
+    "name": "对乙酰氨基酚",
+    "description": "用于缓解轻中度疼痛和降低发热。常见剂型为片剂或液体。",
+    "commonDosage": "成人：500-1000 mg 每 4-6 小时，24 小时不超过 4 g（请遵医嘱）",
+    "warnings": "避免与酒精同时使用；肝功能不全者慎用。"
+  },
+  {
+    "id": "ibuprofen",
+    "name": "布洛芬",
+    "description": "非甾体抗炎药（NSAID），用于缓解疼痛和炎症。",
+    "commonDosage": "成人：200-400 mg 每 4-6 小时，24 小时不超过 1200 mg（OTC）或遵医嘱。",
+    "warnings": "对阿司匹林过敏或有消化性溃疡、出血风险者慎用。"
+  }
+]

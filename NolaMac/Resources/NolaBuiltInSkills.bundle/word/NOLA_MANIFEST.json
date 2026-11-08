@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "id": "word-document-authoring",
+  "delivery": "built-in",
+  "category": {
+    "id": "documents",
+    "name": "Documents",
+    "name_zh": "文档处理"
+  },
+  "source": {
+    "project": "Nola",
+    "license": "Apache-2.0"
+  },
+  "status": "stable",
+  "platforms": [
+    "macos",
+    "cli-web"
+  ],
+  "required_tools": [
+    "write_file",
+    "bash"
+  ],
+  "optional_tools": [
+    "read_file"
+  ],
+  "runtime_dependencies": [
+    "python3 (standard library)"
+  ],
+  "permissions": [
+    "filesystem.read",
+    "filesystem.write.confirm"
+  ],
+  "secrets": [],
+  "validation": [
+    "scripts/create_document.py validation receipt",
+    "source-to-output structural reconciliation"
+  ],
+  "recommended_handoffs": [
+    "review-documents",
+    "conduct-deep-research"
+  ],
+  "execution_contract": {
+    "schemaVersion": 1,
+    "progressSteps": [
+      {
+        "id": "inspect",
+        "title": "Inspect inputs and constraints",
+        "required": true
+      },
+      {
+        "id": "execute",
+        "title": "Produce the requested outcome",
+        "required": true
+      },
+      {
+        "id": "verify",
+        "title": "Verify the outcome with evidence",
+        "required": true
+      }
+    ],
+    "artifacts": [
+      {
+        "id": "document",
+        "mediaType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "required": true,
+        "description": "Stable reference to the final requested outcome or its persisted receipt"
+      }
+    ],
+    "verifiers": [
+      {
+        "id": "completion-audit",
+        "method": "model_judgment",
+        "description": "Record real evidence for the applicable completion checks: scripts/create_document.py validation receipt; source-to-output structural reconciliation",
+        "required": true
+      }
+    ],
+    "resumePoints": [
+      "after-inspect",
+      "after-execute",
+      "after-verify"
+    ]
+  }
+}

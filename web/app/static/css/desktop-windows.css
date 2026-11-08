@@ -1,0 +1,210 @@
+/* Electron-only desktop composition. The preload sets data-nola-desktop before DOMContentLoaded. */
+html[data-nola-desktop="windows"] {
+    --desktop-rail-w: 232px;
+    --font-sans: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+    --font-display: "Segoe UI Variable Display", "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+    background: var(--bg-app);
+}
+
+html[data-nola-desktop="windows"] body {
+    min-width: 0;
+    overscroll-behavior: none;
+}
+
+html[data-nola-desktop="windows"] body:not(.chat-page) .navbar {
+    position: fixed;
+    z-index: 120;
+    inset: 0 auto 0 0;
+    width: var(--desktop-rail-w);
+    height: 100vh;
+    border-right: 1px solid var(--border);
+    border-bottom: 0;
+    background: color-mix(in srgb, var(--bg-elevated) 88%, var(--bg-app));
+    backdrop-filter: blur(24px) saturate(1.2);
+}
+
+html[data-nola-desktop="windows"] body:not(.chat-page) .nav-container {
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    padding: 18px 12px 14px;
+    flex-direction: column;
+    align-items: stretch;
+}
+
+html[data-nola-desktop="windows"] body:not(.chat-page) .brand {
+    min-height: 44px;
+    margin: 0 4px 16px;
+    padding: 0 8px;
+}
+
+html[data-nola-desktop="windows"] body:not(.chat-page) .brand-mark {
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
+    font-size: 14px;
+}
+
+html[data-nola-desktop="windows"] body:not(.chat-page) .nav-toggle { display: none; }
+
+html[data-nola-desktop="windows"] body:not(.chat-page) .nav-links {
+    display: flex;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 3px;
+}
+
+html[data-nola-desktop="windows"] body:not(.chat-page) .nav-link {
+    min-height: 39px;
+    justify-content: flex-start;
+    gap: 10px;
+    padding: 0 11px;
+    border-radius: 10px;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 560;
+}
+
+html[data-nola-desktop="windows"] body:not(.chat-page) .nav-link svg {
+    width: 16px;
+    height: 16px;
+}
+
+html[data-nola-desktop="windows"] body:not(.chat-page) .nav-link.active {
+    background: color-mix(in srgb, var(--nola-primary) 10%, transparent);
+    color: var(--nola-primary-strong);
+}
+
+html[data-nola-desktop="windows"] body:not(.chat-page) .nav-divider { margin-top: auto; }
+html[data-nola-desktop="windows"] body:not(.chat-page) .nav-user-chip { max-width: 100%; margin: 4px 0; }
+html[data-nola-desktop="windows"] body:not(.chat-page) .nav-inline-form,
+html[data-nola-desktop="windows"] body:not(.chat-page) .nav-inline-form .btn { width: 100%; }
+html[data-nola-desktop="windows"] body:not(.chat-page) .theme-toggle { align-self: flex-start; margin-top: 3px; }
+
+html[data-nola-desktop="windows"] body:not(.chat-page) .main-content {
+    width: auto;
+    max-width: none;
+    min-height: 100vh;
+    margin-left: var(--desktop-rail-w);
+    padding: 30px clamp(24px, 4vw, 52px) 42px;
+}
+
+html[data-nola-desktop="windows"] body:not(.chat-page) .site-footer {
+    margin-left: var(--desktop-rail-w);
+}
+
+html[data-nola-desktop="windows"] body.chat-page .navbar,
+html[data-nola-desktop="windows"] body.chat-page .site-footer { display: none; }
+
+html[data-nola-desktop="windows"] body.chat-page,
+html[data-nola-desktop="windows"] body.chat-page .main-content,
+html[data-nola-desktop="windows"] body.chat-page #chatApp,
+html[data-nola-desktop="windows"] body.chat-page .chat-layout {
+    height: 100vh;
+    min-height: 0;
+}
+
+html[data-nola-desktop="windows"] body.chat-page .chat-layout {
+    --chat-sidebar-width: clamp(224px, 17vw, 258px);
+    --chat-inspector-width: clamp(286px, 22vw, 340px);
+    background: var(--bg-app);
+}
+
+html[data-nola-desktop="windows"] .chat-sidebar {
+    background: color-mix(in srgb, var(--bg-elevated) 84%, var(--bg-app));
+}
+
+html[data-nola-desktop="windows"] .chat-main {
+    min-width: 0;
+    background: color-mix(in srgb, var(--bg-elevated) 62%, var(--bg-app));
+}
+
+html[data-nola-desktop="windows"] .chat-toolbar {
+    background: color-mix(in srgb, var(--bg-elevated) 84%, transparent);
+    backdrop-filter: blur(22px) saturate(1.18);
+}
+
+html[data-nola-desktop="windows"] .chat-inspector {
+    background: color-mix(in srgb, var(--bg-elevated) 78%, var(--bg-app));
+}
+
+html[data-nola-desktop="windows"] .msg-main { max-width: min(900px, calc(100% - 44px)); }
+html[data-nola-desktop="windows"] .msg-assistant .msg-main { width: min(900px, calc(100% - 44px)); }
+
+html[data-nola-desktop="windows"] :focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--nola-primary) 62%, transparent);
+    outline-offset: 2px;
+}
+
+html[data-nola-desktop="windows"] .desktop-native-runtime {
+    display: inline-flex;
+    align-items: center;
+    min-height: 22px;
+    margin-left: 3px;
+    padding: 0 8px;
+    border-left: 1px solid var(--border);
+    color: var(--text-tertiary);
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: .04em;
+}
+
+html[data-nola-desktop="windows"] .desktop-login-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    margin-top: 18px;
+}
+
+html[data-nola-desktop="windows"] .desktop-login-card > div { min-width: 0; }
+html[data-nola-desktop="windows"] .desktop-login-card strong {
+    display: block;
+    color: var(--text);
+    font-size: 14px;
+}
+html[data-nola-desktop="windows"] .desktop-login-card p {
+    max-width: 66ch;
+    margin: 5px 0 0;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.55;
+}
+html[data-nola-desktop="windows"] .desktop-login-toggle {
+    min-width: 104px;
+    flex: 0 0 auto;
+}
+html[data-nola-desktop="windows"] .desktop-login-toggle.is-enabled {
+    border-color: color-mix(in srgb, var(--success) 32%, var(--border));
+    background: var(--success-soft);
+    color: var(--success);
+}
+
+@media (max-width: 760px) {
+    html[data-nola-desktop="windows"] .desktop-login-card { align-items: stretch; flex-direction: column; }
+    html[data-nola-desktop="windows"] .desktop-login-toggle { width: 100%; }
+}
+
+html[data-nola-desktop="windows"] ::-webkit-scrollbar { width: 10px; height: 10px; }
+html[data-nola-desktop="windows"] ::-webkit-scrollbar-thumb {
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--text-tertiary) 34%, transparent);
+    background-clip: padding-box;
+}
+
+@media (max-width: 1120px) {
+    html[data-nola-desktop="windows"] { --desktop-rail-w: 210px; }
+    html[data-nola-desktop="windows"] body:not(.chat-page) .main-content { padding-inline: 22px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    html[data-nola-desktop="windows"] *,
+    html[data-nola-desktop="windows"] *::before,
+    html[data-nola-desktop="windows"] *::after {
+        scroll-behavior: auto !important;
+    }
+}

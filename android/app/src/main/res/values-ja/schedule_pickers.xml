@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="scheduled_saving">保存中…</string>
+    <string name="scheduled_save_failed">保存できませんでした。下書きは保持されています。もう一度お試しください。</string>
+    <string name="scheduled_save_partial">タスクは保存されましたが、スケジュールの設定に失敗しました。下書きは保持されています。再試行してスケジュールを適用してください。</string>
+    <string name="scheduled_pick_date">日付：%1$s</string>
+    <string name="scheduled_pick_time">時刻：%1$s</string>
+    <string name="scheduled_pick_zone">タイムゾーン：%1$s</string>
+    <string name="scheduled_not_selected">選択…</string>
+    <string name="scheduled_zone_wall_time">タイムゾーンを変更しても、表示されている日付と時刻は維持されます。実際の実行時点は変わります。</string>
+    <string name="scheduled_recurring_dst">この現地時刻に繰り返します。夏時間への切り替えで存在しない時刻は変更幅だけ先にずらし、重複する時刻は最初の時刻に実行します。</string>
+    <string name="scheduled_dst_gap">時計が進められるため、この現地時刻は存在しません。別の時刻を選択してください。</string>
+    <string name="scheduled_dst_overlap">時計が戻されるため、この時刻は2回発生します。どちらを使用するか選択してください。</string>
+    <string name="scheduled_dst_first">1回目 — 時計の変更前（%1$s）</string>
+    <string name="scheduled_dst_second">2回目 — 時計の変更後（%1$s）</string>
+    <string name="scheduled_exact_time">実行時刻：%1$s</string>
+    <string name="scheduled_zone_search">都市またはタイムゾーンを検索</string>
+    <string name="scheduled_zone_device">端末のタイムゾーンを使用（%1$s）</string>
+    <string name="scheduled_zone_selected">選択中：%1$s</string>
+    <string name="scheduled_zone_no_matches">一致するタイムゾーンがありません。</string>
+    <string name="scheduled_frequency_unsupported">このエディタは「%1$s」に対応していません。既存のスケジュールは変更されていません。置き換えるには対応する頻度を選択してください。</string>
+</resources>

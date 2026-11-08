@@ -1,0 +1,3 @@
+// Optional generated SDK; a source-only checkout retains normal direct Host transport.
+// Build the pinned SDK explicitly. App compilation never downloads/installs tools.
+#include? "build/apple/SDK.xcconfig"

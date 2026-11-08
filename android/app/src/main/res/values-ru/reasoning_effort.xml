@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="reasoning_effort_title">Усилие рассуждения</string>
+    <string name="reasoning_effort_automatic">Настройка провайдера</string>
+    <string name="reasoning_effort_none">Нет</string>
+    <string name="reasoning_effort_minimal">Минимум</string>
+    <string name="reasoning_effort_low">Низкое</string>
+    <string name="reasoning_effort_medium">Среднее</string>
+    <string name="reasoning_effort_high">Высокое</string>
+    <string name="reasoning_effort_xhigh">Очень высокое</string>
+    <string name="reasoning_effort_max">Максимум</string>
+</resources>

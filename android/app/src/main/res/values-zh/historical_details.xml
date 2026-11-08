@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="historical_details">历史详情</string>
+    <string name="historical_unavailable">历史内容不可用或已变更，请重新打开详情。</string>
+    <string name="historical_limited">此详情视图有大小限制，部分原始字段尚未加载。</string>
+    <string name="historical_field_deferred">原始字段尚未加载</string>
+    <string name="historical_reload">重新加载 / 重试</string>
+</resources>

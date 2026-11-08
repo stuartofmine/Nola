@@ -1,0 +1,6 @@
+"NSCalendarsFullAccessUsageDescription" = "Nola reads and changes calendar events only for assistant actions you approve.";
+"NSRemindersFullAccessUsageDescription" = "Nola reads and changes reminders only for assistant actions you approve.";
+"NSContactsUsageDescription" = "Nola reads contacts only for assistant actions you approve.";
+"NSAppleEventsUsageDescription" = "Nola controls other apps only when you run an approved automation tool.";
+"NSMicrophoneUsageDescription" = "Nola uses the microphone only when you start voice input.";
+"NSLocalNetworkUsageDescription" = "Nola connects to model servers and Nola hosts on your local network when you select them.";

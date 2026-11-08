@@ -1,0 +1,21 @@
+{
+  "title": "PowerPoint Final Artifact Acceptance",
+  "slides": [
+    {
+      "title": "73 orchard pears are reconciled",
+      "bullets": [
+        "Source rows match the validated total",
+        "The presentation remains editable"
+      ],
+      "notes": "Open with the verified count of 73 orchard pears."
+    },
+    {
+      "title": "Decision and next step",
+      "bullets": [
+        "Approve the validated plan",
+        "Retain the source evidence"
+      ],
+      "notes": "Close with the decision owner and next review."
+    }
+  ]
+}

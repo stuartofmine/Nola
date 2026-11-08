@@ -1,0 +1,3280 @@
+/* English Localizations for Nola */
+"room.title" = "Agent chats";
+"room.members" = "Members";
+"room.independent" = "Independent context";
+"room.left" = "Left · history retained";
+"room.remove" = "Remove";
+"room.add" = "Add an agent";
+"room.create_agent" = "Create agent";
+"room.agent_name" = "Agent name";
+"room.use_current_model" = "Use current model";
+"room.open" = "Open chat";
+"room.all" = "All agent chats";
+"room.create" = "Create chat";
+"room.name" = "Chat name";
+"room.done" = "Done";
+"room.select_model" = "Select a concrete API or local model before creating an agent.";
+"room.sent_to" = "You → %@";
+"room.choose_recipient" = "Choose a recipient";
+"room.close" = "Leave room view";
+"common.discard_changes" = "Discard Changes?";
+"common.discard" = "Discard";
+"common.more" = "More";
+"health.dashboard.day" = "Day";
+"chat.context.partial_save" = "Some changes were saved. Your remaining edits are retained; retry Save to finish.";
+"chat.more_settings.immediate_changes" = "Changes on this page take effect immediately. Model parameter editors have their own Save action.";
+"chat.context.knowledge.draft_footer" = "Keep this conversation’s facts, decisions, constraints, and unresolved items. Choose Save to apply changes.";
+"scheduled_actions.history.unavailable" = "Run history is unavailable. Retry when local storage is ready.";
+"personal.intelligence.clear.failed" = "Could not clear learned data. Retry when local storage is ready.";
+"personal.intelligence.load.failed" = "Could not load learned data. Previous results are retained. Try refreshing.";
+"app.name" = "Nola";
+"chat.context.metric.occupancy_unknown" = "No committed context usage yet";
+"chat.context.metric.cache_hit_rate" = "Conversation cache hit rate";
+"chat.context.metric.cache_reported" = "Reported requests";
+"chat.context.metric.cache_unreported" = "Requests with unknown cache usage";
+"model.center.execution_capabilities" = "Capabilities";
+"model.execution.hint" = "Tool calls are enabled by default on import. Provider declarations and your explicit settings override this default.";
+"model.execution.tools" = "Native tool calls";
+"model.execution.images" = "Image input";
+"model.execution.sampling" = "Temperature and Top P";
+"model.execution.output_field" = "Chat output limit field";
+"model.execution.output_auto" = "Automatic";
+"app.unit_tests.placeholder" = "Nola unit tests";
+
+/* Common */
+"common.ok" = "OK";
+"common.create" = "Create";
+"common.cancel" = "Cancel";
+"common.done" = "Done";
+"common.skip" = "Skip";
+"common.next" = "Next";
+"common.previous" = "Previous";
+"common.close" = "Close";
+"common.settings" = "Settings";
+"common.yes" = "Yes";
+"common.no" = "No";
+"common.days_count" = "%d days";
+
+/* Onboarding */
+"onboarding.welcome.title" = "Welcome to Nola";
+"onboarding.welcome.subtitle" = "Helpful summaries and reminders, powered by AI";
+"onboarding.start" = "Get Started";
+"onboarding.complete" = "All Set";
+"onboarding.feature.1" = "Smart daily summaries";
+"onboarding.feature.2" = "Personal reminders";
+"onboarding.feature.3" = "Privacy-first local AI";
+"onboarding.feature.4" = "Seamless calendar integration";
+"onboarding.permission.prompt" = "To provide summaries we need access to your calendars, reminders and contacts.";
+
+/* Permissions */
+"permission.contacts.title" = "Contacts Access";
+"permission.contacts.description" = "Allow Nola to read your contacts to link people with events.";
+"permission.contacts.benefit.1" = "Personalized reminders";
+"permission.contacts.benefit.2" = "Better suggestions";
+"permission.contacts.benefit.3" = "Faster context linking";
+
+"permission.calendars.title" = "Calendar Access";
+"permission.calendars.description" = "Allow Nola to read your calendars to generate summaries and reminders.";
+"permission.calendars.benefit.1" = "Event summaries";
+"permission.calendars.benefit.2" = "Scheduling insights";
+"permission.calendars.benefit.3" = "Conflict detection";
+
+"permission.reminders.title" = "Reminders Access";
+"permission.reminders.description" = "Allow Nola to read reminders to include them in daily summaries.";
+"permission.reminders.benefit.1" = "Unified task list";
+"permission.reminders.benefit.2" = "Better reminders";
+"permission.reminders.benefit.3" = "Simplified planning";
+
+"permission.notifications.title" = "Notifications";
+"permission.notifications.description" = "Enable notifications to receive timely summaries and reminders.";
+"permission.notifications.benefit.1" = "Timely alerts";
+"permission.notifications.benefit.2" = "Actionable summaries";
+"permission.notifications.benefit.3" = "Quick interactions";
+
+/* Data Sources */
+"data_source.contacts.birthday_title" = "%@ Birthday";
+"data_source.calendar.untitled_event" = "Untitled Event";
+"data_source.reminder.untitled_reminder" = "Untitled Reminder";
+
+/* URL Fetcher */
+"url_fetcher.json.description" = "Detected JSON data, found approx %d events";
+"url_fetcher.ical.description" = "Detected iCalendar (.ics) data, found approx %d events";
+"url_fetcher.rss.description" = "Detected RSS/Atom feed, found approx %d items";
+"url_fetcher.html.description" = "Detected HTML page, extracted title/metadata";
+"url_fetcher.error.parse_failed" = "Failed to parse using %@ format or no data";
+"url_fetcher.error.unknown_format" = "Could not identify URL data format or parse result is empty";
+"url_fetcher.format.json_found" = "Parsed using JSON format, found %d events";
+"url_fetcher.format.ical_found" = "Parsed using iCalendar format, found %d events";
+"url_fetcher.format.rss_found" = "Parsed using RSS format, found %d items";
+"url_fetcher.format.html_found" = "Parsed using HTML format, extracted %d events";
+
+"permission.grant" = "Grant Access";
+"permission.granted" = "Granted";
+"permission.denied" = "Denied";
+"permission.requesting" = "Requesting...";
+"permission.go_to_settings" = "Open Settings";
+"permission.can_change_anytime" = "You can change this anytime in Settings.";
+
+/* Home */
+"home.title" = "Home";
+"home.generate_summary" = "Generate Summary";
+"home.empty_state" = "No items to summarize";
+"home.analyzing" = "Analyzing...";
+"home.section.today" = "Today";
+"home.error.no_events" = "No events found for the selected period.";
+"home.error.no_important_events" = "No important events detected.";
+"home.error.generation_failed" = "Failed to generate summary.";
+"home.error.generation_failed.detail" = "Failed to generate summary: %1$@. Showing fetched URL history.";
+"home.greeting.morning" = "Good morning";
+"home.greeting.noon" = "Good afternoon";
+"home.greeting.afternoon" = "Good afternoon";
+"home.greeting.evening" = "Good evening";
+"home.greeting.night" = "It's late";
+"home.greeting.generic" = "Hello";
+
+"home.permission_alert.title" = "Permission Needed";
+"home.permission_alert.message" = "Nola needs permission to access data to show summaries.";
+"home.permission_alert.go_to_settings" = "Open Settings";
+"home.permission_alert.cancel" = "Cancel";
+"home.alert.ok" = "OK";
+
+/* Settings */
+"settings.section.llm" = "LLM & API";
+"settings.base_url" = "Base URL";
+"settings.api_key" = "API Key";
+"settings.model" = "Model";
+"settings.save_and_test" = "Save";
+"settings.test_connection" = "Test Connection";
+"settings.reset" = "Reset";
+"settings.use_dev_env" = "Use Dev Environment";
+"settings.config_source" = "Config Source";
+"settings.env_debug_title" = "Environment";
+"settings.dev_env_no_vars" = "No dev environment variables available.";
+"settings.dev_env_applied" = "Development environment applied.";
+"settings.dev_env_partial" = "Development environment partially applied.";
+
+
+
+/* Connection test strings */
+"settings.connection.test" = "Connection test";
+"settings.connection.not_tested" = "Not tested";
+"settings.connection.testing" = "Testing...";
+"settings.connection.ok.models" = "Success (models=%d)";
+"settings.connection.ok.chat" = "Success (chat)";
+"settings.echo.testing" = "Echo testing...";
+"settings.echo.ok" = "Passed";
+"settings.echo.mismatch" = "No echo";
+"settings.connection.unauthorized" = "Unauthorized (401)";
+
+"settings.section.logs" = "Logs";
+"settings.log_level" = "Log Level";
+"settings.clear_logs" = "Clear Logs";
+"settings.no_logs" = "No logs";
+
+"settings.logs.title" = "Logs";
+"settings.logs.reload" = "Reload";
+"settings.logs.empty.title" = "No Logs Yet";
+"settings.logs.empty.description" = "Logs will appear after the app runs some actions.";
+"settings.logs.footer.size_format" = "Size: %@";
+
+"settings.section.data_sources" = "Data Sources";
+"settings.data_source.contacts" = "Contacts";
+"settings.data_source.calendars" = "Calendars";
+"settings.data_source.reminders" = "Reminders";
+
+"settings.section.rag" = "RAG (Retrieval)";
+"settings.rag.enable" = "Enable RAG";
+"settings.rag.document_count" = "Document Count";
+"settings.rag.dimension" = "Vector Dimension";
+"settings.rag.coming_soon" = "Coming soon";
+
+"settings.section.data_management" = "Data & Export";
+"settings.export_data" = "Export Data";
+"settings.export.description" = "Export data as JSON. Clearing data will remove all settings, usage records and custom content.";
+"settings.clear_all_data" = "Clear All Data";
+"settings.data_management.coming_soon" = "Data management coming soon";
+
+"settings.section.debug" = "Debug";
+"settings.reset_onboarding" = "Reset Onboarding";
+
+/* Errors */
+"error.network.not_connected" = "Network not connected.";
+"error.network.timeout" = "Network request timed out.";
+"error.network.unauthorized" = "Unauthorized (401).";
+"error.network.rate_limited" = "Rate limited.";
+
+"error.llm.not_configured" = "LLM not configured.";
+"error.llm.decoding" = "Failed to decode LLM response.";
+
+
+"error.permission.denied" = "Permission denied.";
+"error.no_data" = "No data available.";
+
+"conversation_store.error.conversation_not_found_format" = "Conversation %1$@ does not exist.";
+
+"model_downloader.error.download_cancelled" = "Download cancelled.";
+"model_downloader.error.file_download_failed_after_retries_format" = "Failed to download %1$@ after %2$d retries.";
+"model_downloader.error.unable_to_open_file" = "Unable to open file.";
+
+"cloud_model_setup.error.invalid_url" = "Invalid URL format.";
+"cloud_model_setup.test.success" = "Connection test succeeded.";
+"cloud_model_setup.test.server_error_format" = "Server error (%1$d).";
+"cloud_model_setup.test.failed_format" = "Connection failed: %1$@";
+
+
+"unified_storage.error.invalid_candidate_index" = "Invalid candidate index.";
+
+"health_data_source.error.deallocated" = "HealthDataSource was deallocated.";
+
+"notification_orchestrator.error.notification_not_found" = "Notification not found.";
+
+"model_downloader.error.no_downloaded_file_found" = "No downloaded file found.";
+
+/* Alerts */
+"alert.title" = "Alert";
+"alert.permission_needed" = "Permission Required";
+"alert.permission_message" = "Permission is required to access data for summaries.";
+
+/* Health & permission additional strings */
+"permission.full_access_note" = "⚠️ In the system prompt, please choose \"Full Access\"";
+"permission.health.title" = "Health Data (optional)";
+"permission.health.description" = "Authorize to use steps, sleep, heart rate and workouts for daily summaries and health alerts.";
+"permission.health.benefit.1" = "Understand sleep and activity trends";
+"permission.health.benefit.2" = "Receive actionable suggestions based on health";
+"permission.health.benefit.3" = "Privacy-first: data processed only on device";
+"permission.health.capability_note" = "⚠️ If access fails, check Signing & Capabilities in Xcode to ensure HealthKit is added.";
+"permission.health.authorization_popup_message" = "The system authorization dialog was shown. Final status can be checked in Settings or after next launch.";
+
+"permission.insufficient.title" = "Insufficient Permissions";
+"permission.insufficient.description" = "Currently set to \"Add & Edit\"; upgrade to \"Full Access\" is required.";
+"permission.upgrade_to_full_access" = "Go to Settings to upgrade";
+
+/* Model Management */
+"model.management.title" = "Model Management";
+"model.management.subtitle" = "Local and cloud AI models";
+"model.management.current_model_format" = "Current model: %@";
+"model.management.picker.label" = "Model Type";
+"model.management.picker.all" = "All Models";
+"model.management.picker.local" = "Local Models";
+"model.management.picker.cloud" = "Cloud Models";
+
+"model.management.delete.title" = "Delete Model";
+"model.management.delete.message_format" = "Are you sure you want to delete %@? This action cannot be undone.";
+
+
+"model.management.source.official" = "Official";
+
+"model.management.delete.success_format" = "Deleted model %@";
+
+"model.management.local.privacy" = "Runs on device";
+"model.management.cloud.features" = "Connect via API";
+
+"model.management.no_local_models" = "No local models";
+"model.management.local.download_hint" = "Download a model to get started.";
+"model.management.no_cloud_models" = "No cloud models";
+"model.management.cloud.setup_hint" = "Add a cloud model to get started.";
+
+
+"model.management.added" = "Added Models";
+
+"model.management.local.title" = "Local AI Models";
+"model.management.local.offline_note" = "Fully offline after download — no charges.";
+"model.management.download_model" = "Download Model";
+"model.management.downloaded" = "Downloaded";
+
+"model.management.cloud.title" = "Cloud AI Models";
+"model.management.cloud.note" = "More powerful via API calls";
+"model.management.cloud.add" = "Add Cloud Model";
+"model.management.configured" = "Configured";
+
+"model.status.ready" = "Ready";
+"model.status.configured" = "Configured";
+
+"chat.state.idle" = "Ready";
+"chat.state.loading_local" = "Loading local model...";
+"chat.state.processing_local" = "Processing with local model...";
+"chat.state.processing_cloud" = "Processing with cloud model...";
+"chat.state.streaming_format" = "Processing (%d%%)";
+"chat.state.error_format" = "Error: %1$@";
+"chat.state.completed" = "Completed";
+
+"datasource.contacts.subtitle" = "Birthdays and important contacts";
+"datasource.calendars.subtitle" = "Events and meetings";
+"datasource.reminders.subtitle" = "To-do tasks";
+
+"model.management.test_model" = "Test Model";
+"model.management.save_model" = "Save Model";
+"model.management.testing" = "Testing...";
+"model.management.test_connection" = "Test Connection";
+"model.management.connection_success" = "Connection successful ✓";
+
+"model.management.form.info" = "Model Info";
+"model.management.form.name_placeholder" = "Model name (e.g. DeepSeek)";
+"model.management.form.base_url" = "API Base URL";
+"model.management.form.api_key" = "API Key";
+"model.management.form.id_placeholder" = "Model ID (e.g. deepseek-chat)";
+
+"model.management.form.hint.title" = "Tips";
+"model.management.form.hint.url" = "URL should include scheme (https://) and a version path if required.";
+"model.management.form.hint.id" = "Model ID is the provider's model identifier (e.g. gpt-4o-mini).";
+"model.management.form.hint.api_key" = "If your provider requires an API key, paste it here.";
+
+"cloud_model_setup.title.add" = "Add Cloud Model";
+"cloud_model_setup.title.edit" = "Edit Cloud Model";
+
+/* Official models endpoint placeholder */
+"settings.official_models_endpoint.placeholder" = "Official models list URL (optional)";
+
+"model.management.source.local" = "Local";
+"model.management.source.cloud" = "Cloud";
+
+/* Settings extra */
+"settings.sync.server_config" = "Sync server config";
+"settings.manage.url_sources" = "Manage Scheduled Actions";
+"settings.local_llm.daily_limit.title" = "Local LLM daily limit";
+"settings.daily_times" = "%1$@ times per day";
+"settings.unlimited" = "Unlimited";
+"settings.url_data_source.limit_title" = "Scheduled action limit";
+"settings.official_backend.access" = "Official backend access";
+"settings.custom_prompt.description" = "Custom prompts for event analysis and summary generation.";
+"settings.templates.count" = "%1$@ templates";
+"settings.section.date_range" = "Date Range";
+"settings.range.7days" = "7 days";
+"settings.range.30days" = "30 days";
+"settings.range.half_year" = "Half year";
+"settings.range.one_year" = "One year";
+"settings.calendar.range.description" = "Set the range for calendars, reminders and birthdays.";
+"settings.section.notifications" = "Notifications";
+"settings.notification.daily" = "Daily";
+"settings.notification.weekly" = "Weekly";
+"settings.notification.immediate" = "Immediate";
+
+"settings.section.api_keys" = "API Keys";
+"settings.api_keys.footer" = "After configuring the Bing Search API key, you can use Bing Search as a data source in Scheduled Actions.";
+"settings.bing_web_search.api_key.title" = "Bing Web Search API Key";
+"settings.api_key.placeholder" = "Enter key";
+"settings.verify_receipt.title" = "Verify Receipt";
+"settings.verify_receipt.test_button" = "Test Verify Receipt";
+"settings.verify.success_format" = "Success: uuid=%1$@ product=%2$@ expires=%3$@";
+"settings.verify.error_format" = "Error: %1$@";
+"settings.silent_period.title" = "Silent period settings";
+"settings.start_time" = "Start time";
+"settings.end_time" = "End time";
+"settings.birthday_lead.title" = "Birthday lead";
+"settings.reminder_lead.title" = "Reminder lead";
+"settings.lead_control.description" = "Control how many days before birthdays and reminders you want to be notified.";
+"settings.enable_notifications" = "Enable notifications";
+"settings.enable_step_reminders" = "Enable step reminders";
+"settings.enable_step_reminders.note" = "When disabled, step-count insights will not trigger reminder notifications.";
+"settings.calendar_notifications.aggregate.title" = "Aggregate calendar notifications in reminder window";
+"settings.calendar_notifications.aggregate.description" = "When enabled, multiple calendar events in the same reminder window are merged into one notification.";
+"notification.calendar.aggregate.title_format" = "%d calendar events in your reminder window";
+"notification.calendar.aggregate.body_format" = "Includes: %@";
+
+
+
+/* Auto-added from Text("...") literals - translated to natural English */
+
+
+
+
+
+/* URL Data Sources */
+"urlsources.empty.title" = "No scheduled actions";
+"urlsources.empty.subtitle" = "Add a URL to run on a schedule";
+"urlsources.usage_label" = "Used / Limit";
+"urlsources.navigation.title" = "Scheduled Actions";
+"urlsources.delete.title" = "Delete Action";
+"urlsources.delete.cancel" = "Cancel";
+"urlsources.delete.confirm" = "Delete";
+
+"urlsources.detected_format" = "Detected: %1$@";
+"urlsources.format.auto_detect" = "Auto";
+"urlsources.data_type.title" = "Data type";
+"urlsources.data_type.will_detect" = "Will auto-detect during validation";
+"urlsources.data_type.will_use_format" = "Will parse as %1$@";
+"urlsources.section.validation" = "Source validation";
+"urlsources.validation.ready_note" = "Validated. You can save and use this source.";
+"urlsources.validation.failure_note" = "Check the URL or your network connection.";
+"urlsources.user_prompt.placeholder_examples" = "Example: Extract the top 5 NBA teams and their win rates (put the final result in {{...}})\nOr: Summarize the key headlines on this page (put the final result in {{...}})";
+"urlsources.user_prompt.help" = "Guide the AI: what to focus on and how to summarize. If left blank, the AI will auto-extract key information.";
+"urlsources.section.model_selection" = "Model";
+"urlsources.section.test" = "Test source";
+"urlsources.testing" = "Testing...";
+"urlsources.test.note" = "Test fetches data and generates an AI summary";
+"urlsources.validating" = "Validating...";
+"urlsources.validate" = "Validate URL";
+"urlsources.validate.success" = "Validation succeeded: found %d events";
+"urlsources.validate.failure" = "%1$@";
+"urlsources.max_limit_reached" = "Reached the maximum allowed number of scheduled actions (%1$@). Contact support if you need more.";
+"urlsources.url_empty" = "URL is empty";
+"urlsources.fetcher_unavailable" = "URL fetcher unavailable";
+
+/* Background Refresh */
+"background_refresh.section.title" = "Background Refresh";
+"background_refresh.disabled.message" = "Background App Refresh is disabled or restricted. Scheduled actions may not run in the background.";
+"background_refresh.open_settings" = "Open System Settings";
+"background_refresh.hint" = "Enable it in Settings > General > Background App Refresh (global + per-app), and turn off Low Power Mode if needed.";
+"background_refresh.low_power_mode_note" = "Low Power Mode is enabled; iOS may further limit background activity.";
+
+
+
+"urlsources.test.run" = "Test: run the full flow and show output";
+"urlsources.test.push_toggle" = "Push test notifications";
+"urlsources.test.push_note" = "If enabled, test run will trigger a notification based on the model output (for verification only).";
+"urlsources.test.output_title" = "Test Output";
+"urlsources.copy" = "Copy";
+"urlsources.edit.title" = "Edit Scheduled Action";
+"urlsources.add.title" = "Add Scheduled Action";
+"urlsources.action.save" = "Save";
+"urlsources.action.add" = "Add";
+
+"urlsources.delete.message" = "Are you sure you want to delete \"%1$@\"?";
+
+/* Data Source Detail */
+"data_source_detail.section.permission_settings" = "Permissions";
+"data_source_detail.open_system_settings" = "Open System Settings";
+"data_source_detail.section.control" = "Controls";
+"data_source_detail.enable_toggle" = "Enable data source";
+"data_source_detail.refreshing" = "Refreshing...";
+"data_source_detail.refresh_now" = "Refresh now";
+"data_source_detail.section.health_overview" = "Health overview";
+"data_source_detail.section.info" = "Info";
+"data_source_detail.info.type" = "Type";
+"data_source_detail.info.supported_events" = "Supported events";
+"data_source_detail.info.event_count" = "Events";
+"data_source_detail.info.last_updated" = "Last updated";
+"data_source_detail.section.usage" = "How it works";
+"data_source_detail.section.error" = "Error";
+"data_source_detail.permission_alert.title" = "Permission required";
+"data_source_detail.permission_alert.message_format" = "Authorize access to %1$@ to use this data source.";
+"data_source_detail.error_alert.title" = "Error";
+"data_source_detail.error_unknown" = "Unknown error";
+"data_source_detail.error.health_not_initialized" = "Health data source not initialized";
+"data_source_detail.error.fetch_failed_format" = "Failed to fetch data: %1$@";
+"data_source_detail.error.fetch_health_metrics_failed_format" = "Failed to fetch health metrics: %1$@";
+"data_source_detail.status.disabled" = "Disabled";
+"data_source_detail.status.ok" = "Working";
+"data_source_detail.status.insufficient" = "Insufficient permission";
+"data_source_detail.status.denied" = "Permission denied";
+"data_source_detail.status.needs_auth" = "Authorization needed";
+"data_source_detail.stat.permission_status" = "Permission";
+"data_source_detail.stat.source" = "Source";
+"data_source_detail.stat.enabled" = "Enabled";
+"data_source_detail.stat.disabled" = "Disabled";
+"data_source_detail.stat.event_count" = "Events";
+"data_source_detail.last_updated_prefix_format" = "Last updated: %1$@";
+"data_source_detail.permission.access_title" = "Access";
+"data_source_detail.permission.request_button" = "Request";
+"data_source_detail.health_metric.steps" = "Steps";
+"data_source_detail.health_metric.heart_rate" = "Heart rate";
+"data_source_detail.health_metric.sleep" = "Sleep";
+"data_source_detail.health_metric.workout" = "Workout";
+"health.dashboard.today" = "Today";
+"health.dashboard.steps" = "Steps";
+"health.dashboard.distance" = "Distance";
+"health.dashboard.active_energy" = "Active energy";
+"health.dashboard.exercise" = "Exercise";
+"health.dashboard.last_7_days" = "Last 7 days";
+"health.dashboard.latest_heart_rate" = "Latest heart rate";
+"health.dashboard.resting_heart_rate" = "Resting heart rate";
+"health.dashboard.recent_sleep" = "Recent sleep";
+"health.dashboard.recent_workout" = "Recent workout";
+"health.dashboard.no_recent_data" = "No recent data";
+"health.dashboard.no_workout_30_days" = "No workout in 30 days";
+"health.dashboard.no_readable_data" = "No readable Health data is available yet.";
+"health.dashboard.reading" = "Reading the latest Health data…";
+"health.dashboard.status.updated" = "Updated";
+"health.dashboard.status.needs_access" = "Needs access";
+"health.dashboard.status.unavailable" = "Unavailable";
+"health.dashboard.summary_format" = "%1$@ steps · %2$@ kcal";
+"health.dashboard.value_bpm_format" = "%@ bpm";
+"health.dashboard.value_hours_format" = "%@ hr";
+"health.dashboard.value_minutes_format" = "%@ min";
+"home.health.average_7d" = "7-day average";
+"home.health.unit.bpm" = "bpm";
+"home.health.unit.hours" = "hr";
+"home.health.unit.minutes" = "min";
+"chat.host_tool.name.command" = "Run command";
+"chat.host_tool.name.read_file" = "Read file";
+"chat.host_tool.name.write_file" = "Write file";
+"chat.host_tool.name.edit_file" = "Edit file";
+"chat.host_tool.name.delete_file" = "Delete file";
+"chat.host_tool.name.list_folder" = "List folder";
+"chat.host_tool.name.search_files" = "Search files";
+"chat.host_tool.name.workspace" = "Inspect workspace";
+"chat.host_tool.name.changes" = "Inspect changes";
+"chat.host_tool.name.project_overview" = "Inspect project overview";
+"chat.host_tool.name.web_search" = "Search web";
+"chat.host_tool.name.web_read" = "Read webpage";
+"chat.host_tool.name.read_output" = "Read tool output";
+"chat.host_tool.name.search_tools" = "Search tools";
+"chat.host_tool.name.memory" = "Manage memory";
+"chat.host_tool.name.subtask" = "Run subtask";
+"chat.host_tool.name.plan" = "Update plan";
+"chat.host_tool.name.time" = "Read system time";
+"chat.host_tool.name.browser" = "Control browser";
+"chat.host_tool.name.computer" = "Control computer";
+"chat.host_tool.name.skill" = "Use skill";
+"chat.host_tool.name.mcp" = "Call MCP";
+"chat.host_tool.name.background" = "Background task";
+"chat.host_tool.name.clipboard" = "Use clipboard";
+"chat.host_tool.name.calendar" = "Use calendar";
+"chat.host_tool.name.location" = "Read location";
+"chat.host_tool.name.generic" = "Tool";
+"chat.host_tool.name.unknown_format" = "Tool · %@";
+"health.dashboard.value_energy_date_format" = "%1$@ kcal · %2$@";
+"health.dashboard.unit.steps" = "steps";
+"health.dashboard.unit.km" = "km";
+"health.dashboard.unit.kcal" = "kcal";
+"health.dashboard.unit.min" = "min";
+"health.dashboard.error.unavailable" = "Health data is unavailable on this device.";
+"permission.status.not_requested" = "Not requested";
+"chat.attachment.extraction.docx" = "DOCX text";
+"chat.attachment.image_reference" = "Image attached for visual analysis.";
+"chat.attachment.extraction.image" = "Image";
+"chat.attachment.extraction.local_text" = "Local text";
+"chat.attachment.extraction.web_host" = "Host parser";
+"chat.attachment.extraction.unavailable" = "Text unavailable";
+"chat.attachment.extraction.pdf_ocr" = "PDF text + OCR";
+"chat.attachment.extraction.pdf_text" = "PDF text";
+"chat.attachment.warning.web_host_failed" = "Host parsing failed: %@";
+"chat.attachment.warning.web_host_required" = "This format needs a connected host for text extraction.";
+"chat.attachment.warning.ocr_page_limit" = "%d scanned pages were not OCR-processed.";
+"chat.attachment.warning.pdf_page_limit" = "%d PDF pages were not processed.";
+"chat.attachment.warning.no_pdf_text" = "No readable text was found in this PDF.";
+"chat.attachment.warning.text_truncated" = "The extracted text was shortened to fit the conversation context.";
+"chat.attachment.error.not_regular" = "The selected item is not a regular file.";
+"chat.attachment.error.file_too_large_format" = "The file exceeds the %d MB attachment limit.";
+"chat.attachment.error.web_host_file_too_large_format" = "The file exceeds the %d MB host parsing limit, but local parsing may still be available.";
+"chat.attachment.error.invalid_pdf" = "The PDF could not be opened.";
+"chat.attachment.error.unreadable_text" = "The file does not contain readable text.";
+"chat.attachment.error.image_normalization_failed" = "The image could not be prepared for upload.";
+"office.docx.error.invalid_archive" = "The DOCX archive is invalid.";
+"office.docx.error.missing_body" = "The DOCX document body is missing.";
+"office.docx.error.encrypted" = "Encrypted DOCX files cannot be parsed locally.";
+"office.docx.error.unsupported_compression" = "The DOCX uses an unsupported compression format.";
+"office.docx.error.decompression_failed" = "The DOCX document body could not be decompressed.";
+"office.docx.error.part_too_large" = "A DOCX document part is too large to parse.";
+"office.docx.error.invalid_xml" = "The DOCX document XML is invalid.";
+"office.docx.error.no_text" = "No readable text was found in this DOCX file.";
+
+/* Relative times */
+"relative.just_now" = "just now";
+"relative.minutes_ago" = "%d minutes ago";
+"relative.hours_ago" = "%d hours ago";
+"relative.days_ago" = "%d days ago";
+
+/* Tasks */
+"task.section.task" = "Task";
+"task.section.when" = "When";
+"task.section.extra" = "Extra";
+"task.confirm" = "Confirm Task";
+"task.ignore" = "Ignore";
+
+/* Parse error */
+"error.parse_failed" = "Parse failed: %1$@";
+
+/* Task placeholders */
+"task.title.placeholder" = "Title";
+"task.notes.placeholder" = "Notes";
+"task.toggle.recurring" = "Recurring";
+"task.date" = "Date";
+"task.date.optional" = "Date (optional)";
+"task.recurrence.rule" = "Recurrence Rule";
+"task.related_person.placeholder" = "Related person";
+"task.amount.placeholder" = "Amount";
+"task.save_failed" = "Failed to save task: %1$@";
+
+/* Model Test UI */
+"model.test.title" = "Inference Test";
+"model.test.default_prompt" = "Explain what Nola can do in three concise bullet points.";
+"model.test.prompt" = "Test prompt";
+"model.test.metrics" = "Metrics";
+"model.test.first_token" = "First token";
+"model.test.total_time" = "Total time";
+"model.test.characters" = "Characters";
+"model.test.output" = "Output";
+"model.test.empty" = "Run a model test to inspect its response here.";
+"model.test.close" = "Close";
+"model.test.local_label" = "Local model";
+"model.test.cloud_label" = "Cloud API";
+"model.test.model_select" = "Model selection";
+"model.test.max_tokens" = "Max Tokens";
+"model.test.4k" = "4K";
+"model.test.32k" = "32K";
+"model.test.prompt_label" = "Prompt";
+"model.test.preset" = "Preset %d";
+"model.test.task_label" = "Task description";
+"model.test.result_title" = "Generated Result";
+"model.test.generating" = "Generating...";
+"model.test.fill_prompt_and_run" = "Fill the prompt and tap Generate";
+"model.test.stop" = "Stop";
+"model.test.run" = "Run";
+"model.test.running" = "Running...";
+"model.test.explain" = "Explanation";
+/* MLX / Local inference */
+"model.downloaded.status" = "%1$@ downloaded";
+"model.not_downloaded" = "Not downloaded - please download from Model Management";
+"model.test.max_tokens.value" = "Max Tokens: %d";
+"model.test.temperature.value" = "Temperature: %.2f";
+
+/* Model Parameters */
+"model.parameters.context" = "Context Length";
+"model.parameters.sampling" = "Sampling Parameters";
+"model.parameters.max_length" = "Max Length";
+"model.parameters.top_k" = "Top-K";
+"model.parameters.top_p" = "Top P";
+"model.parameters.temperature" = "Temperature";
+"model.parameters.save" = "Save Parameters";
+"model.parameters.length_label" = "Length";
+"model.test.sample_instruction" = "This will construct a small sample input and trigger local model inference to generate schedule suggestions.";
+"model.run.local" = "Run local inference";
+"model.test.generated_items" = "Generated items:";
+"model.local" = "Local";
+"model.priority.format" = "Priority: %.2f";
+"model.inference.time" = "Inference time: %.2fs";
+/* Default prompts for model test view */
+"model.test.default_prompt.1" = "Generate today's summary from candidate events, output JSON ModelOutput";
+"model.test.default_prompt.2" = "Extract important todo items from candidates, show the top 3 most urgent";
+"model.test.default_prompt.3" = "From candidate events, provide 3 actionable suggestions, each under 30 characters";
+/* Model download view */
+"model.download.section.sources" = "Download sources";
+"model.download.select_source" = "Select download source";
+"model.source.huggingface" = "Hugging Face (global)";
+"model.source.modelscope" = "ModelScope (China)";
+"model.download.section.available" = "Available models";
+"model.download.section.all" = "All models";
+"model.action.use" = "Use";
+"model.action.download" = "Download";
+"model.local_test.title" = "Local inference test";
+"model.local_test.description" = "Validate model loading and inference performance";
+"model.advanced_test.title" = "Advanced tests";
+"model.advanced_test.description" = "Generation and streaming tests";
+"model.disk_space.title" = "Disk space";
+"model.disk.downloaded_size" = "Downloaded models size";
+"model.delete_all.title" = "Delete all models";
+"model.notes.title" = "Notes";
+"model.notes.download_wifi" = "Model files are ~500MB; we recommend downloading on Wi‑Fi";
+"model.notes.saved" = "Downloaded models are stored in the app cache";
+"model.notes.delete_space" = "You can delete models anytime to free space";
+"model.notes.source_suggestion" = "Users in China may prefer the ModelScope source";
+
+/* Model status */
+"model.status.not_downloaded" = "Not downloaded";
+"model.status.failed" = "Download failed";
+"model.status.paused" = "Paused";
+"model.downloaded.count" = "%d models downloaded";
+
+/* Model source origin format */
+"model.source.origin_format" = "Source: %@";
+/* Main tab / home */
+"model.not_selected" = "No model selected";
+"home.updated_at" = "Updated at %@";
+"home.refresh" = "Refresh";
+"home.generating_in_progress" = "Generating today's summary for you...";
+"home.summary.title" = "Smart Summary";
+"home.summary.items.count" = "%d items";
+"home.no_todos.title" = "No todos";
+"home.no_todos.message" = "Enjoy a relaxed day!\nTap the refresh button to generate today's smart summary";
+"item.actionable" = "Actionable";
+"item.time.label" = "Time:";
+"notification.view.details" = "View notification details";
+"notifications.title" = "Notifications";
+"notifications.none_pending" = "No pending notifications";
+"notifications.all_sent_or_cancelled" = "All notifications have been sent or cancelled";
+"notifications.filter.title" = "Filter";
+"notifications.filter.all" = "All";
+"notifications.filter.unread" = "Unread";
+"notifications.search.placeholder" = "Search";
+"notifications.mark_all_read" = "Mark all read";
+"notifications.load_more" = "Load more";
+"notifications.mark_read" = "Mark read";
+"notifications.read" = "Read";
+/* Notification detail view */
+"notification.loading" = "Loading...";
+"notification.pending.title" = "Pending notification";
+"notification.scheduled.notice" = "This notification is scheduled and will be sent at the appointed time. You can mark it as handled early to cancel delivery.";
+"notification.mark.handled" = "Mark as handled";
+"notification.cancel.confirm" = "This will cancel delivery and mark it as completed.";
+"notification.open.raw" = "Open raw content";
+"notification.view_in_browser" = "View full content in browser";
+"notification.details" = "Details";
+"notification.content.unavailable" = "Content unavailable";
+/* Home feature tiles and descriptions */
+"home.section.custom_data_sources" = "Custom Data Sources";
+"home.feature.urls.title" = "Scheduled Actions";
+"home.feature.urls.count" = "%d data sources";
+"home.feature.drugs.title" = "Medication Lookup";
+"home.feature.drugs.subtitle" = "Offline medication index & quick info";
+"home.section.ai_config" = "AI Configuration";
+"home.feature.prompt_templates.title" = "Prompt Templates";
+"home.feature.health.title" = "Health";
+"home.feature.health.subtitle" = "Aggregated steps, sleep, heart rate, workouts";
+"home.mode.current" = "Current mode";
+"home.mode.local.label" = "Local mode";
+"home.mode.cloud.label" = "Cloud mode";
+"home.mode.local.description" = "Local mode provides basic event ordering without API configuration. Download local AI models to enable fully offline smart summaries.";
+"home.downloaded.label" = "Downloaded:";
+"home.downloaded.models.count" = "%d models";
+"home.manage.local_models" = "Manage local models";
+"home.manage.local_models.subtitle" = "Download, update or delete models";
+"home.download.info" = "After downloading local AI models (approx. 481 MB) you can use full smart summaries offline.";
+"home.api.configuration" = "API Configuration";
+"home.advanced_tests.title" = "Advanced Tests";
+"home.advanced_tests.subtitle" = "Supports local and cloud models";
+"home.start_test.title" = "Start Tests";
+"home.start_test.subtitle" = "Model generation & streaming tests";
+"home.advanced_tests.desc" = "Run generation and streaming tests. Supports custom prompts, parameter tuning and API configuration.";
+"home.testing_in_progress" = "Testing...";
+
+/* Model status */
+"model.status.downloading" = "Downloading model files...";
+"model.status.available_offline" = "Available offline";
+"model.status.need_download" = "Needs download to use offline";
+
+/* Generic connection */
+"settings.connection.failed" = "Connection failed";
+"history.details.title" = "History Details";
+"home.section.tools" = "Tools";
+/* Prompt templates (new) */
+"prompt.templates.title" = "Prompt Templates";
+"prompt.templates.section.current" = "Current";
+"prompt.templates.section.builtin_count" = "Built-in · %@";
+"prompt.templates.section.custom" = "Custom";
+"prompt.templates.section.custom_detail" = "Your templates stay editable and can be duplicated or deleted.";
+"prompt.templates.search" = "Search templates";
+"prompt.templates.add" = "Add template";
+"prompt.templates.empty.title" = "No templates yet";
+"prompt.templates.empty.message" = "Create a reusable instruction set for the work you do often.";
+"prompt.templates.search.empty.title" = "No matching templates";
+"prompt.templates.search.empty.message" = "Try another name, description, language, or instruction.";
+"prompt.templates.search.clear" = "Clear search";
+"prompt.templates.delete.title" = "Delete Prompt Template?";
+"prompt.templates.delete.detail" = "This action cannot be undone.";
+"prompt.templates.selected" = "Selected";
+"prompt.templates.variables" = "Available variables:";
+"prompt.templates.builtin" = "Built-in";
+"prompt.templates.use" = "Use";
+
+/* Common actions (new) */
+"common.preview" = "Preview";
+"common.edit" = "Edit";
+"common.copy" = "Copy";
+"common.delete" = "Delete";
+"common.save" = "Save";
+
+/* Prompt templates - additional */
+"prompt.content.title" = "Prompt Content";
+"prompt.template.new_title" = "New Template";
+"prompt.template.edit_title" = "Edit Template";
+"autogen.PromptTemplateService.default_summary_name" = "Default Summary Template";
+"autogen.PromptTemplateService.summary_name" = "Summary Template";
+"autogen.PromptTemplateService.summary_description" = "Summary template for text/content summarization";
+"autogen.PromptTemplateService.reminder_name" = "Reminder Template";
+"autogen.PromptTemplateService.reminder_description" = "Template for event reminders and notification generation";
+"common.name" = "Name";
+"common.description" = "Description";
+"settings.local_data_size" = "Local data size";
+"chat.title" = "Chat";
+"chat.conversation.default_title" = "Conversation";
+"chat.conversation.recovered_title" = "Conversation (restored)";
+"chat.task_acknowledgement" = "I recognized this as a task instruction and parsed it — a confirmation card is shown below. Please review and save.";
+"chat.error.no_model_selected" = "No model selected";
+"chat.error.unknown" = "Unknown error";
+"chat.error.failed_to_load_local_model_format" = "Failed to load local model: %1$@";
+"chat.error.failed_to_process_message_format" = "Failed to process message: %1$@";
+"chat.error.failed_to_create_conversation_format" = "Failed to create conversation: %1$@";
+"chat.error.failed_to_append_message_format" = "Failed to append message: %1$@";
+"chat.empty.title" = "Start chatting";
+"chat.empty.subtitle" = "Ask a question or tell me what to remember";
+"chat.empty.mode.device" = "Ready on this device for writing, planning, and device actions.";
+"chat.empty.mode.host" = "Connected to your Mac for project tools and longer-running work.";
+"chat.empty.mode.hybrid" = "Your Mac can coordinate work and request approved actions on this device.";
+"chat.empty.mode.cloud" = "Using the selected cloud model for conversation and analysis.";
+"chat.attachments.partial_failure" = "%d selected files couldn't be imported. Other files are ready.";
+"chat.input.placeholder" = "Type a message…";
+"chat.send" = "Send";
+"chat.clear.title" = "Clear conversation";
+"chat.clear.message" = "Clear all messages for this conversation and local storage? You can undo within 5 minutes.";
+"chat.clear.action" = "Clear";
+"chat.cleared.title" = "Conversation cleared";
+"chat.cleared.message" = "Conversation cleared. You can undo to restore the most recently deleted chat (available for 5 minutes).";
+"chat.undo.action" = "Undo";
+"chat.new_conversation_prompt" = "New conversation";
+"chat.new_conversation_message" = "Create a new conversation?";
+"data_sources.title" = "Data Sources";
+
+/* Small helpers (new) */
+"common.back" = "Back";
+
+/* URL data sources usage format */
+"urlsources.usage_format" = "%1$d/%2$d";
+
+/* Model delete confirmations */
+"model.delete.confirm_single" = "Are you sure you want to delete \"%1$@\"? You will need to re-download it to use it again.";
+"model.delete.confirm_all" = "Are you sure you want to delete all downloaded models?";
+
+/* Model download helpers */
+"model.download.progress_format" = "%d%%";
+"model.download.byte_progress_format" = "%1$@ / %2$@";
+"model.download.speed_format" = "Speed: %1$@";
+"model.download.size_format" = "Size: %1$@";
+/* Model delete dialog */
+"model.delete.title" = "Delete model";
+"model.delete.cancel" = "Cancel";
+"model.delete.confirm" = "Delete";
+
+/* Model download availability */
+"model.download.available_offline" = "Downloaded, available offline";
+"model.download.incomplete" = "File incomplete, delete and re-download";
+"notification.content.removed" = "This content has been removed or is temporarily unavailable";
+"notification.marked.handled" = "Marked as handled";
+"notification.cancelled" = "Notification cancelled";
+"notification.undo" = "Undo";
+"notification.priority" = "Priority";
+"notification.priority.format" = "%d%% importance";
+"notification.ai_summary.title" = "AI Smart Summary";
+"notification.ai_summary.desc" = "This summary is generated by AI based on your schedule, reminders and other data";
+"notification.suggested_actions" = "Suggested actions";
+"notification.tap_summary_action" = "Tap the summary to perform related actions";
+"notification.about_summary.title" = "About Smart Summaries";
+"notification.about_summary.desc" = "Summaries are generated from your calendar, todos, health data and more to help you plan your day.";
+/* Prompt templates */
+"prompt.current" = "Current template";
+"prompt.builtin" = "Built-in templates";
+"prompt.custom" = "Custom templates";
+"prompt.variables" = "Available variables:";
+"prompt.use" = "Use";
+"prompt.view" = "View";
+"prompt.save_as_template" = "Save as Template";
+"prompt.estimate.tokens" = "~ %d tokens";
+"prompt.warning" = "Warning";
+"prompt.basic.info" = "Basic information";
+"prompt.title" = "Prompt Templates";
+/* Timeline / misc */
+"timeline.added_time" = "Added time";
+"timeline.scheduled_notification" = "Scheduled notification";
+"notification.confirm_mark.title" = "Confirm mark as handled";
+"notification.notes.title" = "Notes";
+/* Chat */
+"chat.no_model_configured" = "Please download a local model or configure a cloud model before using chat.";
+"chat.ai_thinking" = "AI is thinking...";
+"chat.retrieval_in_progress" = "Retrieving web results…";
+"chat.thinking.short" = "Thinking process";
+"chat.thinking.process" = "Thinking process";
+"model.no_available.title" = "No models available";
+"model.go_download" = "Download";
+"chat.select_model_prompt" = "Please select a model first";
+
+/* Missing keys (added by audit) */
+"home.dashboard.url_sources.title" = "Scheduled Actions";
+"home.dashboard.today_events.title" = "Today's Events";
+"home.dashboard.partial_sources_failed.title" = "Some sources failed";
+"home.dashboard.no_events" = "No events";
+"home.dashboard.chip.summary_format" = "Summary %d";
+"home.dashboard.chip.events_format" = "Events %d";
+"home.dashboard.chip.url_sources_format" = "Actions %d/%d";
+
+"medication.title" = "Medication Lookup";
+"medication.search.placeholder" = "Search medications";
+"medication.search_failed" = "Search failed";
+"medication.not_found" = "No medication found";
+"medication.note" = "Note";
+"medication.common_dose" = "Common dose";
+"medication.service_not_initialized" = "Medication service not initialized";
+
+"model.action.generate" = "Generate";
+"model.action.stop" = "Stop";
+"model.cloud" = "Cloud";
+"model.preset" = "Preset";
+"model.bullet" = "•";
+"model.generating" = "Generating...";
+"model.inference.test" = "Inference Test";
+"model.item.id" = "ID";
+"model.fill_prompt_hint" = "Fill in the prompt above";
+"model.explain.title" = "Explanation";
+
+"settings.clear_all_data.warning" = "This will permanently delete all local data.";
+"settings.manage.prompt_templates" = "Manage Prompt Templates";
+"settings.view.pending_notifications" = "View Pending Notifications";
+"settings.health.data_source" = "Health Data Source";
+"settings.health.data_source_note" = "Requires Health permissions";
+
+/* Settings - additional feedback */
+"settings.export.failed" = "Export failed — please try again.";
+"settings.clear_all_data.done" = "All data cleared. Please restart the app to complete the reset.";
+
+/* Scheduled Actions */
+"scheduled_actions.title" = "Scheduled Actions";
+"scheduled_actions.section.overview" = "Overview";
+"scheduled_actions.section.configure" = "Configuration";
+"scheduled_actions.section.history" = "History";
+"scheduled_actions.overview.subtitle" = "Manage scheduled actions and track execution status.";
+"scheduled_actions.overview.configured" = "Configured";
+"scheduled_actions.overview.due_now" = "Due";
+"scheduled_actions.overview.last_run" = "Last";
+"scheduled_actions.overview.status.ok" = "OK";
+"scheduled_actions.overview.status.partial" = "Partial";
+"scheduled_actions.overview.status.skipped" = "Skipped";
+"scheduled_actions.overview.status.failed" = "Failed";
+"scheduled_actions.run_status.answered" = "Answered";
+"scheduled_actions.run_status.action_completed" = "Action completed";
+"scheduled_actions.run_status.incomplete" = "Incomplete";
+"scheduled_actions.run_status.blocked" = "Blocked";
+"scheduled_actions.run_status.cancelled" = "Cancelled";
+"scheduled_actions.run_now" = "Run Now";
+"scheduled_actions.running" = "Running…";
+"scheduled_actions.run_now.no_actions" = "No scheduled actions configured";
+"scheduled_actions.run_now.completed" = "Run finished";
+"scheduled_actions.run_now.completed.message" = "Results will arrive via notifications and are saved in Execution Runs.";
+"scheduled_actions.run_now.result.failed.title" = "Run failed";
+"scheduled_actions.run_now.result.failed.message" = "Please check your model/provider configuration and try again. Details are saved in Execution Runs.";
+"scheduled_actions.run_now.result.partial.message" = "Run partially succeeded. Details are saved in Execution Runs.";
+"scheduled_actions.run_now.result.skipped.message" = "Run was skipped due to policy (e.g. quiet hours or no events). Details are saved in Execution Runs.";
+"scheduled_actions.runs.title" = "Execution Runs";
+"scheduled_actions.runs.empty" = "No execution records yet.";
+
+"scheduled_actions.options" = "Options";
+"scheduled_actions.advanced_options.title" = "Advanced Options";
+"scheduled_actions.advanced.manage.title" = "Manage Scheduled Actions";
+"scheduled_actions.advanced.manage.subtitle" = "Advanced editor, tests, formats, prompts, and history.";
+"scheduled_actions.advanced.edit" = "Advanced settings";
+"scheduled_actions.delete" = "Delete";
+"scheduled_actions.delete.confirm_format" = "Delete \"%1$@\"?";
+"scheduled_actions.schedule.not_set" = "Schedule not set";
+
+"scheduled_actions.run_detail.title" = "Run";
+"scheduled_actions.run_detail.section.status" = "Status";
+"scheduled_actions.run_detail.section.time" = "Time";
+"scheduled_actions.run_detail.section.action" = "Action";
+"scheduled_actions.run_detail.section.result" = "Result";
+"scheduled_actions.run_detail.section.retry" = "Retry";
+"scheduled_actions.run_detail.section.reason" = "Reason";
+"scheduled_actions.run_detail.section.details" = "Details";
+"scheduled_actions.run_detail.section.error" = "Error";
+"scheduled_actions.run_detail.section.notifications" = "Notifications";
+"scheduled_actions.run_detail.section.model" = "Model";
+
+"scheduled_actions.run_detail.label.result" = "Result";
+"scheduled_actions.run_detail.label.type" = "Type";
+"scheduled_actions.run_detail.label.background" = "Background";
+"scheduled_actions.run_detail.label.start" = "Start";
+"scheduled_actions.run_detail.label.end" = "End";
+"scheduled_actions.run_detail.label.duration" = "Duration";
+"scheduled_actions.run_detail.label.next_eligible" = "Next eligible";
+"scheduled_actions.run_detail.label.id" = "ID";
+"scheduled_actions.run_detail.label.name" = "Name";
+"scheduled_actions.run_detail.label.events_count" = "Events";
+"scheduled_actions.run_detail.view_analysis" = "View analysis result";
+"scheduled_actions.run_detail.label.retry_allowed" = "Retry allowed";
+"scheduled_actions.run_detail.label.retry_count" = "Retries";
+"scheduled_actions.run_detail.retry_count" = "%d times";
+"scheduled_actions.run_detail.label.notification_sent" = "Sent";
+"scheduled_actions.run_detail.label.event_id" = "Event ID";
+"scheduled_actions.run_detail.label.model" = "Model";
+"scheduled_actions.run_detail.label.tokens" = "Tokens";
+"scheduled_actions.run_detail.label.processing_duration" = "Processing time";
+
+"scheduled_actions.run_reason.quiet_hours" = "Skipped due to quiet hours";
+"scheduled_actions.run_reason.no_events" = "No events (skipped)";
+"scheduled_actions.run_reason.deduped" = "Deduped (skipped)";
+"scheduled_actions.run_reason.fetch_failed" = "Fetch failed";
+"scheduled_actions.run_reason.fetch_too_large" = "Fetch too large (max 1MB)";
+"scheduled_actions.run_reason.fetch_blocked" = "Fetch blocked (security)";
+"scheduled_actions.run_reason.execution_failed" = "Execution failed";
+
+
+"scheduled_actions.journal.title" = "Analysis Result";
+"scheduled_actions.journal.done" = "Done";
+"scheduled_actions.journal.load_failed_format" = "Load failed: %1$@";
+"scheduled_actions.journal.not_found_format" = "Journal ID not found: %1$@";
+
+/* MainTabView / Home additional */
+"common.actions" = "Actions";
+
+"home.section.data_sources" = "Data Sources";
+"home.section.url_content" = "URL Content";
+"home.section.calendar" = "Calendar";
+"home.section.reminders" = "Reminders";
+"home.section.health" = "Health";
+"home.section.data_source_details" = "About Data Sources";
+
+"home.data_source.local_storage" = "Data stored on device";
+"home.data_source.privacy_description" = "Nola combines authorized data sources to produce today’s summary and suggestions. By default, data is processed and stored on-device when possible.";
+
+"home.data_source.status.title" = "Data Source Status";
+"home.data_source.status.subtitle" = "Syncs automatically after authorization and is used to generate today’s summary";
+"home.overview.enabled" = "Enabled";
+"home.overview.syncing" = "Syncing";
+"home.overview.needs_auth" = "Needs access";
+
+"home.status.not_fetched" = "Not fetched yet";
+
+"home.data_source.stat.successful" = "Fetched";
+"home.data_source.stat.failed" = "Failed";
+"home.data_source.stat.events" = "Total events";
+
+"home.priority.high" = "High";
+"home.priority.medium" = "Medium";
+"home.priority.low" = "Low";
+"home.priority.percent_format" = "%d%%";
+
+"home.explain.no_model" = "Data shown directly from data sources (no AI model available)";
+"home.refresh.too_frequent_format" = "Too many refreshes. Try again in about %ds.";
+"home.refresh.partial_failed_format" = "Some data sources failed; summary may be incomplete: %@";
+"home.refresh.cooldown_suffix_format" = " (cooling down for ~%ds)";
+
+"url.source.history.count_format" = "%d";
+"url.source.history.empty" = "No history yet";
+"url.source.events.count_format" = "%d events";
+
+"history.data_source.title" = "Data Source";
+"history.ai_summary.title" = "AI Summary";
+"history.processing_info.title" = "Processing";
+"history.token_count.label" = "Token count:";
+"history.processing_duration.label" = "Duration:";
+"history.model.label" = "Model:";
+"history.original_content.title" = "Original content";
+"history.raw_response.title" = "Raw response";
+
+"model.picker.title" = "Select Model";
+
+"models.title" = "Models";
+"models.section.local" = "Local Models";
+"models.section.cloud_api" = "Cloud API";
+"models.cloud.custom_api.title" = "Custom API";
+"models.cloud.custom_api.description" = "Use your own API key";
+"models.status.downloading" = "Downloading…";
+"models.status.ready" = "Models ready";
+"models.status.not_downloaded" = "No models downloaded";
+
+"scheduled_actions.latest_run.success" = "Latest scheduled run: Success";
+"scheduled_actions.latest_run.partial" = "Latest scheduled run: Partial";
+"scheduled_actions.latest_run.skipped" = "Latest scheduled run: Skipped";
+"scheduled_actions.latest_run.failed" = "Latest scheduled run: Failed";
+
+/* Added by localization cleanup */
+"common.confirm" = "Confirm";
+"common.tokens_format" = "Tokens: %d";
+
+"settings.time.hour_format" = "%d:00";
+
+"task.inline.planned_time" = "Planned time";
+"task.inline.no_time_detected" = "No specific time detected";
+"task.inline.set_reminder_time" = "Set reminder time";
+"task.inline.select_time" = "Select time";
+
+"model.parameters.tokens_format" = "%d tokens";
+"model.parameters.show_thinking" = "Show model reasoning (thinking)";
+"model.parameters.stream_output" = "Stream output";
+"model.parameters.reset_defaults" = "Reset to defaults";
+"model.parameters.navigation_title_format" = "%@ Parameters";
+
+"model.test.execution_environment" = "Execution environment";
+"model.test.detail.parameters_title" = "Parameters";
+"model.test.detail.quick_presets" = "Quick presets";
+"model.test.detail.failed_title" = "Test failed";
+"model.test.detail.model_info" = "Model info";
+"model.test.detail.model_name" = "Model name";
+"model.test.detail.model_type" = "Type";
+"model.test.detail.temperature.precise" = "Precise";
+"model.test.detail.temperature.creative" = "Creative";
+"model.test.detail.default_prompt.1" = "Generate today's summary";
+"model.test.detail.default_prompt.2" = "Extract important todos";
+"model.test.detail.default_prompt.3" = "Give actionable suggestions";
+
+"mlx.test.params_title" = "Inference parameters";
+"mlx.test.logs_title" = "Logs";
+
+"notification.detail.title" = "Details";
+"notification.complete_item" = "Complete";
+"notification.ai_explain.title" = "AI explanation";
+"notification.related_event" = "Related event";
+"notification.view_detail" = "View details";
+"notification.summary_detail.title" = "Summary details";
+
+"urlsources.format.html" = "HTML";
+"urlsources.format.rss" = "RSS";
+"urlsources.format.json" = "JSON";
+"urlsources.format.icalendar" = "iCalendar";
+"urlsources.url_field" = "URL";
+
+"permissions.setup.contacts.desc" = "Automatically reminds birthdays and important anniversaries";
+"permissions.setup.calendars.desc" = "Sync your schedule to plan your time intelligently";
+"permissions.setup.reminders.desc" = "Integrate todos to avoid missing anything";
+"permissions.setup.health.desc" = "Analyze health metrics and provide personalized suggestions";
+"permissions.setup.finish_setup" = "Finish setup";
+"permissions.start_using_nola" = "Start using Nola";
+"permissions.request_failed" = "Permission request failed";
+"permissions.unknown_error" = "Unknown error";
+"permissions.setup.error_permission_format" = "Unable to get %@ permission. You can grant it later in Settings.";
+
+"permissions.setup.completed.title" = "Setup complete!";
+"permissions.setup.completed.granted_count_format" = "You granted %d/%d data sources";
+
+"permissions.setup.info.all_granted.title" = "Perfect!";
+"permissions.setup.info.all_granted.desc" = "All data sources are ready. Nola will provide the best experience.";
+"permissions.setup.info.some_granted.title" = "Nice!";
+"permissions.setup.info.some_granted.desc" = "Granted data sources are ready. You can add more later in Settings.";
+"permissions.setup.info.none_granted.title" = "Tip";
+"permissions.setup.info.none_granted.desc" = "You can grant permissions anytime in Settings for a better experience.";
+
+"permissions.setup.feature.privacy.title" = "Privacy";
+"permissions.setup.feature.privacy.desc" = "All data stays on your device";
+"permissions.setup.feature.no_upload.title" = "No upload";
+"permissions.setup.feature.no_upload.desc" = "Your data never leaves your device";
+"permissions.setup.feature.control.title" = "Control";
+"permissions.setup.feature.control.desc" = "You can revoke permissions anytime in Settings";
+
+"home.enabled_sources_ratio_format" = "%d/%d";
+
+
+
+/* AUTOGEN: UI hardcoded → localized */
+"autogen.MLXTestView.1d5258bc" = "Using model: Qwen3 4B (local file)";
+"autogen.MLXTestView.48457675" = "Preparing to run local inference (MLX)...";
+"autogen.MLXTestView.f2cd5ae9" = "Team meeting";
+"autogen.MLXTestView.c36f20a6" = "Starting summary generation...";
+"autogen.MLXTestView.e051e4e6" = "Inference completed: total time %.2fs";
+"autogen.MLXTestView.c2d273a2" = "Inference timeout: generation took over 90s; consider reducing maxTokens or using a faster model";
+"autogen.MLXTestView.73754ade" = "Submit weekly report";
+"autogen.MLXTestView.6849b829" = "Error: model not downloaded";
+"autogen.MLXTestView.4949e39c" = "Project discussion";
+"autogen.SettingsView.1c46823b" = "Push connection";
+"autogen.NotificationDetailView.28ff5ffe" = "Health";
+"autogen.NotificationDetailView.1a26edf9" = "Other";
+"autogen.NotificationDetailView.640e8fc4" = "Scheduled action (URL)";
+"autogen.NotificationDetailView.2a4a4de8" = "Manual";
+"autogen.NotificationDetailView.81944e48" = "Reminder";
+"autogen.NotificationDetailView.b6f9b4bd" = "Debt / loan";
+"autogen.NotificationDetailView.25999591" = "Birthday reminder";
+"autogen.NotificationDetailView.ec7b537e" = "Custom task";
+"autogen.ModelDownloadView.041f8c30" = "Hugging Face official source (recommended for overseas users)";
+"autogen.ModelDownloadView.115bd479" = "ModelScope official source (faster access within China)";
+"autogen.ModelDownloadView.e0dab22b" = "Download failed";
+"autogen.ModelDownloadView.35cabc26" = "Failed to download model";
+"autogen.ModelDownloadView.238c0cc1" = "Failed to delete model";
+"autogen.ModelDownloadView.82d38a17" = "Source: Hugging Face";
+"autogen.ModelDownloadView.bbb58cda" = "Source: ModelScope";
+"autogen.BriefDisplayView.15081b04" = "Today's priorities";
+"autogen.BriefDisplayView.da6d8802" = "Code review";
+"autogen.BriefDisplayView.20115727" = "Attend team meeting";
+"autogen.BriefDisplayView.7790cd26" = "Complete project report";
+"autogen.BriefDisplayView.ad6f4e5c" = "Suggested order based on priority and schedule";
+"autogen.ModelTestView.5c69f135" = "✓ Completed (%.1fs)";
+"autogen.ModelTestView.4f92eb12" = "✓ Stream completed (%.1fs)";
+"autogen.ModelTestView.f2cd5ae9" = "Team meeting";
+"autogen.ModelTestView.fff208a3" = "From candidate events, provide 3 actionable suggestions, each under 30 characters";
+"autogen.ModelTestView.765216a7" = "Starting streaming generation...";
+"autogen.ModelTestView.d0754da8" = "Starting generation...";
+"autogen.ModelTestView.73754ade" = "Submit weekly report";
+"autogen.ModelTestView.a94d5104" = "Extract important todos from candidate events and show the top 3 most urgent";
+"autogen.TaskConfirmationView.c63d4b22" = "Remind me to drink water tomorrow at 9 AM";
+"autogen.OnboardingView.14550e6d" = "HealthKit fully authorized";
+"autogen.OnboardingView.9c935c11" = "HealthKit authorization request triggered; due to privacy the result may not be immediately available";
+"autogen.OnboardingView.3bebc1f8" = "HealthKit not authorized";
+"autogen.OnboardingView.bc319e07" = "HealthKit denied";
+"autogen.OnboardingView.6865ebfb" = "HealthKit partial authorization";
+"autogen.OnboardingView.993ab095" = "writeOnly (requires fullAccess)";
+"autogen.OnboardingView.ea7b3750" = "Set status to granted";
+"autogen.OnboardingView.659f8f3c" = "Insufficient reminders permission";
+"autogen.OnboardingView.9a5b2771" = "Reminders permission granted but status not updated";
+"autogen.OnboardingView.e14123fd" = "Insufficient reminders permission level";
+"autogen.OnboardingView.65e0a3bb" = "Reminders permission result";
+"autogen.OnboardingView.edb493e9" = "Insufficient calendar permission";
+"autogen.OnboardingView.6c63f490" = "Calendar permission granted but status not updated";
+"autogen.OnboardingView.3764b285" = "Insufficient calendar permission level";
+"autogen.OnboardingView.311b30d2" = "Calendar permission result";
+"autogen.OnboardingView.d9dfedb0" = "Check permission status";
+"autogen.OnboardingView.1aeef1a7" = "User completed onboarding";
+"autogen.OnboardingView.fdd8107b" = "Request reminders permission (full access)";
+"autogen.OnboardingView.fc7d9f56" = "Request calendar permission (full access)";
+"autogen.OnboardingView.6bbc0da3" = "Skip HealthKit status check (unknown immediately after request)";
+"autogen.OnboardingView.a7b2b8ae" = "Notification permission request failed";
+"autogen.OnboardingView.64df1f08" = "Contacts permission request failed";
+"autogen.LLMResponseValidator.211ee58e" = "An unknown error occurred.";
+"autogen.LLMResponseValidator.e0bf4688" = "Failed to parse a usable JSON from model response; please retry or switch models.";
+"autogen.LLMResponseValidator.a5a04700" = "Model did not suggest any actions (actions empty).";
+"autogen.LLMResponseValidator.b352d746" = "Model returned invalid JSON format; please retry or report the issue.";
+"autogen.LLMResponseValidator.89154a16" = "Model returned a summary that is too long to process.";
+"autogen.LLMResponseValidator.1cf6e0d8" = "Some actions returned by the model are missing a dedupeKey.";
+"autogen.TaskParsingService.fbe2ad89" = "M/d";
+"autogen.TaskParsingService.29b8a027" = "M/d HH:mm";
+"autogen.TaskParsingService.3054424b" = "yyyy/M/d";
+"autogen.TaskParsingService.01f7fe78" = "yyyy/M/d HH:mm";
+"autogen.TaskParsingService.e214ee22" = "AM";
+"autogen.TaskParsingService.1dfaab65" = "PM";
+"autogen.TaskParsingService.0c5382c1" = "Noon";
+"autogen.TaskParsingService.17e83cc2" = "Today";
+"autogen.TaskParsingService.5ef2d60e" = "Evening";
+"autogen.TaskParsingService.4ca5b0f2" = "Early morning";
+"autogen.TaskParsingService.639e8f00" = "Day after tomorrow";
+"autogen.TaskParsingService.f40a330d" = "Three days from now";
+"autogen.TaskParsingService.172fb719" = "Morning";
+"autogen.TaskParsingService.b76ce230" = "Tomorrow";
+"autogen.TaskParsingService.76a41594" = "Night";
+"autogen.OpenAIProvider.e74e9a44" = "Chat completion first choice missing message.content";
+"autogen.OpenAIProvider.ce15af25" = "Chat completion returned tool_calls; current chat flow does not support tool_calls";
+"autogen.OpenAIProvider.ef1859c9" = "Chat completion returned tool_calls; current summarize flow does not support tool_calls";
+"autogen.OpenAIProvider.21021c9e" = "Chat completion returned empty choices";
+"autogen.OpenAIProvider.a4022d12" = "Chat completion returned empty choices (upstream may not follow OpenAI chat.completions format)";
+"autogen.LLMClient.d01e6a95" = "(No response)";
+"autogen.PromptTemplates.7d7e44f8" = "1. Boston Celtics — win rate 0.750 (30-10)";
+"autogen.PromptTemplates.0e286f95" = "Matches the user's work preferences";
+"autogen.PromptTemplates.577143e8" = "Top 3";
+"autogen.PromptTemplates.ef1cbd7c" = "Ranked top 3";
+"autogen.PromptTemplates.e58ac954" = "1st/2nd/3rd";
+"autogen.PromptTemplates.cb75bb1c" = "This article contains 5 key steps to prepare an end-of-year report.";
+"autogen.ModelService.e09bb0e6" = "Simulator detected — using placeholder local provider instead of MLX";
+"autogen.ServiceContainer.a8c326db" = "Health data source enabled";
+"autogen.ServiceContainer.8cfe8d2a" = "HealthDataSource enabled";
+"autogen.ServiceContainer.90b807d8" = "HealthDataSource added to data sources list";
+"autogen.ServiceContainer.e2d798d4" = "HealthDataSource disabled";
+"autogen.ServiceContainer.4d294c08" = "HealthKit authorization failed";
+"autogen.ServiceContainer.8a634bbd" = "HealthKit authorized and data source enabled";
+"autogen.ServiceContainer.d478d0a6" = "HealthKit authorization not granted";
+"autogen.ServiceContainer.5dacf1e6" = "HealthKit data source enabled (on-demand)";
+"autogen.ServiceContainer.4240edab" = "URL data source enabled";
+"autogen.ServiceContainer.fb891b55" = "URL data source disabled";
+"autogen.ServiceContainer.63a2e315" = "Preparing to enable HealthKit data source (authorization state not checked)";
+"autogen.ServiceContainer.37ef41e5" = "Unable to create HealthDataSource";
+
+
+/* AUTOGEN: non-test non-ASCII → localized */
+"autogen.DataManager.b2556e9c" = "Start exporting data";
+"autogen.DataManager.4c447732" = "Export scheduled actions record failed";
+"autogen.DataManager.76d44f70" = "Data export succeeded";
+"autogen.DataManager.c2dd674e" = "Data export failed";
+"autogen.DataManager.138108a7" = "Valid key";
+"autogen.DataManager.8018989a" = "Invalid key";
+"autogen.DataManager.640e954b" = "Start clear all data";
+"autogen.DataManager.9e60996c" = "Clearing local file storage failed";
+"autogen.DataManager.f56bfab6" = "All data cleared";
+"scheduled_actions.chat_hint.title" = "Create schedules from chat";
+"scheduled_actions.chat_hint.body" = "Describe the schedule in natural language in Chat, and Nola will prepare a scheduled action for review and saving.";
+"scheduled_actions.chat_hint.open_chat" = "Open Chat";
+"scheduled_actions.mode.local" = "Local schedule";
+"scheduled_actions.scheduler.unavailable" = "Scheduled action service is unavailable right now.";
+"scheduled_actions.weekday_format" = "Weekday %d";
+"autogen.DataManager.2707fc27" = "Start export HealthKit data";
+"autogen.DataManager.72b82bb2" = "HealthKit metric data added";
+"autogen.DataManager.7e09322c" = "HealthKit data export succeeded";
+"autogen.DataManager.f97c62e7" = "HealthKit data export failed";
+"autogen.DataManager.19498a0c" = "Keychain cleared";
+"autogen.MedicationService.a563fd56" = "Loading local index";
+"autogen.MedicationService.9bb13bb1" = "Local medication data not found (medications.json)";
+"autogen.MedicationService.80acdf56" = "Loading local medication index";
+"autogen.MedicationService.096d64a7" = "Loading local medication data failed";
+"autogen.NolaError.be2dc7fc" = "Network not connected";
+"autogen.NolaError.e41ce24c" = "Request timeout";
+"autogen.NolaError.9e9ffd48" = "Request format error";
+"autogen.NolaError.05017035" = "Not authorized (API key invalid or missing)";
+"autogen.NolaError.a465c89c" = "Request rate limited (429), please try again later";
+"autogen.NolaError.ad08ccdc" = "Server response format error";
+"autogen.NolaError.1b17319a" = "LLM not configured (missing API key or endpoint)";
+"autogen.NolaError.4fe90130" = "LLM request timed out";
+"autogen.NolaError.4dbe8495" = "LLM call rate limited";
+"autogen.NolaError.f03719c5" = "Failed to parse LLM response";
+"autogen.NolaError.3d1e8609" = "Model not loaded";
+"autogen.NolaError.239f2c07" = "Unknown LLM error";
+"autogen.NolaError.40811b69" = "Usage reset failed";
+"autogen.NolaError.4a919919" = "Data corrupted";
+"autogen.NolaError.3a1e2e0f" = "No available data";
+"autogen.NolaError.7799860c" = "Data parsing failed";
+"autogen.IntegrationValidationCheckList.4b145e27" = "✓ LocalJSONStorage: Safe concurrent access with atomic writes";
+"autogen.IntegrationValidationCheckList.518c8bf3" = "✓ RulesEngine: User-configurable quiet hours and lead days";
+"autogen.IntegrationValidationCheckList.b8e03fea" = "✓ NotificationService: Deduplication and merging";
+"autogen.IntegrationValidationCheckList.69d6f52b" = "✓ Settings: Persistent configuration storage";
+"autogen.IntegrationValidationCheckList.fe865367" = "✓ ErrorHandling: Data sanitization for logging";
+"autogen.IntegrationValidationCheckList.3b12a98f" = "✓ DraftWorkflow: Three-phase confirmation pipeline";
+"autogen.IntegrationValidationCheckList.d1775683" = "✓ EventKit: Create, update, delete synchronization";
+"autogen.IntegrationValidationCheckList.63bb14d5" = "✓ BriefUI: Display formatted content with metadata";
+"autogen.IntegrationValidationCheckList.81ee499b" = "✓ Performance: All operations complete in < 100ms";
+"autogen.IntegrationValidationCheckList.7d3e11f2" = "✓ DataFlow: End-to-end from sources to storage";
+"autogen.DataSources.33b55947" = "Data source statistics";
+"autogen.ModelDownloader.71608408" = "ModelScope (China)";
+"autogen.ModelDownloader.0d54c9d0" = "Lightweight intelligent model, suitable for everyday use";
+"autogen.HealthDataSource.5609f5e3" = "Your average daily step count is low. We recommend increasing daily activity to at least 7,000–10,000 steps per day to maintain health. Try walking after meals, taking stairs instead of elevators, parking farther away, etc.";
+"autogen.HealthDataSource.f4335811" = "Steps: average %d per day";
+"autogen.HealthDataSource.6c1f3d50" = "Your average daily steps meet the baseline but there is room for improvement. Keep it up and consider slightly increasing activity.";
+"autogen.HealthDataSource.b4cd805d" = "Great! Your average daily steps are close to recommended levels. Maintaining this activity helps support cardiovascular health.";
+"autogen.HealthDataSource.7eaff2a0" = "Excellent! Your average daily steps exceed recommended levels and your activity is ample. Keep it up!";
+"autogen.HealthDataSource.06fb0a82" = "Average heart rate: %d bpm";
+"autogen.HealthDataSource.9856f308" = "Your average heart rate is low. This can be normal for athletes or frequent exercisers. Otherwise, consider consulting a physician.";
+"autogen.HealthDataSource.fe09efe7" = "Your average heart rate is high. Monitor for stress, anxiety, or other health issues, and consult a physician if necessary.";
+"autogen.HealthDataSource.eba7d4ca" = "Your average heart rate is within a healthy range; cardiovascular condition appears good.";
+"autogen.HealthDataSource.7ab5bb3c" = "Sleep: average %.1f hours per night";
+"autogen.HealthDataSource.71634d69" = "Your average sleep duration is severely insufficient. Chronic sleep deprivation can affect immunity, memory, and mood. Adjust your routine to ensure at least 7 hours of sleep per night.";
+"autogen.HealthDataSource.ad7e29fa" = "Your average sleep duration is slightly insufficient. Consider increasing sleep; adults typically need 7–9 hours per night.";
+"autogen.HealthDataSource.1bdf2fda" = "Good! Your sleep duration is sufficient, which is important for health. Maintain a regular sleep routine.";
+"autogen.HealthDataSource.769d2c90" = "Your sleep duration is long. If you feel fatigued or excessively sleepy, consult a physician to rule out potential health issues.";
+"autogen.HealthDataSource.c72bfab1" = "Recent workout: %@ %d minutes";
+"autogen.HealthDataSource.1afa6cc5" = "Great! Maintaining regular exercise is very beneficial. Aim for at least 3–5 workouts per week, 30+ minutes each.";
+"autogen.HealthDataSource.0be8f3b7" = "Good start! Gradually increase workout duration; aim for at least 30 minutes per session for better effect.";
+"autogen.HealthDataSource.8eb2fcd6" = "Running";
+"autogen.HealthDataSource.191f5b40" = "Walking";
+"autogen.HealthDataSource.596c5a92" = "Cycling";
+"autogen.HealthDataSource.9e5ab613" = "Yoga";
+"autogen.HealthDataSource.b66f447b" = "Swimming";
+"autogen.HealthDataSource.a3350811" = "Exercise";
+"autogen.MorningBriefService.b053fef8" = "📅 Today's priorities";
+"autogen.MorningBriefService.15081b04" = "Today's priorities";
+"autogen.ChatManager.81944e48" = "Reminder";
+"autogen.ChatManager.1d3c3d48" = "Noted";
+"autogen.ChatManager.9058a1c2" = "Recorded";
+"autogen.ChatManager.eb640387" = "Birthday";
+"autogen.ChatManager.039bb1a0" = "Appointment";
+"autogen.ChatManager.a0c2b5e5" = "Remind me";
+"autogen.ChatManager.8066e0f4" = "Due";
+"autogen.ChatManager.5a989c5e" = "When due";
+"autogen.NotificationService.f93b1b1c" = "Skip duplicate notification";
+"autogen.NotificationService.78d2e66d" = "Daily notification limit reached";
+"autogen.NotificationService.7d112e59" = "Notification sent";
+"autogen.NotificationService.337bdb4b" = "Skip duplicate scheduled notification";
+"autogen.NotificationService.04527f8d" = "Scheduled notification set";
+"autogen.NotificationService.ac4ec9aa" = "Notification canceled";
+"autogen.NotificationService.70ee1939" = "All notifications cleared";
+"autogen.NotificationService.ccb981dd" = "Notification history cleared";
+"autogen.NotificationService.cbd8dc66" = "Notification categories configured";
+"autogen.NotificationService.24221727" = "🚨 Nola Important Reminder";
+"autogen.NotificationService.b92a5a6b" = "💡 Nola Reminder";
+"autogen.NotificationService.cd639880" = "📋 Nola Notification";
+"autogen.NotificationService.2a8dbcfb" = "Open Calendar";
+"autogen.NotificationService.d84129b8" = "Ignore";
+"autogen.NotificationService.766ccd69" = "Open Reminder";
+"autogen.NotificationService.ed2cc287" = "Add to Calendar";
+"autogen.NotificationService.c69a9153" = "Remind later";
+"autogen.NotificationService.cb63c62e" = "Got it";
+"autogen.ModelSelectionManager.e8666c37" = "Local";
+"autogen.ModelSelectionManager.565481c9" = "Cloud";
+"autogen.ScheduledTimeParser.2d4817f7" = "08：30";
+"autogen.ScheduledTimeParser.e05453c8" = "11:31 PM";
+"autogen.ScheduledTimeParser.b9ccd93e" = "9:05 AM";
+"autogen.ScheduledTimeParser.1e38b4e4" = "11:31 AM";
+"autogen.ScheduledTimeParser.ad12f310" = "9:05 PM";
+"autogen.ScheduledTimeParser.35be2453" = "12:00 PM";
+"autogen.ScheduledTimeParser.0cb01238" = "7:10 PM";
+"autogen.ScheduledTimeParser.e214ee22" = "AM";
+"autogen.ScheduledTimeParser.1dfaab65" = "PM";
+"autogen.ScheduledTimeParser.76a41594" = "Evening";
+"autogen.ScheduledTimeParser.0c5382c1" = "Noon";
+"autogen.ScheduledTimeParser.637448a8" = "12:xx PM";
+"autogen.DataSourceTypes.9070cb0e" = "Contacts";
+"autogen.DataSourceTypes.2ecbc116" = "Calendar";
+"autogen.DataSourceTypes.35cffa73" = "Reminders";
+"autogen.DataSourceTypes.28ff5ffe" = "Health";
+"autogen.DataSourceTypes.6623f369" = "Scheduled actions";
+"autogen.DataSourceTypes.15e018f4" = "Birthdays & anniversaries";
+"autogen.DataSourceTypes.1eb3ff07" = "Events, meetings, activities";
+"autogen.DataSourceTypes.082fbef9" = "To-dos / Reminders";
+"autogen.DataSourceTypes.2426a028" = "Steps, heart rate, sleep, workouts";
+"autogen.DataSourceTypes.6d670c3b" = "RSS, calendars, and custom scheduled data";
+"autogen.DataSourceTypes.5f03bd33" = "Automatically read birthdays and important dates from contacts to remind you in advance.";
+"autogen.DataSourceTypes.3684772e" = "Sync events from your system calendar so you never miss important meetings or activities.";
+"autogen.DataSourceTypes.b186e113" = "Integrate Reminders to keep todos under control and ensure important tasks are completed on time.";
+"autogen.DataSourceTypes.18c3106d" = "Analyze Health data and provide personalized suggestions to help you maintain healthy habits.";
+"autogen.DataSourceTypes.ed56bbf0" = "Fetch data from custom URLs on a schedule (RSS, iCalendar, JSON, etc.) to extend data sources.";
+"autogen.URLFetcherService.5a5f0ecf" = "Non-HTTPS URL";
+"autogen.URLFetcherService.371f0e30" = "Add data source";
+"autogen.URLFetcherService.c40ac45d" = "Delete data source";
+"autogen.URLFetcherService.5067150c" = "Update data source";
+"autogen.URLFetcherService.760bf4a9" = "Invalid URL — skipping history append";
+"autogen.URLFetcherService.18ba2c58" = "No data source found to append history";
+"autogen.URLFetcherService.d1814124" = "History already contains same dedupeKey — skipping append";
+"autogen.URLFetcherService.16c8f46b" = "History limit reached — removing oldest entries";
+"autogen.URLFetcherService.fc2a6707" = "Appending URL data source history";
+"autogen.URLFetcherService.0bc136b4" = "Failed to serialize HistoryEntry — not written to Rust";
+"autogen.URLFetcherService.7990486a" = "Rust persistence of history write failed";
+"autogen.URLFetcherService.691f17c7" = "Data source refresh succeeded";
+"autogen.URLFetcherService.eeb2fb5e" = "Data source refresh failed";
+"autogen.URLFetcherService.256d5e02" = "Skipping disabled data source";
+"autogen.URLFetcherService.7782eb43" = "Start fetching";
+"autogen.URLFetcherService.91f68cfb" = "Fetch succeeded";
+"autogen.URLFetcherService.6292a3a8" = "Fetch failed";
+"autogen.URLFetcherService.cd260bd3" = "Data version mismatch";
+"autogen.URLFetcherService.b506ae69" = "JSON parse failed: unrecognized JSON structure (not Nola events schema nor Bing Web Search schema)";
+"autogen.URLFetcherService.a51bab9e" = "Unable to decode iCalendar data";
+"autogen.URLFetcherService.5f76edc5" = "Unknown error";
+"autogen.URLFetcherService.68591f54" = "Unable to decode HTML data";
+"autogen.URLFetcherService.87ad1b2c" = "Invalid URL";
+"autogen.URLFetcherService.0d43d6d8" = "Invalid response";
+"autogen.ProcessingAgent.c0d24c8a" = "URL notification could not match a data source — skipping history write";
+"autogen.DataSourcePermissionManager.284cc0ba" = "Authorized";
+"autogen.DataSourcePermissionManager.28183c49" = "Insufficient permission";
+"autogen.DataSourcePermissionManager.4c7c52c7" = "Denied";
+"autogen.DataSourcePermissionManager.93633305" = "Restricted";
+"autogen.DataSourcePermissionManager.beff4a1c" = "Unavailable";
+"autogen.DataSourcePermissionManager.30b06e2f" = "This device does not support HealthKit";
+"autogen.PromptTemplateService.bee8164c" = "Date range (e.g. 2025-11-11 to 2025-11-18)";
+"autogen.PromptTemplateService.f29b6953" = "Event list (JSON format)";
+"autogen.PromptTemplateService.7864544e" = "Desired number of returned items";
+"autogen.PromptTemplateService.ccea14b5" = "User preferences (JSON)";
+"autogen.PromptTemplateService.ce9829e6" = "Extra context (RAG retrieval results)";
+"autogen.PromptTemplateService.026d50c2" = "Add template";
+"autogen.PromptTemplateService.6b713a80" = "Cannot modify built-in templates";
+"autogen.PromptTemplateService.3eb58aa9" = "Update template";
+"autogen.PromptTemplateService.2e2a4e49" = "Cannot delete built-in templates";
+"autogen.PromptTemplateService.b31745bd" = "Delete template";
+"autogen.PromptTemplateService.b880979a" = "Duplicate template";
+"autogen.PromptTemplateService.860cb319" = "Select template";
+"autogen.PromptTemplateService.67d328b4" = "No templates available";
+"autogen.PromptTemplateService.ccb412b9" = "Generate prompt";
+"autogen.PromptTemplateService.db4dd68f" = "Template is empty";
+"autogen.PromptTemplateService.5a6d1c7f" = "Template too long (exceeds 10000 characters)";
+"autogen.PromptTemplateService.1e8dccfd" = "Reminder text (short, actionable)";
+"autogen.PromptTemplateService.a28eac4d" = "Unique identifier";
+"autogen.PromptTemplateService.6a99be56" = "Default event summary and reminder generation templates";
+"autogen.PromptTemplateService.dddd7bf6" = "Birthday reminder template";
+"autogen.PromptTemplateService.9c2f12d3" = "Template specifically for birthday reminders";
+"autogen.PromptTemplateService.1f17e67f" = "To-do task template";
+"autogen.PromptTemplateService.a85c7a56" = "To-do priority sorting template";
+"autogen.Scheduler.abcf95e0" = "Background task handler not set (Scheduler not initialized; BGTask callbacks will be dropped)";
+"autogen.Scheduler.e74c7118" = "Background processing handler not set (Scheduler not initialized; BGTask callbacks will be dropped)";
+"autogen.Scheduler.0f36e286" = "Background task registered successfully";
+"autogen.Scheduler.bc2069f7" = "Background task registration failed";
+"autogen.Scheduler.f9a58c29" = "Background processing task registered successfully";
+"autogen.Scheduler.d7afabe9" = "Background processing task registration failed";
+"autogen.Scheduler.dad3a85e" = "Scheduled background dispatch (earliestBeginDate)";
+"autogen.Scheduler.dc971e08" = "Next background refresh scheduled";
+"autogen.Scheduler.84908629" = "Background tasks unavailable (possibly on simulator)";
+"autogen.Scheduler.8e8892f4" = "Too many pending tasks";
+"autogen.Scheduler.a1191dd3" = "No background task permissions";
+"autogen.Scheduler.f88048d7" = "Scheduling failed";
+"autogen.Scheduler.67c471a2" = "Scheduling background processing task (BGProcessing)";
+"autogen.Scheduler.61d32f61" = "Next background processing task scheduled";
+"autogen.Scheduler.141780c1" = "Background processing scheduling failed";
+"autogen.Scheduler.af60885d" = "Manual trigger: generate summary";
+"autogen.Scheduler.0df7a9f3" = "Manual run: no scheduled URL actions configured";
+"autogen.Scheduler.700374cd" = "Manually running scheduled URL actions";
+"autogen.Scheduler.c17e8c5b" = "Manual run: scheduled URL action not found";
+"autogen.Scheduler.f7092ea4" = "Manual run: action not enabled";
+"autogen.Scheduler.04018530" = "Manual run: action has no schedule configured";
+"autogen.Scheduler.dfdee7e7" = "Manual run: single scheduled URL action";
+"autogen.Scheduler.3f737a0e" = "Background task started";
+"autogen.Scheduler.6709783d" = "Background task ended early due to insufficient time";
+"autogen.Scheduler.176d4835" = "Task expired — skipping execution";
+"autogen.Scheduler.d5152143" = "Preparing background task execution";
+"autogen.Scheduler.c9e93c9b" = "Background task completed";
+"autogen.Scheduler.3a8e3c6a" = "Background task failed";
+"autogen.Scheduler.ed22106a" = "Background processing task started";
+"autogen.Scheduler.7e3b2c88" = "Background processing task ended early due to insufficient time";
+"autogen.Scheduler.aae7761e" = "Processing task expired — skipping execution";
+"autogen.Scheduler.7704a080" = "Processing task triggered too early — waiting until scheduled time";
+"autogen.Scheduler.1c5c5747" = "Preparing to execute scheduled URL actions in background processing task";
+"autogen.Scheduler.1c099943" = "Background processing task completed";
+"autogen.Scheduler.a43d1f16" = "No events — skipping summary";
+"autogen.Scheduler.d01983b8" = "Preprocessing completed";
+"autogen.Scheduler.d157c0c2" = "Candidates after rule filtering";
+"autogen.Scheduler.a15945a4" = "Currently in quiet hours — skipping notifications";
+"autogen.Scheduler.a4c24092" = "Quota exhausted";
+"autogen.Scheduler.67db48b7" = "LLM generate summary completed";
+"autogen.Scheduler.7cb0753d" = "Failed to save ProcessedEvent";
+"autogen.Scheduler.4dffa8e7" = "Unified notification service nil — enqueueing candidate for replay";
+"autogen.Scheduler.30b349b6" = "LLM generate summary failed";
+"autogen.Scheduler.410abcf5" = "In quiet hours: only fetch scheduled URL sources, do not generate report notifications";
+"autogen.Scheduler.083440df" = "Failed to write scheduled action execution record";
+"autogen.Scheduler.75151f0e" = "Scheduled URL action is in backoff window — skipping execution";
+"autogen.Scheduler.9f973728" = "Failed to fetch scheduled URL source";
+"autogen.Scheduler.1118cd82" = "Scheduled URL source has no events — skipping report";
+"autogen.Scheduler.43565123" = "Scheduled action results saved as Journal";
+"autogen.Scheduler.7db6318f" = "Failed to save Journal";
+"autogen.Scheduler.04a28c8c" = "(no available summary)";
+"autogen.Scheduler.f7c89d47" = "Scheduled URL report was sent within throttle window — skipping";
+"autogen.Scheduler.b6c248fa" = "Failed to save scheduled action report event";
+"autogen.Scheduler.9046455a" = "Scheduled URL report notification sent";
+"autogen.Scheduler.e3a83bab" = "Failed to send scheduled URL report notification";
+"autogen.Scheduler.1876ea54" = "Failed to generate scheduled URL report";
+"autogen.Scheduler.7b6411d9" = "Periodic data source analysis (placeholder, to be implemented)";
+"autogen.RustInterop.d659c1da" = "Failed to parse JSON returned from Rust";
+"autogen.RustInterop.ff7ffa8e" = "Failed to parse ProcessedEvent JSON returned from Rust";
+"autogen.RustInterop.88705991" = "Failed to parse ProcessedEvent JSON returned from Rust preprocess";
+
+/* Chat localization expansion */
+"chat.more_settings.model.not_selected" = "No model selected";
+"chat.more_settings.subtitle" = "Manage model parameters, Agent execution, context memory, and skills for this conversation.";
+"chat.more_settings.title" = "More Settings";
+"chat.more_settings.response_style" = "Response style";
+"chat.more_settings.max_context_length" = "Max context length";
+"chat.more_settings.max_output_tokens" = "Max output tokens";
+"chat.more_settings.tokens_value_format" = "%d tokens";
+"chat.more_settings.temperature.label" = "Temperature";
+"chat.more_settings.top_p.label" = "Top P";
+"chat.more_settings.temperature.hint" = "Higher values increase creativity; lower values improve stability.";
+"chat.more_settings.top_p.hint" = "Controls the cumulative probability mass of candidate tokens.";
+"chat.more_settings.stream_output" = "Stream output";
+"chat.more_settings.show_thinking" = "Show thinking";
+"chat.more_settings.model_output.header" = "Model and output";
+"chat.more_settings.model_output.footer" = "Advanced defaults are saved for the selected model and apply to every conversation using it.";
+"chat.more_settings.agent_mode" = "Agent mode";
+"chat.more_settings.enable_retrieval" = "Enable retrieval";
+"chat.more_settings.iteration_steps_format" = "%d steps";
+"chat.more_settings.auto_compact_trigger" = "Auto-compact trigger";
+"chat.more_settings.context_usage.title" = "Current context usage";
+"chat.more_settings.context_usage.hint_format" = "Currently about %d%%. When the threshold is reached and message count is sufficient, Nola auto-compacts older context.";
+"chat.more_settings.execution.header" = "Execution, host, and context window";
+"chat.more_settings.execution.footer" = "When connected to a Web host, iOS is only the input and confirmation surface. The Agent can use authorized file, grep, bash, real Chrome, and desktop computer-use tools on the host. Screenshots, mouse, keyboard, clipboard, login, OAuth, credential changes, authorization changes, or deletions require confirmation.";
+"chat.host_tool.computer_screenshot_hint" = "This is a screenshot of the host desktop, not the current iPhone screen.";
+"chat.more_settings.session_memory.header" = "Session memory";
+"chat.more_settings.session_memory.footer" = "Applies only to the current conversation for tracking task state and temporary constraints.";
+"chat.more_settings.long_term.header" = "Long-term memory and user preferences";
+"chat.more_settings.long_term.footer" = "Long-term memory and user preferences persist across conversations and are injected into future context.";
+"chat.more_settings.skills.empty" = "No skills yet.";
+"chat.more_settings.skills.host_managed" = "Provided by the host; manage it in the Skill Library on your Mac.";
+"chat.more_settings.skills.open_library" = "Open full Skill Library";
+"chat.more_settings.skills.open_context_settings" = "Open context, MCP, and data source settings";
+"chat.more_settings.skills.header" = "Skills and extended context";
+"chat.more_settings.skills.footer" = "Use this panel to quickly enable or disable local skills. For uploading skills and managing MCP, documents, and data sources, open the full management page.";
+"chat.more_settings.saved" = "Settings saved.";
+
+"chat.composer.attach_files" = "Attach files";
+"chat.composer.stop_generation" = "Stop generation";
+"chat.composer.remove_attachment" = "Remove attachment";
+
+"chat.controls.agent.value.on" = "Complex tasks";
+"chat.controls.agent.value.off" = "Off";
+"chat.controls.agent.accessibility.on" = "Agent mode is enabled";
+"chat.controls.agent.accessibility.off" = "Agent mode is disabled";
+"chat.controls.style" = "Style";
+"chat.controls.context" = "Context";
+"chat.controls.execution" = "Execution";
+"chat.controls.more_settings" = "More settings";
+"chat.controls.more_settings.value_format" = "%@ · %d steps";
+
+"chat.attachments.limit" = "Only the latest 10 attachments are kept.";
+"chat.attachments.importing" = "Importing attachments…";
+"chat.attachments.import_empty" = "No usable content was imported from the selected files.";
+"chat.attachments.analysis_default" = "Please analyze based on the attachments.";
+"chat.attachments.label" = "Attachments:";
+"chat.attachment.open_format" = "Open attachment %@";
+"chat.attachments.image.multimodal_hint" = "Raw image attached for multimodal model input.";
+"chat.attachments.document.extract_failed" = "Document file attached, but Nola could not extract readable text locally from this format.";
+"chat.attachments.pdf.parse_failed" = "PDF file attached, but local PDF parsing failed.";
+"chat.attachments.pdf.no_selectable_text" = "PDF file attached, but no selectable text was found.";
+
+"chat.context.detail.messages_format" = "%d%% · %d messages";
+"chat.context.detail.message_format_one" = "%d%% · %d message";
+"prompt.response_style.professional" = "Professional";
+"prompt.response_style.casual" = "Casual";
+"prompt.response_style.playful" = "Playful";
+"chat.context.detail.template_sources_format" = "%@ · %d sources";
+"chat.context.detail.sources_count_format" = "%d sources";
+
+"chat.host_skill.default_name" = "Host Skill";
+"chat.host_skill.description_prefix" = "From Web host.";
+"chat.host_document.default_name" = "Host Document";
+"chat.host_document.description_prefix" = "From Web host.";
+"chat.host_mcp.default_name" = "Host MCP Server";
+"chat.host_mcp.description_prefix" = "From Web host.";
+"chat.context.documents.host.header" = "Host documents";
+"chat.context.documents.host.enabled" = "Host enabled";
+"chat.context.documents.host.disabled" = "Host disabled";
+"chat.context.mcp.host.header" = "Host MCP";
+"chat.context.mcp.host.empty" = "The connected host has no available MCP servers.";
+"chat.context.mcp.host.footer" = "Connection, authorization, and capability discovery are managed by the host; this device shows what is available to this conversation.";
+"chat.context.mcp.host.connected" = "Connected";
+"chat.context.mcp.host.unavailable" = "Unavailable";
+"chat.context.mcp.host.catalog_count" = "Capability catalog · %d items";
+"chat.context.mcp.host.tools" = "Tools";
+"chat.context.mcp.host.resources" = "Resources";
+"chat.context.mcp.host.templates" = "Resource templates";
+"chat.context.mcp.host.prompts" = "Prompts";
+"chat.context.mcp.host.enabled" = "Host enabled";
+"chat.context.mcp.host.disabled" = "Host disabled";
+"chat.more_settings.documents.host_format" = "Provided by the Web host • %d characters";
+"chat.attachments.type.image" = "Image";
+"chat.attachments.type.document" = "Document";
+"chat.attachments.display_line_format" = "%@: %@ (%@)";
+"chat.input.waiting" = "Generating a reply. Tap the stop button on the right to interrupt.";
+"chat.generation.cancelled" = "Generation stopped.";
+"chat.generation.cancelled_suffix" = "\n\n(Generation stopped)";
+"chat.model.missing_config_notice" = "Model is not fully configured: add Base URL, upstream model ID, and API Key";
+"chat.web_host.missing_config_notice" = "The host is not configured. Pair this device from Nola on your Mac before using host tools.";
+"chat.web_host.auth_failed" = "Host authentication failed: %@";
+"chat.web_host.connection_failed" = "Cannot connect to host %@. Open Nola on your Mac, enable device connections, and confirm both devices are on the same network.";
+"chat.agent.permission_denied" = "The local tool permission request was denied. The Agent did not continue the operation that required authorization.";
+"chat.agent.permission_resume_limit" = "The Agent requested too many host-tool permission confirmations in one turn, so Nola stopped this run before continuing.";
+"chat.agent.permission_resume_failed" = "The conversation is no longer available, so the authorized host tool run could not resume.";
+"chat.reasoning_model.short_output_notice" = "\n\n_(The current model is a reasoning model and spent most of its output budget on internal reasoning, leaving very little final text. This is upstream model behavior, not Nola truncation. Consider switching to a non-reasoning model in Model Management, such as qwen-max-latest / qwen-plus / deepseek-chat.)_";
+"chat.model.local" = "Local model";
+"chat.model.web_backend" = "Host";
+"chat.model.cloud" = "Cloud model";
+"chat.model.unconfigured" = "Model not configured";
+"chat.model.official_auto" = "Official model · Auto";
+"chat.model.local_named" = "Local model · %@";
+"chat.model.web_backend_host" = "Host · %@";
+"chat.model.web_backend_named" = "Host · %@";
+"chat.model.cloud_host" = "Cloud model · %@";
+"chat.model.cloud_named" = "Cloud model · %@";
+"chat.context.global_memory" = "Global memory";
+"chat.context.default" = "Default";
+"chat.context.prompt.empty" = "No templates are available yet. Add one in Settings first.";
+"chat.context.prompt.footer" = "The template will be prepended to the system prompt for this conversation.";
+"chat.context.prompt.picker" = "Current template";
+"chat.context.prompt.section" = "Additional prompt template";
+"chat.context.sheet.subtitle" = "Review context usage, organize session memory, and maintain long-term memory and user preferences across conversations.";
+"chat.context.sources.disabled" = "Disabled";
+"chat.context.sources.empty" = "No data sources linked yet. Readable sources like websites, search results, documents, or folders will appear here.";
+"chat.context.sources.footer" = "Selected readable sources are injected into the current conversation context. Sources can come from websites, search results, files, folders, system data, or APIs; they are stored locally by default.";
+"chat.context.sources.section" = "Additional data sources";
+"chat.context.title" = "Context";
+"chat.empty.greeting" = "Where should we begin?";
+"chat.empty.ready" = "Start with your data, memory, or a file. Nola learns from what you confirm.";
+"chat.answer.source.file" = "File";
+"chat.answer.source.memory" = "Personal memory";
+"chat.answer.source.knowledge" = "Knowledge";
+"chat.answer.source.skills" = "Skills";
+"chat.answer.source.tools" = "Tool results";
+"chat.answer.basis_detail" = "Only sources included in this answer are shown.";
+"chat.answer.memory_updates" = "%d memory updates";
+"chat.history.current" = "Current";
+"chat.history.delete.title" = "Delete this conversation?";
+"chat.history.empty.action" = "New conversation";
+"chat.history.empty.message" = "Use the new conversation button above to begin.";
+"chat.history.empty.title" = "No conversations yet";
+"chat.history.short" = "History";
+"chat.history.subtitle" = "Recently saved local chats";
+"chat.history.title" = "Conversation history";
+"chat.local_reminder_deleted" = "Deleted local reminder \"%@\".";
+"chat.local_reminder_paused" = "Paused local reminder \"%@\".";
+"chat.local_reminder_resumed" = "Resumed local reminder \"%@\".";
+"chat.local_reminder_updated" = "Updated local reminder \"%@\" to %@.";
+"chat.markdown.code" = "Code";
+"chat.markdown.code.copied" = "Copied";
+"chat.markdown.code.copy" = "Copy";
+"chat.message.copied" = "Copied";
+"chat.message.copy" = "Copy message";
+"chat.model.add" = "Add model";
+"chat.model.manage" = "Manage models and parameters";
+"chat.new.short" = "New chat";
+"chat.scheduled_action_tool_deleted" = "Deleted local scheduled action \"%@\".";
+"chat.scheduled_action_tool_paused" = "Paused local scheduled action \"%@\".";
+"chat.scheduled_action_tool_resumed" = "Resumed local scheduled action \"%@\".";
+"chat.scheduled_action_tool_updated" = "Updated local scheduled action \"%@\" to %@.";
+"chat.suggest.brainstorm" = "Review meaningful changes in my recent data";
+"chat.suggest.schedule" = "Plan today around my schedule and priorities";
+"chat.suggest.summary" = "Based on what you remember, what should I focus on next?";
+"chat.suggest.translate" = "Analyze my uploaded file and extract facts and implications";
+"chat.thinking.deepseek.finished" = "Deep thinking complete";
+
+"model.parameters.response_style" = "Response style";
+"model.parameters.response_style.hint" = "Only the selected response-style prompt is injected into the system prompt. You can also switch per conversation.";
+"model.parameters.seed.optional" = "Seed (optional)";
+"model.parameters.stop_sequences" = "Stop sequences, one per line";
+"model.parameters.stop_sequences.hint" = "At most 8 stop sequences are used; empty Seed means nondeterministic sampling.";
+"scheduled.actions.options.ok" = "OK";
+"notifications.unread.label" = "Unread notifications";
+"notifications.unread.hint.count" = "You have %d unread notifications";
+"notifications.unread.hint.none" = "No unread notifications";
+"scheduled.runs.path.server" = "Server";
+"scheduled.runs.path.local" = "Local";
+"scheduled.runs.events_count" = "%d items";
+"scheduled.run_detail.status.trigger" = "Trigger";
+"scheduled.run_detail.status.path" = "Execution path";
+"scheduled.run_detail.trigger.manual" = "Run now manually";
+"scheduled.run_detail.trigger.push" = "Server push";
+"scheduled.run_detail.trigger.background" = "Scheduled background";
+"scheduled.run_detail.trigger.fallback.background" = "Background";
+"scheduled.run_detail.trigger.fallback.manual" = "Manual";
+"scheduled.run_detail.path.server" = "Server";
+"scheduled.run_detail.path.local" = "Local";
+"scheduled.run_detail.source.section" = "Source";
+"scheduled.run_detail.source.name" = "Name";
+"scheduled.run_detail.source.url" = "URL";
+"scheduled.run_detail.events_count" = "%d items";
+"chat.topbar.accessibility.summary" = "%@, %@";
+"scheduled.run_detail.error.section" = "Error / Notes";
+"scheduled.run_detail.processing.section" = "Processing";
+"scheduled.run_detail.processing.tokens" = "Token usage";
+"scheduled.run_detail.processing.tokens_value" = "%d tokens";
+"scheduled.run_detail.processing.network_duration" = "Network duration";
+"scheduled.run_detail.processing.network_duration_value" = "%.1f sec";
+"scheduled.run_detail.processing.content_size" = "Fetched content size";
+"scheduled.run_detail.processing.result_id" = "Result ID";
+"data_sources.readable_sources.title" = "Readable sources";
+"data_sources.custom_source.title" = "Custom sources";
+"data_sources.custom_source.locked_description" = "Readable sources such as websites, search results, APIs, and feeds can be injected into chat context and used for scheduled actions.";
+"data_sources.inline.empty.title" = "No readable sources yet";
+"data_sources.inline.empty.message" = "Add websites, search-result URLs, APIs, or feeds. Then you can inject them into chat context or use them in scheduled actions.";
+"data_sources.inline.empty.action" = "Add source";
+"data_sources.inline.unavailable.title" = "Data source service unavailable";
+"data_sources.inline.unavailable.message" = "Cannot load custom data source configuration right now.";
+"scheduled_actions.run_reason.server_processing_loading_source" = "Server processing: loading task configuration";
+"scheduled_actions.run_reason.server_processing_fetching_url" = "Server processing: reading data source content";
+"scheduled_actions.run_reason.server_processing_llm_generating" = "Server processing: generating summary";
+"scheduled_actions.run_reason.server_processing_persisting_result" = "Server processing: writing result";
+"scheduled_actions.run_reason.server_processing" = "Server processing: task has started";
+"url_sources.system_sources.title" = "System sources";
+"url_sources.custom_sources.title" = "Custom sources";
+"url_sources.custom_sources.empty.title" = "No custom sources yet";
+"url_sources.custom_sources.empty.message" = "Add websites, search-result URLs, APIs, or feeds. Then reference them in chat or use them in scheduled processing.";
+"url_sources.delete.failed" = "Delete failed: %@";
+"url_sources.reason.not_eligible_yet" = "Backoff window active";
+"url_sources.reason.llm_failed_tls" = "Summary generation failed (TLS/certificate error, check proxy or certificate config)";
+"url_sources.reason.llm_failed" = "Summary generation failed";
+"url_sources.reason.notification_failed" = "Notification delivery failed";
+"url_sources.reason.server_auth_missing" = "Server execution failed: push account is not signed in";
+"url_sources.reason.server_run_failed" = "Server execution failed (gateway/service error)";
+"url_sources.reason.server_timeout" = "Server execution timed out (task may still finish later and push back results)";
+"url_sources.reason.server_processing" = "Server is processing; results will be returned via push notification";
+"url_sources.reason.server_processing_loading_source" = "Server processing: loading task configuration";
+"url_sources.reason.server_processing_fetching_url" = "Server processing: reading data source content";
+"url_sources.reason.server_processing_llm_generating" = "Server processing: generating summary";
+"url_sources.reason.server_processing_persisting_result" = "Server processing: writing result";
+"url_sources.reason.generic" = "Reason: %@";
+"url_sources.details.events_count" = "Events: %d";
+"url_sources.details.execution_path.server" = "Execution path: server";
+"url_sources.details.execution_path.local" = "Execution path: local";
+"url_sources.details.next_eligible" = "Next eligible: %@";
+"url_sources.details.error" = "Error: %@";
+"url_sources.run_now.source_line" = "Source: %@";
+"url_sources.fetch_failed.with_content_type" = "Fetch failed (HTTP %@, %@)";
+"url_sources.fetch_failed.with_status" = "Fetch failed (HTTP %@)";
+"url_sources.local_source.folder_desc" = "Local folder: %@";
+"url_sources.local_source.file_desc" = "Local file: %@";
+"model.test.default_prompt.summary_json" = "Generate a daily summary from the candidate events below and output JSON in ModelOutput format.";
+"notification.detail.source.calendar" = "Calendar";
+
+/* Added for direct Swift localization references */
+"autogen.DataSources.no_system_sources" = "No system data sources";
+"autogen.HealthDataSource.subtitle" = "Steps, heart rate, sleep, and workouts";
+"autogen.HealthDataSource.title" = "Health";
+"autogen.NotificationService.scheduled" = "Scheduled";
+"chars" = "chars";
+"chat.bubble.archived_to_session" = "Archived to session memory";
+"chat.history.badge.compacted" = "Compacted";
+"chat.history.badge.memory" = "Memory";
+"chat.history.delete.message" = "Delete \"%@\" and its message history from local storage.";
+"chat.host_tool.args" = "Arguments";
+"chat.host_tool.loading_screenshot" = "Loading screenshot…";
+"chat.host_tool.open_screenshot" = "Open screenshot";
+"chat.host_tool.open_download" = "Open download";
+"chat.host_tool.screenshot_warning" = "Screenshot warning: %@";
+"chat.host_tool.permission.allow_once" = "Allow this operation once";
+"chat.host_tool.permission.allow_conversation" = "Allow in this conversation";
+"chat.host_tool.permission.args_prefix" = "Arguments:";
+"chat.host_tool.permission.hint" = "This will run a real tool on the Web host. For sensitive actions involving login, authorization, credentials, or deletion, only one-time confirmation is allowed.";
+"chat.host_tool.permission.match_prefix" = "Match scope:";
+"chat.host_tool.permission.reject" = "Reject";
+"chat.host_tool.permission.title" = "Agent requests host operation";
+"chat.host_tool.result" = "Result";
+"chat.host_tool.sensitive_result_hidden" = "The result may contain account, OAuth, token, or secret data. Sensitive content and screenshots have been hidden on iOS.";
+"chat.host_tool.status.failed_no_reason" = "Failed: no reason returned";
+"chat.host_tool.status.failed_prefix" = "Failed:";
+"chat.host_tool.status.permission_required" = "Confirmation required";
+"chat.host_tool.status.running" = "Running";
+"chat.host_tool.status.succeeded" = "Completed";
+"chat.web_agent.summary.done" = "Done";
+"chat.web_agent.summary.error_format" = "\nError: %@\n";
+"chat.web_agent.summary.max_iterations_notice" = "\n\nReached this turn's maximum agent iterations, returning the current result. Send another message to continue.";
+"chat.web_agent.summary.permission_required_format" = "\n⚠️ %@ requires permission: %@\n";
+"chat.web_agent.summary.sensitive_hidden" = "Sensitive tool result hidden";
+"chat.web_agent.summary.tool_result_format" = "\n✅ %@: %@\n";
+"chat.web_agent.summary.tool_running_format" = "\n\n🔧 %@ is running…\n";
+"chat.local_reminder_service_unavailable" = "Local reminder service is temporarily unavailable. Try again later.";
+"chat.scheduled_action_auto_saved" = "Created scheduled action \"%@\". It will run on %@ %@.";
+"chat.scheduled_action_fetcher_unavailable" = "Data source service is unavailable";
+"chat.scheduled_action_tool_no_match" = "I could not find the local scheduled action to operate on. Include the task name, for example “move the meal reminder to 1 PM” or “pause the daily summary.”";
+"chat.scheduled_action_tool_update_missing_time" = "I found the local scheduled action to modify, but did not detect a new time. You can say “move it to 1 PM,” “change it to every day at 8:30,” or “remind me tomorrow at noon.”";
+"chat.task_auto_saved" = "Created task \"%@\".";
+"chat.task_auto_saved_with_date" = "Created reminder \"%@\" for %@.";
+"common.frequency.daily" = "Daily";
+"common.frequency.weekly" = "Weekly";
+"common.no.zh" = "No";
+"common.retry" = "Retry";
+"common.unknown" = "Unknown";
+"common.yes.zh" = "Yes";
+"data.subtitle.local_first" = "On-device data sources, scheduled actions, and recent execution status.";
+"data.title" = "Data";
+"data_source.capability.chat_context" = "Can join chat context";
+"data_source.capability.local_only" = "Local-first";
+"data_source.capability.notification" = "Can notify results";
+"data_source.capability.scheduled_operation" = "Can be used by scheduled operations";
+"data_source.kind.api" = "API / JSON";
+"data_source.kind.api.example" = "JSON APIs, webhook output, structured endpoints";
+"data_source.kind.calendar_feed" = "Calendar feed";
+"data_source.kind.calendar_feed.example" = "iCalendar and ICS feeds";
+"data_source.kind.custom" = "Custom source";
+"data_source.kind.custom.example" = "Any source Nola can read and convert into context";
+"data_source.kind.feed" = "RSS / Atom";
+"data_source.kind.feed.example" = "RSS, Atom, blog/news feeds";
+"data_source.kind.file" = "File";
+"data_source.kind.file.example" = "Local files such as PDF, Markdown, text, and CSV";
+"data_source.kind.folder" = "Folder";
+"data_source.kind.folder.example" = "Readable local folders or project directories";
+"data_source.kind.local_reminder" = "Local reminder";
+"data_source.kind.local_reminder.example" = "Reminders and notifications triggered only on this device";
+"data_source.kind.search.example" = "Google/Bing/custom search result URLs or APIs";
+"data_source.kind.system" = "System data";
+"data_source.kind.system.example" = "Contacts, calendars, reminders, and health";
+"data_source.kind.web_search" = "Search results";
+"data_source.kind.website" = "Website / web page";
+"data_source.kind.website.example" = "Web pages, documentation sites, public pages";
+"data_source.url.display_name" = "Readable data source";
+"data_source.url.supported_events" = "Websites, search results, RSS, iCalendar, JSON, files/folders";
+"data_source.url.usage_description" = "Connect any source Nola can read as reference material: websites, search results, feeds, APIs, files, or folders. They can enter chat context or be processed by scheduled actions with result notifications.";
+"data_sources.capability.configure_in_chat" = "Configurable in chat";
+"data_sources.capability.context" = "Inject into chat context";
+"data_sources.capability.local_first" = "Local-first storage";
+"data_sources.capability.scheduled" = "Schedule and notify";
+"data_sources.capability.section_subtitle" = "Data sources are not just URLs. They are any source Nola can read, summarize, search, and inject into context. You can reference them in chat or let Nola create and adjust scheduled actions.";
+"data_sources.capability.section_title" = "Unified data source capabilities";
+"data_sources.hero.subtitle" = "Any data that Nola can read can become context: websites, search results, folders, documents, system data, and APIs.";
+"data_sources.hero.title" = "Data sources";
+"home.quick.chat" = "Continue chat";
+"home.quick.scheduled" = "View tasks";
+"home.refresh.button" = "Refresh";
+"home.refresh.last_updated" = "Last updated: %@";
+"home.refresh.loading" = "Updating local data…";
+"home.refresh.not_yet" = "Not refreshed yet";
+"home.refresh.title" = "Data status";
+"main.tab.data" = "Data";
+"model.center.action.download_local" = "Download local model";
+"model.center.action.download_local.subtitle" = "Offline inference";
+"model.center.cloud_models" = "Cloud models";
+"model.center.in_use" = "In use";
+"model.center.local_models" = "Local models";
+"model.center.host_models" = "Hosts";
+"model.center.downloaded" = "Downloaded";
+"model.center.parameters" = "Parameters";
+"model.center.quick_actions" = "Quick actions";
+"model.center.subtitle" = "Manage model lists and inference parameters in one place, keeping the chat page lightweight.";
+"model.center.title" = "Models";
+"model.center.use" = "Use";
+"model.parameters.behavior" = "Repetition and penalties";
+"model.parameters.cloud_hint" = "These parameters are written into OpenAI-compatible requests and are useful for tuning stability, creativity, and output length by task.";
+"model.parameters.cloud_title" = "Cloud model parameters";
+"model.parameters.custom_system_prompt.hint" = "Optional: appended after the built-in system prompt. Use stable long-term preferences such as output format, tone, and priorities.";
+"model.parameters.frequency_penalty" = "Frequency penalty";
+"model.parameters.limits" = "Context and output";
+"model.parameters.local_hint" = "These parameters are used directly for local MLX inference. Advanced options not supported by the local engine are kept as configuration.";
+"model.parameters.local_title" = "Local model parameters";
+"model.parameters.max_output" = "Max output";
+"model.parameters.output" = "Output control";
+"model.parameters.presence_penalty" = "Presence penalty";
+"model.parameters.repetition_penalty" = "Repetition penalty";
+"model.parameters.show_thinking.hint" = "Shows available reasoning summaries. Turning this off does not change the selected reasoning effort.";
+"notification.detail.field.created_at" = "Created at";
+"notification.detail.field.dedupe_key" = "Dedupe key";
+"notification.detail.field.delivered_at" = "Delivered at";
+"notification.detail.field.read" = "Read";
+"notification.detail.field.request_id" = "Request ID";
+"notification.detail.field.retry_count" = "Retry count";
+"notification.detail.field.sent_at" = "Sent at";
+"notification.detail.field.source" = "Source";
+"notification.detail.field.status" = "Status";
+"notification.detail.field.user_action" = "User action";
+"notification.detail.record.title" = "Notification record";
+"notification.detail.run.field.action" = "Action";
+"notification.detail.run.field.details" = "Execution details";
+"notification.detail.run.field.error" = "Error";
+"notification.detail.run.field.events_count" = "Event count";
+"notification.detail.run.field.failure_reason" = "Failure reason";
+"notification.detail.run.field.finished_at" = "Finished";
+"notification.detail.run.field.reason" = "Reason code";
+"notification.detail.run.field.result" = "Result";
+"notification.detail.run.field.started_at" = "Started";
+"notification.detail.run.title" = "Related run record";
+"onboarding.calendars.system_expectation" = "iOS 17 and later usually shows “Full Access” or “Add and Edit.” Nola needs “Full Access” to read your existing events.";
+"onboarding.contacts.system_expectation" = "After you continue, iOS will show its Contacts permission sheet. Button text and layout are controlled by the system and will not exactly match Nola’s page.";
+"onboarding.header.eyebrow.permissions" = "System permissions";
+"onboarding.header.eyebrow.welcome" = "Before you start";
+"onboarding.header.subtitle.permissions" = "Button text and layout vary by system version. Below is the real state currently detected by Nola.";
+"onboarding.header.subtitle.welcome" = "Nola explains why first, then the system presents the permission sheet. You can adjust every permission later in Settings.";
+"onboarding.header.title.permissions" = "Next you will see the native iOS permission screen";
+"onboarding.header.title.welcome" = "First, understand how Nola works";
+"onboarding.health.system_expectation" = "The HealthKit authorization page is provided by Apple. Health items and ordering may differ by device and system version.";
+"onboarding.notifications.system_expectation" = "Notification authorization follows the iOS system sheet. In some cases the system may grant provisional authorization directly, and Nola will update based on the real system state.";
+"onboarding.permission.status.denied" = "Currently off";
+"onboarding.permission.status.granted" = "Already on";
+"onboarding.permission.status.insufficient" = "Current permission level is insufficient";
+"onboarding.permission.status.not_requested" = "System request not started yet";
+"onboarding.permission.status.requesting" = "Waiting for system result";
+"onboarding.permission.status_desc.denied" = "iOS usually will not show the same permission prompt again. To enable it, change it manually in system Settings.";
+"onboarding.permission.status_desc.granted" = "Nola now reads data only within the scope allowed by the system and will not access unauthorized content.";
+"onboarding.permission.status_desc.insufficient" = "The system granted partial capability, but it is not enough to read your existing data. Upgrade to full access in Settings.";
+"onboarding.permission.status_desc.not_requested" = "After you tap the button below, iOS will show the matching system permission sheet. The text you see in the system may differ from this page.";
+"onboarding.permission.status_desc.requesting" = "If the system opened a separate authorization page or you switched to Settings, this page will refresh automatically after you return to the app.";
+"onboarding.permission.system_title" = "System screen you are about to see";
+"onboarding.primary.request" = "Continue and request system permission";
+"onboarding.primary.requesting" = "Waiting for system result";
+"onboarding.reminders.system_expectation" = "Reminders also shows the native iOS permission page. If you only grant “Add and Edit,” Nola still cannot read existing reminders.";
+"onboarding.secondary.finish" = "Skip for now and enter Nola";
+"onboarding.secondary.skip" = "Set this up later";
+"onboarding.welcome.reality_body" = "From the next step, permission prompts and options are provided by iOS. Nola only explains the purpose, reads the result, and updates the status after you return to the app.";
+"onboarding.welcome.reality_title" = "What you will actually see next";
+"privacy.disclosure.header" = "Privacy";
+"privacy.disclosure.intro" = "Nola is open-source and local-first. Data is stored on this device by default.";
+"privacy.disclosure.nav.title" = "Privacy";
+"privacy.disclosure.principle.1" = "Chat history and settings stay local by default.";
+"privacy.disclosure.principle.2" = "Only the API requests you explicitly configure are sent to your chosen endpoint.";
+"privacy.disclosure.principle.3" = "You can clear local data at any time from Settings.";
+"privacy.disclosure.principles.header" = "Principles";
+"scheduled.actions.ai_only.body" = "Create, modify, pause, and delete automations directly in AI chat. For example: \"Summarize updates from https://news.ycombinator.com/ every day at 9:00.\" This page only shows status and run history for web/search automations.";
+"scheduled.actions.ai_only.empty.body" = "Create one in AI chat with a natural-language sentence, for example: \"Summarize this RSS feed every Monday at 8:00.\" Reminders go to local tasks instead of the automation list.";
+"scheduled.actions.ai_only.empty.title" = "No automations yet";
+"scheduled.actions.ai_only.title" = "Manage scheduled actions with natural language";
+"scheduled.actions.badge.enabled" = "Enabled";
+"scheduled.actions.badge.paused" = "Paused";
+"scheduled.actions.editor.removed.body" = "Nola no longer provides a manual form for scheduled tasks. Web fetch, search automation, pause, delete, and edit can all be done in chat with natural language. Local reminders go to the task and notification system instead of URL automations.";
+"scheduled.actions.editor.removed.title" = "Manage automations in AI chat";
+"scheduled.actions.frequency.once" = "Once";
+"scheduled.actions.local_first.body.short" = "Automations are stored and triggered locally first; local reminders are handled by the task and notification system and are not mixed in here.";
+"scheduled.actions.metric.cloud" = "Cloud push";
+"scheduled.actions.metric.enabled" = "Enabled";
+"scheduled.actions.metric.total" = "Total";
+"scheduled.actions.redesigned.title" = "Automation & Scheduling";
+"scheduled.section.actions" = "Tasks";
+"settings.local_only_active" = "Open-source local-only mode is active.";
+"settings.data.export_complete" = "Export prepared successfully.";
+"settings.section.common" = "Common";
+"url_sources.form.local_file_note" = "Files and folders are read only on this device for chat context or local scheduled actions.";
+"url_sources.form.pick_file" = "Select local file";
+"url_sources.form.pick_folder" = "Select local folder";
+"url_sources.form.section_source" = "Source";
+"url_sources.form.source_kind" = "Source type";
+"url_sources.navigation.title" = "Data sources";
+"url_sources.readable.section_subtitle" = "Manage sources readable via URL/API: websites, search result pages, JSON APIs, RSS, and iCalendar. They can be injected into chat context and used in scheduled actions with notifications.";
+"url_sources.readable.section_title" = "Readable sources";
+"url_sources.run_now_log.source_prefix" = "Source: ";
+"url_sources.run_now_log.title" = "Run now log";
+"chat.more_settings.native_browser.title" = "Native Chrome";
+"chat.more_settings.native_browser.capacity" = "Chrome bridge";
+"chat.more_settings.native_browser.capacity_format" = "%d hosts • %d pending • %d in flight";
+"chat.more_settings.native_browser.not_configured" = "Native browser token not configured";
+"chat.more_settings.native_browser.connected" = "Connected";
+"chat.more_settings.native_browser.disconnected" = "No Chrome bridge connected";
+"chat.more_settings.hybrid_device_tools" = "Allow host to request device tools";
+"chat.more_settings.hybrid_device_tools.hint" = "Each request still requires approval. Device results may return to this host session only.";
+"chat.hybrid.files" = "Selected files";
+"chat.hybrid.clipboard" = "Clipboard";
+"chat.hybrid.location" = "Approximate location";
+"chat.hybrid.calendar" = "Calendar";
+"chat.hybrid.capabilities.hint" = "Only selected capabilities are shown to the host model. Every action still requires confirmation.";
+"chat.host_pairing.identity" = "Paired host";
+"chat.host_pairing.forget" = "Forget host pairing";
+"chat.host_pairing.forget.confirm.title" = "Forget this host pairing?";
+"chat.host_pairing.forget.confirm.message" = "Nola will clear the trusted host identity. Conversations remain on this device.";
+"chat.host_pairing.forget.confirm.action" = "Forget pairing";
+"chat.permission.hybrid.title" = "Host requests this device";
+"chat.permission.hybrid.hint" = "The action runs on this device and its result returns to the current host session.";
+"chat.permission.action.read_file" = "Choose and Read File";
+"chat.permission.action.write_file" = "Choose and Write File";
+"chat.permission.action.read_clipboard" = "Read Clipboard";
+"chat.permission.action.write_clipboard" = "Update Clipboard";
+"chat.permission.action.location" = "Share Location";
+"chat.permission.action.read_calendar" = "Share Calendar Events";
+"chat.permission.action.create_calendar" = "Create Event";
+"chat.permission.hybrid.request_reason" = "The paired host is requesting a device capability. The result will return only to this host session.";
+"chat.permission.hybrid.run_format" = "Run %@ on this device";
+"model.center.action.connect_host" = "Connect Host";
+"model.center.action.connect_host.subtitle" = "Run models and tools on your Mac";
+"model.center.configure_host" = "Configure host";
+"model.web_host.title" = "Host Connection";
+"model.web_host.url" = "Host URL";
+"model.web_host.token" = "Access token";
+"model.web_host.connection" = "Connection";
+"model.web_host.connection.footer" = "Nola verifies the host before storing the token in this device's Keychain.";
+"model.web_host.trust" = "Trust";
+"model.web_host.certificate_pin" = "Certificate SHA-256 (optional)";
+"model.web_host.certificate_pin.footer" = "For HTTPS hosts, paste the leaf certificate fingerprint with or without colons. System certificate and hostname validation still apply.";
+"model.web_host.security_summary" = "Nola verifies the token, permission protocol, and host identity before pairing. Every host or device tool still follows its own approval policy.";
+"model.web_host.error_format" = "Connection error: %@";
+"model.web_host.connect" = "Connect";
+"model.web_host.connect.accessibility_hint" = "Validates this host and pairs its identity before saving.";
+"model.web_host.invalid_url" = "Enter a valid HTTP or HTTPS Host URL.";
+"model.web_host.missing_token" = "Enter the access token for this host.";
+"model.web_host.invalid_pin" = "The certificate fingerprint must contain exactly 64 hexadecimal characters.";
+"model.web_host.pin_requires_https" = "Certificate pinning requires an HTTPS Host URL.";
+"model.web_host.public_http_forbidden" = "Public Web Host addresses require HTTPS. HTTP is limited to this device or a private local network.";
+"chat.host_pairing.transport" = "Transport security";
+"chat.host_pairing.transport.pinned_https" = "Pinned HTTPS";
+"chat.host_pairing.transport.system_https" = "System HTTPS";
+"chat.host_pairing.transport.encrypted_lan" = "Encrypted LAN bridge";
+"chat.model.group.device" = "On Device";
+"chat.model.group.host" = "Host";
+"chat.model.group.cloud" = "Cloud";
+"chat.model.not_configured" = "Not configured";
+"chat.model.parameters.accessibility" = "%@ parameters";
+"chat.tool_activity" = "Tool activity";
+"chat.tool_activity.running_format" = "%d running";
+"chat.tool_activity.failed_format" = "%d failed";
+"chat.tool_activity.completed_format" = "%d completed";
+"common.expand" = "Expand";
+"common.collapse" = "Collapse";
+"chat.error.dismiss" = "Dismiss";
+"chat.error.edit_retry" = "Edit and try again";
+"chat.error.switch_model" = "Switch model";
+
+"data_sources.runtime.hero.title" = "Live context";
+"data_sources.runtime.hero.subtitle" = "A source is ready only after Nola has read it successfully.";
+"data_sources.runtime.device_section" = "On this device";
+"data_sources.runtime.metric.ready" = "Ready";
+"data_sources.runtime.metric.attention" = "Attention";
+"data_sources.runtime.metric.updating" = "Updating";
+"data_sources.runtime.never_read" = "No successful read yet";
+"data_sources.runtime.last_read_format" = "Latest successful read %1$@";
+"data_sources.runtime.status.syncing" = "Updating";
+"data_sources.runtime.status.ready" = "Ready";
+"data_sources.runtime.status.needs_permission" = "Access needed";
+"data_sources.runtime.status.stale" = "May be outdated";
+"data_sources.runtime.status.error" = "Refresh failed";
+"data_sources.runtime.status.unavailable" = "Unavailable";
+"data_sources.runtime.status.disabled" = "Off";
+"data_sources.runtime.detail.syncing" = "Checking the latest available data...";
+"data_sources.runtime.detail.ready_count_format" = "%1$d items read · %2$@";
+"data_sources.runtime.detail.ready_empty" = "Read succeeded · no recent items";
+"data_sources.runtime.detail.request_access" = "Allow access before Nola can read this source";
+"data_sources.runtime.detail.open_settings" = "Access is off · change it in System Settings";
+"data_sources.runtime.detail.stale_format" = "Last successful read %1$@";
+"data_sources.runtime.detail.error_cached_format" = "Refresh failed · last read %1$@";
+"data_sources.runtime.detail.error" = "No successful read yet";
+"data_sources.runtime.detail.unavailable" = "This source is not available on this device";
+"data_sources.runtime.detail.disabled" = "This source is currently turned off";
+"data_sources.runtime.error.no_snapshot" = "No readable health summary was returned.";
+"data_sources.runtime.detail.access_title" = "Access";
+"data_sources.runtime.detail.last_success" = "Last successful read";
+"data_sources.runtime.detail.contributes_title" = "What Nola can use";
+"data_sources.runtime.action.allow" = "Allow access";
+"data_sources.runtime.action.retry" = "Try again";
+"data_sources.runtime.action.turn_on" = "Turn on and refresh";
+
+"onboarding.core.brand_subtitle" = "Context that improves with you";
+"onboarding.core.step_format" = "%1$d of 3";
+"onboarding.core.loop_eyebrow" = "NOT JUST ANOTHER CHAT";
+"onboarding.core.loop_title" = "Your context becomes useful intelligence";
+"onboarding.core.loop_body" = "Nola connects the information you choose, shows what each answer used, and keeps only the durable details worth remembering.";
+"onboarding.core.source_title" = "Connect";
+"onboarding.core.source_detail" = "Device data, documents, and tools";
+"onboarding.core.answer_title" = "Understand";
+"onboarding.core.answer_detail" = "Answers grounded in the sources actually used";
+"onboarding.core.learn_title" = "Improve";
+"onboarding.core.learn_detail" = "Preferences and durable facts stay editable";
+"onboarding.core.local_note" = "Works locally first. A host adds capabilities; it is never required for the core experience.";
+"onboarding.core.sources_eyebrow" = "START WITH WHAT MATTERS";
+"onboarding.core.sources_title" = "Connect one source, or none for now";
+"onboarding.core.sources_body" = "Every source is optional. Nola verifies a real read before showing it as ready.";
+"onboarding.core.contacts_detail" = "Recognize people when they appear in plans and requests";
+"onboarding.core.calendar_detail" = "Answer about your schedule and upcoming commitments";
+"onboarding.core.reminders_detail" = "Bring open tasks into planning and summaries";
+"onboarding.core.health_detail" = "Use recent activity, sleep, heart rate, and workouts";
+"onboarding.core.notifications_detail" = "Deliver scheduled results when they are ready";
+"onboarding.core.sources_footer" = "You can add documents and manage every source later from the Data tab.";
+"onboarding.core.connect" = "Connect";
+"onboarding.core.ready" = "Ready";
+"onboarding.core.settings" = "Settings";
+"onboarding.core.learning_eyebrow" = "VISIBLE, EDITABLE LEARNING";
+"onboarding.core.learning_title" = "Nola improves without becoming a black box";
+"onboarding.core.learning_body" = "Answers can show their basis. When a durable preference is learned, you can open it, edit it, or remove it.";
+"onboarding.core.answer_sample" = "Your afternoon is open after 3:30. A short walk would also complete your activity goal.";
+"onboarding.core.sample_calendar" = "Calendar";
+"onboarding.core.sample_health" = "Health";
+"onboarding.core.memory_updated" = "Memory updated";
+"onboarding.core.memory_sample" = "Prefers short walks in the late afternoon";
+"onboarding.core.memory_control" = "Tap any memory update to review it in Personal Intelligence.";
+"onboarding.core.action.sources" = "Choose my sources";
+"onboarding.core.action.continue" = "Continue";
+"onboarding.core.action.enter" = "Enter Nola";
+"main.tab.intelligence" = "Intelligence";
+
+"chat.learning.action" = "Teach Nola";
+"chat.learning.title" = "Teach Nola to understand you";
+"chat.learning.subtitle" = "Save a correction in local personal intelligence records, linked to this answer. Saving does not regenerate the answer.";
+"chat.learning.preview" = "This answer";
+"chat.learning.focus.concise" = "More concise";
+"chat.learning.focus.detailed" = "More depth";
+"chat.learning.focus.tone" = "Adjust tone";
+"chat.learning.focus.context" = "Use more context";
+"chat.learning.focus.correction" = "Correct a fact";
+"chat.learning.statement.concise" = "Lead with the conclusion and keep future answers concise.";
+"chat.learning.statement.detailed" = "Provide deeper analysis and the necessary supporting detail.";
+"chat.learning.statement.tone" = "Adapt the tone of future answers to my communication preference.";
+"chat.learning.statement.context" = "Use the available conversation and personal context more fully before answering.";
+"chat.learning.statement.correction" = "Remember my correction when answering similar factual questions.";
+"chat.learning.note" = "What should change?";
+"chat.learning.note.placeholder" = "Tell Nola exactly how this answer should improve";
+"chat.learning.future" = "Use in future answers";
+"chat.learning.future.detail" = "When enabled, also save a lasting preference for future answers. When off, save only the correction record, not a lasting preference.";
+"chat.learning.save_failed" = "Could not save the correction. Your draft is still here; try again.";
+"history.detail.available" = "Available";
+"history.detail.partial" = "Partially loaded";
+"history.detail.not_loaded" = "Not loaded";
+"history.detail.unsupported" = "Unrecognized historical format";
+"history.detail.content" = "Content";
+"history.detail.summary" = "Summary";
+"history.detail.input" = "Input";
+"history.detail.output" = "Output";
+"history.detail.files" = "Files";
+"history.detail.name" = "Name";
+"history.detail.state" = "Status";
+"history.detail.preview_only" = "This is a preview, not the complete original content.";
+"history.detail.limit" = "This detail preview is limited to 32 KB. Open the original record to read its raw content page by page.";
+"history.detail.open_original" = "Read original record";
+"history.detail.diagnostics" = "Technical details";
+"history.original.explanation" = "Read-only original record. Each page contains up to 8 KB; selecting or copying text includes only this page, not the complete record.";
+"history.original.range" = "Bytes %llu–%llu of %llu";
+"history.original.previous" = "Previous page";
+"history.original.next" = "Next page";
+"history.original.empty" = "The original record is empty.";
+"chat.learning.cancel" = "Cancel";
+"chat.learning.save" = "Save correction";
+
+"settings.scope.title" = "App-wide settings";
+"settings.scope.detail" = "These choices apply across Nola. Style, context, and tools stay with each conversation.";
+"settings.section.connections" = "Connections";
+"settings.connections.data_sources.detail" = "Health, files, calendar, and other local data";
+"settings.connections.models.detail" = "Local, cloud, and host model connections";
+"settings.section.automation" = "Automation";
+"settings.automation.scheduled.detail" = "Routines, reminders, and upcoming actions";
+"settings.data.export.detail" = "Create a portable copy of your Nola data";
+"settings.data.clear.detail" = "Remove conversations, memories, and connected data";
+
+"scheduled.timeline.section" = "Up next";
+"scheduled.timeline.next" = "Next automation";
+"scheduled.timeline.none" = "Nothing scheduled yet";
+"scheduled.timeline.create.detail" = "Describe a routine in chat and Nola will schedule it.";
+"scheduled.timeline.enabled.count" = "%d enabled";
+"scheduled.timeline.create" = "Create in chat";
+"scheduled.timeline.history" = "Run history";
+
+"chat.scope.current_conversation" = "This conversation";
+"chat.scope.across_conversations" = "Across conversations";
+
+// MARK: - First-run guide v2
+"onboarding.guide.step_format" = "%1$d of %2$d";
+"onboarding.guide.runtime.eyebrow" = "CHOOSE THE RUNTIME";
+"onboarding.guide.runtime.title" = "Decide where Nola does the work";
+"onboarding.guide.runtime.body" = "Start with automatic selection, or express a preference for this device or a connected host. Availability is always shown before a task runs.";
+"onboarding.guide.runtime.auto" = "Automatic";
+"onboarding.guide.runtime.auto_detail" = "Use the best configured model and available tools";
+"onboarding.guide.runtime.device" = "This device";
+"onboarding.guide.runtime.device_detail" = "Prefer a downloaded model and on-device capabilities";
+"onboarding.guide.runtime.host" = "Connected host";
+"onboarding.guide.runtime.host_detail" = "Use a paired Mac or CLI host for broader tools";
+"onboarding.guide.runtime.note" = "This is a preference, not a permission grant. You can change the model and host for each conversation.";
+"onboarding.guide.sources.title" = "Plan the context you want to use";
+"onboarding.guide.sources.body" = "Choose what may become useful. Nothing is accessed until a real task needs it.";
+"onboarding.guide.sources.permission_note" = "System access is requested at the moment of use, with a clear explanation. Skipping a source never blocks chat.";
+"onboarding.guide.source.documents" = "Documents";
+"onboarding.guide.source.documents_detail" = "Attach files directly to the message that needs them";
+"onboarding.guide.source.calendar" = "Calendar";
+"onboarding.guide.source.health" = "Health";
+"onboarding.guide.source.workspace" = "Workspace";
+"onboarding.guide.source.workspace_detail" = "Let Nola work with files in a folder you choose";
+"onboarding.guide.source.web" = "Web sources";
+"onboarding.guide.source.web_detail" = "Keep refreshable pages with visible history";
+"onboarding.guide.source.iphone" = "iPhone data";
+"onboarding.guide.source.iphone_detail" = "Use synced Health summaries and device context when available";
+"onboarding.guide.ready.eyebrow" = "READY FOR A REAL TASK";
+"onboarding.guide.ready.title" = "Begin with an outcome, not a feature";
+"onboarding.guide.ready.body" = "Describe what you want finished. Nola will show sources, thinking, and tool activity while it works.";
+"onboarding.guide.task.day" = "Plan my day";
+"onboarding.guide.task.day_detail" = "Combine the schedule and open tasks into a practical plan";
+"onboarding.guide.task.document" = "Work with a document";
+"onboarding.guide.task.document_detail" = "Attach a file, then ask for extraction, comparison, or review";
+"onboarding.guide.task.research" = "Research a topic";
+"onboarding.guide.task.research_detail" = "Search current sources and cite the evidence";
+"onboarding.guide.task.project" = "Review a project";
+"onboarding.guide.task.project_detail" = "Inspect the workspace, identify risks, and propose a plan";
+"onboarding.guide.ready.memory_note" = "Long-term memory is optional, visible, and editable. Nola should learn with you, never around you.";
+"onboarding.guide.action.start" = "Start using Nola";
+"onboarding.guide.action.next" = "Continue";
+"onboarding.guide.back" = "Back";
+"onboarding.guide.source.calendar_detail" = "Use upcoming events when planning and answering schedule questions";
+"chat.assistant.processing" = "Nola is processing";
+"chat.assistant.phase.planning" = "Planning the next step";
+"chat.assistant.phase.compacting" = "Organizing context";
+"chat.assistant.phase.searching" = "Searching sources";
+"chat.assistant.phase.tools" = "Using tools";
+"chat.assistant.phase.verifying" = "Verifying the result";
+"chat.assistant.phase.composing" = "Composing the response";
+"chat.assistant.phase.waiting" = "Waiting for confirmation";
+"chat.host_tool.resource.operation.read" = "Read";
+"chat.host_tool.resource.operation.unknown" = "Operation not declared";
+"chat.host_tool.resource.operation.create" = "Created";
+"chat.host_tool.resource.operation.update" = "Updated";
+"chat.host_tool.resource.operation.delete" = "Deleted";
+"chat.host_tool.resource.operation.execute" = "Executed";
+"chat.host_tool.resource.operation.open" = "Opened";
+"chat.host_tool.resource.operation.search" = "Searched";
+"chat.thinking.active" = "Thinking";
+
+/* Data source access and verified read contract */
+"data_source.policy.default_enabled" = "Every conversation";
+"data_source.policy.conversation_opt_in" = "Per conversation";
+"data_source.policy.ask_when_relevant" = "Ask when relevant";
+"data_source.policy.blocked" = "Blocked";
+"data_source.policy.title" = "Default access";
+"data_source.policy.section" = "Context access";
+"data_source.policy.note" = "Choose whether this source is used automatically, enabled per conversation, requested only when relevant, or blocked.";
+"data_source.contract.title" = "Verified read contract";
+"data_source.contract.summary" = "%d records · refresh after %d min";
+"data_source.contract.verified" = "Verified";
+"data_source.contract.needs_validation" = "Needs validation";
+"data_source.contract.reader" = "Reader";
+"data_source.contract.format" = "Format: %@";
+"data_source.contract.records" = "%d records";
+"data_source.contract.validated" = "Validated %@";
+"data_source.saved" = "%@ is ready";
+"data_sources.usage.title" = "Recent use";
+"data_sources.usage.purpose.conversation_context" = "Conversation context";
+"data_sources.usage.purpose.scheduled_refresh" = "Scheduled refresh";
+"data_sources.usage.purpose.other" = "Data access";
+"data_sources.usage.disclosure.cloud" = "Shared with the configured cloud model";
+"data_sources.usage.disclosure.local" = "Stayed on this device";
+"data_sources.usage.disclosure.pending" = "Model route recorded when the request is sent";
+/* macOS data and capability centers */
+/* macOS notification center and model test */
+"notifications.load_failed.title" = "Couldn't load notifications";
+"notifications.empty.unread.title" = "No unread notifications";
+"notifications.empty.unread.message" = "You're all caught up.";
+"notifications.empty.search.title" = "No matching notifications";
+"notifications.empty.search.message" = "Try another search or clear the current query.";
+"notifications.empty.search.clear" = "Clear search";
+/* macOS Health summary and medication lookup */
+/* macOS workspace review */
+/* Explicit API and local model lifecycle */
+"model.center.action.configure_api" = "Configure API";
+"model.center.action.configure_api.subtitle" = "Remote model connection";
+"model.center.selected" = "Selected";
+"model.center.running" = "Running";
+"model.center.starting" = "Starting";
+"model.center.start" = "Start";
+"model.center.stop" = "Stop";
+"model.center.runtime_error.title" = "Local model could not start";
+"model.local.not_started.error" = "Start the selected local model in Model Center before chatting.";
+"model.parameters.local_context_memory_hint" = "64K is the recommended context target. Memory use also depends on model architecture and KV-cache precision; choose 0.8B for constrained devices and 4B for higher-memory devices.";
+"model.api.title" = "Remote API";
+"model.api.protocol" = "API protocol";
+"model.api.keychain_error" = "Could not save the API key securely.";
+"model.api.base_url" = "Base URL";
+"model.api.api_key" = "API key";
+"model.api.model" = "Model name";
+"model.api.footer" = "Configuration is saved securely and does not start a request. Select a cloud model separately when you want to use it.";
+"model.api.invalid_url" = "Enter an HTTP(S) URL without a username, password, or fragment.";
+"model.center.connections" = "Connections";
+"model.center.api_saved" = "API configuration saved. Choose a cloud model when you want to use it.";
+"model.center.host_saved" = "Host paired and saved. Choose it when you want to run this conversation on your Mac.";
+"model.center.local_selected_format" = "%@ selected. Start it when you are ready to run locally.";
+"model.center.remote_selected_format" = "%@ is now active.";
+"model.source.local_mlx" = "On-device MLX";
+"settings.connections.intelligence.title" = "Intelligence & Capabilities";
+"settings.connections.intelligence.detail" = "Manage long-term memory, Skills, MCP, and learned preferences";
+"settings.section.privacy" = "Privacy";
+"settings.privacy.detail" = "See what stays on this device and when data leaves it";
+
+/* macOS extensions center */
+
+/* Chat Skill and MCP deletion */
+"chat.context.delete" = "Delete";
+"chat.context.skills.delete_title" = "Delete this Skill?";
+"chat.context.skills.delete_message" = "It will no longer be injected into future conversations.";
+"chat.context.mcp.delete_title" = "Delete this MCP endpoint?";
+"chat.context.mcp.delete_message" = "Tools and resources from this endpoint will no longer be available.";
+"chat.context.mcp.endpoint_required" = "Endpoint required";
+
+/* macOS extension detail and Chrome manager */
+
+/* iOS settings data operations */
+"settings.data.exporting" = "Preparing export…";
+"settings.data.clearing" = "Clearing data…";
+"settings.data.export_failed" = "Could not create the export: %@";
+"settings.data.clear_complete" = "Local data was cleared.";
+"settings.data.clear_partial" = "Most local data was cleared, but some conversation records could not be removed.";
+"settings.operation.title" = "Data management";
+
+/* macOS Settings */
+
+/* macOS windows and commands */
+"Detailed Logging" = "Detailed Logging";
+"Runtime Diagnostics" = "Runtime Diagnostics";
+"Runtime status, logs, and support export." = "Runtime status, logs, and support export.";
+"Pause" = "Pause";
+"Resume" = "Resume";
+"Logs Paused" = "Logs Paused";
+"Detailed" = "Detailed";
+"%lld entries" = "%lld entries";
+"Level" = "Level";
+"All" = "All";
+"Module" = "Module";
+"All modules" = "All modules";
+"Search logs" = "Search logs";
+"Copy" = "Copy";
+"Export Logs" = "Export Logs";
+"Reveal Log in Finder" = "Reveal Log in Finder";
+"Clear Logs" = "Clear Logs";
+"Log file unavailable." = "Log file unavailable.";
+"No log entries match current filter" = "No log entries match current filter";
+"Adjust the filters or search query." = "Adjust the filters or search query.";
+"Waiting for log entries" = "Waiting for log entries";
+"Detailed logging is active. New runtime events will appear here automatically." = "Detailed logging is active. New runtime events will appear here automatically.";
+"Detailed logging is off." = "Detailed logging is off.";
+"Only warnings and errors are recorded until debug logging is enabled in Settings." = "Only warnings and errors are recorded until debug logging is enabled in Settings.";
+"Warnings & Errors" = "Warnings & Errors";
+"Ready" = "Ready";
+"Search templates" = "Search templates";
+"Delete Prompt Template?" = "Delete Prompt Template?";
+"This removes the custom template from this Mac. This action cannot be undone." = "This removes the custom template from this Mac. This action cannot be undone.";
+"This action cannot be undone." = "This action cannot be undone.";
+"Delete Web Source?" = "Delete Web Source?";
+"Cached content and run history for this source will be removed from this Mac." = "Cached content and run history for this source will be removed from this Mac.";
+"Cached Content" = "Cached Content";
+"Refreshing" = "Refreshing";
+"Enable %@" = "Enable %@";
+"settings.section.reset" = "Reset";
+"settings.notifications.status.updating" = "Checking permission…";
+"settings.notifications.status.disabled" = "Off in Nola";
+"settings.notifications.status.ready" = "Allowed by iOS";
+"settings.notifications.status.denied" = "Blocked in iOS Settings";
+"settings.notifications.status.not_determined" = "Permission not requested";
+"settings.notifications.status.unavailable" = "Permission unavailable";
+"settings.notifications.permission_denied" = "Notifications are blocked by iOS. You can allow them later in Settings.";
+"settings.notifications.permission_failed" = "Could not update notification permission: %@";
+"scheduled.filter.results" = "%d of %d automations";
+"scheduled.filter.empty.title" = "No matching automations";
+"scheduled.filter.empty.detail" = "Try another name or status filter.";
+"scheduled.filter.reset" = "Reset filters";
+"scheduled.filter.all" = "All";
+"scheduled.filter.enabled" = "Enabled";
+"scheduled.filter.paused" = "Paused";
+"scheduled.filter.attention" = "Needs attention";
+"scheduled.filter.search" = "Search automations";
+"scheduled.timeline.enabled.total" = "%d of %d enabled";
+"Automations" = "Automations";
+"Recurring work, explicit workspaces, and visible run history" = "Recurring work, explicit workspaces, and visible run history";
+"Automation Count" = "Automation Count";
+"Enabled" = "Enabled";
+"Running" = "Running";
+"Paused" = "Paused";
+"Search automations" = "Search automations";
+"%d of %d automations" = "%d of %d automations";
+"No Matching Automations" = "No Matching Automations";
+"Try another name, prompt, workspace, or status filter." = "Try another name, prompt, workspace, or status filter.";
+"Reset Filters" = "Reset Filters";
+"No Automations" = "No Automations";
+"Schedule a prompt to run daily or weekly in a selected workspace." = "Schedule a prompt to run daily or weekly in a selected workspace.";
+"Define what runs, when it runs, and which data it may use." = "Define what runs, when it runs, and which data it may use.";
+"Run History" = "Run History";
+"New Automation" = "New Automation";
+"Edit Automation" = "Edit Automation";
+"Automation Error" = "Automation Error";
+"Delete Automation?" = "Delete Automation?";
+"This removes the schedule and its future runs. Existing run history is kept." = "This removes the schedule and its future runs. Existing run history is kept.";
+"View Run History" = "View Run History";
+"Edit" = "Edit";
+"Delete" = "Delete";
+"Cancel" = "Cancel";
+"Save" = "Save";
+"More" = "More";
+"On data change" = "On data change";
+"Run Now" = "Run Now";
+"Name" = "Name";
+"Agent prompt" = "Agent prompt";
+"Skill" = "Skill";
+"Automatic" = "Automatic";
+"Frequency" = "Frequency";
+"Weekday" = "Weekday";
+"Time" = "Time";
+"Run when selected data changes" = "Run when selected data changes";
+"Workspace" = "Workspace";
+"Choose…" = "Choose…";
+"Data" = "Data";
+"Maximum data age" = "Maximum data age";
+"minutes" = "minutes";
+"No web sources" = "No web sources";
+"Reliability" = "Reliability";
+"Timeout" = "Timeout";
+"Retries after failure" = "Retries after failure";
+"Maximum data age must be between 5 and 10,080 minutes." = "Maximum data age must be between 5 and 10,080 minutes.";
+"Timeout must be between 1 and 720 minutes." = "Timeout must be between 1 and 720 minutes.";
+"Retries must be between 0 and 3." = "Retries must be between 0 and 3.";
+"scheduled.runs.filter.empty.title" = "No matching runs";
+"scheduled.runs.filter.empty.detail" = "Try another search or status filter.";
+"scheduled.runs.filter.reset" = "Reset filters";
+"scheduled.runs.filter.search" = "Search run history";
+"scheduled.runs.filter.all" = "All";
+"scheduled.runs.filter.success" = "Success";
+"scheduled.runs.filter.issues" = "Issues";
+"scheduled.runs.filter.skipped" = "Skipped";
+"scheduled.runs.filter.summary" = "Run history";
+"scheduled.runs.filter.results" = "%d of %d";
+"scheduled.run_detail.overview.title" = "Run overview";
+"scheduled.run_detail.technical.title" = "Technical details";
+"notifications.pending.title" = "Scheduled Notifications";
+"notifications.pending.search" = "Search scheduled notifications";
+"notifications.pending.filtered.empty.title" = "No matching notifications";
+"notifications.pending.filtered.empty.detail" = "Try another title or message.";
+"notifications.pending.schedule.unavailable" = "Schedule unavailable";
+"notifications.pending.count" = "%d scheduled";
+"notifications.pending.next" = "Next delivery: %@";
+"notifications.pending.next.unavailable" = "No upcoming delivery time is available.";
+"notifications.source.calendar" = "Calendar";
+"notifications.source.reminder" = "Reminder";
+"notifications.source.web" = "Web";
+"notifications.source.health" = "Health";
+"notifications.source.contact" = "Contacts";
+"notifications.source.system" = "System";
+"scheduled.actions.toggle.accessibility" = "Enable %@";
+"scheduled_actions.journal.storage_unavailable" = "Local result storage is unavailable.";
+"scheduled_actions.journal.not_found" = "This result is no longer available.";
+"url_sources.health.diagnostics" = "Run diagnostics";
+"url_sources.health.connect" = "Connect";
+"url_sources.row.toggle.accessibility" = "Enable %@";
+"url_sources.preview.title" = "Verified preview";
+"url_sources.discard.title" = "Discard changes?";
+"url_sources.discard.confirm" = "Discard";
+"url_sources.discard.message" = "Unsaved changes to this data source will be lost.";
+
+/* macOS Settings workspace */
+
+/* Personal intelligence capabilities */
+"personal.capabilities.title" = "Skills & MCP";
+"personal.capabilities.gateway.detail" = "Manage reusable workflows and external tool connections.";
+"personal.capabilities.gateway.count" = "enabled";
+"personal.capabilities.subtitle" = "Reusable workflows and connected tools available across conversations.";
+"personal.capabilities.skills" = "Skills";
+"personal.capabilities.type" = "Capability type";
+"personal.capabilities.search" = "Search capabilities";
+"personal.capabilities.add_skill" = "Add Skill";
+"personal.capabilities.add_mcp" = "Add MCP";
+"personal.capabilities.no_results" = "No matching capabilities";
+"personal.capabilities.no_results.detail" = "Try a different search term.";
+"personal.capabilities.empty" = "No capabilities yet";
+"personal.capabilities.empty.detail" = "Create one to make it available across conversations.";
+"personal.capabilities.untitled_skill" = "Untitled Skill";
+"personal.capabilities.saved" = "Changes saved";
+"personal.capabilities.enabled" = "Enabled";
+"personal.capabilities.disabled" = "Disabled";
+"personal.capabilities.edit" = "Edit";
+"personal.capabilities.delete" = "Delete";
+"personal.capabilities.delete.title" = "Delete this capability?";
+"personal.capabilities.error" = "Could not save changes";
+"personal.capabilities.ok" = "OK";
+"personal.capabilities.name" = "Name";
+"personal.capabilities.description" = "Description";
+"personal.capabilities.instructions" = "Skill instructions";
+"personal.capabilities.endpoint" = "Endpoint";
+"personal.capabilities.characters" = "characters";
+"personal.capabilities.invalid_endpoint" = "Enter a valid HTTP or HTTPS endpoint.";
+"personal.capabilities.skill" = "Skill";
+"personal.capabilities.cancel" = "Cancel";
+"personal.capabilities.save" = "Save";
+
+/* macOS Activity Center */
+"Copied" = "Copied";
+
+"model.center.empty.title" = "No models configured";
+"model.center.empty.message" = "Configure an API, download a local model, or connect a trusted host using the options above.";
+"Commands" = "Commands";
+"Open in New Window" = "Open in New Window";
+"Rename…" = "Rename…";
+"What should we work on?" = "What should we work on?";
+"Ask a question, open a workspace, or bring in a document." = "Ask a question, open a workspace, or bring in a document.";
+"Copy as Markdown" = "Copy as Markdown";
+"Quick Look" = "Quick Look";
+"Open" = "Open";
+"Reveal in Finder" = "Reveal in Finder";
+"Copy Path" = "Copy Path";
+"System Access" = "System Access";
+"Skills and MCP" = "Skills and MCP";
+"Diagnostics" = "Diagnostics";
+"Conversations" = "Conversations";
+
+
+/* Conversation execution, permissions, model editing, and learning feedback */
+"Fast, compact, and suitable for lightweight conversations." = "Fast, compact, and suitable for lightweight conversations.";
+"Recommended for higher-quality writing, reasoning, and tool use." = "Recommended for higher-quality writing, reasoning, and tool use.";
+"chat.execution.cloud" = "Cloud";
+"chat.execution.device" = "On Device";
+"chat.execution.device.detail" = "Model and tools stay on this device";
+"chat.execution.host" = "Host";
+"chat.execution.host.detail" = "The connected host runs the agent and tools";
+"chat.execution.hybrid" = "Host + Device";
+"chat.execution.hybrid.detail" = "Device access is shared only after approval";
+"chat.host_tool.files" = "Files";
+"chat.permission.connected_host" = "Connected host";
+"chat.permission.current_session" = "Current session";
+"chat.permission.data_boundary" = "Data boundary";
+"chat.permission.device.hint" = "Tools access only data allowed by the system on this device.";
+"chat.permission.device.title" = "Run on this device";
+"chat.permission.device_only" = "This device only";
+"chat.permission.host.hint" = "The tool runs on the connected host and returns results to this conversation.";
+"chat.permission.host.title" = "Run on host";
+"chat.permission.location" = "Execution location";
+"chat.permission.once" = "This operation only";
+"chat.permission.this_device" = "This device";
+"chat.permission.validity" = "Validity";
+"chat.scroll.latest" = "Jump to latest message";
+"chat.streaming.active" = "Generating";
+"common.clear" = "Clear";
+"common.refresh" = "Refresh";
+"model.api.discard.action" = "Discard Changes";
+"model.api.discard.message" = "Your endpoint, credentials, or model changes have not been saved.";
+"model.api.discard.title" = "Discard API changes?";
+"model.local.unavailable.error" = "The selected local model is unavailable.";
+"model.parameters.discard.action" = "Discard Changes";
+"model.parameters.discard.message" = "Your model parameter changes have not been saved.";
+"model.parameters.discard.title" = "Discard parameter changes?";
+"model.parameters.frequency_penalty.hint" = "Reduces repeated words and phrases.";
+"model.parameters.presence_penalty.hint" = "Encourages the model to introduce new topics.";
+"model.parameters.repetition_penalty.hint" = "Controls repetition for local inference.";
+"model.parameters.top_k.hint" = "Limits sampling to the most likely candidate tokens.";
+"scheduled.runs.load_failed" = "Run history is temporarily unavailable";
+"scheduled.runs.loading" = "Loading run history…";
+"settings.notifications.frequency" = "Notification Frequency";
+
+"model.download.context_format" = "%@ context";
+"model.download.runtime_memory_format" = "~%@ at 64K";
+"model.download.recommended" = "Recommended";
+
+/* Personal intelligence dashboard */
+"personal.intelligence.title" = "Personal intelligence";
+"personal.intelligence.clear.confirm.title" = "Clear all learned data?";
+"personal.intelligence.clear.confirm.message" = "Chats stay intact, but observations, memories, and route learning cannot be restored.";
+"personal.intelligence.learning.active" = "Learning continuously";
+"personal.intelligence.hero.title" = "Your Nola is forming its own understanding";
+"personal.intelligence.hero.subtitle" = "It turns conversations, files, and changing data into durable memory, then adapts from real outcomes.";
+"personal.intelligence.metric.observed" = "Observed";
+"personal.intelligence.metric.memories" = "Memories";
+"personal.intelligence.metric.confidence" = "Confidence";
+"personal.intelligence.sources.title" = "Learning from these sources";
+"personal.intelligence.memories.title" = "Managed memories";
+"personal.intelligence.memories.subtitle" = "Only active understanding backed by evidence";
+"personal.intelligence.memories.empty.all" = "No durable memories yet";
+"personal.intelligence.memories.empty.category" = "Nothing in this category yet";
+"personal.intelligence.memories.empty.hint" = "Keep using Nola naturally. It organizes what matters without asking you to maintain another library.";
+"personal.intelligence.evidence.format" = "%d evidence";
+"personal.intelligence.confidence" = "Confidence";
+"personal.intelligence.routes.title" = "Learning how to work better";
+"personal.intelligence.routes.subtitle" = "Adapting model and route choices from real outcomes";
+"personal.intelligence.outcomes" = "outcomes";
+"personal.intelligence.fit" = "fit";
+"personal.intelligence.explanation.title" = "How understanding forms";
+"personal.intelligence.explanation.subtitle" = "Not a bookmark folder, and no manual filing";
+"personal.intelligence.explanation.observe.title" = "Observe change";
+"personal.intelligence.explanation.observe.detail" = "Notice meaningful changes across conversations, files, and data sources.";
+"personal.intelligence.explanation.evidence.title" = "Keep evidence";
+"personal.intelligence.explanation.evidence.detail" = "Every memory keeps its sources and can evolve or be replaced by newer evidence.";
+"personal.intelligence.explanation.outcomes.title" = "Learn from outcomes";
+"personal.intelligence.explanation.outcomes.detail" = "Success, failure, and correction shape future model and route choices.";
+"personal.intelligence.clear.action" = "Clear personal intelligence";
+"personal.intelligence.filter.all" = "All";
+"personal.intelligence.filter.facts" = "Facts";
+"personal.intelligence.filter.preferences" = "Preferences";
+"personal.intelligence.filter.episodes" = "Episodes";
+"personal.intelligence.memory.preference" = "Preference";
+"personal.intelligence.memory.episode" = "Episode";
+"personal.intelligence.memory.fact" = "Fact";
+"personal.intelligence.source.conversations" = "Conversations";
+"personal.intelligence.source.health" = "Health";
+"personal.intelligence.source.files" = "Files";
+
+"data_source.policy.summary.default_enabled" = "Added automatically to every conversation unless you turn it off for that conversation.";
+"data_source.policy.summary.conversation_opt_in" = "Available in conversation settings and only used when you select it.";
+"data_source.policy.summary.ask_when_relevant" = "Nola asks before using this source when it becomes relevant.";
+"data_source.policy.summary.blocked" = "Never exposed to conversations or automations.";
+"data_source.policy.saved_automatically" = "Changes are saved automatically for future conversations.";
+"chat.host_tool.name.search_calendar" = "Search calendar";
+"chat.host_tool.name.create_calendar_event" = "Create calendar event";
+"chat.host_tool.name.search_reminders" = "Search reminders";
+"chat.host_tool.name.create_reminder" = "Create reminder";
+"chat.host_tool.name.update_reminder" = "Update reminder";
+"personal.capabilities.gateway.summary" = "%d Skills · %d MCP";
+"prompt.templates.discard.action" = "Discard Changes";
+"prompt.templates.discard.title" = "Discard unsaved changes?";
+"settings.logs.clear" = "Clear logs";
+"settings.logs.clear.confirm.message" = "This permanently removes the local diagnostic log file.";
+"settings.logs.clear.confirm.title" = "Clear all logs?";
+"settings.logs.search" = "Search logs";
+"settings.logs.share" = "Share logs";
+
+"chat.task.agent" = "Background agent";
+
+"chat.task.guidance.pending" = "Guidance pending";
+
+"chat.task.guidance.placeholder" = "Guide this task";
+
+"chat.task.guidance.send" = "Send guidance";
+"model.web_host.setup" = "Before connecting";
+"model.web_host.setup.start" = "On the Mac, open Nola Settings > Host connection and enable device connections.";
+"model.web_host.setup.copy" = "Copy the address and pairing token shown by Nola on the Mac. Use a trusted private network or HTTPS.";
+"model.web_host.checking" = "Checking host";
+"model.web_host.checking.detail" = "Verifying the token, permission protocol, and host identity before saving.";
+"model.web_host.error.protocol" = "This host uses an unsupported permission protocol. Update Nola on the host and try again.";
+"model.web_host.error.identity_changed" = "This address now identifies a different host. Forget the previous pairing before reconnecting.";
+"model.web_host.error.secure_storage" = "The access token could not be stored securely on this device.";
+"model.web_host.error.pairing" = "The verified host identity could not be saved. Try again.";
+"model.web_host.error.timeout" = "The host did not respond in time. Check that device connections are enabled in Nola on your Mac.";
+"model.web_host.error.unreachable" = "The host could not be reached. Check its address, network, and running status.";
+"model.web_host.error.unauthorized" = "The access token was rejected. Copy the current token from the host and try again.";
+"model.web_host.error.generic" = "The host could not be verified. Check the connection details and try again.";
+
+"model.host.messaging.title" = "Messaging channels";
+"model.host.messaging.summary" = "%1$lld connected of %2$lld · background worker %3$@";
+"model.host.messaging.running" = "running";
+"model.host.messaging.stopped" = "stopped";
+"model.host.messaging.providers" = "Telegram · WhatsApp · WeChat Official Account · WeCom";
+"model.host.messaging.manage" = "Manage on Host";
+"chat.execution_unit.choose" = "Choose execution unit";
+"chat.execution_unit.not_installed" = "Not installed";
+"chat.execution_unit.sign_in_required" = "Sign in required";
+"chat.execution_unit.incompatible" = "Incompatible version";
+"chat.execution_unit.unavailable" = "Unavailable";
+"model.host.identity_changed" = "The connected Host identity changed. Forget the existing pairing before reconnecting.";
+"chat.host_tool.status.cancelled" = "Cancelled";
+"chat.source.line_format" = "Line %d";
+"chat.source.lines_format" = "Lines %d-%d";
+"chat.source.open_format" = "Open source %@";
+"chat.source.page_format" = "Page %d";
+"chat.source.untitled" = "Source";
+"chat.sources.title" = "Sources";
+"chat.task.cancel" = "Cancel";
+"chat.task.data_refresh" = "Data refresh";
+"chat.task.open_result" = "Open result";
+"chat.task.skill" = "Skill task";
+"chat.task.tool" = "Background tool";
+"chat.tool_activity.cancelled_format" = "%d cancelled";
+"Data Center" = "Data Center";
+"Manage sources, memory, freshness, and provenance" = "Manage sources, memory, freshness, and provenance";
+"Automation Center" = "Automation Center";
+"Manage schedules, triggers, and run history" = "Manage schedules, triggers, and run history";
+"Model Center" = "Model Center";
+"Configure API and local models" = "Configure API and local models";
+"Skills & MCP" = "Skills & MCP";
+"Browse and configure available capabilities" = "Browse and configure available capabilities";
+"Create reusable instructions for conversations and automations." = "Create reusable instructions for conversations and automations.";
+"onboarding.guide.selection.selected" = "Selected";
+"onboarding.guide.selection.not_selected" = "Not selected";
+
+"health.dashboard.local_source" = "Private, on-device source";
+"health.dashboard.waiting" = "Waiting for permission";
+"health.dashboard.connected" = "Connected";
+"health.dashboard.authorize" = "Allow Health access";
+"personal.intelligence.page.subtitle" = "Long-term memory, reusable capabilities, and learning evidence.";
+"chat.host_pairing.verified" = "Verified";
+"chat.host_pairing.unverified" = "Not verified";
+"chat.more_settings.retrieval" = "Search connected knowledge";
+"chat.more_settings.scope.current" = "Context and memory";
+"chat.more_settings.scope.current.hint" = "Files, context window, and this conversation's memory";
+"chat.more_settings.conversation.header" = "This conversation";
+"chat.more_settings.conversation.footer" = "These choices affect the current conversation. Model defaults below apply whenever this model is used.";
+
+"chat.permission.validity.choice" = "Choose once or this conversation";
+
+"chat.model.configuration.action" = "Configure";
+
+"chat.model.host" = "Host";
+
+"chat.model.host_unconfigured" = "Host not connected";
+
+"chat.model.host_named" = "Host · %@";
+
+"chat.empty.mode.host_unconfigured" = "The host is not connected. Pair it to use project tools and longer-running work.";
+
+"chat.empty.configure_host" = "Configure host";
+
+"chat.host.connection.unavailable" = "Cannot connect to the host. Check that Nola is running on your Mac and both devices are on the same network.";
+
+"chat.model.host_checking" = "Connecting to host";
+
+"chat.model.host_unavailable" = "Host unavailable";
+
+"chat.empty.mode.host_checking" = "Connecting to the host and loading available capabilities…";
+
+"chat.empty.mode.host_unavailable" = "The host is temporarily unavailable. Check Nola on your Mac and your network.";
+
+"chat.empty.retry_host" = "Retry connection";
+
+"chat.empty.host_checking" = "Checking connection";
+
+/* Capability library read and import recovery. */
+"personal.capabilities.load_failed" = "Could not load capabilities. Previous results are retained; reload before editing.";
+"personal.capabilities.retry" = "Retry";
+"personal.capabilities.invalid_import" = "Choose a nonempty UTF-8 Skill file containing at most 48,000 characters.";
+
+// Revision-pinned historical details
+"Historical details" = "Historical details";
+"Loading historical details…" = "Loading historical details…";
+"Historical content is unavailable." = "Historical content is unavailable.";
+"Historical content changed. Reopen its details." = "Historical content changed. Reopen its details.";
+"Some original fields exceed this detail view’s limit and remain available through original content retrieval." = "Some original fields exceed this detail view’s limit and remain available through original content retrieval.";
+"Original field not loaded" = "Original field not loaded";
+
+"chat.permission.guidance" = "Guidance recorded. Tool arguments are unchanged; explicit approval is still required.";
+"permission.mode.cautious" = "Cautious";
+"permission.mode.allow_all" = "Allow All";
+"permission.mode.cautious.detail" = "Confirm deletion, overwrites, sensitive data access, outgoing content, and new connections. Ordinary reads and new files proceed.";
+"permission.mode.allow_all.detail" = "No Nola approval prompts in this conversation. System permissions still apply.";
+"chat.compaction.show_sources_format" = "Show original context (%d items)";
+"chat.style.inherit_model" = "Use model default";
+"chat.more_settings.model_output.scoped_footer" = "Conversation limits affect only this conversation; advanced defaults apply to every conversation using the model.";
+"chat.more_settings.conversation_model_limits" = "Conversation model limits";
+"chat.more_settings.conversation_model_limits_hint" = "Override context and output limits, or inherit model defaults.";
+"chat.more_settings.conversation_model_limits_footer" = "Unset limits inherit this model's defaults. These values affect only this conversation and model.";
+"model.parameters.max_context_length" = "Context window";
+"model.parameters.max_output_tokens" = "Output token limit";
+"chat.host.resume_existing_run" = "Resume existing task";
+"chat.host.retry_observation" = "Reconnect to task";
+"chat.host.observation_unavailable" = "Unable to confirm the existing Host task (HTTP %d). Reconnect before sending another message.";
+"chat.task.state.sealed" = "Execution ended";
+
+/* Exact local Run recovery */
+"chat.recovery.other_conversation" = "Another conversation has an unconfirmed recovery decision.";
+"chat.recovery.open_conversation" = "Open That Conversation";
+"chat.recovery.title" = "Previous Operation Needs Review";
+"chat.recovery.risk" = "The operation may already have taken effect. Retrying can repeat changes. You can leave it unresolved.";
+"chat.recovery.retry_operation" = "Review Retry for Operation %ld";
+"chat.recovery.keep_blocked" = "End Waiting and Keep Unknown";
+"chat.recovery.independent_work" = "Other work is still pending. This task cannot be closed yet.";
+"chat.recovery.pending" = "Your decision was saved, but its result is not confirmed. Check the original receipt without making a new decision.";
+"chat.recovery.check_receipt" = "Check Original Decision";
+"chat.recovery.authorized" = "Risk retry was authorized for the original task. This does not confirm that the operation succeeded.";
+"chat.recovery.blocked" = "The task is closed as blocked. The previous operation’s outcome remains unknown.";
+"chat.recovery.changed" = "The task changed. Check its current state before choosing again.";
+"chat.recovery.checking" = "Checking Task…";
+"chat.recovery.confirm_title" = "Review Recovery Decision";
+"chat.recovery.confirm_retry" = "Accept Risk and Retry";
+"chat.recovery.confirm_risk" = "The previous operation may already have succeeded. Retrying may duplicate changes and cannot undo the original operation.";
+"chat.recovery.confirm_block" = "Close this task as blocked without retrying. External execution may still be running; this does not undo or confirm the operation.";
+"chat.recovery.check_status" = "Check Task Status";
+"chat.recovery.action_failed" = "The decision could not be confirmed. Check the original task before trying again.";
+"chat.recovery.check_failed" = "Unable to check the previous operation. Try checking again; nothing was retried.";
+"chat.host_tool.status.pending" = "Pending";
+"chat.host_tool.status.waiting_input" = "Input required";
+"chat.host_tool.status.sealed" = "Sealed";
+"chat.tool_reader.open" = "Open in reader";
+"chat.tool_reader.snapshot" = "Text snapshot from when opened. Reopen to see updates.";
+
+/* Shared execution and history UI. */
+"autogen.NolaError.adfbef7a" = "Database migration failed";
+"model.parameters.invalid_values" = "Check the displayed parameter ranges. Seed must be a whole number.";
+"chat.host.cancel_submission" = "Cancel pending submission";
+"chat.compaction.source_unavailable" = "The original context is no longer available in this conversation.";
+"chat.compaction.source_load_failed" = "Original context could not be loaded.";
+"chat.compaction.source_title" = "Original context";
+"chat.model.failed" = "Model request failed";
+"chat.model.fallback" = "Model fallback";
+"chat.model.falling_back_format" = "Falling back to %@";
+"chat.host_tool.summary" = "Summary";
+"chat.host_tool.preview" = "Preview";
+"chat.permission.instruction.placeholder" = "Additional guidance";
+"chat.permission.instruction.notice" = "Guidance does not authorize or change tool arguments; the original call still needs explicit approval. Limit: 4 KiB per note, 16 notes and 16 KiB total. You can still approve or deny after reaching the limit.";
+"chat.permission.instruction.submit" = "Submit guidance and keep waiting";
+"chat.context.skills.upload_file" = "Import Skill file";
+"Done" = "Done";
+"Cancelled" = "Cancelled";
+"Answered" = "Answered";
+"Expanded" = "Expanded";
+"Progress" = "Progress";
+"Action completed" = "Action completed";
+"Blocked" = "Blocked";
+"Collapsed" = "Collapsed";
+"Reload" = "Reload";
+"Historical content" = "Historical content";
+"Incomplete" = "Incomplete";
+"512–4,000,000" = "512–4,000,000";
+"Retry" = "Retry";
+"64–1,000,000" = "64–1,000,000";
+
+/* Shared execution and history UI. */
+"Conversation %@" = "Conversation %@";
+"Request %@ was accepted, but its result is not confirmed. Refresh before submitting it again." = "Request %@ was accepted, but its result is not confirmed. Refresh before submitting it again.";
+"The operation conflicted with a newer revision of %@ (%llu expected, %llu current)." = "The operation conflicted with a newer revision of %@ (%llu expected, %llu current).";
+"chat.execution_process" = "Execution process";
+"chat.context.auxiliary.refresh_unavailable" = "Local state loaded; the current model adapter cannot refresh original auxiliary sources.";
+"chat.context.auxiliary.refresh_report" = "Auxiliary sources: refreshed %d, still unconfirmed %d, other hosts skipped %d, failed %d.";
+"chat.context.auxiliary.refresh_more" = "More sources remain; reload again for the next batch.";
+"Some attachments could not be restored. Please attach them again." = "Some attachments could not be restored. Please attach them again.";
+"This draft changed in another window. Your local edits are kept; copy them before reopening the draft." = "This draft changed in another window. Your local edits are kept; copy them before reopening the draft.";
+"This draft was deleted or submitted in another window. Your local edits are kept but cannot overwrite it." = "This draft was deleted or submitted in another window. Your local edits are kept but cannot overwrite it.";
+"chat.permission_state.saving" = "Switching permissions…";
+"chat.permission_state.saved" = "Permissions saved";
+"chat.permission_state.pending" = "Saved; waiting for the running task";
+"chat.permission_state.checking" = "Checking task permissions…";
+"chat.permission_state.active" = "Active for the running task";
+"chat.permission_state.failed" = "Save not confirmed. Your selection is retained for retry.";
+"room.model" = "Model";
+"room.load_more" = "Load more";
+"room.older_messages" = "Earlier messages";
+"room.latest" = "Latest messages";
+"room.stop" = "Stop";
+"room.resume" = "Resume";
+
+/* Room-owned submission feedback */
+"room.member_unavailable" = "Unavailable assistant";
+"room.remove_mention" = "Remove mention";
+"room.message_placeholder" = "Message, @ to mention an assistant";
+"room.retry" = "Retry";
+"room.sending" = "Sending…";
+"room.accepted" = "Received · waiting for assignment";
+"room.selected" = "Received · waiting to start";
+"room.executing" = "Processing";
+"room.cancel_pending" = "Cancel pending message";
+"room.failed" = "Could not complete";
+"room.agent_description" = "Responsibilities and strengths";
+"room.completed" = "Completed";
+"room.incomplete" = "Incomplete";
+"room.blocked" = "Action required";
+"room.not_sent" = "Not sent";
+"room.status_unknown" = "Status not confirmed";
+"chat.response.failed" = "Response failed. Open the process for details.";
+"chat.response.cancelled" = "Response stopped";
+"room.assignment_failed" = "Assignment failed";
+"room.cancelled" = "Cancelled";
+"Invalid model configuration field: %@" = "Invalid model configuration field: %@";
+
+"model.center.connection_accounts" = "Connections and accounts";
+"model.center.connection_accounts.subtitle" = "Connect, discover, and enable models";
+
+// Model connection management
+"model.connections.title" = "Connections and accounts";
+"model.connections.privacy" = "Credentials stay in this device's secure vault. Discovering models does not send an inference request.";
+"model.connections.refresh" = "Refresh connections";
+"model.connections.host_section" = "API import and capability checks on a Host";
+"model.connections.host_import" = "OpenCode, Codex and Kimi Code source files belong to the selected Host. Preview and confirm there; credentials remain on that Host. This does not scan your iPhone or copy Host accounts into this device's connections.";
+"model.connections.host_check" = "Host model management also offers an optional single text capability check with an explicit possible-charge confirmation. It does not test this iPhone’s local accounts.";
+"model.connections.host_login" = "Codex and Kimi Code source login is local to the Host computer. Open /models?tab=api in a browser on that computer to manage login or cancellation. This iPhone cannot launch source processes or manage their login remotely. Signing in does not enable subscription inference; source tokens are never copied to this device.";
+"model.connections.connect_host" = "Connect a Host";
+"model.connections.destination" = "Import destination";
+"model.connections.choose_host" = "Choose a Host";
+"model.connections.open_host" = "Open Host API management";
+"model.connections.continue_host" = "Continue preview and confirmation in Host management. Imported models remain owned by that Host.";
+"model.connections.connected" = "Connection saved";
+"model.connections.disconnected" = "Disconnected";
+"model.connections.discover" = "Discover models · no inference";
+"model.connections.discovered" = "Model discovery finished. Select the models to enable.";
+"model.connections.apply" = "Apply enabled models";
+"model.connections.enabled" = "Enabled models are available in the chat model picker.";
+"model.connections.disconnect" = "Disconnect";
+"model.connections.disabled" = "Connection disabled. Credentials were not deleted.";
+"model.connections.account_section" = "Connect an API account";
+"model.connections.name" = "Connection name";
+"model.connections.endpoint" = "API endpoint";
+"model.connections.protocol" = "Protocol";
+"model.connections.key" = "API key · optional for anonymous endpoints";
+"model.connections.connect" = "Connect account";
+"model.connections.saved" = "Connection saved. Discover and enable models before using it.";
+"model.connections.cancel" = "Cancel discovery";
+"model.connections.cancelled" = "Operation cancelled. Saved state was refreshed for review.";
+"model.connections.done" = "Done";
+"model.connections.host_summary" = "Host imports and credentials remain on the selected Host. Local API accounts belong to this device.";
+"model.connections.host_details" = "Import, checks and login details";
+"chat.history.load_failed" = "Unable to refresh this conversation";
+"chat.history.retry" = "Retry";
+"chat.history.error_details" = "Error details";
+"history.detail.open_text" = "Read original text";
+"history.detail.open_reasoning" = "Read reasoning details";
+"history.detail.open_tool" = "Read tool record";
+"history.detail.open_attachment" = "Read attachment details";
+"history.detail.open_record" = "Read historical record";
+
+"chat.history.search" = "Search conversations";
+
+"chat.history.no_messages" = "No messages yet";
+
+"chat.history.running" = "Running";
+
+"chat.history.awaiting_permission" = "Awaiting approval";
+
+"chat.history.no_results" = "No matching conversations";
+
+"chat.history.create_failed" = "Could not create the conversation. Please try again.";
+
+"chat.history.stop_before_delete" = "Stop the task before deleting";
+
+// Authoritative context maintenance results
+"chat.context.host.unconfirmed" = "Host context maintenance could not be confirmed. Reload the Host state before trying again.";
+"chat.context.host.compacted" = "Host context compacted (%lld archived items).";
+"chat.context.host.no_history" = "No complete historical turn is available to compact on the Host.";
+"chat.context.compact.completed" = "Context maintenance completed.";
+
+/* Localization coverage for current runtime UI. */
+"@" = "@";
+"Acknowledge A" = "Acknowledge A";
+"Anthropic Messages" = "Anthropic Messages";
+"Chat Completions" = "Chat Completions";
+"Responses" = "Responses";
+"Room permission fixture" = "Room permission fixture";
+"Save the draft before sending." = "Save the draft before sending.";
+"Submission status not confirmed. Retry checks the same request." = "Submission status not confirmed. Retry checks the same request.";
+"Switch to B" = "Switch to B";
+"The mentioned assistant is unavailable. Remove or replace the mention." = "The mentioned assistant is unavailable. Remove or replace the mention.";
+"Unknown startup error" = "Unknown startup error";
+"移除未执行的表单操作" = "Remove unexecuted form action";
+"Experts" = "Experts";
+"Choose who replies in this conversation. Selection does not start a reply or grant permissions." = "Choose who replies in this conversation. Selection does not start a reply or grant permissions.";
+"No available experts" = "No available experts";
+"Retry expert reply" = "Retry expert reply";
+"Search experts" = "Search experts";
+"Unable to open Nola data" = "Unable to open Nola data";
+"Your existing data has been preserved. No database was reset or converted." = "Your existing data has been preserved. No database was reset or converted.";
+
+"chat.mention.no_matches" = "No matching experts";
+"chat.mention.experts" = "Experts";
+
+/* Expert picker */
+"chat.experts.title" = "Experts";
+"chat.experts.description" = "Choose who replies in this conversation. Selection does not start a reply or grant permissions.";
+"chat.experts.search" = "Search experts";
+"chat.experts.empty" = "No available experts";
+"chat.experts.selected" = "Selected";
+"chat.experts.not_selected" = "Not selected";
+
+/* Conversation settings labels and host status */
+"chat.more_settings.permission_mode" = "Permission mode";
+"chat.more_settings.scope.intelligence" = "Personal intelligence";
+"chat.more_settings.scope.skills" = "Skills library";
+"chat.more_settings.intelligence.header" = "Intelligence and knowledge";
+"chat.more_settings.intelligence.footer" = "Personal intelligence learns across conversations. Skills are reusable capabilities available throughout the app.";
+"chat.more_settings.scope.global" = "Global app settings";
+"chat.more_settings.model_output.advanced" = "Advanced model defaults";
+"chat.more_settings.computer_use.title" = "Computer-use host";
+"chat.more_settings.computer_use.capacity" = "Desktop tools";
+"chat.more_settings.computer_use.capacity_format" = "%d hosts • %d tools";
+"chat.more_settings.computer_use.disabled" = "Disabled on host";
+"chat.more_settings.computer_use.not_configured" = "Host token not configured";
+"chat.more_settings.computer_use.connected" = "Connected";
+"chat.more_settings.computer_use.disconnected" = "Desktop host disconnected";
+
+// Local composer commands
+"composer.command.model" = "Models";
+"composer.command.experts" = "Experts";
+"composer.command.resources" = "Resources";
+"composer.command.permissions" = "Permissions";
+"composer.command.plan" = "Plans";
+"composer.command.search" = "Search";
+"composer.command.stop" = "Stop";
+"composer.command.help" = "Commands";
+
+"workspace.title" = "Workspace";
+"workspace.sources" = "Sources";
+"workspace.memory" = "Memory";
+"workspace.plans" = "Plans";
+"workspace.records" = "Records";
+
+"chat.run.unresolved" = "The previous task has not finished or its stop has not been confirmed. Resume or reconcile that task before sending again. Your draft has been kept.";
+
+"a2ui.history.version" = "View this form version";
+
+"Delegated" = "Delegated";
+
+/* Current prototype: Today, expert presentation and message actions. */
+"workspace.today.title" = "Today";
+"workspace.today.waiting" = "Waiting for you";
+"workspace.today.underway" = "In progress";
+"workspace.today.updates" = "Recent updates";
+"workspace.today.recent" = "Recent conversations";
+"workspace.today.markRead" = "Mark as read";
+"workspace.today.empty" = "Nothing needs your attention";
+"workspace.today.emptyDetail" = "New updates and conversations that need a response will appear here.";
+"workspace.today.manage" = "Manage workspace";
+"workspace.models" = "Models";
+"workspace.settings" = "Settings";
+"expert.color.title" = "Bubble color";
+"expert.color.preview" = "Preview";
+"expert.color.red" = "Red";
+"expert.color.orange" = "Orange";
+"expert.color.yellow" = "Yellow";
+"expert.color.green" = "Green";
+"expert.color.teal" = "Teal";
+"expert.color.blue" = "Blue";
+"expert.color.purple" = "Purple";
+"expert.color.pink" = "Pink";
+"chat.message.edit" = "Edit and resend";
+"chat.message.editWait" = "Stop or wait for the current reply before editing.";
+"chat.message.editPreservesOriginal" = "Resending creates a separate conversation. The original message and your current draft remain unchanged.";
+"chat.message.saveResend" = "Save and resend";
+"chat.message.resendUnavailable" = "Resending is unavailable for this message. Its original execution configuration must be confirmed first.";
+
+"workspace.today.upNext" = "Up next";
+"workspace.today.noQueuedPlans" = "No queued scheduled instances.";
+"workspace.today.queuedInstance" = "Queued scheduled instance";
+"workspace.today.needsResponse" = "Needs your response";
+
+"workspace.today.moreFacts" = "More items are available in conversations and plans";
+
+"workspace.today.attention" = "Needs attention";
+
+"workspace.today.expertDestinationUnconfirmed" = "Some expert work has no confirmed conversation destination.";
+
+"room.pending_expert_message" = "Expert delivery is waiting to start.";
+"room.resume_complete_experts" = "Resume original expert message";
+
+// Expert directory management
+"experts.manage" = "Manage experts";
+"experts.edit.title" = "Edit expert";
+"experts.save" = "Save";
+"experts.archive" = "Archive expert";
+"experts.restore" = "Restore expert";
+"experts.conversationModel" = "Use conversation model";
+
+"experts.template" = "Prompt template";
+
+"experts.conversationTemplate" = "Use conversation template";
+
+"experts.savedModelUnavailable" = "Saved model (unavailable)";
+
+"experts.savedTemplateUnavailable" = "Saved template (not readable)";
+
+"experts.templateUnavailable" = "The selected template is no longer readable.";
+
+"work.tools.title" = "Current work";
+
+"work.tools.goals" = "Goals";
+
+"work.tools.execution" = "Execution and permissions";
+
+"work.tools.noGoal" = "No active goal";
+
+"chat.experts.sourceUnavailable.title" = "Experts unavailable in this conversation";
+
+"chat.experts.sourceUnavailable.detail" = "Experts on this device cannot join a conversation owned by another Host, or one whose source cannot be verified. You can still manage local experts.";
+
+// Shared Apple model request presentation.
+"Model request pending" = "Model request pending";
+"Model request running" = "Model request running";
+"Model request waiting" = "Model request waiting";
+"Model request completed" = "Model request completed";
+"Response stopped" = "Response stopped";
+"Model request failed" = "Model request failed";
+"Request restarted" = "Request restarted";
+"Model route changed" = "Model route changed";
+"Model request recorded" = "Model request recorded";
+
+"prompt.templates.error.missing" = "The selected template is unavailable. Choose an available template.";
+
+"prompt.templates.error.denied" = "You do not have permission to read this template.";
+
+"prompt.templates.error.identity" = "This template has no valid access identity.";
+
+"prompt.templates.error.definition" = "This template cannot be used as an instruction.";
+
+"prompt.templates.error.catalog" = "The template catalog contains conflicting identities.";
+
+"prompt.templates.error.unavailable" = "The template catalog could not be read.";
+
+"chat.message.checkOriginalRequest" = "Check original request";
+
+"experts.manageTemplates" = "Manage templates";
+"chat.request.diagnostic_details" = "Diagnostic details";
+
+"chat.step.failed" = "This step failed";
+
+"chat.expert.ui.read_only" = "Expert interfaces are read-only. Continuing an expert action is not available yet.";
+
+"chat.part.task" = "Task";
+"chat.task.details_unavailable" = "Task details unavailable";
+"chat.part.diagnostic.code" = "Code";
+"chat.part.diagnostic.display_key" = "Display key";
+"chat.part.diagnostic.recoverable" = "Recoverable";
+"chat.part.diagnostic.mode" = "Mode";
+"chat.part.diagnostic.model_turns" = "Model turns";
+"chat.part.diagnostic.tool_calls" = "Tool calls";
+"chat.part.diagnostic.elapsed_ms" = "Elapsed time (ms)";
+"chat.part.diagnostic.result_reference" = "Result reference";
+"chat.part.diagnostic.failure" = "Failure details";
+
+"model.connections.invalid_endpoint" = "Enter an HTTP or HTTPS API address without a username, password, query, or fragment.";
+
+"navigation.information" = "Information";
+
+"model.setup.title" = "Configure model";
+
+"model.setup.key_hint" = "As required by your service";
+
+"model.setup.model_id" = "Default model ID";
+
+"model.setup.model_hint" = "Model ID from your service";
+
+"model.setup.model_required" = "Enter the model ID supplied by your service.";
+
+"model.setup.name_hint" = "Optional connection name";
+
+"model.setup.advanced" = "Advanced settings";
+
+"model.setup.summary" = "Save to enable this model and use it by default. No model discovery or test request is required.";
+
+"model.setup.save" = "Save and use";
+
+"model.setup.saved" = "Saved and set as default · not tested";
+
+"model.setup.configured" = "Configured models";
+
+"model.setup.other" = "Other options";
+
+"model.setup.source" = "Model source";
+
+"model.setup.service" = "Service address";
+
+"model.setup.missing" = "Configure a service, a local model, or a host to start chatting.";
+
+"model.setup.discover" = "Discover models";
+
+"model.setup.discovered" = "Choose a discovered model";
+
+"model.setup.choose" = "Choose a model";
+
+"model.setup.discovery_empty" = "No models were returned. You can enter a model ID manually.";
+
+"model.setup.discovery_manual" = "You can still enter the model ID manually and save.";
+
+"model.setup.api_key" = "API key";
+
+/* Information navigation */
+"information.knowledge" = "Knowledge points";
+"information.memory" = "Long-term memory";
+"information.activity" = "Activity";
+"information.knowledge.empty" = "No conversation knowledge points yet.";
+
+/* Information reading hierarchy */
+"information.knowledge.detail" = "Conversation insights, with their sources preserved";
+"information.sources.detail" = "Documents, connections, and access policies";
+"information.memory.detail" = "Categories, evidence, and confidence";
+"information.plans.detail" = "Schedules, status, and run history";
+"information.activity.detail" = "Items needing a response and execution records";
+"information.subtitle" = "Keep what matters, together.";
+"workspace.today.subtitle" = "Your conversations, updates, and upcoming plans.";
+
+"chat.permission_state.next_message" = "Saved; applies to the next message";
+
+"information.activity.empty" = "No runs yet.";
+
+// Application appearance
+"appearance.title" = "Appearance";
+"appearance.system" = "Follow System";
+"appearance.light" = "Light";
+"appearance.dark" = "Dark";
+
+/* Activity plan history */
+"activity.planHistory" = "Plan history";
+
+"model.execution.reasoning" = "Reasoning summaries";
+
+"activity.source" = "Source";
+"activity.all" = "All";
+"activity.agent" = "Agent";
+"activity.plan" = "Plans";
+"activity.localScope" = "Runs stored on this device, including received remote results.";
+"activity.localSummaries" = "Local summaries";
+"activity.loadMore" = "Load more";
+"activity.reviewSource" = "Review or respond in source conversation";
+"activity.openSource" = "Open source conversation";
+"activity.sourceActions" = "Authorization, input and recovery use the source conversation’s current controls.";
+"activity.unavailable" = "This run is no longer available.";
+"activity.status.answered" = "Answered";
+"activity.status.action_completed" = "Action completed";
+"activity.status.delegation_accepted" = "Delegated";
+"activity.status.incomplete" = "Incomplete";
+"activity.status.blocked" = "Blocked";
+"activity.status.cancelled" = "Cancelled";
+"activity.status.failed" = "Failed";
+"activity.status.queued" = "Queued";
+"activity.status.running" = "Running";
+"activity.status.waiting_input" = "Waiting for input";
+
+"activity.emptyResponse" = "Nothing needs a response right now.";
+
+"activity.search" = "Search title, source or result status";
+"activity.result" = "Result";
+"activity.sourceUnavailable" = "The source conversation is not accessible on this device.";
+"personal.intelligence.memories.load_more" = "Load more memories";
+"activity.fullResultInSource" = "Open the source conversation for the full result.";
+
+"activity.refresh" = "Refresh activity";
+"activity.conversation" = "Chat";
+
+"chat.checklist.checked" = "Checked";
+"chat.checklist.unchecked" = "Not checked";
+"chat.history.group.today" = "Today";
+"chat.history.group.yesterday" = "Yesterday";
+"chat.history.group.earlier" = "Earlier";
+
+"settings.navigation.summary" = "Your habits, with fewer interruptions.";
+"settings.navigation.appearance" = "Appearance";
+"settings.navigation.appearance.detail" = "Theme and system motion";
+"settings.navigation.notifications" = "Notifications";
+"settings.navigation.notifications.detail" = "Reminders and items needing a response";
+"settings.navigation.providers" = "Providers";
+"settings.navigation.providers.detail" = "Local, API and host model connections";
+"settings.navigation.agent" = "Agent & connections";
+"settings.navigation.agent.detail" = "Manage Skills and MCP";
+"settings.navigation.memory" = "Data & memory";
+"settings.navigation.memory.detail" = "Long-term memory and its evidence";
+"settings.navigation.privacy" = "Privacy & data";
+"settings.navigation.privacy.detail" = "Local storage, export and deletion";
+"settings.navigation.plans" = "Plans";
+"settings.navigation.plans.detail" = "Routines and upcoming actions";
+"settings.appearance.motionReduced" = "Reduce Motion is enabled in iOS accessibility settings.";
+"settings.appearance.motionStandard" = "Motion follows iOS accessibility settings.";
+"settings.appearance.theme" = "Theme";
+"Task conversation · Read only" = "Task conversation · Read only";
+"Load earlier messages" = "Load earlier messages";
+"Task instructions" = "Task instructions";
+"Assistant" = "Assistant";
+"Reasoning" = "Reasoning";
+"Task result" = "Task result";
+"Refresh" = "Refresh";
+"composer.command.noRun" = "No task is running.";
+"composer.command.invalid" = "Invalid command or arguments. Enter / to view available commands.";
+
+/* Execution ownership and context scope */
+"activity.execution" = "This execution";
+"activity.executionHost" = "Execution host";
+"activity.hostUnknown" = "Execution location is not recorded";
+"activity.contextScope" = "Context scope";
+"activity.context.task" = "Task brief, selected references and separate work history; the full source conversation is not copied.";
+"activity.context.conversation" = "Retained context and authorized references from this conversation; other conversations’ private records are excluded.";
+"activity.context.unavailable" = "Context ownership is unavailable for this record";
+"activity.executionBoundary" = "An execution ending does not mean the entire goal is complete.";
+
+/* Core-admitted reasoning tiers */
+"model.parameters.reasoning_tier" = "Reasoning effort";
+"model.parameters.reasoning_tier.automatic" = "Model default";
+"model.parameters.reasoning_tier.concise" = "Simple";
+"model.parameters.reasoning_tier.balanced" = "Medium";
+"model.parameters.reasoning_tier.detailed" = "Complex";
+
+"navigation.library" = "Library";
+"chat.history.draft" = "Draft";
+
+"chat.search.loaded.title" = "Search this conversation";
+"chat.search.loaded.scope" = "Searches messages currently loaded on this device.";
+
+"mcp.mobile.http_execution" = "HTTP MCP runs on this device after approval. Each tool call sends its result to the selected model. Process servers require a connected Host.";
+
+"mcp.permission.http_server" = "Configured HTTP server";
+"mcp.permission.server_and_model" = "HTTP server and selected model";
+
+"execution.scope.local" = "Tools run locally, using this device’s available tools and files.";
+"execution.scope.host" = "Tools and files belong to the selected Host; connecting does not grant local permissions.";
+"execution.scope.child" = "Child tasks have separate context and stay within their delegated permissions.";
+"execution.scope.noApprovalBridge" = "No Nola approval bridge; native permissions may deny operations requiring confirmation.";
+
+"chat.recovery.reason" = "Reason for this decision";
+
+"task.recovery.source_host" = "This task belongs to a Host. Review recovery on its source Host; no local operation was performed.";
+
+"task.recovery.none" = "No recovery decision is pending for this task.";
+
+// Software update
+"softwareUpdate.title" = "Software update";
+"softwareUpdate.check" = "Check for updates";
+"softwareUpdate.download" = "Download update";
+"softwareUpdate.store" = "Update in store";
+"softwareUpdate.install" = "Open installer";
+"softwareUpdate.reveal" = "Show downloaded file";
+"softwareUpdate.notChecked" = "Updates have not been checked";
+"softwareUpdate.working" = "Working on the update…";
+"softwareUpdate.failed" = "Update failed. Please try again.";
+"softwareUpdate.verified" = "Download complete; signature and integrity verified";
+"softwareUpdate.dataHint" = "Finish running tasks before installing. Updates never automatically convert or rebuild conversation data.";
+"softwareUpdate.hostHint" = "Updates apply to the connected Nola Host. The browser UI ships with the Host.";
+"softwareUpdate.downloadRequested" = "Download requested. The browser saves the package after verification; failures appear in the download window.";
+"softwareUpdate.status.disabled" = "Update publishing is not configured";
+"softwareUpdate.status.not_checked" = "Updates have not been checked";
+"softwareUpdate.status.up_to_date" = "You have the latest published version";
+"softwareUpdate.status.ahead" = "This build is newer than the published release";
+"softwareUpdate.status.unavailable" = "No update package is available for this platform";
+"softwareUpdate.status.available" = "An update is available";
+"softwareUpdate.installPermission" = "If prompted, allow Nola to install apps, return here and open the installer again.";
+"softwareUpdate.status.incompatible_data" = "The new data format differs. Updating is blocked; existing data is preserved.";

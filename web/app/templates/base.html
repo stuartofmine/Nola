@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+{% import "_icons.html" as icons %}
+<html lang="{{ 'zh-CN' if ui_locale == 'zh-Hans' else ui_locale }}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="format-detection" content="telephone=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Nola">
+    <meta name="theme-color" content="#F7F8FB" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#0E0F14" media="(prefers-color-scheme: dark)">
+    <meta name="darkreader-lock">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='apple-touch-icon.png') }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
+    <title>{% block title %}{{ tr('base.title.default', 'Nola — 本地智能助理', 'Nola — Local Intelligent Assistant') }}{% endblock %}</title>
+    <script>
+    (function() {
+        try {
+            var t = localStorage.getItem('nola_theme');
+            var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+            if (t === 'dark' || (!t && prefersDark)) document.documentElement.setAttribute('data-theme', 'dark');
+        } catch (e) {}
+    })();
+    </script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/desktop-windows.css') }}">
+    <script src="{{ url_for('static', filename='js/web-session.js') }}"></script>
+    {% block extra_css %}{% endblock %}
+</head>
+<body class="{% block body_class %}{% endblock %}">
+    <a class="skip-link" href="#mainContent">{{ tr('base.nav.skip_content', '跳到主要内容', 'Skip to main content') }}</a>
+    <nav class="navbar" aria-label="{{ tr('base.nav.primary_aria', '主要导航', 'Primary navigation') }}">
+        <div class="nav-container">
+            <a href="/" class="brand" aria-label="{{ tr('base.nav.brand.aria', 'Nola 主页', 'Nola Home') }}">
+                <span class="brand-mark" aria-hidden="true">N</span>
+                <span>Nola</span>
+            </a>
+
+            <button type="button" id="navToggle" class="nav-toggle" aria-label="{{ tr('base.nav.toggle_menu', '切换菜单', 'Toggle menu') }}" aria-expanded="false">
+                {{ icons.icon('menu') }}
+            </button>
+
+            <div class="nav-links" id="navLinks">
+                {% if logged_in %}
+                <div class="nav-route-groups">
+                    <div class="nav-route-group">
+                        <span class="nav-group-label">{{ tr('base.nav.group.workspace', '工作区', 'Workspace') }}</span>
+                        <a href="/dashboard" class="nav-link {% if request.path == '/dashboard' %}active{% endif %}" {% if request.path == '/dashboard' %}aria-current="page"{% endif %}>{{ icons.icon('home') }}<span>{{ tr('base.nav.dashboard', '概览', 'Overview') }}</span></a>
+                        <a href="/chat" class="nav-link {% if request.path == '/chat' %}active{% endif %}" {% if request.path == '/chat' %}aria-current="page"{% endif %}>{{ icons.icon('chat') }}<span>{{ tr('base.nav.chat', 'AI 对话', 'AI Chat') }}</span></a>
+                    </div>
+                    <div class="nav-route-group">
+                        <span class="nav-group-label">{{ tr('base.nav.group.context', '上下文', 'Context') }}</span>
+                        <a href="/data-sources" class="nav-link {% if request.path == '/data-sources' %}active{% endif %}" {% if request.path == '/data-sources' %}aria-current="page"{% endif %}>{{ icons.icon('database') }}<span>{{ tr('base.nav.data_sources', '数据', 'Data') }}</span></a>
+                        <a href="/capabilities" class="nav-link {% if request.path == '/capabilities' %}active{% endif %}" {% if request.path == '/capabilities' %}aria-current="page"{% endif %}>{{ icons.icon('settings') }}<span>{{ tr('base.nav.capabilities', '技能与 MCP', 'Skills & MCP') }}</span></a>
+                        <a href="/models" class="nav-link {% if request.path == '/models' %}active{% endif %}" {% if request.path == '/models' %}aria-current="page"{% endif %}>{{ icons.icon('cpu') }}<span>{{ tr('base.nav.models', '模型', 'Models') }}</span></a>
+                    </div>
+                    <div class="nav-route-group">
+                        <span class="nav-group-label">{{ tr('base.nav.group.activity', '运行', 'Activity') }}</span>
+                        <a href="/scheduled-actions" class="nav-link {% if request.path == '/scheduled-actions' %}active{% endif %}" {% if request.path == '/scheduled-actions' %}aria-current="page"{% endif %}>{{ icons.icon('scheduled') }}<span>{{ tr('base.nav.scheduled', '自动化', 'Automations') }}</span></a>
+                        <a href="/results" class="nav-link {% if request.path == '/results' %}active{% endif %}" {% if request.path == '/results' %}aria-current="page"{% endif %}>{{ icons.icon('results') }}<span>{{ tr('base.nav.results', '执行记录', 'Run History') }}</span></a>
+                    </div>
+                </div>
+                <div class="nav-utilities">
+                    <span class="nav-group-label">{{ tr('base.nav.group.account', '宿主机', 'Host') }}</span>
+                    <a href="/settings" class="nav-link nav-icon-link {% if request.path == '/settings' %}active{% endif %}" aria-label="{{ tr('base.nav.settings', '设置', 'Settings') }}" title="{{ tr('base.nav.settings', '设置', 'Settings') }}" {% if request.path == '/settings' %}aria-current="page"{% endif %}>{{ icons.icon('settings') }}<span>{{ tr('base.nav.settings', '设置', 'Settings') }}</span></a>
+                    <button type="button" id="openNolaGuide" class="nav-link nav-guide-button nav-icon-link" aria-label="{{ tr('base.nav.guide', '使用引导', 'Guide') }}" title="{{ tr('base.nav.guide', '使用引导', 'Guide') }}">
+                        <span aria-hidden="true">?</span><span>{{ tr('base.nav.guide', '使用引导', 'Guide') }}</span>
+                    </button>
+                    <span class="nav-divider" aria-hidden="true"></span>
+                    <span class="nav-user-chip" title="{{ display_name or user_email or session_client_uuid }}">{{ display_name or user_email or session_client_uuid }}</span>
+                    <form method="post" action="{{ url_for('main.logout') }}" class="nav-inline-form">
+                        <button type="submit" class="btn btn-ghost btn-sm">{{ tr('base.nav.logout', '断开连接', 'Disconnect') }}</button>
+                    </form>
+                </div>
+                {% else %}
+                <a href="{{ url_for('main.login') }}" class="nav-link {% if request.path == '/login' %}active{% endif %}">{{ tr('base.nav.login', '连接 Host', 'Connect Host') }}</a>
+                {% endif %}
+                <button type="button" id="themeToggle" class="theme-toggle" aria-label="{{ tr('base.nav.toggle_theme', '切换主题', 'Toggle theme') }}">
+                    <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="6.34" y2="6.34"/><line x1="17.66" y1="17.66" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="6.34" y2="17.66"/><line x1="17.66" y1="6.34" x2="19.07" y2="4.93"/></svg>
+                    <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <main class="main-content" id="mainContent" tabindex="-1">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div data-flash="{{ category if category in ['success','error','warning','info'] else 'info' }}" hidden>{{ message }}</div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+        {% block content %}{% endblock %}
+    </main>
+
+    {% block footer %}
+    <footer class="site-footer">
+        <div class="footer-inner">
+            <div>© 2026 Nola · {{ tr('base.footer.tagline', '本地优先智能助理', 'Local-first intelligent assistant') }}</div>
+            <div class="footer-links">
+                <a href="/dashboard">{{ tr('base.nav.dashboard', '概览', 'Overview') }}</a>
+                <a href="/models">{{ tr('base.nav.models', '模型', 'Models') }}</a>
+                <a href="/capabilities">{{ tr('base.nav.capabilities', '技能与 MCP', 'Skills & MCP') }}</a>
+                <a href="/data-sources">{{ tr('base.nav.data_sources', '数据', 'Data') }}</a>
+                <a href="/scheduled-actions">{{ tr('base.nav.scheduled', '自动化', 'Automations') }}</a>
+                <a href="/settings">{{ tr('base.nav.settings', '设置', 'Settings') }}</a>
+            </div>
+        </div>
+    </footer>
+    {% endblock %}
+
+    {% if logged_in %}
+    <div id="nolaGuide" class="nola-guide" hidden>
+        <div class="nola-guide-backdrop" data-guide-close></div>
+        <section class="nola-guide-dialog" role="dialog" aria-modal="true" aria-labelledby="nolaGuideTitle" aria-describedby="nolaGuideBody">
+            <button type="button" class="nola-guide-close" data-guide-close aria-label="{{ tr('base.js.close', '关闭', 'Close') }}">×</button>
+            <header class="nola-guide-brand">
+                <span class="nola-guide-mark" aria-hidden="true">N</span>
+                <span>
+                    <strong>Nola</strong>
+                    <small id="nolaGuideBrand"></small>
+                </span>
+                <span id="nolaGuideCount" class="nola-guide-count"></span>
+            </header>
+            <div id="nolaGuideProgress" class="nola-guide-progress" role="progressbar" aria-valuemin="1" aria-valuemax="4"></div>
+            <div class="nola-guide-copy">
+                <p id="nolaGuideEyebrow" class="nola-guide-eyebrow"></p>
+                <h2 id="nolaGuideTitle"></h2>
+                <p id="nolaGuideBody" class="nola-guide-body"></p>
+            </div>
+            <div id="nolaGuideCards" class="nola-guide-cards"></div>
+            <p id="nolaGuideNote" class="nola-guide-note"></p>
+            <footer class="nola-guide-actions">
+                <button type="button" id="nolaGuideBack" class="btn btn-ghost"></button>
+                <button type="button" id="nolaGuideNext" class="btn btn-primary"></button>
+            </footer>
+        </section>
+    </div>
+    {% endif %}
+
+    <script>
+    window.NOLA_UI_TEXT = {
+        close: {{ tr('base.js.close', '关闭', 'Close') | tojson }},
+        confirmTitle: {{ tr('base.js.confirm.title', '确认操作', 'Confirm action') | tojson }},
+        confirm: {{ tr('base.js.confirm.confirm', '确认', 'Confirm') | tojson }},
+        cancel: {{ tr('base.js.confirm.cancel', '取消', 'Cancel') | tojson }},
+        themeDark: {{ tr('base.nav.theme_dark', '切换到深色外观', 'Switch to dark appearance') | tojson }},
+        themeLight: {{ tr('base.nav.theme_light', '切换到浅色外观', 'Switch to light appearance') | tojson }},
+    };
+    window.NOLA_UI_LOCALE = {{ ui_locale | tojson }};
+    </script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    <script>
+    (function() {
+        var KEY = 'nola_theme';
+        var root = document.documentElement;
+        function apply(theme) {
+            var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+            var resolved = theme || (prefersDark ? 'dark' : 'light');
+            if (resolved === 'dark') root.setAttribute('data-theme', 'dark');
+            else root.removeAttribute('data-theme');
+            var toggle = document.getElementById('themeToggle');
+            if (toggle) {
+                var label = resolved === 'dark' ? window.NOLA_UI_TEXT.themeLight : window.NOLA_UI_TEXT.themeDark;
+                toggle.setAttribute('aria-label', label);
+                toggle.setAttribute('title', label);
+                toggle.setAttribute('aria-pressed', resolved === 'dark' ? 'true' : 'false');
+            }
+            window.dispatchEvent(new Event('nola-theme-change'));
+            var metas = document.querySelectorAll('meta[name="theme-color"]');
+            metas.forEach(function(m){ m.removeAttribute('media'); });
+            if (metas.length) {
+                metas[0].setAttribute('content', resolved === 'dark' ? '#0E0F14' : '#F7F8FB');
+                for (var i = 1; i < metas.length; i++) metas[i].remove();
+            }
+        }
+        function toggleTheme() {
+            var next = localStorage.getItem(KEY) === 'dark' ? 'light' : 'dark';
+            localStorage.setItem(KEY, next);
+            apply(next);
+        }
+        document.addEventListener('DOMContentLoaded', function() {
+            var stored = localStorage.getItem(KEY);
+            apply(stored === 'dark' || stored === 'light' ? stored : '');
+            var btn = document.getElementById('themeToggle');
+            if (btn) btn.addEventListener('click', toggleTheme);
+        });
+    })();
+    </script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

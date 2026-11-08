@@ -1,0 +1,27 @@
+{
+  "protocol_version": 53,
+  "request_id": "unknown-effect-resolution-request-1",
+  "client_id": "operator-client-1",
+  "command": {
+    "type": "resolve_unknown_effect_recovery",
+    "arguments": {
+      "input": {
+        "conversation_id": "conversation-1",
+        "run_id": "run-1",
+        "invocation_config_digest": "config-digest-1",
+        "resolution_id": "user-decision-1",
+        "targets": [{
+        "effect_id": "effect-1",
+        "request_id": "host-request-1",
+        "attempt_id": "attempt-1",
+        "worker_generation": "generation-1",
+        "lease_owner": "worker-1",
+        "lease_token": "lease-token-1",
+        "expected_attempt_revision": 4
+        }],
+        "choice": {"kind":"authorize_risk_retry","reason":"I explicitly authorize a retry despite uncertain effects."},
+        "resolved_at_ms": 1735689605000
+      }
+    }
+  }
+}

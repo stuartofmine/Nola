@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="scheduled_saving">Wird gespeichert…</string>
+    <string name="scheduled_save_failed">Speichern fehlgeschlagen. Dein Entwurf bleibt erhalten. Versuche es erneut.</string>
+    <string name="scheduled_save_partial">Die Aufgabe wurde gespeichert, aber die Zeitplanung ist fehlgeschlagen. Dein Entwurf bleibt erhalten. Versuche erneut, den Zeitplan anzuwenden.</string>
+    <string name="scheduled_pick_date">Datum: %1$s</string>
+    <string name="scheduled_pick_time">Uhrzeit: %1$s</string>
+    <string name="scheduled_pick_zone">Zeitzone: %1$s</string>
+    <string name="scheduled_not_selected">Auswählen…</string>
+    <string name="scheduled_zone_wall_time">Beim Wechsel der Zeitzone bleiben das angezeigte Datum und die Uhrzeit erhalten. Der tatsächliche Ausführungszeitpunkt ändert sich.</string>
+    <string name="scheduled_recurring_dst">Wird zu dieser Ortszeit wiederholt. Bei Zeitumstellungen wird eine ausfallende Uhrzeit um die Zeitverschiebung nach vorn verlegt; bei einer doppelt auftretenden Uhrzeit gilt das erste Auftreten.</string>
+    <string name="scheduled_dst_gap">Diese Ortszeit existiert wegen der Zeitumstellung nicht. Wähle eine andere Uhrzeit.</string>
+    <string name="scheduled_dst_overlap">Die Uhr wird zurückgestellt, daher tritt diese Uhrzeit zweimal auf. Wähle das gewünschte Auftreten.</string>
+    <string name="scheduled_dst_first">Erstes Auftreten — vor der Zeitumstellung (%1$s)</string>
+    <string name="scheduled_dst_second">Zweites Auftreten — nach der Zeitumstellung (%1$s)</string>
+    <string name="scheduled_exact_time">Ausführungszeit: %1$s</string>
+    <string name="scheduled_zone_search">Stadt oder Zeitzone suchen</string>
+    <string name="scheduled_zone_device">Zeitzone des Geräts verwenden (%1$s)</string>
+    <string name="scheduled_zone_selected">Ausgewählt: %1$s</string>
+    <string name="scheduled_zone_no_matches">Keine passenden Zeitzonen.</string>
+    <string name="scheduled_frequency_unsupported">Dieser Editor unterstützt „%1$s“ nicht. Der bestehende Zeitplan bleibt unverändert. Wähle eine unterstützte Häufigkeit, um ihn zu ersetzen.</string>
+</resources>

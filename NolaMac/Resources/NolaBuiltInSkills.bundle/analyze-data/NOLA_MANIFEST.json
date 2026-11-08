@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "id": "analyze-data",
+  "delivery": "built-in",
+  "category": {
+    "id": "data-analysis",
+    "name": "Data & Analysis",
+    "name_zh": "数据与分析"
+  },
+  "source": {
+    "project": "Nola",
+    "license": "Apache-2.0"
+  },
+  "status": "stable",
+  "platforms": [
+    "macos",
+    "cli-web"
+  ],
+  "required_tools": [
+    "Skill",
+    "read_file",
+    "write_file",
+    "bash"
+  ],
+  "optional_tools": [
+    "web_search"
+  ],
+  "runtime_dependencies": [
+    "python3 (standard library)"
+  ],
+  "permissions": [
+    "filesystem.read",
+    "filesystem.write.confirm",
+    "network.optional"
+  ],
+  "secrets": [],
+  "validation": [
+    "scripts/analyze_table.py --validate-only",
+    "scripts/analyze_dataset.py --validate-only",
+    "source-to-output reconciliation"
+  ],
+  "recommended_handoffs": [
+    "excel-workbook-authoring",
+    "powerpoint-presentation-authoring",
+    "work-with-pdf"
+  ],
+  "execution_contract": {
+    "schemaVersion": 1,
+    "progressSteps": [
+      {
+        "id": "inspect",
+        "title": "Inspect inputs and constraints",
+        "required": true
+      },
+      {
+        "id": "execute",
+        "title": "Produce the requested outcome",
+        "required": true
+      },
+      {
+        "id": "verify",
+        "title": "Verify the outcome with evidence",
+        "required": true
+      }
+    ],
+    "artifacts": [
+      {
+        "id": "analysis",
+        "mediaType": "text/markdown",
+        "required": false,
+        "description": "Stable reference to the final requested outcome or its persisted receipt"
+      }
+    ],
+    "verifiers": [
+      {
+        "id": "completion-audit",
+        "method": "model_judgment",
+        "description": "Record real evidence for the applicable completion checks: scripts/analyze_table.py --validate-only; scripts/analyze_dataset.py --validate-only; source-to-output reconciliation",
+        "required": true
+      }
+    ],
+    "resumePoints": [
+      "after-inspect",
+      "after-execute",
+      "after-verify"
+    ]
+  }
+}

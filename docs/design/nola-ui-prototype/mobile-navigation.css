@@ -1,0 +1,16 @@
+/* Mobile IA follows the accepted current app layout; desktop chrome is untouched. */
+@media(max-width:700px){
+.bottom-nav{padding:5px 12px max(7px,env(safe-area-inset-bottom));gap:4px}
+.bottom-nav button{min-width:0;min-height:52px;flex-direction:column;gap:4px;font-size:12px;line-height:16px;border-radius:8px;padding:5px 2px;white-space:nowrap}
+.bottom-nav button.active{background:var(--soft)}
+.bottom-nav button.active:before{content:none}
+.bottom-nav svg{width:20px;height:20px}
+.page-head h1{white-space:nowrap}
+.mobile-information .object-copy{min-width:0}
+.mobile-information .object-copy h3{font-size:16px;line-height:24px}
+.mobile-information .object-row>.object-icon{flex-shrink:0}
+.chat-header{gap:2px}
+.chat-header>.icon-btn{width:44px;min-width:44px}
+.chat-heading p{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+}
+@media(max-width:359px){.bottom-nav{padding-left:8px;padding-right:8px}.chat-header{padding-left:4px;padding-right:4px}.chat-heading h1{font-size:15px}}

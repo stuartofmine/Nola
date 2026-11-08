@@ -1,0 +1,20 @@
+[package]
+name = "nola_store"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nola_measurement = { path = "../nola-measurement" }
+nola_store_port = { path = "../nola-store-port" }
+nola_domain = { path = "../nola-domain" }
+nola_kernel = { path = "../nola-kernel" }
+rusqlite = { version = "0.31", features = ["bundled", "functions", "hooks"] }
+memchr = "2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+base64 = "0.21"
+uuid = { version = "1.10", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3.12"

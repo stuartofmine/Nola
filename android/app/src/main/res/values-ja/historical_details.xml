@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="historical_details">履歴の詳細</string>
+    <string name="historical_unavailable">過去の内容が利用できないか、変更されています。詳細を開き直してください。</string>
+    <string name="historical_limited">この詳細表示にはサイズ制限があるため、一部の元のフィールドは読み込まれていません。</string>
+    <string name="historical_field_deferred">元のフィールドは未読み込み</string>
+    <string name="historical_reload">再読み込み／再試行</string>
+</resources>

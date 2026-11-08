@@ -1,0 +1,212 @@
+{
+  "type": "conversation_projection_committed_v1",
+  "protocol_version": 2,
+  "session_id": "contract-conversation-1",
+  "submission_id": "MixedCase-Remote-Run",
+  "source_host_id": "contract-host-1",
+  "cursor": 12,
+  "revision": 7,
+  "terminal_status": "completed",
+  "snapshot": {
+    "session_id": "contract-conversation-1",
+    "revision": 7,
+    "last_event_cursor": {
+      "sequence": 12
+    },
+    "host_catalog_revision": 0,
+    "model": null,
+    "tool_count": 0,
+    "active_turn_id": null,
+    "turn_status": "completed",
+    "history_item_count": 0,
+    "model_context_item_count": 0,
+    "queued_input_count": 0,
+    "active_tool_count": 0,
+    "engineering": {
+      "phase": "diagnosing",
+      "mutation_count": 0,
+      "validation_attempt_count": 0,
+      "correction_count": 0,
+      "validation_required": false,
+      "skill_validation_required": false,
+      "last_failure": null,
+      "last_failure_tool": null,
+      "last_failure_signature": null,
+      "repeated_failure_count": 0,
+      "recovery_required": false,
+      "recovery_purpose": null,
+      "recovery_tool": null
+    },
+    "context_window_tokens": 128000,
+    "context_used_tokens": 0,
+    "context_usage_percent": 0,
+    "context_usage_is_estimated": true,
+    "context_usage": {
+      "used_tokens": 0,
+      "context_window_tokens": 128000,
+      "prompt_token_limit": 119808,
+      "usage_percent": 0,
+      "usage_is_estimated": true,
+      "cached_input_tokens": 0,
+      "cached_input_tokens_reported": false,
+      "cache_write_input_tokens": 0,
+      "cache_write_input_tokens_reported": false
+    },
+    "compaction_in_progress": false,
+    "consecutive_compaction_failures": 0,
+    "automatic_compaction_blocked": false,
+    "pending_host_effect_count": 0,
+    "pending_recovery_effect_count": 0,
+    "session_closing": false,
+    "session_closed": false,
+    "tasks": {
+      "revision": 0,
+      "order": [],
+      "tasks": {}
+    },
+    "goal": {
+      "revision": 0
+    },
+    "memories": {
+      "revision": 0,
+      "order": [],
+      "records": {}
+    },
+    "memory_runtime": {
+      "revision": 0,
+      "jobs": {},
+      "job_order": [],
+      "usage_ledger": [],
+      "usage_stats": {},
+      "processed_operations": []
+    },
+    "permissions": {
+      "revision": 0,
+      "pending": []
+    },
+    "permission_rules": {
+      "rules": []
+    },
+    "skill_runtime": {
+      "revision": 0,
+      "next_event_sequence": 0,
+      "accepted_operation_ids": [],
+      "catalog": {
+        "revision": 0,
+        "builtin_tools": [],
+        "mcp": {
+          "revision": 0,
+          "servers": {}
+        }
+      },
+      "runs": {}
+    },
+    "projection": {
+      "revision": 0,
+      "order": [],
+      "parts": {}
+    }
+  },
+  "conversation_projection": {
+    "contract_version": 1,
+    "conversation_id": "contract-conversation-1",
+    "revision": 7,
+    "title": "Host projection contract",
+    "messages": [
+      {
+        "message_id": "contract-user-1",
+        "role": "user",
+        "state": "completed",
+        "revision": 7,
+        "created_at_ms": 1787443200000,
+        "parts": [
+          {
+            "kind": "text",
+            "part_id": "contract-user-1:text",
+            "revision": 7,
+            "markdown": "Explain the contract.",
+            "is_final": true
+          }
+        ]
+      },
+      {
+        "message_id": "contract-assistant-1",
+        "role": "assistant",
+        "state": "completed",
+        "revision": 7,
+        "created_at_ms": 1787443201000,
+        "parts": [
+          {
+            "kind": "reasoning",
+            "part_id": "contract-assistant-1:reasoning",
+            "revision": 7,
+            "state": "completed",
+            "title": "Inspect evidence",
+            "summary": "Inspect the shared projection."
+          },
+          {
+            "kind": "tool",
+            "execution_source": {
+              "kind": "model"
+            },
+            "part_id": "contract-assistant-1:tool:call-1",
+            "revision": 7,
+            "tool_call_id": "call-1",
+            "capability_id": "file.read",
+            "state": "completed",
+            "display_key": "tool.file.read",
+            "title": "Read architecture",
+            "summary": "Read the contract",
+            "origin": {
+              "kind": "builtin"
+            },
+            "permission": null,
+            "output_preview": "Independent technical preview",
+            "full_output": null,
+            "artifacts": [
+              {
+                "uri": "file:///workspace/Doc/历史任务/实施与审计/ARCHITECTURE.md",
+                "name": "ARCHITECTURE.md",
+                "mime_type": "text/markdown",
+                "operation": "read"
+              }
+            ],
+            "started_at_ms": 1787443201000,
+            "finished_at_ms": 1787443201010,
+            "input": {
+              "path": "Doc/历史任务/实施与审计/ARCHITECTURE.md"
+            },
+            "output": {
+              "text": "Architecture contract"
+            },
+            "affected_resources": [
+              {
+                "resource_type": "text/markdown",
+                "uri": "file:///workspace/Doc/历史任务/实施与审计/ARCHITECTURE.md",
+                "operation": "read"
+              }
+            ]
+          },
+          {
+            "kind": "text",
+            "part_id": "contract-assistant-1:text",
+            "revision": 7,
+            "markdown": "The projection is the durable UI source.",
+            "is_final": true
+          }
+        ]
+      }
+    ],
+    "active_run": null,
+    "context_usage": {
+      "used_tokens": 4096,
+      "context_window_tokens": 65536,
+      "prompt_token_limit": 57344,
+      "estimated": false,
+      "measured_at_revision": 7
+    },
+    "execution_ownership": {
+      "kind": "user"
+    }
+  }
+}

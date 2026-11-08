@@ -1,0 +1,12 @@
+{
+  "protocol_version": 53,
+  "request_id": "request-1",
+  "client_id": "mac-1",
+  "received_at": "2026-09-04T10:00:00Z",
+  "status": "committed",
+  "completed_at": "2026-09-04T10:00:01Z",
+  "committed_revision": 43,
+  "result": {
+    "run_id": "run-1"
+  }
+}

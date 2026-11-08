@@ -1,0 +1,4 @@
+interface:
+  display_name: "Collaborate in Figma"
+  short_description: "Inspect and improve Figma designs"
+  default_prompt: "Help me inspect or improve this Figma design."

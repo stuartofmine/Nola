@@ -1,0 +1,2201 @@
+{
+  "event_envelopes": [
+    {
+      "cursor": {
+        "sequence": 1
+      },
+      "event": {
+        "session_id": "session-part-lifecycle-v1",
+        "type": "session_started"
+      },
+      "revision": 1,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": null
+    },
+    {
+      "cursor": {
+        "sequence": 2
+      },
+      "event": {
+        "admission": {
+          "accepted_sequence": 1,
+          "admission_id": "session-part-lifecycle-v1:input-admission:1",
+          "anchor_turn_id": null,
+          "delivery": "current_turn",
+          "item_ids": [
+            "user-fixture-complete"
+          ],
+          "origin": "interactive_user",
+          "payload_digest": "6cfb5c8bc2ad51a6d931b2b1f1fef765459fa84128f037a4f843f8ca1e2c0377",
+          "submission_id": "submission-fixture-complete"
+        },
+        "type": "input_accepted"
+      },
+      "revision": 1,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": null
+    },
+    {
+      "cursor": {
+        "sequence": 3
+      },
+      "event": {
+        "assistant_message_id": "submission-fixture-complete:assistant",
+        "session_id": "session-part-lifecycle-v1",
+        "turn_id": "submission-fixture-complete",
+        "type": "turn_started"
+      },
+      "revision": 1,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 4
+      },
+      "event": {
+        "applications": [
+          {
+            "admission_id": "session-part-lifecycle-v1:input-admission:1",
+            "applied_sequence": 1,
+            "destination_turn_id": "submission-fixture-complete"
+          }
+        ],
+        "items": [
+          {
+            "content": "Find one source and explain the Core contract.",
+            "id": "user-fixture-complete",
+            "role": "user",
+            "type": "message"
+          }
+        ],
+        "turn_id": "submission-fixture-complete",
+        "type": "input_applied"
+      },
+      "revision": 1,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 5
+      },
+      "event": {
+        "scope": {
+          "applied_input_refs": [
+            {
+              "admission_id": "session-part-lifecycle-v1:input-admission:1",
+              "applied_sequence": "1",
+              "turn_id": "submission-fixture-complete"
+            }
+          ],
+          "requirements": [
+            {
+              "dependency_ids": [],
+              "description": "Deliver the accepted input scope referenced by this requirement.",
+              "goal_requirement_ref": null,
+              "requirement_id": "submission-fixture-complete:requirement:3",
+              "resource_scope": {
+                "kind": "undeclared"
+              },
+              "source_refs": [
+                "user-fixture-complete"
+              ]
+            }
+          ],
+          "revision": "1",
+          "scope_id": "submission-fixture-complete:requirement_scope:2",
+          "source": {
+            "code": "input_applied",
+            "kind": "runtime",
+            "source_refs": [
+              "session-part-lifecycle-v1:input-admission:1"
+            ]
+          },
+          "source_input_refs": [
+            "user-fixture-complete"
+          ]
+        },
+        "turn_id": "submission-fixture-complete",
+        "type": "requirement_scope_changed"
+      },
+      "revision": 1,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 6
+      },
+      "event": {
+        "capability_projection": {
+          "available_capabilities": {
+            "host.cancel": {
+              "availability": "available",
+              "cancellation": "cooperative",
+              "exposure": "visible",
+              "id": "host.cancel",
+              "input_normalization": {
+                "effect": {
+                  "fixed": "execute",
+                  "schema_version": 1,
+                  "variants": {}
+                },
+                "execution_target": null,
+                "integer_maximums": {},
+                "origin": {
+                  "kind": "unknown"
+                },
+                "permission_contract": {
+                  "risk": "unknown"
+                },
+                "permission_resource": {
+                  "kind": "full_input"
+                },
+                "root_relative_patterns": [],
+                "transaction_boundary": "workspace"
+              },
+              "input_schema": {
+                "type": "object"
+              },
+              "output_policy": {
+                "allow_artifacts": true,
+                "persist_full_output": true,
+                "preview_char_limit": 4000
+              },
+              "parallelism": "serial",
+              "permission_domain": null,
+              "replay_safety": "recoverable",
+              "route": "tool",
+              "supports_argument_streaming": false,
+              "supports_streaming": false,
+              "title": "host.cancel"
+            },
+            "model.stream": {
+              "availability": "available",
+              "cancellation": "cooperative",
+              "exposure": "visible",
+              "id": "model.stream",
+              "input_normalization": {
+                "effect": {
+                  "fixed": "execute",
+                  "schema_version": 1,
+                  "variants": {}
+                },
+                "execution_target": null,
+                "integer_maximums": {},
+                "origin": {
+                  "kind": "unknown"
+                },
+                "permission_contract": {
+                  "risk": "unknown"
+                },
+                "permission_resource": {
+                  "kind": "full_input"
+                },
+                "root_relative_patterns": [],
+                "transaction_boundary": "workspace"
+              },
+              "input_schema": {
+                "type": "object"
+              },
+              "output_policy": {
+                "allow_artifacts": true,
+                "persist_full_output": true,
+                "preview_char_limit": 4000
+              },
+              "parallelism": "serial",
+              "permission_domain": null,
+              "replay_safety": "recoverable",
+              "route": "model",
+              "supports_argument_streaming": false,
+              "supports_streaming": true,
+              "title": "model.stream"
+            },
+            "permission.ask": {
+              "availability": "available",
+              "cancellation": "cooperative",
+              "exposure": "visible",
+              "id": "permission.ask",
+              "input_normalization": {
+                "effect": {
+                  "fixed": "execute",
+                  "schema_version": 1,
+                  "variants": {}
+                },
+                "execution_target": null,
+                "integer_maximums": {},
+                "origin": {
+                  "kind": "unknown"
+                },
+                "permission_contract": {
+                  "risk": "unknown"
+                },
+                "permission_resource": {
+                  "kind": "full_input"
+                },
+                "root_relative_patterns": [],
+                "transaction_boundary": "workspace"
+              },
+              "input_schema": {
+                "type": "object"
+              },
+              "output_policy": {
+                "allow_artifacts": true,
+                "persist_full_output": true,
+                "preview_char_limit": 4000
+              },
+              "parallelism": "serial",
+              "permission_domain": null,
+              "replay_safety": "recoverable",
+              "route": "permission",
+              "supports_argument_streaming": false,
+              "supports_streaming": false,
+              "title": "permission.ask"
+            },
+            "web_search": {
+              "availability": "available",
+              "cancellation": "cooperative",
+              "exposure": "visible",
+              "id": "web_search",
+              "input_normalization": {
+                "effect": {
+                  "fixed": "execute",
+                  "schema_version": 1,
+                  "variants": {}
+                },
+                "execution_target": null,
+                "integer_maximums": {},
+                "origin": {
+                  "kind": "unknown"
+                },
+                "permission_contract": {
+                  "risk": "unknown"
+                },
+                "permission_resource": {
+                  "kind": "full_input"
+                },
+                "root_relative_patterns": [],
+                "transaction_boundary": "workspace"
+              },
+              "input_schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "query": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "query"
+                ],
+                "type": "object"
+              },
+              "output_policy": {
+                "allow_artifacts": true,
+                "persist_full_output": true,
+                "preview_char_limit": 4000
+              },
+              "parallelism": "serial",
+              "permission_domain": "network.read",
+              "replay_safety": "recoverable",
+              "route": "tool",
+              "supports_argument_streaming": false,
+              "supports_streaming": false,
+              "title": "web_search"
+            }
+          },
+          "enabled": [
+            {
+              "capability_id": "web_search",
+              "descriptor": {
+                "availability": "available",
+                "cancellation": "cooperative",
+                "exposure": "visible",
+                "id": "web_search",
+                "input_normalization": {
+                  "effect": {
+                    "fixed": "execute",
+                    "schema_version": 1,
+                    "variants": {}
+                  },
+                  "execution_target": null,
+                  "integer_maximums": {},
+                  "origin": {
+                    "kind": "unknown"
+                  },
+                  "permission_contract": {
+                    "risk": "unknown"
+                  },
+                  "permission_resource": {
+                    "kind": "full_input"
+                  },
+                  "root_relative_patterns": [],
+                  "transaction_boundary": "workspace"
+                },
+                "input_schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "query": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "query"
+                  ],
+                  "type": "object"
+                },
+                "output_policy": {
+                  "allow_artifacts": true,
+                  "persist_full_output": true,
+                  "preview_char_limit": 4000
+                },
+                "parallelism": "serial",
+                "permission_domain": "network.read",
+                "replay_safety": "recoverable",
+                "route": "tool",
+                "supports_argument_streaming": false,
+                "supports_streaming": false,
+                "title": "web_search"
+              },
+              "model_definition": {
+                "function": {
+                  "description": "Return cited Web evidence.",
+                  "name": "web_search",
+                  "parameters": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "_nolaExecution": {
+                        "additionalProperties": false,
+                        "description": "Optional durable SOP execution lineage. Supply only when an active SOP context explicitly provides the exact runId and stepId for this concrete call. Never use a Skill id, Skill run alias, skill_update run_id, or guessed workflow name here; Skill execution is tracked separately. Omit this field when no active SOP supplies both identifiers.",
+                        "properties": {
+                          "sopRunId": {
+                            "description": "Exact durable SOP runId from the active SOP context; never a Skill id or Skill run alias.",
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "sopStepId": {
+                            "description": "Exact active SOP stepId paired with sopRunId; never infer it from Skill progress steps.",
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "sopRunId",
+                          "sopStepId"
+                        ],
+                        "type": "object"
+                      },
+                      "query": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "query"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "type": "function"
+              },
+              "model_schema_digest": "b4124d5bdba942471fa7a34887d23448430e214a6d1062edd517ae447703a1c9"
+            }
+          ],
+          "host_availability_epoch": 1,
+          "host_catalog_revision": 1,
+          "host_id": "canonical-fixture-host",
+          "model_schema_digest": "0213762f15ec1562573b495f25e22fe0ef583df4fa40d297e14e6901e129ddfb",
+          "projection_digest": "706392735301dcb29de13ff0fc7aebcbf124f8709166bd13b1543454ef32af04",
+          "schema_version": 2
+        },
+        "context_component_count": 0,
+        "context_item_count": 0,
+        "context_payload_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "context_window_tokens": 128000,
+        "host_availability_epoch": 1,
+        "host_catalog_revision": 1,
+        "host_id": "canonical-fixture-host",
+        "model": "fixture-model",
+        "prompt_token_limit": 119808,
+        "tool_count": 1,
+        "turn_id": "submission-fixture-complete",
+        "type": "turn_context_captured"
+      },
+      "revision": 1,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": null
+    },
+    {
+      "cursor": {
+        "sequence": 7
+      },
+      "event": {
+        "detail": null,
+        "effect_id": "submission-fixture-complete:model_request:4",
+        "metadata": null,
+        "title": "model_generation_started",
+        "turn_id": "submission-fixture-complete",
+        "type": "host_progress"
+      },
+      "revision": 1,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 8
+      },
+      "event": {
+        "context_usage": {
+          "cache_write_input_tokens": 0,
+          "cache_write_input_tokens_reported": false,
+          "cached_input_tokens": 0,
+          "cached_input_tokens_reported": false,
+          "context_window_tokens": 128000,
+          "prompt_token_limit": 119808,
+          "usage_is_estimated": true,
+          "usage_percent": 2.565625,
+          "used_tokens": 3284
+        },
+        "context_window_tokens": 128000,
+        "measurement": {
+          "attempt_id": null,
+          "context_generation": 0,
+          "request_id": "submission-fixture-complete:model_request:4"
+        },
+        "prompt_cache_measurement": null,
+        "type": "context_updated",
+        "usage_is_estimated": true,
+        "usage_percent": 2.565625,
+        "used_tokens": 3284
+      },
+      "revision": 1,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": null
+    },
+    {
+      "cursor": {
+        "sequence": 9
+      },
+      "event": {
+        "part": {
+          "detail": "",
+          "id": "submission-fixture-complete:reasoning:6",
+          "is_complete": false,
+          "kind": "reasoning",
+          "message_id": "submission-fixture-complete:assistant",
+          "title": "reasoning",
+          "turn_id": "submission-fixture-complete"
+        },
+        "projection_revision": 1,
+        "turn_id": "submission-fixture-complete",
+        "type": "part_updated",
+        "update": {
+          "part": {
+            "detail": "",
+            "id": "submission-fixture-complete:reasoning:6",
+            "is_complete": false,
+            "kind": "reasoning",
+            "message_id": "submission-fixture-complete:assistant",
+            "title": "reasoning",
+            "turn_id": "submission-fixture-complete"
+          },
+          "type": "created"
+        }
+      },
+      "revision": 2,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 10
+      },
+      "event": {
+        "part": {
+          "detail": "Inspect the available evidence before answering.",
+          "id": "submission-fixture-complete:reasoning:6",
+          "is_complete": false,
+          "kind": "reasoning",
+          "message_id": "submission-fixture-complete:assistant",
+          "title": "reasoning",
+          "turn_id": "submission-fixture-complete"
+        },
+        "projection_revision": 2,
+        "turn_id": "submission-fixture-complete",
+        "type": "part_updated",
+        "update": {
+          "detail_delta": "Inspect the available evidence before answering.",
+          "part_id": "submission-fixture-complete:reasoning:6",
+          "title": null,
+          "type": "reasoning_delta"
+        }
+      },
+      "revision": 2,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 11
+      },
+      "event": {
+        "part": {
+          "id": "submission-fixture-complete:assistant:5",
+          "is_complete": false,
+          "kind": "text",
+          "message_id": "submission-fixture-complete:assistant",
+          "text": "",
+          "turn_id": "submission-fixture-complete"
+        },
+        "projection_revision": 4,
+        "turn_id": "submission-fixture-complete",
+        "type": "part_updated",
+        "update": {
+          "part": {
+            "id": "submission-fixture-complete:assistant:5",
+            "is_complete": false,
+            "kind": "text",
+            "message_id": "submission-fixture-complete:assistant",
+            "text": "",
+            "turn_id": "submission-fixture-complete"
+          },
+          "type": "created"
+        }
+      },
+      "revision": 3,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 12
+      },
+      "event": {
+        "part": {
+          "id": "submission-fixture-complete:assistant:5",
+          "is_complete": false,
+          "kind": "text",
+          "message_id": "submission-fixture-complete:assistant",
+          "text": "A provisional answer that must be replaced before the tool round.",
+          "turn_id": "submission-fixture-complete"
+        },
+        "projection_revision": 4,
+        "turn_id": "submission-fixture-complete",
+        "type": "part_updated",
+        "update": {
+          "delta": "A provisional answer that must be replaced before the tool round.",
+          "part_id": "submission-fixture-complete:assistant:5",
+          "type": "text_delta"
+        }
+      },
+      "revision": 3,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 13
+      },
+      "event": {
+        "part": {
+          "detail": "A provisional answer that must be replaced before the tool round.",
+          "id": "submission-fixture-complete:assistant:5:process",
+          "is_complete": false,
+          "kind": "reasoning",
+          "message_id": "submission-fixture-complete:assistant",
+          "title": "thinking",
+          "turn_id": "submission-fixture-complete"
+        },
+        "projection_revision": 6,
+        "turn_id": "submission-fixture-complete",
+        "type": "part_updated",
+        "update": {
+          "part": {
+            "detail": "A provisional answer that must be replaced before the tool round.",
+            "id": "submission-fixture-complete:assistant:5:process",
+            "is_complete": false,
+            "kind": "reasoning",
+            "message_id": "submission-fixture-complete:assistant",
+            "title": "thinking",
+            "turn_id": "submission-fixture-complete"
+          },
+          "type": "created"
+        }
+      },
+      "revision": 4,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 14
+      },
+      "event": {
+        "part": {
+          "id": "submission-fixture-complete:assistant:5",
+          "is_complete": true,
+          "kind": "text",
+          "message_id": "submission-fixture-complete:assistant",
+          "text": "",
+          "turn_id": "submission-fixture-complete"
+        },
+        "projection_revision": 6,
+        "turn_id": "submission-fixture-complete",
+        "type": "part_updated",
+        "update": {
+          "is_complete": true,
+          "part_id": "submission-fixture-complete:assistant:5",
+          "text": "",
+          "type": "text_replaced"
+        }
+      },
+      "revision": 4,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 15
+      },
+      "event": {
+        "part": {
+          "detail": "Inspect the available evidence before answering.",
+          "id": "submission-fixture-complete:reasoning:6",
+          "is_complete": false,
+          "kind": "reasoning",
+          "message_id": "submission-fixture-complete:assistant",
+          "title": "Inspect evidence",
+          "turn_id": "submission-fixture-complete"
+        },
+        "projection_revision": 8,
+        "turn_id": "submission-fixture-complete",
+        "type": "part_updated",
+        "update": {
+          "detail_delta": "",
+          "part_id": "submission-fixture-complete:reasoning:6",
+          "title": "Inspect evidence",
+          "type": "reasoning_delta"
+        }
+      },
+      "revision": 4,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 16
+      },
+      "event": {
+        "part": {
+          "detail": "Inspect the available evidence before answering.",
+          "id": "submission-fixture-complete:reasoning:6",
+          "is_complete": true,
+          "kind": "reasoning",
+          "message_id": "submission-fixture-complete:assistant",
+          "title": "Inspect evidence",
+          "turn_id": "submission-fixture-complete"
+        },
+        "projection_revision": 8,
+        "turn_id": "submission-fixture-complete",
+        "type": "part_updated",
+        "update": {
+          "part_id": "submission-fixture-complete:reasoning:6",
+          "type": "completed"
+        }
+      },
+      "revision": 4,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 17
+      },
+      "event": {
+        "part": {
+          "artifacts": [],
+          "call_id": "call-fixture-search",
+          "capability_id": "web_search",
+          "finished_at_ms": null,
+          "full_output_ref": null,
+          "id": "tool:submission-fixture-complete:tool_call:9",
+          "input": {
+            "query": "Nola Agent Core contract"
+          },
+          "execution_source": {"kind": "model"},
+          "kind": "tool",
+          "message_id": "submission-fixture-complete:assistant",
+          "origin": {
+            "kind": "unknown"
+          },
+          "output_preview": null,
+          "permission": null,
+          "raw_input": "",
+          "started_at_ms": null,
+          "state": "pending",
+          "summary": null,
+          "title": "web_search",
+          "turn_id": "submission-fixture-complete"
+        },
+        "projection_revision": 9,
+        "turn_id": "submission-fixture-complete",
+        "type": "part_updated",
+        "update": {
+          "part": {
+            "artifacts": [],
+            "call_id": "call-fixture-search",
+            "capability_id": "web_search",
+            "finished_at_ms": null,
+            "full_output_ref": null,
+            "id": "tool:submission-fixture-complete:tool_call:9",
+            "input": {
+              "query": "Nola Agent Core contract"
+            },
+            "execution_source": {"kind": "model"},
+            "kind": "tool",
+            "message_id": "submission-fixture-complete:assistant",
+            "origin": {
+              "kind": "unknown"
+            },
+            "output_preview": null,
+            "permission": null,
+            "raw_input": "",
+            "started_at_ms": null,
+            "state": "pending",
+            "summary": null,
+            "title": "web_search",
+            "turn_id": "submission-fixture-complete"
+          },
+          "type": "created"
+        }
+      },
+      "revision": 4,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 18
+      },
+      "event": {
+        "part": {
+          "artifacts": [],
+          "call_id": "call-fixture-search",
+          "capability_id": "web_search",
+          "finished_at_ms": null,
+          "full_output_ref": null,
+          "id": "tool:submission-fixture-complete:tool_call:9",
+          "input": {
+            "query": "Nola Agent Core contract"
+          },
+          "execution_source": {"kind": "model"},
+          "kind": "tool",
+          "message_id": "submission-fixture-complete:assistant",
+          "origin": {
+            "kind": "unknown"
+          },
+          "output_preview": null,
+          "permission": {
+            "decision": null,
+            "permission_domain": "network.read",
+            "rationale": "web_search requests network.read access to {\"query\":\"Nola Agent Core contract\"}",
+            "request_id": "session-part-lifecycle-v1:permission:10"
+          },
+          "raw_input": "{\"query\":\"Nola Agent Core contract\"}",
+          "started_at_ms": null,
+          "state": "waiting_for_permission",
+          "summary": null,
+          "title": "web_search",
+          "turn_id": "submission-fixture-complete"
+        },
+        "projection_revision": 10,
+        "turn_id": "submission-fixture-complete",
+        "type": "part_updated",
+        "update": {
+          "part_id": "tool:submission-fixture-complete:tool_call:9",
+          "permission": {
+            "decision": null,
+            "permission_domain": "network.read",
+            "rationale": "web_search requests network.read access to {\"query\":\"Nola Agent Core contract\"}",
+            "request_id": "session-part-lifecycle-v1:permission:10"
+          },
+          "type": "tool_permission"
+        }
+      },
+      "revision": 4,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 19
+      },
+      "event": {
+        "context_usage": {
+          "cache_write_input_tokens": 0,
+          "cache_write_input_tokens_reported": false,
+          "cached_input_tokens": 0,
+          "cached_input_tokens_reported": false,
+          "context_window_tokens": 128000,
+          "prompt_token_limit": 119808,
+          "usage_is_estimated": false,
+          "usage_percent": 0.09375,
+          "used_tokens": 120
+        },
+        "context_window_tokens": 128000,
+        "measurement": {
+          "attempt_id": null,
+          "context_generation": 0,
+          "request_id": "submission-fixture-complete:host_request:8"
+        },
+        "prompt_cache_measurement": null,
+        "type": "context_updated",
+        "usage_is_estimated": false,
+        "usage_percent": 0.09375,
+        "used_tokens": 120
+      },
+      "revision": 4,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": null
+    },
+    {
+      "cursor": {
+        "sequence": 20
+      },
+      "event": {
+        "part": {
+          "detail": "A provisional answer that must be replaced before the tool round.",
+          "id": "submission-fixture-complete:assistant:5:process",
+          "is_complete": true,
+          "kind": "reasoning",
+          "message_id": "submission-fixture-complete:assistant",
+          "title": "thinking",
+          "turn_id": "submission-fixture-complete"
+        },
+        "projection_revision": 11,
+        "turn_id": "submission-fixture-complete",
+        "type": "part_updated",
+        "update": {
+          "part_id": "submission-fixture-complete:assistant:5:process",
+          "type": "completed"
+        }
+      },
+      "revision": 4,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 21
+      },
+      "event": {
+        "receipt": {
+          "call_id": "call-fixture-search",
+          "capability_id": "web_search",
+          "outcome": {
+            "decision": "allow_once",
+            "type": "authorization"
+          },
+          "request_id": "session-part-lifecycle-v1:permission:10",
+          "resource": "{\"query\":\"Nola Agent Core contract\"}",
+          "turn_id": "submission-fixture-complete"
+        },
+        "type": "permission_settled"
+      },
+      "revision": 5,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 22
+      },
+      "event": {
+        "part": {
+          "artifacts": [],
+          "call_id": "call-fixture-search",
+          "capability_id": "web_search",
+          "finished_at_ms": null,
+          "full_output_ref": null,
+          "id": "tool:submission-fixture-complete:tool_call:9",
+          "input": {
+            "query": "Nola Agent Core contract"
+          },
+          "execution_source": {"kind": "model"},
+          "kind": "tool",
+          "message_id": "submission-fixture-complete:assistant",
+          "origin": {
+            "kind": "unknown"
+          },
+          "output_preview": null,
+          "permission": {
+            "decision": "allow_once",
+            "permission_domain": "network.read",
+            "rationale": "web_search requests network.read access to {\"query\":\"Nola Agent Core contract\"}",
+            "request_id": "session-part-lifecycle-v1:permission:10"
+          },
+          "raw_input": "{\"query\":\"Nola Agent Core contract\"}",
+          "started_at_ms": null,
+          "state": "waiting_for_permission",
+          "summary": null,
+          "title": "web_search",
+          "turn_id": "submission-fixture-complete"
+        },
+        "projection_revision": 12,
+        "turn_id": "submission-fixture-complete",
+        "type": "part_updated",
+        "update": {
+          "part_id": "tool:submission-fixture-complete:tool_call:9",
+          "permission": {
+            "decision": "allow_once",
+            "permission_domain": "network.read",
+            "rationale": "web_search requests network.read access to {\"query\":\"Nola Agent Core contract\"}",
+            "request_id": "session-part-lifecycle-v1:permission:10"
+          },
+          "type": "tool_permission"
+        }
+      },
+      "revision": 5,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 23
+      },
+      "event": {
+        "part": {
+          "artifacts": [],
+          "call_id": "call-fixture-search",
+          "capability_id": "web_search",
+          "finished_at_ms": null,
+          "full_output_ref": null,
+          "id": "tool:submission-fixture-complete:tool_call:9",
+          "input": {
+            "query": "Nola Agent Core contract"
+          },
+          "execution_source": {"kind": "model"},
+          "kind": "tool",
+          "message_id": "submission-fixture-complete:assistant",
+          "origin": {
+            "kind": "unknown"
+          },
+          "output_preview": null,
+          "permission": {
+            "decision": "allow_once",
+            "permission_domain": "network.read",
+            "rationale": "web_search requests network.read access to {\"query\":\"Nola Agent Core contract\"}",
+            "request_id": "session-part-lifecycle-v1:permission:10"
+          },
+          "raw_input": "{\"query\":\"Nola Agent Core contract\"}",
+          "started_at_ms": 1700000000020,
+          "state": "running",
+          "summary": null,
+          "title": "web_search",
+          "turn_id": "submission-fixture-complete"
+        },
+        "projection_revision": 13,
+        "turn_id": "submission-fixture-complete",
+        "type": "part_updated",
+        "update": {
+          "artifacts": [],
+          "full_output_ref": null,
+          "output_preview": null,
+          "part_id": "tool:submission-fixture-complete:tool_call:9",
+          "state": "running",
+          "summary": null,
+          "timestamp_ms": 1700000000020,
+          "title": "web_search",
+          "type": "tool_state"
+        }
+      },
+      "revision": 5,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 24
+      },
+      "event": {
+        "detail": "Nola Agent Core contract",
+        "effect_id": "submission-fixture-complete:host_effect:13",
+        "metadata": {
+          "phase": "retrieval"
+        },
+        "title": "Searching",
+        "turn_id": "submission-fixture-complete",
+        "type": "host_progress"
+      },
+      "revision": 6,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 25
+      },
+      "event": {
+        "evidence": {
+          "call_id": "call-fixture-search",
+          "evidence_id": "submission-fixture-complete:execution_evidence:15",
+          "outcome": "succeeded",
+          "receipt": null,
+          "source": {
+            "attempt_id": null,
+            "availability_epoch": "1",
+            "catalog_revision": "1",
+            "effect_id": "submission-fixture-complete:host_effect:13",
+            "host_id": "canonical-fixture-host",
+            "request_id": "submission-fixture-complete:host_request:14",
+            "response_sequence": "2"
+          },
+          "tool_name": "web_search"
+        },
+        "turn_id": "submission-fixture-complete",
+        "type": "execution_evidence_observed"
+      },
+      "revision": 7,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 26
+      },
+      "event": {
+        "part": {
+          "artifacts": [],
+          "call_id": "call-fixture-search",
+          "capability_id": "web_search",
+          "finished_at_ms": 1700000000024,
+          "full_output_ref": null,
+          "id": "tool:submission-fixture-complete:tool_call:9",
+          "input": {
+            "query": "Nola Agent Core contract"
+          },
+          "execution_source": {"kind": "model"},
+          "kind": "tool",
+          "message_id": "submission-fixture-complete:assistant",
+          "origin": {
+            "kind": "unknown"
+          },
+          "output_preview": "{\n  \"results\": [\n    {\n      \"snippet\": \"Core owns stable Part identity and terminal lifecycle.\",\n      \"title\": \"Agent Core contract\",\n      \"url\": \"https://example.com/nola/core-contract/\"\n    }\n  ]\n}",
+          "permission": {
+            "decision": "allow_once",
+            "permission_domain": "network.read",
+            "rationale": "web_search requests network.read access to {\"query\":\"Nola Agent Core contract\"}",
+            "request_id": "session-part-lifecycle-v1:permission:10"
+          },
+          "raw_input": "{\"query\":\"Nola Agent Core contract\"}",
+          "started_at_ms": 1700000000020,
+          "state": "completed",
+          "structured_output": {
+            "results": [
+              {
+                "snippet": "Core owns stable Part identity and terminal lifecycle.",
+                "title": "Agent Core contract",
+                "url": "https://example.com/nola/core-contract/"
+              }
+            ]
+          },
+          "summary": null,
+          "title": "web_search",
+          "turn_id": "submission-fixture-complete"
+        },
+        "projection_revision": 16,
+        "turn_id": "submission-fixture-complete",
+        "type": "part_updated",
+        "update": {
+          "artifacts": [],
+          "full_output_ref": null,
+          "output_preview": "{\n  \"results\": [\n    {\n      \"snippet\": \"Core owns stable Part identity and terminal lifecycle.\",\n      \"title\": \"Agent Core contract\",\n      \"url\": \"https://example.com/nola/core-contract/\"\n    }\n  ]\n}",
+          "part_id": "tool:submission-fixture-complete:tool_call:9",
+          "state": "completed",
+          "structured_output": {
+            "results": [
+              {
+                "snippet": "Core owns stable Part identity and terminal lifecycle.",
+                "title": "Agent Core contract",
+                "url": "https://example.com/nola/core-contract/"
+              }
+            ]
+          },
+          "summary": null,
+          "timestamp_ms": 1700000000024,
+          "title": "web_search",
+          "type": "tool_state"
+        }
+      },
+      "revision": 7,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 27
+      },
+      "event": {
+        "part": {
+          "id": "source_02f048b12fa10f3cf4a6961a",
+          "kind": "source",
+          "message_id": "submission-fixture-complete:assistant",
+          "mime_type": null,
+          "source_id": "source_2b081ea43bc803737b68c63b",
+          "title": "Agent Core contract",
+          "turn_id": "submission-fixture-complete",
+          "uri": "https://example.com/nola/core-contract"
+        },
+        "projection_revision": 16,
+        "turn_id": "submission-fixture-complete",
+        "type": "part_updated",
+        "update": {
+          "part": {
+            "id": "source_02f048b12fa10f3cf4a6961a",
+            "kind": "source",
+            "message_id": "submission-fixture-complete:assistant",
+            "mime_type": null,
+            "source_id": "source_2b081ea43bc803737b68c63b",
+            "title": "Agent Core contract",
+            "turn_id": "submission-fixture-complete",
+            "uri": "https://example.com/nola/core-contract"
+          },
+          "type": "created"
+        }
+      },
+      "revision": 7,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 28
+      },
+      "event": {
+        "part": {
+          "citation_id": "citation_dc504a5c9f7b9729c1d07fbc",
+          "id": "citation_9789bf9cd44f953b2652e452",
+          "kind": "citation",
+          "location": null,
+          "message_id": "submission-fixture-complete:assistant",
+          "mime_type": null,
+          "origin_tool_call_id": "call-fixture-search",
+          "range": null,
+          "source_id": "source_2b081ea43bc803737b68c63b",
+          "title": "Agent Core contract",
+          "turn_id": "submission-fixture-complete",
+          "uri": "https://example.com/nola/core-contract"
+        },
+        "projection_revision": 16,
+        "turn_id": "submission-fixture-complete",
+        "type": "part_updated",
+        "update": {
+          "part": {
+            "citation_id": "citation_dc504a5c9f7b9729c1d07fbc",
+            "id": "citation_9789bf9cd44f953b2652e452",
+            "kind": "citation",
+            "location": null,
+            "message_id": "submission-fixture-complete:assistant",
+            "mime_type": null,
+            "origin_tool_call_id": "call-fixture-search",
+            "range": null,
+            "source_id": "source_2b081ea43bc803737b68c63b",
+            "title": "Agent Core contract",
+            "turn_id": "submission-fixture-complete",
+            "uri": "https://example.com/nola/core-contract"
+          },
+          "type": "created"
+        }
+      },
+      "revision": 7,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 29
+      },
+      "event": {
+        "state": {
+          "catalog_admission_recovery": false,
+          "catalog_failure_batch": null,
+          "continuation_tool": null,
+          "correction_count": 0,
+          "correction_count_since_progress": 0,
+          "direct_execution_completed": true,
+          "exact_mutation_decisions": 0,
+          "expected_artifact_resources": [],
+          "investigated_resources_since_progress": [],
+          "investigation_count_since_mutation": 0,
+          "investigation_evidence": {},
+          "investigation_families_since_progress": {},
+          "investigation_signature_resources": {},
+          "investigation_signatures_since_mutation": [],
+          "investigation_stage_exit_required": false,
+          "last_exact_mutation_batch": null,
+          "last_failure": null,
+          "last_failure_signature": null,
+          "last_failure_tool": null,
+          "last_mutation_sample": null,
+          "model_tool_batch": 1,
+          "mutated_expected_artifact_resources": [],
+          "mutation_count": 0,
+          "mutation_streak": 0,
+          "no_progress_recovery": {
+            "state": "inactive"
+          },
+          "pending_validation_resources": [],
+          "pending_validation_versions": {},
+          "phase": "diagnosing",
+          "recent_activity": [
+            {
+              "effect": "execute",
+              "resources": [],
+              "skipped": false,
+              "succeeded": true,
+              "tool": "web_search"
+            }
+          ],
+          "recovery_purpose": null,
+          "recovery_required": false,
+          "recovery_tool": null,
+          "repeated_failure_count": 0,
+          "scratch_mutation_count": 0,
+          "similar_mutation_streak": 0,
+          "skill_validation_required": false,
+          "strategy_recovery": {
+            "model_requests": [],
+            "observation_dependencies": {},
+            "observation_witnesses": {},
+            "rejected_calls": {},
+            "resource_generations": {}
+          },
+          "unscoped_mutation_count": 0,
+          "validated_expected_artifact_resources": [],
+          "validation_attempt_count": 0,
+          "validation_required": false
+        },
+        "turn_id": "submission-fixture-complete",
+        "type": "engineering_loop_updated"
+      },
+      "revision": 7,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 30
+      },
+      "event": {
+        "detail": null,
+        "effect_id": "submission-fixture-complete:model_request:17",
+        "metadata": null,
+        "title": "model_generation_started",
+        "turn_id": "submission-fixture-complete",
+        "type": "host_progress"
+      },
+      "revision": 7,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 31
+      },
+      "event": {
+        "context_usage": {
+          "cache_write_input_tokens": 0,
+          "cache_write_input_tokens_reported": false,
+          "cached_input_tokens": 0,
+          "cached_input_tokens_reported": false,
+          "context_window_tokens": 128000,
+          "prompt_token_limit": 119808,
+          "usage_is_estimated": true,
+          "usage_percent": 2.715625,
+          "used_tokens": 3476
+        },
+        "context_window_tokens": 128000,
+        "measurement": {
+          "attempt_id": null,
+          "context_generation": 0,
+          "request_id": "submission-fixture-complete:model_request:17"
+        },
+        "prompt_cache_measurement": null,
+        "type": "context_updated",
+        "usage_is_estimated": true,
+        "usage_percent": 2.715625,
+        "used_tokens": 3476
+      },
+      "revision": 7,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": null
+    },
+    {
+      "cursor": {
+        "sequence": 32
+      },
+      "event": {
+        "part": {
+          "id": "submission-fixture-complete:assistant:18",
+          "is_complete": false,
+          "kind": "text",
+          "message_id": "submission-fixture-complete:assistant",
+          "text": "",
+          "turn_id": "submission-fixture-complete"
+        },
+        "projection_revision": 18,
+        "turn_id": "submission-fixture-complete",
+        "type": "part_updated",
+        "update": {
+          "part": {
+            "id": "submission-fixture-complete:assistant:18",
+            "is_complete": false,
+            "kind": "text",
+            "message_id": "submission-fixture-complete:assistant",
+            "text": "",
+            "turn_id": "submission-fixture-complete"
+          },
+          "type": "created"
+        }
+      },
+      "revision": 8,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 33
+      },
+      "event": {
+        "part": {
+          "id": "submission-fixture-complete:assistant:18",
+          "is_complete": false,
+          "kind": "text",
+          "message_id": "submission-fixture-complete:assistant",
+          "text": "## Verified Result\n\n",
+          "turn_id": "submission-fixture-complete"
+        },
+        "projection_revision": 18,
+        "turn_id": "submission-fixture-complete",
+        "type": "part_updated",
+        "update": {
+          "delta": "## Verified Result\n\n",
+          "part_id": "submission-fixture-complete:assistant:18",
+          "type": "text_delta"
+        }
+      },
+      "revision": 8,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 34
+      },
+      "event": {
+        "part": {
+          "id": "submission-fixture-complete:assistant:18",
+          "is_complete": false,
+          "kind": "text",
+          "message_id": "submission-fixture-complete:assistant",
+          "text": "## Verified Result\n\nThe evidence confirms that Core owns stable Part identity, lifecycle, and citations.",
+          "turn_id": "submission-fixture-complete"
+        },
+        "projection_revision": 19,
+        "turn_id": "submission-fixture-complete",
+        "type": "part_updated",
+        "update": {
+          "delta": "The evidence confirms that Core owns stable Part identity, lifecycle, and citations.",
+          "part_id": "submission-fixture-complete:assistant:18",
+          "type": "text_delta"
+        }
+      },
+      "revision": 9,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 35
+      },
+      "event": {
+        "part": {
+          "id": "submission-fixture-complete:assistant:18",
+          "is_complete": true,
+          "kind": "text",
+          "message_id": "submission-fixture-complete:assistant",
+          "text": "## Verified Result\n\nThe evidence confirms that Core owns stable Part identity, lifecycle, and citations.",
+          "turn_id": "submission-fixture-complete"
+        },
+        "projection_revision": 20,
+        "turn_id": "submission-fixture-complete",
+        "type": "part_updated",
+        "update": {
+          "part_id": "submission-fixture-complete:assistant:18",
+          "type": "completed"
+        }
+      },
+      "revision": 10,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 36
+      },
+      "event": {
+        "decision": {
+          "applied_input_refs": [
+            {
+              "admission_id": "session-part-lifecycle-v1:input-admission:1",
+              "applied_sequence": "1",
+              "turn_id": "submission-fixture-complete"
+            }
+          ],
+          "evidence_frontier": "34",
+          "requirement_revision": "1",
+          "result_id": "submission-fixture-complete:run_result:22",
+          "scope_id": "submission-fixture-complete:requirement_scope:2",
+          "source": {
+            "attempt_id": null,
+            "call_id": null,
+            "effect_id": "submission-fixture-complete:host_effect:20",
+            "kind": "model",
+            "request_id": "submission-fixture-complete:host_request:21"
+          },
+          "value": {
+            "answer_part_refs": [
+              "submission-fixture-complete:assistant:18"
+            ],
+            "kind": "answered"
+          }
+        },
+        "turn_id": "submission-fixture-complete",
+        "type": "run_result_decided"
+      },
+      "revision": 10,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 37
+      },
+      "event": {
+        "outcome": "answered",
+        "session_id": "session-part-lifecycle-v1",
+        "turn_id": "submission-fixture-complete",
+        "type": "turn_completed"
+      },
+      "revision": 10,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 38
+      },
+      "event": {
+        "context_usage": {
+          "cache_write_input_tokens": 0,
+          "cache_write_input_tokens_reported": false,
+          "cached_input_tokens": 0,
+          "cached_input_tokens_reported": false,
+          "context_window_tokens": 128000,
+          "prompt_token_limit": 119808,
+          "usage_is_estimated": false,
+          "usage_percent": 0.1640625,
+          "used_tokens": 210
+        },
+        "context_window_tokens": 128000,
+        "measurement": {
+          "attempt_id": null,
+          "context_generation": 0,
+          "request_id": "submission-fixture-complete:host_request:21"
+        },
+        "prompt_cache_measurement": null,
+        "type": "context_updated",
+        "usage_is_estimated": false,
+        "usage_percent": 0.1640625,
+        "used_tokens": 210
+      },
+      "revision": 10,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": null
+    },
+    {
+      "cursor": {
+        "sequence": 39
+      },
+      "event": {
+        "admission": {
+          "accepted_sequence": 2,
+          "admission_id": "submission-fixture-complete:input-admission:23",
+          "anchor_turn_id": null,
+          "delivery": "current_turn",
+          "item_ids": [
+            "user-fixture-cancel"
+          ],
+          "origin": "interactive_user",
+          "payload_digest": "c929f7e2086dbdee00f5c700235438b9b2978ae678e09de6ee800f77c1f5828f",
+          "submission_id": "submission-fixture-cancel"
+        },
+        "type": "input_accepted"
+      },
+      "revision": 11,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": null
+    },
+    {
+      "cursor": {
+        "sequence": 40
+      },
+      "event": {
+        "assistant_message_id": "submission-fixture-cancel:assistant",
+        "session_id": "session-part-lifecycle-v1",
+        "turn_id": "submission-fixture-cancel",
+        "type": "turn_started"
+      },
+      "revision": 11,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-cancel"
+    },
+    {
+      "cursor": {
+        "sequence": 41
+      },
+      "event": {
+        "applications": [
+          {
+            "admission_id": "submission-fixture-complete:input-admission:23",
+            "applied_sequence": 1,
+            "destination_turn_id": "submission-fixture-cancel"
+          }
+        ],
+        "items": [
+          {
+            "content": "Start another answer, then cancel it.",
+            "id": "user-fixture-cancel",
+            "role": "user",
+            "type": "message"
+          }
+        ],
+        "turn_id": "submission-fixture-cancel",
+        "type": "input_applied"
+      },
+      "revision": 11,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-cancel"
+    },
+    {
+      "cursor": {
+        "sequence": 42
+      },
+      "event": {
+        "scope": {
+          "applied_input_refs": [
+            {
+              "admission_id": "submission-fixture-complete:input-admission:23",
+              "applied_sequence": "1",
+              "turn_id": "submission-fixture-cancel"
+            }
+          ],
+          "requirements": [
+            {
+              "dependency_ids": [],
+              "description": "Deliver the accepted input scope referenced by this requirement.",
+              "goal_requirement_ref": null,
+              "requirement_id": "submission-fixture-cancel:requirement:25",
+              "resource_scope": {
+                "kind": "undeclared"
+              },
+              "source_refs": [
+                "user-fixture-cancel"
+              ]
+            }
+          ],
+          "revision": "1",
+          "scope_id": "submission-fixture-cancel:requirement_scope:24",
+          "source": {
+            "code": "input_applied",
+            "kind": "runtime",
+            "source_refs": [
+              "submission-fixture-complete:input-admission:23"
+            ]
+          },
+          "source_input_refs": [
+            "user-fixture-cancel"
+          ]
+        },
+        "turn_id": "submission-fixture-cancel",
+        "type": "requirement_scope_changed"
+      },
+      "revision": 11,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-cancel"
+    },
+    {
+      "cursor": {
+        "sequence": 43
+      },
+      "event": {
+        "capability_projection": {
+          "available_capabilities": {
+            "host.cancel": {
+              "availability": "available",
+              "cancellation": "cooperative",
+              "exposure": "visible",
+              "id": "host.cancel",
+              "input_normalization": {
+                "effect": {
+                  "fixed": "execute",
+                  "schema_version": 1,
+                  "variants": {}
+                },
+                "execution_target": null,
+                "integer_maximums": {},
+                "origin": {
+                  "kind": "unknown"
+                },
+                "permission_contract": {
+                  "risk": "unknown"
+                },
+                "permission_resource": {
+                  "kind": "full_input"
+                },
+                "root_relative_patterns": [],
+                "transaction_boundary": "workspace"
+              },
+              "input_schema": {
+                "type": "object"
+              },
+              "output_policy": {
+                "allow_artifacts": true,
+                "persist_full_output": true,
+                "preview_char_limit": 4000
+              },
+              "parallelism": "serial",
+              "permission_domain": null,
+              "replay_safety": "recoverable",
+              "route": "tool",
+              "supports_argument_streaming": false,
+              "supports_streaming": false,
+              "title": "host.cancel"
+            },
+            "model.stream": {
+              "availability": "available",
+              "cancellation": "cooperative",
+              "exposure": "visible",
+              "id": "model.stream",
+              "input_normalization": {
+                "effect": {
+                  "fixed": "execute",
+                  "schema_version": 1,
+                  "variants": {}
+                },
+                "execution_target": null,
+                "integer_maximums": {},
+                "origin": {
+                  "kind": "unknown"
+                },
+                "permission_contract": {
+                  "risk": "unknown"
+                },
+                "permission_resource": {
+                  "kind": "full_input"
+                },
+                "root_relative_patterns": [],
+                "transaction_boundary": "workspace"
+              },
+              "input_schema": {
+                "type": "object"
+              },
+              "output_policy": {
+                "allow_artifacts": true,
+                "persist_full_output": true,
+                "preview_char_limit": 4000
+              },
+              "parallelism": "serial",
+              "permission_domain": null,
+              "replay_safety": "recoverable",
+              "route": "model",
+              "supports_argument_streaming": false,
+              "supports_streaming": true,
+              "title": "model.stream"
+            },
+            "permission.ask": {
+              "availability": "available",
+              "cancellation": "cooperative",
+              "exposure": "visible",
+              "id": "permission.ask",
+              "input_normalization": {
+                "effect": {
+                  "fixed": "execute",
+                  "schema_version": 1,
+                  "variants": {}
+                },
+                "execution_target": null,
+                "integer_maximums": {},
+                "origin": {
+                  "kind": "unknown"
+                },
+                "permission_contract": {
+                  "risk": "unknown"
+                },
+                "permission_resource": {
+                  "kind": "full_input"
+                },
+                "root_relative_patterns": [],
+                "transaction_boundary": "workspace"
+              },
+              "input_schema": {
+                "type": "object"
+              },
+              "output_policy": {
+                "allow_artifacts": true,
+                "persist_full_output": true,
+                "preview_char_limit": 4000
+              },
+              "parallelism": "serial",
+              "permission_domain": null,
+              "replay_safety": "recoverable",
+              "route": "permission",
+              "supports_argument_streaming": false,
+              "supports_streaming": false,
+              "title": "permission.ask"
+            },
+            "web_search": {
+              "availability": "available",
+              "cancellation": "cooperative",
+              "exposure": "visible",
+              "id": "web_search",
+              "input_normalization": {
+                "effect": {
+                  "fixed": "execute",
+                  "schema_version": 1,
+                  "variants": {}
+                },
+                "execution_target": null,
+                "integer_maximums": {},
+                "origin": {
+                  "kind": "unknown"
+                },
+                "permission_contract": {
+                  "risk": "unknown"
+                },
+                "permission_resource": {
+                  "kind": "full_input"
+                },
+                "root_relative_patterns": [],
+                "transaction_boundary": "workspace"
+              },
+              "input_schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "query": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "query"
+                ],
+                "type": "object"
+              },
+              "output_policy": {
+                "allow_artifacts": true,
+                "persist_full_output": true,
+                "preview_char_limit": 4000
+              },
+              "parallelism": "serial",
+              "permission_domain": "network.read",
+              "replay_safety": "recoverable",
+              "route": "tool",
+              "supports_argument_streaming": false,
+              "supports_streaming": false,
+              "title": "web_search"
+            }
+          },
+          "enabled": [
+            {
+              "capability_id": "web_search",
+              "descriptor": {
+                "availability": "available",
+                "cancellation": "cooperative",
+                "exposure": "visible",
+                "id": "web_search",
+                "input_normalization": {
+                  "effect": {
+                    "fixed": "execute",
+                    "schema_version": 1,
+                    "variants": {}
+                  },
+                  "execution_target": null,
+                  "integer_maximums": {},
+                  "origin": {
+                    "kind": "unknown"
+                  },
+                  "permission_contract": {
+                    "risk": "unknown"
+                  },
+                  "permission_resource": {
+                    "kind": "full_input"
+                  },
+                  "root_relative_patterns": [],
+                  "transaction_boundary": "workspace"
+                },
+                "input_schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "query": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "query"
+                  ],
+                  "type": "object"
+                },
+                "output_policy": {
+                  "allow_artifacts": true,
+                  "persist_full_output": true,
+                  "preview_char_limit": 4000
+                },
+                "parallelism": "serial",
+                "permission_domain": "network.read",
+                "replay_safety": "recoverable",
+                "route": "tool",
+                "supports_argument_streaming": false,
+                "supports_streaming": false,
+                "title": "web_search"
+              },
+              "model_definition": {
+                "function": {
+                  "description": "Return cited Web evidence.",
+                  "name": "web_search",
+                  "parameters": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "_nolaExecution": {
+                        "additionalProperties": false,
+                        "description": "Optional durable SOP execution lineage. Supply only when an active SOP context explicitly provides the exact runId and stepId for this concrete call. Never use a Skill id, Skill run alias, skill_update run_id, or guessed workflow name here; Skill execution is tracked separately. Omit this field when no active SOP supplies both identifiers.",
+                        "properties": {
+                          "sopRunId": {
+                            "description": "Exact durable SOP runId from the active SOP context; never a Skill id or Skill run alias.",
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "sopStepId": {
+                            "description": "Exact active SOP stepId paired with sopRunId; never infer it from Skill progress steps.",
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "sopRunId",
+                          "sopStepId"
+                        ],
+                        "type": "object"
+                      },
+                      "query": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "query"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "type": "function"
+              },
+              "model_schema_digest": "b4124d5bdba942471fa7a34887d23448430e214a6d1062edd517ae447703a1c9"
+            }
+          ],
+          "host_availability_epoch": 1,
+          "host_catalog_revision": 1,
+          "host_id": "canonical-fixture-host",
+          "model_schema_digest": "0213762f15ec1562573b495f25e22fe0ef583df4fa40d297e14e6901e129ddfb",
+          "projection_digest": "706392735301dcb29de13ff0fc7aebcbf124f8709166bd13b1543454ef32af04",
+          "schema_version": 2
+        },
+        "context_component_count": 0,
+        "context_item_count": 0,
+        "context_payload_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "context_window_tokens": 128000,
+        "host_availability_epoch": 1,
+        "host_catalog_revision": 1,
+        "host_id": "canonical-fixture-host",
+        "model": "fixture-model",
+        "prompt_token_limit": 119808,
+        "tool_count": 1,
+        "turn_id": "submission-fixture-cancel",
+        "type": "turn_context_captured"
+      },
+      "revision": 11,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": null
+    },
+    {
+      "cursor": {
+        "sequence": 44
+      },
+      "event": {
+        "detail": null,
+        "effect_id": "submission-fixture-cancel:model_request:26",
+        "metadata": null,
+        "title": "model_generation_started",
+        "turn_id": "submission-fixture-cancel",
+        "type": "host_progress"
+      },
+      "revision": 11,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-cancel"
+    },
+    {
+      "cursor": {
+        "sequence": 45
+      },
+      "event": {
+        "context_usage": {
+          "cache_write_input_tokens": 0,
+          "cache_write_input_tokens_reported": false,
+          "cached_input_tokens": 0,
+          "cached_input_tokens_reported": false,
+          "context_window_tokens": 128000,
+          "prompt_token_limit": 119808,
+          "usage_is_estimated": true,
+          "usage_percent": 2.7609375,
+          "used_tokens": 3534
+        },
+        "context_window_tokens": 128000,
+        "measurement": {
+          "attempt_id": null,
+          "context_generation": 0,
+          "request_id": "submission-fixture-cancel:model_request:26"
+        },
+        "prompt_cache_measurement": null,
+        "type": "context_updated",
+        "usage_is_estimated": true,
+        "usage_percent": 2.7609375,
+        "used_tokens": 3534
+      },
+      "revision": 11,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": null
+    },
+    {
+      "cursor": {
+        "sequence": 46
+      },
+      "event": {
+        "part": {
+          "id": "submission-fixture-cancel:assistant:27",
+          "is_complete": false,
+          "kind": "text",
+          "message_id": "submission-fixture-cancel:assistant",
+          "text": "",
+          "turn_id": "submission-fixture-cancel"
+        },
+        "projection_revision": 22,
+        "turn_id": "submission-fixture-cancel",
+        "type": "part_updated",
+        "update": {
+          "part": {
+            "id": "submission-fixture-cancel:assistant:27",
+            "is_complete": false,
+            "kind": "text",
+            "message_id": "submission-fixture-cancel:assistant",
+            "text": "",
+            "turn_id": "submission-fixture-cancel"
+          },
+          "type": "created"
+        }
+      },
+      "revision": 12,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-cancel"
+    },
+    {
+      "cursor": {
+        "sequence": 47
+      },
+      "event": {
+        "part": {
+          "id": "submission-fixture-cancel:assistant:27",
+          "is_complete": false,
+          "kind": "text",
+          "message_id": "submission-fixture-cancel:assistant",
+          "text": "This partial answer must remain attached to the cancelled Turn.",
+          "turn_id": "submission-fixture-cancel"
+        },
+        "projection_revision": 22,
+        "turn_id": "submission-fixture-cancel",
+        "type": "part_updated",
+        "update": {
+          "delta": "This partial answer must remain attached to the cancelled Turn.",
+          "part_id": "submission-fixture-cancel:assistant:27",
+          "type": "text_delta"
+        }
+      },
+      "revision": 12,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-cancel"
+    },
+    {
+      "cursor": {
+        "sequence": 48
+      },
+      "event": {
+        "fact": {
+          "fact_id": "submission-fixture-cancel:result_fact:31",
+          "kind": {
+            "cancellation_id": "test-cancellation",
+            "kind": "cancellation",
+            "reason": "canonical fixture cancellation"
+          }
+        },
+        "turn_id": "submission-fixture-cancel",
+        "type": "runtime_decision_fact_observed"
+      },
+      "revision": 13,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-cancel"
+    },
+    {
+      "cursor": {
+        "sequence": 49
+      },
+      "event": {
+        "part": {
+          "id": "submission-fixture-cancel:assistant:27",
+          "is_complete": true,
+          "kind": "text",
+          "message_id": "submission-fixture-cancel:assistant",
+          "text": "This partial answer must remain attached to the cancelled Turn.",
+          "turn_id": "submission-fixture-cancel"
+        },
+        "projection_revision": 23,
+        "turn_id": "submission-fixture-cancel",
+        "type": "part_updated",
+        "update": {
+          "part_id": "submission-fixture-cancel:assistant:27",
+          "type": "completed"
+        }
+      },
+      "revision": 14,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-cancel"
+    },
+    {
+      "cursor": {
+        "sequence": 50
+      },
+      "event": {
+        "reason": "canonical fixture cancellation",
+        "session_id": "session-part-lifecycle-v1",
+        "turn_id": "submission-fixture-cancel",
+        "type": "turn_cancelled"
+      },
+      "revision": 14,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-cancel"
+    },
+    {
+      "cursor": {
+        "sequence": 51
+      },
+      "event": {
+        "decision": {
+          "applied_input_refs": [
+            {
+              "admission_id": "submission-fixture-complete:input-admission:23",
+              "applied_sequence": "1",
+              "turn_id": "submission-fixture-cancel"
+            }
+          ],
+          "evidence_frontier": "48",
+          "requirement_revision": "1",
+          "result_id": "submission-fixture-cancel:run_result:34",
+          "scope_id": "submission-fixture-cancel:requirement_scope:24",
+          "source": {
+            "code": "terminal_boundary",
+            "kind": "runtime",
+            "source_refs": [
+              "submission-fixture-cancel:result_fact:31"
+            ]
+          },
+          "value": {
+            "cancellation_id": "test-cancellation",
+            "kind": "cancelled",
+            "observed_effect_refs": [],
+            "unknown_effect_refs": []
+          }
+        },
+        "turn_id": "submission-fixture-cancel",
+        "type": "run_result_decided"
+      },
+      "revision": 14,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-cancel"
+    }
+  ],
+  "fixture_id": "canonical-part-lifecycle-v1",
+  "generated_by": "nola_core::agent::AgentCore",
+  "late_response_probe": {
+    "outcome": {
+      "accepted_as_noop": false,
+      "emitted_event_count": 0
+    },
+    "response": {
+      "availability_epoch": 1,
+      "catalog_revision": 1,
+      "effect_id": "submission-fixture-cancel:host_effect:29",
+      "host_id": "canonical-fixture-host",
+      "lease_id": null,
+      "payload": {
+        "channel": "text",
+        "delta": "LATE CONTENT MUST NOT APPEAR",
+        "part_id": "submission-fixture-cancel:assistant:27",
+        "type": "model_delta"
+      },
+      "request_id": "submission-fixture-cancel:host_request:30",
+      "sequence": 2,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-cancel"
+    },
+    "snapshot_unchanged": true
+  },
+  "latest_projection_revision_by_part": {
+    "citation_9789bf9cd44f953b2652e452": 16,
+    "source_02f048b12fa10f3cf4a6961a": 16,
+    "submission-fixture-cancel:assistant:27": 23,
+    "submission-fixture-complete:assistant:18": 20,
+    "submission-fixture-complete:assistant:5": 6,
+    "submission-fixture-complete:assistant:5:process": 11,
+    "submission-fixture-complete:reasoning:6": 8,
+    "tool:submission-fixture-complete:tool_call:9": 16
+  },
+  "part_order": [
+    "submission-fixture-complete:reasoning:6",
+    "submission-fixture-complete:assistant:5",
+    "submission-fixture-complete:assistant:5:process",
+    "tool:submission-fixture-complete:tool_call:9",
+    "source_02f048b12fa10f3cf4a6961a",
+    "citation_9789bf9cd44f953b2652e452",
+    "submission-fixture-complete:assistant:18",
+    "submission-fixture-cancel:assistant:27"
+  ],
+  "schema_version": 1,
+  "script": [
+    "submit user input and create assistant shell",
+    "stream reasoning",
+    "complete model round with permission-gated web_search",
+    "allow once and run tool with progress",
+    "complete tool and project source/citation",
+    "replace the tool-round preamble and stream the canonical answer",
+    "complete Turn",
+    "start second Turn and stream partial text",
+    "interrupt and acknowledge cancellation",
+    "submit late model delta and prove no mutation"
+  ]
+}

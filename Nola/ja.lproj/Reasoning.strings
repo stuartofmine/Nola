@@ -1,0 +1,10 @@
+// SPDX-License-Identifier: Apache-2.0
+"reasoning.effort.title" = "思考の強さ";
+"reasoning.effort.automatic" = "プロバイダーの既定値";
+"reasoning.effort.none" = "なし";
+"reasoning.effort.minimal" = "最小";
+"reasoning.effort.low" = "低";
+"reasoning.effort.medium" = "中";
+"reasoning.effort.high" = "高";
+"reasoning.effort.xhigh" = "非常に高い";
+"reasoning.effort.max" = "最大";

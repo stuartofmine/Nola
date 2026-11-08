@@ -1,0 +1,4093 @@
+{
+  "clock": "std::time::Instant; same process",
+  "concurrency": 1,
+  "failures": [],
+  "profile": "cargo-test-dev",
+  "provider": "not called; injected Host envelopes",
+  "recovery": "second connection, not process restart",
+  "samples": [
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "17637291",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 0,
+      "stage": "fresh_database_open"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "91234291",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 0,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1708083",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 0,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "44897125",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 0,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "47214458",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 0,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "48015250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 0,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "2058542",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 0,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "81542",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 0,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "2885375",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 0,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "14935042",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 1,
+      "stage": "fresh_database_open"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "62262875",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 1,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1327084",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 1,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "42394625",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 1,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "44435625",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 1,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "49913042",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 1,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1982000",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 1,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "76167",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 1,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1790500",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 1,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "14706459",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 2,
+      "stage": "fresh_database_open"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "64578666",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 2,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1376250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 2,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "47332625",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 2,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "47399666",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 2,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "48937208",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 2,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "2015792",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 2,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "82584",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 2,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1809084",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 2,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "15266917",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 3,
+      "stage": "fresh_database_open"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "56898125",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 3,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1239792",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 3,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "35490250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 3,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "42436875",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 3,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "47057791",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 3,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "2018875",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 3,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "84250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 3,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1803334",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 3,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "14629875",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 4,
+      "stage": "fresh_database_open"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "63130667",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 4,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1449000",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 4,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "44023542",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 4,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "47324333",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 4,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "45135000",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 4,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "2039292",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 4,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "90791",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 4,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1831666",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 4,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "15820792",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 5,
+      "stage": "fresh_database_open"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "61882958",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 5,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1422792",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 5,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "43492083",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 5,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "45210583",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 5,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "48866917",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 5,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "2028209",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 5,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "87000",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 5,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1856542",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 5,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "15897750",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 6,
+      "stage": "fresh_database_open"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "64148083",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 6,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1411875",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 6,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "46307458",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 6,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "45246459",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 6,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "45285166",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 6,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "2036167",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 6,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "85542",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 6,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1828166",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 6,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "17232625",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 7,
+      "stage": "fresh_database_open"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "63317459",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 7,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1440084",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 7,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "43278542",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 7,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "50310584",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 7,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "43797625",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 7,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "2007917",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 7,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "85125",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 7,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1822667",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 7,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "15458833",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 8,
+      "stage": "fresh_database_open"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "57747833",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 8,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1348000",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 8,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "44452958",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 8,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "45236375",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 8,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "49260792",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 8,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1980625",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 8,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "83125",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 8,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1807625",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 8,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "14976875",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 9,
+      "stage": "fresh_database_open"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "59038500",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 9,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1369333",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 9,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "48161833",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 9,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "45445584",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 9,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "48130042",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 9,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "2003459",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 9,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "86500",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 9,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1810917",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 9,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "15774375",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 10,
+      "stage": "fresh_database_open"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "61315708",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 10,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1446833",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 10,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "45193542",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 10,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "44377833",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 10,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "47067083",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 10,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "2013083",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 10,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "84042",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 10,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1820334",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 10,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "15028584",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 11,
+      "stage": "fresh_database_open"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "61070416",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 11,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1348208",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 11,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "44638209",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 11,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "40314416",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 11,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "47976375",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 11,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1984417",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 11,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "82625",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 11,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1800250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 11,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "14839333",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 12,
+      "stage": "fresh_database_open"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "63307167",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 12,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1420917",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 12,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "44249250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 12,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "45538292",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 12,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "47822792",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 12,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1981125",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 12,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "82625",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 12,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1795750",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 12,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "15013750",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 13,
+      "stage": "fresh_database_open"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "57071167",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 13,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1331625",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 13,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "37382500",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 13,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "40393333",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 13,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "47945792",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 13,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1975500",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 13,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "77375",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 13,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1769917",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 13,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "14895084",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 14,
+      "stage": "fresh_database_open"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "63243667",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 14,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1346750",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 14,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "44371333",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 14,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "45443167",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 14,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "46867084",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 14,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1977000",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 14,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "85750",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 14,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1869166",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 14,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "14843583",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 15,
+      "stage": "fresh_database_open"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "64256958",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 15,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1385375",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 15,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "44678459",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 15,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "44093708",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 15,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "51178917",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 15,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "2007916",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 15,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "84084",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 15,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1814541",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 15,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "15009083",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 16,
+      "stage": "fresh_database_open"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "59941708",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 16,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1302750",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 16,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "43401083",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 16,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "46404709",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 16,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "44900875",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 16,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1951125",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 16,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "82417",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 16,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1793125",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 16,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "14925208",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 17,
+      "stage": "fresh_database_open"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "62981292",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 17,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1321542",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 17,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "45505667",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 17,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "44127125",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 17,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "46091584",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 17,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1984000",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 17,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "78583",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 17,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1788666",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 17,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "15110625",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 18,
+      "stage": "fresh_database_open"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "60891750",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 18,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1396959",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 18,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "43299333",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 18,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "44428250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 18,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "48001041",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 18,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1994250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 18,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "78291",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 18,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1783000",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 18,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "14940125",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 19,
+      "stage": "fresh_database_open"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "62011375",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 19,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1321625",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 19,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "44273875",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 19,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "46281500",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 19,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "46265333",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 19,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1998500",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 19,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "83834",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 19,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1825833",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 19,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "15485083",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 20,
+      "stage": "fresh_database_open"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "55300791",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 20,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1283250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 20,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "38514625",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 20,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "46477709",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 20,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "43998416",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 20,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "2042875",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 20,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "82917",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 20,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1875458",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 20,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "15609791",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 21,
+      "stage": "fresh_database_open"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "58304667",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 21,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1398542",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 21,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "40297542",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 21,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "40167375",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 21,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "43985500",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 21,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1987917",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 21,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "87083",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 21,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1850417",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 21,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "15066292",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 22,
+      "stage": "fresh_database_open"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "57202167",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 22,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1396292",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 22,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "40210084",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 22,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "40239167",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 22,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "39071209",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 22,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1996750",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 22,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "78708",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 22,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1829750",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 22,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "15449667",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 23,
+      "stage": "fresh_database_open"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "51642750",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 23,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1383208",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 23,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "40100416",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 23,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "42579166",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 23,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "42143792",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 23,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "2000916",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 23,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "88125",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 23,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1847625",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 23,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "15722500",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 24,
+      "stage": "fresh_database_open"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "58179583",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 24,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1347250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 24,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "39179000",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 24,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "36360792",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 24,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "40882709",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 24,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "2087167",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 24,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "85292",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 24,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1837667",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 24,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "15546541",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 25,
+      "stage": "fresh_database_open"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "57756500",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 25,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1315542",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 25,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "44346875",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 25,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "43249833",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 25,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "42193833",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 25,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1997166",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 25,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "79166",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 25,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1819042",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 25,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "15384583",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 26,
+      "stage": "fresh_database_open"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "58703167",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 26,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1476250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 26,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "42141416",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 26,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "38176959",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 26,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "40211084",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 26,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "2008209",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 26,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "84334",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 26,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1827250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 26,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "15669041",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 27,
+      "stage": "fresh_database_open"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "55258291",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 27,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1319500",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 27,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "43572292",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 27,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "43213417",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 27,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "45137791",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 27,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "2023084",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 27,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "83542",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 27,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1829167",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 27,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "16308208",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 28,
+      "stage": "fresh_database_open"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "57511042",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 28,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1285667",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 28,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "41412333",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 28,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "42317416",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 28,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "42996208",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 28,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "2206250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 28,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "90708",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 28,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "2008917",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 28,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "16048250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 29,
+      "stage": "fresh_database_open"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "58349833",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 29,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1387709",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 29,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "36465083",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 29,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "40316250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 29,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "43851333",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 29,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "2109958",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 29,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "89583",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 29,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "fresh_database",
+      "elapsed_ns": "1907000",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 29,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "59570167",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 0,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1426208",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 0,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "36312500",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 0,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "39353917",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 0,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "42975875",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 0,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2154417",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 0,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "89250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 0,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1942458",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 0,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "47033916",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 1,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1346792",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 1,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "39372958",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 1,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "39332916",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 1,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "51147750",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 1,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2208375",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 1,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "98958",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 1,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2017167",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 1,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "57798959",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 2,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1317375",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 2,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "36512500",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 2,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "42082542",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 2,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "44159875",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 2,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2145666",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 2,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "89166",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 2,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1885417",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 2,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "52162167",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 3,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1354583",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 3,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "42406667",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 3,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "40326625",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 3,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "42107458",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 3,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2240458",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 3,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "93333",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 3,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1942667",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 3,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "50733125",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 4,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1443542",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 4,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "40504417",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 4,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "41168000",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 4,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "44098375",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 4,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2343375",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 4,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "87291",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 4,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1942500",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 4,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "47817417",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 5,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1368917",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 5,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "40431166",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 5,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "45406208",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 5,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "45803459",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 5,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2449292",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 5,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "100917",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 5,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2044917",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 5,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "48572375",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 6,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1380750",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 6,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "39656500",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 6,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "41139250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 6,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "47126125",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 6,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2445834",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 6,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "101625",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 6,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2006750",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 6,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "52390459",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 7,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1358000",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 7,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "41568500",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 7,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "41454583",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 7,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "41820834",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 7,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2533959",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 7,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "95459",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 7,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1996958",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 7,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "49864583",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 8,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1377917",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 8,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "39939958",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 8,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "42418584",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 8,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "46317125",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 8,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2616084",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 8,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "108833",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 8,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2142000",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 8,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "55161834",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 9,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1359292",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 9,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "45174375",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 9,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "45479458",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 9,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "42447417",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 9,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2539041",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 9,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "98000",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 9,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1993292",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 9,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "50515584",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 10,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "3119666",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 10,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "38527917",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 10,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "40280083",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 10,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "43180250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 10,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2470250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 10,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "93709",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 10,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1986958",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 10,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "46714500",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 11,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1356500",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 11,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "38506250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 11,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "36141875",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 11,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "47961834",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 11,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2557541",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 11,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "99542",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 11,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2081541",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 11,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "51554500",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 12,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1383042",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 12,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "38378792",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 12,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "45422667",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 12,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "41933959",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 12,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2589000",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 12,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "93292",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 12,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2040708",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 12,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "49441666",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 13,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1413041",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 13,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "43182709",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 13,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "41301667",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 13,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "47060792",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 13,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2620792",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 13,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "91625",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 13,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1984834",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 13,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "49699208",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 14,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1369792",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 14,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "38250917",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 14,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "41322167",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 14,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "45101209",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 14,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2694084",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 14,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "101875",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 14,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2006042",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 14,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "48604958",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 15,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1371750",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 15,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "34132542",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 15,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "43550375",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 15,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "41993666",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 15,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2756958",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 15,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "94875",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 15,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2053166",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 15,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "47341625",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 16,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1369375",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 16,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "41360042",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 16,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "47186250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 16,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "44443125",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 16,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2798166",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 16,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "99000",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 16,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2020250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 16,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "54823208",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 17,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1455292",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 17,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "38399000",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 17,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "43271417",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 17,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "47499417",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 17,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "3127791",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 17,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "232542",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 17,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "3401042",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 17,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "68201625",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 18,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1429750",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 18,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "46749250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 18,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "54775791",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 18,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "55233166",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 18,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2918333",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 18,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "104042",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 18,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2032334",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 18,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "62376084",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 19,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2081708",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 19,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "55300125",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 19,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "59300250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 19,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "55729375",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 19,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "3974584",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 19,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "143292",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 19,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2355875",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 19,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "75560125",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 20,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "3971792",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 20,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "51605917",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 20,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "55642000",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 20,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "50899417",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 20,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "3295583",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 20,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "108000",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 20,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2016250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 20,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "55774917",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 21,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2445708",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 21,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "53253292",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 21,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "52325125",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 21,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "53247750",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 21,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "5607209",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 21,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "128250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 21,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2383250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 21,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "59416209",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 22,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1779834",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 22,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "53857334",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 22,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "44460417",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 22,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "49968375",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 22,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "3170208",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 22,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "103875",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 22,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2069375",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 22,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "58024042",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 23,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "3148083",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 23,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "48243125",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 23,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "53779167",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 23,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "54605042",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 23,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "4983292",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 23,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "137667",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 23,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2724500",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 23,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "74008250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 24,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2113041",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 24,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "46218458",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 24,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "43722000",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 24,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "51751208",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 24,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "3211083",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 24,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "101250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 24,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2028291",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 24,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "54827875",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 25,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1595042",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 25,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "44164083",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 25,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "50126792",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 25,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "53126042",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 25,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "3332458",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 25,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "125333",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 25,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "2362959",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 25,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "65376000",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 26,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1709250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 26,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "55524917",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 26,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "52108250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 26,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "46851333",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 26,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "3011042",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 26,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "90292",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 26,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1832541",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 26,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "51224000",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 27,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1298833",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 27,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "40353500",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 27,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "44434166",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 27,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "53796625",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 27,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "3230458",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 27,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "99834",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 27,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1968541",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 27,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "57160083",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 28,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1591250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 28,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "50241375",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 28,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "55375250",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 28,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "55919417",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 28,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "3261750",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 28,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "82500",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 28,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1800583",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 28,
+      "stage": "recovered_session_projection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "57047959",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 29,
+      "stage": "admission_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1208917",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 29,
+      "stage": "claim_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "45548416",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 29,
+      "stage": "execution_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "41465333",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 29,
+      "stage": "attempt_started_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "47932375",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 29,
+      "stage": "delta_1024b_receipt"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "3367292",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 29,
+      "stage": "reopen_connection"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "90458",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 29,
+      "stage": "recovered_journal_head"
+    },
+    {
+      "condition": "reused_database",
+      "elapsed_ns": "1873125",
+      "error": null,
+      "outcome": "succeeded",
+      "sample": 29,
+      "stage": "recovered_session_projection"
+    }
+  ],
+  "samples_per_condition": 30,
+  "scenario": "local-application-sqlite-v1",
+  "schema_version": 1
+}

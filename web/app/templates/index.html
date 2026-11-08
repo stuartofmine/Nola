@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% import "_icons.html" as icons %}
+
+{% block title %}{{ tr('page.index.title', 'Nola — 本地智能助理', 'Nola — Local Intelligent Assistant') }}{% endblock %}
+
+{% block content %}
+<section class="hero">
+    <span class="hero-eyebrow"><span class="dot"></span>{{ tr('page.index.hero.eyebrow.v2', '由本机 CLI Host 提供', 'Served by your local CLI host') }}</span>
+    <h1>{{ tr('page.index.hero_line1.v2', '让你的数据、工具和记忆，', 'Turn your data, tools, and memory') }}<br>{{ tr('page.index.hero_line2.v2', '成为持续进化的个人智能。', 'into intelligence that keeps improving.') }}</h1>
+    <p class="lead">{{ tr('page.index.hero.lead.v2', 'Nola 只连接你选择的上下文，展示每一步工具执行，并让长期记忆始终可检查、可编辑。', 'Nola connects only the context you choose, shows every tool action, and keeps long-term memory reviewable and editable.') }}</p>
+    <div class="hero-actions">
+        {% if logged_in %}
+        <a class="btn btn-primary btn-lg" href="/dashboard">{{ tr('page.index.cta.dashboard', '进入仪表板', 'Open dashboard') }}{{ icons.icon('arrow') }}</a>
+        <a class="btn btn-secondary btn-lg" href="/chat">{{ icons.icon('chat') }}<span>{{ tr('page.index.cta.chat', '开始对话', 'Start chat') }}</span></a>
+        {% else %}
+        <a class="btn btn-primary btn-lg" href="{{ url_for('main.login') }}">{{ tr('page.index.cta.connect_host', '连接 Host', 'Connect Host') }}{{ icons.icon('arrow') }}</a>
+        <a class="btn btn-secondary btn-lg" href="#how-it-works">{{ tr('page.index.cta.how_it_works', '了解工作方式', 'How it works') }}</a>
+        {% endif %}
+    </div>
+</section>
+
+<section class="index-trust-strip" aria-label="{{ tr('page.index.trust.aria', '隐私与控制', 'Privacy and control') }}">
+    <span>{{ icons.icon('check') }}{{ tr('page.index.trust.choice', '未经选择，不连接数据', 'No data connects without your choice') }}</span>
+    <span>{{ icons.icon('check') }}{{ tr('page.index.trust.permission', '敏感操作逐项确认', 'Sensitive actions require confirmation') }}</span>
+    <span>{{ icons.icon('check') }}{{ tr('page.index.trust.memory', '长期记忆可审阅和删除', 'Long-term memory stays reviewable and removable') }}</span>
+</section>
+
+<section class="index-loop" id="how-it-works" aria-labelledby="index-loop-title">
+    <div class="index-section-heading">
+        <span>{{ tr('page.index.loop.eyebrow', '工作方式', 'How it works') }}</span>
+        <h2 id="index-loop-title">{{ tr('page.index.loop.title', '从真实上下文开始，而不是从空白聊天开始', 'Start with real context, not an empty chat') }}</h2>
+    </div>
+    <div class="index-loop-grid">
+        <article class="index-loop-step">
+            <span class="index-loop-number">01</span>
+            <div class="feature-icon">{{ icons.icon('database') }}</div>
+            <h3>{{ tr('page.index.loop.connect.title', '连接所需上下文', 'Connect the context you need') }}</h3>
+            <p>{{ tr('page.index.loop.connect.desc', '选择工作区、文档和可刷新的网页来源；权限只在真正使用时请求。', 'Choose a workspace, documents, and refreshable web sources. Access is requested only when used.') }}</p>
+        </article>
+        <article class="index-loop-step">
+            <span class="index-loop-number">02</span>
+            <div class="feature-icon">{{ icons.icon('sparkles') }}</div>
+            <h3>{{ tr('page.index.loop.act.title', '描述你要的结果', 'Describe the outcome') }}</h3>
+            <p>{{ tr('page.index.loop.act.desc', 'Nola 编排搜索、文件、脚本和技能，并把工具参数与中间过程呈现在对话中。', 'Nola orchestrates search, files, scripts, and skills while showing tool inputs and progress in chat.') }}</p>
+        </article>
+        <article class="index-loop-step">
+            <span class="index-loop-number">03</span>
+            <div class="feature-icon">{{ icons.icon('results') }}</div>
+            <h3>{{ tr('page.index.loop.review.title', '审阅、修正、持续进化', 'Review, correct, and improve') }}</h3>
+            <p>{{ tr('page.index.loop.review.desc', '执行记录可追溯，记忆和偏好可编辑，下一次任务会使用你确认过的上下文。', 'Runs stay traceable, memory stays editable, and future tasks use context you have confirmed.') }}</p>
+        </article>
+    </div>
+</section>
+
+<section class="features index-capabilities">
+    <div class="feature">
+        <div class="feature-icon">{{ icons.icon('folder') }}</div>
+        <h3>{{ tr('page.index.feature.context.title', '数据源驱动', 'Data-source driven') }}</h3>
+        <p>{{ tr('page.index.feature.context.desc', '工作区、文档与网页来源拥有明确范围、格式和刷新记录。', 'Workspaces, documents, and web sources keep explicit scope, format, and refresh history.') }}</p>
+    </div>
+    <div class="feature">
+        <div class="feature-icon">{{ icons.icon('chat') }}</div>
+        <h3>{{ tr('page.index.feature.visible.title', '过程透明', 'Visible execution') }}</h3>
+        <p>{{ tr('page.index.feature.visible.desc', '思考、工具调用、权限等待和后台任务都在消息中清晰呈现。', 'Thinking, tool calls, permission waits, and background jobs remain visible in the conversation.') }}</p>
+    </div>
+    <div class="feature">
+        <div class="feature-icon">{{ icons.icon('chart') }}</div>
+        <h3>{{ tr('page.index.feature.memory.title', '长期记忆可控', 'Controllable long-term memory') }}</h3>
+        <p>{{ tr('page.index.feature.memory.desc', '跨会话记忆与偏好由用户开启，支持查看、修正和删除。', 'Cross-conversation memory and preferences are opt-in, reviewable, correctable, and removable.') }}</p>
+    </div>
+    <div class="feature">
+        <div class="feature-icon">{{ icons.icon('cpu') }}</div>
+        <h3>{{ tr('page.index.feature.models.title', '模型自由选择', 'Choose your model') }}</h3>
+        <p>{{ tr('page.index.feature.models.desc', '本地 llama.cpp 模型与 OpenAI 兼容 API 平行管理，选择、参数和启动彼此独立。', 'Local llama.cpp models and OpenAI-compatible APIs are managed in parallel, with selection, parameters, and startup kept separate.') }}</p>
+    </div>
+</section>
+{% endblock %}

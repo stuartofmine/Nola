@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Nola for Mac",
+  "description": "Connects Chrome to Nola for Mac through Chrome Native Messaging.",
+  "version": "0.2.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2lp/yVyfhi4oOt0wYExeceCGL3lLWG7fGzV1lC+XSNHrTr2Z1OzJx02G1UvRVijrtxdZAlVfadZyv7CGFjS3GozmrsArgPxZpnIHwj+kCdwoWYEXUhw8SQFTMQeDiaW6fgDuoEc7GV+jKMsrBPC8P9EwoLrICvgOPAPTVOs6wXFWyoZFIiaxn3+WcqXySyjlKvaApzMEbJfpcLdqEcoOZ4IgtEDvTIxXtLnImAy16pFm61UKlsf5g4ZdzwfYqhditrQyMoSl5QCrvrnDWONzPLsdNl4p3XVPc+FAcxmujQx2/kpdF0Kqe8tz1Rh7Mdszu7NmGR5IfkBtglT79nzYvQIDAQAB",
+  "action": {
+    "default_title": "Connect Nola",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": [
+    "activeTab",
+    "debugger",
+    "nativeMessaging",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ]
+}

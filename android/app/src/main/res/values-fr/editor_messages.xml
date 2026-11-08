@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="intelligence_editor_save_failed">Les modifications ne peuvent pas être confirmées. Votre brouillon est conservé ici. Avant de réessayer, gardez une copie de vos modifications, puis fermez et rouvrez cet élément pour vérifier son contenu actuel.</string>
+    <string name="intelligence_profile_load_failed">Impossible de charger les données actuelles. Les données existantes restent inchangées. Réessayez avant de modifier le contenu.</string>
+</resources>

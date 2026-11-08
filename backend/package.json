@@ -1,0 +1,17 @@
+{
+  "name": "nola-backend",
+  "private": true,
+  "scripts": {
+    "predev": "npm --prefix worker install --silent",
+    "predeploy": "npm --prefix worker install --silent",
+    "pretypecheck": "npm --prefix worker install --silent",
+    "premigrate:local": "npm --prefix worker install --silent",
+    "premigrate:remote": "npm --prefix worker install --silent",
+    "dev": "npm --prefix worker run dev",
+    "deploy": "npx --yes wrangler deploy --config worker/wrangler.toml --keep-vars",
+    "typecheck": "npm --prefix worker run typecheck",
+    "migrate:local": "npm --prefix worker run migrate:local",
+    "migrate:remote": "npm --prefix worker run migrate:remote",
+    "check-env": "./deploy_backend.sh check-env"
+  }
+}

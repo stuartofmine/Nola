@@ -1,0 +1,41 @@
+/* Shared surface language: opaque, softly lit, with continuous corners.
+   Navigation selection stays a background change; it does not gain a frame. */
+:root {
+    --material-fill: var(--bg);
+    --material-gradient: linear-gradient(145deg, color-mix(in srgb, var(--material-fill) 95.5%, white), color-mix(in srgb, var(--material-fill) 98.2%, black));
+    --material-highlight: rgb(255 255 255 / .65);
+    --material-shadow: 0 6px 18px rgb(20 28 24 / .055), 0 1px 2px rgb(20 28 24 / .035);
+}
+:root[data-theme=dark] {
+    --material-fill: #111;
+    --material-highlight: rgb(255 255 255 / .09);
+    --material-shadow: 0 6px 18px rgb(0 0 0 / .24), 0 1px 2px rgb(0 0 0 / .15);
+}
+.inline-card, .error-card, .approval, .im-group, .model-setup-prompt,
+.composer, #sheet, #dialog {
+    border: 1px solid var(--line);
+    background: var(--material-gradient);
+    box-shadow: inset 0 1px 0 var(--material-highlight), var(--material-shadow);
+}
+.inline-card, .error-card, .approval, .im-group, .model-setup-prompt { border-radius: 16px; }
+.field input, .field textarea, .field select,
+dialog input, dialog select, dialog textarea, .model-setup-form input, .model-setup-form select,
+.im-composer textarea {
+    background: var(--material-gradient);
+    box-shadow: inset 0 1px 0 var(--material-highlight), 0 1px 3px rgb(0 0 0 / .055);
+}
+.primary, .im-primary, .im-quiet {
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / .12), 0 1px 3px rgb(0 0 0 / .1);
+}
+@supports (corner-shape: squircle) {
+    .inline-card, .error-card, .approval, .im-group, .model-setup-prompt,
+    .composer, #sheet, #dialog, .primary, .im-primary, .im-quiet,
+    .field input, .field textarea, .field select, .im-composer textarea { corner-shape: squircle; }
+}
+@media (prefers-contrast: more) {
+    .inline-card, .error-card, .approval, .im-group, .model-setup-prompt, .composer, #sheet, #dialog { border-color: var(--edge); }
+}
+@media (forced-colors: active) {
+    .inline-card, .error-card, .approval, .im-group, .model-setup-prompt, .composer, #sheet, #dialog,
+    input, textarea, select, .primary, .im-primary, .im-quiet { background: Canvas; box-shadow: none; }
+}

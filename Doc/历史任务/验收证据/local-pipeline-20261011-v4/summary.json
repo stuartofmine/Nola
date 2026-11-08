@@ -1,0 +1,189 @@
+[
+  {
+    "condition": "fresh_database",
+    "stage": "admission_receipt",
+    "expected": 30,
+    "observed": 30,
+    "failed": 0,
+    "missing": 0,
+    "median_ms": 29.2554375,
+    "p95_ms": 40.121667,
+    "max_ms": 41.030083
+  },
+  {
+    "condition": "fresh_database",
+    "stage": "claim_receipt",
+    "expected": 30,
+    "observed": 30,
+    "failed": 0,
+    "missing": 0,
+    "median_ms": 3.7896875,
+    "p95_ms": 4.380542,
+    "max_ms": 4.41825
+  },
+  {
+    "condition": "fresh_database",
+    "stage": "execution_started_receipt",
+    "expected": 30,
+    "observed": 30,
+    "failed": 0,
+    "missing": 0,
+    "median_ms": 10.0811875,
+    "p95_ms": 15.116833,
+    "max_ms": 15.302708
+  },
+  {
+    "condition": "fresh_database",
+    "stage": "attempt_started_receipt",
+    "expected": 30,
+    "observed": 30,
+    "failed": 0,
+    "missing": 0,
+    "median_ms": 4.146729,
+    "p95_ms": 15.200625,
+    "max_ms": 15.85725
+  },
+  {
+    "condition": "fresh_database",
+    "stage": "delta_1024b_receipt",
+    "expected": 30,
+    "observed": 30,
+    "failed": 0,
+    "missing": 0,
+    "median_ms": 6.928770500000001,
+    "p95_ms": 24.315125,
+    "max_ms": 24.372542
+  },
+  {
+    "condition": "fresh_database",
+    "stage": "reopen_connection",
+    "expected": 30,
+    "observed": 30,
+    "failed": 0,
+    "missing": 0,
+    "median_ms": 2.119854,
+    "p95_ms": 2.23425,
+    "max_ms": 2.687292
+  },
+  {
+    "condition": "fresh_database",
+    "stage": "recovered_journal_head",
+    "expected": 30,
+    "observed": 30,
+    "failed": 0,
+    "missing": 0,
+    "median_ms": 0.0845205,
+    "p95_ms": 0.090208,
+    "max_ms": 0.090834
+  },
+  {
+    "condition": "fresh_database",
+    "stage": "recovered_session_projection",
+    "expected": 30,
+    "observed": 30,
+    "failed": 0,
+    "missing": 0,
+    "median_ms": 1.869375,
+    "p95_ms": 1.990791,
+    "max_ms": 2.968583
+  },
+  {
+    "condition": "fresh_database",
+    "stage": "fresh_database_open",
+    "expected": 30,
+    "observed": 30,
+    "failed": 0,
+    "missing": 0,
+    "median_ms": 22.8764375,
+    "p95_ms": 28.528084,
+    "max_ms": 39.040542
+  },
+  {
+    "condition": "reused_database",
+    "stage": "admission_receipt",
+    "expected": 30,
+    "observed": 30,
+    "failed": 0,
+    "missing": 0,
+    "median_ms": 7.2373125,
+    "p95_ms": 42.283709,
+    "max_ms": 47.862458
+  },
+  {
+    "condition": "reused_database",
+    "stage": "claim_receipt",
+    "expected": 30,
+    "observed": 30,
+    "failed": 0,
+    "missing": 0,
+    "median_ms": 1.0453545,
+    "p95_ms": 5.781042,
+    "max_ms": 7.925625
+  },
+  {
+    "condition": "reused_database",
+    "stage": "execution_started_receipt",
+    "expected": 30,
+    "observed": 30,
+    "failed": 0,
+    "missing": 0,
+    "median_ms": 2.980416,
+    "p95_ms": 17.910625,
+    "max_ms": 19.864125
+  },
+  {
+    "condition": "reused_database",
+    "stage": "attempt_started_receipt",
+    "expected": 30,
+    "observed": 30,
+    "failed": 0,
+    "missing": 0,
+    "median_ms": 3.10625,
+    "p95_ms": 20.118834,
+    "max_ms": 22.157167
+  },
+  {
+    "condition": "reused_database",
+    "stage": "delta_1024b_receipt",
+    "expected": 30,
+    "observed": 30,
+    "failed": 0,
+    "missing": 0,
+    "median_ms": 5.324583499999999,
+    "p95_ms": 36.476708,
+    "max_ms": 38.659375
+  },
+  {
+    "condition": "reused_database",
+    "stage": "reopen_connection",
+    "expected": 30,
+    "observed": 30,
+    "failed": 0,
+    "missing": 0,
+    "median_ms": 1.7640004999999999,
+    "p95_ms": 3.814958,
+    "max_ms": 3.846
+  },
+  {
+    "condition": "reused_database",
+    "stage": "recovered_journal_head",
+    "expected": 30,
+    "observed": 30,
+    "failed": 0,
+    "missing": 0,
+    "median_ms": 0.072708,
+    "p95_ms": 0.149416,
+    "max_ms": 0.151125
+  },
+  {
+    "condition": "reused_database",
+    "stage": "recovered_session_projection",
+    "expected": 30,
+    "observed": 30,
+    "failed": 0,
+    "missing": 0,
+    "median_ms": 1.576146,
+    "p95_ms": 3.164416,
+    "max_ms": 3.189458
+  }
+]

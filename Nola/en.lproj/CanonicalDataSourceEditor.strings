@@ -1,0 +1,4 @@
+"editor.edit" = "Edit data source";
+"editor.add" = "Add data source";
+"editor.validate" = "Validate source";
+"editor.reopen_required" = "Reopen this source before saving so its latest version can be checked.";

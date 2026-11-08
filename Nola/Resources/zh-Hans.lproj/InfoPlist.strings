@@ -1,0 +1,9 @@
+/* Localized Info.plist strings */
+"CFBundleDisplayName" = "Nola";
+"CFBundleName" = "Nola";
+"NSContactsUsageDescription" = "Nola 需要访问您的通讯录以读取联系人的生日信息，提前提醒您重要的日子（如家人生日）。所有数据仅在设备本地处理，不会上传到任何服务器。";
+"NSCalendarsUsageDescription" = "Nola 使用您的日历生成概览并完成您批准的操作。日历数据默认留在此设备，只有您明确批准后，特定结果才会共享给已配对的宿主机。";
+"NSRemindersUsageDescription" = "Nola 需要访问您的提醒事项以检测即将到期的待办任务（如账单缴费），确保不遗漏重要事项。所有数据仅在设备本地处理，不会上传到任何服务器。";
+"NSHealthShareUsageDescription" = "Nola 需要 HealthKit 读取权限，以展示个性化的用药和活动洞察。所有处理都在设备本地完成，并尊重您的隐私。";
+"NSHealthUpdateUsageDescription" = "Nola 需要 HealthKit 写入权限，以记录汇总指标，方便您追踪趋势并与兼容的健康服务共享洞察。";
+"NSLocalNetworkUsageDescription" = "当您选择 Nola Web host 模型时，Nola 会连接到本地网络中的自托管 Web 服务。";

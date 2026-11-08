@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "id": "design-automations",
+  "delivery": "built-in",
+  "category": {
+    "id": "planning-automation",
+    "name": "Planning & Automation",
+    "name_zh": "计划与自动化"
+  },
+  "source": {
+    "project": "Nola",
+    "license": "Apache-2.0"
+  },
+  "status": "stable",
+  "platforms": [
+    "macos",
+    "cli-web"
+  ],
+  "required_tools": [
+    "Skill",
+    "nola_orchestrate"
+  ],
+  "optional_tools": [
+    "memory_search"
+  ],
+  "runtime_dependencies": [],
+  "permissions": [
+    "automation.persist.confirm",
+    "automation.side_effect.confirm"
+  ],
+  "secrets": [],
+  "validation": [
+    "representative dry-run",
+    "persisted automation and run-history reconciliation"
+  ],
+  "recommended_handoffs": [
+    "plan-schedule-tasks"
+  ],
+  "execution_contract": {
+    "schemaVersion": 1,
+    "progressSteps": [
+      {
+        "id": "inspect",
+        "title": "Inspect inputs and constraints",
+        "required": true
+      },
+      {
+        "id": "execute",
+        "title": "Produce the requested outcome",
+        "required": true
+      },
+      {
+        "id": "verify",
+        "title": "Verify the outcome with evidence",
+        "required": true
+      }
+    ],
+    "artifacts": [
+      {
+        "id": "automation-record",
+        "mediaType": "application/json",
+        "required": true,
+        "description": "Stable reference to the final requested outcome or its persisted receipt"
+      }
+    ],
+    "verifiers": [
+      {
+        "id": "completion-audit",
+        "method": "model_judgment",
+        "description": "Record real evidence for the applicable completion checks: representative dry-run; persisted automation and run-history reconciliation",
+        "required": true
+      }
+    ],
+    "resumePoints": [
+      "after-inspect",
+      "after-execute",
+      "after-verify"
+    ]
+  }
+}

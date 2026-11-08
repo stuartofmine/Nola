@@ -1,0 +1,14 @@
+load("@valdi//bzl/valdi:valdi_module.bzl", "valdi_module")
+
+valdi_module(
+    name = "nola_ui",
+    srcs = glob([
+        "src/**/*.ts",
+        "src/**/*.tsx",
+    ]),
+    android_class_path = "com.nola.ui",
+    ios_module_name = "NolaUIModule",
+    visibility = ["//visibility:public"],
+    # Note: deps on Valdi core modules removed for local Bazel quick-build.
+    # Add back proper @valdi deps after Valdi workspace is initialized.
+)

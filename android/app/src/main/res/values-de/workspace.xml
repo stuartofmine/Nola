@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="workspace_title">Arbeitsbereich</string>
+    <string name="workspace_sources">Materialien</string>
+    <string name="workspace_memory">Langzeitgedächtnis</string>
+    <string name="workspace_plans">Pläne</string>
+    <string name="workspace_records">Aktivität</string>
+    <string name="composer_commands">Befehle</string>
+    <string name="composer_command_invalid">Ungültiger Befehl oder Parameter. / zeigt Befehle.</string>
+    <string name="composer_command_no_run">Keine Aufgabe läuft.</string>
+    <string name="workspace_knowledge">Wissen</string>
+    <string name="workspace_knowledge_empty">Es wurde noch kein Gesprächswissen gespeichert.</string>
+    <string name="workspace_knowledge_failed">Gesprächswissen konnte nicht geladen werden. Versuche es erneut.</string>
+    <string name="workspace_knowledge_open">Ursprüngliches Gespräch öffnen</string>
+</resources>

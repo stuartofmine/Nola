@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="intelligence_editor_save_failed">暂时无法确认修改结果，草稿仍保留在此处。重试前，请先另存需要保留的修改，再关闭并重新打开此项，核对最新内容。</string>
+    <string name="intelligence_profile_load_failed">无法加载最新数据，已有数据未被修改。请重试后再进行编辑。</string>
+</resources>

@@ -1,0 +1,16 @@
+import type { Locale } from './i18n.ts';
+const languages: Locale[]=['zh-Hans','en','de','es','fr','ja','ru'];
+const labels={
+    resumeExperts:['恢复原专家消息','Resume original expert message','Ursprüngliche Expertenanfrage fortsetzen','Reanudar el mensaje original a expertos','Reprendre le message initial aux experts','元の専門家メッセージを再開','Возобновить исходный запрос экспертам'],
+    edit:['编辑并重发','Edit and resend','Bearbeiten und erneut senden','Editar y reenviar','Modifier et renvoyer','編集して再送','Изменить и отправить'],
+    cancel:['取消','Cancel','Abbrechen','Cancelar','Annuler','キャンセル','Отмена'],
+    save:['保存并重发','Save and resend','Speichern und erneut senden','Guardar y reenviar','Enregistrer et renvoyer','保存して再送','Сохранить и отправить'],
+    detail:['将创建独立会话，保留原消息与草稿，并使用原模型重新发送。','Creates a separate conversation, preserves the original message and draft, and resends using the original model.','Erstellt ein eigenes Gespräch, behält Nachricht und Entwurf bei und verwendet das ursprüngliche Modell.','Crea otra conversación, conserva el mensaje y borrador originales y usa el modelo original.','Crée une conversation distincte, conserve le message et le brouillon et utilise le modèle d’origine.','元のメッセージと下書きを保持し、元のモデルで別の会話に再送します。','Создаёт отдельную беседу, сохраняя исходное сообщение и черновик, с исходной моделью.'],
+    wait:['当前会话正在执行，请结束后重发。','Wait until the current Run finishes.','Warten Sie, bis die laufende Ausführung endet.','Espera a que termine la ejecución actual.','Attendez la fin de l’exécution en cours.','現在の実行が終了するまでお待ちください。','Дождитесь завершения текущего запуска.'],
+    changed:['原会话或消息已变化，暂停重发。请先复制编辑文本，再关闭窗口核对原消息。','The source conversation or message changed. Copy your edited text before closing this window to check the source.','Die Quelle wurde geändert. Kopieren Sie Ihren Text, bevor Sie das Fenster schließen und die Quelle prüfen.','El origen cambió. Copia el texto editado antes de cerrar esta ventana y revisar el mensaje original.','La source a changé. Copiez le texte modifié avant de fermer cette fenêtre pour vérifier le message source.','元の会話かメッセージが変更されました。編集した文章をコピーしてから、元の内容を確認してください。','Источник изменился. Скопируйте изменённый текст перед закрытием окна и проверкой исходного сообщения.'],
+    copyDraft:['复制编辑文本','Copy edited text','Bearbeiteten Text kopieren','Copiar texto editado','Copier le texte modifié','編集した文章をコピー','Копировать изменённый текст'],
+    copied:['已复制','Copied','Kopiert','Copiado','Copié','コピーしました','Скопировано'],
+    manual:['无法自动复制，已选中文本，请手动复制。','Automatic copy failed. The text is selected for manual copying.','Automatisches Kopieren fehlgeschlagen. Der Text ist zum manuellen Kopieren markiert.','La copia automática falló. El texto está seleccionado para copiarlo manualmente.','La copie automatique a échoué. Le texte est sélectionné pour une copie manuelle.','自動コピーできませんでした。選択された文章を手動でコピーしてください。','Автоматическое копирование не удалось. Текст выделен для ручного копирования.'],
+    sending:['正在发送…','Sending…','Senden wird bestätigt…','Confirmando el envío…','Confirmation de l’envoi…','送信を確認中…','Подтверждение отправки…'],
+};
+export function editedResendLabel(locale:Locale,key:keyof typeof labels):string{return labels[key][languages.indexOf(locale)]??labels[key][1];}

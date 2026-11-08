@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "source": {
+    "kind": "redacted_cli_debug_session",
+    "session_shape": "20260715-execution-9"
+  },
+  "messages": [
+    {
+      "role": "system",
+      "content": "system"
+    },
+    {
+      "role": "user",
+      "content": "create the project and keep working until complete"
+    },
+    {
+      "repeat_completed_tool_transactions": {
+        "count": 10,
+        "argument_content_chars": 3000,
+        "result_chars": 7800,
+        "offload_reference": "<tool-output-cache>/tool-debug-session.txt"
+      }
+    },
+    {
+      "role": "assistant",
+      "tool_calls": [
+        {
+          "id": "call_00_u3v",
+          "type": "function",
+          "function": {
+            "name": "write_file",
+            "arguments": {
+              "path": "src/style.css",
+              "content_chars": 2812
+            }
+          }
+        },
+        {
+          "id": "call_01_4AK",
+          "type": "function",
+          "function": {
+            "name": "write_file",
+            "arguments": {
+              "path": "src/main.ts",
+              "content_chars": 314
+            }
+          }
+        },
+        {
+          "id": "call_02_CaV",
+          "type": "function",
+          "function": {
+            "name": "write_file",
+            "arguments": {
+              "path": "src/vite-env.d.ts",
+              "content_chars": 273
+            }
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_00_u3v",
+      "content": "missing coding context"
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_01_4AK",
+      "content": "written"
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_02_CaV",
+      "content": "missing coding context"
+    },
+    {
+      "role": "user",
+      "content": "Agent reflection hint: read required context before retrying.",
+      "ephemeral": "agent_reflection_hint"
+    }
+  ]
+}

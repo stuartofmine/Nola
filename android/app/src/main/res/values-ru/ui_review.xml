@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ui_unsaved_changes">Изменения не сохранены.</string>
+    <string name="ui_delete_model_message">Удалить %1$s с этого устройства? Для использования потребуется скачать модель заново.</string>
+    <string name="ui_delete_entry_message">Удалить эти сохранённые сведения? Это действие нельзя отменить.</string>
+    <string name="ui_entry_changed">Эти сведения изменились. Закройте диалог и проверьте их перед удалением.</string>
+</resources>

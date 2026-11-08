@@ -1,0 +1,13 @@
+const{chromium}=require('playwright-core');const assert=require('node:assert/strict');
+(async()=>{const b=await chromium.launch({executablePath:'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true});try{for(const width of [320,390,768]){
+const p=await b.newPage({viewport:{width,height:360}});const base=process.env.UI_FIXTURE_URL||'http://127.0.0.1:5149';
+await p.route('**/api/model-profiles',async r=>{const data=await(await r.fetch()).json();await r.fulfill({json:{profiles:data.profiles.map(x=>({...x,provider:'openai-compatible'}))}});});
+await p.route('**/api/model-endpoints/*/discover',r=>r.fulfill({json:{models:Array.from({length:20},(_,i)=>`隔离发现模型 ${i} long model name`)}}));
+await p.goto(`${base}/models?tab=api`);await p.locator('.profile-settings > summary').click();await p.locator('.endpoint-summary').first().click();await p.locator('.model-toolbar').first().getByRole('button',{name:'发现模型',exact:true}).click();
+const owner=p.locator('.discovered').first(),trigger=owner.locator('summary'),popup=owner.locator('[popover]');await trigger.click();await p.waitForTimeout(250);
+await popup.locator('button').last().focus();assert.equal(await popup.locator('button').last().evaluate(e=>{const r=e.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight&&e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))}),true);
+let r=await popup.boundingBox();assert.ok(r.x>=0&&r.x+r.width<=width&&r.y>=0&&r.y+r.height<=360);
+await p.screenshot({path:`/tmp/nola-web-layers/discovered-${width}.png`});await p.keyboard.press('Escape');await p.waitForFunction(()=>!document.querySelector('.discovered').open);assert.equal(await trigger.evaluate(e=>e===document.activeElement),true);
+await trigger.click();await p.waitForTimeout(100);await p.evaluate(()=>window.scrollTo(0,0));await p.waitForFunction(()=>!document.querySelector('.discovered').open);assert.equal(await popup.evaluate(e=>e.matches(':popover-open')),false,'orphan popup closes when anchor leaves viewport');
+const menu=p.locator('.endpoint-head .compact-actions').first();await menu.locator('summary').click();await menu.locator(':popover-open').waitFor();await p.setViewportSize({width:1440,height:360});await p.waitForFunction(()=>!document.querySelector('.endpoint-head .compact-actions').open);assert.equal(await menu.locator('[popover]').evaluate(e=>e.matches(':popover-open')),false,'responsive hidden trigger dismisses popup');
+console.log('PASS discovered popup',width,'last option hit, viewport bounds, Escape, anchor scrolled away');await p.close();}}finally{await b.close();}})().catch(e=>{console.error(e);process.exitCode=1});

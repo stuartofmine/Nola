@@ -1,0 +1,192 @@
+[
+    {
+        "kind": "location",
+        "raw": "{}",
+        "accepted": true
+    },
+    {
+        "kind": "location",
+        "raw": "{\"page\":null,\"section\":null}",
+        "accepted": true
+    },
+    {
+        "kind": "location",
+        "raw": "{\"page\":18446744073709551615,\"line_start\":0,\"line_end\":2,\"section\":\"s\",\"future\":[]}",
+        "accepted": false
+    },
+    {
+        "kind": "location",
+        "raw": "{\"page\":18446744073709551615,\"line_start\":0,\"line_end\":2,\"section\":\"s\"}",
+        "accepted": true
+    },
+    {
+        "kind": "location",
+        "raw": "{\"page\":-1}",
+        "accepted": false
+    },
+    {
+        "kind": "location",
+        "raw": "{\"page\":1.0}",
+        "accepted": false
+    },
+    {
+        "kind": "location",
+        "raw": "{\"line_start\":1,\"line_start\":2}",
+        "accepted": false
+    },
+    {
+        "kind": "location",
+        "raw": "{\"section\":true}",
+        "accepted": false
+    },
+    {
+        "kind": "range",
+        "raw": "{\"start\":9,\"end\":1}",
+        "accepted": true
+    },
+    {
+        "kind": "range",
+        "raw": "{\"start\":0,\"end\":18446744073709551615,\"extra\":{}}",
+        "accepted": false
+    },
+    {
+        "kind": "range",
+        "raw": "{\"start\":0,\"end\":18446744073709551615}",
+        "accepted": true
+    },
+    {
+        "kind": "range",
+        "raw": "{}",
+        "accepted": false
+    },
+    {
+        "kind": "range",
+        "raw": "{\"start\":null,\"end\":1}",
+        "accepted": false
+    },
+    {
+        "kind": "range",
+        "raw": "{\"start\":0,\"end\":18446744073709551616}",
+        "accepted": false
+    },
+    {
+        "kind": "range",
+        "raw": "{\"start\":0,\"\u0073tart\":1,\"end\":2}",
+        "accepted": false
+    },
+    {
+        "kind": "evidence",
+        "raw": "{\"kind\":\"memory\",\"usage\":{\"record_id\":\"r\",\"component_id\":\"c\",\"namespace\":{\"kind\":\"personal\"}}}",
+        "accepted": true
+    },
+    {
+        "kind": "evidence",
+        "raw": "{\"kind\":\"memory\",\"usage\":{\"record_id\":\"r\",\"component_id\":\"c\",\"namespace\":{\"kind\":\"personal\",\"name\":null}}}",
+        "accepted": false
+    },
+    {
+        "kind": "evidence",
+        "raw": "{\"kind\":\"memory\",\"usage\":{\"record_id\":\"r\",\"component_id\":\"c\",\"namespace\":{\"kind\":\"workspace\",\"name\":\"\"}}}",
+        "accepted": false
+    },
+    {
+        "kind": "evidence",
+        "raw": "{\"kind\":\"memory\",\"usage\":{\"record_id\":\"r\",\"component_id\":\"c\",\"namespace\":{\"kind\":\"conversation\",\"name\":\"project\"}}}",
+        "accepted": false
+    },
+    {
+        "kind": "evidence",
+        "raw": "{\"kind\":\"memory\",\"usage\":{\"record_id\":\"r\",\"component_id\":\"c\",\"namespace\":{\"kind\":\"personal\",\"name\":null,\"name\":null}}}",
+        "accepted": false
+    },
+    {
+        "kind": "evidence",
+        "raw": "{\"kind\":\"memory\",\"usage\":{\"record_id\":\"r\",\"component_id\":\"c\",\"namespace\":{\"kind\":\"personal\",\"name\":\"bad\"}}}",
+        "accepted": false
+    },
+    {
+        "kind": "evidence",
+        "raw": "{\"kind\":\"memory\",\"usage\":{\"record_id\":\"r\",\"component_id\":\"c\",\"namespace\":{\"kind\":\"custom\",\"name\":\"p\"}}}",
+        "accepted": true
+    },
+    {
+        "kind": "evidence",
+        "raw": "{\"kind\":\"memory\",\"usage\":{\"record_id\":\"r\",\"component_id\":\"c\",\"namespace\":{\"kind\":\"custom\",\"name\":\"\"}}}",
+        "accepted": true
+    },
+    {
+        "kind": "evidence",
+        "raw": "{\"kind\":\"memory\",\"usage\":{\"record_id\":\"r\",\"component_id\":\"c\",\"namespace\":{\"kind\":\"custom\"}}}",
+        "accepted": false
+    },
+    {
+        "kind": "evidence",
+        "raw": "{\"kind\":\"memory\",\"usage\":{\"record_id\":\"r\",\"component_id\":\"c\",\"namespace\":{\"kind\":\"workspace\",\"future\":{}}}}",
+        "accepted": false
+    },
+    {
+        "kind": "evidence",
+        "raw": "{\"kind\":\"memory\",\"usage\":{\"record_id\":\"r\",\"component_id\":\"c\"},\"future\":[]}",
+        "accepted": false
+    },
+    {
+        "kind": "evidence",
+        "raw": "{\"kind\":\"memory\",\"usage\":{\"record_id\":\"r\",\"component_id\":\"c\",\"body\":\"private memory\"}}",
+        "accepted": false
+    },
+    {
+        "kind": "evidence",
+        "raw": "{\"kind\":\"memory\",\"usage\":{\"record_id\":\"r\",\"component_id\":\"c\",\"namespace\":{\"kind\":\"custom\",\"name\":\"a\",\"name\":\"b\"}}}",
+        "accepted": false
+    },
+    {
+        "kind": "evidence",
+        "raw": "{\"kind\":\"memory\",\"usage\":{\"record_id\":\"r\",\"component_id\":\"c\"}}",
+        "accepted": true
+    },
+    {
+        "kind": "evidence",
+        "raw": "{\"kind\":\"memory\",\"usage\":{\"record_id\":\"r\",\"component_id\":\"c\",\"scope\":\"global\",\"provenance_kind\":\"tool_result\",\"supersedes\":[\"old\"],\"usage_count\":18446744073709551615,\"last_used_at_epoch_ms\":-9223372036854775808}}",
+        "accepted": true
+    },
+    {
+        "kind": "evidence",
+        "raw": "{\"kind\":\"memory\",\"usage\":{\"record_id\":\"r\",\"component_id\":\"c\",\"source_role\":\"tool\",\"event_time\":\"event\",\"range_start\":\"start\",\"range_end\":\"end\"}}",
+        "accepted": true
+    },
+    {
+        "kind": "evidence",
+        "raw": "{\"kind\":\"memory\",\"usage\":{\"record_id\":\"r\",\"component_id\":\"c\",\"scope\":\"bad\"}}",
+        "accepted": false
+    },
+    {
+        "kind": "evidence",
+        "raw": "{\"kind\":\"memory\",\"usage\":{\"record_id\":\"r\",\"component_id\":\"c\",\"truncated\":null}}",
+        "accepted": false
+    },
+    {
+        "kind": "evidence",
+        "raw": "{\"kind\":\"memory\",\"usage\":{\"record_id\":\"r\",\"component_id\":\"c\",\"usage_count\":null}}",
+        "accepted": false
+    },
+    {
+        "kind": "evidence",
+        "raw": "{\"kind\":\"memory\",\"usage\":{\"record_id\":\"r\",\"component_id\":\"c\",\"supersedes\":[1]}}",
+        "accepted": false
+    },
+    {
+        "kind": "evidence",
+        "raw": "{\"kind\":\"memory\",\"usage\":{\"record_id\":\"r\",\"component_id\":\"c\",\"supersedes\":null}}",
+        "accepted": false
+    },
+    {
+        "kind": "evidence",
+        "raw": "{\"kind\":\"memory\",\"usage\":{\"record_id\":\"r\",\"component_id\":\"c\",\"last_used_at_epoch_ms\":9223372036854775808}}",
+        "accepted": false
+    },
+    {
+        "kind": "evidence",
+        "raw": "{\"kind\":\"memory\",\"usage\":{\"record_id\":\"r\",\"component_id\":\"c\",\"component_id\":\"other\"}}",
+        "accepted": false
+    }
+]

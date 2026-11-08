@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "name": "memory-terminal-regression-2026-09-12",
+  "selection_policy": "Existing scored cases selected to cover distinct architecture failure modes; IDs and expected answers are never exposed to product code or model prompts.",
+  "benchmarks": {
+    "longmemeval": {
+      "required_mode": "memory-architecture",
+      "cases": [
+        {
+          "id": "2ebe6c90",
+          "name": "How many days did it take me to finish 'The Nightingale' by Kristin Hannah?",
+          "coverage": "temporal duration calculation from two dated memories"
+        },
+        {
+          "id": "75832dbd",
+          "name": "Can you recommend some recent publications or conferences that I might find interesting?",
+          "coverage": "preference retrieval and application"
+        },
+        {
+          "id": "gpt4_70e84552",
+          "name": "Which task did I complete first, fixing the fence or trimming the goats' hooves?",
+          "coverage": "event-time ordering versus report order"
+        },
+        {
+          "id": "a346bb18",
+          "name": "How many minutes did I exceed my target time by in the marathon?",
+          "coverage": "multi-session arithmetic and final-answer consistency"
+        },
+        {
+          "id": "c6853660",
+          "name": "Did I mostly recently increase or decrease the limit on the number of cups of coffee in the morning?",
+          "coverage": "newest-fact selection after a preference update"
+        }
+      ]
+    },
+    "terminal-bench": {
+      "cases": [
+        {
+          "id": "batched-eval-parity",
+          "name": "batched-eval-parity",
+          "coverage": "investigation-to-mutation transition on an existing codebase"
+        },
+        {
+          "id": "data-anonymization",
+          "name": "data-anonymization",
+          "coverage": "vertical slice, multiple durable artifacts, and validation"
+        },
+        {
+          "id": "foodstuff-beta-activity",
+          "name": "foodstuff-beta-activity",
+          "coverage": "bounded spreadsheet and PDF recovery with an exact output contract"
+        },
+        {
+          "id": "satb-audio-transcription",
+          "name": "satb-audio-transcription",
+          "coverage": "audio evidence, exact structured output, and incremental artifact validation"
+        },
+        {
+          "id": "vf2-speedup-networkx",
+          "name": "vf2-speedup-networkx",
+          "coverage": "repository editing, functional validation, and performance validation"
+        }
+      ]
+    }
+  }
+}

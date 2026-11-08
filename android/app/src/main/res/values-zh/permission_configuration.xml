@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="chat_permission_state_saving">正在切换权限…</string>
+    <string name="chat_permission_state_saved">权限已保存</string>
+    <string name="chat_permission_state_pending">已保存，等待当前任务生效</string>
+    <string name="chat_permission_state_checking">正在核对任务权限…</string>
+    <string name="chat_permission_state_active">当前任务已生效</string>
+    <string name="chat_permission_state_failed">保存未确认；选择已保留，可重试。</string>
+    <string name="chat_context_estimated_request">预计下次请求</string>
+    <string name="chat_context_measured_request">请求实测上下文</string>
+    <string name="chat_cache_conversation_rate">会话累计缓存命中率</string>
+    <string name="chat_cache_request_identity">请求：%1$s</string>
+    <string name="chat_cache_coverage">已报告：%1$d · 未报告：%2$d</string>
+</resources>

@@ -1,0 +1,5 @@
+<resources>
+    <plurals name="chat_pending_permission_review">
+        <item quantity="other">%1$d 项待授权 · 查看 %2$s 请求</item>
+    </plurals>
+</resources>

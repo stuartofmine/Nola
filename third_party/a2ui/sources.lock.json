@@ -1,0 +1,260 @@
+{
+  "wire_version": "v0.9.1",
+  "status": "unmodified reference sources; separate production adaptation awaits consolidated validation",
+  "sources": [
+    {
+      "name": "spec",
+      "repository": "https://github.com/a2ui-project/a2ui",
+      "commit": "ba4c47baba5663037217f107d5bcc51f6d35c536",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "8c8b5b632d56c4c1658296963c693db5396772a33caaddb9a22593c4155c437a"
+        },
+        {
+          "path": "specification/v0_9_1/catalogs/basic/catalog.json",
+          "sha256": "8cc94d0a482e67048f9fc989964ca5da56fe42f531d919315a508989fb22e13e"
+        },
+        {
+          "path": "specification/v0_9_1/catalogs/basic/examples/00_interactive-button.json",
+          "sha256": "19d990117be8d66ffed20d5bb21127c9d153f90b8e3b2670f80c72d34aad0fb5"
+        },
+        {
+          "path": "specification/v0_9_1/json/client_capabilities.json",
+          "sha256": "917ff302b883c8c50475f0fafa836c17620078e7e2089392b322dc5df01de78f"
+        },
+        {
+          "path": "specification/v0_9_1/json/client_data_model.json",
+          "sha256": "6aefe455be9287caaf2f964ae480e8cf87706718106130908b41df19d5e982be"
+        },
+        {
+          "path": "specification/v0_9_1/json/client_to_server.json",
+          "sha256": "f049f8a554296a603cd3c1cef37dd6811006dc90e3ff52ce845d1674cd00a6b7"
+        },
+        {
+          "path": "specification/v0_9_1/json/common_types.json",
+          "sha256": "a13897d7dbe14c37512c5cbc9b8561782fc3b01e3a6ff114c1f12c82275b5884"
+        },
+        {
+          "path": "specification/v0_9_1/json/server_capabilities.json",
+          "sha256": "bdaf275dd2abf279e62637ead1b840744e031d94735ec4f63d0c7c2fe5347dd4"
+        },
+        {
+          "path": "specification/v0_9_1/json/server_to_client.json",
+          "sha256": "21693ba612f029940222ac788ff381c5fe0ef08f612312ff934db7a2daaca289"
+        }
+      ]
+    },
+    {
+      "name": "svelte",
+      "repository": "https://github.com/ChaliceForAuri/a2ui-svelte",
+      "commit": "d0345eeb52c4c84871c82c4f9c0e43f078ac3ffc",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "32a5f32e9b26ba4b37d72dca8d40631fb3541b3ec3a84261b248745347ed9a5f"
+        },
+        {
+          "path": "README.md",
+          "sha256": "9e555c61676926ee4fad5bb384edfb2343e1135b4a1dba94a513ee036588f010"
+        },
+        {
+          "path": "package.json",
+          "sha256": "c32d17a30bc27e01598604994867b22245b3f1b38d1af56fafab205ca4810934"
+        },
+        {
+          "path": "src/lib/catalog/basic/AudioPlayer.svelte",
+          "sha256": "a4ca447d7bf5eadcf0a1adc23e84b382e59786b47abdb364bb4d094bc4a93985"
+        },
+        {
+          "path": "src/lib/catalog/basic/Button.svelte",
+          "sha256": "2b241159400bd1f5b13d2c60e6a7d3e2ebf90f29e24852e0a785dee4813c6131"
+        },
+        {
+          "path": "src/lib/catalog/basic/Card.svelte",
+          "sha256": "dbc375c365a9da8aaeda73e94f7173386f3cc68c6ba9e31ef47c4c2ded008c72"
+        },
+        {
+          "path": "src/lib/catalog/basic/CheckBox.svelte",
+          "sha256": "109f19bf6be42e52d8a6aa9feba88eefa367e8b2acf95b6507b9b534b662a4e8"
+        },
+        {
+          "path": "src/lib/catalog/basic/ChoicePicker.svelte",
+          "sha256": "f4416456a57c9dd38a83b66035df78eb5c2e4174963af240ac71a4a91e7681b1"
+        },
+        {
+          "path": "src/lib/catalog/basic/Column.svelte",
+          "sha256": "ccd4c849b3ad2bc002975ad11b5b63d1cd503251a31bd7157a9bfab3be4c7d5d"
+        },
+        {
+          "path": "src/lib/catalog/basic/DateTimeInput.svelte",
+          "sha256": "db26c53ed3f89a017bd24991dacfb96fc3d018f6ce97fc38bc5997e533b59ba8"
+        },
+        {
+          "path": "src/lib/catalog/basic/Divider.svelte",
+          "sha256": "1ae8ca6b77634ff311406e73786b5f9bb75446d26a1f1320ba16092701d07b32"
+        },
+        {
+          "path": "src/lib/catalog/basic/Icon.svelte",
+          "sha256": "11778457354f0bb559c976a7b56a656a724975fb3b8bb550699c99c1d935ae70"
+        },
+        {
+          "path": "src/lib/catalog/basic/Image.svelte",
+          "sha256": "c737181cbe3526f7a1c781329e0b19cd33c75668691cc3be8e866de8cc51291d"
+        },
+        {
+          "path": "src/lib/catalog/basic/List.svelte",
+          "sha256": "9eac11982fbf79edbd38e9c6ae04ee0b54863c7ef1a82c2c387ecbd3b0720833"
+        },
+        {
+          "path": "src/lib/catalog/basic/Modal.svelte",
+          "sha256": "3859cfd6a8ee59b53c49e0359ab66b979ceab641167da6213dbadef2196b3d74"
+        },
+        {
+          "path": "src/lib/catalog/basic/Row.svelte",
+          "sha256": "bc83f6e489a216df93f46f4e37742c5e45fa729999d123766bab2c9dbcd8899c"
+        },
+        {
+          "path": "src/lib/catalog/basic/Slider.svelte",
+          "sha256": "b94b4b798848246dede54fd75cce04d2355c1e6f1b09572b1a92a600441bd842"
+        },
+        {
+          "path": "src/lib/catalog/basic/Tabs.svelte",
+          "sha256": "93cf0d4a1a413c5aa7a9490559597a57d469fb80b15140c8961a8ea96a4a5683"
+        },
+        {
+          "path": "src/lib/catalog/basic/Text.svelte",
+          "sha256": "e01b4b540e0c87bc20d5c83fba5bd71cf1e123eaf14a90ef9553fa5af2ae4008"
+        },
+        {
+          "path": "src/lib/catalog/basic/TextField.svelte",
+          "sha256": "3ef439edf716a5923a58ebf269ca308d7a05af36071e933f02d212783dd755c9"
+        },
+        {
+          "path": "src/lib/catalog/basic/ValidationMessages.svelte",
+          "sha256": "604fe831bec24aeda9da51a6423ee99c3d8f57f04bef41b30edaa08579c2a6f3"
+        },
+        {
+          "path": "src/lib/catalog/basic/Video.svelte",
+          "sha256": "d222c50a414c7a99665b3d73660fa0364788bcabb3b43b22cb563f5eaf4ad8ac"
+        },
+        {
+          "path": "src/lib/catalog/basic/icons.ts",
+          "sha256": "edfb517ad8ea70798c9adfb6e9c9b958b1286fba601d82d018f572f4c95d5e68"
+        },
+        {
+          "path": "src/lib/catalog/basic/index.ts",
+          "sha256": "620cd210c5921531baacdce16c126070ee3c53f0c787809f3062a0be3f42fdda"
+        },
+        {
+          "path": "src/lib/catalog/basic/layout.ts",
+          "sha256": "97e14816ea46ad8395df89e2bb6b3ee45020dde420937fccedd6532379d82c02"
+        },
+        {
+          "path": "src/lib/catalog/basic/markdown.ts",
+          "sha256": "bb9e6e305a4a650867b16dd5639fa0929c2ec888ff73485bf4dc19b45f9a11bc"
+        },
+        {
+          "path": "src/lib/catalog/basic/theme.css",
+          "sha256": "d6058ded28d4e555d270c887381bc96e56ece162f98a294242762a8d8b34100c"
+        },
+        {
+          "path": "src/lib/catalog/registry.ts",
+          "sha256": "e0a2225f0d7ebde6ae80cebde05882db9d89a159c24f36eb1ad0b4b4038965b6"
+        },
+        {
+          "path": "src/lib/catalog/types.ts",
+          "sha256": "f58c7790b4833f4b2ccecb92576f600d812832f121ed08af51338aeb1d9f2e58"
+        },
+        {
+          "path": "src/lib/client.svelte.ts",
+          "sha256": "3e7b201873ccea64dc47bd4bbe77624a6b349c5820a7c7b10c6b43bc372b14c1"
+        },
+        {
+          "path": "src/lib/index.ts",
+          "sha256": "82dfdce2003435580d9cdfd972d3f1b9f65df69cbb0030257c9553f63b3d3197"
+        },
+        {
+          "path": "src/lib/protocol/checks.ts",
+          "sha256": "db83033630724dd3e80487a23f67478d3e5415d3163946daacb0b5e022d25795"
+        },
+        {
+          "path": "src/lib/protocol/functions.ts",
+          "sha256": "7a47d875aeb29c845c793872bd1e7c7e9b430f4a3fab6e0749adb8e63a5499d4"
+        },
+        {
+          "path": "src/lib/protocol/index.ts",
+          "sha256": "8480be9d43d080f7b90163bb45d06e2442a0770eba82cfbec6d032e8683f8038"
+        },
+        {
+          "path": "src/lib/protocol/pointer.ts",
+          "sha256": "8097b681a803ab219676f517b4bd3232737af270751dc46531cb6b83281113d7"
+        },
+        {
+          "path": "src/lib/protocol/reducer.ts",
+          "sha256": "af1e65da5f985dba46cc6418a033b68b064c28d4cfcf72d82c3bdccc14be8d8c"
+        },
+        {
+          "path": "src/lib/protocol/resolve.ts",
+          "sha256": "21218c27b58035685c1400b0122a79b6243d362e7d495cf61b0ecbf4a850ccad"
+        },
+        {
+          "path": "src/lib/protocol/scope.ts",
+          "sha256": "0ea0f361af2cdffcda38d91d19cf007f89dec01be8bff5e7a18c42e9c76eba13"
+        },
+        {
+          "path": "src/lib/protocol/types.ts",
+          "sha256": "d8aa86d83ce64ae2900c54d5fc67d0111b2c83cbdfb9a28e23a59a7fe4737b58"
+        },
+        {
+          "path": "src/lib/render/Node.svelte",
+          "sha256": "673a7fbb7a94e07de0c4cc1ba60ea1c1650ec11e5ef1f05c4560ebb8c78d51be"
+        },
+        {
+          "path": "src/lib/render/Slot.svelte",
+          "sha256": "64653b30cd822bfcae1fbcc27e9667259eac67f400421d956caa19ffabb38adb"
+        },
+        {
+          "path": "src/lib/render/Surface.svelte",
+          "sha256": "550d3542ffd8adbbb6344825ac5534106850178034555149f66b9584a6c69610"
+        },
+        {
+          "path": "src/lib/render/context.ts",
+          "sha256": "2429713797a0593a3da0fb81b237fc4cf6ca671423106b43008db848acf1ede9"
+        },
+        {
+          "path": "src/lib/render/props.ts",
+          "sha256": "eacfe6d5ceecd20df3e567ad1b1741496efe31fcabe2f302a8f8389621cd3266"
+        },
+        {
+          "path": "src/lib/transport/a2a.ts",
+          "sha256": "0b3cb151984f188fb548450a493c0ecf6e42164c17d3a0acbc498557d51dda72"
+        },
+        {
+          "path": "src/lib/transport/agui.ts",
+          "sha256": "4b4a11d77cdec2e1496c7109ced0f5138301d9ca9608432c4d8a51ec12b84781"
+        },
+        {
+          "path": "src/lib/transport/http.ts",
+          "sha256": "3c6d0ce6675d0e3dc48f39972708f80f270061d955ec402243260adce0cf87c8"
+        },
+        {
+          "path": "src/lib/transport/index.ts",
+          "sha256": "317e04329f92c0875bb4bca4a24ae40b5ff7ec18b57ad869c4598e09587509cd"
+        },
+        {
+          "path": "src/lib/transport/json-patch.ts",
+          "sha256": "f69a466e10566b86e86a2b0fe2edff443bdd4b77c9498d7808cd5f4beaaa78c2"
+        },
+        {
+          "path": "src/lib/transport/stream.ts",
+          "sha256": "97bfd017dd2b1720743464ea32493c37afbe0d84c3dc9358b1ca7b0596b6cf98"
+        },
+        {
+          "path": "src/lib/transport/types.ts",
+          "sha256": "ec2fd41839ada128112fa407fb628f48fbfa746879f199c470b85e881259abdf"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="intelligence_editor_save_failed">Changes could not be confirmed. Your draft is still here. Before retrying, keep a copy of your edits, then close and reopen this item to check its latest content.</string>
+    <string name="intelligence_profile_load_failed">Unable to load the latest data. Existing data has not been changed. Retry before making changes.</string>
+</resources>

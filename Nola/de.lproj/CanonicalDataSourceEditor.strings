@@ -1,0 +1,4 @@
+"editor.edit" = "Datenquelle bearbeiten";
+"editor.add" = "Datenquelle hinzufügen";
+"editor.validate" = "Datenquelle prüfen";
+"editor.reopen_required" = "Öffnen Sie diese Datenquelle vor dem Speichern erneut, damit ihre aktuelle Version geprüft werden kann.";

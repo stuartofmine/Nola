@@ -1,0 +1,6 @@
+"NSCalendarsFullAccessUsageDescription" = "Nola 仅在你批准的助理操作中读取或更改日历事件。";
+"NSRemindersFullAccessUsageDescription" = "Nola 仅在你批准的助理操作中读取或更改提醒事项。";
+"NSContactsUsageDescription" = "Nola 仅在你批准的助理操作中读取联系人。";
+"NSAppleEventsUsageDescription" = "Nola 仅在你运行并批准自动化工具时控制其他 App。";
+"NSMicrophoneUsageDescription" = "Nola 仅在你主动开始语音输入时使用麦克风。";
+"NSLocalNetworkUsageDescription" = "当您选择局域网中的模型服务器或 Nola 主机时，Nola 会连接到这些服务。";

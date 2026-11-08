@@ -1,0 +1,140 @@
+{
+  "checkpoint": {
+    "revision": 2,
+    "order": ["task-report-1"],
+    "tasks": {
+      "task-report-1": {
+        "id": "task-report-1",
+        "owner_session_id": "conversation-task-contract",
+        "owner_turn_id": "turn-task-contract",
+        "kind": "skill",
+        "lineage": {
+          "resumed_from_task_id": null,
+          "parent_task_id": null,
+          "parent_call_id": null,
+          "child_session_id": null,
+          "permission_scope_id": null,
+          "cancellation_scope_id": null
+        },
+        "state": "running",
+        "progress": 0.25,
+        "current_step": "Reading source documents",
+        "result_ref": null,
+        "cancel_requested": false,
+        "cancel_requested_at_epoch_ms": null,
+        "durability": {
+          "ownership_token": null,
+          "worker_id": null,
+          "lease_until_epoch_ms": null,
+          "last_heartbeat_epoch_ms": null,
+          "retry_count": 0,
+          "retry_at_epoch_ms": null,
+          "input_watermark": null,
+          "completion_watermark": null,
+          "terminal_receipt_id": null,
+          "last_error": null,
+          "run_result": null,
+          "result_digest": null
+        }
+      }
+    }
+  },
+  "events": [
+    {
+      "protocol_version": 2,
+      "type": "core_task_updated",
+      "session_id": "conversation-task-contract",
+      "turn_id": "turn-task-contract",
+      "cursor": 14,
+      "revision": 8,
+      "task_projection_revision": 3,
+      "task": {
+        "id": "task-report-1",
+        "owner_session_id": "conversation-task-contract",
+        "owner_turn_id": "turn-task-contract",
+        "kind": "skill",
+        "lineage": {
+          "resumed_from_task_id": null,
+          "parent_task_id": null,
+          "parent_call_id": null,
+          "child_session_id": null,
+          "permission_scope_id": null,
+          "cancellation_scope_id": null
+        },
+        "state": "waiting",
+        "progress": 0.5,
+        "current_step": "Waiting for source availability",
+        "result_ref": null,
+        "cancel_requested": false,
+        "cancel_requested_at_epoch_ms": null,
+        "durability": {
+          "ownership_token": null,
+          "worker_id": null,
+          "lease_until_epoch_ms": null,
+          "last_heartbeat_epoch_ms": null,
+          "retry_count": 0,
+          "retry_at_epoch_ms": null,
+          "input_watermark": null,
+          "completion_watermark": null,
+          "terminal_receipt_id": null,
+          "last_error": null,
+          "run_result": null,
+          "result_digest": null
+        }
+      }
+    },
+    {
+      "protocol_version": 2,
+      "type": "core_task_updated",
+      "session_id": "conversation-task-contract",
+      "turn_id": "turn-task-contract",
+      "cursor": 15,
+      "revision": 9,
+      "task_projection_revision": 4,
+      "task": {
+        "id": "task-report-1",
+        "owner_session_id": "conversation-task-contract",
+        "owner_turn_id": "turn-task-contract",
+        "kind": "skill",
+        "lineage": {
+          "resumed_from_task_id": null,
+          "parent_task_id": null,
+          "parent_call_id": null,
+          "child_session_id": null,
+          "permission_scope_id": null,
+          "cancellation_scope_id": null
+        },
+        "state": "completed",
+        "progress": 1.0,
+        "current_step": "Report generated",
+        "result_ref": "file:///tmp/report.docx",
+        "cancel_requested": false,
+        "cancel_requested_at_epoch_ms": null,
+        "durability": {
+          "ownership_token": null,
+          "worker_id": null,
+          "lease_until_epoch_ms": null,
+          "last_heartbeat_epoch_ms": null,
+          "retry_count": 0,
+          "retry_at_epoch_ms": null,
+          "input_watermark": null,
+          "completion_watermark": null,
+          "terminal_receipt_id": null,
+          "last_error": null,
+          "run_result": null,
+          "result_digest": null
+        }
+      }
+    }
+  ],
+  "short_tool_event": {
+    "type": "tool_started",
+    "run_id": "turn-task-contract",
+    "conversation_id": "conversation-task-contract",
+    "message_id": "assistant-task-contract",
+    "sequence": 1,
+    "id": "read-short",
+    "name": "read_file",
+    "args": {"path": "/tmp/source.md"}
+  }
+}

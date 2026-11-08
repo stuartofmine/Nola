@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "id": "nature-paper2ppt",
+  "delivery": "built-in",
+  "category": {
+    "id": "design-presentations",
+    "name": "Design & Presentations",
+    "name_zh": "设计与演示"
+  },
+  "source": {
+    "project": "nature-skills",
+    "commit": "8d674eb50454d4b49d3e0be625a121ad4863840b",
+    "license": "Apache-2.0"
+  },
+  "status": "beta",
+  "platforms": [
+    "macos",
+    "cli-web"
+  ],
+  "required_tools": [
+    "Skill",
+    "read_file",
+    "write_file",
+    "bash"
+  ],
+  "optional_tools": [
+    "web_search",
+    "web_fetch"
+  ],
+  "runtime_dependencies": [
+    "python3 (standard library)"
+  ],
+  "permissions": [
+    "filesystem.read",
+    "filesystem.write",
+    "network.optional"
+  ],
+  "secrets": [],
+  "validation": [
+    "scripts/create_paper_presentation.py",
+    "scripts/audit_pptx_quality.py",
+    "rendered slide visual review"
+  ],
+  "execution_contract": {
+    "schemaVersion": 1,
+    "progressSteps": [
+      {
+        "id": "inspect",
+        "title": "Inspect inputs and constraints",
+        "required": true
+      },
+      {
+        "id": "execute",
+        "title": "Produce the requested outcome",
+        "required": true
+      },
+      {
+        "id": "verify",
+        "title": "Verify the outcome with evidence",
+        "required": true
+      }
+    ],
+    "artifacts": [
+      {
+        "id": "presentation",
+        "mediaType": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "required": true,
+        "description": "Stable reference to the final requested outcome or its persisted receipt"
+      }
+    ],
+    "verifiers": [
+      {
+        "id": "completion-audit",
+        "method": "model_judgment",
+        "description": "Record real evidence for the applicable completion checks: scripts/create_paper_presentation.py; scripts/audit_pptx_quality.py; rendered slide visual review",
+        "required": true
+      }
+    ],
+    "resumePoints": [
+      "after-inspect",
+      "after-execute",
+      "after-verify"
+    ]
+  }
+}

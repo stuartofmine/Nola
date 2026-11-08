@@ -1,0 +1,2203 @@
+{
+  "schemaVersion": 6,
+  "scenarios": [
+    {
+      "id": "core-contracts",
+      "platforms": [
+        "core"
+      ],
+      "layer": "contract",
+      "suite": [
+        "smoke",
+        "full"
+      ],
+      "timeoutSeconds": 600,
+      "command": "./scripts/test_real_core_contracts.sh",
+      "evidence": {
+        "platforms": [
+          "core"
+        ],
+        "modules": [
+          "core"
+        ],
+        "boundaries": [
+          "core"
+        ]
+      },
+      "contractId": "core-contract-suite",
+      "execution": {
+        "runtime": "native-process",
+        "productionCode": false,
+        "productEntrypoint": false,
+        "realProvider": false,
+        "realPersistence": false,
+        "realUI": false,
+        "semanticJudge": false,
+        "isolation": "build-target"
+      }
+    },
+    {
+      "id": "cli-multitool-recovery",
+      "platforms": [
+        "cli"
+      ],
+      "layer": "system",
+      "suite": [
+        "smoke",
+        "full"
+      ],
+      "timeoutSeconds": 420,
+      "realModel": true,
+      "command": "NOLA_REAL_LLM_E2E=1 ./scripts/test_real_cli_multitool_recovery.sh",
+      "evidence": {
+        "platforms": [
+          "cli"
+        ],
+        "modules": [
+          "agent",
+          "core",
+          "provider",
+          "tools",
+          "persistence",
+          "recovery"
+        ],
+        "boundaries": [
+          "cli",
+          "agent-host",
+          "provider",
+          "persistence"
+        ],
+        "requiredObservationKinds": [
+          "event_stream",
+          "persistence_store",
+          "provider_trace",
+          "semantic_audit",
+          "transcript"
+        ],
+        "requireAssertionEvidence": true
+      },
+      "contractId": "multitool-turn-recovery",
+      "execution": {
+        "runtime": "native-process",
+        "productionCode": true,
+        "productEntrypoint": true,
+        "realProvider": true,
+        "realPersistence": true,
+        "realUI": false,
+        "semanticJudge": true,
+        "isolation": "temporary-profile"
+      }
+    },
+    {
+      "id": "cli-memory",
+      "platforms": [
+        "cli"
+      ],
+      "layer": "system",
+      "suite": [
+        "full"
+      ],
+      "timeoutSeconds": 420,
+      "realModel": true,
+      "command": "NOLA_REAL_LLM_E2E=1 ./scripts/live_memory_e2e.sh",
+      "evidence": {
+        "platforms": [
+          "cli"
+        ],
+        "modules": [
+          "agent",
+          "core",
+          "provider",
+          "memory",
+          "persistence"
+        ],
+        "boundaries": [
+          "cli",
+          "agent-host",
+          "provider",
+          "persistence"
+        ]
+      },
+      "contractId": "cross-session-memory",
+      "execution": {
+        "runtime": "native-process",
+        "productionCode": true,
+        "productEntrypoint": true,
+        "realProvider": true,
+        "realPersistence": true,
+        "realUI": false,
+        "semanticJudge": false,
+        "isolation": "temporary-profile"
+      }
+    },
+    {
+      "id": "cli-data-source",
+      "platforms": [
+        "cli"
+      ],
+      "layer": "system",
+      "suite": [
+        "full"
+      ],
+      "timeoutSeconds": 420,
+      "realModel": true,
+      "command": "NOLA_REAL_LLM_E2E=1 ./scripts/test_real_cli_data_source.sh",
+      "evidence": {
+        "platforms": [
+          "cli"
+        ],
+        "modules": [
+          "agent",
+          "core",
+          "provider",
+          "data-source",
+          "persistence",
+          "audit"
+        ],
+        "boundaries": [
+          "cli",
+          "agent-host",
+          "provider",
+          "persistence"
+        ]
+      },
+      "contractId": "validated-source-grounding",
+      "execution": {
+        "runtime": "native-process",
+        "productionCode": true,
+        "productEntrypoint": true,
+        "realProvider": true,
+        "realPersistence": true,
+        "realUI": false,
+        "semanticJudge": false,
+        "isolation": "temporary-profile"
+      }
+    },
+    {
+      "id": "cli-terminal-product-ui",
+      "contractId": "terminal-product-ui",
+      "platforms": [
+        "cli"
+      ],
+      "layer": "product-ui",
+      "suite": [
+        "smoke",
+        "full"
+      ],
+      "realModel": true,
+      "timeoutSeconds": 240,
+      "command": "NOLA_REAL_LLM_E2E=1 ./scripts/test_real_cli_terminal_e2e.sh",
+      "execution": {
+        "runtime": "terminal-pty",
+        "productionCode": true,
+        "productEntrypoint": true,
+        "realProvider": true,
+        "realPersistence": true,
+        "realUI": true,
+        "semanticJudge": false,
+        "isolation": "temporary-profile"
+      },
+      "evidence": {
+        "platforms": [
+          "cli"
+        ],
+        "modules": [
+          "chat",
+          "provider",
+          "terminal",
+          "persistence",
+          "cancellation"
+        ],
+        "boundaries": [
+          "cli-ui",
+          "cli",
+          "provider",
+          "persistence"
+        ],
+        "requiredObservationKinds": [
+          "provider_trace",
+          "terminal_capture",
+          "terminal_frames",
+          "terminal_actions",
+          "terminal_metrics",
+          "persistence_audit",
+          "persistence_store"
+        ],
+        "requireAssertionEvidence": true,
+        "validators": [
+          "terminal_ui"
+        ]
+      }
+    },
+    {
+      "id": "web-agent-real-model",
+      "platforms": [
+        "web"
+      ],
+      "layer": "product-ui",
+      "suite": [
+        "smoke",
+        "full"
+      ],
+      "timeoutSeconds": 600,
+      "realModel": true,
+      "command": "test -x web/.venv/bin/python && NOLA_RUN_REAL_MODEL_E2E=1 web/.venv/bin/python -m pytest -q -rs web/tests/test_real_llm_web_agent_e2e.py",
+      "evidence": {
+        "platforms": [
+          "web"
+        ],
+        "modules": [
+          "chat",
+          "agent",
+          "core",
+          "provider",
+          "tools",
+          "skills",
+          "persistence",
+          "cancellation",
+          "ui"
+        ],
+        "boundaries": [
+          "web-ui",
+          "http",
+          "agent-host",
+          "provider",
+          "persistence"
+        ],
+        "requiredObservationKinds": [
+          "accessibility_tree",
+          "event_stream",
+          "persistence_audit",
+          "provider_trace",
+          "semantic_audit",
+          "transcript",
+          "ui_screenshot",
+          "ui_timeline"
+        ],
+        "requireAssertionEvidence": true,
+        "minimumSteps": 2,
+        "requiredChains": [
+          {
+            "id": "web-skill-tool-ui-chain",
+            "platform": "web",
+            "modules": [
+              "agent",
+              "chat",
+              "core",
+              "provider",
+              "tools",
+              "skills",
+              "persistence",
+              "ui"
+            ],
+            "boundaries": [
+              "web-ui",
+              "http",
+              "agent-host",
+              "provider",
+              "persistence"
+            ],
+            "assertions": [
+              "assistant_rendered",
+              "skill_enable_edit_disable",
+              "unknown_tool_recovered"
+            ]
+          },
+          {
+            "id": "web-cancellation-recovery-chain",
+            "platform": "web",
+            "modules": [
+              "agent",
+              "cancellation",
+              "chat",
+              "core",
+              "provider",
+              "tools",
+              "persistence",
+              "ui"
+            ],
+            "boundaries": [
+              "web-ui",
+              "http",
+              "agent-host",
+              "provider",
+              "persistence"
+            ],
+            "assertions": [
+              "cancelled_terminal_persisted",
+              "next_turn_recovered"
+            ]
+          }
+        ]
+      },
+      "contractId": "web-product-lifecycle",
+      "execution": {
+        "runtime": "browser",
+        "productionCode": true,
+        "productEntrypoint": true,
+        "realProvider": true,
+        "realPersistence": true,
+        "realUI": true,
+        "semanticJudge": true,
+        "isolation": "temporary-profile"
+      }
+    },
+    {
+      "id": "mac-product-ui-transformer-cpp-word",
+      "platforms": [
+        "mac"
+      ],
+      "layer": "product-ui",
+      "suite": [
+        "smoke",
+        "full"
+      ],
+      "timeoutSeconds": 1200,
+      "realModel": true,
+      "command": "./scripts/test_real_mac_product_ui_multiturn.sh",
+      "evidence": {
+        "platforms": [
+          "mac"
+        ],
+        "modules": [
+          "chat",
+          "agent",
+          "core",
+          "provider",
+          "web-search",
+          "skills",
+          "tools",
+          "permissions",
+          "persistence",
+          "rendering",
+          "ui"
+        ],
+        "boundaries": [
+          "mac-ui",
+          "mac-client-runtime",
+          "agent-host",
+          "provider",
+          "tool-runtime",
+          "persistence"
+        ],
+        "requiredObservationKinds": [
+          "provider_trace",
+          "event_stream",
+          "persistence_store",
+          "ui_screenshot",
+          "accessibility_tree",
+          "ui_timeline",
+          "transcript"
+        ],
+        "requireAssertionEvidence": true,
+        "minimumSteps": 1,
+        "validators": [
+          "transcript_order",
+          "ui_terminal",
+          "ui_progressive",
+          "accessibility_matches_transcript",
+          "ui_screenshot_valid"
+        ]
+      },
+      "contractId": "native-progressive-render",
+      "execution": {
+        "runtime": "native-app",
+        "productionCode": true,
+        "productEntrypoint": true,
+        "realProvider": true,
+        "realPersistence": true,
+        "realUI": true,
+        "semanticJudge": false,
+        "isolation": "temporary-profile"
+      }
+    },
+    {
+      "id": "mac-agent-structured-render",
+      "platforms": [
+        "mac"
+      ],
+      "layer": "product-runtime",
+      "suite": [
+        "smoke",
+        "full"
+      ],
+      "timeoutSeconds": 1200,
+      "realModel": true,
+      "command": "./scripts/test_real_mac_structured_response.sh",
+      "evidence": {
+        "platforms": [
+          "mac"
+        ],
+        "modules": [
+          "chat",
+          "agent",
+          "core",
+          "provider",
+          "tools",
+          "persistence",
+          "rendering",
+          "recovery"
+        ],
+        "boundaries": [
+          "mac-product-runtime",
+          "agent-host",
+          "provider",
+          "persistence"
+        ],
+        "requiredObservationKinds": [
+          "provider_trace",
+          "event_stream",
+          "persistence_store",
+          "persistence_audit"
+        ],
+        "requireAssertionEvidence": true
+      },
+      "contractId": "native-progressive-render",
+      "execution": {
+        "runtime": "native-process",
+        "productionCode": true,
+        "productEntrypoint": false,
+        "realProvider": true,
+        "realPersistence": true,
+        "realUI": false,
+        "semanticJudge": false,
+        "isolation": "temporary-profile"
+      }
+    },
+    {
+      "id": "mac-permission-denial-recovery",
+      "platforms": ["mac"],
+      "layer": "product-runtime",
+      "suite": ["full"],
+      "timeoutSeconds": 1200,
+      "realModel": true,
+      "command": "./scripts/test_real_mac_permission_denial.sh",
+      "evidence": {
+        "platforms": ["mac"],
+        "modules": ["chat", "agent", "core", "provider", "tools", "permissions", "persistence", "recovery"],
+        "boundaries": ["mac-product-runtime", "agent-host", "provider", "permission-runtime", "persistence"],
+        "requiredObservationKinds": ["provider_trace", "event_stream", "persistence_store", "persistence_audit"],
+        "requireAssertionEvidence": true
+      },
+      "contractId": "mac-permission-overwrite",
+      "execution": {
+        "runtime": "native-process",
+        "productionCode": true,
+        "productEntrypoint": false,
+        "realProvider": true,
+        "realPersistence": true,
+        "realUI": false,
+        "semanticJudge": false,
+        "isolation": "temporary-profile"
+      }
+    },
+    {
+      "id": "mac-parallel-natural-follow-up",
+      "contractId": "multitool-turn-recovery",
+      "platforms": [
+        "mac"
+      ],
+      "layer": "product-runtime",
+      "suite": [
+        "smoke",
+        "full"
+      ],
+      "timeoutSeconds": 1200,
+      "realModel": true,
+      "command": "./scripts/test_real_mac_parallel_followup.sh",
+      "evidence": {
+        "platforms": [
+          "mac"
+        ],
+        "modules": [
+          "agent",
+          "core",
+          "provider",
+          "tools",
+          "persistence",
+          "recovery"
+        ],
+        "boundaries": [
+          "mac-product-runtime",
+          "agent-host",
+          "provider",
+          "persistence"
+        ],
+        "requiredObservationKinds": [
+          "event_stream",
+          "persistence_audit",
+          "persistence_store",
+          "provider_trace",
+          "semantic_audit"
+        ],
+        "requireAssertionEvidence": true
+      },
+      "execution": {
+        "runtime": "native-process",
+        "productionCode": true,
+        "productEntrypoint": false,
+        "realProvider": true,
+        "realPersistence": true,
+        "realUI": false,
+        "semanticJudge": true,
+        "isolation": "temporary-profile"
+      }
+    },
+    {
+      "id": "mac-memory",
+      "platforms": [
+        "mac"
+      ],
+      "layer": "system",
+      "suite": [
+        "full"
+      ],
+      "timeoutSeconds": 1200,
+      "realModel": true,
+      "command": "./scripts/test_real_mac_memory.sh",
+      "evidence": {
+        "platforms": [
+          "mac"
+        ],
+        "modules": [
+          "chat",
+          "agent",
+          "core",
+          "provider",
+          "memory",
+          "persistence"
+        ],
+        "boundaries": [
+          "mac-client-runtime",
+          "agent-host",
+          "provider",
+          "persistence"
+        ]
+      },
+      "contractId": "native-runtime-xctest",
+      "execution": {
+        "runtime": "native-process",
+        "productionCode": true,
+        "productEntrypoint": false,
+        "realProvider": true,
+        "realPersistence": true,
+        "realUI": false,
+        "semanticJudge": false,
+        "isolation": "temporary-profile"
+      }
+    },
+    {
+      "id": "mac-compaction",
+      "platforms": [
+        "mac"
+      ],
+      "layer": "system",
+      "suite": [
+        "full"
+      ],
+      "timeoutSeconds": 1800,
+      "realModel": true,
+      "command": "./scripts/test_real_mac_compaction.sh",
+      "evidence": {
+        "platforms": [
+          "mac"
+        ],
+        "modules": [
+          "chat",
+          "agent",
+          "core",
+          "provider",
+          "compaction",
+          "memory",
+          "persistence"
+        ],
+        "boundaries": [
+          "mac-client-runtime",
+          "agent-host",
+          "provider",
+          "persistence"
+        ]
+      },
+      "contractId": "native-runtime-xctest",
+      "execution": {
+        "runtime": "native-process",
+        "productionCode": true,
+        "productEntrypoint": false,
+        "realProvider": true,
+        "realPersistence": true,
+        "realUI": false,
+        "semanticJudge": false,
+        "isolation": "temporary-profile"
+      }
+    },
+    {
+      "id": "mac-cancellation",
+      "platforms": [
+        "mac"
+      ],
+      "layer": "system",
+      "suite": [
+        "full"
+      ],
+      "timeoutSeconds": 1200,
+      "realModel": true,
+      "command": "./scripts/test_real_mac_cancellation.sh",
+      "evidence": {
+        "platforms": [
+          "mac"
+        ],
+        "modules": [
+          "chat",
+          "agent",
+          "core",
+          "provider",
+          "tools",
+          "cancellation",
+          "recovery",
+          "persistence"
+        ],
+        "boundaries": [
+          "mac-client-runtime",
+          "agent-host",
+          "provider",
+          "persistence"
+        ]
+      },
+      "contractId": "native-runtime-xctest",
+      "execution": {
+        "runtime": "native-process",
+        "productionCode": true,
+        "productEntrypoint": false,
+        "realProvider": true,
+        "realPersistence": true,
+        "realUI": false,
+        "semanticJudge": false,
+        "isolation": "temporary-profile"
+      }
+    },
+    {
+      "id": "mac-skill-lifecycle",
+      "platforms": [
+        "mac"
+      ],
+      "layer": "system",
+      "suite": [
+        "full"
+      ],
+      "timeoutSeconds": 1200,
+      "realModel": true,
+      "command": "./scripts/test_real_mac_skill_lifecycle.sh",
+      "evidence": {
+        "platforms": [
+          "mac"
+        ],
+        "modules": [
+          "chat",
+          "agent",
+          "core",
+          "provider",
+          "skills",
+          "tools",
+          "persistence"
+        ],
+        "boundaries": [
+          "mac-client-runtime",
+          "agent-host",
+          "provider",
+          "persistence"
+        ]
+      },
+      "contractId": "native-runtime-xctest",
+      "execution": {
+        "runtime": "native-process",
+        "productionCode": true,
+        "productEntrypoint": false,
+        "realProvider": true,
+        "realPersistence": true,
+        "realUI": false,
+        "semanticJudge": false,
+        "isolation": "temporary-profile"
+      }
+    },
+    {
+      "id": "mac-data-source",
+      "platforms": [
+        "mac"
+      ],
+      "layer": "system",
+      "suite": [
+        "full"
+      ],
+      "timeoutSeconds": 1200,
+      "realModel": true,
+      "command": "./scripts/test_real_mac_data_source.sh",
+      "evidence": {
+        "platforms": [
+          "mac"
+        ],
+        "modules": [
+          "chat",
+          "agent",
+          "core",
+          "provider",
+          "data-source",
+          "persistence",
+          "audit"
+        ],
+        "boundaries": [
+          "mac-client-runtime",
+          "agent-host",
+          "provider",
+          "persistence"
+        ]
+      },
+      "contractId": "native-runtime-xctest",
+      "execution": {
+        "runtime": "native-process",
+        "productionCode": true,
+        "productEntrypoint": false,
+        "realProvider": true,
+        "realPersistence": true,
+        "realUI": false,
+        "semanticJudge": false,
+        "isolation": "temporary-profile"
+      }
+    },
+    {
+      "id": "ios-real-chat-product",
+      "platforms": [
+        "ios"
+      ],
+      "layer": "product-ui",
+      "suite": [
+        "smoke",
+        "full"
+      ],
+      "timeoutSeconds": 2400,
+      "realModel": true,
+      "command": "./scripts/test_real_ios_rendered_chat.sh",
+      "evidence": {
+        "platforms": [
+          "ios"
+        ],
+        "modules": [
+          "chat",
+          "agent",
+          "core",
+          "provider",
+          "tools",
+          "persistence",
+          "ui",
+          "rendering"
+        ],
+        "boundaries": [
+          "ios-ui",
+          "agent-host",
+          "provider",
+          "persistence"
+        ],
+        "requiredObservationKinds": [
+          "accessibility_tree",
+          "event_stream",
+          "persistence_audit",
+          "persistence_store",
+          "provider_trace",
+          "semantic_audit",
+          "transcript",
+          "ui_screenshot",
+          "ui_timeline"
+        ],
+        "requireAssertionEvidence": true
+      },
+      "contractId": "mobile-rendered-agent-host",
+      "execution": {
+        "runtime": "simulator",
+        "productionCode": true,
+        "productEntrypoint": true,
+        "realProvider": true,
+        "realPersistence": true,
+        "realUI": true,
+        "semanticJudge": true,
+        "isolation": "temporary-profile"
+      }
+    },
+    {
+      "id": "android-provider-streaming",
+      "platforms": [
+        "android"
+      ],
+      "layer": "provider-product",
+      "suite": [
+        "smoke",
+        "full"
+      ],
+      "timeoutSeconds": 1200,
+      "realModel": true,
+      "command": "NOLA_REAL_MOBILE_PLATFORM=android ./scripts/test_real_mobile_providers.sh",
+      "evidence": {
+        "platforms": [
+          "android"
+        ],
+        "modules": [
+          "provider",
+          "streaming",
+          "data-source",
+          "audit"
+        ],
+        "boundaries": [
+          "android-provider",
+          "provider"
+        ]
+      },
+      "contractId": "single-native-provider-streaming",
+      "execution": {
+        "runtime": "emulator",
+        "productionCode": true,
+        "productEntrypoint": false,
+        "realProvider": true,
+        "realPersistence": false,
+        "realUI": false,
+        "semanticJudge": false,
+        "isolation": "test-target"
+      }
+    },
+    {
+      "id": "ios-provider-streaming",
+      "platforms": [
+        "ios"
+      ],
+      "layer": "provider-product",
+      "suite": [
+        "smoke",
+        "full"
+      ],
+      "timeoutSeconds": 1200,
+      "realModel": true,
+      "command": "NOLA_REAL_MOBILE_PLATFORM=ios ./scripts/test_real_mobile_providers.sh",
+      "evidence": {
+        "platforms": [
+          "ios"
+        ],
+        "modules": [
+          "provider",
+          "streaming",
+          "data-source",
+          "audit"
+        ],
+        "boundaries": [
+          "ios-provider",
+          "provider"
+        ]
+      },
+      "contractId": "single-native-provider-streaming",
+      "execution": {
+        "runtime": "simulator",
+        "productionCode": true,
+        "productEntrypoint": false,
+        "realProvider": true,
+        "realPersistence": false,
+        "realUI": false,
+        "semanticJudge": false,
+        "isolation": "test-target"
+      }
+    },
+    {
+      "id": "mobile-provider-streaming",
+      "platforms": [
+        "ios",
+        "android"
+      ],
+      "layer": "provider-product",
+      "suite": [
+        "full"
+      ],
+      "timeoutSeconds": 1800,
+      "realModel": true,
+      "command": "./scripts/test_real_mobile_providers.sh",
+      "evidence": {
+        "platforms": [
+          "ios",
+          "android"
+        ],
+        "modules": [
+          "provider",
+          "streaming",
+          "data-source",
+          "audit"
+        ],
+        "boundaries": [
+          "ios-provider",
+          "android-provider",
+          "provider"
+        ],
+        "requiredChains": [
+          {
+            "id": "android-native-provider-chain",
+            "platform": "android",
+            "modules": [
+              "provider",
+              "streaming",
+              "data-source",
+              "audit"
+            ],
+            "boundaries": [
+              "android-provider",
+              "provider"
+            ],
+            "assertions": [
+              "real_provider_stream_passed",
+              "no_skipped_tests"
+            ]
+          },
+          {
+            "id": "ios-native-provider-chain",
+            "platform": "ios",
+            "modules": [
+              "provider",
+              "streaming",
+              "data-source",
+              "audit"
+            ],
+            "boundaries": [
+              "ios-provider",
+              "provider"
+            ],
+            "assertions": [
+              "real_provider_stream_passed",
+              "no_skipped_tests"
+            ]
+          }
+        ]
+      },
+      "contractId": "native-provider-streaming",
+      "execution": {
+        "runtime": "simulator-and-emulator",
+        "productionCode": true,
+        "productEntrypoint": false,
+        "realProvider": true,
+        "realPersistence": false,
+        "realUI": false,
+        "semanticJudge": false,
+        "isolation": "test-target"
+      }
+    },
+    {
+      "id": "mobile-skill-lifecycle",
+      "platforms": [
+        "ios",
+        "android"
+      ],
+      "layer": "product-runtime",
+      "suite": [
+        "smoke",
+        "full"
+      ],
+      "timeoutSeconds": 2400,
+      "realModel": true,
+      "command": "./scripts/test_real_mobile_skill_lifecycle.sh",
+      "evidence": {
+        "platforms": [
+          "ios",
+          "android"
+        ],
+        "modules": [
+          "chat",
+          "agent",
+          "core",
+          "provider",
+          "skills"
+        ],
+        "boundaries": [
+          "ios-client-runtime",
+          "android-client-runtime",
+          "provider"
+        ],
+        "requiredObservationKinds": [
+          "provider_trace",
+          "instrumentation_output",
+          "test_report"
+        ],
+        "requiredChains": [
+          {
+            "id": "android-skill-lifecycle-chain",
+            "platform": "android",
+            "modules": [
+              "chat",
+              "agent",
+              "core",
+              "provider",
+              "skills"
+            ],
+            "boundaries": [
+              "android-client-runtime",
+              "provider"
+            ],
+            "assertions": [
+              "skill_lifecycle_passed"
+            ]
+          },
+          {
+            "id": "ios-skill-lifecycle-chain",
+            "platform": "ios",
+            "modules": [
+              "chat",
+              "agent",
+              "core",
+              "provider",
+              "skills"
+            ],
+            "boundaries": [
+              "ios-client-runtime",
+              "provider"
+            ],
+            "assertions": [
+              "skill_lifecycle_passed"
+            ]
+          }
+        ]
+      },
+      "contractId": "skill-lifecycle",
+      "execution": {
+        "runtime": "simulator-and-emulator",
+        "productionCode": true,
+        "productEntrypoint": false,
+        "realProvider": true,
+        "realPersistence": false,
+        "realUI": false,
+        "semanticJudge": false,
+        "isolation": "test-target"
+      }
+    },
+    {
+      "id": "android-data-source-product",
+      "platforms": [
+        "android"
+      ],
+      "layer": "product-runtime",
+      "suite": [
+        "smoke",
+        "full"
+      ],
+      "timeoutSeconds": 1800,
+      "realModel": true,
+      "command": "./scripts/test_real_android_product_data_source.sh",
+      "evidence": {
+        "platforms": [
+          "android"
+        ],
+        "modules": [
+          "chat",
+          "agent",
+          "core",
+          "provider",
+          "data-source",
+          "skills",
+          "persistence"
+        ],
+        "boundaries": [
+          "android-client-runtime",
+          "android-repository",
+          "core",
+          "provider",
+          "persistence"
+        ]
+      },
+      "contractId": "android-product-data-source",
+      "execution": {
+        "runtime": "emulator",
+        "productionCode": true,
+        "productEntrypoint": false,
+        "realProvider": true,
+        "realPersistence": true,
+        "realUI": false,
+        "semanticJudge": false,
+        "isolation": "test-target"
+      }
+    },
+    {
+      "id": "android-real-chat-product-ui",
+      "contractId": "android-product-ui",
+      "platforms": [
+        "android"
+      ],
+      "layer": "product-ui",
+      "suite": [
+        "smoke",
+        "full"
+      ],
+      "realModel": true,
+      "timeoutSeconds": 420,
+      "command": "./scripts/test_real_android_chat_product_ui.sh",
+      "execution": {
+        "runtime": "emulator",
+        "productionCode": true,
+        "productEntrypoint": true,
+        "realProvider": true,
+        "realPersistence": true,
+        "realUI": true,
+        "semanticJudge": true,
+        "isolation": "temporary-profile"
+      },
+      "evidence": {
+        "platforms": [
+          "android"
+        ],
+        "modules": [
+          "chat",
+          "agent",
+          "provider",
+          "ui",
+          "persistence"
+        ],
+        "boundaries": [
+          "android-ui",
+          "android-client-runtime",
+          "provider",
+          "persistence"
+        ],
+        "requiredObservationKinds": [
+          "accessibility_tree",
+          "instrumentation_output",
+          "persistence_audit",
+          "persistence_store",
+          "provider_trace",
+          "semantic_audit",
+          "transcript",
+          "ui_screenshot",
+          "ui_timeline"
+        ],
+        "requireAssertionEvidence": true
+      }
+    },
+    {
+      "id": "mobile-host-runtime",
+      "platforms": [
+        "ios",
+        "android"
+      ],
+      "layer": "product-runtime",
+      "suite": [
+        "full"
+      ],
+      "timeoutSeconds": 2400,
+      "realModel": true,
+      "command": "./scripts/test_real_mobile_agent_host.sh",
+      "evidence": {
+        "platforms": [
+          "ios",
+          "android"
+        ],
+        "modules": [
+          "chat",
+          "agent",
+          "core",
+          "provider",
+          "tools",
+          "permissions",
+          "memory",
+          "recovery",
+          "persistence"
+        ],
+        "boundaries": [
+          "ios-provider",
+          "android-provider",
+          "agent-host",
+          "provider",
+          "persistence"
+        ],
+        "requiredObservationKinds": [
+          "provider_trace",
+          "persistence_store",
+          "test_report"
+        ],
+        "requiredChains": [
+          {
+            "id": "ios-host-permission-memory-chain",
+            "platform": "ios",
+            "modules": [
+              "chat",
+              "agent",
+              "core",
+              "provider",
+              "tools",
+              "permissions",
+              "memory",
+              "recovery",
+              "persistence"
+            ],
+            "boundaries": [
+              "ios-provider",
+              "agent-host",
+              "provider",
+              "persistence"
+            ],
+            "assertions": [
+              "host_chain_passed",
+              "destructive_denial_preserved_file"
+            ]
+          },
+          {
+            "id": "android-host-permission-memory-chain",
+            "platform": "android",
+            "modules": [
+              "chat",
+              "agent",
+              "core",
+              "provider",
+              "tools",
+              "permissions",
+              "memory",
+              "recovery",
+              "persistence"
+            ],
+            "boundaries": [
+              "android-provider",
+              "agent-host",
+              "provider",
+              "persistence"
+            ],
+            "assertions": [
+              "host_chain_passed",
+              "destructive_denial_preserved_file"
+            ]
+          }
+        ]
+      },
+      "contractId": "mobile-host-runtime",
+      "execution": {
+        "runtime": "simulator-and-emulator",
+        "productionCode": true,
+        "productEntrypoint": false,
+        "realProvider": true,
+        "realPersistence": true,
+        "realUI": false,
+        "semanticJudge": false,
+        "isolation": "temporary-profile"
+      }
+    },
+    {
+      "id": "backend-http-persistence",
+      "contractId": "backend-http-lifecycle",
+      "suite": [
+        "smoke",
+        "full"
+      ],
+      "platforms": [
+        "backend"
+      ],
+      "layer": "system",
+      "realModel": false,
+      "command": "python3 scripts/test_real_backend_http_persistence.py",
+      "timeoutSeconds": 120,
+      "execution": {
+        "runtime": "http-service",
+        "productionCode": true,
+        "productEntrypoint": true,
+        "realProvider": false,
+        "realPersistence": true,
+        "realUI": false,
+        "semanticJudge": false,
+        "isolation": "temporary-profile"
+      },
+      "evidence": {
+        "platforms": [
+          "backend"
+        ],
+        "modules": [
+          "auth",
+          "chat",
+          "database",
+          "http"
+        ],
+        "boundaries": [
+          "backend-http",
+          "backend-persistence"
+        ],
+        "requiredObservationKinds": [
+          "http_transcript",
+          "persistence_store",
+          "persistence_audit",
+          "process_log"
+        ],
+        "requireAssertionEvidence": true
+      }
+    },
+    {
+      "id": "cli-skill-permission-runtime",
+      "platforms": [
+        "cli"
+      ],
+      "layer": "product-runtime",
+      "suite": [
+        "full"
+      ],
+      "timeoutSeconds": 1200,
+      "realModel": true,
+      "command": "bash scripts/test_real_cli_skill_permission.sh",
+      "evidence": {
+        "platforms": [
+          "cli"
+        ],
+        "modules": [
+          "agent",
+          "chat",
+          "core",
+          "permissions",
+          "persistence",
+          "provider",
+          "recovery",
+          "skills",
+          "tools"
+        ],
+        "boundaries": [
+          "cli-runtime",
+          "provider",
+          "persistence"
+        ],
+        "requiredObservationKinds": [
+          "provider_trace",
+          "persistence_store",
+          "persistence_audit",
+          "test_report"
+        ],
+        "requiredChains": [
+          {
+            "id": "cli-permission-skill-chain",
+            "modules": [
+              "agent",
+              "chat",
+              "core",
+              "permissions",
+              "persistence",
+              "provider",
+              "recovery",
+              "skills",
+              "tools"
+            ],
+            "boundaries": [
+              "cli-runtime",
+              "provider",
+              "persistence"
+            ],
+            "platform": "cli"
+          }
+        ]
+      },
+      "contractId": "cli-skill-permission-runtime",
+      "execution": {
+        "runtime": "native-process",
+        "productionCode": true,
+        "productEntrypoint": false,
+        "realProvider": true,
+        "realPersistence": true,
+        "realUI": false,
+        "semanticJudge": false,
+        "isolation": "temporary-profile"
+      },
+      "modules": [
+        "agent",
+        "chat",
+        "core",
+        "permissions",
+        "persistence",
+        "provider",
+        "recovery",
+        "skills",
+        "tools"
+      ],
+      "boundaries": [
+        "cli-runtime",
+        "provider",
+        "persistence"
+      ],
+      "claims": {
+        "modules": [
+          "agent",
+          "chat",
+          "core",
+          "permissions",
+          "persistence",
+          "provider",
+          "recovery",
+          "skills",
+          "tools"
+        ],
+        "boundaries": [
+          "cli-runtime",
+          "provider",
+          "persistence"
+        ]
+      }
+    },
+    {
+      "id": "cli-web-integrated-runtime",
+      "platforms": [
+        "web"
+      ],
+      "layer": "product-runtime",
+      "suite": [
+        "full"
+      ],
+      "timeoutSeconds": 1500,
+      "realModel": true,
+      "command": "bash scripts/test_real_cli_web.sh",
+      "evidence": {
+        "platforms": [
+          "web"
+        ],
+        "modules": [
+          "agent",
+          "audit",
+          "chat",
+          "compaction",
+          "core",
+          "data-source",
+          "memory",
+          "permissions",
+          "persistence",
+          "provider",
+          "recovery",
+          "skills",
+          "tools",
+          "ui"
+        ],
+        "boundaries": [
+          "cli-web-host",
+          "http",
+          "persistence",
+          "provider",
+          "sse"
+        ],
+        "requiredObservationKinds": [
+          "provider_trace",
+          "persistence_store",
+          "persistence_audit",
+          "test_report"
+        ],
+        "requiredChains": [
+          {
+            "id": "web-integrated-agent-chain",
+            "modules": [
+              "agent",
+              "audit",
+              "chat",
+              "compaction",
+              "core",
+              "data-source",
+              "memory",
+              "permissions",
+              "persistence",
+              "provider",
+              "recovery",
+              "skills",
+              "tools",
+              "ui"
+            ],
+            "boundaries": [
+              "cli-web-host",
+              "http",
+              "persistence",
+              "provider",
+              "sse"
+            ],
+            "platform": "web"
+          }
+        ]
+      },
+      "contractId": "cli-web-integrated-runtime",
+      "execution": {
+        "runtime": "http-service",
+        "productionCode": true,
+        "productEntrypoint": false,
+        "realProvider": true,
+        "realPersistence": true,
+        "realUI": false,
+        "semanticJudge": false,
+        "isolation": "temporary-profile"
+      },
+      "modules": [
+        "agent",
+        "audit",
+        "chat",
+        "compaction",
+        "core",
+        "data-source",
+        "memory",
+        "permissions",
+        "persistence",
+        "provider",
+        "recovery",
+        "skills",
+        "tools",
+        "ui"
+      ],
+      "boundaries": [
+        "cli-web-host",
+        "http",
+        "persistence",
+        "provider",
+        "sse"
+      ],
+      "claims": {
+        "modules": [
+          "agent",
+          "audit",
+          "chat",
+          "compaction",
+          "core",
+          "data-source",
+          "memory",
+          "permissions",
+          "persistence",
+          "provider",
+          "recovery",
+          "skills",
+          "tools",
+          "ui"
+        ],
+        "boundaries": [
+          "cli-web-host",
+          "http",
+          "persistence",
+          "provider",
+          "sse"
+        ]
+      }
+    },
+    {
+      "id": "messaging-webhook-protocols",
+      "contractId": "secure-messaging-ingress",
+      "platforms": [
+        "backend",
+        "web"
+      ],
+      "layer": "system",
+      "suite": [
+        "smoke",
+        "full"
+      ],
+      "timeoutSeconds": 180,
+      "realModel": false,
+      "command": "python3 scripts/test_messaging_full_stack_e2e.py",
+      "execution": {
+        "runtime": "local-service-stack",
+        "productionCode": true,
+        "productEntrypoint": true,
+        "realProvider": false,
+        "realPersistence": true,
+        "realUI": false,
+        "semanticJudge": false,
+        "isolation": "temporary-profile"
+      },
+      "evidence": {
+        "platforms": [
+          "backend",
+          "web"
+        ],
+        "modules": [
+          "delivery",
+          "messaging",
+          "webhooks",
+          "persistence",
+          "security",
+          "web-host"
+        ],
+        "boundaries": [
+          "telegram-webhook",
+          "whatsapp-webhook",
+          "wechat-official-webhook",
+          "wecom-webhook",
+          "provider-delivery",
+          "d1",
+          "web-host-channel-proxy"
+        ],
+        "requiredObservationKinds": [
+          "event_stream",
+          "persistence_store"
+        ],
+        "requireAssertionEvidence": true
+      }
+    },
+    {
+      "id": "messaging-channel-codex-real",
+      "contractId": "messaging-external-executor",
+      "platforms": [
+        "cli",
+        "web"
+      ],
+      "layer": "system",
+      "suite": [
+        "full"
+      ],
+      "timeoutSeconds": 360,
+      "realModel": true,
+      "command": "python3 scripts/test_real_messaging_channel_codex_e2e.py --execution-backend codex --timeout 240",
+      "execution": {
+        "runtime": "local-service-stack",
+        "productionCode": true,
+        "productEntrypoint": true,
+        "realProvider": true,
+        "realPersistence": true,
+        "realUI": false,
+        "semanticJudge": false,
+        "isolation": "temporary-profile"
+      },
+      "evidence": {
+        "platforms": [
+          "cli",
+          "web"
+        ],
+        "modules": [
+          "messaging",
+          "agent-host",
+          "external-executor",
+          "persistence"
+        ],
+        "boundaries": [
+          "channel-lease",
+          "web-host",
+          "agent-host",
+          "codex"
+        ],
+        "requiredObservationKinds": [
+          "event_stream",
+          "provider_trace",
+          "persistence_store"
+        ],
+        "requireAssertionEvidence": true
+      }
+    },
+    {
+      "id": "messaging-channel-claude-real",
+      "contractId": "messaging-external-executor",
+      "platforms": [
+        "cli",
+        "web"
+      ],
+      "layer": "system",
+      "suite": [
+        "full"
+      ],
+      "timeoutSeconds": 360,
+      "realModel": true,
+      "command": "python3 scripts/test_real_messaging_channel_codex_e2e.py --execution-backend claude_code --timeout 240",
+      "execution": {
+        "runtime": "local-service-stack",
+        "productionCode": true,
+        "productEntrypoint": true,
+        "realProvider": true,
+        "realPersistence": true,
+        "realUI": false,
+        "semanticJudge": false,
+        "isolation": "temporary-profile"
+      },
+      "evidence": {
+        "platforms": [
+          "cli",
+          "web"
+        ],
+        "modules": [
+          "messaging",
+          "agent-host",
+          "external-executor",
+          "persistence"
+        ],
+        "boundaries": [
+          "channel-lease",
+          "web-host",
+          "agent-host",
+          "claude-code"
+        ],
+        "requiredObservationKinds": [
+          "event_stream",
+          "provider_trace",
+          "persistence_store"
+        ],
+        "requireAssertionEvidence": true
+      }
+    },
+    {
+      "id": "external-execution-web-real",
+      "contractId": "external-execution-session",
+      "platforms": [
+        "web",
+        "cli"
+      ],
+      "layer": "system",
+      "suite": [
+        "full"
+      ],
+      "timeoutSeconds": 900,
+      "realModel": true,
+      "command": "python3 scripts/test_real_external_execution_web.py",
+      "execution": {
+        "runtime": "local-service-stack",
+        "productionCode": true,
+        "productEntrypoint": true,
+        "realProvider": true,
+        "realPersistence": true,
+        "realUI": false,
+        "semanticJudge": false,
+        "isolation": "temporary-profile"
+      },
+      "evidence": {
+        "platforms": [
+          "web",
+          "cli"
+        ],
+        "modules": [
+          "chat",
+          "external-executor",
+          "persistence",
+          "recovery"
+        ],
+        "boundaries": [
+          "web-host",
+          "agent-host",
+          "codex",
+          "claude-code",
+          "opencode"
+        ],
+        "requiredObservationKinds": [
+          "event_stream",
+          "provider_trace",
+          "persistence_store",
+          "persistence_audit"
+        ],
+        "requireAssertionEvidence": true
+      }
+    }
+  ],
+  "contracts": {
+    "mac-permission-overwrite": {
+      "requiredAssertions": ["exact_pending_permission_audited", "original_fixture_intact_before_decision", "permission_result_sealed", "permission_execution_count_verified", "permission_final_bytes_verified"],
+      "minimumSteps": 1,
+      "perPlatformSteps": true,
+      "validators": ["provider_real", "event_terminal", "assistant_nonempty", "persistence_present"],
+      "requiredObservationKinds": ["provider_trace", "event_stream", "persistence_store", "persistence_audit"]
+    },
+    "core-contract-suite": {
+      "requiredAssertions": [
+        "cargo_contract_tests_passed"
+      ],
+      "minimumSteps": 1,
+      "perPlatformSteps": true,
+      "validators": [],
+      "requiredObservationKinds": []
+    },
+    "multitool-turn-recovery": {
+      "requiredAssertions": [
+        "tool_scope_covered",
+        "every_tool_has_result",
+        "follow_up_has_no_tools",
+        "no_protocol_errors"
+      ],
+      "minimumSteps": 1,
+      "perPlatformSteps": true,
+      "validators": [
+        "provider_real",
+        "event_terminal",
+        "tool_pairing",
+        "assistant_nonempty",
+        "persistence_present"
+      ],
+      "requiredObservationKinds": [
+        "provider_trace",
+        "event_stream",
+        "persistence_store"
+      ]
+    },
+    "cross-session-memory": {
+      "requiredAssertions": [
+        "memory_saved",
+        "memory_recalled_in_new_session",
+        "internal_memory_needs_no_permission"
+      ],
+      "minimumSteps": 1,
+      "perPlatformSteps": true,
+      "validators": [
+        "provider_real",
+        "event_terminal",
+        "assistant_nonempty",
+        "persistence_present"
+      ],
+      "requiredObservationKinds": [
+        "provider_trace",
+        "event_stream",
+        "persistence_store"
+      ]
+    },
+    "validated-source-grounding": {
+      "requiredAssertions": [
+        "source_contract_verified",
+        "selected_source_grounded_answer",
+        "unselected_source_did_not_leak",
+        "usage_audit_persisted"
+      ],
+      "minimumSteps": 1,
+      "perPlatformSteps": true,
+      "validators": [
+        "provider_real",
+        "event_terminal",
+        "assistant_nonempty",
+        "persistence_present"
+      ],
+      "requiredObservationKinds": [
+        "provider_trace",
+        "event_stream",
+        "persistence_audit"
+      ]
+    },
+    "web-product-lifecycle": {
+      "requiredAssertions": [
+        "assistant_rendered",
+        "unknown_tool_recovered",
+        "skill_enable_edit_disable",
+        "cancelled_terminal_persisted",
+        "next_turn_recovered"
+      ],
+      "minimumSteps": 2,
+      "perPlatformSteps": true,
+      "validators": [
+        "provider_real",
+        "event_terminal",
+        "tool_pairing",
+        "assistant_nonempty",
+        "persistence_present",
+        "transcript_order",
+        "ui_terminal",
+        "ui_progressive",
+        "accessibility_matches_transcript",
+        "ui_screenshot_valid"
+      ],
+      "requiredObservationKinds": [
+        "provider_trace",
+        "event_stream",
+        "persistence_audit",
+        "transcript",
+        "ui_timeline",
+        "accessibility_tree",
+        "ui_screenshot"
+      ]
+    },
+    "native-progressive-render": {
+      "requiredAssertions": [
+        "run_succeeded",
+        "tools_completed",
+        "stable_stream_prefix",
+        "stream_tail_progressive",
+        "rendered_markdown",
+        "isolated_database"
+      ],
+      "minimumSteps": 1,
+      "perPlatformSteps": true,
+      "validators": [
+        "provider_real",
+        "event_terminal",
+        "tool_pairing",
+        "assistant_nonempty",
+        "persistence_present"
+      ],
+      "requiredObservationKinds": [
+        "provider_trace",
+        "event_stream",
+        "persistence_store"
+      ]
+    },
+    "native-runtime-xctest": {
+      "requiredAssertions": [
+        "selected_real_tests_executed",
+        "selected_real_tests_passed",
+        "no_selected_test_skipped",
+        "isolated_runtime_database"
+      ],
+      "minimumSteps": 1,
+      "perPlatformSteps": true,
+      "validators": [
+        "provider_real",
+        "event_terminal",
+        "assistant_nonempty",
+        "persistence_present"
+      ],
+      "requiredObservationKinds": [
+        "provider_trace",
+        "event_stream",
+        "persistence_store"
+      ]
+    },
+    "mobile-rendered-agent-host": {
+      "requiredAssertions": [
+        "host_chain_passed",
+        "ios_production_chat_rendered"
+      ],
+      "minimumSteps": 1,
+      "perPlatformSteps": true,
+      "validators": [
+        "provider_real",
+        "event_terminal",
+        "assistant_nonempty",
+        "persistence_present",
+        "transcript_order",
+        "ui_terminal",
+        "ui_progressive",
+        "accessibility_matches_transcript",
+        "ui_screenshot_valid"
+      ],
+      "requiredObservationKinds": [
+        "provider_trace",
+        "event_stream",
+        "persistence_store",
+        "transcript",
+        "ui_timeline",
+        "accessibility_tree",
+        "ui_screenshot"
+      ]
+    },
+    "single-native-provider-streaming": {
+      "requiredAssertions": [
+        "real_provider_stream_passed",
+        "no_skipped_tests"
+      ],
+      "minimumSteps": 1,
+      "perPlatformSteps": true,
+      "validators": [
+        "provider_real"
+      ],
+      "requiredObservationKinds": [
+        "provider_trace"
+      ],
+      "requireAssertionEvidence": true
+    },
+    "native-provider-streaming": {
+      "requiredAssertions": [
+        "real_provider_stream_passed",
+        "no_skipped_tests"
+      ],
+      "minimumSteps": 2,
+      "perPlatformSteps": true,
+      "validators": [
+        "provider_real"
+      ],
+      "requiredObservationKinds": [
+        "provider_trace"
+      ]
+    },
+    "skill-lifecycle": {
+      "requiredAssertions": [
+        "skill_lifecycle_passed"
+      ],
+      "minimumSteps": 2,
+      "perPlatformSteps": true,
+      "validators": [
+        "provider_real",
+        "instrumentation_passed"
+      ],
+      "requiredObservationKinds": [
+        "provider_trace",
+        "instrumentation_output",
+        "test_report"
+      ]
+    },
+    "android-product-data-source": {
+      "requiredAssertions": [
+        "instrumentation_passed",
+        "data_source_chain_passed",
+        "skill_chain_passed"
+      ],
+      "minimumSteps": 1,
+      "perPlatformSteps": true,
+      "validators": [
+        "provider_real",
+        "instrumentation_passed",
+        "persistence_present"
+      ],
+      "requiredObservationKinds": [
+        "provider_trace",
+        "instrumentation_output",
+        "persistence_store"
+      ]
+    },
+    "terminal-product-ui": {
+      "requiredAssertions": [
+        "long_response_preserved",
+        "escape_cancelled_promptly",
+        "follow_up_recovered",
+        "terminal_layout_stable"
+      ],
+      "requiredObservationKinds": [
+        "provider_trace",
+        "terminal_capture",
+        "terminal_frames",
+        "terminal_actions",
+        "terminal_metrics",
+        "persistence_audit",
+        "persistence_store"
+      ],
+      "validators": [
+        "provider_real",
+        "persistence_present",
+        "terminal_ui"
+      ],
+      "minimumSteps": 1,
+      "perPlatformSteps": true
+    },
+    "android-product-ui": {
+      "requiredAssertions": [
+        "main_activity_rendered_real_answer",
+        "assistant_marker_persisted"
+      ],
+      "requiredObservationKinds": [
+        "provider_trace",
+        "instrumentation_output",
+        "ui_screenshot",
+        "accessibility_tree",
+        "ui_timeline",
+        "persistence_store",
+        "persistence_audit"
+      ],
+      "validators": [
+        "provider_real",
+        "instrumentation_passed",
+        "persistence_present",
+        "ui_terminal",
+        "ui_progressive",
+        "ui_screenshot_valid"
+      ],
+      "minimumSteps": 1,
+      "perPlatformSteps": true
+    },
+    "backend-http-lifecycle": {
+      "requiredAssertions": [
+        "authenticated_http_round_trip",
+        "durable_rows_verified_after_shutdown"
+      ],
+      "minimumSteps": 1,
+      "perPlatformSteps": true,
+      "validators": [
+        "http_api",
+        "persistence_present"
+      ],
+      "requiredObservationKinds": [
+        "http_transcript",
+        "persistence_store",
+        "persistence_audit",
+        "process_log"
+      ]
+    },
+    "mobile-host-runtime": {
+      "minimumSteps": 2,
+      "perPlatformSteps": true,
+      "requiredAssertions": [
+        "host_chain_passed",
+        "destructive_denial_preserved_file"
+      ],
+      "requiredObservationKinds": [
+        "provider_trace",
+        "persistence_store",
+        "test_report"
+      ],
+      "validators": [
+        "provider_real",
+        "persistence_present"
+      ]
+    },
+    "cli-skill-permission-runtime": {
+      "minimumSteps": 1,
+      "perPlatformSteps": true,
+      "requiredAssertions": [
+        "cli_permission_skill_chain_passed"
+      ],
+      "requiredObservationKinds": [
+        "provider_trace",
+        "persistence_store",
+        "persistence_audit",
+        "test_report"
+      ],
+      "validators": [
+        "provider_real",
+        "persistence_present"
+      ]
+    },
+    "cli-web-integrated-runtime": {
+      "minimumSteps": 1,
+      "perPlatformSteps": true,
+      "requiredAssertions": [
+        "web_integrated_chain_passed"
+      ],
+      "requiredObservationKinds": [
+        "provider_trace",
+        "persistence_store",
+        "persistence_audit",
+        "test_report"
+      ],
+      "validators": [
+        "provider_real",
+        "persistence_present"
+      ]
+    },
+    "secure-messaging-ingress": {
+      "requiredAssertions": [
+        "all_official_webhooks_accepted_valid_signatures",
+        "invalid_signatures_rejected",
+        "duplicate_provider_events_deduplicated",
+        "inbox_projection_persisted",
+        "provider_replies_delivered_and_persisted",
+        "host_channel_management_token_not_leaked"
+      ],
+      "minimumSteps": 6,
+      "perPlatformSteps": false,
+      "validators": [
+        "persistence_present"
+      ],
+      "requiredObservationKinds": [
+        "event_stream",
+        "persistence_store"
+      ]
+    },
+    "messaging-external-executor": {
+      "requiredAssertions": [
+        "channel_message_claimed_once",
+        "lease_identity_preserved",
+        "real_external_executor_answered",
+        "reply_completed_once",
+        "destructive_permission_not_auto_approved"
+      ],
+      "minimumSteps": 1,
+      "perPlatformSteps": true,
+      "validators": [
+        "provider_real",
+        "event_terminal",
+        "assistant_nonempty",
+        "persistence_present"
+      ],
+      "requiredObservationKinds": [
+        "event_stream",
+        "provider_trace",
+        "persistence_store"
+      ]
+    },
+    "external-execution-session": {
+      "requiredAssertions": [
+        "host_catalog_matches_runtime",
+        "installed_backends_execute_real_turn",
+        "external_session_id_persisted",
+        "same_external_session_resumed",
+        "unavailable_backends_report_explicit_state"
+      ],
+      "minimumSteps": 2,
+      "perPlatformSteps": true,
+      "validators": [
+        "provider_real",
+        "event_terminal",
+        "assistant_nonempty",
+        "persistence_present"
+      ],
+      "requiredObservationKinds": [
+        "event_stream",
+        "provider_trace",
+        "persistence_store",
+        "persistence_audit"
+      ]
+    }
+  }
+}

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="chat_permission_state_saving">Изменение разрешений…</string>
+    <string name="chat_permission_state_saved">Разрешения сохранены</string>
+    <string name="chat_permission_state_pending">Сохранено; ожидание текущей задачи</string>
+    <string name="chat_permission_state_checking">Проверка разрешений задачи…</string>
+    <string name="chat_permission_state_active">Действует для текущей задачи</string>
+    <string name="chat_permission_state_failed">Сохранение не подтверждено. Выбор оставлен для повтора.</string>
+    <string name="chat_context_estimated_request">Оценка следующего запроса</string>
+    <string name="chat_context_measured_request">Измеренный контекст запроса</string>
+    <string name="chat_cache_conversation_rate">Доля попаданий в кэш беседы</string>
+    <string name="chat_cache_request_identity">Запрос: %1$s</string>
+    <string name="chat_cache_coverage">С отчётом: %1$d · Без отчёта: %2$d</string>
+</resources>

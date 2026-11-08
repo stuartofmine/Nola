@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="chat_permission_state_saving">権限を変更中…</string>
+    <string name="chat_permission_state_saved">権限を保存しました</string>
+    <string name="chat_permission_state_pending">保存済み・実行中のタスクの反映待ち</string>
+    <string name="chat_permission_state_checking">タスクの権限を確認しています…</string>
+    <string name="chat_permission_state_active">実行中のタスクに適用済み</string>
+    <string name="chat_permission_state_failed">保存を確認できません。選択を保持しました。再試行できます。</string>
+    <string name="chat_context_estimated_request">次のリクエストの推定</string>
+    <string name="chat_context_measured_request">リクエストの実測コンテキスト</string>
+    <string name="chat_cache_conversation_rate">会話全体のキャッシュヒット率</string>
+    <string name="chat_cache_request_identity">リクエスト：%1$s</string>
+    <string name="chat_cache_coverage">報告済み：%1$d · 未報告：%2$d</string>
+</resources>

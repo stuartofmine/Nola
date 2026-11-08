@@ -1,0 +1,13 @@
+{
+  "name": "nola-playwright-runtime",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Pinned managed-browser runtime bundled with Nola Mac",
+  "scripts": {
+    "test": "node --test owner_queue.test.cjs bridge_ownership.test.cjs ../native_browser/extension/background.bound-targets.test.cjs",
+    "test:e2e": "node e2e.cjs"
+  },
+  "dependencies": {
+    "playwright-core": "1.62.1"
+  }
+}

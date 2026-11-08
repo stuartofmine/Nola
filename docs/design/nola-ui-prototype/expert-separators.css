@@ -1,0 +1,50 @@
+/* Quiet per-expert identity; names remain the primary cue. */
+[data-expert-color="red"]{--expert-bubble:#f8f1f1;--expert-rule:#a36e6e}
+:root[data-theme=dark] [data-expert-color="red"]{--expert-bubble:#1c1313;--expert-rule:#c89b9b}
+[data-expert-color="orange"]{--expert-bubble:#f8f4ef;--expert-rule:#a38059}
+:root[data-theme=dark] [data-expert-color="orange"]{--expert-bubble:#1c1712;--expert-rule:#c5aa85}
+[data-expert-color="yellow"]{--expert-bubble:#f7f6ed;--expert-rule:#94894e}
+:root[data-theme=dark] [data-expert-color="yellow"]{--expert-bubble:#1a190f;--expert-rule:#bbb47c}
+[data-expert-color="green"]{--expert-bubble:#f1f6f2;--expert-rule:#63876c}
+:root[data-theme=dark] [data-expert-color="green"]{--expert-bubble:#111a14;--expert-rule:#91b19a}
+[data-expert-color="cyan"]{--expert-bubble:#eff6f6;--expert-rule:#5e898c}
+:root[data-theme=dark] [data-expert-color="cyan"]{--expert-bubble:#101a1b;--expert-rule:#8eb8ba}
+[data-expert-color="blue"]{--expert-bubble:#f2f6f8;--expert-rule:#527f9d}
+:root[data-theme=dark] [data-expert-color="blue"]{--expert-bubble:#11171b;--expert-rule:#83aac3}
+[data-expert-color="purple"]{--expert-bubble:#f6f3f7;--expert-rule:#8b739d}
+:root[data-theme=dark] [data-expert-color="purple"]{--expert-bubble:#18141c;--expert-rule:#b09ac0}
+[data-expert-color="pink"]{--expert-bubble:#f8f2f5;--expert-rule:#a4738b}
+:root[data-theme=dark] [data-expert-color="pink"]{--expert-bubble:#1c1318;--expert-rule:#c49bb0}
+.message[data-expert]{border:0;border-top:1px solid var(--expert-rule);padding:16px 18px 12px;background:var(--expert-bubble);border-radius:0 0 10px 10px;box-shadow:none}
+.message[data-expert] pre{max-width:100%;overflow-x:auto;padding:12px;background:var(--bg);border-radius:6px}.message[data-expert] code{font-size:.9em}
+.expert-config-link{font-size:12px;color:var(--muted);min-height:40px;padding:0 0 8px;text-decoration:underline;text-underline-offset:3px}.expert-palette{border:0;padding:0;margin:24px 0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.expert-palette legend{font-size:13px;margin-bottom:12px}.expert-palette .expert-swatch{margin:0;min-height:60px;position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;border:1px solid var(--line);border-radius:8px;cursor:pointer;font-size:12px}.expert-swatch input{position:absolute;opacity:0;width:1px;height:1px;min-height:0;padding:0}.expert-swatch:has(input:checked){outline:2px solid var(--fg);outline-offset:0}.expert-swatch:has(input:focus-visible){outline:2px solid var(--focus);outline-offset:3px}.swatch-dot{width:24px;height:14px;background:var(--expert-bubble);border-top:2px solid var(--expert-rule);border-radius:0 0 4px 4px}.expert-preview>.meta{margin-bottom:10px}.expert-preview .message{margin-bottom:0}.expert-preview .prose{font-size:15px;line-height:25px}
+@media(max-width:700px){.message[data-expert]{padding:14px 14px 10px}.expert-config-link{min-height:44px}}
+@media(max-width:359px){.message[data-expert]{padding-left:12px;padding-right:12px}.expert-palette{gap:7px}}
+/* A reply is a content-sized bubble, not a full-width panel. The rule stays straight. */
+.message[data-expert]{position:relative;width:fit-content;max-width:100%;min-width:min(160px,100%);border:0;border-radius:5px 16px 16px 16px;padding:17px 18px 12px}
+.message[data-expert]::before{content:'';position:absolute;top:0;left:16px;right:16px;height:1px;background:var(--expert-rule);pointer-events:none}
+.message[data-expert] .signature{margin-bottom:10px}
+.message[data-expert] .prose{min-width:0;max-width:100%}
+.message[data-expert] pre{white-space:pre;overflow-wrap:normal;max-width:100%}
+.user-body{border-radius:16px 5px 16px 16px;min-width:0;overflow-wrap:anywhere}
+@media(max-width:700px){.message[data-expert]{padding:15px 14px 10px;border-radius:5px 14px 14px 14px}.message[data-expert]::before{left:14px;right:14px}.user-body{border-radius:14px 5px 14px 14px}}
+@media(max-width:359px){.message[data-expert]{padding-left:12px;padding-right:12px}.message[data-expert]::before{left:12px;right:12px}}
+/* Expert identity lives beside—not inside—the reply. No separator rules. */
+.message[data-expert]{display:flex;align-items:flex-start;gap:12px;width:100%;min-width:0;max-width:100%;padding:0;border:0;border-radius:0;background:transparent}
+.message[data-expert]::before{content:none;display:none}
+.expert-identity{width:48px;flex:0 0 48px;display:flex;align-items:center;flex-direction:column;gap:6px;padding-top:3px;text-align:center}
+.expert-avatar{display:grid;place-items:center;width:32px;height:32px;border-radius:11px;background:var(--soft);color:var(--fg);font-size:13px;font-weight:600}
+.expert-name{font-size:12px;line-height:18px;color:var(--fg);font-weight:550;overflow-wrap:anywhere;max-width:100%}
+.expert-bubble{min-width:0;width:fit-content;max-width:calc(100% - 60px);padding:14px 18px 10px;background:var(--expert-bubble);border:0;border-radius:5px 16px 16px 16px;overflow-wrap:anywhere}
+.expert-status{font-size:11px;line-height:18px;color:var(--muted);margin-bottom:6px}
+.message[data-expert] .inline-block:first-child{margin-top:0}
+.expert-preview .message{margin:0}.swatch-dot{border:0;border-radius:4px}
+@media(max-width:700px){.message[data-expert]{gap:10px;padding:0}.expert-identity{width:38px;flex-basis:38px}.expert-avatar{width:30px;height:30px;border-radius:10px}.expert-bubble{max-width:calc(100% - 48px);padding:12px 14px 9px;border-radius:5px 14px 14px 14px}}
+@media(max-width:359px){.message[data-expert]{gap:8px;padding:0}.expert-identity{width:34px;flex-basis:34px}.expert-bubble{max-width:calc(100% - 42px);padding-left:12px;padding-right:12px}}
+/* Message actions remain on the page surface, never inside the colored bubble. */
+.expert-content{min-width:0;max-width:calc(100% - 60px);width:fit-content}.expert-content>.expert-bubble{max-width:100%}
+.user-stack{max-width:85%;min-width:0;width:fit-content}.user-stack>.user-body{max-width:100%}
+.message-actions{display:flex;align-items:center;flex-wrap:wrap;gap:2px;margin-top:5px;min-height:32px;color:var(--muted)}
+.message-actions button{min-height:32px;padding:4px 8px;display:inline-flex;align-items:center;gap:5px;font-size:12px;border-radius:6px}.message-actions button:hover{background:var(--soft)}.message-actions svg{width:14px;height:14px}.message-actions button:disabled{cursor:not-allowed}.user .message-actions{justify-content:flex-end}.action-note{font-size:11px;line-height:18px}.branch-origin{font-size:12px;line-height:20px;color:var(--muted);margin-bottom:22px}.branch-origin button{text-decoration:underline;min-height:36px}.expert-content>.message-actions{padding-left:2px}
+@media(max-width:700px){.expert-content{max-width:calc(100% - 48px)}.user-stack{max-width:90%}.message-actions button{min-height:44px}.message-actions{min-height:44px}}
+@media(max-width:359px){.expert-content{max-width:calc(100% - 42px)}}

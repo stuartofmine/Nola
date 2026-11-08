@@ -1,0 +1,96 @@
+{
+  "scope": {
+    "type": "conversation",
+    "conversation_id": "conversation-1"
+  },
+  "after": {
+    "scope": {
+      "type": "conversation",
+      "conversation_id": "conversation-1"
+    },
+    "sequence": 42
+  },
+  "events": [
+    {
+      "protocol_version": 53,
+      "scope": {
+        "type": "conversation",
+        "conversation_id": "conversation-1"
+      },
+      "cursor": {
+        "scope": {
+          "type": "conversation",
+          "conversation_id": "conversation-1"
+        },
+        "sequence": 43
+      },
+      "identity": {
+        "event_id": "event-43",
+        "conversation_id": "conversation-1",
+        "run_id": "run-1",
+        "attempt_id": "attempt-1",
+        "message_id": "message-2",
+        "part_id": null,
+        "call_id": null
+      },
+      "mutation": {
+        "type": "upsert",
+        "record": {
+          "entity_type": "message",
+          "entity_id": "message-2",
+          "revision": 1,
+          "payload": {
+            "role": "assistant",
+            "status": "streaming"
+          }
+        }
+      },
+      "occurred_at": "2026-09-04T10:00:01Z"
+    },
+    {
+      "protocol_version": 53,
+      "scope": {
+        "type": "conversation",
+        "conversation_id": "conversation-1"
+      },
+      "cursor": {
+        "scope": {
+          "type": "conversation",
+          "conversation_id": "conversation-1"
+        },
+        "sequence": 44
+      },
+      "identity": {
+        "event_id": "event-44",
+        "conversation_id": "conversation-1",
+        "run_id": "run-1",
+        "attempt_id": "attempt-1",
+        "message_id": "message-2",
+        "part_id": "part-1",
+        "call_id": null
+      },
+      "mutation": {
+        "type": "upsert",
+        "record": {
+          "entity_type": "content_part",
+          "entity_id": "part-1",
+          "revision": 1,
+          "payload": {
+            "kind": "text",
+            "status": "streaming",
+            "content": "Hello"
+          }
+        }
+      },
+      "occurred_at": "2026-09-04T10:00:02Z"
+    }
+  ],
+  "next_cursor": {
+    "scope": {
+      "type": "conversation",
+      "conversation_id": "conversation-1"
+    },
+    "sequence": 44
+  },
+  "has_more": false
+}

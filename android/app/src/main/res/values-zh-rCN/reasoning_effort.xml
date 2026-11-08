@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="reasoning_effort_title">思考强度</string>
+    <string name="reasoning_effort_automatic">提供商默认</string>
+    <string name="reasoning_effort_none">无</string>
+    <string name="reasoning_effort_minimal">极低</string>
+    <string name="reasoning_effort_low">低</string>
+    <string name="reasoning_effort_medium">中</string>
+    <string name="reasoning_effort_high">高</string>
+    <string name="reasoning_effort_xhigh">极高</string>
+    <string name="reasoning_effort_max">最高</string>
+</resources>

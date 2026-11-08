@@ -1,0 +1,1190 @@
+--- /dev/null
++++ web/frontend/src/vendor/a2ui-svelte/ADAPTATION.md
+@@ -0,0 +1,11 @@
++# Nola renderer adaptation
++
++Source: ChaliceForAuri/a2ui-svelte at d0345eeb52c4c84871c82c4f9c0e43f078ac3ffc, Apache-2.0 (LICENSE retained). Original files and hashes remain in `third_party/a2ui/svelte` and `sources.lock.json`.
++
++The production timeline mounts these components using Rust-resolved projections. Surface, Node, Slot, context and catalog types replace upstream runtime access: they forward binding edits/action references without parsing wire messages or evaluating bindings/functions. No upstream A2uiClient, reducer, transport or protocol implementation is imported. Core accepts v0.9.1 only.
++
++Local adaptations include IME composition buffering, identity-scoped drafts, revision conflict handling, durable unknown-request recovery, and native dialog top-layer/focus handling. Resource widgets remain capability-gated; this is not full upstream catalog support. Renderer fixture tests do not establish real-model acceptance.
++
++`third_party/a2ui/production-adaptation.json` inventories every production file with SHA-256, its upstream source where present, and the unified patch digest. `production-adaptation.patch` records differences from the pinned upstream files (new files diff against `/dev/null`). Regenerate both with `python3 scripts/update_a2ui_adaptation.py` after intentional renderer changes; `npm test` verifies the complete inventory and patch. This manifest is separate from the immutable reference-source lock.
++
++The Surface maps the complete renderer palette to Nola design tokens, including manual appearance selection; native modal backgrounds use the same tokens. Text links reject URL credentials and control characters. Pending/deleted projections expose localized noninteractive status instead of an empty card. These changes affect rendering and URL admission only, not Core authority or wire interpretation.
+--- third_party/a2ui/svelte/src/lib/catalog/basic/Button.svelte
++++ web/frontend/src/vendor/a2ui-svelte/catalog/basic/Button.svelte
+@@ -1,7 +1,7 @@
+ <script lang="ts">
+ 	import Slot from '../../render/Slot.svelte';
+ 	import type { SlotContent } from '../types.js';
+-	import type { ValidationResult } from '../../protocol/checks.js';
++	import type { ValidationResult } from '../types.js';
+ 
+ 	interface Props {
+ 		slots: Record<string, SlotContent>;
+@@ -36,7 +36,7 @@
+ 	style:flex-grow={weight}
+ 	onclick={actions.action}
+ >
+-	<Slot content={slots.child} />
++	<Slot content={slots.child} presentationOnly />
+ </button>
+ 
+ <style>
+@@ -47,7 +47,7 @@
+ 		gap: 0.375rem;
+ 		min-height: var(--a2ui-control-height);
+ 		margin: var(--a2ui-space-leaf);
+-		padding: 0 0.875rem;
++		padding: 0.5rem 0.875rem;
+ 		border: 1px solid var(--a2ui-color-border);
+ 		border-radius: var(--a2ui-radius-small);
+ 		background: var(--a2ui-color-surface);
+@@ -77,5 +77,6 @@
+ 	/* Buttons own their padding; the label inside shouldn't add more. */
+ 	.a2ui-button :global(.a2ui-text) {
+ 		margin: 0;
++		color: inherit;
+ 	}
+ </style>
+--- third_party/a2ui/svelte/src/lib/catalog/basic/CheckBox.svelte
++++ web/frontend/src/vendor/a2ui-svelte/catalog/basic/CheckBox.svelte
+@@ -1,10 +1,11 @@
+ <script lang="ts">
+ 	import type { Binding } from '../types.js';
+-	import type { ValidationResult } from '../../protocol/checks.js';
++	import type { ValidationResult } from '../types.js';
+ 	import ValidationMessages from './ValidationMessages.svelte';
+ 
+ 	interface Props {
+ 		bindings: Record<string, Binding>;
++        value?: unknown;
+ 		validation: ValidationResult;
+ 		label?: string;
+ 		disabled?: boolean;
+@@ -12,10 +13,10 @@
+ 		ariaLabel?: string;
+ 	}
+ 
+-	let { bindings, validation, label = '', disabled = false, weight, ariaLabel }: Props = $props();
++	let { bindings, value: projectedValue, validation, label = '', disabled = false, weight, ariaLabel }: Props = $props();
+ 
+ 	const binding = $derived(bindings.value);
+-	const checked = $derived(binding?.value === true);
++	const checked = $derived((binding ? binding.value : projectedValue) === true);
+ </script>
+ 
+ <div class="a2ui-checkbox-wrap" style:flex-grow={weight}>
+--- third_party/a2ui/svelte/src/lib/catalog/basic/ChoicePicker.svelte
++++ web/frontend/src/vendor/a2ui-svelte/catalog/basic/ChoicePicker.svelte
+@@ -1,6 +1,6 @@
+ <script lang="ts">
+ 	import type { Binding } from '../types.js';
+-	import type { ValidationResult } from '../../protocol/checks.js';
++	import type { ValidationResult } from '../types.js';
+ 	import ValidationMessages from './ValidationMessages.svelte';
+ 
+ 	interface Option {
+@@ -10,6 +10,7 @@
+ 
+ 	interface Props {
+ 		bindings: Record<string, Binding>;
++        value?: unknown;
+ 		validation: ValidationResult;
+ 		options?: Option[];
+ 		label?: string;
+@@ -24,6 +25,7 @@
+ 
+ 	let {
+ 		bindings,
++        value: projectedValue,
+ 		validation,
+ 		options = [],
+ 		label = '',
+@@ -43,7 +45,7 @@
+ 
+ 	// The wire format stores an array even in single-select mode.
+ 	const selected = $derived.by(() => {
+-		const raw = binding?.value;
++		const raw = (binding ? binding.value : projectedValue);
+ 		if (Array.isArray(raw)) return raw;
+ 		return raw === null || raw === undefined ? [] : [raw];
+ 	});
+@@ -160,8 +162,8 @@
+ 		cursor: pointer;
+ 	}
+ 	.chip.selected {
+-		background: var(--a2ui-color-primary);
+-		border-color: var(--a2ui-color-primary);
+-		color: var(--a2ui-color-on-primary);
++		background: var(--accent-subtle, var(--a2ui-color-surface));
++		border-color: var(--a2ui-color-border);
++		color: var(--a2ui-color-text);
+ 	}
+ </style>
+--- third_party/a2ui/svelte/src/lib/catalog/basic/DateTimeInput.svelte
++++ web/frontend/src/vendor/a2ui-svelte/catalog/basic/DateTimeInput.svelte
+@@ -1,10 +1,11 @@
+ <script lang="ts">
+ 	import type { Binding } from '../types.js';
+-	import type { ValidationResult } from '../../protocol/checks.js';
++	import type { ValidationResult } from '../types.js';
+ 	import ValidationMessages from './ValidationMessages.svelte';
+ 
+ 	interface Props {
+ 		bindings: Record<string, Binding>;
++        value?: unknown;
+ 		validation: ValidationResult;
+ 		enableDate?: boolean;
+ 		enableTime?: boolean;
+@@ -18,8 +19,9 @@
+ 
+ 	let {
+ 		bindings,
++        value: projectedValue,
+ 		validation,
+-		enableDate = true,
++		enableDate = false,
+ 		enableTime = false,
+ 		min,
+ 		max,
+@@ -43,17 +45,17 @@
+ 
+ 	function localDateTime(iso: string): string {
+ 		const d = new Date(iso);
+-		if (Number.isNaN(d.getTime())) return iso.slice(0, 16);
+-		return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
++		if (Number.isNaN(d.getTime())) return '';
++		return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, '0')}`;
++	}
++
++	function inputValue(raw: unknown): string {
++		if (typeof raw !== 'string' || raw === '') return '';
++		return type === 'datetime-local' ? localDateTime(raw) : raw;
+ 	}
+ 
+ 	const displayValue = $derived.by(() => {
+-		const raw = binding?.value;
+-		if (typeof raw !== 'string' || raw === '') return '';
+-		if (type === 'date') return raw.slice(0, 10);
+-		if (type === 'time')
+-			return raw.length > 10 ? localDateTime(raw).slice(11, 16) : raw.slice(0, 5);
+-		return localDateTime(raw);
++		return inputValue((binding ? binding.value : projectedValue));
+ 	});
+ 
+ 	function write(raw: string) {
+@@ -61,7 +63,7 @@
+ 			binding?.set('');
+ 			return;
+ 		}
+-		if (type === 'time') {
++		if (type === 'time' || type === 'date') {
+ 			binding?.set(raw);
+ 			return;
+ 		}
+@@ -74,9 +76,10 @@
+ 	{#if label}<span class="label">{label}</span>{/if}
+ 	<input
+ 		{type}
+-		{min}
+-		{max}
+-		{disabled}
++		min={min === undefined ? undefined : inputValue(min)}
++		max={max === undefined ? undefined : inputValue(max)}
++		step="any"
++		disabled={disabled || (!enableDate && !enableTime)}
+ 		value={displayValue}
+ 		aria-label={ariaLabel ?? label}
+ 		oninput={(e) => write(e.currentTarget.value)}
+--- third_party/a2ui/svelte/src/lib/catalog/basic/Modal.svelte
++++ web/frontend/src/vendor/a2ui-svelte/catalog/basic/Modal.svelte
+@@ -1,4 +1,5 @@
+ <script lang="ts">
++	import { onDestroy } from 'svelte';
+ 	import Slot from '../../render/Slot.svelte';
+ 	import type { SlotContent } from '../types.js';
+ 
+@@ -6,54 +7,83 @@
+ 		slots: Record<string, SlotContent>;
+ 		weight?: number;
+ 		ariaLabel?: string;
++		disabled?: boolean;
+ 	}
+ 
+-	let { slots, weight, ariaLabel }: Props = $props();
++	let { slots, weight, ariaLabel, disabled = false }: Props = $props();
+ 
+ 	let open = $state(false);
+ 	let dialog = $state<HTMLDialogElement | null>(null);
++    let trigger: HTMLDivElement;
++    function reveal() {
++        if (disabled || document.querySelector('dialog:modal')) return;
++        open = true;
++    }
++    function closed() {
++        open = false;
++        if (trigger?.isConnected) trigger.focus({preventScroll: true});
++    }
++    onDestroy(() => { if (dialog?.open) dialog.close(); });
+ 
+ 	// <dialog> owns focus trapping, Escape and the backdrop; keep it authoritative.
+ 	$effect(() => {
+ 		if (!dialog) return;
+-		if (open && !dialog.open) dialog.showModal();
++		if (open && !dialog.open) {
++            if (document.querySelector('dialog:modal')) open = false;
++            else dialog.showModal();
++        }
+ 		else if (!open && dialog.open) dialog.close();
+ 	});
+ </script>
+ 
+ <div
+-	class="a2ui-modal-trigger"
++	bind:this={trigger}
++    class="a2ui-modal-trigger"
+ 	style:flex-grow={weight}
+ 	role="button"
+-	tabindex="0"
++	tabindex={disabled ? -1 : 0}
++	aria-disabled={disabled}
+ 	aria-haspopup="dialog"
+ 	aria-expanded={open}
+-	aria-label={ariaLabel}
+-	onclick={() => (open = true)}
++	aria-label={ariaLabel ?? "查看详情"}
++	onclick={reveal}
+ 	onkeydown={(e) => {
+-		if (e.key === 'Enter' || e.key === ' ') {
++		if (!disabled && (e.key === 'Enter' || e.key === ' ')) {
+ 			e.preventDefault();
+-			open = true;
++			reveal();
+ 		}
+ 	}}
+ >
+-	<Slot content={slots.trigger} />
++    <!-- Trigger content is visual only; opening the dialog is one action. -->
++    <div inert class="trigger-content"><Slot content={slots.trigger} presentationOnly /></div>
+ </div>
+ 
+-<dialog bind:this={dialog} class="a2ui-modal" onclose={() => (open = false)}>
++<dialog bind:this={dialog} class="a2ui-modal" aria-label={ariaLabel ?? "详情"} onclose={closed} onclick={(event) => {
++        if (event.target !== dialog || !dialog) return;
++        const rect = dialog.getBoundingClientRect();
++        if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close();
++    }}>
+ 	<div class="body">
+ 		{#if open}
+ 			<Slot content={slots.content} />
+ 		{/if}
+ 	</div>
+ 	<form method="dialog" class="dismiss">
+-		<button type="submit" aria-label="Close">Close</button>
++		<button type="submit" aria-label="关闭">关闭</button>
+ 	</form>
+ </dialog>
+ 
+ <style>
+ 	.a2ui-modal-trigger {
+-		display: contents;
++        display: flex;
++        align-items: center;
++        min-height: 44px;
++        cursor: pointer;
++        border-radius: var(--a2ui-radius-small);
++    }
++    .a2ui-modal-trigger:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
++    .a2ui-modal-trigger[aria-disabled="true"] { cursor: default; opacity: 0.6; }
++    .trigger-content { pointer-events: none; width: 100%;
+ 	}
+ 	.a2ui-modal {
+ 		border: 1px solid var(--a2ui-color-border);
+@@ -62,6 +92,10 @@
+ 		color: var(--a2ui-color-text);
+ 		padding: var(--a2ui-space-inset);
+ 		max-width: min(90vw, 32rem);
++        max-height: 85dvh;
++        box-sizing: border-box;
++        overflow: auto;
++        overscroll-behavior: contain;
+ 		box-shadow: var(--a2ui-elevation);
+ 	}
+ 	.a2ui-modal::backdrop {
+@@ -77,7 +111,8 @@
+ 		margin-top: 0.75rem;
+ 	}
+ 	.dismiss button {
+-		font: inherit;
++		min-height: 44px;
++        font: inherit;
+ 		color: inherit;
+ 		background: none;
+ 		border: 1px solid var(--a2ui-color-border);
+--- third_party/a2ui/svelte/src/lib/catalog/basic/Slider.svelte
++++ web/frontend/src/vendor/a2ui-svelte/catalog/basic/Slider.svelte
+@@ -1,10 +1,11 @@
+ <script lang="ts">
+ 	import type { Binding } from '../types.js';
+-	import type { ValidationResult } from '../../protocol/checks.js';
++	import type { ValidationResult } from '../types.js';
+ 	import ValidationMessages from './ValidationMessages.svelte';
+ 
+ 	interface Props {
+ 		bindings: Record<string, Binding>;
++        value?: unknown;
+ 		validation: ValidationResult;
+ 		min?: number;
+ 		max?: number;
+@@ -17,6 +18,7 @@
+ 
+ 	let {
+ 		bindings,
++        value: projectedValue,
+ 		validation,
+ 		min = 0,
+ 		max = 100,
+@@ -28,7 +30,7 @@
+ 	}: Props = $props();
+ 
+ 	const binding = $derived(bindings.value);
+-	const current = $derived(Number(binding?.value ?? min));
++	const current = $derived(Number((binding ? binding.value : projectedValue) ?? min));
+ 
+ 	// `steps` is a count of intervals, not a step size.
+ 	const step = $derived(steps && steps > 0 ? (max - min) / steps : undefined);
+--- third_party/a2ui/svelte/src/lib/catalog/basic/Tabs.svelte
++++ web/frontend/src/vendor/a2ui-svelte/catalog/basic/Tabs.svelte
+@@ -12,6 +12,16 @@
+ 
+ 	// Selection is local component state — the spec keeps it off the data model.
+ 	let selected = $state(0);
++    const domId = $props.id();
++    function navigate(event: KeyboardEvent & {currentTarget: HTMLButtonElement}, index: number) {
++        const target = event.key === 'ArrowRight' ? (index + 1) % titles.length
++            : event.key === 'ArrowLeft' ? (index + titles.length - 1) % titles.length
++            : event.key === 'Home' ? 0 : event.key === 'End' ? titles.length - 1 : null;
++        if (target === null || !titles.length) return;
++        event.preventDefault();
++        selected = target;
++        event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role=tab]')[target]?.focus();
++    }
+ 
+ 	const tabsSlot = $derived(slots.tabs);
+ 	const titles = $derived(tabsSlot?.kind === 'tabs' ? tabsSlot.tabs.map((t) => t.title) : []);
+@@ -21,11 +31,15 @@
+ </script>
+ 
+ <div class="a2ui-tabs" style:flex-grow={weight} aria-label={ariaLabel}>
+-	<div class="tablist" role="tablist">
++	<div class="tablist" role="tablist" aria-label={ariaLabel}>
+ 		{#each titles as title, i (i)}
+ 			<button
+ 				type="button"
+ 				role="tab"
++                id={`${domId}-tab-${i}`}
++                aria-controls={`${domId}-panel`}
++                tabindex={i === active ? 0 : -1}
++                onkeydown={(event) => navigate(event, i)}
+ 				class="tab"
+ 				class:active={i === active}
+ 				aria-selected={i === active}
+@@ -36,7 +50,7 @@
+ 		{/each}
+ 	</div>
+ 
+-	<div class="panel" role="tabpanel">
++	<div class="panel" role="tabpanel" id={`${domId}-panel`} aria-labelledby={titles.length ? `${domId}-tab-${active}` : undefined} tabindex="0">
+ 		<Slot content={tabsSlot} tab={active} />
+ 	</div>
+ </div>
+@@ -67,7 +81,7 @@
+ 	}
+ 	.tab.active {
+ 		color: var(--a2ui-color-text);
+-		border-bottom-color: var(--a2ui-color-primary);
++		background: var(--accent-subtle, var(--a2ui-color-surface-raised));
+ 	}
+ 	.panel {
+ 		display: flex;
+--- third_party/a2ui/svelte/src/lib/catalog/basic/TextField.svelte
++++ web/frontend/src/vendor/a2ui-svelte/catalog/basic/TextField.svelte
+@@ -1,10 +1,11 @@
+ <script lang="ts">
+ 	import type { Binding } from '../types.js';
+-	import type { ValidationResult } from '../../protocol/checks.js';
++	import type { ValidationResult } from '../types.js';
+ 	import ValidationMessages from './ValidationMessages.svelte';
+ 
+ 	interface Props {
+ 		bindings: Record<string, Binding>;
++        value?: unknown;
+ 		validation: ValidationResult;
+ 		label?: string;
+ 		placeholder?: string;
+@@ -17,6 +18,7 @@
+ 
+ 	let {
+ 		bindings,
++        value: projectedValue,
+ 		validation,
+ 		label = '',
+ 		placeholder,
+@@ -28,9 +30,19 @@
+ 	}: Props = $props();
+ 
+ 	const binding = $derived(bindings.value);
+-	const value = $derived(binding?.value ?? '');
++	const value = $derived((binding ? binding.value : projectedValue) ?? '');
+ 	// Only surface errors after the field has been touched, not on first paint.
+ 	let touched = $state(false);
++	let composing = $state(false);
++    let editing = $state<string | null>(null);
++    const displayed = $derived(composing && editing !== null ? editing : String(value ?? ''));
++    function compositionStart(event: CompositionEvent & {currentTarget: HTMLInputElement | HTMLTextAreaElement}) {
++        editing = event.currentTarget.value; composing = true;
++    }
++    function input(event: Event & {currentTarget: HTMLInputElement | HTMLTextAreaElement}) {
++        if (composing) editing = event.currentTarget.value;
++        else write(event.currentTarget.value);
++    }
+ 
+ 	const inputType = $derived(
+ 		variant === 'number' ? 'number' : variant === 'obscured' ? 'password' : 'text'
+@@ -38,7 +50,7 @@
+ 	const errorId = $derived(a2ui ? `${a2ui.id}-error` : undefined);
+ 
+ 	function write(raw: string) {
+-		binding?.set(variant === 'number' ? (raw === '' ? null : Number(raw)) : raw);
++		binding?.set(raw); // A2UI v0.9.1 TextField.value remains a string.
+ 	}
+ </script>
+ 
+@@ -54,8 +66,10 @@
+ 			aria-label={ariaLabel ?? label}
+ 			aria-invalid={touched && !validation.valid}
+ 			aria-describedby={touched && !validation.valid ? errorId : undefined}
+-			value={String(value ?? '')}
+-			oninput={(e) => write(e.currentTarget.value)}
++			value={displayed}
++			oncompositionstart={compositionStart}
++			oncompositionend={(e) => { composing = false; write(e.currentTarget.value); }}
++			oninput={input}
+ 			onblur={() => (touched = true)}
+ 		></textarea>
+ 	{:else}
+@@ -67,8 +81,10 @@
+ 			aria-label={ariaLabel ?? label}
+ 			aria-invalid={touched && !validation.valid}
+ 			aria-describedby={touched && !validation.valid ? errorId : undefined}
+-			value={value === null || value === undefined ? '' : String(value)}
+-			oninput={(e) => write(e.currentTarget.value)}
++			value={displayed}
++			oncompositionstart={compositionStart}
++			oncompositionend={(e) => { composing = false; write(e.currentTarget.value); }}
++			oninput={input}
+ 			onblur={() => (touched = true)}
+ 		/>
+ 	{/if}
+--- third_party/a2ui/svelte/src/lib/catalog/basic/ValidationMessages.svelte
++++ web/frontend/src/vendor/a2ui-svelte/catalog/basic/ValidationMessages.svelte
+@@ -1,5 +1,5 @@
+ <script lang="ts">
+-	import type { ValidationResult } from '../../protocol/checks.js';
++	import type { ValidationResult } from '../types.js';
+ 
+ 	interface Props {
+ 		validation: ValidationResult;
+--- third_party/a2ui/svelte/src/lib/catalog/basic/markdown.ts
++++ web/frontend/src/vendor/a2ui-svelte/catalog/basic/markdown.ts
+@@ -22,13 +22,14 @@
+ const SAFE_PROTOCOLS = new Set(['http:', 'https:', 'mailto:']);
+ 
+ function safeHref(url: string): string | null {
++	if (/[\u0000-\u0020\u007f]/.test(url)) return null;
+ 	try {
+ 		const base =
+ 			typeof globalThis.location === 'undefined'
+ 				? 'https://a2ui.invalid'
+ 				: globalThis.location.href;
+ 		const parsed = new URL(url, base);
+-		return SAFE_PROTOCOLS.has(parsed.protocol) ? parsed.href : null;
++		return SAFE_PROTOCOLS.has(parsed.protocol) && !parsed.username && !parsed.password ? parsed.href : null;
+ 	} catch {
+ 		return null;
+ 	}
+--- third_party/a2ui/svelte/src/lib/catalog/types.ts
++++ web/frontend/src/vendor/a2ui-svelte/catalog/types.ts
+@@ -1,103 +1,11 @@
+-import type { Component } from 'svelte';
+-
+-/**
+- * Catalog entries hold components with wildly different prop shapes, so the
+- * registry is intentionally permissive here; per-component typing happens in
+- * the component itself via `A2uiComponentProps`.
+- */
+-export type AnyComponent = Component<any, any, any>;
+-import type { FunctionRegistry } from '../protocol/functions.js';
+-import type { Scope } from '../protocol/scope.js';
+-import type { ComponentSpec } from '../protocol/types.js';
+-import type { ValidationResult } from '../protocol/checks.js';
+-
+-/**
+- * How a property that holds component references should be turned into a slot.
+- *
+- * - `child`    — a single ComponentId (`Card.child`, `Button.child`)
+- * - `children` — a ChildList: either ids or a `{path, componentId}` template
+- * - `tabs`     — `[{ title, child }]`, as used by `Tabs`
+- */
+-export type SlotKind = 'child' | 'children' | 'tabs';
+-
+-/** One instantiated child: which component, and the data scope it renders in. */
+-export interface SlotNode {
+-	id: string;
+-	scope: Scope;
+-	/** Stable `{#each}` key — a template child appears once per item. */
+-	key: string;
++// Nola projection adapter; upstream visual component interfaces retained.
++export interface Binding<T = unknown> {
++    readonly value: T;
++    set(next: T): void;
++    readonly path: string | null;
+ }
+-
++export interface ValidationResult { valid: boolean; errors: string[] }
++export interface SlotNode { id: string; key: string }
+ export type SlotContent =
+-	| { kind: 'nodes'; nodes: SlotNode[] }
+-	| { kind: 'tabs'; tabs: { title: string; nodes: SlotNode[] }[] };
+-
+-/** Two-way binding between an input component and the surface data model. */
+-export interface Binding<T = unknown> {
+-	readonly value: T;
+-	set(next: T): void;
+-	/** Absolute JSON Pointer this binding writes to, if it is bound at all. */
+-	readonly path: string | null;
+-}
+-
+-/**
+- * The props every catalog component receives.
+- *
+- * Resolved scalar properties are spread at the top level, so a `Text` component
+- * simply declares `let { text, variant } = $props()`. Everything structural is
+- * namespaced to avoid colliding with catalog property names.
+- */
+-export interface A2uiComponentProps {
+-	slots: Record<string, SlotContent>;
+-	bindings: Record<string, Binding>;
+-	/** Action properties, already resolved into callable handlers. */
+-	actions: Record<string, () => void>;
+-	validation: ValidationResult;
+-	/** Escape hatch for custom components that need the raw wire spec. */
+-	a2ui: {
+-		id: string;
+-		component: string;
+-		spec: ComponentSpec;
+-		scope: Scope;
+-		/**
+-		 * Names of props still waiting on an agent round trip — a value that is
+-		 * neither absent nor resolved. Show a skeleton for these rather than an
+-		 * empty string, or an agent-backed value flashes blank and then pops.
+-		 */
+-		pending: ReadonlySet<string>;
+-	};
+-	[key: string]: unknown;
+-}
+-
+-export interface CatalogEntry {
+-	component: AnyComponent;
+-	/** Properties holding component references. */
+-	slots?: Readonly<Record<string, SlotKind>>;
+-	/** Properties two-way bound to the data model. */
+-	bindings?: readonly string[];
+-	/** Properties holding an `Action`. */
+-	actions?: readonly string[];
+-	/** Properties passed through verbatim, without dynamic resolution. */
+-	raw?: readonly string[];
+-}
+-
+-export interface Catalog {
+-	/** Canonical catalog id, as referenced by `createSurface.catalogId`. */
+-	id: string;
+-	components: Readonly<Record<string, CatalogEntry>>;
+-	/** Catalog-scoped functions, merged over the built-ins. */
+-	functions?: FunctionRegistry;
+-}
+-
+-export interface CatalogRegistry {
+-	/**
+-	 * Resolution order per spec: explicit per-component `catalogId`, then the
+-	 * surface default. `strict` mode stops there; otherwise an unscoped lookup
+-	 * falls back to searching every registered catalog by component name, which
+-	 * is what makes single-catalog apps pleasant.
+-	 */
+-	resolve(catalogId: string | undefined, component: string): CatalogEntry | undefined;
+-	functions: FunctionRegistry;
+-	has(catalogId: string): boolean;
+-	ids: string[];
+-}
++    | { kind: 'nodes'; nodes: SlotNode[] }
++    | { kind: 'tabs'; tabs: { title: string; nodes: SlotNode[] }[] };
+--- third_party/a2ui/svelte/src/lib/render/Node.svelte
++++ web/frontend/src/vendor/a2ui-svelte/render/Node.svelte
+@@ -1,89 +1,67 @@
+-<!--
+-	Renders one A2UI component by id.
+-
+-	Recursion happens by self-import (`<svelte:self>` is obsolete in Svelte 5).
+-	Unresolvable ids render a placeholder rather than throwing: the spec requires
+-	renderers to tolerate forward references, because a streaming agent routinely
+-	names a child before it defines it.
+--->
+ <script lang="ts">
+-	import { getContext, setContext } from 'svelte';
+-	import type { Scope } from '../protocol/scope.js';
+-	import { ROOT_SCOPE } from '../protocol/scope.js';
+-	import type { EvalContext } from '../protocol/resolve.js';
+-	import type { Action } from '../protocol/types.js';
+-	import { buildNodeProps } from './props.js';
+-	import { getRenderContext, DEPTH_KEY } from './context.js';
+-
+-	interface Props {
+-		id: string;
+-		scope?: Scope;
+-	}
+-
+-	let { id, scope = ROOT_SCOPE }: Props = $props();
+-
+-	const rc = getRenderContext();
+-
+-	// Depth rides on context so slots don't have to thread it through every
+-	// catalog component's prop list.
+-	const depth = getContext<number>(DEPTH_KEY) ?? 0;
+-	setContext(DEPTH_KEY, depth + 1);
+-
+-	const surface = $derived(rc.client.surface(rc.surfaceId));
+-	const spec = $derived(surface?.components[id]);
+-
+-	const entry = $derived(
+-		spec ? rc.catalog.resolve(spec.catalogId ?? surface?.catalogId, spec.component) : undefined
+-	);
+-
+-	const ctx: EvalContext = $derived({
+-		data: surface?.dataModel,
+-		scope,
+-		functions: rc.catalog.functions,
+-		/*
+-		 * Agent-side function routing. `agentValues` holds what the agent has
+-		 * already answered; `onUnresolvedFunction` asks for what it has not. The
+-		 * client queues these and flushes on a microtask — this fires mid-render,
+-		 * so it must not write reactive state synchronously.
+-		 */
+-		agentValues: surface?.agentValues,
+-		onUnresolvedFunction: (ref, key) => rc.client.requestAgentFunction(rc.surfaceId, ref, key)
+-	});
+-
+-	const handlers = {
+-		setData(pointer: string, value: unknown) {
+-			rc.client.setData(rc.surfaceId, pointer, value);
+-		},
+-		dispatch(action: Action, sourceComponentId: string, actionScope: Scope) {
+-			rc.client.dispatch(rc.surfaceId, action, sourceComponentId, actionScope);
+-		}
+-	};
+-
+-	const built = $derived(spec && entry ? buildNodeProps(spec, entry, ctx, handlers) : null);
+-
+-	const Resolved = $derived(entry?.component);
+-	const Fallback = $derived(rc.fallback);
++    import { useProjection, inheritedPresentationOnly } from './context';
++    import Slot from './Slot.svelte';
++    import type { Binding, SlotContent } from '../catalog/types';
++    import Text from '../catalog/basic/Text.svelte';
++    import Row from '../catalog/basic/Row.svelte';
++    import Column from '../catalog/basic/Column.svelte';
++    import List from '../catalog/basic/List.svelte';
++    import Card from '../catalog/basic/Card.svelte';
++    import Tabs from '../catalog/basic/Tabs.svelte';
++    import Modal from '../catalog/basic/Modal.svelte';
++    import Divider from '../catalog/basic/Divider.svelte';
++    import Button from '../catalog/basic/Button.svelte';
++    import TextField from '../catalog/basic/TextField.svelte';
++    import CheckBox from '../catalog/basic/CheckBox.svelte';
++    import ChoicePicker from '../catalog/basic/ChoicePicker.svelte';
++    import Slider from '../catalog/basic/Slider.svelte';
++    import DateTimeInput from '../catalog/basic/DateTimeInput.svelte';
++    import Icon from '../catalog/basic/Icon.svelte';
++    let { id }: { id: string } = $props();
++    // Native DOM identity is per mount; Core instance IDs may intentionally
++    // recur in a read-only history beside the live Surface.
++    const domId = $props.id();
++    const context = useProjection();
++    const presentationOnly = inheritedPresentationOnly();
++    const node = $derived(context.snapshot().nodes[id]);
++    const components = { Text, Row, Column, List, Card, Tabs, Modal, Divider, Button,
++        TextField, CheckBox, ChoicePicker, Slider, DateTimeInput, Icon };
++    const Component = $derived(node ? components[node.component as keyof typeof components] : undefined);
++    const slots = $derived.by(() => {
++        const result: Record<string, SlotContent> = {};
++        if (!node) return result;
++        for (const [name, ids] of Object.entries(node.slots)) {
++            result[name] = { kind: 'nodes', nodes: ids.map(id => ({ id, key: id })) };
++        }
++        if (Array.isArray(node.props.tab_titles)) {
++            result.tabs = { kind: 'tabs', tabs: node.props.tab_titles.map((title, index) => ({
++                title: String(title ?? ''), nodes: (node.slots[`tab:${index}`] ?? []).map(id => ({ id, key: id }))
++            })) };
++        }
++        return result;
++    });
++    const bindings = $derived.by(() => {
++        const result: Record<string, Binding> = {};
++        if (!node) return result;
++        for (const [name, path] of Object.entries(node.bindings)) {
++            result[name] = { value: context.value(id, name, node.props[name]), path,
++                set: value => context.edit(id, name, value) };
++        }
++        return result;
++    });
++    const actions = $derived.by(() => Object.fromEntries(Object.entries(node?.actions ?? {})
++        .map(([name, reference]) => [name, () => context.dispatch(reference)])));
++    const validation = $derived({ valid: !node?.validation_errors.length, errors: node?.validation_errors ?? [] });
+ </script>
+-
+-{#if depth > rc.maxDepth}
+-	<!-- Bounded: a cyclic component graph would otherwise recurse forever. -->
+-	<span data-a2ui-error="max-depth" hidden></span>
+-{:else if !spec}
+-	<!-- Forward reference: the agent named this child before defining it. -->
+-	<span data-a2ui-pending={id} hidden></span>
+-{:else if !Resolved}
+-	{#if Fallback}
+-		<Fallback component={spec.component} {id} />
+-	{:else}
+-		<span data-a2ui-unknown={spec.component} hidden></span>
+-	{/if}
+-{:else if built?.visible}
+-	<Resolved
+-		{...built.props}
+-		slots={built.slots}
+-		bindings={built.bindings}
+-		actions={built.actions}
+-		validation={built.validation}
+-		a2ui={{ id, component: spec.component, spec, scope, pending: built.pending }}
+-	/>
++{#if node && presentationOnly() && (node.component === 'Button' || node.component === 'Modal')}
++    <Slot content={slots[node.component === 'Button' ? 'child' : 'trigger']} presentationOnly />
++{:else if node && presentationOnly() && ['TextField', 'CheckBox', 'ChoicePicker', 'Slider', 'DateTimeInput'].includes(node.component)}
++    <span>{String(node.props.label ?? node.props.ariaLabel ?? '')}</span>
++{:else if node && Component}
++    <Component {...node.props} {slots} {bindings} {actions} {validation}
++        disabled={presentationOnly() || context.disabled() || node.props.disabled === true
++            || Object.keys(node.actions).length > 0 && context.actionsDisabled?.() === true
++            || ['TextField', 'CheckBox', 'ChoicePicker', 'Slider', 'DateTimeInput'].includes(node.component) && !node.bindings.value} a2ui={{ id: domId }} />
++{:else if node}
++    <p role="status">{node.component}: unsupported renderer component</p>
+ {/if}
+--- third_party/a2ui/svelte/src/lib/render/Slot.svelte
++++ web/frontend/src/vendor/a2ui-svelte/render/Slot.svelte
+@@ -1,34 +1,10 @@
+-<!--
+-	Renders the children of a slot.
+-
+-	Catalog components use this instead of Svelte snippets because A2UI addresses
+-	children by id, not by lexical nesting — a container receives a list of ids
+-	(or a template plus a collection path), and the renderer decides what those
+-	resolve to.
+--->
+ <script lang="ts">
+-	import type { SlotContent } from '../catalog/types.js';
+-	import Node from './Node.svelte';
+-
+-	interface Props {
+-		/**
+-		 * The slot to render. Named `content`, not `slot`: a prop literally called
+-		 * `slot` collides with Svelte's legacy slot attribute.
+-		 */
+-		content?: SlotContent;
+-		/** Render only the nodes of one tab, by index. */
+-		tab?: number;
+-	}
+-
+-	let { content, tab }: Props = $props();
+-
+-	const nodes = $derived.by(() => {
+-		if (!content) return [];
+-		if (content.kind === 'nodes') return content.nodes;
+-		return content.tabs[tab ?? 0]?.nodes ?? [];
+-	});
++    import type { SlotContent } from '../catalog/types';
++    import Node from './Node.svelte';
++    import { inheritedPresentationOnly, providePresentationOnly } from './context';
++    let { content, tab = 0, presentationOnly = false }: { content?: SlotContent; tab?: number; presentationOnly?: boolean } = $props();
++    const inherited = inheritedPresentationOnly();
++    providePresentationOnly(() => presentationOnly || inherited());
++    const nodes = $derived(content?.kind === 'nodes' ? content.nodes : content?.tabs[tab]?.nodes ?? []);
+ </script>
+-
+-{#each nodes as node (node.key)}
+-	<Node id={node.id} scope={node.scope} />
+-{/each}
++{#each nodes as node (node.key)}<Node id={node.id} />{/each}
+--- third_party/a2ui/svelte/src/lib/render/Surface.svelte
++++ web/frontend/src/vendor/a2ui-svelte/render/Surface.svelte
+@@ -1,78 +1,228 @@
+-<!--
+-	Mounts one A2UI surface.
++<script lang="ts">
++    import { untrack } from 'svelte';
++    import { locale, t } from '../../../lib/i18n';
++    import type { UiSnapshot, UiInteraction, UiActionRef, UiEdit, UiSubmissionOutcome } from '../../../lib/generativeUi';
++    import { readUiDraftState, saveUiDraftState, restoreUiAttempt, persistUiAttempt, retireUiAttempt } from '../../../lib/uiDraftSession';
++    import { uiIdentityKey, previewUiSurface, validateUiDraftPreview } from '../../../lib/generativeUi';
++    import type { UiDraftPreviewInput, UiDraftPreview } from '../../../lib/generativeUi';
++    import { provideProjection } from './context';
++    import Node from './Node.svelte';
++    import '../catalog/basic/theme.css';
++    let { snapshot, oninteraction, onrefresh, onpreview = previewUiSurface, readOnly = false }: {
++        snapshot: UiSnapshot;
++        readOnly?: boolean;
++        onpreview?: (input: UiDraftPreviewInput, signal?: AbortSignal) => Promise<UiDraftPreview>;
++        onrefresh: () => Promise<void>;
++        oninteraction: (input: UiInteraction, requestId: string, submittedAtMs: number) => Promise<UiSubmissionOutcome>;
++    } = $props();
++    const mountedIdentity = untrack(() => uiIdentityKey(snapshot.identity));
++    const rememberEdits = untrack(() => !readOnly && snapshot.phase !== 'read_only' && snapshot.phase !== 'deleted');
++    const restored = rememberEdits ? readUiDraftState(mountedIdentity) : undefined;
++    let drafts = $state<Record<string, UiEdit>>(restored?.drafts ?? {});
++    let draftRevision = $state<number | null>(restored?.revision ?? null);
++    let pending = $state(false);
++    let restoring = $state(rememberEdits);
++    let composing = $state(false);
++    let failure = $state('');
++    let draftGeneration = $state(1);
++    let validatedGeneration = $state(0);
++    let previewSnapshot = $state<UiSnapshot | null>(null);
++    let previewFailure = $state('');
++    const hasDrafts = $derived(Object.keys(drafts).length > 0);
++    const staleDraft = $derived(hasDrafts && draftRevision !== snapshot.revision);
++    const previewReady = () => !hasDrafts || validatedGeneration === draftGeneration
++        && previewSnapshot?.revision === snapshot.revision && draftRevision === snapshot.revision;
++    const renderedSnapshot = () => hasDrafts && previewReady() && previewSnapshot ? previewSnapshot : snapshot;
++    // Drafts remain local. Only Core evaluates checks; no action or edit is
++    // committed by this cancellable projection request.
++    $effect(() => {
++        const generation = draftGeneration;
++        const revision = snapshot.revision;
++        const identity = snapshot.identity;
++        const edits = Object.values(drafts);
++        if (!edits.length || composing || restoring || pending || unresolved || snapshot.phase !== 'ready'
++            || draftRevision !== revision || uiIdentityKey(identity) !== mountedIdentity) return;
++        const controller = new AbortController();
++        let deadline: ReturnType<typeof setTimeout> | undefined;
++        const timer = setTimeout(() => {
++            previewFailure = '';
++            deadline = setTimeout(() => {
++                controller.abort();
++                if (draftGeneration === generation && active()) {
++                    validatedGeneration = 0;
++                    previewFailure = '草稿校验超时，请重试。';
++                }
++            }, 15000);
++            const input = {identity, expected_surface_revision: revision, edits, draft_generation: generation};
++            void onpreview(input, controller.signal).then(result => {
++                const projected = validateUiDraftPreview(input, result);
++                if (projected.catalog_digest !== snapshot.catalog_digest || projected.catalog_id !== snapshot.catalog_id) {
++                    throw new Error('UI draft preview catalog mismatch');
++                }
++                if (!controller.signal.aborted && draftGeneration === generation && snapshot.revision === revision
++                    && active() && !composing) {
++                    previewSnapshot = projected;
++                    validatedGeneration = generation;
++                }
++            }).catch(error => {
++                if (!controller.signal.aborted && draftGeneration === generation) {
++                    previewFailure = error instanceof Error ? error.message : String(error);
++                    validatedGeneration = 0;
++                }
++            }).finally(() => clearTimeout(deadline));
++        }, 150);
++        return () => { clearTimeout(timer); clearTimeout(deadline); controller.abort(); };
++    });
++    let unresolved = $state<{ input: UiInteraction; requestId: string; submittedAtMs: number } | null>(restored?.unresolved ?? null);
++    // Surface is keyed by the full authority identity at its mounting boundary.
++    $effect(() => {
++        if (rememberEdits) saveUiDraftState(mountedIdentity, {drafts, revision: draftRevision, unresolved});
++    });
++    $effect(() => {
++        if (!rememberEdits) return;
++        let mounted = true;
++        void restoreUiAttempt(mountedIdentity).then(value => {
++            if (!mounted) return;
++            if (value) unresolved = value;
++            restoring = false;
++        }).catch(error => { if (mounted) failure = error instanceof Error ? error.message : String(error); });
++        return () => { mounted = false; };
++    });
++    const active = () => uiIdentityKey(snapshot.identity) === mountedIdentity;
++    const disabled = () => readOnly || restoring || pending || unresolved !== null || !active() || snapshot.phase !== 'ready';
++    const editKey = (id: string, binding: string) => JSON.stringify([id, binding]);
++    provideProjection({
++        snapshot: renderedSnapshot,
++        actionsDisabled: () => composing || !previewReady(),
++        disabled,
++        value: (id, binding, committed) => {
++            const draft = drafts[editKey(id, binding)];
++            return draft?.type === 'set' ? draft.value : committed;
++        },
++        edit: (id, binding, value) => {
++            if (disabled()) return;
++            draftGeneration++;
++            validatedGeneration = 0;
++            draftRevision ??= snapshot.revision;
++            drafts = { ...drafts, [editKey(id, binding)]: { type: 'set', instance_id: id, binding, value } };
++        },
++        dispatch: action => { void submit(action); }
++    });
++    function revalidateDrafts() {
++        if (disabled() || composing) return;
++        const valid = Object.values(drafts).every(edit =>
++            Object.hasOwn(snapshot.nodes[edit.instance_id]?.bindings ?? {}, edit.binding));
++        if (!valid) {
++            previewFailure = '表单已更新，部分编辑项不再存在。你的编辑已保留，请确认后放弃编辑。';
++            return;
++        }
++        // The user explicitly confirms the new revision. Keep all values;
++        // only Core may decide whether they are valid for this version.
++        draftRevision = snapshot.revision;
++        previewFailure = '';
++        previewSnapshot = null;
++        validatedGeneration = 0;
++        draftGeneration++;
++    }
++    function discardDrafts() {
++        if (pending || unresolved || !active()) return;
++        drafts = {};
++        draftRevision = null;
++        failure = '';
++        previewFailure = '';
++        previewSnapshot = null;
++        draftGeneration++;
++        validatedGeneration = 0;
++    }
++    async function refresh() {
++        if (pending || unresolved || !active()) return;
++        pending = true;
++        try { await onrefresh(); }
++        catch (error) { failure = error instanceof Error ? error.message : String(error); }
++        finally { pending = false; }
++    }
++    async function submit(action: UiActionRef) {
++        if (disabled() || !previewReady()) return;
++        if (composing) { failure = '请先完成当前输入法输入，再提交表单。'; return; }
++        if (draftRevision !== null && draftRevision !== snapshot.revision) {
++            failure = '表单已更新。你的编辑已保留，请刷新并确认后重新填写。';
++            return;
++        }
++        const edits = Object.values(drafts);
++        const input: UiInteraction = { identity: snapshot.identity,
++            expected_surface_revision: draftRevision ?? snapshot.revision, edits, action };
++        await deliver({ input, requestId: crypto.randomUUID(), submittedAtMs: Date.now() });
++    }
++    async function deliver(attempt: { input: UiInteraction; requestId: string; submittedAtMs: number }) {
++        if (pending || !active()) return;
++        const identity = uiIdentityKey(attempt.input.identity);
++        pending = true;
++        failure = '';
++        unresolved = attempt;
++        if (rememberEdits) saveUiDraftState(mountedIdentity, {drafts, revision: draftRevision, unresolved});
++        try {
++            await persistUiAttempt(mountedIdentity, attempt);
++            const outcome = await oninteraction(attempt.input, attempt.requestId, attempt.submittedAtMs);
++            if (identity !== uiIdentityKey(snapshot.identity) || !active()) return;
++            if (outcome.status !== 'unknown') await retireUiAttempt(mountedIdentity, attempt);
++            if (outcome.status === 'committed') {
++                drafts = {};
++                draftRevision = null;
++                unresolved = null;
++            } else {
++                failure = outcome.message;
++                unresolved = outcome.status === 'unknown' ? attempt : null;
++            }
++        } catch (error) {
++            if (identity === uiIdentityKey(snapshot.identity) && active()) {
++                failure = error instanceof Error ? error.message : String(error);
++                // Lost acknowledgement: preserve the identical request and
++                // payload until its receipt is reconciled, never resubmit anew.
++                unresolved = attempt;
++            }
++        } finally {
++            pending = false;
++            if (rememberEdits) saveUiDraftState(mountedIdentity, {drafts, revision: draftRevision, unresolved});
++        }
++    }
+ 
+-	`createSurface` implicitly instantiates the canonical `Surface` container,
+-	whose child is always `root`. Nothing paints until `root` exists — components
+-	that arrive first are buffered by the reducer, which is what makes progressive
+-	streaming look deliberate instead of janky.
+--->
+-<script lang="ts">
+-	import type { Snippet } from 'svelte';
+-	import type { A2uiClient } from '../client.svelte.js';
+-	import type { CatalogRegistry } from '../catalog/types.js';
+-	import { ROOT_COMPONENT_ID } from '../protocol/reducer.js';
+-	import { setRenderContext, type RenderContext } from './context.js';
+-	import Node from './Node.svelte';
+-
+-	interface Props {
+-		client: A2uiClient;
+-		catalog: CatalogRegistry;
+-		surfaceId: string;
+-		/** Shown until the surface exists and its `root` component arrives. */
+-		pending?: Snippet;
+-		/** Rendered in place of a component type this catalog doesn't know. */
+-		fallback?: RenderContext['fallback'];
+-		maxDepth?: number;
+-		class?: string;
+-	}
+-
+-	let {
+-		client,
+-		catalog,
+-		surfaceId,
+-		pending,
+-		fallback,
+-		maxDepth = 64,
+-		class: className = ''
+-	}: Props = $props();
+-
+-	// Context is set once; the fields it exposes are read through getters so a
+-	// swapped client or catalog still propagates.
+-	setRenderContext({
+-		get client() {
+-			return client;
+-		},
+-		get catalog() {
+-			return catalog;
+-		},
+-		get surfaceId() {
+-			return surfaceId;
+-		},
+-		get fallback() {
+-			return fallback;
+-		},
+-		get maxDepth() {
+-			return maxDepth;
+-		}
+-	} as RenderContext);
+-
+-	const surface = $derived(client.surface(surfaceId));
+-	const ready = $derived(surface?.ready === true);
+ </script>
+-
+-<div class="a2ui-surface {className}" data-a2ui-surface={surfaceId} data-a2ui-ready={ready}>
+-	{#if ready}
+-		<Node id={ROOT_COMPONENT_ID} />
+-	{:else if pending}
+-		{@render pending()}
+-	{/if}
+-</div>
+-
++<section oncompositionstart={() => composing = true} oncompositionend={() => composing = false} onfocusout={() => composing = false} class="nola-generative-surface" aria-busy={pending || snapshot.phase === 'pending'} data-ui-surface={snapshot.identity.surface_id}>
++    {#if snapshot.phase === 'pending'}
++        <p role="status">{t($locale, 'a2ui.pending')}</p>
++    {:else if snapshot.phase === 'deleted'}
++        <p role="status">{t($locale, 'a2ui.deleted')}</p>
++    {:else if snapshot.root_instance_id}
++        <Node id={snapshot.root_instance_id} />
++    {:else if snapshot.summary}<p>{snapshot.summary}</p>{/if}
++    {#if failure}<p role="alert">{failure}</p>{/if}
++    {#if staleDraft}<p role="status">表单已更新。你的编辑已保留，请确认后重新校验。</p>{/if}
++    {#if previewFailure}<p role="alert">草稿校验未完成：{previewFailure}</p>{/if}
++    {#if previewFailure || staleDraft}
++        <button type="button" disabled={disabled() || composing} onclick={revalidateDrafts}>重新校验</button>
++    {/if}
++    {#if !unresolved && (failure || draftRevision !== null && draftRevision !== snapshot.revision)}
++        <div class="recovery-actions">
++            <button type="button" disabled={pending} onclick={() => void refresh()}>刷新表单（保留编辑）</button>
++            {#if Object.keys(drafts).length}
++                <button type="button" disabled={pending} onclick={discardDrafts}>放弃编辑，使用当前值</button>
++            {/if}
++        </div>
++    {/if}
++    {#if !readOnly && unresolved && (snapshot.phase === 'ready' || snapshot.phase === 'pending')}<button type="button" disabled={pending} onclick={() => { if (unresolved) void deliver(unresolved); }}>查询提交结果</button>{/if}
++</section>
+ <style>
+-	.a2ui-surface {
+-		display: flex;
+-		flex-direction: column;
+-		color: var(--a2ui-color-text);
+-		font-family: var(--a2ui-font-family);
+-	}
++    .nola-generative-surface {
++        min-width: 0;
++        max-width: 100%;
++        --a2ui-control-height: 44px;
++        --a2ui-color-surface: var(--surface);
++        --a2ui-color-surface-raised: var(--panel);
++        --a2ui-color-text: var(--content);
++        --a2ui-color-text-muted: var(--muted);
++        --a2ui-color-primary: var(--primary);
++        --a2ui-color-on-primary: var(--on-primary);
++        --a2ui-color-border: var(--outline);
++        --a2ui-color-danger: var(--danger);
++    }
+ </style>
+--- third_party/a2ui/svelte/src/lib/render/context.ts
++++ web/frontend/src/vendor/a2ui-svelte/render/context.ts
+@@ -1,32 +1,21 @@
+ import { getContext, setContext } from 'svelte';
+-import type { A2uiClient } from '../client.svelte.js';
+-import type { CatalogRegistry } from '../catalog/types.js';
++import type { UiSnapshot, UiActionRef } from '../../../lib/generativeUi';
++const KEY = Symbol('nola.ui.projection');
++export interface ProjectionContext {
++    snapshot(): UiSnapshot;
++    disabled(): boolean;
++    actionsDisabled?(): boolean;
++    value(instance: string, binding: string, committed: unknown): unknown;
++    edit(instance: string, binding: string, value: unknown): void;
++    dispatch(action: UiActionRef): void;
++}
++export function provideProjection(context: ProjectionContext): void { setContext(KEY, context); }
++export function useProjection(): ProjectionContext { return getContext<ProjectionContext>(KEY); }
+ 
+-const KEY = Symbol.for('a2ui.render-context');
+-
+-/** Nesting depth, carried on context so slots need not thread it as a prop. */
+-export const DEPTH_KEY = Symbol.for('a2ui.depth');
+-
+-export interface RenderContext {
+-	client: A2uiClient;
+-	catalog: CatalogRegistry;
+-	surfaceId: string;
+-	/** Rendered instead of an unknown component type. */
+-	fallback?: import('svelte').Component<{ component: string; id: string }>;
+-	/** Hard cap on nesting, to bound an adversarial or looping component graph. */
+-	maxDepth: number;
++const PRESENTATION_ONLY = Symbol('nola.ui.presentation-only');
++export function inheritedPresentationOnly(): () => boolean {
++    return getContext<(() => boolean) | undefined>(PRESENTATION_ONLY) ?? (() => false);
+ }
+-
+-export function setRenderContext(context: RenderContext): RenderContext {
+-	return setContext(KEY, context);
++export function providePresentationOnly(value: () => boolean): void {
++    setContext(PRESENTATION_ONLY, value);
+ }
+-
+-export function getRenderContext(): RenderContext {
+-	const context = getContext<RenderContext | undefined>(KEY);
+-	if (!context) {
+-		throw new Error(
+-			'[a2ui] no render context found — render A2UI nodes inside <Surface> (or call setRenderContext yourself).'
+-		);
+-	}
+-	return context;
+-}

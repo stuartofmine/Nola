@@ -1,0 +1,4 @@
+"editor.edit" = "データソースを編集";
+"editor.add" = "データソースを追加";
+"editor.validate" = "データソースを検証";
+"editor.reopen_required" = "最新のバージョンを確認するため、データソースを開き直してから保存してください。";

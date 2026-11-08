@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="historical_details">Сведения об истории</string>
+    <string name="historical_unavailable">Историческое содержимое недоступно или изменилось. Откройте подробности заново.</string>
+    <string name="historical_limited">Некоторые исходные поля не загружены из-за ограничения размера этой панели подробностей.</string>
+    <string name="historical_field_deferred">Исходное поле не загружено</string>
+    <string name="historical_reload">Перезагрузить / Повторить</string>
+</resources>

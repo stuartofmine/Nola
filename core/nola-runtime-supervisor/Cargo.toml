@@ -1,0 +1,12 @@
+[package]
+name = "nola_runtime_supervisor"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nola_domain = { path = "../nola-domain" }
+nola_protocol = { path = "../nola-protocol" }
+nola_service_client = { path = "../nola-service-client" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Design Automations"
+  short_description: "Design reliable scheduled workflows"
+  default_prompt: "Design a safe and observable automation for this task."

@@ -1,0 +1,8 @@
+{
+  "llamaCpp": {
+    "repository": "https://github.com/ggml-org/llama.cpp.git",
+    "release": "b9631",
+    "commitPrefix": "6e14286",
+    "license": "MIT"
+  }
+}

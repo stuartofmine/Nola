@@ -1,0 +1,152 @@
+{
+  "input": {
+    "schema_version": 2,
+    "platform": "ios",
+    "now_ms": 1000000,
+    "expected_identity": {
+      "host_id": "ios-device-1",
+      "client_id": "ios-controller-1",
+      "session_id": "conversation-1"
+    },
+    "runtime": {
+      "manifest_id": "ios-device-1:tool-manifest",
+      "manifest_version": 1,
+      "issued_at_ms": 999000,
+      "expires_at_ms": 1060000,
+      "host_id": "ios-device-1",
+      "client_id": "ios-controller-1",
+      "session_id": "conversation-1",
+      "routes": ["device"],
+      "capabilities": ["files_read", "files_write"],
+      "authorizations": {
+        "files_read": "granted",
+        "files_write": "granted"
+      },
+      "result_egress_receipts": [
+        {
+          "tool_id": "device_read_file",
+          "route": "device",
+          "manifest_id": "ios-device-1:tool-manifest",
+          "host_id": "ios-device-1",
+          "client_id": "ios-controller-1",
+          "session_id": "conversation-1",
+          "issued_at_ms": 999000,
+          "expires_at_ms": 1050000,
+          "allow_result_egress": true
+        },
+        {
+          "tool_id": "device_write_file",
+          "route": "device",
+          "manifest_id": "ios-device-1:tool-manifest",
+          "host_id": "ios-device-1",
+          "client_id": "ios-controller-1",
+          "session_id": "conversation-1",
+          "issued_at_ms": 999000,
+          "expires_at_ms": 1050000,
+          "allow_result_egress": true
+        }
+      ],
+      "tools": [
+        {
+          "tool_id": "device_read_file",
+          "handler_id": "device_read_file",
+          "schema": {
+            "type": "function",
+            "function": {
+              "name": "device_read_file",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "path": {"type": "string"}
+                },
+                "required": ["path"]
+              }
+            }
+          },
+          "route": "device",
+          "available": true
+        },
+        {
+          "tool_id": "device_write_file",
+          "handler_id": "device_write_file",
+          "schema": {
+            "type": "function",
+            "function": {
+              "name": "device_write_file",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "path": {"type": "string"},
+                  "content": {"type": "string"}
+                },
+                "required": ["path", "content"]
+              }
+            }
+          },
+          "route": "device",
+          "available": true
+        }
+      ]
+    },
+    "conversation": {
+      "mode": "agent",
+      "allow_tools": [],
+      "deny_tools": []
+    },
+    "user_policy": {
+      "allow_tools": [],
+      "deny_tools": [],
+      "allow_capabilities": [],
+      "deny_capabilities": [],
+      "max_risk": "read_only",
+      "allow_result_egress_routes": ["device"]
+    },
+    "scoped_grants": [],
+    "result_egress_grants": [
+      {
+        "tool_id": "device_read_file",
+        "route": "device",
+        "manifest_id": "ios-device-1:tool-manifest",
+        "host_id": "ios-device-1",
+        "client_id": "ios-controller-1",
+        "session_id": "conversation-1",
+        "expires_at_ms": 1050000
+      },
+      {
+        "tool_id": "device_write_file",
+        "route": "device",
+        "manifest_id": "ios-device-1:tool-manifest",
+        "host_id": "ios-device-1",
+        "client_id": "ios-controller-1",
+        "session_id": "conversation-1",
+        "expires_at_ms": 1050000
+      }
+    ]
+  },
+  "expected": {
+    "enabled_tool_ids": ["device_read_file"],
+    "disabled_tools": [
+      {
+        "tool_id": "device_write_file",
+        "reason": "risk_exceeds_user_policy"
+      }
+    ],
+    "receipt": {
+      "schema_version": 2,
+      "platform": "ios",
+      "manifest_valid_until_ms": 1060000,
+      "enabled_tool": {
+        "tool_id": "device_read_file",
+        "name": "device_read_file",
+        "route": "device",
+        "capability": "files_read",
+        "permission": "scoped_resource",
+        "authorization": "granted",
+        "risk": "read_only",
+        "requires_result_egress": true,
+        "reason": "enabled"
+      },
+      "digest_hex_length": 64
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "title": "Excel Final Artifact Acceptance",
+  "sheets": [
+    {
+      "name": "Summary",
+      "columns": ["Metric", "Value", "Status"],
+      "rows": [
+        ["Source rows", 73, "Reconciled"],
+        ["Validated rows", 73, "Ready"],
+        ["Formula total", "=SUM(B2:B3)", "Calculated"]
+      ]
+    }
+  ]
+}

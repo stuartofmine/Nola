@@ -1,0 +1,39 @@
+{
+  "conversation_id": "conversation-1",
+  "anchor": {
+    "type": "latest"
+  },
+  "items": [
+    {
+      "message_id": "message-1",
+      "ordinal": 1,
+      "revision": 1,
+      "payload": {
+        "role": "user",
+        "status": "completed",
+        "parts": []
+      }
+    },
+    {
+      "message_id": "message-2",
+      "ordinal": 2,
+      "revision": 2,
+      "payload": {
+        "role": "assistant",
+        "status": "streaming",
+        "parts": ["part-1"]
+      }
+    }
+  ],
+  "previous_cursor": "before-message-1",
+  "next_cursor": null,
+  "has_more_before": true,
+  "has_more_after": false,
+  "projection_cursor": {
+    "scope": {
+      "type": "conversation",
+      "conversation_id": "conversation-1"
+    },
+    "sequence": 44
+  }
+}

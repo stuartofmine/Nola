@@ -1,0 +1,750 @@
+{% extends "base.html" %}
+{% import "_icons.html" as icons %}
+
+{% block title %}{{ tr('page.models.title', '模型 — Nola', 'Models — Nola') }}{% endblock %}
+
+{% block content %}
+<div class="subpage models-page model-hub-page">
+    <div class="page-header model-hub-header">
+        <div>
+            <h1 class="page-title">{{ icons.icon('cpu') }}<span>{{ tr('models.header.title', '模型中心', 'Model center') }}</span></h1>
+            <p class="page-subtitle">{{ tr('models.header.subtitle.v2', '分别管理本地 llama.cpp 模型与 API 模型。选择、配置和启动互不混淆。', 'Manage local llama.cpp models and API models independently. Selection, configuration, and startup are separate actions.') }}</p>
+        </div>
+        <div class="model-engine-state" id="modelEngineState" aria-live="polite"></div>
+    </div>
+
+    <div class="model-center-tabs" role="tablist" aria-label="{{ tr('models.header.title', '模型中心', 'Model center') }}">
+        <button type="button" id="modelTabLocal" role="tab" aria-selected="true" aria-controls="modelPanelLocal" tabindex="0">{{ icons.icon('cpu') }} {{ tr('models.local.title', '本地模型', 'Local models') }}</button>
+        <button type="button" id="modelTabApi" role="tab" aria-selected="false" aria-controls="modelPanelApi" tabindex="-1">{{ icons.icon('network') }} {{ tr('models.api.title', 'API 模型', 'API models') }}</button>
+    </div>
+    <div class="model-route-grid">
+        <section class="section-card model-route-section model-route-local" id="modelPanelLocal" role="tabpanel" aria-labelledby="modelTabLocal" tabindex="0">
+            <div class="model-route-heading">
+                <div class="model-route-icon local">{{ icons.icon('cpu') }}</div>
+                <div>
+                    <div class="model-route-kicker">llama.cpp</div>
+                    <h2>{{ tr('models.local.title', '本地模型', 'Local models') }}</h2>
+                    <p>{{ tr('models.local.subtitle', '模型和对话数据留在本机。下载后先配置，再由你明确启动。', 'Models and conversations stay on this device. Download, configure, then explicitly start a model.') }}</p>
+                </div>
+            </div>
+
+            <div class="local-device-card" id="localDeviceCard">
+                <div class="local-device-pulse" aria-hidden="true"></div>
+                <div><strong>{{ tr('models.local.detecting', '正在检测设备与 llama.cpp…', 'Detecting device and llama.cpp…') }}</strong></div>
+            </div>
+
+            <div class="managed-model-grid" id="managedModelGrid"></div>
+            <div class="model-inline-status local-model-status" id="localModelStatus" role="status" aria-live="polite"></div>
+        </section>
+
+        <section class="section-card model-route-section model-route-api" id="modelPanelApi" role="tabpanel" aria-labelledby="modelTabApi" tabindex="0" hidden>
+            <div class="model-route-heading">
+                <div class="model-route-icon api">{{ icons.icon('key') }}</div>
+                <div>
+                    <div class="model-route-kicker">{{ tr('models.api.compatible', 'OpenAI 兼容', 'OpenAI-compatible') }}</div>
+                    <h2>{{ tr('models.api.title', 'API 模型', 'API models') }}</h2>
+                    <p>{{ tr('models.api.subtitle', '连接云端或局域网兼容端点。该配置不会启动本地模型。', 'Connect to a cloud or LAN-compatible endpoint. This configuration never starts a local model.') }}</p>
+                </div>
+            </div>
+
+            <form class="api-model-form" id="apiModelForm">
+                <div class="form-group">
+                    <label for="apiEndpoint">{{ tr('models.connection.endpoint.label', 'API 端点', 'API endpoint') }}</label>
+                        <input type="url" id="apiEndpoint" placeholder="https://example.com/v1" autocomplete="url" required>
+                </div>
+                <div class="api-model-form-row">
+                    <div class="form-group">
+                        <label for="apiModelId">{{ tr('models.connection.model.label', '模型 ID', 'Model ID') }}</label>
+                        <input type="text" id="apiModelId" placeholder="qwen-plus" autocomplete="off" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="apiKey">{{ tr('models.connection.api_key.label', 'API 密钥', 'API key') }}</label>
+                        <div class="secret-input-wrap">
+                            <input type="password" id="apiKey" placeholder="sk-…" autocomplete="new-password">
+                            <button type="button" class="secret-toggle" id="toggleApiKeyBtn" aria-label="{{ tr('models.api.key.show', '显示 API 密钥', 'Show API key') }}">{{ icons.icon('eye') }}</button>
+                        </div>
+                        <p class="form-help" id="apiKeyHint"></p>
+                    </div>
+                </div>
+                <details class="model-advanced-disclosure">
+                    <summary>{{ tr('models.parameters.title', '生成参数', 'Generation parameters') }}</summary>
+                    <div class="model-parameter-grid api-parameter-grid">
+                        <label><span>{{ tr('models.parameters.temperature', '温度', 'Temperature') }}</span><input type="number" id="apiTemperature" min="0" max="2" step="0.05"></label>
+                        <label><span>{{ tr('models.parameters.top_p', 'Top P', 'Top P') }}</span><input type="number" id="apiTopP" min="0" max="1" step="0.05"></label>
+                        <label><span>{{ tr('models.parameters.max_output', '最大输出', 'Max output') }}</span><input type="number" id="apiMaxOutput" min="64" max="32768" step="1"></label>
+                        <label><span>{{ tr('models.parameters.context_window', '上下文窗口', 'Context window') }}</span><input type="number" id="apiContext" min="512" max="1000000" step="1"></label>
+                    </div>
+                </details>
+                <div class="api-model-actions">
+                    <button type="button" class="btn btn-secondary" id="clearApiModelBtn">{{ tr('models.connection.clear', '清空配置', 'Clear configuration') }}</button>
+                    <button type="submit" class="btn btn-primary" id="saveApiModelBtn" data-default-label="{{ tr('models.connection.save', '保存 API 模型', 'Save API model') }}" disabled>{{ tr('models.connection.save', '保存 API 模型', 'Save API model') }}</button>
+                </div>
+                <div class="model-inline-status" id="apiModelStatus" role="status" aria-live="polite"></div>
+            </form>
+        </section>
+    </div>
+</div>
+
+<div class="modal local-model-config-modal" id="localModelConfigModal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="localConfigTitle" style="display:none;">
+    <div class="modal-content modal-wide" tabindex="-1">
+        <div class="modal-header">
+            <div>
+                <div class="page-eyebrow">llama.cpp</div>
+                <h2 id="localConfigTitle">{{ tr('models.local.configure', '配置本地模型', 'Configure local model') }}</h2>
+            </div>
+            <button type="button" class="close-btn" id="localConfigCloseBtn" aria-label="{{ tr('base.js.close', '关闭', 'Close') }}">{{ icons.icon('x') }}</button>
+        </div>
+        <div class="modal-body">
+            <div class="local-config-note">
+                <strong>{{ tr('models.local.config.note.title', '参数在下次启动时生效', 'Parameters apply on the next start') }}</strong>
+                <span>{{ tr('models.local.config.note.body', '保存参数不会自动启动或重启模型。上下文窗口最低为 64K。', 'Saving parameters never starts or restarts a model. The context window is at least 64K.') }}</span>
+            </div>
+            <div class="model-parameter-grid local-parameter-grid">
+                <label><span>{{ tr('models.parameters.context_window', '上下文窗口', 'Context window') }}</span><input type="number" id="localContext" min="65536" max="262144" step="1024"><small>{{ tr('models.local.context_hint', 'tokens · 最低 64K', 'tokens · min 64K') }}</small></label>
+                <label><span>{{ tr('models.parameters.temperature', '温度', 'Temperature') }}</span><input type="number" id="localTemperature" min="0" max="2" step="0.05"></label>
+                <label><span>{{ tr('models.parameters.top_p', 'Top P', 'Top P') }}</span><input type="number" id="localTopP" min="0" max="1" step="0.01"></label>
+                <label><span>{{ tr('models.parameters.top_k', 'Top K', 'Top K') }}</span><input type="number" id="localTopK" min="1" max="200" step="1"></label>
+                <label><span>{{ tr('models.parameters.min_p', 'Min P', 'Min P') }}</span><input type="number" id="localMinP" min="0" max="1" step="0.01"></label>
+                <label><span>{{ tr('models.local.batch_size', '批处理大小', 'Batch size') }}</span><input type="number" id="localBatch" min="32" max="4096" step="32"></label>
+                <label><span>{{ tr('models.local.threads', 'CPU 线程', 'CPU threads') }}</span><input type="number" id="localThreads" min="0" max="256" step="1"><small>{{ tr('models.local.threads.hint', '0 表示自动', '0 means automatic') }}</small></label>
+                <label><span>{{ tr('models.local.gpu_layers', 'GPU 层数', 'GPU layers') }}</span><input type="number" id="localGpuLayers" min="0" max="999" step="1"></label>
+                <label class="parameter-toggle"><span>{{ tr('models.local.flash_attention', 'Flash Attention', 'Flash Attention') }}</span><input type="checkbox" id="localFlashAttention"></label>
+            </div>
+            <div class="model-modal-actions">
+                <button type="button" class="btn btn-secondary" id="localConfigCancelBtn">{{ tr('base.js.confirm.cancel', '取消', 'Cancel') }}</button>
+                <button type="button" class="btn btn-primary" id="localConfigSaveBtn" data-default-label="{{ tr('models.local.save_parameters', '保存参数', 'Save parameters') }}">{{ tr('models.local.save_parameters', '保存参数', 'Save parameters') }}</button>
+            </div>
+            <div class="model-inline-status" id="localConfigStatus" role="status" aria-live="polite"></div>
+        </div>
+    </div>
+</div>
+
+<style>
+.model-hub-page { max-width: 948px; margin-inline: auto; }
+.model-hub-page .model-route-grid { grid-template-columns: minmax(0, 1fr); }
+.model-center-tabs { display: flex; gap: 4px; width: fit-content; max-width: 100%; margin: 0 auto 24px; padding: 4px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-secondary); }
+.model-center-tabs [role="tab"] { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 8px 24px; border: 0; border-radius: 7px; background: transparent; color: var(--text-secondary); font: inherit; cursor: pointer; }
+.model-center-tabs [aria-selected="true"] { background: var(--bg-primary); color: var(--text-primary); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.model-center-tabs [role="tab"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.model-center-tabs svg { width: 16px; height: 16px; }
+.model-hub-page [role="tabpanel"][hidden] { display: none; }
+.model-catalog-empty{min-height:190px;padding:28px;border:1px dashed var(--border);border-radius:16px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:var(--text-secondary)}.model-catalog-empty .model-empty-icon{width:42px;height:42px;margin-bottom:13px;border-radius:13px;display:grid;place-items:center;background:color-mix(in srgb,var(--accent) 10%,transparent);color:var(--accent)}.model-catalog-empty .model-empty-icon svg{width:21px;height:21px}.model-catalog-empty strong{color:var(--text-primary);font-size:.96rem}.model-catalog-empty p{max-width:420px;margin:7px 0 0;font-size:.85rem;line-height:1.55}.model-catalog-empty .btn{margin-top:16px}.model-card-busy{display:flex;align-items:center;gap:8px;margin-top:12px;padding:8px 10px;border-radius:10px;background:color-mix(in srgb,var(--accent) 8%,transparent);color:var(--text-secondary);font-size:.78rem;font-weight:600}.model-card-busy-dot{width:8px;height:8px;border:2px solid color-mix(in srgb,var(--accent) 28%,transparent);border-top-color:var(--accent);border-radius:50%;animation:model-card-spin .9s linear infinite}@keyframes model-card-spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.model-card-busy-dot{animation:none;border-color:var(--accent)}}
+.model-engine-state{min-height:32px}
+.managed-model-card{display:flex;flex-direction:column;transition:border-color var(--dur-base) var(--ease-out),box-shadow var(--dur-base) var(--ease-out),background-color var(--dur-base) var(--ease-out)}
+.managed-model-card:hover{border-color:color-mix(in srgb,var(--nola-primary) 24%,var(--border));box-shadow:var(--shadow-1)}
+.managed-model-card>p{min-height:2.9em}
+.managed-model-actions{margin-top:auto;flex-wrap:wrap}
+.model-card-busy{min-height:34px}
+.model-card-busy.is-idle{visibility:hidden}
+.model-inline-status{min-height:1.35em}
+.api-model-actions,.model-modal-actions{position:sticky;bottom:10px;z-index:2;padding:10px;border:1px solid var(--border);border-radius:13px;background:color-mix(in srgb,var(--bg-primary) 92%,transparent);box-shadow:0 8px 24px rgba(15,23,42,.07);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+#saveApiModelBtn[aria-busy="true"],#localConfigSaveBtn[aria-busy="true"]{cursor:progress}
+@media(max-width:720px){
+    .model-route-grid{grid-template-columns:1fr}
+    .api-model-form-row,.model-parameter-grid{grid-template-columns:1fr}
+    .api-model-actions,.model-modal-actions{bottom:8px}
+    .api-model-actions .btn,.model-modal-actions .btn{min-height:44px;flex:1 1 140px}
+}
+@keyframes model-content-enter{
+    from{opacity:0;transform:translateY(5px)}
+    to{opacity:1;transform:translateY(0)}
+}
+.managed-model-card,.api-model-card,.model-catalog-empty,.model-card-busy{
+    animation:model-content-enter var(--dur-base) var(--ease-out) both
+}
+.managed-model-card:nth-child(2),.api-model-card:nth-child(2){animation-delay:18ms}
+.managed-model-card:nth-child(3),.api-model-card:nth-child(3){animation-delay:36ms}
+.managed-model-card:nth-child(4),.api-model-card:nth-child(4){animation-delay:54ms}
+@media(prefers-reduced-motion:reduce){
+    .managed-model-card,.api-model-card,.model-catalog-empty,.model-card-busy{animation:none}
+}
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script src="/static/js/model-center-navigation.js"></script>
+<script>
+const MODEL_I18N = {
+    recommended: {{ tr('models.local.recommended', '推荐', 'Recommended') | tojson }},
+    compact: {{ tr('models.local.compact', '轻量', 'Compact') | tojson }},
+    installed: {{ tr('models.local.installed', '已下载', 'Downloaded') | tojson }},
+    notInstalled: {{ tr('models.local.not_installed', '未下载', 'Not downloaded') | tojson }},
+    running: {{ tr('models.local.running', '运行中', 'Running') | tojson }},
+    selected: {{ tr('models.local.selected', '已选择', 'Selected') | tojson }},
+    select: {{ tr('models.local.action.select', '选择', 'Select') | tojson }},
+    configure: {{ tr('models.local.action.configure', '参数', 'Parameters') | tojson }},
+    download: {{ tr('models.local.action.download', '下载', 'Download') | tojson }},
+    start: {{ tr('models.local.action.start', '启动', 'Start') | tojson }},
+    stop: {{ tr('models.local.action.stop', '停止', 'Stop') | tojson }},
+    remove: {{ tr('models.local.action.remove', '删除', 'Delete') | tojson }},
+    more: {{ tr('models.local.action.more', '更多操作', 'More actions') | tojson }},
+    preparing: {{ tr('models.local.preparing', '正在准备…', 'Preparing…') | tojson }},
+    downloadSize: {{ tr('models.local.download_size', '下载', 'Download') | tojson }},
+    runtimeEstimate: {{ tr('models.local.runtime_estimate', '64K 运行估算', 'Estimated at 64K') | tojson }},
+    memory: {{ tr('models.local.memory', '统一内存', 'System memory') | tojson }},
+    context: {{ tr('models.local.context', '有效窗口', 'Effective context') | tojson }},
+    compatible: {{ tr('models.local.compatible', '适合此设备', 'Fits this device') | tojson }},
+    constrained: {{ tr('models.local.constrained', '可能造成内存压力', 'May cause memory pressure') | tojson }},
+    backendReady: {{ tr('models.local.backend_ready', 'llama.cpp 已就绪', 'llama.cpp ready') | tojson }},
+    backendMissing: {{ tr('models.local.backend_missing', '需要安装 llama.cpp', 'llama.cpp required') | tojson }},
+    apiSaved: {{ tr('models.api.saved', 'API 模型配置已保存。', 'API model configuration saved.') | tojson }},
+    apiCleared: {{ tr('models.api.cleared', 'API 模型配置已清空。', 'API model configuration cleared.') | tojson }},
+    keySaved: {{ tr('models.js.key_saved', '密钥已保存，留空可保留', 'Key saved; leave empty to keep it') | tojson }},
+    keyOptional: {{ tr('models.api.key_optional', '无鉴权端点可以留空', 'Leave empty for endpoints without authentication') | tojson }},
+    operationFailed: {{ tr('models.local.operation_failed', '操作失败：', 'Operation failed: ') | tojson }},
+    localLoadFailed: {{ tr('models.local.load_failed', '无法加载本地模型：', 'Failed to load local models: ') | tojson }},
+    apiLoadFailed: {{ tr('models.api.load_failed', '无法加载 API 配置：', 'Failed to load API configuration: ') | tojson }},
+    recommendedDescription: {{ tr('models.local.4b.desc', '更适合写作、复杂问答和本地 Agent。', 'Better for writing, complex questions, and local agent work.') | tojson }},
+    compactDescription: {{ tr('models.local.08b.desc', '响应更快，适合摘要、改写和轻量问答。', 'Faster for summaries, rewriting, and lightweight questions.') | tojson }},
+    removeTitle: {{ tr('models.local.remove.title', '删除本地模型', 'Delete local model') | tojson }},
+    removeMessage: {{ tr('models.local.remove.message', '模型文件会从本机移除，参数配置将保留。', 'The model file will be removed; parameter settings are kept.') | tojson }},
+    starting: {{ tr('models.local.starting', '正在启动模型…', 'Starting model…') | tojson }},
+    stopping: {{ tr('models.local.stopping', '正在停止模型…', 'Stopping model…') | tojson }},
+    downloadStarting: {{ tr('models.local.download_starting', '正在准备下载…', 'Preparing download…') | tojson }},
+    started: {{ tr('models.local.started', '模型已启动，可以在聊天页使用。', 'Model started and ready in chat.') | tojson }},
+    selectionSaved: {{ tr('models.local.selection_saved', '已选择模型；只有点击“启动”后才会运行。', 'Model selected; it runs only after you click Start.') | tojson }},
+    parametersSaved: {{ tr('models.local.parameters_saved', '参数已保存，将在下次启动时生效。', 'Parameters saved and will apply on the next start.') | tojson }},
+    configurationConflict: {{ tr('models.local.configuration_conflict', '配置已被其他窗口修改，本次未保存。你的输入仍保留，请关闭后重新打开最新配置再编辑。', 'Another window changed this configuration. Nothing was saved and your input is preserved. Close and reopen the latest configuration before editing again.') | tojson }},
+    configurationUnavailable: {{ tr('models.local.configuration_unavailable', '无法读取配置版本，请刷新后重试。', 'Configuration revision is unavailable. Refresh and try again.') | tojson }},
+    invalidParameters: {{ tr('models.local.parameters_invalid', '请检查参数范围后再保存。', 'Check the parameter ranges before saving.') | tojson }},
+    apiValidation: {{ tr('models.api.validation', '请填写有效的端点和模型 ID。', 'Enter a valid endpoint and model ID.') | tojson }},
+    apiParametersInvalid: {{ tr('models.api.parameters_invalid', '请检查生成参数范围。', 'Check the generation parameter ranges.') | tojson }},
+    saving: {{ tr('models.api.saving', '正在保存…', 'Saving...') | tojson }},
+    clearTitle: {{ tr('models.api.clear.title', '清空 API 模型配置', 'Clear API model configuration') | tojson }},
+    clearMessage: {{ tr('models.api.clear.message', '端点、模型名称和已保存的密钥都会被移除。', 'The endpoint, model name, and saved key will be removed.') | tojson }},
+    keyShow: {{ tr('models.api.key.show', '显示 API 密钥', 'Show API key') | tojson }},
+    keyHide: {{ tr('models.api.key.hide', '隐藏 API 密钥', 'Hide API key') | tojson }},
+    noLocalModels: {{ tr('models.local.empty', '没有可用的本地模型。', 'No local models are available.') | tojson }},
+    noLocalModelsBody: {{ tr('models.local.empty.body', '模型目录暂时为空。你仍可配置 API 模型，或稍后重新读取本地目录。', 'The local catalog is currently empty. You can still configure an API model or reload the catalog later.') | tojson }},
+    retry: {{ tr('base.js.retry', '重试', 'Retry') | tojson }},
+    stopped: {{ tr('models.local.stopped', '本地模型已停止。', 'Local model stopped.') | tojson }},
+    downloadQueued: {{ tr('models.local.download_queued', '模型下载已开始。', 'Model download started.') | tojson }},
+    removed: {{ tr('models.local.removed', '本地模型文件已删除。', 'Local model files removed.') | tojson }},
+    discardTitle: {{ tr('models.local.discard.title', '放弃参数修改？', 'Discard parameter changes?') | tojson }},
+    discardMessage: {{ tr('models.local.discard.message', '尚未保存的本地模型参数将丢失。', 'Unsaved local model parameters will be lost.') | tojson }},
+    discard: {{ tr('models.local.discard.action', '放弃修改', 'Discard changes') | tojson }},
+    apiUnsaved: {{ tr('models.api.unsaved', 'API 模型有未保存的修改', 'Unsaved API model changes') | tojson }},
+    unsavedLeave: {{ tr('models.api.unsaved_leave', '模型配置尚未保存。确定离开吗？', 'Model configuration has unsaved changes. Leave anyway?') | tojson }},
+};
+
+let catalog = null;
+let configuredModel = null;
+let pollTimer = null;
+let apiSettings = null;
+let catalogStructureSignature = '';
+let previousModalFocus = null;
+let localConfigInitialSignature = '';
+let apiSettingsInitialSignature = '';
+let savingApiSettings = false;
+const busyModelActions = new Map();
+
+const esc = value => Nola.escapeHtml(String(value ?? ''));
+async function apiJson(url, options = {}) {
+    const response = await fetch(url, options);
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        const error = new Error(body.error || body.detail || `HTTP ${response.status}`);
+        error.code = body.code;
+        throw error;
+    }
+    return body;
+}
+const fmtBytes = value => {
+    const bytes = Number(value || 0);
+    if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
+    return `${Math.round(bytes / 1e6)} MB`;
+};
+
+function setInlineStatus(id, message, level = 'info') {
+    const target = document.getElementById(id);
+    target.className = `model-inline-status ${message ? `is-${level}` : ''}`;
+    target.textContent = message || '';
+}
+
+async function refreshCatalog() {
+    catalog = await apiJson('/api/local-models');
+    renderDeviceCard();
+    const signature = JSON.stringify({
+        binaryAvailable: !!catalog.binaryAvailable,
+        models: (catalog.models || []).map(model => [
+            model.id, model.installed, model.running, model.selected, model.deviceCompatible,
+            model.download?.status, model.download?.error, model.parameters,
+        ]),
+    });
+    if (signature !== catalogStructureSignature) {
+        catalogStructureSignature = signature;
+        renderManagedModels();
+    } else {
+        updateManagedModelProgress();
+    }
+    const downloading = (catalog.models || []).some(model => model.download?.status === 'downloading');
+    window.clearTimeout(pollTimer);
+    if (downloading) pollTimer = window.setTimeout(() => refreshCatalog().catch(() => {}), 900);
+}
+
+function updateManagedModelProgress() {
+    (catalog.models || []).forEach(model => {
+        const card = document.querySelector(`[data-model-id="${CSS.escape(String(model.id))}"]`);
+        if (!card) return;
+        const download = model.download || {};
+        const progress = Math.max(0, Math.min(100, Number(download.downloadedBytes || 0) * 100 / Math.max(1, Number(download.totalBytes || model.downloadBytes || 1))));
+        const bar = card.querySelector('.model-download-progress span');
+        const caption = card.querySelector('.model-download-caption');
+        if (bar) bar.style.width = `${progress.toFixed(1)}%`;
+        if (caption) caption.textContent = `${MODEL_I18N.preparing} ${Math.round(progress)}%`;
+    });
+}
+
+function renderDeviceCard() {
+    const memory = catalog.physicalMemoryBytes ? fmtBytes(catalog.physicalMemoryBytes) : '—';
+    const ready = !!catalog.binaryAvailable;
+    document.getElementById('modelEngineState').innerHTML = `<span class="engine-dot ${ready ? 'ready' : 'missing'}"></span>${esc(ready ? MODEL_I18N.backendReady : MODEL_I18N.backendMissing)}`;
+    document.getElementById('localDeviceCard').innerHTML = `
+        <div class="local-device-pulse ${ready ? 'is-ready' : 'is-warning'}" aria-hidden="true"></div>
+        <div class="local-device-copy">
+            <strong>${esc(ready ? MODEL_I18N.backendReady : MODEL_I18N.backendMissing)}</strong>
+            <span>${esc(MODEL_I18N.memory)} ${esc(memory)} · ${esc(MODEL_I18N.context)} 64K · ${esc(catalog.binaryPath || catalog.installHint || '')}</span>
+        </div>
+    `;
+}
+
+function renderManagedModels() {
+    const grid = document.getElementById('managedModelGrid');
+    if (!(catalog.models || []).length) {
+        grid.innerHTML = `<div class="model-catalog-empty">
+            <span class="model-empty-icon">${Nola.icon('cpu')}</span>
+            <strong>${esc(MODEL_I18N.noLocalModels)}</strong>
+            <p>${esc(MODEL_I18N.noLocalModelsBody)}</p>
+            <button type="button" class="btn btn-secondary btn-sm" data-catalog-retry>${esc(MODEL_I18N.retry)}</button>
+        </div>`;
+        return;
+    }
+    grid.innerHTML = (catalog.models || []).map(model => {
+        const download = model.download || {};
+        const downloading = download.status === 'downloading';
+        const progress = Math.max(0, Math.min(100, Number(download.downloadedBytes || 0) * 100 / Math.max(1, Number(download.totalBytes || model.downloadBytes || 1))));
+        const deviceState = model.deviceCompatible === false ? MODEL_I18N.constrained : MODEL_I18N.compatible;
+        const state = model.running ? MODEL_I18N.running : (model.installed ? MODEL_I18N.installed : MODEL_I18N.notInstalled);
+        const canStart = model.installed && catalog.binaryAvailable && !model.running;
+        const busyAction = busyModelActions.get(String(model.id));
+        const busy = !!busyAction;
+        const busyLabel = busyAction === 'start'
+            ? MODEL_I18N.starting
+            : busyAction === 'stop'
+                ? MODEL_I18N.stopping
+                : busyAction === 'download'
+                    ? MODEL_I18N.downloadStarting
+                    : MODEL_I18N.preparing;
+        return `
+            <article class="managed-model-card ${model.running ? 'is-running' : ''} ${model.selected ? 'is-selected' : ''} ${busy ? 'is-busy' : ''}" data-model-id="${esc(model.id)}" aria-busy="${busy}">
+                <div class="managed-model-topline">
+                    <span class="model-tier ${esc(model.tier)}">${esc(model.tier === 'recommended' ? MODEL_I18N.recommended : MODEL_I18N.compact)}</span>
+                    <span class="model-runtime-state ${model.running ? 'running' : ''}"><i></i>${esc(state)}</span>
+                </div>
+                <h3>${esc(model.name)}</h3>
+                <p>${esc(model.tier === 'recommended' ? MODEL_I18N.recommendedDescription : MODEL_I18N.compactDescription)}</p>
+                <div class="managed-model-specs">
+                    <span><small>${esc(MODEL_I18N.downloadSize)}</small><strong>${esc(fmtBytes(model.downloadBytes))}</strong></span>
+                    <span><small>${esc(MODEL_I18N.runtimeEstimate)}</small><strong>~${esc(fmtBytes(model.estimatedRuntimeBytes))}</strong></span>
+                    <span><small>${esc(MODEL_I18N.context)}</small><strong>${Math.round(Number(model.parameters?.contextTokens || 65536) / 1024)}K</strong></span>
+                </div>
+                <div class="model-fit-line ${model.deviceCompatible === false ? 'warn' : ''}">${esc(deviceState)} · ${esc(model.quantization)}</div>
+                ${downloading ? `<div class="model-download-progress"><span style="width:${progress.toFixed(1)}%"></span></div><div class="model-download-caption">${esc(MODEL_I18N.preparing)} ${Math.round(progress)}%</div>` : ''}
+                ${download.error ? `<div class="model-card-error">${esc(download.error)}</div>` : ''}
+                <div class="model-card-busy ${busy ? '' : 'is-idle'}" role="status"><span class="model-card-busy-dot" aria-hidden="true"></span><span>${esc(busy ? busyLabel : MODEL_I18N.preparing)}</span></div>
+                <div class="managed-model-actions">
+                    ${!model.installed ? `<button class="btn btn-primary btn-sm" data-model-action="download" ${downloading || busy ? 'disabled' : ''}>${esc(MODEL_I18N.download)}</button>` : ''}
+                    ${model.installed ? `<button class="btn btn-secondary btn-sm" data-model-action="select" ${model.selected || busy ? 'disabled' : ''}>${esc(model.selected ? MODEL_I18N.selected : MODEL_I18N.select)}</button>` : ''}
+                    ${model.installed
+                        ? (model.running
+                            ? `<button class="btn btn-secondary btn-sm" data-model-action="stop" ${busy ? 'disabled' : ''}>${esc(MODEL_I18N.stop)}</button>`
+                            : `<button class="btn btn-primary btn-sm" data-model-action="start" ${canStart && !busy ? '' : 'disabled'}>${esc(MODEL_I18N.start)}</button>`)
+                        : ''}
+                    <button class="btn btn-ghost btn-sm" data-model-action="configure" ${busy ? 'disabled' : ''}>${esc(MODEL_I18N.configure)}</button>
+                    ${model.installed && !model.running ? `<button class="btn btn-ghost btn-sm danger" data-model-action="remove" ${busy ? 'disabled' : ''}>${esc(MODEL_I18N.remove)}</button>` : ''}
+                </div>
+            </article>
+        `;
+    }).join('');
+}
+
+async function modelAction(modelId, action) {
+    if (action === 'configure') return openLocalConfiguration(modelId);
+    if (action === 'remove') {
+        const confirmed = window.Nola?.confirm ? await Nola.confirm({
+            title: MODEL_I18N.removeTitle,
+            message: MODEL_I18N.removeMessage,
+            confirmText: MODEL_I18N.remove,
+            danger: true,
+        }) : window.confirm(MODEL_I18N.remove);
+        if (!confirmed) return;
+    }
+    const method = action === 'remove' ? 'DELETE' : 'POST';
+    const endpointAction = action === 'remove' ? 'installation' : action;
+    const activity = action === 'start'
+        ? MODEL_I18N.starting
+        : action === 'stop'
+            ? MODEL_I18N.stopping
+            : action === 'download'
+                ? MODEL_I18N.downloadStarting
+                : '';
+    setInlineStatus('localModelStatus', activity);
+    await apiJson(`/api/local-models/${encodeURIComponent(modelId)}/${endpointAction}`, { method });
+    await refreshCatalog();
+    const successMessage = action === 'start'
+        ? MODEL_I18N.started
+        : action === 'select'
+            ? MODEL_I18N.selectionSaved
+            : action === 'stop'
+                ? MODEL_I18N.stopped
+                : action === 'download'
+                    ? MODEL_I18N.downloadQueued
+                    : action === 'remove'
+                        ? MODEL_I18N.removed
+                        : '';
+    setInlineStatus('localModelStatus', successMessage, 'success');
+}
+
+function openLocalConfiguration(modelId) {
+    const model = (catalog.models || []).find(item => item.id === modelId);
+    if (!model) return;
+    configuredModel = model;
+    const p = model.parameters || {};
+    document.getElementById('localConfigTitle').textContent = `${model.name} · ${MODEL_I18N.configure}`;
+    document.getElementById('localContext').value = p.contextTokens || 65536;
+    document.getElementById('localContext').max = model.nativeContextTokens || 262144;
+    document.getElementById('localTemperature').value = p.temperature ?? 0.7;
+    document.getElementById('localTopP').value = p.topP ?? 0.9;
+    document.getElementById('localTopK').value = p.topK ?? 40;
+    document.getElementById('localMinP').value = p.minP ?? 0.05;
+    document.getElementById('localBatch').value = p.batchSize ?? 512;
+    document.getElementById('localThreads').value = p.threads ?? 0;
+    document.getElementById('localGpuLayers').value = p.gpuLayers ?? 999;
+    document.getElementById('localFlashAttention').checked = p.flashAttention !== false;
+    localConfigInitialSignature = localConfigSignature();
+    const modal = document.getElementById('localModelConfigModal');
+    previousModalFocus = document.activeElement;
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    modal.querySelector('.modal-content').focus();
+    setInlineStatus('localConfigStatus', '');
+}
+
+function closeLocalConfiguration() {
+    const modal = document.getElementById('localModelConfigModal');
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+    configuredModel = null;
+    localConfigInitialSignature = '';
+    if (previousModalFocus instanceof HTMLElement) previousModalFocus.focus();
+    previousModalFocus = null;
+}
+
+function localConfigSignature() {
+    return JSON.stringify([
+        'localContext', 'localTemperature', 'localTopP', 'localTopK', 'localMinP',
+        'localBatch', 'localThreads', 'localGpuLayers',
+    ].map(id => document.getElementById(id).value).concat([
+        document.getElementById('localFlashAttention').checked,
+    ]));
+}
+
+async function requestCloseLocalConfiguration() {
+    if (configuredModel && localConfigInitialSignature && localConfigSignature() !== localConfigInitialSignature) {
+        const confirmed = window.Nola?.confirm ? await Nola.confirm({
+            title: MODEL_I18N.discardTitle,
+            message: MODEL_I18N.discardMessage,
+            confirmText: MODEL_I18N.discard,
+            danger: true,
+        }) : window.confirm(MODEL_I18N.discardMessage);
+        if (!confirmed) return;
+    }
+    closeLocalConfiguration();
+}
+
+async function saveLocalConfiguration() {
+    if (!configuredModel) return;
+    if (!Number.isSafeInteger(configuredModel.configurationRevision) || configuredModel.configurationRevision < 0) {
+        setInlineStatus('localConfigStatus', MODEL_I18N.configurationUnavailable, 'danger');
+        return;
+    }
+    const body = {
+        contextTokens: Number(document.getElementById('localContext').value),
+        temperature: Number(document.getElementById('localTemperature').value),
+        topP: Number(document.getElementById('localTopP').value),
+        topK: Number(document.getElementById('localTopK').value),
+        minP: Number(document.getElementById('localMinP').value),
+        batchSize: Number(document.getElementById('localBatch').value),
+        threads: Number(document.getElementById('localThreads').value),
+        gpuLayers: Number(document.getElementById('localGpuLayers').value),
+        flashAttention: document.getElementById('localFlashAttention').checked,
+    };
+    const numericValues = Object.entries(body).filter(([, value]) => typeof value === 'number');
+    const fieldsValid = numericValues.every(([, value]) => Number.isFinite(value))
+        && body.contextTokens >= 65536
+        && body.temperature >= 0 && body.temperature <= 2
+        && body.topP >= 0 && body.topP <= 1
+        && body.topK >= 1 && body.topK <= 200
+        && body.minP >= 0 && body.minP <= 1;
+    if (!fieldsValid) {
+        setInlineStatus('localConfigStatus', MODEL_I18N.invalidParameters, 'danger');
+        return;
+    }
+    const saveButton = document.getElementById('localConfigSaveBtn');
+    saveButton.disabled = true;
+    saveButton.textContent = MODEL_I18N.preparing;
+    saveButton.setAttribute('aria-busy', 'true');
+    try {
+        await apiJson(`/api/local-models/${encodeURIComponent(configuredModel.id)}/configuration`, {
+            method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({
+                expectedRevision: configuredModel.configurationRevision, parameters: body,
+            }),
+        });
+        await refreshCatalog();
+        setInlineStatus('localModelStatus', MODEL_I18N.parametersSaved, 'success');
+        closeLocalConfiguration();
+    } catch (error) {
+        setInlineStatus('localConfigStatus', error.code === 'revision_conflict'
+            ? MODEL_I18N.configurationConflict : MODEL_I18N.operationFailed + error.message, 'danger');
+        if (error.code === 'revision_conflict') await refreshCatalog().catch(() => {});
+    } finally {
+        saveButton.disabled = false;
+        saveButton.textContent = saveButton.dataset.defaultLabel || '';
+        saveButton.removeAttribute('aria-busy');
+    }
+}
+
+async function loadApiSettings() {
+    apiSettings = await apiJson('/api/agent/settings');
+    document.getElementById('apiEndpoint').value = apiSettings.agent_llm_endpoint || '';
+    document.getElementById('apiModelId').value = apiSettings.agent_llm_model || '';
+    document.getElementById('apiKey').value = '';
+    document.getElementById('apiKeyHint').textContent = apiSettings.has_agent_llm_api_key ? MODEL_I18N.keySaved : MODEL_I18N.keyOptional;
+    document.getElementById('apiTemperature').value = apiSettings.temperature ?? 0.7;
+    document.getElementById('apiTopP').value = apiSettings.top_p ?? 0.9;
+    document.getElementById('apiMaxOutput').value = apiSettings.max_output_tokens ?? 16384;
+    document.getElementById('apiContext').value = apiSettings.max_context_tokens ?? 65536;
+    apiSettingsInitialSignature = apiSettingsSignature();
+    updateApiDirtyState();
+}
+
+function apiSettingsSignature() {
+    return JSON.stringify([
+        document.getElementById('apiEndpoint').value.trim(),
+        document.getElementById('apiModelId').value.trim(),
+        document.getElementById('apiKey').value.trim(),
+        document.getElementById('apiTemperature').value,
+        document.getElementById('apiTopP').value,
+        document.getElementById('apiMaxOutput').value,
+        document.getElementById('apiContext').value,
+    ]);
+}
+
+function hasUnsavedApiSettings() {
+    return !!apiSettingsInitialSignature && apiSettingsSignature() !== apiSettingsInitialSignature;
+}
+
+function updateApiDirtyState() {
+    if (savingApiSettings || !apiSettingsInitialSignature) return;
+    const dirty = hasUnsavedApiSettings();
+    document.getElementById('saveApiModelBtn').disabled = !dirty;
+    setInlineStatus('apiModelStatus', dirty ? MODEL_I18N.apiUnsaved : '', dirty ? 'warning' : 'info');
+}
+
+async function saveApiSettings(event) {
+    event.preventDefault();
+    const endpoint = document.getElementById('apiEndpoint').value.trim();
+    const model = document.getElementById('apiModelId').value.trim();
+    if (!endpoint || !/^https?:\/\//i.test(endpoint) || !model) {
+        setInlineStatus('apiModelStatus', MODEL_I18N.apiValidation, 'danger');
+        return;
+    }
+    const payload = {
+        agent_llm_endpoint: endpoint,
+        agent_llm_model: model,
+        temperature: Number(document.getElementById('apiTemperature').value),
+        top_p: Number(document.getElementById('apiTopP').value),
+        max_output_tokens: Number(document.getElementById('apiMaxOutput').value),
+        max_context_tokens: Number(document.getElementById('apiContext').value),
+    };
+    const parametersValid = Number.isFinite(payload.temperature)
+        && payload.temperature >= 0 && payload.temperature <= 2
+        && Number.isFinite(payload.top_p)
+        && payload.top_p >= 0 && payload.top_p <= 1
+        && Number.isInteger(payload.max_output_tokens)
+        && payload.max_output_tokens >= 64 && payload.max_output_tokens <= 32768
+        && Number.isInteger(payload.max_context_tokens)
+        && payload.max_context_tokens >= 512 && payload.max_context_tokens <= 1000000;
+    if (!parametersValid) {
+        setInlineStatus('apiModelStatus', MODEL_I18N.apiParametersInvalid, 'danger');
+        return;
+    }
+    const key = document.getElementById('apiKey').value.trim();
+    if (key) payload.agent_llm_api_key = key;
+    apiSettings = await apiJson('/api/agent/settings', {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
+    });
+    document.getElementById('apiKey').value = '';
+    document.getElementById('apiKeyHint').textContent = apiSettings.has_agent_llm_api_key ? MODEL_I18N.keySaved : MODEL_I18N.keyOptional;
+    apiSettingsInitialSignature = apiSettingsSignature();
+    setInlineStatus('apiModelStatus', MODEL_I18N.apiSaved, 'success');
+}
+
+async function clearApiSettings() {
+    const confirmed = await Nola.confirm({
+        title: MODEL_I18N.clearTitle,
+        message: MODEL_I18N.clearMessage,
+        confirmText: MODEL_I18N.remove,
+        danger: true,
+    });
+    if (!confirmed) return;
+    apiSettings = await apiJson('/api/agent/settings', {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({
+            agent_llm_endpoint: '', agent_llm_model: '', agent_llm_api_key: '', clear_agent_llm_api_key: true,
+        }),
+    });
+    await loadApiSettings();
+    setInlineStatus('apiModelStatus', MODEL_I18N.apiCleared, 'warning');
+}
+
+document.getElementById('managedModelGrid').addEventListener('click', event => {
+    const retryButton = event.target.closest('[data-catalog-retry]');
+    if (retryButton) {
+        retryButton.disabled = true;
+        setInlineStatus('localModelStatus', MODEL_I18N.preparing);
+        refreshCatalog()
+            .then(() => setInlineStatus('localModelStatus', ''))
+            .catch(error => {
+                retryButton.disabled = false;
+                setInlineStatus('localModelStatus', MODEL_I18N.localLoadFailed + error.message, 'danger');
+            });
+        return;
+    }
+    const button = event.target.closest('[data-model-action]');
+    const card = event.target.closest('[data-model-id]');
+    if (!button || !card || button.disabled) return;
+    const modelId = String(card.dataset.modelId);
+    if (card.getAttribute('aria-busy') === 'true') return;
+    const action = button.dataset.modelAction;
+    if (action === 'configure' || action === 'remove') {
+        modelAction(modelId, action)
+            .catch(error => setInlineStatus('localModelStatus', MODEL_I18N.operationFailed + error.message, 'danger'));
+        return;
+    }
+    const activity = action === 'start'
+        ? MODEL_I18N.starting
+        : action === 'stop'
+            ? MODEL_I18N.stopping
+            : action === 'download'
+                ? MODEL_I18N.downloadStarting
+                : MODEL_I18N.preparing;
+    card.classList.add('is-busy');
+    card.setAttribute('aria-busy', 'true');
+    card.querySelectorAll('button').forEach(control => { control.disabled = true; });
+    const busyStatus = card.querySelector('.model-card-busy');
+    busyStatus?.classList.remove('is-idle');
+    const busyText = busyStatus?.querySelector('span:last-child');
+    if (busyText) busyText.textContent = activity;
+    modelAction(modelId, action)
+        .catch(error => {
+            setInlineStatus('localModelStatus', MODEL_I18N.operationFailed + error.message, 'danger');
+            if (card.isConnected) renderManagedModels();
+        });
+});
+document.getElementById('apiModelForm').addEventListener('submit', async event => {
+    const button = document.getElementById('saveApiModelBtn');
+    const clearButton = document.getElementById('clearApiModelBtn');
+    button.disabled = true;
+    clearButton.disabled = true;
+    button.textContent = MODEL_I18N.saving;
+    button.setAttribute('aria-busy', 'true');
+    savingApiSettings = true;
+    setInlineStatus('apiModelStatus', MODEL_I18N.saving);
+    try {
+        await saveApiSettings(event);
+    } catch (error) {
+        setInlineStatus('apiModelStatus', MODEL_I18N.operationFailed + error.message, 'danger');
+    } finally {
+        savingApiSettings = false;
+        button.textContent = button.dataset.defaultLabel || '';
+        button.removeAttribute('aria-busy');
+        button.disabled = !hasUnsavedApiSettings();
+        clearButton.disabled = false;
+    }
+});
+document.getElementById('clearApiModelBtn').addEventListener('click', async event => {
+    const button = event.currentTarget;
+    const saveButton = document.getElementById('saveApiModelBtn');
+    button.disabled = true;
+    saveButton.disabled = true;
+    try {
+        await clearApiSettings();
+    } catch (error) {
+        setInlineStatus('apiModelStatus', MODEL_I18N.operationFailed + error.message, 'danger');
+    } finally {
+        button.disabled = false;
+        saveButton.disabled = !hasUnsavedApiSettings();
+    }
+});
+[
+    'apiEndpoint', 'apiModelId', 'apiKey', 'apiTemperature',
+    'apiTopP', 'apiMaxOutput', 'apiContext',
+].forEach(id => {
+    document.getElementById(id)?.addEventListener('input', updateApiDirtyState);
+    document.getElementById(id)?.addEventListener('change', updateApiDirtyState);
+});
+document.getElementById('toggleApiKeyBtn').addEventListener('click', event => {
+    const input = document.getElementById('apiKey');
+    const reveal = input.type === 'password';
+    input.type = reveal ? 'text' : 'password';
+    event.currentTarget.setAttribute('aria-label', reveal ? MODEL_I18N.keyHide : MODEL_I18N.keyShow);
+    event.currentTarget.setAttribute('aria-pressed', reveal ? 'true' : 'false');
+});
+document.getElementById('localConfigSaveBtn').addEventListener('click', saveLocalConfiguration);
+document.getElementById('localConfigCloseBtn').addEventListener('click', requestCloseLocalConfiguration);
+document.getElementById('localConfigCancelBtn').addEventListener('click', requestCloseLocalConfiguration);
+document.getElementById('localModelConfigModal').addEventListener('click', event => { if (event.target === event.currentTarget) requestCloseLocalConfiguration(); });
+document.addEventListener('keydown', event => {
+    const modal = document.getElementById('localModelConfigModal');
+    if (modal.getAttribute('aria-hidden') !== 'false') return;
+    if (event.key === 'Escape') {
+        event.preventDefault();
+        requestCloseLocalConfiguration();
+        return;
+    }
+    if (event.key === 'Tab') {
+        const focusable = [...modal.querySelectorAll('button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+            .filter(element => element.offsetParent !== null);
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
+        }
+    }
+});
+
+refreshCatalog().catch(error => {
+    setInlineStatus('localModelStatus', MODEL_I18N.localLoadFailed + error.message, 'danger');
+    document.getElementById('managedModelGrid').innerHTML = `<div class="model-catalog-empty" role="alert">
+        <span class="model-empty-icon">${Nola.icon('warning')}</span>
+        <strong>${esc(MODEL_I18N.localLoadFailed)}</strong>
+        <p>${esc(error.message || String(error))}</p>
+        <button type="button" class="btn btn-secondary btn-sm" data-catalog-retry>${esc(MODEL_I18N.retry)}</button>
+    </div>`;
+});
+loadApiSettings().catch(error => setInlineStatus('apiModelStatus', MODEL_I18N.apiLoadFailed + error.message, 'danger'));
+window.addEventListener('beforeunload', event => {
+    const localDirty = configuredModel
+        && localConfigInitialSignature
+        && localConfigSignature() !== localConfigInitialSignature;
+    if (!localDirty && !hasUnsavedApiSettings()) return;
+    event.preventDefault();
+    event.returnValue = MODEL_I18N.unsavedLeave;
+});
+</script>
+{% endblock %}

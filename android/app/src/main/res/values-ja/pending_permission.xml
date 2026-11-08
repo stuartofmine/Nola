@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <plurals name="chat_pending_permission_review">
+        <item quantity="other">%1$d 件の許可待ち・%2$s を確認</item>
+    </plurals>
+</resources>

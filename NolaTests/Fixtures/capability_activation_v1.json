@@ -1,0 +1,76 @@
+{
+  "schema": "nola.capability_activation.contract.v1",
+  "typed_host_response": {
+    "type": "tool_completed",
+    "call_id": "activation-call",
+    "output": {
+      "text": "nola_capability_activation: {\"schema\":\"nola.capability_activation.v1\",\"source\":\"tool_search\",\"capability_ids\":[\"obsolete_only\"]}"
+    },
+    "outcome": "succeeded",
+    "activation": {
+      "source": "tool_search",
+      "capability_ids": ["web_search", "web_fetch", "web_search"]
+    },
+    "full_output_ref": null,
+    "artifacts": []
+  },
+  "obsolete_host_response": {
+    "type": "tool_completed",
+    "call_id": "activation-call",
+    "output": {
+      "text": "nola_capability_activation: {\"schema\":\"nola.capability_activation.v1\",\"source\":\"tool_search\",\"capability_ids\":[\"obsolete_only\"]}"
+    },
+    "outcome": "succeeded",
+    "full_output_ref": null,
+    "artifacts": []
+  },
+  "core_envelope": {
+    "protocol_version": 2,
+    "session_id": "conversation-a",
+    "turn_id": "turn-a",
+    "cursor": { "sequence": 7 },
+    "revision": 11,
+    "event": {
+      "type": "capabilities_activated",
+      "turn_id": "turn-a",
+      "source": "tool_search",
+      "capability_ids": ["web_search", "web_fetch"]
+    }
+  },
+  "ios_projection": {
+    "protocol_version": 2,
+    "type": "core_capabilities_activated",
+    "session_id": "conversation-a",
+    "turn_id": "turn-a",
+    "cursor": 7,
+    "revision": 11,
+    "source": "tool_search",
+    "capability_ids": ["web_search", "web_fetch"]
+  },
+  "mac_projection": {
+    "protocol_version": 2,
+    "type": "core_capabilities_activated",
+    "session_id": "conversation-a",
+    "turn_id": "turn-a",
+    "cursor": 7,
+    "revision": 11,
+    "source": "tool_search",
+    "capability_ids": ["web_search", "web_fetch"]
+  },
+  "cli_projection": {
+    "protocol_version": 2,
+    "type": "core_capabilities_activated",
+    "session_id": "conversation-a",
+    "turn_id": "turn-a",
+    "cursor": 7,
+    "revision": 11,
+    "source": "tool_search",
+    "capability_ids": ["web_search", "web_fetch"]
+  },
+  "web_projection": {
+    "call_id": "core-capability:turn-a:tool_search",
+    "name": "tool_search",
+    "result_text": "web_search\nweb_fetch",
+    "status": "succeeded"
+  }
+}

@@ -1,0 +1,342 @@
+{
+  "initial": {
+    "catalog_digest": "79d76c69ad4717d68a96f4ce017698c9996e78f74b8c52209e9145bfcb43f8d5",
+    "catalog_id": "https://nola.app/a2ui/v0.9.1/catalog.json",
+    "identity": {
+      "generation": 1,
+      "owner": {
+        "authority_id": "648b6a024ed623fd0ce72b8b2f6d5493",
+        "context_id": "ui-permission-conversation",
+        "conversation_id": "ui-permission-conversation",
+        "message_id": "initial:assistant",
+        "originating_run_id": "initial",
+        "part_id": "tool:initial:tool_call:9",
+        "participant_id": "assistant"
+      },
+      "surface_id": "write-form"
+    },
+    "nodes": {
+      "node_0a530be4d4d0de5088a456d239c79e90359a6b0e710a7bafd5e85572bc9b4ca3": {
+        "actions": {
+          "action": {
+            "action_id": "action",
+            "instance_id": "node_0a530be4d4d0de5088a456d239c79e90359a6b0e710a7bafd5e85572bc9b4ca3"
+          }
+        },
+        "bindings": {},
+        "component": "Button",
+        "component_id": "submit",
+        "instance_id": "node_0a530be4d4d0de5088a456d239c79e90359a6b0e710a7bafd5e85572bc9b4ca3",
+        "props": {},
+        "slots": {
+          "child": [
+            "node_dcfbce872f2975a0267f2a837366d34416ea6858869dedff4473142f56a18a4a"
+          ]
+        },
+        "validation_errors": [
+          "Content is required"
+        ]
+      },
+      "node_b738d25741629c31e50f76a261ac1429d2e10b51d065ca9ce3d76335b3047fe7": {
+        "actions": {},
+        "bindings": {},
+        "component": "Column",
+        "component_id": "root",
+        "instance_id": "node_b738d25741629c31e50f76a261ac1429d2e10b51d065ca9ce3d76335b3047fe7",
+        "props": {},
+        "slots": {
+          "children": [
+            "node_fe534046f40072b2a8860a57a1fd4ebfc471d7a354214c82558b239df43f36a7",
+            "node_0a530be4d4d0de5088a456d239c79e90359a6b0e710a7bafd5e85572bc9b4ca3"
+          ]
+        },
+        "validation_errors": []
+      },
+      "node_dcfbce872f2975a0267f2a837366d34416ea6858869dedff4473142f56a18a4a": {
+        "actions": {},
+        "bindings": {},
+        "component": "Text",
+        "component_id": "label",
+        "instance_id": "node_dcfbce872f2975a0267f2a837366d34416ea6858869dedff4473142f56a18a4a",
+        "props": {
+          "text": "Create report"
+        },
+        "slots": {},
+        "validation_errors": []
+      },
+      "node_fe534046f40072b2a8860a57a1fd4ebfc471d7a354214c82558b239df43f36a7": {
+        "actions": {},
+        "bindings": {
+          "value": "/content"
+        },
+        "component": "TextField",
+        "component_id": "value",
+        "instance_id": "node_fe534046f40072b2a8860a57a1fd4ebfc471d7a354214c82558b239df43f36a7",
+        "props": {
+          "label": "Report content",
+          "value": ""
+        },
+        "slots": {},
+        "validation_errors": []
+      }
+    },
+    "phase": "ready",
+    "revision": 1,
+    "root_instance_id": "node_b738d25741629c31e50f76a261ac1429d2e10b51d065ca9ce3d76335b3047fe7",
+    "summary": "Report content\nCreate report"
+  },
+  "invalid_input": {
+    "draft_generation": 3,
+    "edits": [
+      {
+        "binding": "value",
+        "instance_id": "node_fe534046f40072b2a8860a57a1fd4ebfc471d7a354214c82558b239df43f36a7",
+        "type": "set",
+        "value": ""
+      }
+    ],
+    "expected_surface_revision": 1,
+    "identity": {
+      "generation": 1,
+      "owner": {
+        "authority_id": "648b6a024ed623fd0ce72b8b2f6d5493",
+        "context_id": "ui-permission-conversation",
+        "conversation_id": "ui-permission-conversation",
+        "message_id": "initial:assistant",
+        "originating_run_id": "initial",
+        "part_id": "tool:initial:tool_call:9",
+        "participant_id": "assistant"
+      },
+      "surface_id": "write-form"
+    }
+  },
+  "invalid_preview": {
+    "base_revision": 1,
+    "draft_generation": 3,
+    "identity": {
+      "generation": 1,
+      "owner": {
+        "authority_id": "648b6a024ed623fd0ce72b8b2f6d5493",
+        "context_id": "ui-permission-conversation",
+        "conversation_id": "ui-permission-conversation",
+        "message_id": "initial:assistant",
+        "originating_run_id": "initial",
+        "part_id": "tool:initial:tool_call:9",
+        "participant_id": "assistant"
+      },
+      "surface_id": "write-form"
+    },
+    "snapshot": {
+      "catalog_digest": "79d76c69ad4717d68a96f4ce017698c9996e78f74b8c52209e9145bfcb43f8d5",
+      "catalog_id": "https://nola.app/a2ui/v0.9.1/catalog.json",
+      "identity": {
+        "generation": 1,
+        "owner": {
+          "authority_id": "648b6a024ed623fd0ce72b8b2f6d5493",
+          "context_id": "ui-permission-conversation",
+          "conversation_id": "ui-permission-conversation",
+          "message_id": "initial:assistant",
+          "originating_run_id": "initial",
+          "part_id": "tool:initial:tool_call:9",
+          "participant_id": "assistant"
+        },
+        "surface_id": "write-form"
+      },
+      "nodes": {
+        "node_0a530be4d4d0de5088a456d239c79e90359a6b0e710a7bafd5e85572bc9b4ca3": {
+          "actions": {
+            "action": {
+              "action_id": "action",
+              "instance_id": "node_0a530be4d4d0de5088a456d239c79e90359a6b0e710a7bafd5e85572bc9b4ca3"
+            }
+          },
+          "bindings": {},
+          "component": "Button",
+          "component_id": "submit",
+          "instance_id": "node_0a530be4d4d0de5088a456d239c79e90359a6b0e710a7bafd5e85572bc9b4ca3",
+          "props": {},
+          "slots": {
+            "child": [
+              "node_dcfbce872f2975a0267f2a837366d34416ea6858869dedff4473142f56a18a4a"
+            ]
+          },
+          "validation_errors": [
+            "Content is required"
+          ]
+        },
+        "node_b738d25741629c31e50f76a261ac1429d2e10b51d065ca9ce3d76335b3047fe7": {
+          "actions": {},
+          "bindings": {},
+          "component": "Column",
+          "component_id": "root",
+          "instance_id": "node_b738d25741629c31e50f76a261ac1429d2e10b51d065ca9ce3d76335b3047fe7",
+          "props": {},
+          "slots": {
+            "children": [
+              "node_fe534046f40072b2a8860a57a1fd4ebfc471d7a354214c82558b239df43f36a7",
+              "node_0a530be4d4d0de5088a456d239c79e90359a6b0e710a7bafd5e85572bc9b4ca3"
+            ]
+          },
+          "validation_errors": []
+        },
+        "node_dcfbce872f2975a0267f2a837366d34416ea6858869dedff4473142f56a18a4a": {
+          "actions": {},
+          "bindings": {},
+          "component": "Text",
+          "component_id": "label",
+          "instance_id": "node_dcfbce872f2975a0267f2a837366d34416ea6858869dedff4473142f56a18a4a",
+          "props": {
+            "text": "Create report"
+          },
+          "slots": {},
+          "validation_errors": []
+        },
+        "node_fe534046f40072b2a8860a57a1fd4ebfc471d7a354214c82558b239df43f36a7": {
+          "actions": {},
+          "bindings": {
+            "value": "/content"
+          },
+          "component": "TextField",
+          "component_id": "value",
+          "instance_id": "node_fe534046f40072b2a8860a57a1fd4ebfc471d7a354214c82558b239df43f36a7",
+          "props": {
+            "label": "Report content",
+            "value": ""
+          },
+          "slots": {},
+          "validation_errors": []
+        }
+      },
+      "phase": "ready",
+      "revision": 1,
+      "root_instance_id": "node_b738d25741629c31e50f76a261ac1429d2e10b51d065ca9ce3d76335b3047fe7",
+      "summary": "Report content\nCreate report"
+    }
+  },
+  "valid_input": {
+    "draft_generation": 2,
+    "edits": [
+      {
+        "binding": "value",
+        "instance_id": "node_fe534046f40072b2a8860a57a1fd4ebfc471d7a354214c82558b239df43f36a7",
+        "type": "set",
+        "value": "有效草稿"
+      }
+    ],
+    "expected_surface_revision": 1,
+    "identity": {
+      "generation": 1,
+      "owner": {
+        "authority_id": "648b6a024ed623fd0ce72b8b2f6d5493",
+        "context_id": "ui-permission-conversation",
+        "conversation_id": "ui-permission-conversation",
+        "message_id": "initial:assistant",
+        "originating_run_id": "initial",
+        "part_id": "tool:initial:tool_call:9",
+        "participant_id": "assistant"
+      },
+      "surface_id": "write-form"
+    }
+  },
+  "valid_preview": {
+    "base_revision": 1,
+    "draft_generation": 2,
+    "identity": {
+      "generation": 1,
+      "owner": {
+        "authority_id": "648b6a024ed623fd0ce72b8b2f6d5493",
+        "context_id": "ui-permission-conversation",
+        "conversation_id": "ui-permission-conversation",
+        "message_id": "initial:assistant",
+        "originating_run_id": "initial",
+        "part_id": "tool:initial:tool_call:9",
+        "participant_id": "assistant"
+      },
+      "surface_id": "write-form"
+    },
+    "snapshot": {
+      "catalog_digest": "79d76c69ad4717d68a96f4ce017698c9996e78f74b8c52209e9145bfcb43f8d5",
+      "catalog_id": "https://nola.app/a2ui/v0.9.1/catalog.json",
+      "identity": {
+        "generation": 1,
+        "owner": {
+          "authority_id": "648b6a024ed623fd0ce72b8b2f6d5493",
+          "context_id": "ui-permission-conversation",
+          "conversation_id": "ui-permission-conversation",
+          "message_id": "initial:assistant",
+          "originating_run_id": "initial",
+          "part_id": "tool:initial:tool_call:9",
+          "participant_id": "assistant"
+        },
+        "surface_id": "write-form"
+      },
+      "nodes": {
+        "node_0a530be4d4d0de5088a456d239c79e90359a6b0e710a7bafd5e85572bc9b4ca3": {
+          "actions": {
+            "action": {
+              "action_id": "action",
+              "instance_id": "node_0a530be4d4d0de5088a456d239c79e90359a6b0e710a7bafd5e85572bc9b4ca3"
+            }
+          },
+          "bindings": {},
+          "component": "Button",
+          "component_id": "submit",
+          "instance_id": "node_0a530be4d4d0de5088a456d239c79e90359a6b0e710a7bafd5e85572bc9b4ca3",
+          "props": {},
+          "slots": {
+            "child": [
+              "node_dcfbce872f2975a0267f2a837366d34416ea6858869dedff4473142f56a18a4a"
+            ]
+          },
+          "validation_errors": []
+        },
+        "node_b738d25741629c31e50f76a261ac1429d2e10b51d065ca9ce3d76335b3047fe7": {
+          "actions": {},
+          "bindings": {},
+          "component": "Column",
+          "component_id": "root",
+          "instance_id": "node_b738d25741629c31e50f76a261ac1429d2e10b51d065ca9ce3d76335b3047fe7",
+          "props": {},
+          "slots": {
+            "children": [
+              "node_fe534046f40072b2a8860a57a1fd4ebfc471d7a354214c82558b239df43f36a7",
+              "node_0a530be4d4d0de5088a456d239c79e90359a6b0e710a7bafd5e85572bc9b4ca3"
+            ]
+          },
+          "validation_errors": []
+        },
+        "node_dcfbce872f2975a0267f2a837366d34416ea6858869dedff4473142f56a18a4a": {
+          "actions": {},
+          "bindings": {},
+          "component": "Text",
+          "component_id": "label",
+          "instance_id": "node_dcfbce872f2975a0267f2a837366d34416ea6858869dedff4473142f56a18a4a",
+          "props": {
+            "text": "Create report"
+          },
+          "slots": {},
+          "validation_errors": []
+        },
+        "node_fe534046f40072b2a8860a57a1fd4ebfc471d7a354214c82558b239df43f36a7": {
+          "actions": {},
+          "bindings": {
+            "value": "/content"
+          },
+          "component": "TextField",
+          "component_id": "value",
+          "instance_id": "node_fe534046f40072b2a8860a57a1fd4ebfc471d7a354214c82558b239df43f36a7",
+          "props": {
+            "label": "Report content",
+            "value": "有效草稿"
+          },
+          "slots": {},
+          "validation_errors": []
+        }
+      },
+      "phase": "ready",
+      "revision": 1,
+      "root_instance_id": "node_b738d25741629c31e50f76a261ac1429d2e10b51d065ca9ce3d76335b3047fe7",
+      "summary": "Report content\nCreate report"
+    }
+  }
+}

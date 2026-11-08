@@ -1,0 +1,62 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "mac.startup.incompatible.archive_location" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Archivordner: %@" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Archive folder: %@" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Carpeta del archivo: %@" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Dossier d’archive : %@" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "保存先フォルダ：%@" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "보관 폴더: %@" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Папка архива: %@" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "归档文件夹：%@" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "封存資料夾：%@" } }
+      }
+    },
+    "mac.startup.incompatible.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Diese Nola-Daten stammen aus einer inkompatiblen Version. Nola kann die vorhandenen Dateien unverändert archivieren und anschließend mit einem neuen Datenspeicher starten." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "This Nola data is from an incompatible version. Nola can archive the existing files unchanged, then start with a new data store." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Estos datos de Nola proceden de una versión incompatible. Nola puede archivar los archivos existentes sin cambios y después iniciar con un almacén nuevo." } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Ces données Nola proviennent d’une version incompatible. Nola peut archiver les fichiers existants sans les modifier, puis démarrer avec un nouveau stockage." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "この Nola データは互換性のないバージョンで作成されています。既存のファイルを変更せずに保存してから、新しいデータストアで起動できます。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "이 Nola 데이터는 호환되지 않는 버전에서 생성되었습니다. 기존 파일을 변경 없이 보관한 다음 새 데이터 저장소로 시작할 수 있습니다." } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Эти данные Nola созданы несовместимой версией. Nola может сохранить существующие файлы без изменений, а затем запуститься с новым хранилищем." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "现有 Nola 数据来自不兼容的版本。Nola 可以原样归档现有文件，然后使用新的数据存储启动。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "現有 Nola 資料來自不相容的版本。Nola 可以原樣封存現有檔案，然後使用新的資料儲存區啟動。" } }
+      }
+    },
+    "mac.startup.incompatible.recover" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Alte Daten archivieren und starten" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Archive Old Data and Start" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Archivar datos anteriores e iniciar" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Archiver les anciennes données et démarrer" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "旧データを保存して起動" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "이전 데이터 보관 후 시작" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Сохранить старые данные и запустить" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "归档旧数据并启动" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "封存舊資料並啟動" } }
+      }
+    },
+    "mac.startup.incompatible.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Ältere Datenversion erkannt" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Older Data Version Found" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Se encontró una versión anterior de los datos" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Ancienne version des données détectée" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "古いデータバージョンが見つかりました" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "이전 데이터 버전 발견" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Обнаружена старая версия данных" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "发现旧版数据" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "發現舊版資料" } }
+      }
+    }
+  },
+  "version" : "1.0"
+}

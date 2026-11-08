@@ -1,0 +1,4 @@
+interface:
+  display_name: "Assist with Email"
+  short_description: "Summarize and draft email safely"
+  default_prompt: "Help me handle this email thread without sending anything yet."

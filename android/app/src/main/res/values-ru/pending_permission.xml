@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <plurals name="chat_pending_permission_review">
+        <item quantity="one">%1$d ожидающее разрешение · Проверить %2$s</item>
+        <item quantity="few">%1$d ожидающих разрешения · Проверить %2$s</item>
+        <item quantity="many">%1$d ожидающих разрешений · Проверить %2$s</item>
+        <item quantity="other">%1$d ожидающего разрешения · Проверить %2$s</item>
+    </plurals>
+</resources>

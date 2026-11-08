@@ -1,0 +1,238 @@
+{
+  "execution_ownership": {"kind": "user"},
+  "contract_version": 1,
+  "conversation_id": "history",
+  "revision": 1,
+  "title": "History",
+  "messages": [
+    {
+      "message_id": "message",
+      "role": "assistant",
+      "state": "completed",
+      "revision": 1,
+      "created_at_ms": 1,
+      "parts": [
+        {
+          "kind": "historical",
+          "part_id": "text",
+          "revision": 1,
+          "projection": {
+            "owner": {
+              "conversation_id": "history",
+              "message_id": "message",
+              "part_id": "text"
+            },
+            "canonical_revision": 1,
+            "source": null,
+            "schema": null,
+            "canonical_kind": "text",
+            "binding": null,
+            "status": {
+              "state": "not_loaded",
+              "reason": "selection_budget"
+            },
+            "fields": {},
+            "canonical_text": null
+          }
+        },
+        {
+          "kind": "historical",
+          "part_id": "reason",
+          "revision": 1,
+          "projection": {
+            "owner": {
+              "conversation_id": "history",
+              "message_id": "message",
+              "part_id": "reason"
+            },
+            "canonical_revision": 1,
+            "source": {
+              "owner": {
+                "conversation_id": "history",
+                "message_id": "message",
+                "part_id": "reason"
+              },
+              "field": "content_json",
+              "identity": {
+                "storage": "inline_sha256",
+                "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "total_utf8_bytes": 100
+              }
+            },
+            "schema": "message_part_view",
+            "canonical_kind": "reasoning",
+            "binding": "canonical",
+            "status": {
+              "state": "supported"
+            },
+            "fields": {
+              "summary": {
+                "availability": "complete",
+                "value": " reasoning 原文 "
+              }
+            }
+          }
+        },
+        {
+          "kind": "historical",
+          "part_id": "tool",
+          "revision": 1,
+          "projection": {
+            "owner": {
+              "conversation_id": "history",
+              "message_id": "message",
+              "part_id": "tool"
+            },
+            "canonical_revision": 1,
+            "source": {
+              "owner": {
+                "conversation_id": "history",
+                "message_id": "message",
+                "part_id": "tool"
+              },
+              "field": "content_json",
+              "identity": {
+                "storage": "inline_sha256",
+                "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "total_utf8_bytes": 100
+              }
+            },
+            "schema": "message_part_view",
+            "canonical_kind": "tool",
+            "binding": "canonical",
+            "status": {
+              "state": "supported"
+            },
+            "fields": {
+              "state": {
+                "availability": "complete",
+                "value": "waiting_for_permission"
+              },
+              "input": {
+                "availability": "complete",
+                "value": {
+                  "command": "must not run"
+                }
+              },
+              "output": {
+                "availability": "complete",
+                "value": null
+              }
+            }
+          }
+        },
+        {
+          "kind": "historical",
+          "part_id": "deferred",
+          "revision": 1,
+          "projection": {
+            "owner": {
+              "conversation_id": "history",
+              "message_id": "message",
+              "part_id": "deferred"
+            },
+            "canonical_revision": 1,
+            "source": {
+              "owner": {
+                "conversation_id": "history",
+                "message_id": "message",
+                "part_id": "deferred"
+              },
+              "field": "content_json",
+              "identity": {
+                "storage": "inline_sha256",
+                "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "total_utf8_bytes": 100
+              }
+            },
+            "schema": "message_part_view",
+            "canonical_kind": "text",
+            "binding": "canonical",
+            "status": {
+              "state": "deferred"
+            },
+            "fields": {
+              "markdown": {
+                "availability": "deferred",
+                "locator": {
+                  "source": {
+                    "owner": {
+                      "conversation_id": "history",
+                      "message_id": "message",
+                      "part_id": "deferred"
+                    },
+                    "field": "content_json",
+                    "identity": {
+                      "storage": "inline_sha256",
+                      "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "total_utf8_bytes": 100
+                    }
+                  },
+                  "start_bytes": 1,
+                  "end_bytes": 99,
+                  "token_kind": "string"
+                }
+              }
+            }
+          }
+        },
+        {
+          "kind": "historical",
+          "part_id": "unknown",
+          "revision": 1,
+          "projection": {
+            "owner": {
+              "conversation_id": "history",
+              "message_id": "message",
+              "part_id": "unknown"
+            },
+            "canonical_revision": 1,
+            "source": {
+              "owner": {
+                "conversation_id": "history",
+                "message_id": "message",
+                "part_id": "unknown"
+              },
+              "field": "content_json",
+              "identity": {
+                "storage": "inline_sha256",
+                "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "total_utf8_bytes": 100
+              }
+            },
+            "schema": "message_part_view",
+            "canonical_kind": "future_kind",
+            "binding": "canonical",
+            "status": {
+              "state": "unsupported",
+              "code": "unknown_kind"
+            },
+            "fields": {},
+            "canonical_text": {
+              "text": "opaque original evidence",
+              "total_utf8_bytes": 100
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "active_run": null,
+  "surface": {
+    "revision": 1,
+    "committed_message_ids": [
+      "message"
+    ],
+    "live_message_id": null,
+    "current_activity_part_id": null,
+    "archived_activity_part_ids": [],
+    "show_assistant_placeholder": false
+  },
+  "context_usage": {
+    "used_tokens": 0,
+    "context_window_tokens": 65536,
+    "prompt_token_limit": 61440,
+    "estimated": true,
+    "measured_at_revision": 1
+  }
+}

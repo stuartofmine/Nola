@@ -1,0 +1,6 @@
+Research Workbench workflows are adapted from nature-skills.
+Source: https://github.com/Yuan1z0825/nature-skills
+Commit: 8d674eb50454d4b49d3e0be625a121ad4863840b
+License: Apache License 2.0 (see LICENSE in this directory)
+
+Nola excludes repository documentation, evaluation fixtures, and unsafe anti-bot or CAPTCHA automation from its built-in bundle.

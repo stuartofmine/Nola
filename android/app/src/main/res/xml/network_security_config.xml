@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Arbitrary user-owned LAN hosts cannot be expressed as a static domain allowlist.
+         WebHostHttpClientFactory enforces HTTPS for public hosts and permits cleartext only
+         for loopback, RFC1918, link-local, IPv6 ULA/link-local, and .local destinations.
+         Mobile payloads remain authenticated and encrypted at the application layer. -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

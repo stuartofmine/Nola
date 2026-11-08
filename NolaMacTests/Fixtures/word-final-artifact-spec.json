@@ -1,0 +1,39 @@
+{
+  "title": "Word Final Artifact Acceptance",
+  "blocks": [
+    {
+      "type": "heading",
+      "level": 1,
+      "text": "Word 最终产物验收"
+    },
+    {
+      "type": "paragraph",
+      "text": "该文档用于验证原生表格、代码字符和真实 Word 渲染。"
+    },
+    {
+      "type": "code",
+      "text": "#include <vector>\nComplex<f64> && value > 0"
+    },
+    {
+      "type": "table",
+      "columns": [
+        "索引 n",
+        "实部 (Re)",
+        "虚部 (Im)"
+      ],
+      "rows": [
+        ["0", "36.0000", "0.0000"],
+        ["1", "-4.0000", "9.6569"],
+        ["2", "-4.0000", "4.0000"],
+        ["3", "-4.0000", "1.6569"]
+      ]
+    },
+    {
+      "type": "bullets",
+      "items": [
+        "表格必须是可编辑的 Word 表格。",
+        "代码中的尖括号与 & 字符必须完整保留。"
+      ]
+    }
+  ]
+}

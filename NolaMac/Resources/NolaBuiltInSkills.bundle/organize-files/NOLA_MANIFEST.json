@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "id": "organize-files",
+  "delivery": "built-in",
+  "category": {
+    "id": "workspace",
+    "name": "Workspace",
+    "name_zh": "工作区管理"
+  },
+  "source": {
+    "project": "Nola",
+    "license": "Apache-2.0"
+  },
+  "status": "stable",
+  "platforms": [
+    "macos",
+    "cli-web"
+  ],
+  "required_tools": [
+    "Skill",
+    "read_file",
+    "write_file",
+    "bash"
+  ],
+  "optional_tools": [],
+  "runtime_dependencies": [
+    "python3 (standard library)"
+  ],
+  "permissions": [
+    "filesystem.read",
+    "filesystem.move.confirm",
+    "filesystem.delete.confirm"
+  ],
+  "secrets": [],
+  "validation": [
+    "scripts/organize_files.py --validate-only --manifest <requested-final-manifest.json> --expected-state executed",
+    "the planned, executed, delivered, and validated manifest path must be identical",
+    "manifest count and hash reconciliation"
+  ],
+  "recommended_handoffs": [
+    "review-documents"
+  ],
+  "execution_contract": {
+    "schemaVersion": 1,
+    "progressSteps": [
+      {
+        "id": "inspect",
+        "title": "Inspect inputs and constraints",
+        "required": true
+      },
+      {
+        "id": "execute",
+        "title": "Produce the requested outcome",
+        "required": true
+      },
+      {
+        "id": "verify",
+        "title": "Verify the outcome with evidence",
+        "required": true
+      }
+    ],
+    "artifacts": [
+      {
+        "id": "organization-manifest",
+        "mediaType": "application/json",
+        "required": true,
+        "description": "Stable reference to the final requested outcome or its persisted receipt"
+      }
+    ],
+    "verifiers": [
+      {
+        "id": "completion-audit",
+        "method": "model_judgment",
+        "description": "Record real evidence for the applicable completion checks: scripts/organize_files.py --validate-only --manifest <requested-final-manifest.json> --expected-state executed; the planned, executed, delivered, and validated manifest path must be identical; manifest count and hash reconciliation",
+        "required": true
+      }
+    ],
+    "resumePoints": [
+      "after-inspect",
+      "after-execute",
+      "after-verify"
+    ]
+  }
+}

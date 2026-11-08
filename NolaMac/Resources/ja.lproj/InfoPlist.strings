@@ -1,0 +1,6 @@
+"NSCalendarsFullAccessUsageDescription" = "Nolaは、承認したアシスタント操作でのみカレンダーの予定を読み取り、変更します。";
+"NSRemindersFullAccessUsageDescription" = "Nolaは、承認したアシスタント操作でのみリマインダーを読み取り、変更します。";
+"NSContactsUsageDescription" = "Nolaは、承認したアシスタント操作でのみ連絡先を読み取ります。";
+"NSAppleEventsUsageDescription" = "Nolaは、承認した自動化ツールを実行するときだけ他のアプリを操作します。";
+"NSMicrophoneUsageDescription" = "Nolaは、音声入力を開始したときだけマイクを使用します。";
+"NSLocalNetworkUsageDescription" = "選択したローカルネットワーク上のモデルサーバーや Nola ホストに接続します。";

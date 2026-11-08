@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="intelligence_editor_save_failed">No se pudieron confirmar los cambios. El borrador sigue aquí. Antes de reintentarlo, guarda una copia de tus cambios, cierra este elemento y vuelve a abrirlo para comprobar su contenido actual.</string>
+    <string name="intelligence_profile_load_failed">No se pudieron cargar los datos actuales. Los datos existentes no han cambiado. Reinténtalo antes de editar.</string>
+</resources>

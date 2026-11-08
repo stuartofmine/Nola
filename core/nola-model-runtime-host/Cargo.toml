@@ -1,0 +1,12 @@
+[package]
+name = "nola_model_runtime_host"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+reqwest = { version = "0.11", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+sha2 = "0.10"
+hex = "0.4"
+
+[dev-dependencies]
+tempfile = "3.12"

@@ -1,0 +1,667 @@
+{% extends "base.html" %}
+{% import "_icons.html" as icons %}
+
+{% block title %}{{ tr('capabilities.page.title', '能力中心 - Nola', 'Capabilities - Nola') }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.capability-shell{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,390px);gap:18px;align-items:start}.capability-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.capability-toolbar-actions{display:flex;align-items:center;justify-content:flex-end;gap:9px;flex:1;min-width:min(100%,280px)}.capability-tabs{display:inline-flex;padding:4px;border:1px solid var(--border-color);border-radius:14px;background:var(--bg-secondary)}.capability-tab{display:inline-flex;align-items:center;gap:7px;border:0;background:transparent;color:var(--text-secondary);padding:8px 12px;border-radius:10px;font:inherit;font-weight:650;cursor:pointer}.capability-tab[aria-selected="true"]{background:var(--bg-primary);color:var(--primary-color);box-shadow:0 3px 12px rgba(15,23,42,.08)}.capability-tab-count{display:inline-grid;min-width:20px;height:20px;padding:0 5px;place-items:center;border-radius:999px;background:color-mix(in srgb,currentColor 9%,transparent);font-size:.72rem;font-variant-numeric:tabular-nums}.capability-search{display:flex;align-items:center;gap:8px;min-width:190px;max-width:280px;flex:1;padding:0 11px;border:1px solid var(--border-color);border-radius:11px;background:var(--bg-primary);color:var(--text-tertiary)}.capability-search:focus-within{border-color:color-mix(in srgb,var(--primary-color) 45%,var(--border-color));box-shadow:0 0 0 3px color-mix(in srgb,var(--primary-color) 10%,transparent)}.capability-search svg{width:15px;height:15px;flex:0 0 auto}.capability-search input{width:100%;min-width:0;height:36px;padding:0;border:0;background:transparent;color:var(--text-primary);outline:0}.capability-gallery,.capability-category-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}.capability-gallery.has-groups{display:block}.capability-category-section+.capability-category-section{margin-top:22px}.capability-category-header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 2px 10px}.capability-category-header strong{font-size:.84rem}.capability-category-header span{color:var(--text-tertiary);font-size:.75rem;font-variant-numeric:tabular-nums}.capability-card-wrap{position:relative;min-width:0}.capability-card{appearance:none;text-align:left;width:100%;min-height:148px;border:1px solid var(--border-color);border-radius:18px;background:var(--bg-primary);color:inherit;padding:16px;cursor:pointer;transition:border-color .18s ease,box-shadow .18s ease,opacity .18s ease}.capability-card:hover,.capability-card:focus-visible{border-color:color-mix(in srgb,var(--primary-color) 42%,var(--border-color));box-shadow:0 10px 28px rgba(15,23,42,.08);outline:none}.capability-card.is-selected{border-color:var(--primary-color);box-shadow:0 0 0 3px color-mix(in srgb,var(--primary-color) 12%,transparent)}.capability-card.is-disabled{opacity:.68}.capability-card-head{display:flex;align-items:flex-start;gap:11px;padding-right:76px}.capability-card-toggle{position:absolute;top:13px;right:13px;z-index:2;border:0;border-radius:999px;padding:5px 9px;background:var(--bg-secondary);color:var(--text-secondary);font:inherit;font-size:.72rem;font-weight:700;cursor:pointer;transition:background .16s ease,color .16s ease,transform .16s ease}.capability-card-toggle:hover,.capability-card-toggle:focus-visible{color:var(--primary-color);outline:2px solid color-mix(in srgb,var(--primary-color) 30%,transparent);outline-offset:2px}.capability-card-toggle.enabled{background:color-mix(in srgb,#16a34a 12%,var(--bg-primary));color:#15803d}.capability-card-toggle:active{transform:scale(.96)}.capability-card-toggle:disabled{cursor:wait;opacity:.6}.capability-symbol{display:grid;place-items:center;width:38px;height:38px;flex:0 0 auto;border-radius:12px;background:color-mix(in srgb,var(--primary-color) 11%,transparent);color:var(--primary-color)}.capability-symbol svg{width:18px;height:18px}.capability-card-copy{min-width:0;flex:1}.capability-name{font-weight:720;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.capability-description{margin-top:7px;color:var(--text-secondary);font-size:.9rem;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.capability-meta{display:flex;gap:7px;align-items:center;margin-top:13px;flex-wrap:wrap}.capability-pill{padding:4px 8px;border-radius:999px;background:var(--bg-secondary);color:var(--text-secondary);font-size:.76rem;font-weight:650}.capability-pill.enabled{background:color-mix(in srgb,#16a34a 12%,transparent);color:#15803d}.capability-detail{position:sticky;top:88px;min-height:390px;max-height:calc(100vh - 112px);overflow:auto;scrollbar-gutter:stable;scroll-margin-top:82px}.capability-detail-heading{display:flex;align-items:flex-start;gap:11px;margin-bottom:18px}.capability-detail-heading-copy{min-width:0;flex:1}.capability-detail-heading h2{margin:1px 0 6px;font-size:1.08rem;line-height:1.3}.capability-detail-heading .capability-meta{margin-top:0}.capability-detail .form-group{margin-bottom:14px}.capability-detail textarea{min-height:170px;resize:vertical}.capability-switch-row{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:0 0 18px;padding:11px 12px;border:1px solid var(--border-color);border-radius:13px;background:var(--bg-secondary);cursor:pointer}.capability-switch-copy{display:grid;gap:2px}.capability-switch-copy strong{font-size:.88rem}.capability-switch-copy span{color:var(--text-secondary);font-size:.78rem;line-height:1.35}.capability-switch-input{appearance:none;width:36px;height:21px;flex:0 0 auto;margin:0;border:1px solid var(--border-color);border-radius:999px;background:var(--text-tertiary);position:relative;cursor:pointer;transition:background .16s ease,border-color .16s ease}.capability-switch-input::after{content:"";position:absolute;top:2px;left:2px;width:15px;height:15px;border-radius:50%;background:white;box-shadow:0 1px 4px rgba(15,23,42,.25);transition:transform .16s ease}.capability-switch-input:checked{border-color:#16a34a;background:#16a34a}.capability-switch-input:checked::after{transform:translateX(15px)}.capability-editor{min-height:280px!important;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:.83rem;line-height:1.55;tab-size:4}.capability-editor-meta{display:flex;justify-content:flex-end;margin-top:-8px;color:var(--text-tertiary);font-size:.72rem;font-variant-numeric:tabular-nums}.capability-detail-actions{display:flex;gap:9px;justify-content:flex-end;flex-wrap:wrap}.capability-empty{grid-column:1/-1;min-height:220px;display:flex;align-items:center;justify-content:center;padding:42px 24px;text-align:center;color:var(--text-secondary);line-height:1.55;border:1px dashed color-mix(in srgb,var(--primary-color) 22%,var(--border-color));border-radius:18px;background:linear-gradient(145deg,color-mix(in srgb,var(--primary-color) 4%,var(--bg-primary)),var(--bg-primary))}.capability-detail-placeholder{min-height:350px;display:grid;place-items:center;text-align:center;color:var(--text-secondary);padding:28px}.capability-detail-placeholder strong{color:var(--text-primary)}.capability-status{min-height:20px;color:var(--text-secondary);font-size:.88rem}.capability-status.is-dirty{color:var(--warning-color)}.capability-status.error{color:var(--danger-color)}@media(max-width:900px){.capability-shell{grid-template-columns:1fr}.capability-detail{position:static;max-height:none;overflow:visible}.capability-gallery,.capability-category-grid{grid-template-columns:repeat(auto-fill,minmax(190px,1fr))}}@media(max-width:620px){.capability-toolbar-actions{width:100%;flex-basis:100%}.capability-search{max-width:none}.capability-gallery,.capability-category-grid{grid-template-columns:1fr}}@media(max-width:430px){.capability-toolbar-actions{align-items:stretch;flex-direction:column}.capability-toolbar-actions>.btn{width:100%}}@media(prefers-reduced-motion:reduce){.capability-card,.capability-card-toggle,.capability-switch-input,.capability-switch-input::after{transition:none}}
+/* Keep the catalog primary. The editor only claims space after an item is selected. */
+.capability-shell{grid-template-columns:minmax(0,1fr)}
+.capability-shell.has-selection{grid-template-columns:minmax(0,1fr) minmax(340px,420px)}
+.capability-shell:not(.has-selection) .capability-detail{display:none}
+.capabilities-page .capability-detail{min-height:0;max-height:calc(100dvh - 100px);overflow-y:auto;scroll-padding-block:20px;padding-bottom:24px}
+.capability-detail .form-group input{box-sizing:border-box;width:100%;min-width:0;min-height:42px;padding:10px 12px;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-primary);color:var(--text-primary);font:inherit}
+.capability-detail .form-group input:focus-visible{outline:2px solid var(--primary-color);outline-offset:2px}
+.capability-detail .capability-status{overflow-wrap:anywhere;line-height:1.5}
+.capability-detail-actions{padding-top:12px;scroll-margin-block:20px}
+@media(max-width:900px){.capabilities-page .capability-detail{position:static;max-height:none;overflow:visible}}
+.capability-tab{min-height:40px}
+.capability-tab-count{min-width:21px;height:21px;padding-inline:6px;font-size:.78rem}
+.capability-search{max-width:320px}
+.capability-card{
+    transition:border-color var(--dur-fast) var(--ease-out),box-shadow var(--dur-base) var(--ease-out),opacity var(--dur-fast) var(--ease-out),transform var(--dur-fast) var(--ease-out)
+}
+.capability-card:hover,.capability-card:focus-visible{transform:translateY(-1px)}
+.capability-card:active{transform:translateY(0) scale(.995)}
+.capability-detail{transition:border-color var(--dur-base) var(--ease-out),box-shadow var(--dur-base) var(--ease-out)}
+@media(prefers-reduced-motion:reduce){
+    .capability-card,.capability-detail{transition:none}
+    .capability-card:hover,.capability-card:focus-visible,.capability-card:active{transform:none}
+}
+.capability-gallery,.capability-category-grid{grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}.capability-category-section{content-visibility:auto;contain-intrinsic-size:auto 190px}.capability-category-toggle{display:flex;width:100%;align-items:center;justify-content:space-between;gap:10px;padding:5px 2px;border:0;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}.capability-category-toggle>span{display:inline-flex;align-items:center;gap:9px}.capability-category-chevron{font-size:.75rem;transition:transform var(--dur-fast) var(--ease-out)}.capability-category-section.is-collapsed .capability-category-chevron{transform:rotate(-90deg)}
+.capability-detail-close{display:grid;place-items:center;width:36px;height:36px;flex:0 0 auto;border:0;border-radius:10px;background:transparent;color:var(--text-secondary);font:inherit;font-size:1.35rem;line-height:1;cursor:pointer}
+.capability-detail-close:hover,.capability-detail-close:focus-visible{background:var(--bg-secondary);color:var(--text-primary);outline:2px solid color-mix(in srgb,var(--primary-color) 24%,transparent);outline-offset:1px}
+.capability-mcp-catalog{display:grid;gap:12px;margin:2px 0 16px;padding:13px;border:1px solid var(--border-color);border-radius:14px;background:var(--bg-secondary)}.capability-mcp-catalog-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.capability-mcp-catalog-head strong{font-size:.88rem}.capability-mcp-catalog-head small{display:block;margin-top:3px;color:var(--text-secondary);line-height:1.35}.capability-mcp-groups{display:grid;gap:8px}.capability-mcp-group{border:1px solid color-mix(in srgb,var(--border-color) 82%,transparent);border-radius:10px;background:var(--bg-primary);overflow:hidden}.capability-mcp-group summary{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 10px;cursor:pointer;font-size:.8rem;font-weight:700;list-style:none}.capability-mcp-group summary::-webkit-details-marker{display:none}.capability-mcp-items{display:grid;gap:1px;padding:0 10px 9px}.capability-mcp-item{padding:6px 8px;border-radius:7px;background:var(--bg-secondary);font:500 .74rem/1.4 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;overflow-wrap:anywhere}.capability-pill.is-connected{background:color-mix(in srgb,#16a34a 12%,transparent);color:#15803d}
+@media(max-width:900px){.capability-shell.has-selection{grid-template-columns:1fr}.capability-gallery,.capability-category-grid{grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}}
+@media(max-width:620px){.capability-category-section+.capability-category-section{margin-top:10px}.capability-category-header{margin:0}.capability-category-toggle{min-height:44px;padding:8px 2px}.capability-category-grid{padding-top:8px}.capability-card{min-height:132px;padding:14px}.capability-card-head{padding-right:68px}.capability-description{-webkit-line-clamp:2}.capability-meta{margin-top:10px}}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="subpage capabilities-page">
+    <div class="page-header">
+        <div>
+            <div class="page-eyebrow">{{ tr('capabilities.header.eyebrow', '可复用能力', 'Reusable capabilities') }}</div>
+            <h1 class="page-title">{{ icons.icon('settings') }}<span>{{ tr('capabilities.header.title', '能力中心', 'Capabilities') }}</span></h1>
+            <p class="page-subtitle">{{ tr('capabilities.header.subtitle', '查看、编辑和控制 Agent 可调用的 Skill 与 MCP 连接。', 'View, edit, and control the Skills and MCP connections available to the agent.') }}</p>
+        </div>
+    </div>
+
+    <div class="capability-toolbar section-card">
+        <div class="capability-tabs" role="tablist" aria-label="{{ tr('capabilities.tabs.aria', '能力类型', 'Capability type') }}">
+            <button class="capability-tab" id="skillsTab" role="tab" aria-selected="true" aria-controls="capabilityGallery" tabindex="0">{{ tr('capabilities.tabs.skills', 'Skills', 'Skills') }} <span class="capability-tab-count" id="skillsCount">0</span></button>
+            <button class="capability-tab" id="mcpTab" role="tab" aria-selected="false" aria-controls="capabilityGallery" tabindex="-1">MCP <span class="capability-tab-count" id="mcpCount">0</span></button>
+        </div>
+        <div class="capability-toolbar-actions">
+            <label class="capability-search" for="capabilitySearch">
+                {{ icons.icon('search') }}
+                <input id="capabilitySearch" type="search" autocomplete="off" placeholder="{{ tr('capabilities.search.placeholder', '搜索名称、说明或分类', 'Search names, descriptions, or categories') }}">
+            </label>
+            <button class="btn btn-primary" id="createCapabilityBtn">{{ tr('capabilities.create.skill', '新建 Skill', 'New Skill') }}</button>
+        </div>
+    </div>
+
+    <div class="capability-shell" id="capabilityShell">
+        <section class="section-card">
+            <div id="capabilityGallery" class="capability-gallery">
+                <div class="capability-empty">{{ tr('capabilities.loading', '正在读取能力目录…', 'Loading capability catalog...') }}</div>
+            </div>
+        </section>
+        <aside class="section-card capability-detail" id="capabilityDetail">
+            <div class="capability-detail-placeholder">
+                <div><strong>{{ tr('capabilities.detail.empty.title', '选择一项能力', 'Select a capability') }}</strong><p>{{ tr('capabilities.detail.empty.body', '查看配置、内容和启用状态。', 'Inspect its configuration, content, and enabled state.') }}</p></div>
+            </div>
+        </aside>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const CAP_I18N = {
+    skills: {{ tr('capabilities.tabs.skills', 'Skills', 'Skills') | tojson }},
+    builtin: {{ tr('capabilities.source.builtin', '内置', 'Built-in') | tojson }},
+    custom: {{ tr('capabilities.source.custom', '自建', 'Custom') | tojson }},
+    enabled: {{ tr('capabilities.state.enabled', '已启用', 'Enabled') | tojson }},
+    disabled: {{ tr('capabilities.state.disabled', '已停用', 'Disabled') | tojson }},
+    enableAction: {{ tr('capabilities.action.enable', '启用', 'Enable') | tojson }},
+    disableAction: {{ tr('capabilities.action.disable', '停用', 'Disable') | tojson }},
+    emptySkills: {{ tr('capabilities.empty.skills', '还没有 Skill。新建一个可复用工作流。', 'No Skills yet. Create a reusable workflow.') | tojson }},
+    emptyMcp: {{ tr('capabilities.empty.mcp', '还没有 MCP 连接。添加一个 HTTP MCP endpoint。', 'No MCP connections yet. Add an HTTP MCP endpoint.') | tojson }},
+    noMatches: {{ tr('capabilities.empty.search', '没有匹配的能力。', 'No matching capabilities.') | tojson }},
+    name: {{ tr('capabilities.field.name', '名称', 'Name') | tojson }},
+    description: {{ tr('capabilities.field.description', '说明', 'Description') | tojson }},
+    content: {{ tr('capabilities.field.content', 'Skill 内容', 'Skill content') | tojson }},
+    endpoint: {{ tr('capabilities.field.endpoint', '服务地址', 'Endpoint') | tojson }},
+    mcpSaveFailed: {{ tr('capabilities.mcp.save_failed', '无法确认此次修改。草稿已保留，请重新加载服务器列表并核对后再提交。', 'Unable to confirm these changes. Your draft is preserved. Reload and review the server list before submitting again.') | tojson }},
+    catalog: {{ tr('capabilities.mcp.catalog', '发现的能力目录', 'Discovered capability catalog') | tojson }},
+    connected: {{ tr('capabilities.mcp.connected', '已连接', 'Connected') | tojson }},
+    configured: {{ tr('capabilities.mcp.configured', '已配置，尚未发现能力', 'Configured, capabilities not discovered') | tojson }},
+    tools: {{ tr('capabilities.mcp.tools', '工具', 'Tools') | tojson }},
+    resources: {{ tr('capabilities.mcp.resources', '资源', 'Resources') | tojson }},
+    templates: {{ tr('capabilities.mcp.templates', '资源模板', 'Resource templates') | tojson }},
+    prompts: {{ tr('capabilities.mcp.prompts', '提示词', 'Prompts') | tojson }},
+    save: {{ tr('capabilities.action.save', '保存更改', 'Save changes') | tojson }},
+    delete: {{ tr('capabilities.action.delete', '删除', 'Delete') | tojson }},
+    saved: {{ tr('capabilities.toast.saved', '能力配置已保存', 'Capability settings saved') | tojson }},
+    deleted: {{ tr('capabilities.toast.deleted', '已删除', 'Deleted') | tojson }},
+    failed: {{ tr('capabilities.toast.failed', '操作失败：', 'Operation failed: ') | tojson }},
+    saving: {{ tr('capabilities.status.saving', '保存中…', 'Saving…') | tojson }},
+    draft: {{ tr('capabilities.state.draft', '未保存', 'Draft') | tojson }},
+    unsaved: {{ tr('capabilities.state.unsaved', '有未保存的更改', 'Unsaved changes') | tojson }},
+    available: {{ tr('capabilities.state.available', '允许 Agent 使用', 'Available to the agent') | tojson }},
+    availableDetail: {{ tr('capabilities.state.available_detail', '关闭后会保留配置，但不会出现在可调用能力中。', 'When disabled, the configuration is kept but the capability is not callable.') | tojson }},
+    characters: {{ tr('capabilities.editor.characters', '字符', 'characters') | tojson }},
+    customSkills: {{ tr('capabilities.category.custom', '自定义 Skill', 'Custom Skills') | tojson }},
+    retry: {{ tr('base.js.retry', '重试', 'Retry') | tojson }},
+    selectTitle: {{ tr('capabilities.detail.empty.title', '选择一项能力', 'Select a capability') | tojson }},
+    selectBody: {{ tr('capabilities.detail.empty.body', '查看配置、内容和启用状态。', 'Inspect its configuration, content, and enabled state.') | tojson }},
+    nameRequired: {{ tr('capabilities.validation.name_required', '名称不能为空。', 'Name is required.') | tojson }},
+    endpointRequired: {{ tr('capabilities.validation.endpoint_required', '请输入有效的 HTTP 或 HTTPS endpoint。', 'Enter a valid HTTP or HTTPS endpoint.') | tojson }},
+    discardTitle: {{ tr('capabilities.discard.title', '放弃未保存的更改？', 'Discard unsaved changes?') | tojson }},
+    discardBody: {{ tr('capabilities.discard.body', '当前能力的修改尚未保存。', 'Changes to the current capability have not been saved.') | tojson }},
+    discard: {{ tr('capabilities.discard.action', '放弃更改', 'Discard changes') | tojson }},
+    prefersChinese: {{ tr('capabilities.locale.zh', 'true', 'false') | tojson }},
+    skillCategories: {
+        documents: {{ tr('skills.category.documents', '文档处理', 'Documents') | tojson }},
+        'data-analysis': {{ tr('skills.category.data_analysis', '数据与分析', 'Data & Analysis') | tojson }},
+        'design-presentations': {{ tr('skills.category.design_presentations', '设计与演示', 'Design & Presentations') | tojson }},
+        'knowledge-research': {{ tr('skills.category.knowledge_research', '知识与研究', 'Knowledge & Research') | tojson }},
+        communication: {{ tr('skills.category.communication', '沟通协作', 'Communication') | tojson }},
+        'planning-automation': {{ tr('skills.category.planning_automation', '计划与自动化', 'Planning & Automation') | tojson }},
+        workspace: {{ tr('skills.category.workspace', '工作区管理', 'Workspace') | tojson }},
+    },
+    deleteTitle: {{ tr('capabilities.delete.title', '删除这项能力？', 'Delete this capability?') | tojson }},
+    deleteBody: {{ tr('capabilities.delete.body', '删除后 Agent 将无法再调用它，此操作无法撤销。', 'The agent will no longer be able to use it. This cannot be undone.') | tojson }},
+    closeDetail: {{ tr('capabilities.detail.close', '关闭详情', 'Close details') | tojson }},
+    newSkill: {{ tr('capabilities.create.skill', '新建 Skill', 'New Skill') | tojson }},
+    newMcp: {{ tr('capabilities.create.mcp', '添加 MCP', 'Add MCP') | tojson }},
+    untitledSkill: {{ tr('capabilities.default.skill_name', '未命名 Skill', 'Untitled Skill') | tojson }},
+    untitledMcp: {{ tr('capabilities.default.mcp_name', '未命名 MCP', 'Untitled MCP') | tojson }},
+    skillTemplate: {{ tr('capabilities.default.skill_content', '# 目标\n\n描述这个 Skill 解决的问题。\n\n## 工作流\n\n1. 明确输入与约束\n2. 执行任务\n3. 校验输出', '# Goal\n\nDescribe the problem this Skill solves.\n\n## Workflow\n\n1. Clarify inputs and constraints\n2. Execute the task\n3. Validate the output') | tojson }}
+};
+
+const requestedCapabilityMode = new URLSearchParams(window.location.search).get('tab');
+let capabilityMode = requestedCapabilityMode === 'mcp' ? 'mcp' : 'skills';
+let settingsState = { skills: [], mcp_servers: [] };
+let mcpBaseline = [];
+let selectedIndex = null;
+let fieldSequence = 0;
+let capabilityDraft = null;
+let operationBusy = false;
+let detailDirty = false;
+let capabilityQuery = '';
+
+const gallery = document.getElementById('capabilityGallery');
+const detail = document.getElementById('capabilityDetail');
+const createButton = document.getElementById('createCapabilityBtn');
+
+function text(value, fallback = '') { return String(value ?? fallback); }
+function skillName(item) { return text(item.name || item.title, CAP_I18N.untitledSkill); }
+function mcpName(item) { return text(item.display_name || item.name || item.server_id, CAP_I18N.untitledMcp); }
+function mcpEntries(item, key) {
+    const value = item && typeof item[key] === 'object' && !Array.isArray(item[key]) ? item[key] : {};
+    return Object.entries(value).map(([id, descriptor]) => ({ id, descriptor: descriptor || {} }));
+}
+function mcpCatalog(item) {
+    const groups = [
+        { key: 'tools', label: CAP_I18N.tools, entries: mcpEntries(item, 'tools') },
+        { key: 'resources', label: CAP_I18N.resources, entries: mcpEntries(item, 'resources') },
+        { key: 'resource_templates', label: CAP_I18N.templates, entries: mcpEntries(item, 'resource_templates') },
+        { key: 'prompts', label: CAP_I18N.prompts, entries: mcpEntries(item, 'prompts') },
+    ];
+    return { groups, count: groups.reduce((total, group) => total + group.entries.length, 0), discovered: !!text(item?.protocol_version).trim() };
+}
+function skillSummary(item) {
+    const preferred = text(item.description || item.summary).trim();
+    if (preferred) return preferred;
+    return text(item.content || item.instructions || item.markdown)
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(line => line && line !== '---' && !line.startsWith('#') && !/^name\s*:/i.test(line) && !/^description\s*:/i.test(line))
+        .slice(0, 3)
+        .join(' ') || '—';
+}
+function isBuiltin(item) { return item.builtin === true || item.source === 'builtin' || item.isBuiltin === true; }
+function skillCategory(item) {
+    const id = text(item?.category_id, 'custom');
+    const name = text(CAP_I18N.skillCategories[id] || item?.category_name, CAP_I18N.customSkills);
+    const icons = {
+        documents: 'doc',
+        'data-analysis': 'chart',
+        'design-presentations': 'sparkles',
+        communication: 'chat',
+        'planning-automation': 'scheduled',
+        'knowledge-research': 'database',
+        workspace: 'folder',
+        custom: 'settings'
+    };
+    return { id, name, icon: icons[id] || 'settings' };
+}
+function storedItems() { return capabilityMode === 'skills' ? settingsState.skills : settingsState.mcp_servers; }
+function activeItems() {
+    const items = [...storedItems()];
+    if (capabilityDraft?.mode === capabilityMode) items.push(capabilityDraft.item);
+    return items;
+}
+
+async function confirmDiscardIfNeeded() {
+    if (!detailDirty) return true;
+    return Nola.confirm({
+        title: CAP_I18N.discardTitle,
+        message: CAP_I18N.discardBody,
+        confirmText: CAP_I18N.discard,
+    });
+}
+
+function updateGallerySelection() {
+    gallery.querySelectorAll('.capability-card').forEach(card => {
+        const selected = Number(card.dataset.capabilityIndex) === selectedIndex;
+        card.classList.toggle('is-selected', selected);
+        card.setAttribute('aria-pressed', selected ? 'true' : 'false');
+    });
+}
+
+function revealDetailOnCompactLayout() {
+    if (!window.matchMedia('(max-width: 900px)').matches) return;
+    const behavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+    requestAnimationFrame(() => detail.scrollIntoView({ behavior, block: 'start' }));
+}
+
+async function api(path, options = {}) {
+    const response = await fetch(path, options);
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        const error = new Error(body.code === 'mcp_update_failed'
+            ? CAP_I18N.mcpSaveFailed : (body.error || body.detail || response.statusText));
+        error.code = body.code;
+        error.status = response.status;
+        throw error;
+    }
+    return body;
+}
+
+async function loadCapabilities() {
+    try {
+        const body = await api('/api/agent/settings');
+        settingsState = {
+            skills: Array.isArray(body.skills) ? body.skills : [],
+            mcp_servers: Array.isArray(body.mcp_servers) ? body.mcp_servers : []
+        };
+        mcpBaseline = settingsState.mcp_servers.map(({server_id, revision}) => ({server_id, revision}));
+        renderAll();
+    } catch (error) {
+        gallery.innerHTML = '';
+        const empty = document.createElement('div');
+        empty.className = 'capability-empty';
+        const message = document.createElement('p'); message.textContent = CAP_I18N.failed + error.message;
+        const retry = document.createElement('button'); retry.className = 'btn btn-secondary btn-sm'; retry.textContent = CAP_I18N.retry;
+        retry.addEventListener('click', loadCapabilities);
+        empty.append(message, retry);
+        gallery.appendChild(empty);
+    }
+}
+
+function renderAll() {
+    document.getElementById('skillsTab').setAttribute('aria-selected', capabilityMode === 'skills' ? 'true' : 'false');
+    document.getElementById('mcpTab').setAttribute('aria-selected', capabilityMode === 'mcp' ? 'true' : 'false');
+    document.getElementById('skillsTab').tabIndex = capabilityMode === 'skills' ? 0 : -1;
+    document.getElementById('mcpTab').tabIndex = capabilityMode === 'mcp' ? 0 : -1;
+    document.getElementById('skillsCount').textContent = settingsState.skills.length;
+    document.getElementById('mcpCount').textContent = settingsState.mcp_servers.length;
+    createButton.textContent = capabilityMode === 'skills' ? CAP_I18N.newSkill : CAP_I18N.newMcp;
+    document.getElementById('capabilityShell').classList.toggle('has-selection', selectedIndex != null);
+    renderGallery();
+    renderDetail();
+}
+
+function renderGallery() {
+    gallery.innerHTML = '';
+    gallery.classList.toggle('has-groups', capabilityMode === 'skills');
+    const items = activeItems();
+    const normalizedQuery = capabilityQuery.trim().toLocaleLowerCase();
+    const entries = items.map((item, index) => ({ item, index })).filter(({ item }) => {
+        if (!normalizedQuery) return true;
+        const category = capabilityMode === 'skills' ? skillCategory(item).name : '';
+        return [skillName(item), item.name, item.description, item.summary, item.endpoint, category]
+            .some(value => text(value).toLocaleLowerCase().includes(normalizedQuery));
+    });
+    if (!entries.length) {
+        const empty = document.createElement('div');
+        empty.className = 'capability-empty';
+        empty.textContent = items.length ? CAP_I18N.noMatches : (capabilityMode === 'skills' ? CAP_I18N.emptySkills : CAP_I18N.emptyMcp);
+        gallery.appendChild(empty);
+        return;
+    }
+    const groupedCards = new Map();
+    entries.forEach(({ item, index }) => {
+        const category = capabilityMode === 'skills' ? skillCategory(item) : null;
+        const cardWrap = document.createElement('div'); cardWrap.className = 'capability-card-wrap';
+        const card = document.createElement('button');
+        card.type = 'button';
+        card.dataset.capabilityIndex = String(index);
+        card.className = 'capability-card' + (selectedIndex === index ? ' is-selected' : '') + (item.enabled === false ? ' is-disabled' : '');
+        card.setAttribute('aria-pressed', selectedIndex === index ? 'true' : 'false');
+        const head = document.createElement('div'); head.className = 'capability-card-head';
+        const symbol = document.createElement('span'); symbol.className = 'capability-symbol'; symbol.innerHTML = Nola.icon(category?.icon || 'database');
+        const copy = document.createElement('div'); copy.className = 'capability-card-copy';
+        const name = document.createElement('div'); name.className = 'capability-name'; name.textContent = capabilityMode === 'skills' ? skillName(item) : mcpName(item);
+        const desc = document.createElement('div'); desc.className = 'capability-description'; desc.textContent = capabilityMode === 'skills' ? skillSummary(item) : text(item.description || item.summary || item.endpoint, '—');
+        const meta = document.createElement('div'); meta.className = 'capability-meta';
+        const source = document.createElement('span'); source.className = 'capability-pill'; source.textContent = item.__draft ? CAP_I18N.draft : (capabilityMode === 'skills' && isBuiltin(item) ? CAP_I18N.builtin : CAP_I18N.custom);
+        meta.append(source);
+        if (capabilityMode === 'mcp') {
+            const catalog = mcpCatalog(item);
+            const catalogPill = document.createElement('span'); catalogPill.className = 'capability-pill' + (catalog.discovered ? ' is-connected' : '');
+            catalogPill.textContent = catalog.discovered ? `${CAP_I18N.connected} · ${catalog.count}` : CAP_I18N.configured;
+            meta.append(catalogPill);
+        }
+        copy.append(name, desc, meta); head.append(symbol, copy); card.appendChild(head); cardWrap.appendChild(card);
+        card.addEventListener('click', async () => {
+            if (selectedIndex === index) {
+                revealDetailOnCompactLayout();
+                return;
+            }
+            if (!await confirmDiscardIfNeeded()) return;
+            const discardedDraft = capabilityDraft?.mode === capabilityMode;
+            if (discardedDraft) capabilityDraft = null;
+            selectedIndex = Math.min(index, activeItems().length - 1);
+            detailDirty = false;
+            if (discardedDraft) {
+                renderAll();
+            } else {
+                updateGallerySelection();
+                renderDetail();
+            }
+            revealDetailOnCompactLayout();
+        });
+        if (!item.__draft) {
+            const quickToggle = document.createElement('button');
+            quickToggle.type = 'button';
+            quickToggle.className = 'capability-card-toggle' + (item.enabled !== false ? ' enabled' : '');
+            quickToggle.textContent = item.enabled !== false ? CAP_I18N.enabled : CAP_I18N.disabled;
+            quickToggle.setAttribute('aria-label', `${item.enabled !== false ? CAP_I18N.disableAction : CAP_I18N.enableAction} ${capabilityMode === 'skills' ? skillName(item) : text(item.name, CAP_I18N.untitledMcp)}`);
+            quickToggle.addEventListener('click', () => setCapabilityEnabled(index, item.enabled === false, quickToggle));
+            cardWrap.appendChild(quickToggle);
+        }
+        if (category) {
+            if (!groupedCards.has(category.id)) groupedCards.set(category.id, { category, cards: [] });
+            groupedCards.get(category.id).cards.push(cardWrap);
+        } else {
+            gallery.appendChild(cardWrap);
+        }
+    });
+    if (capabilityMode === 'skills') {
+        const order = ['documents', 'data-analysis', 'design-presentations', 'communication', 'planning-automation', 'knowledge-research', 'workspace', 'custom'];
+        [...groupedCards.values()]
+            .sort((left, right) => {
+                const a = order.indexOf(left.category.id);
+                const b = order.indexOf(right.category.id);
+                return (a < 0 ? order.length : a) - (b < 0 ? order.length : b);
+            })
+            .forEach((group, groupIndex) => {
+                const section = document.createElement('section'); section.className = 'capability-category-section';
+                const header = document.createElement('div'); header.className = 'capability-category-header';
+                const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'capability-category-toggle';
+                const label = document.createElement('span');
+                const chevron = document.createElement('span'); chevron.className = 'capability-category-chevron'; chevron.textContent = '⌄';
+                const title = document.createElement('strong'); title.textContent = group.category.name;
+                const count = document.createElement('span'); count.textContent = String(group.cards.length);
+                const grid = document.createElement('div'); grid.className = 'capability-category-grid';
+                group.cards.forEach(card => grid.appendChild(card));
+                const collapsed = window.matchMedia('(max-width: 620px)').matches && !normalizedQuery && groupIndex > 0;
+                section.classList.toggle('is-collapsed', collapsed);
+                grid.hidden = collapsed;
+                toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+                label.append(chevron, title); toggle.append(label, count); header.appendChild(toggle);
+                toggle.addEventListener('click', () => {
+                    const nextCollapsed = !section.classList.contains('is-collapsed');
+                    section.classList.toggle('is-collapsed', nextCollapsed);
+                    grid.hidden = nextCollapsed;
+                    toggle.setAttribute('aria-expanded', nextCollapsed ? 'false' : 'true');
+                });
+                section.append(header, grid); gallery.appendChild(section);
+            });
+    }
+}
+
+async function setCapabilityEnabled(index, enabled, control) {
+    if (operationBusy) return;
+    const list = storedItems();
+    const item = list[index];
+    if (!item) return;
+    const previous = item.enabled;
+    item.enabled = enabled;
+    operationBusy = true;
+    control.disabled = true;
+    try {
+        await persist();
+        Nola.toast(CAP_I18N.saved, 'success');
+    } catch (error) {
+        item.enabled = previous;
+        Nola.toast(CAP_I18N.failed + error.message, 'error');
+    } finally {
+        operationBusy = false;
+        renderAll();
+    }
+}
+
+function field(label, value, kind = 'input') {
+    const group = document.createElement('div'); group.className = 'form-group';
+    const caption = document.createElement('label'); caption.textContent = label;
+    const control = document.createElement(kind === 'textarea' ? 'textarea' : 'input'); control.value = text(value);
+    if (kind !== 'textarea') control.type = 'text';
+    control.id = `capability-field-${++fieldSequence}`;
+    caption.htmlFor = control.id;
+    group.append(caption, control);
+    return { group, control };
+}
+
+function renderDetail() {
+    const fragment = document.createDocumentFragment();
+    const item = selectedIndex == null ? null : activeItems()[selectedIndex];
+    document.getElementById('capabilityShell').classList.toggle('has-selection', item != null);
+    if (!item) {
+        detailDirty = false;
+        const placeholder = document.createElement('div'); placeholder.className = 'capability-detail-placeholder';
+        const copy = document.createElement('div');
+        const heading = document.createElement('strong'); heading.textContent = CAP_I18N.selectTitle;
+        const body = document.createElement('p'); body.textContent = CAP_I18N.selectBody;
+        copy.append(heading, body); placeholder.appendChild(copy); fragment.appendChild(placeholder); detail.replaceChildren(fragment); return;
+    }
+    const category = capabilityMode === 'skills' ? skillCategory(item) : { icon: 'database', name: 'MCP' };
+    const detailHeading = document.createElement('div'); detailHeading.className = 'capability-detail-heading';
+    const detailSymbol = document.createElement('span'); detailSymbol.className = 'capability-symbol'; detailSymbol.innerHTML = Nola.icon(category.icon);
+    const detailHeadingCopy = document.createElement('div'); detailHeadingCopy.className = 'capability-detail-heading-copy';
+    const title = document.createElement('h2'); title.textContent = capabilityMode === 'skills' ? skillName(item) : mcpName(item);
+    const headingMeta = document.createElement('div'); headingMeta.className = 'capability-meta';
+    const categoryPill = document.createElement('span'); categoryPill.className = 'capability-pill'; categoryPill.textContent = category.name;
+    const sourcePill = document.createElement('span'); sourcePill.className = 'capability-pill'; sourcePill.textContent = capabilityMode === 'skills' && isBuiltin(item) ? CAP_I18N.builtin : CAP_I18N.custom;
+    const closeDetail = document.createElement('button');
+    closeDetail.type = 'button'; closeDetail.className = 'capability-detail-close'; closeDetail.textContent = '×';
+    closeDetail.setAttribute('aria-label', CAP_I18N.closeDetail); closeDetail.title = CAP_I18N.closeDetail;
+    closeDetail.addEventListener('click', async () => {
+        if (!await confirmDiscardIfNeeded()) return;
+        if (capabilityDraft?.mode === capabilityMode) capabilityDraft = null;
+        selectedIndex = null; detailDirty = false; renderAll();
+    });
+    headingMeta.append(categoryPill, sourcePill); detailHeadingCopy.append(title, headingMeta); detailHeading.append(detailSymbol, detailHeadingCopy, closeDetail);
+    const enabledGroup = document.createElement('label'); enabledGroup.className = 'capability-switch-row';
+    const enabledCopy = document.createElement('span'); enabledCopy.className = 'capability-switch-copy';
+    const enabledTitle = document.createElement('strong'); enabledTitle.textContent = CAP_I18N.available;
+    const enabledDetail = document.createElement('span'); enabledDetail.textContent = CAP_I18N.availableDetail;
+    enabledCopy.append(enabledTitle, enabledDetail);
+    const enabled = document.createElement('input'); enabled.type = 'checkbox'; enabled.className = 'capability-switch-input'; enabled.checked = item.enabled !== false;
+    enabledGroup.append(enabledCopy, enabled);
+    const name = field(CAP_I18N.name, capabilityMode === 'skills' ? skillName(item) : mcpName(item));
+    const description = field(CAP_I18N.description, item.description || item.summary, 'textarea');
+    description.control.style.minHeight = '88px';
+    const primary = capabilityMode === 'skills' ? field(CAP_I18N.content, item.content || item.instructions || item.markdown, 'textarea') : field(CAP_I18N.endpoint, item.endpoint || item.url);
+    let characterCount = null;
+    if (capabilityMode === 'skills') {
+        primary.control.classList.add('capability-editor');
+        characterCount = document.createElement('div'); characterCount.className = 'capability-editor-meta';
+        primary.group.appendChild(characterCount);
+    }
+    const updateCharacterCount = () => {
+        if (characterCount) characterCount.textContent = `${primary.control.value.length.toLocaleString()} ${CAP_I18N.characters}`;
+    };
+    updateCharacterCount();
+    let catalogPanel = null;
+    if (capabilityMode === 'mcp') {
+        const catalog = mcpCatalog(item);
+        catalogPanel = document.createElement('section'); catalogPanel.className = 'capability-mcp-catalog';
+        const catalogHead = document.createElement('div'); catalogHead.className = 'capability-mcp-catalog-head';
+        const catalogCopy = document.createElement('div');
+        const catalogTitle = document.createElement('strong'); catalogTitle.textContent = CAP_I18N.catalog;
+        const catalogMeta = document.createElement('small'); catalogMeta.textContent = catalog.discovered
+            ? `${CAP_I18N.connected} · MCP ${text(item.protocol_version)} · ${catalog.count}`
+            : CAP_I18N.configured;
+        catalogCopy.append(catalogTitle, catalogMeta); catalogHead.appendChild(catalogCopy); catalogPanel.appendChild(catalogHead);
+        const groups = document.createElement('div'); groups.className = 'capability-mcp-groups';
+        catalog.groups.forEach(group => {
+            const block = document.createElement('details'); block.className = 'capability-mcp-group'; block.open = group.entries.length > 0 && group.entries.length <= 6;
+            const summary = document.createElement('summary');
+            const label = document.createElement('span'); label.textContent = group.label;
+            const count = document.createElement('span'); count.textContent = String(group.entries.length);
+            summary.append(label, count); block.appendChild(summary);
+            const items = document.createElement('div'); items.className = 'capability-mcp-items';
+            group.entries.forEach(({ id, descriptor }) => {
+                const row = document.createElement('div'); row.className = 'capability-mcp-item';
+                row.textContent = text(descriptor.title || descriptor.name || descriptor.uri || descriptor.uri_template || id, id);
+                row.title = text(descriptor.description || id);
+                items.appendChild(row);
+            });
+            block.appendChild(items); groups.appendChild(block);
+        });
+        catalogPanel.appendChild(groups);
+    }
+    const status = document.createElement('div'); status.className = 'capability-status'; status.setAttribute('aria-live', 'polite');
+    const actions = document.createElement('div'); actions.className = 'capability-detail-actions';
+    const remove = document.createElement('button'); remove.className = 'btn btn-danger'; remove.textContent = CAP_I18N.delete; remove.hidden = capabilityMode === 'skills' && isBuiltin(item);
+    const save = document.createElement('button'); save.className = 'btn btn-primary'; save.textContent = CAP_I18N.save;
+    actions.append(remove, save); fragment.append(detailHeading, enabledGroup, name.group, description.group, primary.group);
+    if (catalogPanel) fragment.append(catalogPanel);
+    fragment.append(status, actions);
+
+    const updateDirtyState = () => {
+        const currentName = name.control.value.trim();
+        const currentDescription = description.control.value.trim();
+        const currentPrimary = capabilityMode === 'skills' ? primary.control.value : primary.control.value.trim();
+        const originalName = capabilityMode === 'skills' ? skillName(item) : mcpName(item);
+        const originalPrimary = capabilityMode === 'skills'
+            ? text(item.content || item.instructions || item.markdown)
+            : text(item.endpoint || item.url).trim();
+        const dirty = item.__draft === true
+            || currentName !== originalName
+            || currentDescription !== text(item.description || item.summary).trim()
+            || currentPrimary !== originalPrimary
+            || enabled.checked !== (item.enabled !== false);
+        detailDirty = dirty;
+        save.disabled = !dirty || operationBusy;
+        status.className = dirty ? 'capability-status is-dirty' : 'capability-status';
+        status.textContent = dirty ? CAP_I18N.unsaved : '';
+    };
+    [name.control, description.control, primary.control, enabled].forEach(control => {
+        control.addEventListener('input', () => { updateCharacterCount(); updateDirtyState(); });
+        control.addEventListener('change', updateDirtyState);
+    });
+    updateDirtyState();
+
+    save.addEventListener('click', async () => {
+        if (operationBusy) return;
+        const updated = { ...item, name: name.control.value.trim(), description: description.control.value.trim(), enabled: enabled.checked };
+        delete updated.__draft;
+        if (capabilityMode === 'skills') updated.content = primary.control.value; else {
+            updated.display_name = updated.name;
+            updated.endpoint = primary.control.value.trim();
+        }
+        if (!updated.name) {
+            status.className = 'capability-status error'; status.textContent = CAP_I18N.nameRequired; name.control.focus(); return;
+        }
+        if (capabilityMode === 'mcp') {
+            let endpointValid = false;
+            try { endpointValid = ['http:', 'https:'].includes(new URL(updated.endpoint).protocol); } catch (_) {}
+            if (!endpointValid) {
+                status.className = 'capability-status error'; status.textContent = CAP_I18N.endpointRequired; primary.control.focus(); return;
+            }
+        }
+        const list = storedItems();
+        const updateIndex = selectedIndex;
+        const wasDraft = item.__draft === true;
+        const previous = wasDraft ? null : list[updateIndex];
+        if (wasDraft) {
+            list.push(updated);
+            capabilityDraft = null;
+            selectedIndex = list.length - 1;
+        } else {
+            list[updateIndex] = updated;
+        }
+        operationBusy = true;
+        save.disabled = true;
+        remove.disabled = true;
+        const previousLabel = save.textContent;
+        save.textContent = CAP_I18N.saving;
+        try { await persist(); detailDirty = false; Nola.toast(CAP_I18N.saved, 'success'); renderAll(); }
+        catch (error) {
+            if (wasDraft) {
+                list.pop();
+                capabilityDraft = { mode: capabilityMode, item };
+                selectedIndex = list.length;
+            } else {
+                list[updateIndex] = previous;
+            }
+            status.className = 'capability-status error'; status.textContent = CAP_I18N.failed + error.message;
+        }
+        finally { operationBusy = false; save.disabled = false; remove.disabled = false; save.textContent = previousLabel; }
+    });
+    remove.addEventListener('click', async () => {
+        if (operationBusy) return;
+        const confirmed = await Nola.confirm({ title: CAP_I18N.deleteTitle, message: CAP_I18N.deleteBody, confirmText: CAP_I18N.delete, danger: true });
+        if (!confirmed) return;
+        if (item.__draft) {
+            capabilityDraft = null;
+            selectedIndex = null;
+            detailDirty = false;
+            renderAll();
+            return;
+        }
+        const list = storedItems();
+        const removalIndex = selectedIndex;
+        const [removed] = list.splice(removalIndex, 1);
+        operationBusy = true;
+        remove.disabled = true;
+        save.disabled = true;
+        try {
+            await persist();
+            selectedIndex = null;
+            detailDirty = false;
+            Nola.toast(CAP_I18N.deleted, 'success');
+            renderAll();
+        } catch (error) {
+            list.splice(removalIndex, 0, removed);
+            selectedIndex = removalIndex;
+            Nola.toast(CAP_I18N.failed + error.message, 'error');
+            renderAll();
+        }
+        finally { operationBusy = false; }
+    });
+    detail.replaceChildren(fragment);
+}
+
+async function persist() {
+    const payload = capabilityMode === 'skills' ? { skills: settingsState.skills } : { mcp_servers: settingsState.mcp_servers, mcp_baseline: mcpBaseline };
+    const body = await api('/api/agent/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    settingsState.skills = Array.isArray(body.skills) ? body.skills : settingsState.skills;
+    settingsState.mcp_servers = Array.isArray(body.mcp_servers) ? body.mcp_servers : settingsState.mcp_servers;
+    mcpBaseline = settingsState.mcp_servers.map(({server_id, revision}) => ({server_id, revision}));
+}
+
+async function switchMode(mode) {
+    if (mode === capabilityMode || !await confirmDiscardIfNeeded()) return;
+    capabilityDraft = null; capabilityMode = mode; selectedIndex = null;
+    detailDirty = false;
+    document.getElementById('skillsTab').setAttribute('aria-selected', mode === 'skills' ? 'true' : 'false');
+    document.getElementById('mcpTab').setAttribute('aria-selected', mode === 'mcp' ? 'true' : 'false');
+    document.getElementById('skillsTab').tabIndex = mode === 'skills' ? 0 : -1;
+    document.getElementById('mcpTab').tabIndex = mode === 'mcp' ? 0 : -1;
+    const nextUrl = new URL(window.location.href);
+    nextUrl.searchParams.set('tab', mode);
+    window.history.replaceState({}, '', nextUrl);
+    renderAll();
+}
+
+document.getElementById('skillsTab').addEventListener('click', () => switchMode('skills'));
+document.getElementById('mcpTab').addEventListener('click', () => switchMode('mcp'));
+document.getElementById('capabilitySearch').addEventListener('input', event => {
+    capabilityQuery = event.currentTarget.value;
+    renderGallery();
+});
+document.querySelector('.capability-tabs').addEventListener('keydown', event => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const mode = event.key === 'ArrowRight' || event.key === 'End' ? 'mcp' : 'skills';
+    switchMode(mode).then(() => document.getElementById(mode === 'skills' ? 'skillsTab' : 'mcpTab').focus());
+});
+createButton.addEventListener('click', async () => {
+    if (!await confirmDiscardIfNeeded()) return;
+    capabilityQuery = '';
+    document.getElementById('capabilitySearch').value = '';
+    capabilityDraft = {
+        mode: capabilityMode,
+        item: capabilityMode === 'skills'
+            ? { name: CAP_I18N.untitledSkill, description: '', content: CAP_I18N.skillTemplate, enabled: true, __draft: true }
+            : { name: CAP_I18N.untitledMcp, endpoint: '', description: '', enabled: false, __draft: true }
+    };
+    selectedIndex = storedItems().length;
+    detailDirty = false;
+    renderAll();
+    if (window.matchMedia('(max-width: 900px)').matches) {
+        detail.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+    }
+});
+
+loadCapabilities();
+</script>
+{% endblock %}

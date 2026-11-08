@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="workspace_title">Рабочая область</string>
+    <string name="workspace_sources">Материалы</string>
+    <string name="workspace_memory">Долговременная память</string>
+    <string name="workspace_plans">Планы</string>
+    <string name="workspace_records">Активность</string>
+    <string name="composer_commands">Команды</string>
+    <string name="composer_command_invalid">Неверная команда или параметры. Введите /.</string>
+    <string name="composer_command_no_run">Нет выполняемых задач.</string>
+    <string name="workspace_knowledge">Знания</string>
+    <string name="workspace_knowledge_empty">Знания из разговоров пока не сохранены.</string>
+    <string name="workspace_knowledge_failed">Не удалось загрузить знания из разговора. Повторите попытку.</string>
+    <string name="workspace_knowledge_open">Открыть исходный разговор</string>
+</resources>

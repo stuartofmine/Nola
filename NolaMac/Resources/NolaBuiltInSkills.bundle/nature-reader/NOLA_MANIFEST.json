@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "id": "nature-reader",
+  "delivery": "built-in",
+  "category": {
+    "id": "knowledge-research",
+    "name": "Knowledge & Research",
+    "name_zh": "知识与研究"
+  },
+  "source": {
+    "project": "nature-skills",
+    "commit": "8d674eb50454d4b49d3e0be625a121ad4863840b",
+    "license": "Apache-2.0"
+  },
+  "status": "stable",
+  "platforms": [
+    "macos",
+    "cli-web"
+  ],
+  "required_tools": [
+    "Skill",
+    "read_file"
+  ],
+  "optional_tools": [
+    "web_search",
+    "web_fetch",
+    "bash"
+  ],
+  "runtime_dependencies": [],
+  "permissions": [
+    "filesystem.read",
+    "network.optional"
+  ],
+  "secrets": [],
+  "validation": [
+    "source-anchor audit",
+    "figure/table placement audit",
+    "tool:read_file reopen the final bilingual reader after all edits"
+  ],
+  "execution_contract": {
+    "schemaVersion": 1,
+    "progressSteps": [
+      {
+        "id": "inspect",
+        "title": "Inspect inputs and constraints",
+        "required": true
+      },
+      {
+        "id": "execute",
+        "title": "Produce the requested outcome",
+        "required": true
+      },
+      {
+        "id": "verify",
+        "title": "Verify the outcome with evidence",
+        "required": true
+      }
+    ],
+    "artifacts": [
+      {
+        "id": "reader-report",
+        "mediaType": "text/markdown",
+        "required": false,
+        "description": "Stable reference to the final requested outcome or its persisted receipt"
+      }
+    ],
+    "verifiers": [
+      {
+        "id": "completion-audit",
+        "method": "model_judgment",
+        "description": "Record real evidence for the applicable completion checks: source-anchor audit; figure/table placement audit; tool:read_file reopen the final bilingual reader after all edits",
+        "required": true
+      }
+    ],
+    "resumePoints": [
+      "after-inspect",
+      "after-execute",
+      "after-verify"
+    ]
+  }
+}

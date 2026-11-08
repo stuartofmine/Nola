@@ -1,0 +1,152 @@
+:root {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    color-scheme: light dark;
+    --content: #202020;
+    color: var(--content); background: var(--canvas); font-size: 100%; line-height: 1.5;
+    --canvas: #ffffff; --surface: #ffffff; --rail: #f7f7f7; --panel: #f4f4f4; --border: #e4e4e4; --muted: #606060;
+    --primary: #202020; --on-primary: #ffffff;
+    --accent: #202020; --on-accent: #fff; --accent-subtle: #f4f4f4; --outline: #858585;
+    --danger: #b42335; --radius: 16px;
+    --surface-gradient: linear-gradient(145deg, color-mix(in srgb, var(--surface) 95.5%, white), color-mix(in srgb, var(--surface) 98.2%, black));
+    --surface-highlight: rgb(255 255 255 / .65);
+    --surface-shadow: 0 6px 18px rgb(20 28 24 / .055), 0 1px 2px rgb(20 28 24 / .035);
+    --control-shadow: inset 0 1px 0 var(--surface-highlight), 0 1px 3px rgb(20 28 24 / .055);
+    --control-hit-size: 36px;
+    --text-title: 1.75rem; --text-section: 1rem; --text-body: 1rem; --text-detail: .8125rem;
+    --section-space: 28px;
+    --radius-control: 12px; --radius-message: 18px;
+    --success: #237047; --warning: #865400;
+    --motion-fast: 100ms; --motion-base: 180ms; --motion-slow: 220ms;
+    --motion-selection: 200ms;
+    --motion-disclosure: cubic-bezier(.20, .74, .24, 1);
+}
+@media (prefers-color-scheme: dark) {
+    :root:not([data-appearance="light"]) {
+        color-scheme: dark;
+        --content: #eeeeee; --canvas: #000000; --surface: #111111; --rail: #080808; --panel: #191919; --border: #292929; --muted: #adadad;
+        --primary: #eeeeee; --on-primary: #111111; --accent: #eeeeee; --on-accent: #111111; --accent-subtle: #202020; --outline: #777777;
+        --surface-highlight: rgb(255 255 255 / .09);
+        --surface-shadow: 0 6px 18px rgb(0 0 0 / .24), 0 1px 2px rgb(0 0 0 / .15);
+        --control-shadow: inset 0 1px 0 var(--surface-highlight), 0 1px 3px rgb(0 0 0 / .18);
+        --danger: #ff8794; --success: #a9b99d; --warning: #d9b980;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    :root { --motion-fast: 0ms; --motion-base: 0ms; --motion-slow: 0ms; --motion-selection: 0ms; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-size: var(--text-body); }
+.skip-content { position: fixed; inset-block-start: 8px; inset-inline-start: 8px; z-index: 100; padding: 12px 16px; background: var(--surface); border: 2px solid var(--accent); border-radius: var(--radius-control); transform: translateY(-200%); }
+.skip-content:focus { transform: none; }
+button, input, select, textarea { font: inherit; font-size: .875rem; }
+label, nav, small { font-size: .875rem; }
+button, .button { border: 1px solid var(--outline); background: var(--surface-gradient); box-shadow: var(--control-shadow); color: inherit; border-radius: var(--radius-control); padding: 8px 12px; min-height: var(--control-hit-size); min-width: var(--control-hit-size); cursor: pointer; overflow-wrap: anywhere; transition: background-color var(--motion-fast) ease, border-color var(--motion-selection) var(--motion-disclosure), color var(--motion-selection) var(--motion-disclosure), transform var(--motion-fast) ease-out; }
+.button { display: inline-flex; align-items: center; justify-content: center; text-align: center; }
+button:disabled { opacity: 1; color: var(--muted); background: var(--panel); border-color: var(--border); cursor: not-allowed; }
+button.primary { background: linear-gradient(145deg, color-mix(in srgb, var(--primary) 96%, white), var(--primary)); border-color: var(--primary); color: var(--on-primary); font-weight: 600; }
+button.primary:disabled { color: var(--muted); background: var(--panel); border-color: var(--border); }
+@media (hover: hover) { button:not(:disabled):hover, .button:hover { background: var(--accent-subtle); } button.primary:not(:disabled):hover { background: color-mix(in srgb, var(--primary) 88%, var(--canvas)); } }
+button:not(:disabled):active, .button:active { background: var(--accent-subtle); }
+@media (prefers-reduced-motion: no-preference) {
+    button:not(:disabled):not(.danger):active, .button:active { transform: scale(.98); }
+}
+@media (prefers-reduced-motion: reduce) {
+    button:not(:disabled):active, .button:active { transform: none; }
+}
+button.danger { color: var(--danger); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+a { color: inherit; text-decoration: none; }
+.workspace { display: grid; grid-template-columns: 248px minmax(0, 1fr); min-height: 100dvh; }
+.sidebar { background: color-mix(in srgb, var(--rail) 88%, transparent); padding: 24px 16px; border-right: 1px solid var(--border); }
+.brand { display: block; font-size: 20px; font-weight: 650; padding: 0 12px 24px; }
+nav { display: grid; gap: 5px; } nav a { padding: 10px 12px; border: 1px solid transparent; border-radius: 12px; transition: background-color var(--motion-selection) var(--motion-disclosure), color var(--motion-selection) var(--motion-disclosure), transform var(--motion-fast) ease-out; }
+nav a[aria-current], nav a[aria-current]:hover { background: var(--accent-subtle); border-color: transparent; color: var(--content); }
+nav a:hover { background: var(--accent-subtle); }
+main { min-width: 0; }
+.page-header { width: 100%; max-width: 1120px; margin-inline: auto; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; padding: 32px 32px 20px; }
+.page-header > div:first-child { min-width: 0; overflow-wrap: anywhere; }
+h1 { font-size: var(--text-title); line-height: 1.28; margin: 0; font-weight: 650; } h2 { font-size: .9375rem; line-height: 1.47; margin: 0; }
+h1, h2, h3, legend { overflow-wrap: anywhere; }
+p { margin: 6px 0; } .muted, small { color: var(--muted); }
+.content { width: 100%; max-width: 1120px; min-width: 0; margin: auto; padding: 24px 32px; display: grid; gap: 24px; }
+.tabs { display: flex; flex-wrap: wrap; max-width: 100%; gap: 4px; justify-self: start; background: var(--surface-gradient); border: 1px solid var(--border); box-shadow: var(--control-shadow); padding: 4px; border-radius: var(--radius); }
+.tabs button { box-shadow: none; flex: 0 1 auto; border-color: transparent; background: transparent; min-width: var(--control-hit-size); }
+.tabs button[aria-selected='true'] { background: var(--accent-subtle); border-color: transparent; }
+.card { min-width: 0; background: var(--surface-gradient); box-shadow: inset 0 1px 0 var(--surface-highlight), var(--surface-shadow); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; display: grid; gap: 16px; }
+.row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; } .between { justify-content: space-between; }
+.identity { min-width: 0; flex: 1 1 220px; overflow-wrap: anywhere; }
+.identity + button { flex-shrink: 0; }
+.fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+label { display: grid; gap: 8px; min-width: 0; } input, select, textarea { color: inherit; background: var(--surface-gradient); box-shadow: var(--control-shadow); border: 1px solid var(--outline); border-radius: var(--radius-control); padding: 8px 12px; width: 100%; min-width: 0; max-width: 100%; }
+textarea { resize: vertical; line-height: 1.5; }
+select { min-height: var(--control-hit-size); cursor: pointer; }
+label:has(select), label[for] { cursor: pointer; }
+label:has(> input:is([type='checkbox'], [type='radio'])) {
+    display: flex; align-items: center; gap: 8px; min-height: var(--control-hit-size);
+    padding: 6px 8px; border-radius: var(--radius-control); cursor: pointer;
+}
+label:has(> input:is([type='checkbox'], [type='radio']):disabled), label:has(select:disabled) { cursor: not-allowed; }
+input[type='checkbox'], input[type='radio'] { flex-shrink: 0; width: auto; accent-color: var(--accent); }
+input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; }
+summary { min-height: var(--control-hit-size); cursor: pointer; padding-block: 8px; overflow-wrap: anywhere; }
+pre { max-width: 100%; overflow: auto; }
+.notice { padding: 12px 16px; border: 1px solid var(--border); border-radius: var(--radius); } .error { color: var(--danger); }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+progress { width: 100%; accent-color: var(--accent); }
+dialog { color: var(--content); background: var(--surface-gradient); border: 1px solid var(--border); border-radius: 16px; max-width: 580px; width: calc(100% - 32px); max-height: calc(100dvh - 32px); padding: 24px; overflow: auto; overscroll-behavior: contain; box-shadow: inset 0 1px 0 var(--surface-highlight), 0 20px 60px #0005;  }
+dialog::backdrop { background: #0006; }
+dialog form { display: grid; gap: 20px; }
+/* Shared material keeps management groups on the same reading axis. */
+.management-content { padding-top: 8px; gap: var(--section-space); font-size: var(--text-body); line-height: 1.6; }
+.management-content :is(section.card, div.card) { background: var(--surface-gradient); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; box-shadow: inset 0 1px 0 var(--surface-highlight), var(--surface-shadow); }
+.management-content :is(section.card, div.card) > button { justify-self: start; }
+.management-content h2 { font-size: var(--text-section); font-weight: 600; }
+.management-content :where(.card > .row > button, .card > header > button) { border-color: transparent; background: transparent; }
+.management-content :where(p, small) { max-width: 76ch; }
+.management-content :where(p a, dd a) { text-decoration: underline; text-underline-offset: 3px; }
+.management-content [role='tabpanel']:not([hidden]) { animation: section-arrive var(--motion-base) ease-out; }
+dialog:modal { animation: section-arrive var(--motion-base) ease-out; }
+@keyframes section-arrive { from { opacity: .5; } to { opacity: 1; } }
+.management-content form.card { background: var(--surface-gradient); padding: 24px; border-color: var(--outline); }
+.management-content :where([role='alert']) { overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+    :root { --control-hit-size: 44px; --text-body: 1.0625rem; --text-title: 1.75rem; --section-space: 24px; }
+    .workspace { grid-template-columns: 1fr; } .sidebar { padding: 12px; border-right: 0; border-bottom: 1px solid var(--border); }
+    .brand { padding: 0 8px 8px; } nav { display: flex; overflow: auto; } nav a { white-space: nowrap; }
+    .fields { grid-template-columns: 1fr; } .content, .page-header { padding: 16px; }
+    button, .button { min-height: 44px; }
+    input, select, textarea { font-size: 1rem; }
+    .card, dialog { padding: 16px; }
+}
+@media (pointer: coarse) { :root { --control-hit-size: 44px; } }
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: 0ms !important; }
+}
+@media (prefers-contrast: more) { :root { --border: var(--outline); } }
+@media (forced-colors: active) { :focus-visible { outline-color: Highlight; } button, .button, input, select, textarea { border-color: ButtonText; } }
+
+@media (max-width: 760px) { .management-content form.card { padding: 16px; } .management-content { padding-top: 4px; } }
+
+:root[data-appearance="dark"] {
+        color-scheme: dark;
+        --content: #eeeeee; --canvas: #000000; --surface: #111111; --rail: #080808; --panel: #191919; --border: #292929; --muted: #adadad;
+        --primary: #eeeeee; --on-primary: #111111; --accent: #eeeeee; --on-accent: #111111; --accent-subtle: #202020; --outline: #777777;
+        --surface-highlight: rgb(255 255 255 / .09);
+        --surface-shadow: 0 6px 18px rgb(0 0 0 / .24), 0 1px 2px rgb(0 0 0 / .15);
+        --control-shadow: inset 0 1px 0 var(--surface-highlight), 0 1px 3px rgb(0 0 0 / .18);
+        --danger: #ff8794; --success: #a9b99d; --warning: #d9b980;
+}
+
+@media(min-width:360px) and (max-width:700px) { .content, .page-header { padding-inline:20px; } }
+@media(max-width:700px) { .page-header { padding-top:8px; padding-bottom:20px; } }
+
+:root[data-appearance="light"] { color-scheme: light; }
+
+/* Native continuous corners where supported; rounded fallback keeps layout. */
+@supports (corner-shape: squircle) {
+    button, .button, input, select, textarea, .card, .tabs, dialog, .composer { corner-shape: squircle; }
+}
+@media (forced-colors: active) {
+    button, .button, input, select, textarea, .card, .tabs, dialog,
+    .management-content :is(section.card, div.card, form.card) { background: Canvas; box-shadow: none; }
+}

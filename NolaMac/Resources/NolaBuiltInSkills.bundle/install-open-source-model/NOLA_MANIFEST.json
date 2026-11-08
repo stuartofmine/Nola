@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "id": "install-open-source-model",
+  "delivery": "built-in",
+  "category": {
+    "id": "workspace",
+    "name": "Workspace",
+    "name_zh": "工作区管理"
+  },
+  "source": {
+    "project": "Nola",
+    "license": "Apache-2.0"
+  },
+  "status": "stable",
+  "platforms": [
+    "macos",
+    "cli-web",
+    "windows",
+    "linux"
+  ],
+  "required_tools": [
+    "Skill",
+    "system_time",
+    "web_search",
+    "web_fetch",
+    "bash",
+    "bash_background_status",
+    "bash_background_wait",
+    "bash_background_stop",
+    "write_file"
+  ],
+  "optional_tools": [
+    "read_file",
+    "tool_output_read",
+    "tool_output_search",
+    "agent_task_status"
+  ],
+  "runtime_dependencies": [
+    "python3 (standard library)",
+    "MLX or llama.cpp built for Metal, CUDA, ROCm, Vulkan, or CPU"
+  ],
+  "permissions": [
+    "network.read",
+    "filesystem.download.confirm",
+    "model.configure.confirm",
+    "model.runtime.start.confirm"
+  ],
+  "secrets": [],
+  "validation": [
+    "hardware and accelerator compatibility plan",
+    "download manifest and checksum reconciliation",
+    "Nola model catalog registration",
+    "real runtime load and smoke inference"
+  ],
+  "recommended_handoffs": [],
+  "execution_contract": {
+    "schemaVersion": 1,
+    "progressSteps": [
+      {
+        "id": "inspect",
+        "title": "Inspect inputs and constraints",
+        "required": true
+      },
+      {
+        "id": "execute",
+        "title": "Produce the requested outcome",
+        "required": true
+      },
+      {
+        "id": "verify",
+        "title": "Verify the outcome with evidence",
+        "required": true
+      }
+    ],
+    "artifacts": [
+      {
+        "id": "model-registration",
+        "mediaType": "application/json",
+        "required": true,
+        "description": "Stable reference to the final requested outcome or its persisted receipt"
+      }
+    ],
+    "verifiers": [
+      {
+        "id": "completion-audit",
+        "method": "model_judgment",
+        "description": "Record real evidence for the applicable completion checks: hardware and accelerator compatibility plan; download manifest and checksum reconciliation; Nola model catalog registration; real runtime load and smoke inference",
+        "required": true
+      }
+    ],
+    "resumePoints": [
+      "after-inspect",
+      "after-execute",
+      "after-verify"
+    ]
+  }
+}

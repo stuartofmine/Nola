@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="reasoning_effort_title">Effort de raisonnement</string>
+    <string name="reasoning_effort_automatic">Valeur du fournisseur</string>
+    <string name="reasoning_effort_none">Aucun</string>
+    <string name="reasoning_effort_minimal">Minimal</string>
+    <string name="reasoning_effort_low">Faible</string>
+    <string name="reasoning_effort_medium">Moyen</string>
+    <string name="reasoning_effort_high">Élevé</string>
+    <string name="reasoning_effort_xhigh">Très élevé</string>
+    <string name="reasoning_effort_max">Maximum</string>
+</resources>

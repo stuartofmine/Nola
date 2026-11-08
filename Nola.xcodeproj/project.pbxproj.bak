@@ -1,0 +1,959 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		9A6601F72EC92397002AC09C /* OpenAI in Frameworks */ = {isa = PBXBuildFile; productRef = 9A6601F62EC92397002AC09C /* OpenAI */; };
+		9AE33D412EC5189200F0BDBD /* MLX in Frameworks */ = {isa = PBXBuildFile; productRef = 9AE33D402EC5189200F0BDBD /* MLX */; };
+		9AE33D432EC5189200F0BDBD /* MLXFFT in Frameworks */ = {isa = PBXBuildFile; productRef = 9AE33D422EC5189200F0BDBD /* MLXFFT */; };
+		9AE33D452EC5189200F0BDBD /* MLXFast in Frameworks */ = {isa = PBXBuildFile; productRef = 9AE33D442EC5189200F0BDBD /* MLXFast */; };
+		9AE33D472EC5189200F0BDBD /* MLXLinalg in Frameworks */ = {isa = PBXBuildFile; productRef = 9AE33D462EC5189200F0BDBD /* MLXLinalg */; };
+		9AE33D492EC5189200F0BDBD /* MLXNN in Frameworks */ = {isa = PBXBuildFile; productRef = 9AE33D482EC5189200F0BDBD /* MLXNN */; };
+		9AE33D652EC5644100F0BDBD /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = 9AE33D642EC5644100F0BDBD /* MLXLMCommon */; };
+		9AE33D6B2EC564C100F0BDBD /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = 9AE33D6A2EC564C100F0BDBD /* MLXLLM */; };
+		9AE33D6D2EC564C600F0BDBD /* MLXVLM in Frameworks */ = {isa = PBXBuildFile; productRef = 9AE33D6C2EC564C600F0BDBD /* MLXVLM */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		9A9F769F2EBD3713004F68FB /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 9A9F76842EBD3711004F68FB /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 9A9F768B2EBD3711004F68FB;
+			remoteInfo = Nola;
+		};
+		9A9F76A92EBD3713004F68FB /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 9A9F76842EBD3711004F68FB /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 9A9F768B2EBD3711004F68FB;
+			remoteInfo = Nola;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		9AAF915F2EBEF397006C1B74 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+        
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXFileReference section */
+		9A9F768C2EBD3711004F68FB /* Nola.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Nola.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		9A9F769E2EBD3713004F68FB /* NolaTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NolaTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		9A9F76A82EBD3713004F68FB /* NolaUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NolaUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		9AAF91582EBEF397006C1B74 /* NolaMessageFilter.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NolaMessageFilter.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+        
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		9AE33D382EC513DB00F0BDBD /* Exceptions for "Nola" folder in "Nola" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				"/Localized: Resources/InfoPlist.strings",
+				Info.plist,
+			);
+			target = 9A9F768B2EBD3711004F68FB /* Nola */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		9A9F768E2EBD3711004F68FB /* Nola */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				9AE33D382EC513DB00F0BDBD /* Exceptions for "Nola" folder in "Nola" target */,
+			);
+			path = Nola;
+			sourceTree = "<group>";
+		};
+		9A9F76A12EBD3713004F68FB /* NolaTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = NolaTests;
+			sourceTree = "<group>";
+		};
+		9A9F76AB2EBD3713004F68FB /* NolaUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = NolaUITests;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		9A9F76892EBD3711004F68FB /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9AE33D6B2EC564C100F0BDBD /* MLXLLM in Frameworks */,
+				9AE33D452EC5189200F0BDBD /* MLXFast in Frameworks */,
+				9AE33D472EC5189200F0BDBD /* MLXLinalg in Frameworks */,
+				9AE33D412EC5189200F0BDBD /* MLX in Frameworks */,
+				9AE33D492EC5189200F0BDBD /* MLXNN in Frameworks */,
+				9AE33D652EC5644100F0BDBD /* MLXLMCommon in Frameworks */,
+				9AE33D6D2EC564C600F0BDBD /* MLXVLM in Frameworks */,
+				9A6601F72EC92397002AC09C /* OpenAI in Frameworks */,
+				9AE33D432EC5189200F0BDBD /* MLXFFT in Frameworks */,
+                
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9A9F769B2EBD3713004F68FB /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9A9F76A52EBD3713004F68FB /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9AAF91552EBEF397006C1B74 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		9A9F76832EBD3711004F68FB = {
+			isa = PBXGroup;
+			children = (
+				9A9F768E2EBD3711004F68FB /* Nola */,
+				9A9F76A12EBD3713004F68FB /* NolaTests */,
+				9A9F76AB2EBD3713004F68FB /* NolaUITests */,
+				9AE33D632EC5644100F0BDBD /* Frameworks */,
+				9A9F768D2EBD3711004F68FB /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		9A9F768D2EBD3711004F68FB /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				9A9F768C2EBD3711004F68FB /* Nola.app */,
+				9A9F769E2EBD3713004F68FB /* NolaTests.xctest */,
+				9A9F76A82EBD3713004F68FB /* NolaUITests.xctest */,
+				9AAF91582EBEF397006C1B74 /* NolaMessageFilter.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		9AE33D632EC5644100F0BDBD /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+                
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		9A9F768B2EBD3711004F68FB /* Nola */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9A9F76B22EBD3713004F68FB /* Build configuration list for PBXNativeTarget "Nola" */;
+			buildPhases = (
+				9A9F76882EBD3711004F68FB /* Sources */,
+                
+				9A9F76892EBD3711004F68FB /* Frameworks */,
+				9A9F768A2EBD3711004F68FB /* Resources */,
+				9AAF915F2EBEF397006C1B74 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				9A6601F52EC9238D002AC09C /* PBXTargetDependency */,
+				9AE33D692EC564B600F0BDBD /* PBXTargetDependency */,
+				9AE33D672EC564AF00F0BDBD /* PBXTargetDependency */,
+				9AE33D622EC5643900F0BDBD /* PBXTargetDependency */,
+				9AE33D532EC5627500F0BDBD /* PBXTargetDependency */,
+				9AE33D552EC5627500F0BDBD /* PBXTargetDependency */,
+				9AE33D572EC5627500F0BDBD /* PBXTargetDependency */,
+				9AE33D592EC5627500F0BDBD /* PBXTargetDependency */,
+				9AE33D5B2EC5627500F0BDBD /* PBXTargetDependency */,
+				9AE33D5D2EC5627500F0BDBD /* PBXTargetDependency */,
+				9AE33D5F2EC5627500F0BDBD /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				9A9F768E2EBD3711004F68FB /* Nola */,
+			);
+			name = Nola;
+			packageProductDependencies = (
+				9AE33D402EC5189200F0BDBD /* MLX */,
+				9AE33D422EC5189200F0BDBD /* MLXFFT */,
+				9AE33D442EC5189200F0BDBD /* MLXFast */,
+				9AE33D462EC5189200F0BDBD /* MLXLinalg */,
+				9AE33D482EC5189200F0BDBD /* MLXNN */,
+				9AE33D642EC5644100F0BDBD /* MLXLMCommon */,
+				9AE33D6A2EC564C100F0BDBD /* MLXLLM */,
+				9AE33D6C2EC564C600F0BDBD /* MLXVLM */,
+				9A6601F62EC92397002AC09C /* OpenAI */,
+			);
+			productName = Nola;
+			productReference = 9A9F768C2EBD3711004F68FB /* Nola.app */;
+			productType = "com.apple.product-type.application";
+		};
+		9A9F769D2EBD3713004F68FB /* NolaTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9A9F76B52EBD3713004F68FB /* Build configuration list for PBXNativeTarget "NolaTests" */;
+			buildPhases = (
+				9A9F769A2EBD3713004F68FB /* Sources */,
+				9A9F769B2EBD3713004F68FB /* Frameworks */,
+				9A9F769C2EBD3713004F68FB /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				9A9F76A02EBD3713004F68FB /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				9A9F76A12EBD3713004F68FB /* NolaTests */,
+			);
+			name = NolaTests;
+			packageProductDependencies = (
+			);
+			productName = NolaTests;
+			productReference = 9A9F769E2EBD3713004F68FB /* NolaTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		9A9F76A72EBD3713004F68FB /* NolaUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9A9F76B82EBD3713004F68FB /* Build configuration list for PBXNativeTarget "NolaUITests" */;
+			buildPhases = (
+				9A9F76A42EBD3713004F68FB /* Sources */,
+				9A9F76A52EBD3713004F68FB /* Frameworks */,
+				9A9F76A62EBD3713004F68FB /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				9A9F76AA2EBD3713004F68FB /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				9A9F76AB2EBD3713004F68FB /* NolaUITests */,
+			);
+			name = NolaUITests;
+			packageProductDependencies = (
+			);
+			productName = NolaUITests;
+			productReference = 9A9F76A82EBD3713004F68FB /* NolaUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		9AAF91572EBEF397006C1B74 /* NolaMessageFilter */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9AAF91632EBEF398006C1B74 /* Build configuration list for PBXNativeTarget "NolaMessageFilter" */;
+			buildPhases = (
+				9AAF91542EBEF397006C1B74 /* Sources */,
+				9AAF91552EBEF397006C1B74 /* Frameworks */,
+				9AAF91562EBEF397006C1B74 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = NolaMessageFilter;
+			packageProductDependencies = (
+			);
+			productName = NolaMessageFilter;
+			productReference = 9AAF91582EBEF397006C1B74 /* NolaMessageFilter.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		9A9F76842EBD3711004F68FB /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2600;
+				LastUpgradeCheck = 2600;
+				TargetAttributes = {
+					9A9F768B2EBD3711004F68FB = {
+						CreatedOnToolsVersion = 26.0.1;
+					};
+					9A9F769D2EBD3713004F68FB = {
+						CreatedOnToolsVersion = 26.0.1;
+						TestTargetID = 9A9F768B2EBD3711004F68FB;
+					};
+					9A9F76A72EBD3713004F68FB = {
+						CreatedOnToolsVersion = 26.0.1;
+						TestTargetID = 9A9F768B2EBD3711004F68FB;
+					};
+					9AAF91572EBEF397006C1B74 = {
+						CreatedOnToolsVersion = 26.0.1;
+					};
+				};
+			};
+			buildConfigurationList = 9A9F76872EBD3711004F68FB /* Build configuration list for PBXProject "Nola" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+				"zh-Hans",
+			);
+			mainGroup = 9A9F76832EBD3711004F68FB;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				9AE33D3F2EC5189200F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift" */,
+				9AE33D602EC5642E00F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift-lm" */,
+				9A6601F32EC9237D002AC09C /* XCRemoteSwiftPackageReference "OpenAI" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 9A9F768D2EBD3711004F68FB /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				9A9F768B2EBD3711004F68FB /* Nola */,
+				9A9F769D2EBD3713004F68FB /* NolaTests */,
+				9A9F76A72EBD3713004F68FB /* NolaUITests */,
+				9AAF91572EBEF397006C1B74 /* NolaMessageFilter */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		9A9F768A2EBD3711004F68FB /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9A9F769C2EBD3713004F68FB /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9A9F76A62EBD3713004F68FB /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9AAF91562EBEF397006C1B74 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		9A9F76882EBD3711004F68FB /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9A9F769A2EBD3713004F68FB /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9A9F76A42EBD3713004F68FB /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9AAF91542EBEF397006C1B74 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		9A6601F52EC9238D002AC09C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 9A6601F42EC9238D002AC09C /* OpenAI */;
+		};
+		9A9F76A02EBD3713004F68FB /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 9A9F768B2EBD3711004F68FB /* Nola */;
+			targetProxy = 9A9F769F2EBD3713004F68FB /* PBXContainerItemProxy */;
+		};
+		9A9F76AA2EBD3713004F68FB /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 9A9F768B2EBD3711004F68FB /* Nola */;
+			targetProxy = 9A9F76A92EBD3713004F68FB /* PBXContainerItemProxy */;
+		};
+		9AE33D532EC5627500F0BDBD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 9AE33D522EC5627500F0BDBD /* MLX */;
+		};
+		9AE33D552EC5627500F0BDBD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 9AE33D542EC5627500F0BDBD /* MLXFFT */;
+		};
+		9AE33D572EC5627500F0BDBD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 9AE33D562EC5627500F0BDBD /* MLXFast */;
+		};
+		9AE33D592EC5627500F0BDBD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 9AE33D582EC5627500F0BDBD /* MLXLinalg */;
+		};
+		9AE33D5B2EC5627500F0BDBD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 9AE33D5A2EC5627500F0BDBD /* MLXNN */;
+		};
+		9AE33D5D2EC5627500F0BDBD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 9AE33D5C2EC5627500F0BDBD /* MLXOptimizers */;
+		};
+		9AE33D5F2EC5627500F0BDBD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 9AE33D5E2EC5627500F0BDBD /* MLXRandom */;
+		};
+		9AE33D622EC5643900F0BDBD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 9AE33D612EC5643900F0BDBD /* MLXLMCommon */;
+		};
+		9AE33D672EC564AF00F0BDBD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 9AE33D662EC564AF00F0BDBD /* MLXLLM */;
+		};
+		9AE33D692EC564B600F0BDBD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 9AE33D682EC564B600F0BDBD /* MLXVLM */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		9A9F76B02EBD3713004F68FB /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 65G58B4R2Q;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		9A9F76B12EBD3713004F68FB /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 65G58B4R2Q;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		9A9F76B32EBD3713004F68FB /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Nola/Nola.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 65G58B4R2Q;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Nola/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gaojc.Nola;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		9A9F76B42EBD3713004F68FB /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Nola/Nola.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 65G58B4R2Q;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Nola/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gaojc.Nola;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		9A9F76B62EBD3713004F68FB /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 65G58B4R2Q;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gaojc.NolaTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Nola.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Nola";
+			};
+			name = Debug;
+		};
+		9A9F76B72EBD3713004F68FB /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 65G58B4R2Q;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gaojc.NolaTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Nola.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Nola";
+			};
+			name = Release;
+		};
+		9A9F76B92EBD3713004F68FB /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 65G58B4R2Q;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gaojc.NolaUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Nola;
+			};
+			name = Debug;
+		};
+		9A9F76BA2EBD3713004F68FB /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 65G58B4R2Q;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gaojc.NolaUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Nola;
+			};
+			name = Release;
+		};
+		9AAF91612EBEF398006C1B74 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = NolaMessageFilter/NolaMessageFilter.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 65G58B4R2Q;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = NolaMessageFilter/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = NolaMessageFilter;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gaojc.Nola.NolaMessageFilter;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		9AAF91622EBEF398006C1B74 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = NolaMessageFilter/NolaMessageFilter.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 65G58B4R2Q;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = NolaMessageFilter/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = NolaMessageFilter;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gaojc.Nola.NolaMessageFilter;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		9A9F76872EBD3711004F68FB /* Build configuration list for PBXProject "Nola" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9A9F76B02EBD3713004F68FB /* Debug */,
+				9A9F76B12EBD3713004F68FB /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		9A9F76B22EBD3713004F68FB /* Build configuration list for PBXNativeTarget "Nola" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9A9F76B32EBD3713004F68FB /* Debug */,
+				9A9F76B42EBD3713004F68FB /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		9A9F76B52EBD3713004F68FB /* Build configuration list for PBXNativeTarget "NolaTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9A9F76B62EBD3713004F68FB /* Debug */,
+				9A9F76B72EBD3713004F68FB /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		9A9F76B82EBD3713004F68FB /* Build configuration list for PBXNativeTarget "NolaUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9A9F76B92EBD3713004F68FB /* Debug */,
+				9A9F76BA2EBD3713004F68FB /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		9AAF91632EBEF398006C1B74 /* Build configuration list for PBXNativeTarget "NolaMessageFilter" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9AAF91612EBEF398006C1B74 /* Debug */,
+				9AAF91622EBEF398006C1B74 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		9A6601F32EC9237D002AC09C /* XCRemoteSwiftPackageReference "OpenAI" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/MacPaw/OpenAI";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.4.7;
+			};
+		};
+		9AE33D3F2EC5189200F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/ml-explore/mlx-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.29.1;
+			};
+		};
+		9AE33D602EC5642E00F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift-lm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/ml-explore/mlx-swift-lm";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.29.2;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		9A6601F42EC9238D002AC09C /* OpenAI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9A6601F32EC9237D002AC09C /* XCRemoteSwiftPackageReference "OpenAI" */;
+			productName = OpenAI;
+		};
+		9A6601F62EC92397002AC09C /* OpenAI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9A6601F32EC9237D002AC09C /* XCRemoteSwiftPackageReference "OpenAI" */;
+			productName = OpenAI;
+		};
+		9AE33D402EC5189200F0BDBD /* MLX */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D3F2EC5189200F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLX;
+		};
+		9AE33D422EC5189200F0BDBD /* MLXFFT */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D3F2EC5189200F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLXFFT;
+		};
+		9AE33D442EC5189200F0BDBD /* MLXFast */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D3F2EC5189200F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLXFast;
+		};
+		9AE33D462EC5189200F0BDBD /* MLXLinalg */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D3F2EC5189200F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLXLinalg;
+		};
+		9AE33D482EC5189200F0BDBD /* MLXNN */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D3F2EC5189200F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLXNN;
+		};
+		9AE33D522EC5627500F0BDBD /* MLX */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D3F2EC5189200F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLX;
+		};
+		9AE33D542EC5627500F0BDBD /* MLXFFT */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D3F2EC5189200F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLXFFT;
+		};
+		9AE33D562EC5627500F0BDBD /* MLXFast */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D3F2EC5189200F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLXFast;
+		};
+		9AE33D582EC5627500F0BDBD /* MLXLinalg */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D3F2EC5189200F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLXLinalg;
+		};
+		9AE33D5A2EC5627500F0BDBD /* MLXNN */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D3F2EC5189200F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLXNN;
+		};
+		9AE33D5C2EC5627500F0BDBD /* MLXOptimizers */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D3F2EC5189200F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLXOptimizers;
+		};
+		9AE33D5E2EC5627500F0BDBD /* MLXRandom */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D3F2EC5189200F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLXRandom;
+		};
+		9AE33D612EC5643900F0BDBD /* MLXLMCommon */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D602EC5642E00F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXLMCommon;
+		};
+		9AE33D642EC5644100F0BDBD /* MLXLMCommon */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D602EC5642E00F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXLMCommon;
+		};
+		9AE33D662EC564AF00F0BDBD /* MLXLLM */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D602EC5642E00F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXLLM;
+		};
+		9AE33D682EC564B600F0BDBD /* MLXVLM */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D602EC5642E00F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXVLM;
+		};
+		9AE33D6A2EC564C100F0BDBD /* MLXLLM */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D602EC5642E00F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXLLM;
+		};
+		9AE33D6C2EC564C600F0BDBD /* MLXVLM */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D602EC5642E00F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXVLM;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 9A9F76842EBD3711004F68FB /* Project object */;
+}

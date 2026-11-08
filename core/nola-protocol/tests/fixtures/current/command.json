@@ -1,0 +1,15 @@
+{
+  "protocol_version": 53,
+  "request_id": "request-1",
+  "client_id": "mac-1",
+  "expected_revision": 42,
+  "command": {
+    "type": "rename_conversation",
+    "arguments": {
+      "conversation_id": "conversation-1",
+      "title": "Hello",
+      "title_source": "user",
+      "updated_at_ms": 1735689600000
+    }
+  }
+}

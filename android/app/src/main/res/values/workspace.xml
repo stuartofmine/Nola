@@ -1,0 +1,15 @@
+<resources>
+    <string name="workspace_title">Workspace</string>
+    <string name="workspace_sources">Materials</string>
+    <string name="workspace_memory">Long-term memory</string>
+    <string name="workspace_plans">Plans</string>
+    <string name="workspace_records">Activity</string>
+    <string name="composer_commands">Commands</string>
+    <string name="composer_command_invalid">Invalid command or arguments. Type / for commands.</string>
+    <string name="composer_command_no_run">No task is running.</string>
+    <string name="workspace_knowledge">Knowledge</string>
+    <string name="workspace_knowledge_empty">No conversation knowledge has been saved yet.</string>
+    <string name="workspace_knowledge_failed">Could not load conversation knowledge. Please retry.</string>
+    <string name="workspace_knowledge_open">Open original conversation</string>
+    <string name="tab_information_short">Info</string>
+</resources>

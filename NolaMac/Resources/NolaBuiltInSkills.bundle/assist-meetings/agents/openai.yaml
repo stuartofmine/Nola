@@ -1,0 +1,4 @@
+interface:
+  display_name: "Assist with Meetings"
+  short_description: "Turn meetings into decisions and actions"
+  default_prompt: "Turn this meeting material into decisions and action items."

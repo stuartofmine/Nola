@@ -1,0 +1,10 @@
+// SPDX-License-Identifier: Apache-2.0
+"reasoning.effort.title" = "Усилие рассуждения";
+"reasoning.effort.automatic" = "Настройка провайдера";
+"reasoning.effort.none" = "Нет";
+"reasoning.effort.minimal" = "Минимум";
+"reasoning.effort.low" = "Низкое";
+"reasoning.effort.medium" = "Среднее";
+"reasoning.effort.high" = "Высокое";
+"reasoning.effort.xhigh" = "Очень высокое";
+"reasoning.effort.max" = "Максимум";

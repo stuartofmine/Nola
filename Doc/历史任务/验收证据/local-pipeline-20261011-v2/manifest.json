@@ -1,0 +1,26 @@
+{
+  "captured_at_utc": "2026-10-11T09:23:23.517702+00:00",
+  "machine_model": "Mac17,3",
+  "memory_bytes": 17179869184,
+  "logical_cpus": 10,
+  "os": "ProductName:\t\tmacOS\nProductVersion:\t\t27.0.1\nBuildVersion:\t\t26A434",
+  "architecture": "arm64",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+  "test_binary_sha256": "3ad9d143d4e0c2de912316d0ebd6cd66831f72f458019ddb22fb044fa2dbdb76",
+  "samples_sha256": "57cb6a74ba02e8cc90063d535d8a5b0659885c6394fe96c5abb9434925bd4023",
+  "source_manifest_sha256": "e88690e202e1dd128365b9d0a5de55546c01e18dd6d2415eecd0af504c6e4400",
+  "source_identity_caveat": "Dirty shared worktree snapshot captured after run; binary digest is authoritative for executed artifact.",
+  "build_command": "nola_cargo test -p nola_cli --test local_pipeline_baseline -- --ignored --nocapture",
+  "runtime": {
+    "NOLA_HOME": "isolated temporary directory",
+    "RUST_MIN_STACK": 16777216
+  },
+  "missing": [
+    "provider",
+    "UI frame",
+    "IPC ACK",
+    "process cold start",
+    "OS page-cache cold",
+    "power-loss durability"
+  ]
+}

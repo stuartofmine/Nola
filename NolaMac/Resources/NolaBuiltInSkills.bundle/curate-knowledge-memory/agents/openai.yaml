@@ -1,0 +1,4 @@
+interface:
+  display_name: "Curate Knowledge and Memory"
+  short_description: "Manage durable personal knowledge safely"
+  default_prompt: "Organize this information into useful long-term knowledge."

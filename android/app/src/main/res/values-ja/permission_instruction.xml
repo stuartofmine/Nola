@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="permission_add_instruction">指示を追加</string>
+    <string name="permission_instruction_label">追加の指示</string>
+    <string name="permission_instruction_limit">この操作への指示を追加します。実行するには、引き続き許可が必要です。</string>
+    <string name="permission_send_instruction">指示を送信</string>
+    <string name="permission_instruction_history_full">指示の履歴が上限に達しました。続行するには、明示的に許可または拒否してください。</string>
+</resources>

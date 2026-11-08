@@ -1,0 +1,21 @@
+<resources>
+    <string name="scheduled_saving">Saving…</string>
+    <string name="scheduled_save_failed">Could not save. Your draft is still here; try again.</string>
+    <string name="scheduled_save_partial">The task was saved, but scheduling failed. Your draft is still here; retry to apply the schedule.</string>
+    <string name="scheduled_pick_date">Date: %1$s</string>
+    <string name="scheduled_pick_time">Time: %1$s</string>
+    <string name="scheduled_pick_zone">Time zone: %1$s</string>
+    <string name="scheduled_not_selected">Choose…</string>
+    <string name="scheduled_zone_wall_time">Changing the time zone keeps the displayed date and clock time. The actual execution instant changes.</string>
+    <string name="scheduled_recurring_dst">Repeats at this local time. During daylight saving changes, a missing time moves forward by the clock change; a repeated time runs on its first occurrence.</string>
+    <string name="scheduled_dst_gap">This local time does not exist because the clock moves forward. Choose another time.</string>
+    <string name="scheduled_dst_overlap">The clock moves back, so this time occurs twice. Choose which occurrence to use.</string>
+    <string name="scheduled_dst_first">First occurrence — before the clock change (%1$s)</string>
+    <string name="scheduled_dst_second">Second occurrence — after the clock change (%1$s)</string>
+    <string name="scheduled_exact_time">Execution time: %1$s</string>
+    <string name="scheduled_zone_search">Search city or time zone</string>
+    <string name="scheduled_zone_device">Use device time zone (%1$s)</string>
+    <string name="scheduled_zone_selected">Selected: %1$s</string>
+    <string name="scheduled_zone_no_matches">No matching time zones.</string>
+    <string name="scheduled_frequency_unsupported">This editor does not support “%1$s”. The existing schedule has not been changed. Choose a supported frequency to replace it.</string>
+</resources>

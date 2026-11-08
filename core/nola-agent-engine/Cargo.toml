@@ -1,0 +1,18 @@
+[package]
+name = "nola_agent_engine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nola_domain = { path = "../nola-domain" }
+nola_kernel = { path = "../nola-kernel" }
+nola_host_protocol = { path = "../nola-host-protocol" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+regex = "1.10"
+unicode-segmentation = "1.13"
+uuid = { version = "1.4", features = ["v4"] }
+sha2 = "0.10"
+hex = "0.4"
+md5 = "0.7"

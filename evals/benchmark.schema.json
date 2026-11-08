@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nola.local/schemas/external-benchmark-v1.json",
+  "title": "Nola external benchmark manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "name", "variant", "upstream", "selection", "cases"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "name": {"enum": ["longmemeval", "terminal-bench"]},
+    "variant": {"type": "string", "minLength": 1},
+    "upstream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "revision", "artifact_sha256", "license_spdx", "license_files"],
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "revision": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1},
+        "artifact_kind": {"type": "string", "minLength": 1},
+        "download_url": {"type": "string", "minLength": 1},
+        "artifact_path": {"type": "string", "minLength": 1},
+        "artifact_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "code_repository": {"type": "string", "minLength": 1},
+        "code_revision": {"type": "string", "minLength": 1},
+        "license_spdx": {"type": "string", "minLength": 1},
+        "license_files": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/file"}
+        }
+      }
+    },
+    "selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "seed", "count"],
+      "properties": {
+        "method": {"type": "string", "minLength": 1},
+        "seed": {"type": ["integer", "string"]},
+        "count": {"const": 20},
+        "tree_hash_algorithm": {"type": "string", "minLength": 1},
+        "source_pool_count": {"const": 66},
+        "category_quotas": {
+          "type": "object",
+          "additionalProperties": {"type": "integer", "minimum": 1}
+        },
+        "difficulty_policy": {
+          "type": "object",
+          "additionalProperties": {"type": "string", "minLength": 1}
+        },
+        "by_question_type": {
+          "type": "object",
+          "additionalProperties": {"type": "integer", "minimum": 1}
+        },
+        "abstention_count": {"type": "integer", "minimum": 0},
+        "abstention_distinct_question_types": {"type": "integer", "minimum": 0},
+        "non_abstention_per_question_type": {"type": "integer", "minimum": 0},
+        "by_category": {
+          "type": "object",
+          "additionalProperties": {"type": "integer", "minimum": 1}
+        },
+        "by_difficulty": {
+          "type": "object",
+          "additionalProperties": {"type": "integer", "minimum": 1}
+        }
+      }
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 20,
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "source_path", "sha256"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "source_path": {"type": "string", "minLength": 1},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "question_type": {"type": "string", "minLength": 1},
+          "is_abstention": {"type": "boolean"},
+          "category": {"type": "string", "minLength": 1},
+          "subcategory": {"type": "string", "minLength": 1},
+          "difficulty": {"type": "string", "minLength": 1},
+          "expert_time_estimate_hours": {"type": "number", "exclusiveMinimum": 0},
+          "required_files": {
+            "type": "array",
+            "items": {"$ref": "#/$defs/requiredFile"}
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"name": {"const": "longmemeval"}}},
+      "then": {
+        "properties": {
+          "selection": {
+            "required": [
+              "by_question_type",
+              "abstention_count",
+              "abstention_distinct_question_types",
+              "non_abstention_per_question_type"
+            ]
+          },
+          "cases": {
+            "items": {"required": ["question_type", "is_abstention"]}
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"name": {"const": "terminal-bench"}}},
+      "then": {
+        "properties": {
+          "selection": {
+            "required": [
+              "tree_hash_algorithm",
+              "source_pool_count",
+              "category_quotas",
+              "by_category",
+              "by_difficulty"
+            ]
+          },
+          "cases": {
+            "items": {"required": ["category", "difficulty", "required_files"]}
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "requiredFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "role"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "role": {"enum": ["descriptor", "environment", "tests", "solution"]}
+      }
+    }
+  }
+}

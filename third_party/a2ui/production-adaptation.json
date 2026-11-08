@@ -1,0 +1,189 @@
+{
+  "wire_version": "v0.9.1",
+  "upstream_commit": "d0345eeb52c4c84871c82c4f9c0e43f078ac3ffc",
+  "production_root": "web/frontend/src/vendor/a2ui-svelte",
+  "patch": "production-adaptation.patch",
+  "patch_sha256": "be714a45077eb1e55a75e624b2f56de76062deb1e9b6892a4d31928c74446b23",
+  "files": [
+    {
+      "path": "ADAPTATION.md",
+      "sha256": "8e0dec2904dca354d8a3bf34ebaf87ea987814afe86c32e7d28b85235858cdbd",
+      "source": null,
+      "source_sha256": null
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "32a5f32e9b26ba4b37d72dca8d40631fb3541b3ec3a84261b248745347ed9a5f",
+      "source": "third_party/a2ui/svelte/LICENSE",
+      "source_sha256": "32a5f32e9b26ba4b37d72dca8d40631fb3541b3ec3a84261b248745347ed9a5f"
+    },
+    {
+      "path": "catalog/basic/AudioPlayer.svelte",
+      "sha256": "a4ca447d7bf5eadcf0a1adc23e84b382e59786b47abdb364bb4d094bc4a93985",
+      "source": "third_party/a2ui/svelte/src/lib/catalog/basic/AudioPlayer.svelte",
+      "source_sha256": "a4ca447d7bf5eadcf0a1adc23e84b382e59786b47abdb364bb4d094bc4a93985"
+    },
+    {
+      "path": "catalog/basic/Button.svelte",
+      "sha256": "c97229edb32934353698afa9b491f88c7d5539cbb59b7e01eccc68e83f8831e8",
+      "source": "third_party/a2ui/svelte/src/lib/catalog/basic/Button.svelte",
+      "source_sha256": "2b241159400bd1f5b13d2c60e6a7d3e2ebf90f29e24852e0a785dee4813c6131"
+    },
+    {
+      "path": "catalog/basic/Card.svelte",
+      "sha256": "dbc375c365a9da8aaeda73e94f7173386f3cc68c6ba9e31ef47c4c2ded008c72",
+      "source": "third_party/a2ui/svelte/src/lib/catalog/basic/Card.svelte",
+      "source_sha256": "dbc375c365a9da8aaeda73e94f7173386f3cc68c6ba9e31ef47c4c2ded008c72"
+    },
+    {
+      "path": "catalog/basic/CheckBox.svelte",
+      "sha256": "155388e29b74ac3b17fca5174efecc1d559b691496688d72047aacb6db48aeba",
+      "source": "third_party/a2ui/svelte/src/lib/catalog/basic/CheckBox.svelte",
+      "source_sha256": "109f19bf6be42e52d8a6aa9feba88eefa367e8b2acf95b6507b9b534b662a4e8"
+    },
+    {
+      "path": "catalog/basic/ChoicePicker.svelte",
+      "sha256": "25c8cbee32ca45f462a0c9b1caa61d67721dc094819e6b4d10570d83fa7737a2",
+      "source": "third_party/a2ui/svelte/src/lib/catalog/basic/ChoicePicker.svelte",
+      "source_sha256": "f4416456a57c9dd38a83b66035df78eb5c2e4174963af240ac71a4a91e7681b1"
+    },
+    {
+      "path": "catalog/basic/Column.svelte",
+      "sha256": "ccd4c849b3ad2bc002975ad11b5b63d1cd503251a31bd7157a9bfab3be4c7d5d",
+      "source": "third_party/a2ui/svelte/src/lib/catalog/basic/Column.svelte",
+      "source_sha256": "ccd4c849b3ad2bc002975ad11b5b63d1cd503251a31bd7157a9bfab3be4c7d5d"
+    },
+    {
+      "path": "catalog/basic/DateTimeInput.svelte",
+      "sha256": "8ff95041987f83451ca988d707e80c286efab477bee10df7d5214eae899ff243",
+      "source": "third_party/a2ui/svelte/src/lib/catalog/basic/DateTimeInput.svelte",
+      "source_sha256": "db26c53ed3f89a017bd24991dacfb96fc3d018f6ce97fc38bc5997e533b59ba8"
+    },
+    {
+      "path": "catalog/basic/Divider.svelte",
+      "sha256": "1ae8ca6b77634ff311406e73786b5f9bb75446d26a1f1320ba16092701d07b32",
+      "source": "third_party/a2ui/svelte/src/lib/catalog/basic/Divider.svelte",
+      "source_sha256": "1ae8ca6b77634ff311406e73786b5f9bb75446d26a1f1320ba16092701d07b32"
+    },
+    {
+      "path": "catalog/basic/Icon.svelte",
+      "sha256": "11778457354f0bb559c976a7b56a656a724975fb3b8bb550699c99c1d935ae70",
+      "source": "third_party/a2ui/svelte/src/lib/catalog/basic/Icon.svelte",
+      "source_sha256": "11778457354f0bb559c976a7b56a656a724975fb3b8bb550699c99c1d935ae70"
+    },
+    {
+      "path": "catalog/basic/Image.svelte",
+      "sha256": "c737181cbe3526f7a1c781329e0b19cd33c75668691cc3be8e866de8cc51291d",
+      "source": "third_party/a2ui/svelte/src/lib/catalog/basic/Image.svelte",
+      "source_sha256": "c737181cbe3526f7a1c781329e0b19cd33c75668691cc3be8e866de8cc51291d"
+    },
+    {
+      "path": "catalog/basic/List.svelte",
+      "sha256": "9eac11982fbf79edbd38e9c6ae04ee0b54863c7ef1a82c2c387ecbd3b0720833",
+      "source": "third_party/a2ui/svelte/src/lib/catalog/basic/List.svelte",
+      "source_sha256": "9eac11982fbf79edbd38e9c6ae04ee0b54863c7ef1a82c2c387ecbd3b0720833"
+    },
+    {
+      "path": "catalog/basic/Modal.svelte",
+      "sha256": "fb67d14d21968c30103dcdb327df4586d1ba6efd58b1e3d23f3172fc8e35fe67",
+      "source": "third_party/a2ui/svelte/src/lib/catalog/basic/Modal.svelte",
+      "source_sha256": "3859cfd6a8ee59b53c49e0359ab66b979ceab641167da6213dbadef2196b3d74"
+    },
+    {
+      "path": "catalog/basic/Row.svelte",
+      "sha256": "bc83f6e489a216df93f46f4e37742c5e45fa729999d123766bab2c9dbcd8899c",
+      "source": "third_party/a2ui/svelte/src/lib/catalog/basic/Row.svelte",
+      "source_sha256": "bc83f6e489a216df93f46f4e37742c5e45fa729999d123766bab2c9dbcd8899c"
+    },
+    {
+      "path": "catalog/basic/Slider.svelte",
+      "sha256": "a4b370cffe2ef0c5acf818e9acda6c174dccaf1c3b4087749acbc441cb0ab861",
+      "source": "third_party/a2ui/svelte/src/lib/catalog/basic/Slider.svelte",
+      "source_sha256": "b94b4b798848246dede54fd75cce04d2355c1e6f1b09572b1a92a600441bd842"
+    },
+    {
+      "path": "catalog/basic/Tabs.svelte",
+      "sha256": "a3ede7244d88fedccc3f2315d684d2f682fa6d07afac6c29bcb83ab4042404c1",
+      "source": "third_party/a2ui/svelte/src/lib/catalog/basic/Tabs.svelte",
+      "source_sha256": "93cf0d4a1a413c5aa7a9490559597a57d469fb80b15140c8961a8ea96a4a5683"
+    },
+    {
+      "path": "catalog/basic/Text.svelte",
+      "sha256": "e01b4b540e0c87bc20d5c83fba5bd71cf1e123eaf14a90ef9553fa5af2ae4008",
+      "source": "third_party/a2ui/svelte/src/lib/catalog/basic/Text.svelte",
+      "source_sha256": "e01b4b540e0c87bc20d5c83fba5bd71cf1e123eaf14a90ef9553fa5af2ae4008"
+    },
+    {
+      "path": "catalog/basic/TextField.svelte",
+      "sha256": "6a8ad7d0b0db945905200029af325932fba96883d92c389b52712ae5055d3981",
+      "source": "third_party/a2ui/svelte/src/lib/catalog/basic/TextField.svelte",
+      "source_sha256": "3ef439edf716a5923a58ebf269ca308d7a05af36071e933f02d212783dd755c9"
+    },
+    {
+      "path": "catalog/basic/ValidationMessages.svelte",
+      "sha256": "7d561251f06c075e198fbc7449ec2f135880254aed6e5c04b515811572dd9b66",
+      "source": "third_party/a2ui/svelte/src/lib/catalog/basic/ValidationMessages.svelte",
+      "source_sha256": "604fe831bec24aeda9da51a6423ee99c3d8f57f04bef41b30edaa08579c2a6f3"
+    },
+    {
+      "path": "catalog/basic/Video.svelte",
+      "sha256": "d222c50a414c7a99665b3d73660fa0364788bcabb3b43b22cb563f5eaf4ad8ac",
+      "source": "third_party/a2ui/svelte/src/lib/catalog/basic/Video.svelte",
+      "source_sha256": "d222c50a414c7a99665b3d73660fa0364788bcabb3b43b22cb563f5eaf4ad8ac"
+    },
+    {
+      "path": "catalog/basic/icons.ts",
+      "sha256": "edfb517ad8ea70798c9adfb6e9c9b958b1286fba601d82d018f572f4c95d5e68",
+      "source": "third_party/a2ui/svelte/src/lib/catalog/basic/icons.ts",
+      "source_sha256": "edfb517ad8ea70798c9adfb6e9c9b958b1286fba601d82d018f572f4c95d5e68"
+    },
+    {
+      "path": "catalog/basic/layout.ts",
+      "sha256": "97e14816ea46ad8395df89e2bb6b3ee45020dde420937fccedd6532379d82c02",
+      "source": "third_party/a2ui/svelte/src/lib/catalog/basic/layout.ts",
+      "source_sha256": "97e14816ea46ad8395df89e2bb6b3ee45020dde420937fccedd6532379d82c02"
+    },
+    {
+      "path": "catalog/basic/markdown.ts",
+      "sha256": "fca42e0bde4836f42335dbb564f6bdd689b402d4d50f410cd89d048a8beac72a",
+      "source": "third_party/a2ui/svelte/src/lib/catalog/basic/markdown.ts",
+      "source_sha256": "bb9e6e305a4a650867b16dd5639fa0929c2ec888ff73485bf4dc19b45f9a11bc"
+    },
+    {
+      "path": "catalog/basic/theme.css",
+      "sha256": "d6058ded28d4e555d270c887381bc96e56ece162f98a294242762a8d8b34100c",
+      "source": "third_party/a2ui/svelte/src/lib/catalog/basic/theme.css",
+      "source_sha256": "d6058ded28d4e555d270c887381bc96e56ece162f98a294242762a8d8b34100c"
+    },
+    {
+      "path": "catalog/types.ts",
+      "sha256": "3cc14d98b69fa416ec38505daa4133c78e271f3fd80f276a618ae8ad6afc1006",
+      "source": "third_party/a2ui/svelte/src/lib/catalog/types.ts",
+      "source_sha256": "f58c7790b4833f4b2ccecb92576f600d812832f121ed08af51338aeb1d9f2e58"
+    },
+    {
+      "path": "render/Node.svelte",
+      "sha256": "9ca65baa01676aac0d7d715928c3494e55d04f130b722e57615389ca59e4d7af",
+      "source": "third_party/a2ui/svelte/src/lib/render/Node.svelte",
+      "source_sha256": "673a7fbb7a94e07de0c4cc1ba60ea1c1650ec11e5ef1f05c4560ebb8c78d51be"
+    },
+    {
+      "path": "render/Slot.svelte",
+      "sha256": "f19c5019cb370f7551f9911de9f45d1f4e2a63c5a825ee0f563a4d39a7319727",
+      "source": "third_party/a2ui/svelte/src/lib/render/Slot.svelte",
+      "source_sha256": "64653b30cd822bfcae1fbcc27e9667259eac67f400421d956caa19ffabb38adb"
+    },
+    {
+      "path": "render/Surface.svelte",
+      "sha256": "3504540f6c25ae3b61cdd5e3ad966178ced5652877d2cf8f86b3ae3980b36d94",
+      "source": "third_party/a2ui/svelte/src/lib/render/Surface.svelte",
+      "source_sha256": "550d3542ffd8adbbb6344825ac5534106850178034555149f66b9584a6c69610"
+    },
+    {
+      "path": "render/context.ts",
+      "sha256": "4f22815550d327dab0499a9fba635aa154c1fa993fe9918b96d3678ffd744698",
+      "source": "third_party/a2ui/svelte/src/lib/render/context.ts",
+      "source_sha256": "2429713797a0593a3da0fb81b237fc4cf6ca671423106b43008db848acf1ede9"
+    }
+  ]
+}

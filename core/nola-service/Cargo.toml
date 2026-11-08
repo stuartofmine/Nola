@@ -1,0 +1,28 @@
+[package]
+name = "nola_service"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "nola-service"
+path = "src/main.rs"
+
+[dependencies]
+nola_application_bootstrap = { path = "../nola-application-bootstrap" }
+nola_application = { path = "../nola-application" }
+nola_domain = { path = "../nola-domain" }
+nola_protocol = { path = "../nola-protocol" }
+serde_json = "1.0"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+nola_host_protocol = { path = "../nola-host-protocol" }
+nola_agent_engine = { path = "../nola-agent-engine" }
+nola_store = { path = "../nola-store" }
+nola_store_port = { path = "../nola-store-port" }
+nola_core = { path = ".." }
+nola_service_client = { path = "../nola-service-client" }
+rusqlite = { version = "0.31", features = ["bundled"] }
+tempfile = "3.12"

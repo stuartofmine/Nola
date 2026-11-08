@@ -1,0 +1,4 @@
+"editor.edit" = "Modifier la source de données";
+"editor.add" = "Ajouter une source de données";
+"editor.validate" = "Valider la source";
+"editor.reopen_required" = "Rouvrez cette source avant de l’enregistrer afin de vérifier sa dernière version.";

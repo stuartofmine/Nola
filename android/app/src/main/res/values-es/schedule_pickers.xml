@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="scheduled_saving">Guardando…</string>
+    <string name="scheduled_save_failed">No se pudo guardar. Tu borrador se conserva; inténtalo de nuevo.</string>
+    <string name="scheduled_save_partial">La tarea se guardó, pero falló la programación. Tu borrador se conserva; vuelve a intentarlo para aplicar el horario.</string>
+    <string name="scheduled_pick_date">Fecha: %1$s</string>
+    <string name="scheduled_pick_time">Hora: %1$s</string>
+    <string name="scheduled_pick_zone">Zona horaria: %1$s</string>
+    <string name="scheduled_not_selected">Elegir…</string>
+    <string name="scheduled_zone_wall_time">Al cambiar la zona horaria se mantienen la fecha y la hora mostradas. El instante real de ejecución cambia.</string>
+    <string name="scheduled_recurring_dst">Se repite a esta hora local. Con los cambios de hora, una hora inexistente se adelanta según el cambio; una hora repetida se ejecuta en su primera aparición.</string>
+    <string name="scheduled_dst_gap">Esta hora local no existe porque el reloj se adelanta. Elige otra hora.</string>
+    <string name="scheduled_dst_overlap">El reloj se atrasa, por lo que esta hora ocurre dos veces. Elige cuál usar.</string>
+    <string name="scheduled_dst_first">Primera aparición — antes del cambio de hora (%1$s)</string>
+    <string name="scheduled_dst_second">Segunda aparición — después del cambio de hora (%1$s)</string>
+    <string name="scheduled_exact_time">Hora de ejecución: %1$s</string>
+    <string name="scheduled_zone_search">Buscar ciudad o zona horaria</string>
+    <string name="scheduled_zone_device">Usar la zona horaria del dispositivo (%1$s)</string>
+    <string name="scheduled_zone_selected">Seleccionada: %1$s</string>
+    <string name="scheduled_zone_no_matches">No hay zonas horarias coincidentes.</string>
+    <string name="scheduled_frequency_unsupported">Este editor no admite «%1$s». El horario existente no se ha modificado. Elige una frecuencia compatible para sustituirlo.</string>
+</resources>

@@ -1,0 +1,122 @@
+import Foundation
+
+@main
+struct MacCoreSourceProjectionHarnessMain {
+    static func main() throws {
+        let location = MacCoreSourceLocation(
+            page: 2,
+            lineStart: 10,
+            lineEnd: 14,
+            section: "Results"
+        )
+        let citation = MacCoreEvidencePart(
+            kind: "citation",
+            id: "citation-part",
+            messageID: "assistant-1",
+            turnID: "turn-1",
+            sourceID: "source-1",
+            citationID: "citation-1",
+            title: "Evidence",
+            uri: "https://www.example.com/evidence",
+            mimeType: "text/html",
+            location: location,
+            range: MacCoreCitationRange(start: 4, end: 12)
+        )
+        let source = MacCoreEvidencePart(
+            kind: "source",
+            id: "source-part",
+            messageID: "assistant-1",
+            turnID: "turn-1",
+            sourceID: "source-1",
+            citationID: nil,
+            title: "Evidence source",
+            uri: "https://example.com/evidence",
+            mimeType: "text/html",
+            location: nil,
+            range: nil
+        )
+        let foreign = MacCoreEvidencePart(
+            kind: "citation",
+            id: "foreign",
+            messageID: "assistant-2",
+            turnID: "turn-2",
+            sourceID: "source-2",
+            citationID: "citation-2",
+            title: "Foreign",
+            uri: "https://foreign.example/test",
+            mimeType: nil,
+            location: nil,
+            range: nil
+        )
+
+        let projected = MacCoreSourceProjection.project(
+            [citation, source, citation, foreign],
+            messageID: "assistant-1",
+            turnID: "turn-1"
+        )
+        try require(projected.count == 1, "citation must deduplicate and exclude foreign ownership")
+        let reference = projected[0]
+        try require(reference.id == "citation-1", "citation identity must remain stable")
+        try require(reference.domain == "example.com", "web domain must be normalized")
+        try require(reference.page == 2 && reference.lineStart == 10 && reference.lineEnd == 14, "location lost")
+        try require(reference.section == "Results", "section lost")
+        try require(reference.rangeStart == 4 && reference.rangeEnd == 12, "citation range lost")
+        guard case .web(let webURL) = reference.destination else {
+            throw Failure("safe HTTPS source was not openable")
+        }
+        try require(webURL.scheme == "https", "wrong web destination")
+
+        let fileSource = MacAssistantSourceReference(
+            id: "file-citation",
+            sourceID: "file-source",
+            citationID: "file-citation",
+            title: "Runtime.swift",
+            uri: "file:///tmp/Nola/Runtime.swift",
+            mimeType: "text/x-swift",
+            page: nil,
+            lineStart: 42,
+            lineEnd: 45,
+            section: "run",
+            rangeStart: nil,
+            rangeEnd: nil
+        )
+        guard case .file(let fileURL, let line) = fileSource.destination else {
+            throw Failure("safe file source was not openable")
+        }
+        try require(fileURL.path == "/tmp/Nola/Runtime.swift" && line == 42, "file location lost")
+
+        for unsafeURI in [
+            "javascript:alert(1)",
+            "https://user:secret@example.com/private",
+            "file://remote-host/tmp/file.swift",
+            "relative/file.swift",
+        ] {
+            let unsafe = MacAssistantSourceReference(
+                id: unsafeURI,
+                sourceID: unsafeURI,
+                citationID: nil,
+                title: "Unsafe",
+                uri: unsafeURI,
+                mimeType: nil,
+                page: nil,
+                lineStart: nil,
+                lineEnd: nil,
+                section: nil,
+                rangeStart: nil,
+                rangeEnd: nil
+            )
+            try require(unsafe.destination == nil, "unsafe URI was openable: \(unsafeURI)")
+        }
+
+        print("Mac Core Source/Citation projection harness passed")
+    }
+
+    private static func require(_ condition: @autoclosure () -> Bool, _ message: String) throws {
+        if !condition() { throw Failure(message) }
+    }
+
+    private struct Failure: Error, CustomStringConvertible {
+        let description: String
+        init(_ description: String) { self.description = description }
+    }
+}

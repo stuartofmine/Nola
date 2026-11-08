@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "fixture_id": "normalized-part-lifecycle-contract-v1",
+  "scenarios": [
+    {
+      "id": "completed",
+      "terminal_event": "turn_completed",
+      "expected_final_text": "Canonical final answer.",
+      "events": [
+        {"sequence":1,"type":"part_updated","update":{"type":"created","part":{"kind":"reasoning","id":"reasoning-completed","message_id":"completed:assistant","turn_id":"completed","title":"Thinking","detail":"","is_complete":false}},"part":{"kind":"reasoning","id":"reasoning-completed","message_id":"completed:assistant","turn_id":"completed","title":"Thinking","detail":"","is_complete":false}},
+        {"sequence":2,"type":"part_updated","update":{"type":"reasoning_delta","part_id":"reasoning-completed","title":null,"detail_delta":"Inspect evidence."},"part":{"kind":"reasoning","id":"reasoning-completed","message_id":"completed:assistant","turn_id":"completed","title":"Thinking","detail":"Inspect evidence.","is_complete":false}},
+        {"sequence":3,"type":"part_updated","update":{"type":"completed","part_id":"reasoning-completed"},"part":{"kind":"reasoning","id":"reasoning-completed","message_id":"completed:assistant","turn_id":"completed","title":"Thinking","detail":"Inspect evidence.","is_complete":true}},
+        {"sequence":4,"type":"part_updated","update":{"type":"created","part":{"kind":"tool","id":"tool-completed","message_id":"completed:assistant","turn_id":"completed","call_id":"call-completed","capability_id":"read_file","title":"read_file","state":"pending","input":{"path":"README.md"},"raw_input":"","permission":null,"output_preview":null,"full_output_ref":null,"artifacts":[],"started_at_ms":null,"finished_at_ms":null}},"part":{"kind":"tool","id":"tool-completed","message_id":"completed:assistant","turn_id":"completed","call_id":"call-completed","capability_id":"read_file","title":"read_file","state":"pending","input":{"path":"README.md"},"raw_input":"","permission":null,"output_preview":null,"full_output_ref":null,"artifacts":[],"started_at_ms":null,"finished_at_ms":null}},
+        {"sequence":5,"type":"part_updated","update":{"type":"tool_state","part_id":"tool-completed","state":"running","title":null,"output_preview":null,"full_output_ref":null,"artifacts":[],"timestamp_ms":10},"part":{"kind":"tool","id":"tool-completed","message_id":"completed:assistant","turn_id":"completed","call_id":"call-completed","capability_id":"read_file","title":"read_file","state":"running","input":{"path":"README.md"},"raw_input":"","permission":null,"output_preview":null,"full_output_ref":null,"artifacts":[],"started_at_ms":10,"finished_at_ms":null}},
+        {"sequence":6,"type":"part_updated","update":{"type":"tool_state","part_id":"tool-completed","state":"completed","title":null,"output_preview":"evidence","full_output_ref":null,"artifacts":[],"timestamp_ms":20},"part":{"kind":"tool","id":"tool-completed","message_id":"completed:assistant","turn_id":"completed","call_id":"call-completed","capability_id":"read_file","title":"read_file","state":"completed","input":{"path":"README.md"},"raw_input":"","permission":null,"output_preview":"evidence","full_output_ref":null,"artifacts":[],"started_at_ms":10,"finished_at_ms":20}},
+        {"sequence":7,"type":"part_updated","update":{"type":"created","part":{"kind":"text","id":"text-completed","message_id":"completed:assistant","turn_id":"completed","text":"","is_complete":false}},"part":{"kind":"text","id":"text-completed","message_id":"completed:assistant","turn_id":"completed","text":"","is_complete":false}},
+        {"sequence":8,"type":"part_updated","update":{"type":"text_delta","part_id":"text-completed","delta":"Canonical final answer."},"part":{"kind":"text","id":"text-completed","message_id":"completed:assistant","turn_id":"completed","text":"Canonical final answer.","is_complete":false}},
+        {"sequence":9,"type":"part_updated","update":{"type":"completed","part_id":"text-completed"},"part":{"kind":"text","id":"text-completed","message_id":"completed:assistant","turn_id":"completed","text":"Canonical final answer.","is_complete":true}},
+        {"sequence":10,"type":"turn_completed"}
+      ]
+    },
+    {
+      "id": "failed",
+      "terminal_event": "turn_failed",
+      "expected_final_text": null,
+      "events": [
+        {"sequence":1,"type":"part_updated","update":{"type":"created","part":{"kind":"tool","id":"tool-failed","message_id":"failed:assistant","turn_id":"failed","call_id":"call-failed","capability_id":"write_file","title":"write_file","state":"pending","input":{"path":"blocked"},"raw_input":"","permission":null,"output_preview":null,"full_output_ref":null,"artifacts":[],"started_at_ms":null,"finished_at_ms":null}},"part":{"kind":"tool","id":"tool-failed","message_id":"failed:assistant","turn_id":"failed","call_id":"call-failed","capability_id":"write_file","title":"write_file","state":"pending","input":{"path":"blocked"},"raw_input":"","permission":null,"output_preview":null,"full_output_ref":null,"artifacts":[],"started_at_ms":null,"finished_at_ms":null}},
+        {"sequence":2,"type":"part_updated","update":{"type":"tool_state","part_id":"tool-failed","state":"running","title":null,"output_preview":null,"full_output_ref":null,"artifacts":[],"timestamp_ms":30},"part":{"kind":"tool","id":"tool-failed","message_id":"failed:assistant","turn_id":"failed","call_id":"call-failed","capability_id":"write_file","title":"write_file","state":"running","input":{"path":"blocked"},"raw_input":"","permission":null,"output_preview":null,"full_output_ref":null,"artifacts":[],"started_at_ms":30,"finished_at_ms":null}},
+        {"sequence":3,"type":"part_updated","update":{"type":"tool_state","part_id":"tool-failed","state":"failed","title":null,"output_preview":"permission denied","full_output_ref":null,"artifacts":[],"timestamp_ms":40},"part":{"kind":"tool","id":"tool-failed","message_id":"failed:assistant","turn_id":"failed","call_id":"call-failed","capability_id":"write_file","title":"write_file","state":"failed","input":{"path":"blocked"},"raw_input":"","permission":null,"output_preview":"permission denied","full_output_ref":null,"artifacts":[],"started_at_ms":30,"finished_at_ms":40}},
+        {"sequence":4,"type":"turn_failed"}
+      ]
+    },
+    {
+      "id": "cancelled",
+      "terminal_event": "turn_cancelled",
+      "expected_final_text": "Partial answer.",
+      "events": [
+        {"sequence":1,"type":"part_updated","update":{"type":"created","part":{"kind":"text","id":"text-cancelled","message_id":"cancelled:assistant","turn_id":"cancelled","text":"","is_complete":false}},"part":{"kind":"text","id":"text-cancelled","message_id":"cancelled:assistant","turn_id":"cancelled","text":"","is_complete":false}},
+        {"sequence":2,"type":"part_updated","update":{"type":"text_delta","part_id":"text-cancelled","delta":"Partial answer."},"part":{"kind":"text","id":"text-cancelled","message_id":"cancelled:assistant","turn_id":"cancelled","text":"Partial answer.","is_complete":false}},
+        {"sequence":3,"type":"part_updated","update":{"type":"completed","part_id":"text-cancelled"},"part":{"kind":"text","id":"text-cancelled","message_id":"cancelled:assistant","turn_id":"cancelled","text":"Partial answer.","is_complete":true}},
+        {"sequence":4,"type":"part_updated","update":{"type":"created","part":{"kind":"tool","id":"tool-cancelled","message_id":"cancelled:assistant","turn_id":"cancelled","call_id":"call-cancelled","capability_id":"bash","title":"bash","state":"pending","input":{"command":"sleep 30"},"raw_input":"","permission":null,"output_preview":null,"full_output_ref":null,"artifacts":[],"started_at_ms":null,"finished_at_ms":null}},"part":{"kind":"tool","id":"tool-cancelled","message_id":"cancelled:assistant","turn_id":"cancelled","call_id":"call-cancelled","capability_id":"bash","title":"bash","state":"pending","input":{"command":"sleep 30"},"raw_input":"","permission":null,"output_preview":null,"full_output_ref":null,"artifacts":[],"started_at_ms":null,"finished_at_ms":null}},
+        {"sequence":5,"type":"part_updated","update":{"type":"tool_state","part_id":"tool-cancelled","state":"running","title":null,"output_preview":null,"full_output_ref":null,"artifacts":[],"timestamp_ms":50},"part":{"kind":"tool","id":"tool-cancelled","message_id":"cancelled:assistant","turn_id":"cancelled","call_id":"call-cancelled","capability_id":"bash","title":"bash","state":"running","input":{"command":"sleep 30"},"raw_input":"","permission":null,"output_preview":null,"full_output_ref":null,"artifacts":[],"started_at_ms":50,"finished_at_ms":null}},
+        {"sequence":6,"type":"part_updated","update":{"type":"tool_state","part_id":"tool-cancelled","state":"cancelled","title":null,"output_preview":"cancelled by user","full_output_ref":null,"artifacts":[],"timestamp_ms":60},"part":{"kind":"tool","id":"tool-cancelled","message_id":"cancelled:assistant","turn_id":"cancelled","call_id":"call-cancelled","capability_id":"bash","title":"bash","state":"cancelled","input":{"command":"sleep 30"},"raw_input":"","permission":null,"output_preview":"cancelled by user","full_output_ref":null,"artifacts":[],"started_at_ms":50,"finished_at_ms":60}},
+        {"sequence":7,"type":"turn_cancelled"}
+      ]
+    }
+  ]
+}

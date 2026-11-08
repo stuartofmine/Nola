@@ -1,0 +1,3270 @@
+/* 简体中文 本地化 */
+"room.title" = "Agent 群聊";
+"room.members" = "成员";
+"room.independent" = "独立上下文";
+"room.left" = "已退出 · 历史保留";
+"room.remove" = "移除";
+"room.add" = "加入 Agent";
+"room.create_agent" = "创建 Agent";
+"room.agent_name" = "Agent 名称";
+"room.use_current_model" = "使用当前模型";
+"room.open" = "打开群聊";
+"room.all" = "所有群聊";
+"room.create" = "创建群聊";
+"room.name" = "群聊名称";
+"room.done" = "完成";
+"room.select_model" = "请先选择一个具体的 API 或本地模型，再创建 Agent。";
+"room.sent_to" = "你 → %@";
+"room.choose_recipient" = "选择收件人";
+"room.close" = "退出群聊视图";
+"app.name" = "Nola";
+"chat.context.metric.occupancy_unknown" = "暂无已提交的上下文用量";
+"chat.context.metric.cache_hit_rate" = "会话缓存命中率";
+"chat.context.metric.cache_reported" = "已报告请求";
+"chat.context.metric.cache_unreported" = "缓存用量未知的请求";
+"common.discard_changes" = "放弃更改？";
+"common.discard" = "放弃更改";
+"common.more" = "更多操作";
+"health.dashboard.day" = "日期";
+"chat.context.partial_save" = "部分更改已保存，其余编辑仍保留。请重试保存以完成。";
+"chat.more_settings.immediate_changes" = "本页修改立即生效。模型参数编辑页有独立的保存按钮。";
+"chat.context.knowledge.draft_footer" = "整理当前会话的事实、决定、约束和未完成事项；点击保存后生效。";
+"scheduled_actions.history.unavailable" = "暂时无法读取执行历史，请在本地存储就绪后重试。";
+"personal.intelligence.clear.failed" = "未能清除学习数据，请在本地存储就绪后重试。";
+"personal.intelligence.load.failed" = "无法读取学习数据，已保留上次结果，请尝试刷新。";
+"model.center.execution_capabilities" = "模型能力";
+"model.execution.hint" = "导入时默认开启工具调用；提供商声明和你的明确设置会覆盖此默认值。";
+"model.execution.tools" = "原生工具调用";
+"model.execution.images" = "图像输入";
+"model.execution.sampling" = "温度与 Top P";
+"model.execution.output_field" = "Chat 输出上限字段";
+"model.execution.output_auto" = "自动选择";
+"app.unit_tests.placeholder" = "Nola 单元测试";
+
+/* 通用 */
+"common.ok" = "确定";
+"common.create" = "创建";
+"common.cancel" = "取消";
+"common.done" = "完成";
+"common.skip" = "跳过";
+"common.next" = "下一步";
+"common.previous" = "上一步";
+"common.close" = "关闭";
+"common.settings" = "设置";
+"common.yes" = "是";
+"common.no" = "否";
+"common.days_count" = "%d天";
+
+/* 引导 */
+"onboarding.welcome.title" = "欢迎使用 Nola";
+"onboarding.welcome.subtitle" = "基于 AI 的摘要与提醒，保护隐私";
+"onboarding.start" = "开始使用";
+"onboarding.complete" = "完成";
+"onboarding.feature.1" = "智能每日报告";
+"onboarding.feature.2" = "个性化提醒";
+"onboarding.feature.3" = "隐私优先的本地 AI";
+"scheduled_actions.options" = "选项";
+"scheduled_actions.advanced_options.title" = "高级选项";
+"scheduled_actions.advanced.manage.title" = "管理定时动作";
+"scheduled_actions.advanced.manage.subtitle" = "高级编辑器、测试、格式、提示词与历史。";
+"scheduled_actions.advanced.edit" = "高级设置";
+"scheduled_actions.delete" = "删除";
+"scheduled_actions.delete.confirm_format" = "确定要删除 \"%1$@\" 吗？";
+"scheduled_actions.schedule.not_set" = "未设置计划";
+"onboarding.feature.4" = "日历无缝集成";
+"onboarding.permission.prompt" = "为生成摘要，Nola 需要访问您的日历、提醒和联系人。";
+
+/* 权限 */
+"permission.contacts.title" = "联系人访问";
+"permission.contacts.description" = "允许 Nola 读取联系人以将人物与事件关联。";
+"permission.contacts.benefit.1" = "个性化提醒";
+"permission.contacts.benefit.2" = "更好的建议";
+"permission.contacts.benefit.3" = "快速关联上下文";
+
+"permission.calendars.title" = "日历访问";
+"permission.calendars.description" = "允许 Nola 读取日历以生成摘要和提醒。";
+"permission.calendars.benefit.1" = "事件摘要";
+"permission.calendars.benefit.2" = "日程洞见";
+"permission.calendars.benefit.3" = "冲突检测";
+
+"permission.reminders.title" = "提醒事项访问";
+"permission.reminders.description" = "允许 Nola 读取提醒事项以将其包含在摘要中。";
+"permission.reminders.benefit.1" = "统一任务列表";
+"permission.reminders.benefit.2" = "更好的提醒";
+"permission.reminders.benefit.3" = "更简单的计划";
+
+"permission.notifications.title" = "通知";
+"permission.notifications.description" = "启用通知以接收摘要和提醒。";
+"permission.notifications.benefit.1" = "及时提醒";
+"permission.notifications.benefit.2" = "可操作的摘要";
+
+/* Data Sources */
+"data_source.contacts.birthday_title" = "%@ 生日";
+"data_source.calendar.untitled_event" = "无标题事件";
+"data_source.reminder.untitled_reminder" = "无标题提醒";
+
+/* URL Fetcher */
+"url_fetcher.json.description" = "检测到 JSON 数据，找到约 %d 个事件";
+"url_fetcher.ical.description" = "检测到 iCalendar (.ics) 数据，找到约 %d 个事件";
+"url_fetcher.rss.description" = "检测到 RSS/Atom 源，找到约 %d 个项目";
+"url_fetcher.html.description" = "检测到 HTML 页面，提取到标题/元数据";
+"url_fetcher.error.parse_failed" = "使用 %@ 格式解析失败或无数据";
+"url_fetcher.error.unknown_format" = "无法识别 URL 数据格式或解析结果为空";
+"url_fetcher.format.json_found" = "使用 JSON 格式解析，找到 %d 个事件";
+"url_fetcher.format.ical_found" = "使用 iCalendar 格式解析，找到 %d 个事件";
+"url_fetcher.format.rss_found" = "使用 RSS 格式解析，找到 %d 个项目";
+"url_fetcher.format.html_found" = "使用 HTML 格式解析，提取到 %d 个事件";
+"permission.notifications.benefit.3" = "快速交互";
+
+"permission.grant" = "授权";
+"permission.granted" = "已授权";
+"permission.denied" = "已拒绝";
+"permission.requesting" = "请求中...";
+"permission.go_to_settings" = "打开设置";
+"permission.can_change_anytime" = "您可以随时在设置中更改此项。";
+
+/* 首页 */
+"home.title" = "首页";
+"home.generate_summary" = "生成摘要";
+"home.empty_state" = "暂无可摘要内容";
+"home.analyzing" = "分析中...";
+"home.section.today" = "今日";
+"home.error.no_events" = "所选时间范围内未找到事件。";
+"home.error.no_important_events" = "未检测到重要事件。";
+"home.error.generation_failed" = "摘要生成失败。";
+"home.error.generation_failed.detail" = "摘要生成失败：%1$@。已展示已抓取的 URL 数据源历史。";
+"home.greeting.morning" = "早上好";
+"home.greeting.noon" = "中午好";
+"home.greeting.afternoon" = "下午好";
+"home.greeting.evening" = "晚上好";
+"home.greeting.night" = "夜深了";
+"home.greeting.generic" = "你好";
+
+"home.permission_alert.title" = "需要权限";
+"home.permission_alert.message" = "Nola 需要权限访问数据以显示摘要。";
+"home.permission_alert.go_to_settings" = "打开设置";
+"home.permission_alert.cancel" = "取消";
+"home.alert.ok" = "确定";
+
+/* 设置 */
+"settings.section.llm" = "LLM 与 API";
+"settings.base_url" = "基本 URL";
+"settings.api_key" = "API 密钥";
+"settings.model" = "模型";
+"settings.save_and_test" = "保存";
+"settings.test_connection" = "测试连接";
+"settings.reset" = "重置";
+"settings.use_dev_env" = "使用开发环境";
+"settings.config_source" = "配置来源";
+"settings.env_debug_title" = "环境变量";
+"settings.dev_env_no_vars" = "未检测到开发环境变量。";
+"settings.dev_env_applied" = "开发环境已应用。";
+"settings.dev_env_partial" = "部分开发环境已应用。";
+
+
+/* 连接测试字符串 */
+"settings.connection.test" = "连接测试";
+"settings.connection.not_tested" = "未测试";
+"settings.connection.testing" = "测试中...";
+"settings.connection.ok.models" = "成功（models=%d）";
+"settings.connection.ok.chat" = "成功（聊天）";
+"settings.echo.testing" = "Echo 校验中...";
+"settings.echo.ok" = "通过";
+"settings.echo.mismatch" = "未回显";
+"settings.connection.unauthorized" = "未授权（401）";
+
+"settings.section.logs" = "日志";
+"settings.log_level" = "日志级别";
+"settings.clear_logs" = "清除日志";
+"settings.no_logs" = "暂无日志";
+
+"settings.logs.title" = "日志";
+"settings.logs.reload" = "刷新";
+"settings.logs.empty.title" = "暂无日志";
+"settings.logs.empty.description" = "应用运行一段时间后，日志会出现在这里。";
+"settings.logs.footer.size_format" = "大小：%@";
+
+"settings.section.data_sources" = "数据来源";
+"settings.data_source.contacts" = "联系人";
+"settings.data_source.calendars" = "日历";
+"settings.data_source.reminders" = "提醒事项";
+"datasource.contacts.subtitle" = "生日和重要联系人";
+"datasource.calendars.subtitle" = "日程和会议";
+"datasource.reminders.subtitle" = "待办任务";
+
+"settings.section.rag" = "RAG（检索）";
+"settings.rag.enable" = "启用 RAG";
+"settings.rag.document_count" = "文档数量";
+"settings.rag.dimension" = "向量维度";
+"settings.rag.coming_soon" = "敬请期待";
+
+"settings.section.data_management" = "数据与导出";
+"settings.export_data" = "导出数据";
+"settings.export.description" = "导出数据为 JSON 格式，清除数据将删除所有设置、使用记录和自定义内容";
+"settings.clear_all_data" = "清除所有数据";
+
+"settings.section.api_keys" = "API 密钥";
+"settings.api_keys.footer" = "配置 Bing 搜索 API 密钥后，可在定时动作中使用 Bing 搜索作为数据源。";
+"settings.bing_web_search.api_key.title" = "Bing Web Search API 密钥";
+"settings.api_key.placeholder" = "输入密钥";
+"settings.verify_receipt.title" = "验证收据";
+"settings.verify_receipt.test_button" = "测试验证收据";
+"settings.verify.success_format" = "成功：uuid=%1$@ 产品=%2$@ 到期=%3$@";
+"settings.verify.error_format" = "错误：%1$@";
+
+/* Settings - additional feedback */
+"settings.export.failed" = "导出数据失败，请重试";
+"settings.clear_all_data.done" = "所有数据已清除。请重启应用以完成重置。";
+"settings.data_management.coming_soon" = "数据管理即将推出";
+
+"settings.section.debug" = "调试";
+"settings.reset_onboarding" = "重置引导";
+
+/* 错误 */
+"error.network.not_connected" = "网络未连接。";
+"error.network.timeout" = "网络请求超时。";
+"error.network.unauthorized" = "未授权（401）。";
+"error.network.rate_limited" = "请求被限流。";
+
+"error.llm.not_configured" = "LLM 未配置。";
+"error.llm.decoding" = "解析 LLM 响应失败。";
+
+
+"error.permission.denied" = "权限被拒绝。";
+"error.no_data" = "无可用数据。";
+
+"conversation_store.error.conversation_not_found_format" = "会话 %1$@ 不存在";
+
+"model_downloader.error.download_cancelled" = "下载已取消";
+"model_downloader.error.file_download_failed_after_retries_format" = "文件 %1$@ 下载失败，已重试 %2$d 次";
+"model_downloader.error.unable_to_open_file" = "无法打开文件";
+
+"cloud_model_setup.error.invalid_url" = "URL 格式不正确";
+"cloud_model_setup.test.success" = "连接测试成功";
+"cloud_model_setup.test.server_error_format" = "服务器错误（%1$d）";
+"cloud_model_setup.test.failed_format" = "连接失败: %1$@";
+
+
+"unified_storage.error.invalid_candidate_index" = "候选索引无效";
+
+"health_data_source.error.deallocated" = "HealthDataSource 已释放";
+
+"notification_orchestrator.error.notification_not_found" = "未找到通知";
+
+"model_downloader.error.no_downloaded_file_found" = "未找到已下载的文件";
+
+/* 警告 */
+"alert.title" = "提示";
+"alert.permission_needed" = "需要权限";
+"alert.permission_message" = "需要权限以访问摘要所需的数据。";
+
+/* 健康与权限补充 */
+"permission.full_access_note" = "⚠️ 系统弹窗时请选择「完全访问」";
+"permission.health.title" = "健康数据（可选）";
+"permission.health.description" = "授权后可将步数、睡眠、心率与锻炼等聚合指标用于每日摘要与健康提醒。";
+"permission.health.benefit.1" = "了解睡眠与活动趋势";
+"permission.health.benefit.2" = "接收基于健康的可执行建议";
+"permission.health.benefit.3" = "隐私优先：数据仅在设备本地处理";
+"permission.health.capability_note" = "⚠️ 如果提示无法访问，请检查 Xcode 项目的 Signing & Capabilities 中是否已添加 HealthKit capability";
+"permission.health.authorization_popup_message" = "已弹出系统授权窗口，仅能通过设置或下次启动查看最终状态。";
+
+"permission.insufficient.title" = "权限不足";
+"permission.insufficient.description" = "当前为「添加和编辑」，需要升级为「完全访问」";
+"permission.upgrade_to_full_access" = "前往设置升级权限";
+
+/* 模型管理 */
+"model.management.title" = "模型管理";
+"model.management.subtitle" = "本地和云端 AI 模型";
+"model.management.current_model_format" = "当前模型：%@";
+"model.management.picker.label" = "模型类型";
+"model.management.picker.all" = "全部模型";
+"model.management.picker.local" = "本地模型";
+"model.management.picker.cloud" = "云端模型";
+
+"model.management.delete.title" = "删除模型";
+"model.management.delete.message_format" = "确定要删除 %@ 吗？此操作无法撤销。";
+
+
+"model.management.source.official" = "官方";
+
+"model.management.delete.success_format" = "已删除模型 %@";
+
+"model.management.local.privacy" = "本地运行";
+"model.management.cloud.features" = "通过 API 连接";
+
+"model.management.no_local_models" = "暂无本地模型";
+"model.management.local.download_hint" = "先下载一个模型开始使用。";
+"model.management.no_cloud_models" = "暂无云端模型";
+"model.management.cloud.setup_hint" = "先添加一个云端模型开始使用。";
+
+
+"model.management.added" = "已添加的模型";
+
+"model.management.local.title" = "本地 AI 模型";
+"model.management.local.offline_note" = "下载后可完全离线使用";
+"model.management.download_model" = "下载模型";
+"model.management.downloaded" = "已下载";
+
+"model.management.cloud.title" = "云端 AI 模型";
+"model.management.cloud.note" = "通过 API 调用，功能更强大";
+"model.management.cloud.add" = "添加云端模型";
+"model.management.configured" = "已配置";
+
+"model.management.test_model" = "测试模型";
+"model.management.save_model" = "保存模型";
+"model.management.testing" = "正在测试...";
+"model.management.test_connection" = "测试连接";
+"model.management.connection_success" = "连接成功 ✓";
+
+"model.management.form.info" = "模型信息";
+"model.management.form.name_placeholder" = "模型名称 (如: DeepSeek)";
+"model.management.form.base_url" = "API 基础 URL";
+"model.management.form.api_key" = "API 密钥";
+"model.management.form.id_placeholder" = "模型 ID (如: deepseek-chat)";
+
+"model.management.form.hint.title" = "提示";
+"model.management.form.hint.url" = "URL 需要包含协议（https://），并在需要时包含版本路径。";
+"model.management.form.hint.id" = "模型 ID 为服务商提供的模型标识（如 gpt-4o-mini）。";
+"model.management.form.hint.api_key" = "如果服务商需要 API 密钥，请在此填写。";
+
+"cloud_model_setup.title.add" = "添加云端模型";
+"cloud_model_setup.title.edit" = "编辑云端模型";
+
+/* 官方模型列表占位 */
+"settings.official_models_endpoint.placeholder" = "官方模型列表 URL (可选)";
+
+"model.management.source.local" = "本地";
+"model.management.source.cloud" = "云端";
+
+/* 设置补充 */
+"settings.sync.server_config" = "同步服务器配置";
+"settings.manage.url_sources" = "管理定时动作";
+"settings.local_llm.daily_limit.title" = "本地 LLM 每日限额";
+"settings.daily_times" = "每天 %1$@ 次";
+"settings.unlimited" = "无限";
+"settings.url_data_source.limit_title" = "定时动作限额";
+"settings.official_backend.access" = "官方后端访问";
+"settings.custom_prompt.description" = "用于指导模型解释数据源格式并生成摘要的自定义 Prompt。";
+"settings.templates.count" = "%1$@ 个模板";
+"settings.section.date_range" = "数据范围设置";
+"settings.range.7days" = "7天";
+"settings.range.30days" = "30天";
+"settings.range.half_year" = "半年";
+"settings.range.one_year" = "一年";
+
+/* 任务 */
+"task.section.task" = "任务";
+"task.section.when" = "何时";
+"task.section.extra" = "其他";
+"task.confirm" = "确认任务";
+"task.ignore" = "忽略";
+
+/* 解析错误 */
+"error.parse_failed" = "解析失败：%1$@";
+
+/* 任务占位 */
+"task.title.placeholder" = "标题";
+"task.notes.placeholder" = "备注";
+"task.toggle.recurring" = "重复";
+"task.date" = "日期";
+"task.date.optional" = "日期（可选）";
+"task.recurrence.rule" = "重复规则";
+"task.related_person.placeholder" = "相关人员";
+"task.amount.placeholder" = "金额";
+"task.save_failed" = "保存任务失败：%1$@";
+
+/* Model Test UI */
+"model.test.title" = "推理测试";
+"model.test.default_prompt" = "请用三个简短要点介绍 Nola 能做什么。";
+"model.test.prompt" = "测试提示词";
+"model.test.metrics" = "指标";
+"model.test.first_token" = "首字延迟";
+"model.test.total_time" = "总耗时";
+"model.test.characters" = "字符数";
+"model.test.output" = "输出";
+"model.test.empty" = "运行模型测试后，输出将在这里显示。";
+"model.test.close" = "关闭";
+"model.test.local_label" = "本地模型";
+"model.test.cloud_label" = "云端 API";
+"model.test.model_select" = "模型选择";
+"model.test.max_tokens" = "最大令牌数";
+"model.test.4k" = "4K";
+"model.test.32k" = "32K";
+"model.test.prompt_label" = "提示词";
+"model.test.preset" = "预设 %d";
+"model.test.task_label" = "任务描述";
+"model.test.result_title" = "生成结果";
+"model.test.generating" = "生成中...";
+"model.test.fill_prompt_and_run" = "填写提示词并点击生成";
+"model.test.stop" = "停止";
+"model.test.run" = "运行";
+"model.test.running" = "运行中...";
+"model.test.explain" = "解释";
+/* MLX / 本地推理 */
+"model.downloaded.status" = "%1$@ 已下载";
+"model.not_downloaded" = "未下载 - 请在模型管理中下载";
+"model.test.max_tokens.value" = "最大令牌数：%d";
+"model.test.temperature.value" = "温度：%.2f";
+"model.parameters.context" = "上下文长度";
+"model.parameters.sampling" = "采样参数";
+"model.parameters.max_length" = "最大长度";
+"model.parameters.top_k" = "Top K";
+"model.parameters.top_p" = "Top P";
+"model.parameters.temperature" = "温度";
+"model.parameters.save" = "保存参数";
+"model.parameters.length_label" = "长度";
+"model.test.sample_instruction" = "将会构造一个小样本输入，并触发本地模型进行推理以生成日程建议。";
+"model.run.local" = "运行本地推理";
+"model.test.generated_items" = "生成事项：";
+"model.local" = "本地";
+"model.priority.format" = "优先级: %.2f";
+"model.inference.time" = "推理时间：%.2fs";
+/* Default prompts for model test view */
+"model.test.default_prompt.1" = "请基于下面候选事件生成今日摘要，输出 JSON 格式 ModelOutput";
+"model.test.default_prompt.2" = "提取候选事件中的重要待办，优先展示最紧急的三项";
+"model.test.default_prompt.3" = "基于候选事件，给出 3 条可执行建议，每条不超过 30 字";
+/* ModelDownload 视图 */
+"model.download.section.sources" = "下载源";
+"model.download.select_source" = "选择下载源";
+"model.source.huggingface" = "Hugging Face（海外）";
+"model.source.modelscope" = "ModelScope（国内）";
+"model.download.section.available" = "可用模型";
+"model.download.section.all" = "全部模型";
+"model.action.use" = "使用";
+"model.action.download" = "下载";
+"model.local_test.title" = "本地推理测试";
+"model.local_test.description" = "验证模型加载与推理性能";
+"model.advanced_test.title" = "高级测试";
+"model.advanced_test.description" = "模型生成和流式测试";
+"model.disk_space.title" = "磁盘空间";
+"model.disk.downloaded_size" = "已下载模型大小";
+"model.delete_all.title" = "删除所有模型";
+"model.notes.title" = "注意事项";
+"model.notes.download_wifi" = "模型文件约 500MB，建议在 Wi‑Fi 环境下下载";
+"model.notes.saved" = "下载后模型将保存在应用缓存中";
+"model.notes.delete_space" = "可随时删除模型以释放空间";
+"model.notes.source_suggestion" = "国内用户建议使用 ModelScope 源";
+
+/* 模型状态 */
+"model.status.not_downloaded" = "未下载";
+"model.status.failed" = "下载失败";
+"model.status.paused" = "已暂停";
+"model.status.ready" = "就绪";
+"model.status.configured" = "已配置";
+"model.downloaded.count" = "%d 个模型已下载";
+
+/* 模型来源前缀 */
+"model.source.origin_format" = "来源：%@";
+/* 主页 / 主 Tab */
+"model.not_selected" = "未选择模型";
+"home.updated_at" = "更新于 %@";
+"home.refresh" = "刷新";
+"home.generating_in_progress" = "正在为您生成今日摘要...";
+"home.summary.title" = "智能摘要";
+"home.summary.items.count" = "%d 项";
+"home.no_todos.title" = "暂无待办事项";
+"home.no_todos.message" = "享受轻松的一天！\n点击右上角刷新按钮生成今日智能摘要";
+"item.actionable" = "可操作";
+"item.time.label" = "时间：";
+"notification.view.details" = "查看通知详情";
+/* Notification 详情视图 */
+"notification.loading" = "加载中...";
+"notification.pending.title" = "待发送通知";
+"notification.scheduled.notice" = "该通知已安排，届时将自动发送。您可以提前标记为已处理以取消发送。";
+"notification.mark.handled" = "标记为已处理";
+"notification.cancel.confirm" = "此操作将取消该通知的发送，并将其标记为已完成。";
+"notification.open.raw" = "打开原始内容";
+"notification.view_in_browser" = "在浏览器中查看完整内容";
+"notification.details" = "详细信息";
+"notification.content.unavailable" = "内容不可用";
+"notification.content.removed" = "这项内容已被移除或暂时无法加载";
+"notification.marked.handled" = "已标记为已处理";
+"notification.cancelled" = "通知已取消发送";
+"notification.undo" = "撤销";
+"notification.priority" = "优先级";
+"notification.priority.format" = "%d%% 重要度";
+"notification.ai_summary.title" = "AI 智能摘要";
+"notification.ai_summary.desc" = "该摘要由人工智能根据您的日程、提醒和其他数据自动生成";
+"notification.suggested_actions" = "建议操作";
+"notification.tap_summary_action" = "点击此摘要可执行相关操作";
+"notification.about_summary.title" = "关于智能摘要";
+"notification.about_summary.desc" = "摘要会根据您的日程安排、待办事项、健康数据等信息智能生成，帮助您更好地规划每一天。";
+/* Prompt templates */
+"prompt.current" = "当前使用";
+"prompt.builtin" = "内置模板";
+"prompt.custom" = "自定义模板";
+"prompt.variables" = "可用变量：";
+"prompt.use" = "使用";
+"prompt.view" = "查看";
+"prompt.save_as_template" = "保存为新模板";
+"prompt.estimate.tokens" = "约 %d tokens";
+"prompt.warning" = "警告";
+"prompt.basic.info" = "基本信息";
+"prompt.title" = "Prompt 模板";
+"prompt.templates.title" = "Prompt 模板";
+"prompt.templates.section.current" = "当前使用";
+"prompt.templates.section.builtin_count" = "内置 · %@";
+"prompt.templates.section.custom" = "自定义";
+"prompt.templates.section.custom_detail" = "自定义模板可以随时编辑、复制或删除。";
+"prompt.templates.search" = "搜索模板";
+"prompt.templates.add" = "添加模板";
+"prompt.templates.empty.title" = "还没有模板";
+"prompt.templates.empty.message" = "为经常处理的工作创建一套可复用指令。";
+"prompt.templates.search.empty.title" = "没有匹配的模板";
+"prompt.templates.search.empty.message" = "尝试其他名称、描述、语言或指令内容。";
+"prompt.templates.search.clear" = "清除搜索";
+"prompt.templates.delete.title" = "删除提示词模板？";
+"prompt.templates.delete.detail" = "此操作无法撤销。";
+"prompt.templates.selected" = "已选择";
+"prompt.templates.variables" = "可用变量：";
+"prompt.templates.builtin" = "内置";
+"prompt.templates.use" = "使用";
+"common.preview" = "预览";
+"common.edit" = "编辑";
+"common.copy" = "复制";
+"common.delete" = "删除";
+"common.save" = "保存";
+
+/* Prompt templates - additional */
+"prompt.content.title" = "Prompt 内容";
+"prompt.template.new_title" = "新建模板";
+"prompt.template.edit_title" = "编辑模板";
+"autogen.PromptTemplateService.default_summary_name" = "默认摘要模板";
+"autogen.PromptTemplateService.summary_name" = "摘要模板";
+"autogen.PromptTemplateService.summary_description" = "用于文本或事件内容的压缩性摘要";
+"autogen.PromptTemplateService.reminder_name" = "提醒模板";
+"autogen.PromptTemplateService.reminder_description" = "用于从事件中生成可用于通知/提醒的结构化项";
+"common.name" = "名称";
+"common.description" = "描述";
+
+"settings.local_data_size" = "本地数据大小";
+"chat.title" = "对话";
+"chat.conversation.default_title" = "会话";
+"chat.conversation.recovered_title" = "会话（已恢复）";
+"chat.task_acknowledgement" = "我已识别到这是一个任务指令，已为您解析——我会在回复下方显示确认卡，请核对并保存。";
+"chat.error.no_model_selected" = "未选择任何模型";
+"chat.error.unknown" = "未知错误";
+"chat.error.failed_to_load_local_model_format" = "本地模型加载失败：%1$@";
+"chat.error.failed_to_process_message_format" = "消息处理失败：%1$@";
+"chat.error.failed_to_create_conversation_format" = "创建会话失败：%1$@";
+"chat.error.failed_to_append_message_format" = "添加消息失败：%1$@";
+"chat.empty.title" = "开始对话";
+"chat.empty.subtitle" = "向我提问或告诉我需要提醒的事项";
+"chat.empty.mode.device" = "已在本机就绪，适合写作、规划和设备操作。";
+"chat.empty.mode.host" = "已连接到 Mac，可使用项目工具并处理长任务。";
+"chat.empty.mode.hybrid" = "Mac 可协调任务，并在获得允许后请求此设备执行操作。";
+"chat.empty.mode.cloud" = "正在使用所选云端模型进行对话和分析。";
+"chat.attachments.partial_failure" = "有 %d 个所选文件无法导入，其他文件已就绪。";
+"chat.input.placeholder" = "说点什么...";
+"chat.send" = "发送";
+"chat.clear.title" = "清除会话";
+"chat.clear.message" = "确定要清除当前会话的所有消息和本地存储吗？您可在 5 分钟内撤销。";
+"chat.clear.action" = "清除";
+"chat.cleared.title" = "会话已清除";
+"chat.cleared.message" = "已清除会话。您可以选择撤销以恢复最近删除的对话（有效期 5 分钟）。";
+"chat.undo.action" = "撤销";
+"chat.new_conversation_prompt" = "新建对话";
+"chat.new_conversation_message" = "要创建新的对话吗？";
+"data_sources.title" = "数据源";
+"common.back" = "返回";
+
+/* Home feature tiles and descriptions */
+"home.section.custom_data_sources" = "自定义数据源";
+"home.feature.urls.title" = "定时动作";
+"home.feature.urls.count" = "%d 个数据源";
+"home.feature.drugs.title" = "药物查询";
+"home.feature.drugs.subtitle" = "离线药物索引与快速说明";
+"home.section.ai_config" = "AI 配置";
+"home.feature.prompt_templates.title" = "Prompt 模板";
+"home.feature.health.title" = "健康";
+"home.feature.health.subtitle" = "步数 / 睡眠 / 心率 / 锻炼 的聚合摘要";
+"home.mode.current" = "当前模式";
+"home.mode.local.label" = "本地模式";
+"home.mode.cloud.label" = "云端模式";
+"home.mode.local.description" = "本地模式提供基础的事件排序功能，无需配置 API。下载 AI 模型后可启用完全离线的智能摘要。";
+"home.downloaded.label" = "已下载:";
+"home.downloaded.models.count" = "%d 个模型";
+"home.manage.local_models" = "管理本地模型";
+"home.manage.local_models.subtitle" = "下载、更新或删除模型";
+"home.download.info" = "下载本地 AI 模型（约 481 MB）后，即可使用完整的智能摘要功能，无需网络连接。";
+"home.api.configuration" = "API 配置";
+"home.advanced_tests.title" = "高级测试";
+"home.advanced_tests.subtitle" = "支持本地和云端模型";
+"home.start_test.title" = "开始测试";
+"home.start_test.subtitle" = "模型生成和流式测试";
+"home.advanced_tests.desc" = "对模型进行生成和流式测试，支持自定义 Prompt、参数调整及 API 配置。";
+"home.testing_in_progress" = "测试中...";
+
+/* Model status */
+"model.status.downloading" = "正在下载模型文件...";
+"model.status.available_offline" = "可离线使用";
+"model.status.need_download" = "需要下载才能离线使用";
+
+/* Generic connection */
+"settings.connection.failed" = "连接失败";
+"history.details.title" = "历史详情";
+"home.section.tools" = "测试工具";
+
+/* URL 数据源使用格式 */
+"urlsources.usage_format" = "%1$d/%2$d";
+
+/* 模型删除确认 */
+"model.delete.confirm_single" = "确定要删除 \"%1$@\" 吗？删除后需要重新下载才能使用。";
+"model.delete.confirm_all" = "确定要删除所有已下载的模型吗？";
+
+/* 模型下载帮助文本 */
+"model.download.progress_format" = "%d%%";
+"model.download.byte_progress_format" = "%1$@ / %2$@";
+"model.download.speed_format" = "速度：%1$@";
+"model.download.size_format" = "大小：%1$@";
+/* 模型删除对话 */
+"model.delete.title" = "删除模型";
+"model.delete.cancel" = "取消";
+"model.delete.confirm" = "删除";
+
+/* 模型下载可用性 */
+"model.download.available_offline" = "已下载，可离线使用";
+"model.download.incomplete" = "文件不完整，请删除后重新下载";
+/* 时间轴 / 其它 */
+"timeline.added_time" = "添加时间";
+"timeline.scheduled_notification" = "计划通知";
+"notification.confirm_mark.title" = "确定要标记为已处理吗？";
+"notification.notes.title" = "备注";
+/* Chat */
+"chat.no_model_configured" = "请先下载本地模型或配置云端模型，然后再使用对话功能。";
+"chat.ai_thinking" = "AI 正在思考...";
+"chat.retrieval_in_progress" = "联网检索中…";
+"chat.thinking.short" = "思考过程";
+"chat.thinking.process" = "思考过程";
+"chat.state.idle" = "准备就绪";
+"chat.state.loading_local" = "正在加载本地模型...";
+"chat.state.processing_local" = "本地模型推理中...";
+"chat.state.processing_cloud" = "云端模型推理中...";
+"chat.state.streaming_format" = "处理中 (%d%%)";
+"chat.state.error_format" = "错误: %1$@";
+"chat.state.completed" = "完成";
+"model.no_available.title" = "没有可用的模型";
+"model.go_download" = "去下载";
+"chat.select_model_prompt" = "请先选择一个模型";
+
+
+
+
+
+/* URL 数据源 */
+"urlsources.empty.title" = "暂无定时动作";
+"urlsources.empty.subtitle" = "添加自定义 URL，按计划抓取并生成报告";
+"urlsources.usage_label" = "已用/总数";
+"urlsources.navigation.title" = "定时动作";
+"urlsources.delete.title" = "删除动作";
+"urlsources.delete.cancel" = "取消";
+"urlsources.delete.confirm" = "删除";
+
+"urlsources.detected_format" = "检测到：%1$@";
+"urlsources.format.auto_detect" = "自动";
+"urlsources.data_type.title" = "数据类型";
+"urlsources.data_type.will_detect" = "将在验证时自动检测数据类型";
+"urlsources.data_type.will_use_format" = "将使用 %1$@ 格式解析数据";
+"urlsources.section.validation" = "数据源验证";
+"urlsources.validation.ready_note" = "数据源已就绪，可以保存使用";
+"urlsources.validation.failure_note" = "请检查URL是否正确或网络连接";
+"urlsources.user_prompt.placeholder_examples" = "例如：提取NBA球队排名前5名的队伍及其胜率（把最终结果放在 {{...}} 中）\n或：总结这个页面的重要新闻标题（把最终结果放在 {{...}} 中）";
+"urlsources.user_prompt.help" = "为AI提供处理指引：告诉它关注什么信息、如何总结内容。如果不填写，AI会自动提取页面关键信息。";
+"urlsources.section.model_selection" = "模型选择";
+"urlsources.section.test" = "测试数据源";
+"urlsources.testing" = "测试中...";
+"urlsources.test.note" = "测试将获取数据并通过AI生成摘要";
+"urlsources.validating" = "验证中...";
+"urlsources.validate" = "验证 URL";
+"urlsources.validate.success" = "验证成功：找到 %d 个事件";
+"urlsources.validate.failure" = "%1$@";
+"urlsources.max_limit_reached" = "已达到允许的最大定时动作数量（%1$@）。如需更多，请联系支持。";
+"urlsources.url_empty" = "URL 为空";
+"urlsources.fetcher_unavailable" = "无法访问 URLFetcher";
+
+/* 后台刷新 */
+"background_refresh.section.title" = "后台刷新";
+"background_refresh.disabled.message" = "系统已禁用或限制后台 App 刷新，定时动作可能无法在后台按时执行。";
+"background_refresh.open_settings" = "打开系统设置";
+"background_refresh.hint" = "可在 设置 > 通用 > 后台 App 刷新 中开启（全局 + 本应用），必要时关闭低电量模式。";
+"background_refresh.low_power_mode_note" = "已开启低电量模式，iOS 可能进一步限制后台活动。";
+
+/* 准点推送 */
+
+
+"urlsources.test.run" = "测试：立即执行完整流程并显示输出";
+"urlsources.test.push_toggle" = "推送测试通知";
+"urlsources.test.push_note" = "启用后，测试运行将根据模型输出触发一次通知（仅用于验证）。";
+"urlsources.test.output_title" = "测试输出";
+"urlsources.copy" = "复制";
+"urlsources.edit.title" = "编辑定时动作";
+"urlsources.add.title" = "添加定时动作";
+"urlsources.action.save" = "保存";
+"urlsources.action.add" = "添加";
+
+"urlsources.delete.message" = "确定要删除 \"%1$@\" 吗？";
+
+/* 数据源详情 */
+"data_source_detail.section.permission_settings" = "权限设置";
+"data_source_detail.open_system_settings" = "打开系统设置";
+"data_source_detail.section.control" = "数据源控制";
+"data_source_detail.enable_toggle" = "启用数据源";
+"data_source_detail.refreshing" = "刷新中...";
+"data_source_detail.refresh_now" = "立即刷新数据";
+"data_source_detail.section.health_overview" = "健康数据概览";
+"data_source_detail.section.info" = "数据源信息";
+"data_source_detail.info.type" = "类型";
+"data_source_detail.info.supported_events" = "支持的事件";
+"data_source_detail.info.event_count" = "当前事件数";
+"data_source_detail.info.last_updated" = "上次更新";
+"data_source_detail.section.usage" = "使用说明";
+"data_source_detail.section.error" = "错误信息";
+"data_source_detail.permission_alert.title" = "权限提示";
+"data_source_detail.permission_alert.message_format" = "需要授权访问%1$@才能使用此数据源";
+"data_source_detail.error_alert.title" = "错误";
+"data_source_detail.error_unknown" = "未知错误";
+"data_source_detail.error.health_not_initialized" = "健康数据源未初始化";
+"data_source_detail.error.fetch_failed_format" = "获取数据失败：%1$@";
+"data_source_detail.error.fetch_health_metrics_failed_format" = "获取健康指标失败：%1$@";
+"data_source_detail.status.disabled" = "已禁用";
+"data_source_detail.status.ok" = "运行正常";
+"data_source_detail.status.insufficient" = "权限不足";
+"data_source_detail.status.denied" = "权限被拒绝";
+"data_source_detail.status.needs_auth" = "需要授权";
+"data_source_detail.stat.permission_status" = "权限状态";
+"data_source_detail.stat.source" = "数据源";
+"data_source_detail.stat.enabled" = "已启用";
+"data_source_detail.stat.disabled" = "已禁用";
+"data_source_detail.stat.event_count" = "事件数";
+"data_source_detail.last_updated_prefix_format" = "上次更新：%1$@";
+"data_source_detail.permission.access_title" = "访问权限";
+"data_source_detail.permission.request_button" = "请求授权";
+"data_source_detail.health_metric.steps" = "步数";
+"data_source_detail.health_metric.heart_rate" = "心率";
+"data_source_detail.health_metric.sleep" = "睡眠";
+"data_source_detail.health_metric.workout" = "锻炼";
+"health.dashboard.today" = "今日";
+"health.dashboard.steps" = "步数";
+"health.dashboard.distance" = "距离";
+"health.dashboard.active_energy" = "活动能量";
+"health.dashboard.exercise" = "锻炼";
+"health.dashboard.last_7_days" = "近 7 天";
+"health.dashboard.latest_heart_rate" = "最新心率";
+"health.dashboard.resting_heart_rate" = "静息心率";
+"health.dashboard.recent_sleep" = "最近睡眠";
+"health.dashboard.recent_workout" = "最近训练";
+"health.dashboard.no_recent_data" = "暂无近期数据";
+"health.dashboard.no_workout_30_days" = "近 30 天没有训练记录";
+"health.dashboard.no_readable_data" = "暂时没有可读取的健康数据。";
+"health.dashboard.reading" = "正在读取最新健康数据…";
+"health.dashboard.status.updated" = "已更新";
+"health.dashboard.status.needs_access" = "需要授权";
+"health.dashboard.status.unavailable" = "不可用";
+"health.dashboard.summary_format" = "今日 %1$@ 步 · %2$@ 千卡";
+"health.dashboard.value_bpm_format" = "%@ 次/分";
+"health.dashboard.value_hours_format" = "%@ 小时";
+"health.dashboard.value_minutes_format" = "%@ 分钟";
+"home.health.average_7d" = "7 日均值";
+"home.health.unit.bpm" = "次/分";
+"home.health.unit.hours" = "小时";
+"home.health.unit.minutes" = "分钟";
+"chat.host_tool.name.command" = "运行命令";
+"chat.host_tool.name.read_file" = "读取文件";
+"chat.host_tool.name.write_file" = "写入文件";
+"chat.host_tool.name.edit_file" = "编辑文件";
+"chat.host_tool.name.delete_file" = "删除文件";
+"chat.host_tool.name.list_folder" = "浏览目录";
+"chat.host_tool.name.search_files" = "搜索文件";
+"chat.host_tool.name.workspace" = "检查工作区";
+"chat.host_tool.name.changes" = "检查变更";
+"chat.host_tool.name.project_overview" = "查看项目概览";
+"chat.host_tool.name.web_search" = "联网搜索";
+"chat.host_tool.name.web_read" = "读取网页";
+"chat.host_tool.name.read_output" = "读取工具输出";
+"chat.host_tool.name.search_tools" = "搜索工具";
+"chat.host_tool.name.memory" = "管理记忆";
+"chat.host_tool.name.subtask" = "执行子任务";
+"chat.host_tool.name.plan" = "更新计划";
+"chat.host_tool.name.time" = "读取系统时间";
+"chat.host_tool.name.browser" = "控制浏览器";
+"chat.host_tool.name.computer" = "操作电脑";
+"chat.host_tool.name.skill" = "使用技能";
+"chat.host_tool.name.mcp" = "调用 MCP";
+"chat.host_tool.name.background" = "后台任务";
+"chat.host_tool.name.clipboard" = "使用剪贴板";
+"chat.host_tool.name.calendar" = "使用日历";
+"chat.host_tool.name.location" = "读取位置";
+"chat.host_tool.name.generic" = "工具";
+"chat.host_tool.name.unknown_format" = "工具 · %@";
+"health.dashboard.value_energy_date_format" = "%1$@ 千卡 · %2$@";
+"health.dashboard.unit.steps" = "步";
+"health.dashboard.unit.km" = "公里";
+"health.dashboard.unit.kcal" = "千卡";
+"health.dashboard.unit.min" = "分钟";
+"health.dashboard.error.unavailable" = "此设备无法使用健康数据。";
+"permission.status.not_requested" = "尚未请求";
+"chat.attachment.extraction.docx" = "DOCX 文本";
+"chat.attachment.image_reference" = "已附加图片，可用于视觉分析。";
+"chat.attachment.extraction.image" = "图片";
+"chat.attachment.extraction.local_text" = "本地文本";
+"chat.attachment.extraction.web_host" = "宿主机解析";
+"chat.attachment.extraction.unavailable" = "文本不可用";
+"chat.attachment.extraction.pdf_ocr" = "PDF 文本 + OCR";
+"chat.attachment.extraction.pdf_text" = "PDF 文本";
+"chat.attachment.warning.web_host_failed" = "宿主机解析失败：%@";
+"chat.attachment.warning.web_host_required" = "此格式需要连接宿主机后才能提取文本。";
+"chat.attachment.warning.ocr_page_limit" = "有 %d 个扫描页未进行 OCR 识别。";
+"chat.attachment.warning.pdf_page_limit" = "有 %d 个 PDF 页面未处理。";
+"chat.attachment.warning.no_pdf_text" = "此 PDF 中未找到可读取的文本。";
+"chat.attachment.warning.text_truncated" = "提取文本已缩短，以适应对话上下文。";
+"chat.attachment.error.not_regular" = "所选项目不是普通文件。";
+"chat.attachment.error.file_too_large_format" = "文件超过 %d MB 的附件大小限制。";
+"chat.attachment.error.web_host_file_too_large_format" = "文件超过宿主机解析的 %d MB 限制，但仍可尝试本地解析。";
+"chat.attachment.error.invalid_pdf" = "无法打开此 PDF。";
+"chat.attachment.error.unreadable_text" = "文件中没有可读取的文本。";
+"chat.attachment.error.image_normalization_failed" = "无法处理此图片以供上传。";
+"office.docx.error.invalid_archive" = "DOCX 文件结构无效。";
+"office.docx.error.missing_body" = "DOCX 缺少文档正文。";
+"office.docx.error.encrypted" = "无法在本地解析加密的 DOCX。";
+"office.docx.error.unsupported_compression" = "DOCX 使用了不支持的压缩格式。";
+"office.docx.error.decompression_failed" = "无法解压 DOCX 正文。";
+"office.docx.error.part_too_large" = "DOCX 中的文档片段过大。";
+"office.docx.error.invalid_xml" = "DOCX 文档 XML 无效。";
+"office.docx.error.no_text" = "DOCX 中没有可读取的文本。";
+
+/* 相对时间 */
+"relative.just_now" = "刚刚";
+"relative.minutes_ago" = "%d 分钟前";
+"relative.hours_ago" = "%d 小时前";
+"relative.days_ago" = "%d 天前";
+"settings.calendar.range.description" = "设置日历、提醒事项和生日的查询范围";
+"settings.section.notifications" = "通知设置";
+"settings.notification.daily" = "每日";
+"settings.notification.weekly" = "每周";
+"settings.notification.immediate" = "立即";
+"settings.silent_period.title" = "静默时段设置";
+"settings.start_time" = "开始时间";
+"settings.end_time" = "结束时间";
+"settings.birthday_lead.title" = "生日提醒提前";
+"settings.reminder_lead.title" = "待办提醒提前";
+"settings.lead_control.description" = "控制生日和待办事项的提前提醒天数";
+"settings.enable_notifications" = "启用通知";
+"settings.enable_step_reminders" = "启用步数提醒";
+"settings.enable_step_reminders.note" = "关闭后，步数分析将不再触发提醒通知。";
+"settings.calendar_notifications.aggregate.title" = "整合周期内日历事项推送";
+"settings.calendar_notifications.aggregate.description" = "开启后，同一提醒周期内的多个日历事项将合并为一条推送。";
+"notification.calendar.aggregate.title_format" = "提醒周期内有 %d 个日历事项";
+"notification.calendar.aggregate.body_format" = "包括：%@";
+
+/* Missing keys (added by audit) */
+"home.dashboard.url_sources.title" = "定时动作";
+"home.dashboard.today_events.title" = "今日事件";
+"home.dashboard.partial_sources_failed.title" = "部分数据源异常";
+"home.dashboard.no_events" = "暂无事件";
+"home.dashboard.chip.summary_format" = "摘要 %d";
+"home.dashboard.chip.events_format" = "事件 %d";
+"home.dashboard.chip.url_sources_format" = "动作 %d/%d";
+
+"medication.title" = "药品查询";
+"medication.search.placeholder" = "搜索药品";
+"medication.search_failed" = "搜索失败";
+"medication.not_found" = "未找到药品";
+"medication.note" = "备注";
+"medication.common_dose" = "常用剂量";
+"medication.service_not_initialized" = "药品服务未初始化";
+
+"model.action.generate" = "生成";
+"model.action.stop" = "停止";
+"model.cloud" = "云端";
+"model.preset" = "预设";
+"model.bullet" = "•";
+"model.generating" = "生成中...";
+"model.inference.test" = "推理测试";
+"model.item.id" = "ID";
+"model.fill_prompt_hint" = "请在上方填写提示词";
+"model.explain.title" = "说明";
+
+"notifications.title" = "通知";
+"notifications.none_pending" = "暂无待发送通知";
+"notifications.all_sent_or_cancelled" = "所有通知已发送或已取消";
+"notifications.filter.title" = "筛选";
+"notifications.filter.all" = "全部";
+"notifications.filter.unread" = "未读";
+"notifications.search.placeholder" = "搜索";
+"notifications.mark_all_read" = "全部标为已读";
+"notifications.load_more" = "加载更多";
+"notifications.mark_read" = "标为已读";
+"notifications.read" = "已读";
+
+"settings.clear_all_data.warning" = "此操作将永久删除所有本地数据。";
+"settings.manage.prompt_templates" = "管理提示词模板";
+"settings.view.pending_notifications" = "查看待发送通知";
+"settings.health.data_source" = "健康数据源";
+"settings.health.data_source_note" = "需要健康权限";
+
+/* 定时动作 */
+"scheduled_actions.title" = "定时动作";
+"scheduled_actions.section.overview" = "概览";
+"scheduled_actions.section.configure" = "配置";
+"scheduled_actions.section.history" = "历史";
+"scheduled_actions.overview.subtitle" = "管理定时动作并查看执行状态";
+"scheduled_actions.overview.configured" = "已配置";
+"scheduled_actions.overview.due_now" = "可执行";
+"scheduled_actions.overview.last_run" = "最近";
+"scheduled_actions.overview.status.ok" = "成功";
+"scheduled_actions.overview.status.partial" = "部分";
+"scheduled_actions.overview.status.skipped" = "跳过";
+"scheduled_actions.overview.status.failed" = "失败";
+"scheduled_actions.run_status.answered" = "已回答";
+"scheduled_actions.run_status.action_completed" = "操作已完成";
+"scheduled_actions.run_status.incomplete" = "未完成";
+"scheduled_actions.run_status.blocked" = "受阻";
+"scheduled_actions.run_status.cancelled" = "已取消";
+"scheduled_actions.run_now" = "立即执行";
+"scheduled_actions.running" = "正在执行…";
+"scheduled_actions.run_now.no_actions" = "还没有已配置的定时动作";
+"scheduled_actions.run_now.completed" = "执行完成";
+"scheduled_actions.run_now.completed.message" = "结果将通过通知发送，并会写入执行记录。";
+"scheduled_actions.run_now.result.failed.title" = "执行失败";
+"scheduled_actions.run_now.result.failed.message" = "请检查模型/服务端配置后重试。详情已写入执行记录。";
+"scheduled_actions.run_now.result.partial.message" = "本次仅部分成功，详情已写入执行记录。";
+"scheduled_actions.run_now.result.skipped.message" = "本次被策略跳过（如静默时段或无事件），详情已写入执行记录。";
+"scheduled_actions.runs.title" = "执行记录";
+"scheduled_actions.runs.empty" = "暂无执行记录";
+
+"scheduled_actions.run_detail.title" = "运行";
+"scheduled_actions.run_detail.section.status" = "状态";
+"scheduled_actions.run_detail.section.time" = "时间";
+"scheduled_actions.run_detail.section.action" = "动作";
+"scheduled_actions.run_detail.section.result" = "运行结果";
+"scheduled_actions.run_detail.section.retry" = "重试策略";
+"scheduled_actions.run_detail.section.reason" = "原因";
+"scheduled_actions.run_detail.section.details" = "详情";
+"scheduled_actions.run_detail.section.error" = "错误";
+"scheduled_actions.run_detail.section.notifications" = "通知";
+"scheduled_actions.run_detail.section.model" = "模型";
+
+"scheduled_actions.run_detail.label.result" = "结果";
+"scheduled_actions.run_detail.label.type" = "类型";
+"scheduled_actions.run_detail.label.background" = "后台";
+"scheduled_actions.run_detail.label.start" = "开始";
+"scheduled_actions.run_detail.label.end" = "结束";
+"scheduled_actions.run_detail.label.duration" = "耗时";
+"scheduled_actions.run_detail.label.next_eligible" = "下次可运行";
+"scheduled_actions.run_detail.label.id" = "ID";
+"scheduled_actions.run_detail.label.name" = "名称";
+"scheduled_actions.run_detail.label.events_count" = "事件数";
+"scheduled_actions.run_detail.view_analysis" = "查看分析结果";
+"scheduled_actions.run_detail.label.retry_allowed" = "允许重试";
+"scheduled_actions.run_detail.label.retry_count" = "重试次数";
+"scheduled_actions.run_detail.retry_count" = "%d 次";
+"scheduled_actions.run_detail.label.notification_sent" = "已发送";
+"scheduled_actions.run_detail.label.event_id" = "事件 ID";
+"scheduled_actions.run_detail.label.model" = "模型";
+"scheduled_actions.run_detail.label.tokens" = "Token";
+"scheduled_actions.run_detail.label.processing_duration" = "处理耗时";
+
+"scheduled_actions.run_reason.quiet_hours" = "静默时段，已跳过执行";
+"scheduled_actions.run_reason.no_events" = "无事件，已跳过执行";
+"scheduled_actions.run_reason.deduped" = "已去重，已跳过执行";
+"scheduled_actions.run_reason.fetch_failed" = "抓取失败";
+"scheduled_actions.run_reason.fetch_too_large" = "抓取内容过大（最大 1MB）";
+"scheduled_actions.run_reason.fetch_blocked" = "URL 被安全策略拦截";
+"scheduled_actions.run_reason.execution_failed" = "执行失败";
+
+
+"scheduled_actions.journal.title" = "分析结果";
+"scheduled_actions.journal.done" = "完成";
+"scheduled_actions.journal.load_failed_format" = "加载失败：%1$@";
+"scheduled_actions.journal.not_found_format" = "未找到 Journal ID：%1$@";
+
+/* MainTabView / Home 补充 */
+"common.actions" = "操作";
+
+"home.section.data_sources" = "数据源";
+"home.section.url_content" = "URL 内容";
+"home.section.calendar" = "日历";
+"home.section.reminders" = "提醒";
+"home.section.health" = "健康";
+"home.section.data_source_details" = "数据源说明";
+
+"home.data_source.local_storage" = "数据存储在本机";
+"home.data_source.privacy_description" = "Nola 会整合您授权的数据源，生成今日摘要与提醒建议。默认仅在设备本地处理与存储，尽可能保护隐私。";
+
+"home.data_source.status.title" = "数据源状态";
+"home.data_source.status.subtitle" = "授权后会自动同步，并用于生成今日摘要";
+"home.overview.enabled" = "已启用";
+"home.overview.syncing" = "同步中";
+"home.overview.needs_auth" = "需授权";
+
+"home.status.not_fetched" = "尚未获取";
+
+"home.data_source.stat.successful" = "已获取";
+"home.data_source.stat.failed" = "失败";
+"home.data_source.stat.events" = "总事件";
+
+"home.priority.high" = "高";
+"home.priority.medium" = "中";
+"home.priority.low" = "低";
+"home.priority.percent_format" = "%d%%";
+
+"home.explain.no_model" = "数据直接来自数据源（当前无可用AI模型）";
+"home.refresh.too_frequent_format" = "刷新过于频繁，请稍后再试（约 %ds 后可重试）";
+"home.refresh.partial_failed_format" = "部分数据源拉取失败，摘要可能不完整：%@";
+"home.refresh.cooldown_suffix_format" = "（将自动冷却约 %ds）";
+
+"url.source.history.count_format" = "%d";
+"url.source.history.empty" = "暂无历史记录";
+"url.source.events.count_format" = "%d 事件";
+
+"history.data_source.title" = "数据源";
+"history.ai_summary.title" = "AI摘要";
+"history.processing_info.title" = "处理信息";
+"history.token_count.label" = "Token 数量:";
+"history.processing_duration.label" = "处理时长:";
+"history.model.label" = "模型:";
+"history.original_content.title" = "原始内容";
+"history.raw_response.title" = "LLM 原始响应";
+
+"model.picker.title" = "选择模型";
+
+"models.title" = "模型";
+"models.section.local" = "本地模型";
+"models.section.cloud_api" = "云端 API";
+"models.cloud.custom_api.title" = "自定义 API";
+"models.cloud.custom_api.description" = "使用自己的 API Key";
+"models.status.downloading" = "正在下载...";
+"models.status.ready" = "模型已就绪";
+"models.status.not_downloaded" = "未下载模型";
+
+"scheduled_actions.latest_run.success" = "最近一次定时动作：成功";
+"scheduled_actions.latest_run.partial" = "最近一次定时动作：部分成功";
+"scheduled_actions.latest_run.skipped" = "最近一次定时动作：已跳过";
+"scheduled_actions.latest_run.failed" = "最近一次定时动作：失败";
+
+/* 本地化清理新增 */
+"common.confirm" = "确认";
+"common.tokens_format" = "Token：%d";
+
+"settings.time.hour_format" = "%d:00";
+
+"task.inline.planned_time" = "计划时间";
+"task.inline.no_time_detected" = "未检测到具体时间";
+"task.inline.set_reminder_time" = "设置提醒时间";
+"task.inline.select_time" = "选择时间";
+
+"model.parameters.tokens_format" = "%d Token";
+"model.parameters.show_thinking" = "显示推理过程（Thinking）";
+"model.parameters.stream_output" = "流式输出";
+"model.parameters.reset_defaults" = "重置为默认";
+"model.parameters.navigation_title_format" = "%@ 参数";
+
+"model.test.execution_environment" = "执行环境";
+"model.test.detail.parameters_title" = "参数设置";
+"model.test.detail.quick_presets" = "快速预设";
+"model.test.detail.failed_title" = "测试失败";
+"model.test.detail.model_info" = "模型信息";
+"model.test.detail.model_name" = "模型名称";
+"model.test.detail.model_type" = "类型";
+"model.test.detail.temperature.precise" = "精确";
+"model.test.detail.temperature.creative" = "创意";
+"model.test.detail.default_prompt.1" = "生成今日总结";
+"model.test.detail.default_prompt.2" = "提取重要待办";
+"model.test.detail.default_prompt.3" = "给出可执行建议";
+
+"mlx.test.params_title" = "推理参数";
+"mlx.test.logs_title" = "日志";
+
+"notification.detail.title" = "详情";
+"notification.complete_item" = "标记为已处理";
+"notification.ai_explain.title" = "AI 说明";
+"notification.related_event" = "关联事件";
+"notification.view_detail" = "查看详情";
+"notification.summary_detail.title" = "摘要详情";
+
+"urlsources.format.html" = "超文本标记语言";
+"urlsources.format.rss" = "RSS";
+"urlsources.format.json" = "JSON";
+"urlsources.format.icalendar" = "日历";
+"urlsources.url_field" = "网址";
+
+"permissions.setup.contacts.desc" = "自动提醒生日和重要纪念日";
+"permissions.setup.calendars.desc" = "同步您的日程以智能规划时间";
+"permissions.setup.reminders.desc" = "整合待办事项，避免遗漏";
+"permissions.setup.health.desc" = "分析健康指标，提供个性化建议";
+"permissions.setup.finish_setup" = "完成设置";
+"permissions.start_using_nola" = "开始使用 Nola";
+"permissions.request_failed" = "权限请求失败";
+"permissions.unknown_error" = "未知错误";
+"permissions.setup.error_permission_format" = "无法获取%@权限。您可以稍后在系统设置中授权。";
+
+"permissions.setup.completed.title" = "设置完成！";
+"permissions.setup.completed.granted_count_format" = "您已授权 %d/%d 个数据源";
+
+"permissions.setup.info.all_granted.title" = "完美！";
+"permissions.setup.info.all_granted.desc" = "所有数据源都已就绪。Nola 将提供最佳体验。";
+"permissions.setup.info.some_granted.title" = "不错！";
+"permissions.setup.info.some_granted.desc" = "已授权的数据源已就绪。您可以稍后在设置中授权更多。";
+"permissions.setup.info.none_granted.title" = "提示";
+"permissions.setup.info.none_granted.desc" = "您可以随时在设置中授权权限，以获得更好的体验。";
+
+"permissions.setup.feature.privacy.title" = "隐私保护";
+"permissions.setup.feature.privacy.desc" = "所有数据都保存在您的设备上";
+"permissions.setup.feature.no_upload.title" = "不会上传";
+"permissions.setup.feature.no_upload.desc" = "您的数据永远不会离开设备";
+"permissions.setup.feature.control.title" = "完全控制";
+"permissions.setup.feature.control.desc" = "您可以随时在设置中撤销授权";
+
+"home.enabled_sources_ratio_format" = "%d/%d";
+
+
+/* AUTOGEN: UI hardcoded → localized */
+"autogen.MLXTestView.1d5258bc" = "使用模型：Qwen3 4B (本地文件)";
+"autogen.MLXTestView.48457675" = "准备运行本地推理（MLX）...";
+"autogen.MLXTestView.f2cd5ae9" = "团队例会";
+"autogen.MLXTestView.c36f20a6" = "开始生成摘要...";
+"autogen.MLXTestView.e051e4e6" = "推理完成：总耗时 %.2fs";
+"autogen.MLXTestView.c2d273a2" = "推理超时：生成过程超过90秒，可能需要减少 maxTokens 或使用更快的模型";
+"autogen.MLXTestView.73754ade" = "提交周报";
+"autogen.MLXTestView.6849b829" = "错误：模型未下载";
+"autogen.MLXTestView.4949e39c" = "项目讨论";
+"autogen.SettingsView.1c46823b" = "推送连接";
+"autogen.NotificationDetailView.28ff5ffe" = "健康";
+"autogen.NotificationDetailView.1a26edf9" = "其他";
+"autogen.NotificationDetailView.640e8fc4" = "定时动作（URL）";
+"autogen.NotificationDetailView.2a4a4de8" = "手动";
+"autogen.NotificationDetailView.81944e48" = "提醒";
+"autogen.NotificationDetailView.b6f9b4bd" = "欠款/借款";
+"autogen.NotificationDetailView.25999591" = "生日提醒";
+"autogen.NotificationDetailView.ec7b537e" = "自定义任务";
+"autogen.ModelDownloadView.041f8c30" = "Hugging Face 官方源，适合海外用户";
+"autogen.ModelDownloadView.115bd479" = "ModelScope 官方源，国内访问更快";
+"autogen.ModelDownloadView.e0dab22b" = "下载失败";
+"autogen.ModelDownloadView.35cabc26" = "下载模型失败";
+"autogen.ModelDownloadView.238c0cc1" = "删除模型失败";
+"autogen.ModelDownloadView.82d38a17" = "来源: Hugging Face";
+"autogen.ModelDownloadView.bbb58cda" = "来源: ModelScope";
+"autogen.BriefDisplayView.15081b04" = "今日要事";
+"autogen.BriefDisplayView.da6d8802" = "代码审查";
+"autogen.BriefDisplayView.20115727" = "参加团队会议";
+"autogen.BriefDisplayView.7790cd26" = "完成项目报告";
+"autogen.BriefDisplayView.ad6f4e5c" = "根据优先级和日程安排的建议顺序";
+"autogen.ModelTestView.5c69f135" = "✓ 完成 (%.1fs)";
+"autogen.ModelTestView.4f92eb12" = "✓ 流式完成 (%.1fs)";
+"autogen.ModelTestView.f2cd5ae9" = "团队例会";
+"autogen.ModelTestView.fff208a3" = "基于候选事件，给出 3 条可执行建议，每条不超过 30 字";
+"autogen.ModelTestView.765216a7" = "开始流式生成...";
+"autogen.ModelTestView.d0754da8" = "开始生成...";
+"autogen.ModelTestView.73754ade" = "提交周报";
+"autogen.ModelTestView.a94d5104" = "提取候选事件中的重要待办，优先展示最紧急的三项";
+"autogen.TaskConfirmationView.c63d4b22" = "提醒我明天上午9点喝水";
+"autogen.OnboardingView.14550e6d" = "HealthKit 已完全授权";
+"autogen.OnboardingView.9c935c11" = "HealthKit 授权请求已触发；根据隐私限制无法立即读取结果";
+"autogen.OnboardingView.3bebc1f8" = "HealthKit 未授权";
+"autogen.OnboardingView.bc319e07" = "HealthKit 被拒绝";
+"autogen.OnboardingView.6865ebfb" = "HealthKit 部分授权";
+"autogen.OnboardingView.993ab095" = "writeOnly (需要 fullAccess)";
+"autogen.OnboardingView.ea7b3750" = "将状态设为已授予";
+"autogen.OnboardingView.659f8f3c" = "提醒事项权限不足";
+"autogen.OnboardingView.9a5b2771" = "提醒事项权限已授予但状态未更新";
+"autogen.OnboardingView.e14123fd" = "提醒事项权限级别不足";
+"autogen.OnboardingView.65e0a3bb" = "提醒事项权限结果";
+"autogen.OnboardingView.edb493e9" = "日历权限不足";
+"autogen.OnboardingView.6c63f490" = "日历权限已授予但状态未更新";
+"autogen.OnboardingView.3764b285" = "日历权限级别不足";
+"autogen.OnboardingView.311b30d2" = "日历权限结果";
+"autogen.OnboardingView.d9dfedb0" = "检查权限状态";
+"autogen.OnboardingView.1aeef1a7" = "用户完成引导流程";
+"autogen.OnboardingView.fdd8107b" = "请求提醒事项权限（完全访问）";
+"autogen.OnboardingView.fc7d9f56" = "请求日历权限（完全访问）";
+"autogen.OnboardingView.6bbc0da3" = "跳过 HealthKit 状态检查（请求后无法得知）";
+"autogen.OnboardingView.a7b2b8ae" = "通知权限请求失败";
+"autogen.OnboardingView.64df1f08" = "通讯录权限请求失败";
+"autogen.LLMResponseValidator.211ee58e" = "发生未知错误。";
+"autogen.LLMResponseValidator.e0bf4688" = "未能从模型响应中解析到可处理的 JSON，请重试或切换模型。";
+"autogen.LLMResponseValidator.a5a04700" = "模型未建议任何操作（actions 为空）。";
+"autogen.LLMResponseValidator.b352d746" = "模型返回的 JSON 格式无效，请重试或报告问题。";
+"autogen.LLMResponseValidator.89154a16" = "模型返回的摘要过长，无法处理。";
+"autogen.LLMResponseValidator.1cf6e0d8" = "模型返回的某些操作缺少去重键 (dedupeKey)。";
+"autogen.TaskParsingService.fbe2ad89" = "M月d日";
+"autogen.TaskParsingService.29b8a027" = "M月d日 HH:mm";
+"autogen.TaskParsingService.3054424b" = "yyyy年M月d日";
+"autogen.TaskParsingService.01f7fe78" = "yyyy年M月d日 HH:mm";
+"autogen.TaskParsingService.e214ee22" = "上午";
+"autogen.TaskParsingService.1dfaab65" = "下午";
+"autogen.TaskParsingService.0c5382c1" = "中午";
+"autogen.TaskParsingService.17e83cc2" = "今天";
+"autogen.TaskParsingService.5ef2d60e" = "傍晚";
+"autogen.TaskParsingService.4ca5b0f2" = "凌晨";
+"autogen.TaskParsingService.639e8f00" = "后天";
+"autogen.TaskParsingService.f40a330d" = "大后天";
+"autogen.TaskParsingService.172fb719" = "早上";
+"autogen.TaskParsingService.b76ce230" = "明天";
+"autogen.TaskParsingService.76a41594" = "晚上";
+"autogen.OpenAIProvider.e74e9a44" = "Chat completion 的首个 choice 缺少 message.content";
+"autogen.OpenAIProvider.ce15af25" = "Chat completion 返回 tool_calls，但当前 chat 流程不支持 tool_calls";
+"autogen.OpenAIProvider.ef1859c9" = "Chat completion 返回 tool_calls，但当前 summarize 流程不支持 tool_calls";
+"autogen.OpenAIProvider.21021c9e" = "Chat completion 返回空 choices";
+"autogen.OpenAIProvider.a4022d12" = "Chat completion 返回空 choices（上游可能未按 OpenAI chat.completions 格式返回）";
+"autogen.LLMClient.d01e6a95" = "(无响应)";
+"autogen.PromptTemplates.7d7e44f8" = "1. Boston Celtics — 胜率 0.750 (30胜10负)";
+"autogen.PromptTemplates.0e286f95" = "与用户的工作偏好匹配";
+"autogen.PromptTemplates.577143e8" = "前3名";
+"autogen.PromptTemplates.ef1cbd7c" = "排名前3";
+"autogen.PromptTemplates.e58ac954" = "第一名/第二名/第三名";
+"autogen.PromptTemplates.cb75bb1c" = "这篇文章包含准备年终报告的 5 个关键步骤。";
+"autogen.ModelService.e09bb0e6" = "检测到模拟器 - 使用占位符本地提供商而不是 MLX";
+"autogen.ServiceContainer.a8c326db" = "Health 数据源已启用";
+"autogen.ServiceContainer.8cfe8d2a" = "HealthDataSource 已启用";
+"autogen.ServiceContainer.90b807d8" = "HealthDataSource 已添加到数据源列表";
+"autogen.ServiceContainer.e2d798d4" = "HealthDataSource 已禁用";
+"autogen.ServiceContainer.4d294c08" = "HealthKit 授权失败";
+"autogen.ServiceContainer.8a634bbd" = "HealthKit 授权成功并启用数据源";
+"autogen.ServiceContainer.d478d0a6" = "HealthKit 授权未授予";
+"autogen.ServiceContainer.5dacf1e6" = "HealthKit 数据源已启用（按需读取）";
+"autogen.ServiceContainer.4240edab" = "URL 数据源已启用";
+"autogen.ServiceContainer.fb891b55" = "URL 数据源已禁用";
+"autogen.ServiceContainer.63a2e315" = "准备启用 HealthKit 数据源（不检查授权状态）";
+"autogen.ServiceContainer.37ef41e5" = "无法创建 HealthDataSource";
+
+
+/* AUTOGEN: non-test non-ASCII → localized */
+"autogen.DataManager.b2556e9c" = "开始导出数据";
+"autogen.DataManager.4c447732" = "导出定时动作执行记录失败";
+"autogen.DataManager.76d44f70" = "数据导出成功";
+"autogen.DataManager.c2dd674e" = "数据导出失败";
+"autogen.DataManager.138108a7" = "有效键";
+"autogen.DataManager.8018989a" = "无效键";
+"autogen.DataManager.640e954b" = "开始清除所有数据";
+"autogen.DataManager.9e60996c" = "清除本地文件存储失败";
+"autogen.DataManager.f56bfab6" = "所有数据已清除";
+"autogen.DataManager.2707fc27" = "开始导出 HealthKit 数据";
+"autogen.DataManager.72b82bb2" = "HealthKit 指标数据已添加";
+"autogen.DataManager.7e09322c" = "HealthKit 数据导出成功";
+"autogen.DataManager.f97c62e7" = "HealthKit 数据导出失败";
+"autogen.DataManager.19498a0c" = "Keychain 已清除";
+"autogen.MedicationService.a563fd56" = "加载本地索引";
+"autogen.MedicationService.9bb13bb1" = "本地药物数据未找到（medications.json）";
+"autogen.MedicationService.80acdf56" = "加载本地药物索引";
+"autogen.MedicationService.096d64a7" = "加载本地药物数据失败";
+"autogen.NolaError.be2dc7fc" = "网络未连接";
+"autogen.NolaError.e41ce24c" = "请求超时";
+"autogen.NolaError.9e9ffd48" = "请求格式错误";
+"autogen.NolaError.05017035" = "未授权（API Key 无效或缺失）";
+"autogen.NolaError.a465c89c" = "请求频率受限（429），请稍后重试";
+"autogen.NolaError.ad08ccdc" = "服务器响应格式错误";
+"autogen.NolaError.1b17319a" = "LLM 未配置（缺少 API Key 或端点）";
+"autogen.NolaError.4fe90130" = "LLM 请求超时";
+"autogen.NolaError.4dbe8495" = "LLM 调用频率受限";
+"autogen.NolaError.f03719c5" = "LLM 响应解析失败";
+"autogen.NolaError.3d1e8609" = "模型未加载";
+"autogen.NolaError.239f2c07" = "未知 LLM 错误";
+"autogen.NolaError.40811b69" = "用量重置失败";
+"autogen.NolaError.adfbef7a" = "数据库迁移失败";
+"autogen.NolaError.4a919919" = "数据损坏";
+"autogen.NolaError.3a1e2e0f" = "无可用数据";
+"autogen.NolaError.7799860c" = "数据解析失败";
+"autogen.IntegrationValidationCheckList.4b145e27" = "✓ LocalJSONStorage：通过原子写入进行安全并发访问";
+"autogen.IntegrationValidationCheckList.518c8bf3" = "✓ 规则引擎：用户可配置的安静时间和提前期";
+"autogen.IntegrationValidationCheckList.b8e03fea" = "✓NotificationService：重复数据删除和合并";
+"autogen.IntegrationValidationCheckList.69d6f52b" = "✓ 设置：持久配置存储";
+"autogen.IntegrationValidationCheckList.fe865367" = "✓ 错误处理：日志记录的数据清理";
+"autogen.IntegrationValidationCheckList.3b12a98f" = "✓ DraftWorkflow：三阶段确认管道";
+"autogen.IntegrationValidationCheckList.d1775683" = "✓ EventKit：创建、更新、删除同步";
+"autogen.IntegrationValidationCheckList.63bb14d5" = "✓ BriefUI：显示带有元数据的格式化内容";
+"autogen.IntegrationValidationCheckList.81ee499b" = "✓ 性能：所有操作在 < 100 毫秒内完成";
+"autogen.IntegrationValidationCheckList.7d3e11f2" = "✓ 数据流：从源到存储的端到端";
+"autogen.DataSources.33b55947" = "数据源统计";
+"autogen.ModelDownloader.71608408" = "ModelScope (国内)";
+"autogen.ModelDownloader.0d54c9d0" = "轻量级智能模型，适合日常使用";
+"autogen.HealthDataSource.5609f5e3" = "您的日均步数偏低。建议增加日常活动量，每天至少走7000-10000步以保持健康。可以尝试：饭后散步、爬楼梯代替电梯、远处停车等方式增加步数。";
+"autogen.HealthDataSource.f4335811" = "步数：平均每日 %d 步";
+"autogen.HealthDataSource.6c1f3d50" = "您的日均步数基本达标，但仍有提升空间。建议保持并适当增加活动量。";
+"autogen.HealthDataSource.b4cd805d" = "很好！您的日均步数已经接近健康标准。保持这个活动水平有助于维持心血管健康。";
+"autogen.HealthDataSource.7eaff2a0" = "excellent！您的日均步数超过推荐标准，活动量很充足。继续保持！";
+"autogen.HealthDataSource.06fb0a82" = "平均心率：%d 次/分钟";
+"autogen.HealthDataSource.9856f308" = "您的平均心率偏低。如果您是运动员或经常锻炼，这可能是正常的。否则建议咨询医生。";
+"autogen.HealthDataSource.fe09efe7" = "您的平均心率偏高。建议关注是否有压力、焦虑或其他健康问题，必要时请咨询医生。";
+"autogen.HealthDataSource.eba7d4ca" = "您的平均心率处于健康范围内，心血管状态良好。";
+"autogen.HealthDataSource.7ab5bb3c" = "睡眠：平均每日 %.1f 小时";
+"autogen.HealthDataSource.71634d69" = "您的平均睡眠时间严重不足。长期睡眠不足会影响免疫力、记忆力和情绪。建议调整作息，确保每晚至少7小时睡眠。";
+"autogen.HealthDataSource.ad7e29fa" = "您的平均睡眠时间略显不足。建议适当增加睡眠时间，成人每晚7-9小时睡眠最为理想。";
+"autogen.HealthDataSource.1bdf2fda" = "很好！您的睡眠时间充足，这对健康非常重要。保持规律的睡眠习惯。";
+"autogen.HealthDataSource.769d2c90" = "您的睡眠时间较长。如果感觉疲劳或嗜睡，建议咨询医生排除潜在健康问题。";
+"autogen.HealthDataSource.c72bfab1" = "最近锻炼：%@ %d 分钟";
+"autogen.HealthDataSource.1afa6cc5" = "很好！保持规律的运动习惯对健康非常有益。建议每周至少运动3-5次，每次30分钟以上。";
+"autogen.HealthDataSource.0be8f3b7" = "不错的开始！建议逐步增加锻炼时长，每次至少30分钟效果更佳。";
+"autogen.HealthDataSource.8eb2fcd6" = "跑步";
+"autogen.HealthDataSource.191f5b40" = "步行";
+"autogen.HealthDataSource.596c5a92" = "骑行";
+"autogen.HealthDataSource.9e5ab613" = "瑜伽";
+"autogen.HealthDataSource.b66f447b" = "游泳";
+"autogen.HealthDataSource.a3350811" = "锻炼";
+"autogen.MorningBriefService.b053fef8" = "📅 今日要事";
+"autogen.MorningBriefService.15081b04" = "今日要事";
+"autogen.ChatManager.81944e48" = "提醒";
+"autogen.ChatManager.1d3c3d48" = "记下";
+"autogen.ChatManager.9058a1c2" = "记录";
+"autogen.ChatManager.eb640387" = "生日";
+"autogen.ChatManager.039bb1a0" = "约会";
+"autogen.ChatManager.a0c2b5e5" = "提醒我";
+"autogen.ChatManager.8066e0f4" = "到期";
+"autogen.ChatManager.5a989c5e" = "到时候";
+"autogen.NotificationService.f93b1b1c" = "跳过重复通知";
+"autogen.NotificationService.78d2e66d" = "已达每日通知上限";
+"autogen.NotificationService.7d112e59" = "通知已发送";
+"autogen.NotificationService.337bdb4b" = "跳过重复定时通知";
+"autogen.NotificationService.04527f8d" = "定时通知已调度";
+"autogen.NotificationService.ac4ec9aa" = "通知已取消";
+"autogen.NotificationService.70ee1939" = "所有通知已清除";
+"autogen.NotificationService.ccb981dd" = "通知历史已清除";
+"autogen.NotificationService.cbd8dc66" = "通知类别已设置";
+"scheduled_actions.chat_hint.title" = "从聊天创建定时动作";
+"scheduled_actions.chat_hint.body" = "直接在聊天里用自然语言描述计划，Nola 会先生成待确认的定时动作卡片，再由你保存。";
+"scheduled_actions.chat_hint.open_chat" = "打开聊天";
+"scheduled_actions.mode.local" = "本地定时";
+"scheduled_actions.scheduler.unavailable" = "当前无法使用定时动作服务。";
+"scheduled_actions.weekday_format" = "星期 %d";
+"autogen.NotificationService.24221727" = "🚨 Nola 重要提醒";
+"autogen.NotificationService.b92a5a6b" = "💡 Nola 提醒";
+"autogen.NotificationService.cd639880" = "📋 Nola 通知";
+"autogen.NotificationService.2a8dbcfb" = "打开日历";
+"autogen.NotificationService.d84129b8" = "忽略";
+"autogen.NotificationService.766ccd69" = "打开提醒事项";
+"autogen.NotificationService.ed2cc287" = "添加到日历";
+"autogen.NotificationService.c69a9153" = "稍后提醒";
+"autogen.NotificationService.cb63c62e" = "知道了";
+"autogen.ModelSelectionManager.e8666c37" = "本地";
+"autogen.ModelSelectionManager.565481c9" = "云端";
+"autogen.ScheduledTimeParser.2d4817f7" = "08：30";
+"autogen.ScheduledTimeParser.e05453c8" = "下午11:31";
+"autogen.ScheduledTimeParser.b9ccd93e" = "上午 9:05";
+"autogen.ScheduledTimeParser.1e38b4e4" = "上午11:31";
+"autogen.ScheduledTimeParser.ad12f310" = "下午 9:05";
+"autogen.ScheduledTimeParser.35be2453" = "中午12:00";
+"autogen.ScheduledTimeParser.0cb01238" = "晚上7:10";
+"autogen.ScheduledTimeParser.e214ee22" = "上午";
+"autogen.ScheduledTimeParser.1dfaab65" = "下午";
+"autogen.ScheduledTimeParser.76a41594" = "晚上";
+"autogen.ScheduledTimeParser.0c5382c1" = "中午";
+"autogen.ScheduledTimeParser.637448a8" = "中午12:xx";
+"autogen.DataSourceTypes.9070cb0e" = "通讯录";
+"autogen.DataSourceTypes.2ecbc116" = "日历";
+"autogen.DataSourceTypes.35cffa73" = "提醒事项";
+"autogen.DataSourceTypes.28ff5ffe" = "健康";
+"autogen.DataSourceTypes.6623f369" = "定时动作";
+"autogen.DataSourceTypes.15e018f4" = "生日、纪念日";
+"autogen.DataSourceTypes.1eb3ff07" = "日程、会议、活动";
+"autogen.DataSourceTypes.082fbef9" = "待办事项、提醒";
+"autogen.DataSourceTypes.2426a028" = "步数、心率、睡眠、锻炼";
+"autogen.DataSourceTypes.6d670c3b" = "RSS、日历、自定义数据（按计划）";
+"autogen.DataSourceTypes.5f03bd33" = "自动读取通讯录中的生日和重要日期，提前提醒您不要错过重要的庆祝时刻。";
+"autogen.DataSourceTypes.3684772e" = "同步系统日历中的所有日程安排，帮助您合理安排时间，不会遗漏任何重要会议或活动。";
+"autogen.DataSourceTypes.b186e113" = "整合提醒事项，确保所有待办任务都在掌控之中，按时完成重要工作。";
+"autogen.DataSourceTypes.18c3106d" = "分析健康数据，提供个性化的健康建议，帮助您保持良好的生活习惯和身体状态。";
+"autogen.DataSourceTypes.ed56bbf0" = "从自定义 URL 按计划获取数据，支持 RSS、iCalendar、JSON 等多种格式，灵活扩展数据来源。";
+"autogen.URLFetcherService.5a5f0ecf" = "非 HTTPS URL";
+"autogen.URLFetcherService.371f0e30" = "添加数据源";
+"autogen.URLFetcherService.c40ac45d" = "删除数据源";
+"autogen.URLFetcherService.5067150c" = "更新数据源";
+"autogen.URLFetcherService.760bf4a9" = "无效的 URL，跳过历史追加";
+"autogen.URLFetcherService.18ba2c58" = "未找到数据源以追加历史";
+"autogen.URLFetcherService.d1814124" = "历史已包含相同 dedupeKey，跳过追加";
+"autogen.URLFetcherService.16c8f46b" = "历史记录已达上限，移除旧条目";
+"autogen.URLFetcherService.fc2a6707" = "追加 URL 数据源历史";
+"autogen.URLFetcherService.0bc136b4" = "序列化 HistoryEntry 失败，未写入 Rust";
+"autogen.URLFetcherService.7990486a" = "Rust 持久化历史写入失败";
+"autogen.URLFetcherService.691f17c7" = "数据源刷新成功";
+"autogen.URLFetcherService.eeb2fb5e" = "数据源刷新失败";
+"autogen.URLFetcherService.256d5e02" = "跳过已禁用数据源";
+"autogen.URLFetcherService.7782eb43" = "开始抓取";
+"autogen.URLFetcherService.91f68cfb" = "抓取成功";
+"autogen.URLFetcherService.6292a3a8" = "抓取失败";
+"autogen.URLFetcherService.cd260bd3" = "数据版本不匹配";
+"autogen.URLFetcherService.b506ae69" = "JSON 解析失败: 未识别的 JSON 结构（既不是 Nola events schema，也不是 Bing Web Search schema）";
+"autogen.URLFetcherService.a51bab9e" = "无法解码 iCalendar 数据";
+"autogen.URLFetcherService.5f76edc5" = "未知错误";
+"autogen.URLFetcherService.68591f54" = "无法解码 HTML 数据";
+"autogen.URLFetcherService.87ad1b2c" = "无效的 URL";
+"autogen.URLFetcherService.0d43d6d8" = "无效的响应";
+"autogen.ProcessingAgent.c0d24c8a" = "URL 通知无法匹配到数据源，跳过写入 history";
+"autogen.DataSourcePermissionManager.284cc0ba" = "已授权";
+"autogen.DataSourcePermissionManager.28183c49" = "权限不足";
+"autogen.DataSourcePermissionManager.4c7c52c7" = "已拒绝";
+"autogen.DataSourcePermissionManager.93633305" = "受限";
+"autogen.DataSourcePermissionManager.beff4a1c" = "不可用";
+"autogen.DataSourcePermissionManager.30b06e2f" = "此设备不支持 HealthKit";
+"autogen.PromptTemplateService.bee8164c" = "日期范围（如：2025-11-11 到 2025-11-18）";
+"autogen.PromptTemplateService.f29b6953" = "事件列表（JSON 格式）";
+"autogen.PromptTemplateService.7864544e" = "期望返回的事项数量";
+"autogen.PromptTemplateService.ccea14b5" = "用户偏好设置（JSON）";
+"autogen.PromptTemplateService.ce9829e6" = "额外上下文（RAG 检索结果）";
+"autogen.PromptTemplateService.026d50c2" = "添加模板";
+"autogen.PromptTemplateService.6b713a80" = "不能修改内置模板";
+"autogen.PromptTemplateService.3eb58aa9" = "更新模板";
+"autogen.PromptTemplateService.2e2a4e49" = "不能删除内置模板";
+"autogen.PromptTemplateService.b31745bd" = "删除模板";
+"autogen.PromptTemplateService.b880979a" = "复制模板";
+"autogen.PromptTemplateService.860cb319" = "选择模板";
+"autogen.PromptTemplateService.67d328b4" = "无可用模板";
+"autogen.PromptTemplateService.ccb412b9" = "生成 Prompt";
+"autogen.PromptTemplateService.db4dd68f" = "模板内容为空";
+"autogen.PromptTemplateService.5a6d1c7f" = "模板过长（超过 10000 字符）";
+"autogen.PromptTemplateService.1e8dccfd" = "提醒文案（简短、可执行）";
+"autogen.PromptTemplateService.a28eac4d" = "唯一标识";
+"autogen.PromptTemplateService.6a99be56" = "默认的事件摘要和提醒生成模板";
+"autogen.PromptTemplateService.dddd7bf6" = "生日提醒模板";
+"autogen.PromptTemplateService.9c2f12d3" = "专门用于生日提醒的模板";
+"autogen.PromptTemplateService.1f17e67f" = "待办任务模板";
+"autogen.PromptTemplateService.a85c7a56" = "待办任务优先级排序模板";
+"autogen.Scheduler.abcf95e0" = "后台任务处理程序未设置（Scheduler 尚未初始化，BGTask 回调将被丢弃）";
+"autogen.Scheduler.e74c7118" = "后台处理任务处理程序未设置（Scheduler 尚未初始化，BGTask 回调将被丢弃）";
+"autogen.Scheduler.0f36e286" = "后台任务注册成功";
+"autogen.Scheduler.bc2069f7" = "后台任务注册失败";
+"autogen.Scheduler.f9a58c29" = "后台处理任务注册成功";
+"autogen.Scheduler.d7afabe9" = "后台处理任务注册失败";
+"autogen.Scheduler.dad3a85e" = "计划后台调度（earliestBeginDate）";
+"autogen.Scheduler.dc971e08" = "下次后台刷新已调度";
+"autogen.Scheduler.84908629" = "后台任务不可用（可能在模拟器中）";
+"autogen.Scheduler.8e8892f4" = "待处理任务过多";
+"autogen.Scheduler.a1191dd3" = "没有后台任务权限";
+"autogen.Scheduler.f88048d7" = "调度失败";
+"autogen.Scheduler.67c471a2" = "计划后台处理任务（BGProcessing）";
+"autogen.Scheduler.61d32f61" = "下次后台处理任务已调度";
+"autogen.Scheduler.141780c1" = "后台处理任务调度失败";
+"autogen.Scheduler.af60885d" = "手动触发摘要生成";
+"autogen.Scheduler.0df7a9f3" = "手动立即执行：没有已配置的定时 URL 动作";
+"autogen.Scheduler.700374cd" = "手动立即执行定时 URL 动作";
+"autogen.Scheduler.c17e8c5b" = "手动立即执行：未找到定时 URL 动作";
+"autogen.Scheduler.f7092ea4" = "手动立即执行：动作未启用";
+"autogen.Scheduler.04018530" = "手动立即执行：动作未配置调度";
+"autogen.Scheduler.dfdee7e7" = "手动立即执行单个定时 URL 动作";
+"autogen.Scheduler.3f737a0e" = "后台任务启动";
+"autogen.Scheduler.6709783d" = "后台任务时间不足，提前终止";
+"autogen.Scheduler.176d4835" = "任务已过期，跳过执行";
+"autogen.Scheduler.d5152143" = "后台任务准备执行";
+"autogen.Scheduler.c9e93c9b" = "后台任务完成";
+"autogen.Scheduler.3a8e3c6a" = "后台任务失败";
+"autogen.Scheduler.ed22106a" = "后台处理任务启动";
+"autogen.Scheduler.7e3b2c88" = "后台处理任务时间不足，提前终止";
+"autogen.Scheduler.aae7761e" = "处理任务已过期，跳过执行";
+"autogen.Scheduler.7704a080" = "处理任务触发过早，等待到点再执行";
+"autogen.Scheduler.1c5c5747" = "后台处理任务准备执行 scheduled URL actions";
+"autogen.Scheduler.1c099943" = "后台处理任务完成";
+"autogen.Scheduler.a43d1f16" = "无事件，跳过摘要";
+"autogen.Scheduler.d01983b8" = "预处理完成";
+"autogen.Scheduler.d157c0c2" = "规则过滤后候选";
+"autogen.Scheduler.a15945a4" = "当前处于静默时段，跳过通知";
+"autogen.Scheduler.a4c24092" = "配额已用尽";
+"autogen.Scheduler.67db48b7" = "LLM 生成摘要完成";
+"autogen.Scheduler.7cb0753d" = "保存 ProcessedEvent 失败";
+"autogen.Scheduler.4dffa8e7" = "统一通知服务 nil — 重放候选者入队";
+"autogen.Scheduler.30b349b6" = "LLM 生成摘要失败";
+"autogen.Scheduler.410abcf5" = "处于静默时段：仅抓取定时 URL 源，不生成报告通知";
+"autogen.Scheduler.083440df" = "写入定时动作执行记录失败";
+"autogen.Scheduler.75151f0e" = "定时 URL 动作处于 backoff 窗口，跳过执行";
+"autogen.Scheduler.9f973728" = "抓取定时 URL 源失败";
+"autogen.Scheduler.1118cd82" = "定时 URL 源无事件，跳过报告";
+"autogen.Scheduler.43565123" = "定时动作结果已保存为 Journal";
+"autogen.Scheduler.7db6318f" = "保存 Journal 失败";
+"autogen.Scheduler.04a28c8c" = "(无可用摘要)";
+"autogen.Scheduler.f7c89d47" = "定时 URL 报告已在节流窗口内发送，跳过";
+"autogen.Scheduler.b6c248fa" = "保存定时动作报告事件失败";
+"autogen.Scheduler.9046455a" = "已发送定时 URL 报告通知";
+"autogen.Scheduler.e3a83bab" = "发送定时 URL 报告通知失败";
+"autogen.Scheduler.1876ea54" = "生成定时 URL 报告失败";
+"autogen.Scheduler.7b6411d9" = "定期数据源分析（占位符，未来实现）";
+"autogen.RustInterop.d659c1da" = "解析 Rust 返回 JSON 失败";
+"autogen.RustInterop.ff7ffa8e" = "解析 Rust 返回 ProcessedEvent JSON 失败";
+"autogen.RustInterop.88705991" = "解析 Rust preprocess 返回 ProcessedEvent JSON 失败";
+
+/* 聊天本地化补充 */
+"chat.more_settings.model.not_selected" = "未选择模型";
+"chat.more_settings.subtitle" = "集中管理当前对话的模型参数、智能体执行、上下文记忆与技能。";
+"chat.more_settings.title" = "更多设置";
+"chat.more_settings.response_style" = "回复风格";
+"chat.more_settings.max_context_length" = "最大上下文长度";
+"chat.more_settings.max_output_tokens" = "最大输出";
+"chat.more_settings.tokens_value_format" = "%d 代币";
+"chat.more_settings.temperature.label" = "温度";
+"chat.more_settings.top_p.label" = "Top P";
+"chat.more_settings.temperature.hint" = "越高越发散，越低越稳定。";
+"chat.more_settings.top_p.hint" = "控制候选 token 的概率质量。";
+"chat.more_settings.stream_output" = "流式显示输出";
+"chat.more_settings.show_thinking" = "显示 thinking";
+"chat.more_settings.model_output.header" = "模型与输出";
+"chat.more_settings.model_output.footer" = "高级默认参数保存到所选模型，并应用于使用该模型的所有会话。";
+"chat.more_settings.agent_mode" = "Agent 模式";
+"chat.more_settings.enable_retrieval" = "启用检索增强";
+"chat.more_settings.iteration_steps_format" = "%d 步";
+"chat.more_settings.auto_compact_trigger" = "自动压缩触发";
+"chat.more_settings.context_usage.title" = "当前上下文占用";
+"chat.more_settings.context_usage.hint_format" = "当前约 %d%%。达到阈值且消息数量足够时，Nola 会自动压缩旧上下文。";
+"chat.more_settings.execution.header" = "执行、宿主机与上下文窗口";
+"chat.more_settings.execution.footer" = "连接 Web 主机时，iOS 只是输入与确认界面；Agent 可在宿主机上使用已授权的文件、grep、bash、真 Chrome 和桌面 computer-use 工具。截图、鼠标、键盘、剪贴板、登录、OAuth、凭据、授权变更或删除等动作会请求确认。";
+"chat.host_tool.computer_screenshot_hint" = "这是宿主机桌面的截图，不是当前 iPhone 屏幕。";
+"chat.more_settings.session_memory.header" = "会话内存";
+"chat.more_settings.session_memory.footer" = "仅作用于当前对话，用来记录本轮任务状态和临时约束。";
+"chat.more_settings.long_term.header" = "长期记忆与用户偏好";
+"chat.more_settings.long_term.footer" = "长期记忆和用户偏好跨对话生效，保存后会进入后续对话上下文。";
+"chat.more_settings.skills.empty" = "还没有 Skill。";
+"chat.more_settings.skills.host_managed" = "由宿主机提供；请在 Mac 上的技能库中管理。";
+"chat.more_settings.skills.open_library" = "打开完整 Skill Library";
+"chat.more_settings.skills.open_context_settings" = "打开上下文、MCP 与数据源管理";
+"chat.more_settings.skills.header" = "Skills 与扩展上下文";
+"chat.more_settings.skills.footer" = "这里可快速启停本机 Skill；上传 Skill、管理 MCP、文档和数据源请进入完整管理页。";
+"chat.more_settings.saved" = "设置已保存。";
+
+"chat.composer.attach_files" = "上传文件";
+"chat.composer.stop_generation" = "中止生成";
+"chat.composer.remove_attachment" = "移除附件";
+
+"chat.controls.agent.value.on" = "复杂问题";
+"chat.controls.agent.value.off" = "关闭";
+"chat.controls.agent.accessibility.on" = "Agent 模式已开启";
+"chat.controls.agent.accessibility.off" = "Agent 模式已关闭";
+"chat.controls.style" = "风格";
+"chat.controls.context" = "上下文";
+"chat.controls.execution" = "执行位置";
+"chat.controls.more_settings" = "更多设置";
+"chat.controls.more_settings.value_format" = "%@ · %d 步";
+
+"chat.attachments.limit" = "最多保留最近 10 个附件。";
+"chat.attachments.importing" = "正在导入附件…";
+"chat.attachments.import_empty" = "没有从所选文件中导入可用内容。";
+"chat.attachments.analysis_default" = "请根据附件内容进行分析。";
+"chat.attachments.label" = "附件：";
+"chat.attachment.open_format" = "打开附件 %@";
+"chat.attachments.image.multimodal_hint" = "已附加原始图片，所选模型支持时将作为多模态输入。";
+"chat.attachments.document.extract_failed" = "已附加文档文件，但 Nola 暂时无法在本地从该格式提取可读文本。";
+"chat.attachments.pdf.parse_failed" = "已附加 PDF 文件，但本地 PDF 解析失败。";
+"chat.attachments.pdf.no_selectable_text" = "已附加 PDF 文件，但未检测到可选中文本。";
+
+"chat.context.detail.messages_format" = "%d%% · %d 消息";
+"chat.context.detail.message_format_one" = "%d%% · %d 条消息";
+"prompt.response_style.professional" = "严谨专业";
+"prompt.response_style.casual" = "日常聊天";
+"prompt.response_style.playful" = "俏皮活泼";
+"chat.context.detail.template_sources_format" = "%@ · %d 数据源";
+"chat.context.detail.sources_count_format" = "%d 数据源";
+
+"chat.host_skill.default_name" = "宿主机技能";
+"chat.host_skill.description_prefix" = "来自 Web 主机。";
+"chat.host_document.default_name" = "宿主机文档";
+"chat.host_document.description_prefix" = "来自 Web 主机。";
+"chat.host_mcp.default_name" = "宿主机 MCP 服务器";
+"chat.host_mcp.description_prefix" = "来自 Web 主机。";
+"chat.context.documents.host.header" = "宿主机文档";
+"chat.context.documents.host.enabled" = "主机启用";
+"chat.context.documents.host.disabled" = "主机停用";
+"chat.context.mcp.host.header" = "宿主机 MCP";
+"chat.context.mcp.host.empty" = "当前宿主机没有可用的 MCP 服务器。";
+"chat.context.mcp.host.footer" = "连接、授权和能力发现由宿主机管理；此设备显示本次会话可用的能力。";
+"chat.context.mcp.host.connected" = "已连接";
+"chat.context.mcp.host.unavailable" = "不可用";
+"chat.context.mcp.host.catalog_count" = "能力目录 · %d 项";
+"chat.context.mcp.host.tools" = "工具";
+"chat.context.mcp.host.resources" = "资源";
+"chat.context.mcp.host.templates" = "资源模板";
+"chat.context.mcp.host.prompts" = "提示词";
+"chat.context.mcp.host.enabled" = "主机启用";
+"chat.context.mcp.host.disabled" = "主机停用";
+"chat.more_settings.documents.host_format" = "由 Web 主机提供 • %d 个字符";
+"chat.attachments.type.image" = "图片";
+"chat.attachments.type.document" = "文档";
+"chat.attachments.display_line_format" = "%@：%@（%@）";
+"chat.input.waiting" = "正在生成回复，可点击右侧停止按钮中止。";
+"chat.generation.cancelled" = "已中止生成。";
+"chat.generation.cancelled_suffix" = "\n\n（已中止生成）";
+"chat.model.missing_config_notice" = "模型未配置完整：请补全 Base URL、上游模型 ID 和 API Key";
+"chat.web_host.missing_config_notice" = "宿主机尚未配置。请先在 Mac 版 Nola 中配对此设备，再使用宿主机工具。";
+"chat.web_host.auth_failed" = "宿主机验证失败：%@";
+"chat.web_host.connection_failed" = "无法连接宿主机 %@。请在 Mac 上打开 Nola 并启用设备连接，同时确认两台设备位于同一网络。";
+"chat.agent.permission_denied" = "已拒绝该本地工具权限请求，Agent 未继续执行需要授权的操作。";
+"chat.agent.permission_resume_limit" = "Agent 在本轮请求了过多次宿主机工具权限确认，Nola 已在继续前停止本次运行。";
+"chat.agent.permission_resume_failed" = "会话不可用，已无法继续执行本次宿主机工具授权流程。";
+"chat.reasoning_model.short_output_notice" = "\n\n_（当前模型是「思考型」，把大部分输出预算花在了内部推理上，正文只剩极少内容。这是上游模型行为，不是 Nola 截断。建议在「模型管理」里切换到非思考模型，例如 qwen-max-latest / qwen-plus / deepseek-chat 等。）_";
+"chat.model.local" = "本地模型";
+"chat.model.web_backend" = "宿主机";
+"chat.model.cloud" = "云端模型";
+"chat.model.unconfigured" = "未配置模型";
+"chat.model.official_auto" = "官方模型 · 自动";
+"chat.model.local_named" = "本地模型 · %@";
+"chat.model.web_backend_host" = "宿主机 · %@";
+"chat.model.web_backend_named" = "宿主机 · %@";
+"chat.model.cloud_host" = "云端模型 · %@";
+"chat.model.cloud_named" = "云端模型 · %@";
+"chat.context.global_memory" = "全局记忆";
+"chat.context.default" = "默认";
+"chat.context.prompt.empty" = "当前没有可用模板，可在设置里先添加。";
+"chat.context.prompt.footer" = "模板会作为当前对话的系统提示前缀。";
+"chat.context.prompt.picker" = "当前模板";
+"chat.context.prompt.section" = "附加 Prompt 模板";
+"chat.context.sheet.subtitle" = "查看上下文占用、整理 session memory，并维护跨对话生效的长期记忆与用户偏好。";
+"chat.context.sources.disabled" = "已停用";
+"chat.context.sources.empty" = "还没有可关联的数据源。网站、搜索结果、文档或文件夹等可读取来源会显示在这里。";
+"chat.context.sources.footer" = "会把选中的可读取来源作为当前对话上下文。数据源可以来自网站、搜索结果、文件、文件夹、系统数据或 API；默认保存在本地。";
+"chat.context.sources.section" = "附加数据源";
+"chat.context.title" = "上下文";
+"chat.empty.greeting" = "我们从哪里开始？";
+"chat.empty.ready" = "从你的数据、记忆或一份文件开始。Nola 会从你确认的内容中持续学习。";
+"chat.answer.source.file" = "文件";
+"chat.answer.source.memory" = "个人记忆";
+"chat.answer.source.knowledge" = "知识";
+"chat.answer.source.skills" = "技能";
+"chat.answer.source.tools" = "工具结果";
+"chat.answer.basis_detail" = "这里只显示确实参与本次回答的来源。";
+"chat.answer.memory_updates" = "更新了 %d 条记忆";
+"chat.history.current" = "当前";
+"chat.history.delete.title" = "删除这个对话？";
+"chat.history.empty.action" = "新建对话";
+"chat.history.empty.message" = "点击顶部新会话按钮开始。";
+"chat.history.empty.title" = "还没有对话";
+"chat.history.short" = "历史";
+"chat.history.subtitle" = "本地保存的最近聊天记录";
+"chat.history.title" = "对话历史";
+"chat.local_reminder_deleted" = "已删除本地提醒「%@」。";
+"chat.local_reminder_paused" = "已暂停本地提醒「%@」。";
+"chat.local_reminder_resumed" = "已恢复本地提醒「%@」。";
+"chat.local_reminder_updated" = "已把本地提醒「%@」更新为 %@。";
+"chat.markdown.code" = "代码";
+"chat.markdown.code.copied" = "已复制";
+"chat.markdown.code.copy" = "复制";
+"chat.message.copied" = "已复制";
+"chat.message.copy" = "复制消息";
+"chat.model.add" = "添加模型";
+"chat.model.manage" = "管理模型与参数";
+"chat.new.short" = "新对话";
+"chat.scheduled_action_tool_deleted" = "已删除本地定时动作「%@」。";
+"chat.scheduled_action_tool_paused" = "已暂停本地定时动作「%@」。";
+"chat.scheduled_action_tool_resumed" = "已恢复本地定时动作「%@」。";
+"chat.scheduled_action_tool_updated" = "已把本地定时动作「%@」更新为 %@。";
+"chat.suggest.brainstorm" = "总结我最近数据中的重要变化";
+"chat.suggest.schedule" = "结合我的日程与优先级，规划今天";
+"chat.suggest.summary" = "根据你对我的记忆，我接下来该关注什么？";
+"chat.suggest.translate" = "分析我上传的文件，提炼事实与影响";
+"chat.thinking.deepseek.finished" = "已深度思考";
+
+"model.parameters.response_style" = "回复风格";
+"model.parameters.response_style.hint" = "系统提示只会注入当前选择的语言风格 prompt。新对话中也可临时切换。";
+"model.parameters.seed.optional" = "Seed（可选）";
+"model.parameters.stop_sequences" = "停止词，每行一个";
+"model.parameters.stop_sequences.hint" = "停止词最多会取前 8 个；Seed 留空表示不固定随机种子。";
+"scheduled.actions.options.ok" = "好的";
+"notifications.unread.label" = "未读通知";
+"notifications.unread.hint.count" = "你有 %d 条未读通知";
+"notifications.unread.hint.none" = "没有未读通知";
+"scheduled.runs.path.server" = "服务器";
+"scheduled.runs.path.local" = "本地";
+"scheduled.runs.events_count" = "%d 条";
+"scheduled.run_detail.status.trigger" = "触发方式";
+"scheduled.run_detail.status.path" = "执行路径";
+"scheduled.run_detail.trigger.manual" = "手动立即执行";
+"scheduled.run_detail.trigger.push" = "服务器推送";
+"scheduled.run_detail.trigger.background" = "定时后台";
+"scheduled.run_detail.trigger.fallback.background" = "后台";
+"scheduled.run_detail.trigger.fallback.manual" = "手动";
+"scheduled.run_detail.path.server" = "服务器";
+"scheduled.run_detail.path.local" = "本地";
+"scheduled.run_detail.source.section" = "数据源";
+"scheduled.run_detail.source.name" = "名称";
+"scheduled.run_detail.source.url" = "地址";
+"scheduled.run_detail.events_count" = "%d 条";
+"chat.topbar.accessibility.summary" = "%@，%@";
+"scheduled.run_detail.error.section" = "错误 / 说明";
+"scheduled.run_detail.processing.section" = "处理信息";
+"scheduled.run_detail.processing.tokens" = "Token 用量";
+"scheduled.run_detail.processing.tokens_value" = "%d 代币";
+"scheduled.run_detail.processing.network_duration" = "网络耗时";
+"scheduled.run_detail.processing.network_duration_value" = "%.1f 秒";
+"scheduled.run_detail.processing.content_size" = "抓取内容大小";
+"scheduled.run_detail.processing.result_id" = "结果 ID";
+"data_sources.readable_sources.title" = "可读取数据源";
+"data_sources.custom_source.title" = "自定义数据源";
+"data_sources.custom_source.locked_description" = "网站、搜索结果、API、订阅源等可读取来源可加入对话上下文，也可设置定时操作。";
+"data_sources.inline.empty.title" = "暂无可读取数据源";
+"data_sources.inline.empty.message" = "添加网站、搜索结果 URL、API 或订阅源，之后可加入对话上下文或用于定时操作。";
+"data_sources.inline.empty.action" = "添加数据源";
+"data_sources.inline.unavailable.title" = "数据源服务不可用";
+"data_sources.inline.unavailable.message" = "当前无法读取自定义数据源配置。";
+"scheduled_actions.run_reason.server_processing_loading_source" = "服务器处理中：加载任务配置";
+"scheduled_actions.run_reason.server_processing_fetching_url" = "服务器处理中：读取数据源内容";
+"scheduled_actions.run_reason.server_processing_llm_generating" = "服务器处理中：生成摘要";
+"scheduled_actions.run_reason.server_processing_persisting_result" = "服务器处理中：写入结果";
+"scheduled_actions.run_reason.server_processing" = "服务器处理中：任务已开始执行";
+"url_sources.system_sources.title" = "系统内置";
+"url_sources.custom_sources.title" = "自定义数据源";
+"url_sources.custom_sources.empty.title" = "暂无自定义数据源";
+"url_sources.custom_sources.empty.message" = "添加网站、搜索结果 URL、API 或订阅源，之后可在对话里引用，也可设置定时处理。";
+"url_sources.delete.failed" = "删除失败：%@";
+"url_sources.reason.not_eligible_yet" = "仍在退避窗口";
+"url_sources.reason.llm_failed_tls" = "摘要生成失败（TLS/证书错误，请检查网络代理或证书配置）";
+"url_sources.reason.llm_failed" = "摘要生成失败";
+"url_sources.reason.notification_failed" = "通知发送失败";
+"url_sources.reason.server_auth_missing" = "服务器执行失败：未登录推送账号";
+"url_sources.reason.server_run_failed" = "服务器执行失败（网关或服务异常）";
+"url_sources.reason.server_timeout" = "服务器执行超时（任务仍可能稍后完成并回推结果）";
+"url_sources.reason.server_processing" = "服务器正在处理中，结果将通过推送回传";
+"url_sources.reason.server_processing_loading_source" = "服务器正在处理中：加载任务配置";
+"url_sources.reason.server_processing_fetching_url" = "服务器正在处理中：读取数据源内容";
+"url_sources.reason.server_processing_llm_generating" = "服务器正在处理中：生成摘要";
+"url_sources.reason.server_processing_persisting_result" = "服务器正在处理中：写入结果";
+"url_sources.reason.generic" = "原因：%@";
+"url_sources.details.events_count" = "事件数：%d";
+"url_sources.details.execution_path.server" = "执行路径：服务器";
+"url_sources.details.execution_path.local" = "执行路径：本地";
+"url_sources.details.next_eligible" = "下次可执行：%@";
+"url_sources.details.error" = "错误：%@";
+"url_sources.run_now.source_line" = "数据源：%@";
+"url_sources.fetch_failed.with_content_type" = "抓取失败（HTTP %@, %@）";
+"url_sources.fetch_failed.with_status" = "抓取失败（HTTP %@）";
+"url_sources.local_source.folder_desc" = "本地文件夹：%@";
+"url_sources.local_source.file_desc" = "本地文件：%@";
+"model.test.default_prompt.summary_json" = "请基于下面候选事件生成今日摘要，输出 JSON 格式 ModelOutput";
+"notification.detail.source.calendar" = "日历";
+
+/* Added for direct Swift localization references */
+"autogen.DataSources.no_system_sources" = "暂无系统数据源";
+"autogen.HealthDataSource.subtitle" = "步数、心率、睡眠与锻炼";
+"autogen.HealthDataSource.title" = "健康";
+"autogen.NotificationService.scheduled" = "已计划";
+"chars" = "字符";
+"chat.bubble.archived_to_session" = "已折叠到 session memory";
+"chat.history.badge.compacted" = "已 compact";
+"chat.history.badge.memory" = "记忆";
+"chat.history.delete.message" = "从本地存储中删除“%@”及其消息历史。";
+"chat.host_tool.args" = "参数";
+"chat.host_tool.loading_screenshot" = "加载截图…";
+"chat.host_tool.open_screenshot" = "打开截图";
+"chat.host_tool.open_download" = "打开下载文件";
+"chat.host_tool.screenshot_warning" = "截图保存提示：%@";
+"chat.host_tool.permission.allow_once" = "允许本次操作";
+"chat.host_tool.permission.allow_conversation" = "本对话中允许";
+"chat.host_tool.permission.args_prefix" = "参数：";
+"chat.host_tool.permission.hint" = "这会在 Web 宿主机上执行真实工具；涉及登录、授权、凭据或删除等敏感动作时，只允许本次确认。";
+"chat.host_tool.permission.match_prefix" = "匹配范围：";
+"chat.host_tool.permission.reject" = "拒绝";
+"chat.host_tool.permission.title" = "Agent 请求操作宿主机";
+"chat.host_tool.result" = "结果";
+"chat.host_tool.sensitive_result_hidden" = "结果可能包含账号、OAuth、Token 或 Secret，敏感内容和截图已在 iOS 端隐藏。";
+"chat.host_tool.status.failed_no_reason" = "失败：未返回原因";
+"chat.host_tool.status.failed_prefix" = "失败：";
+"chat.host_tool.status.permission_required" = "需要确认";
+"chat.host_tool.status.running" = "运行中";
+"chat.host_tool.status.succeeded" = "完成";
+"chat.web_agent.summary.done" = "完成";
+"chat.web_agent.summary.error_format" = "\n错误：%@\n";
+"chat.web_agent.summary.max_iterations_notice" = "\n\n已达到本轮 Agent 最大迭代次数，先返回当前结果。你可以继续发送下一条消息，我会接着执行。";
+"chat.web_agent.summary.permission_required_format" = "\n⚠️ %@ 需要权限确认：%@\n";
+"chat.web_agent.summary.sensitive_hidden" = "敏感工具结果已隐藏";
+"chat.web_agent.summary.tool_result_format" = "\n✅ %@：%@\n";
+"chat.web_agent.summary.tool_running_format" = "\n\n🔧 %@ 正在运行…\n";
+"chat.local_reminder_service_unavailable" = "本地提醒服务暂时不可用，请稍后再试。";
+"chat.scheduled_action_auto_saved" = "已创建定时动作「%@」，会按 %@ %@ 执行。";
+"chat.scheduled_action_fetcher_unavailable" = "数据源服务不可用";
+"chat.scheduled_action_tool_no_match" = "我还没定位到要操作的本地定时动作。请带上任务名称，例如“把吃饭提醒改到下午一点”或“暂停每日摘要”。";
+"chat.scheduled_action_tool_update_missing_time" = "我找到了要修改的本地定时动作，但没识别到新的时间。可以说“改到下午一点”“改成每天 8:30”或“明天中午提醒”。";
+"chat.task_auto_saved" = "已创建任务「%@」。";
+"chat.task_auto_saved_with_date" = "已创建提醒「%@」，时间是 %@。";
+"common.frequency.daily" = "每天";
+"common.frequency.weekly" = "每周";
+"common.no.zh" = "否";
+"common.retry" = "重试";
+"common.unknown" = "未知";
+"common.yes.zh" = "是";
+"data.subtitle.local_first" = "本机数据源、定时动作与最近执行状态。";
+"data.title" = "数据";
+"data_source.capability.chat_context" = "可加入对话上下文";
+"data_source.capability.local_only" = "本地优先";
+"data_source.capability.notification" = "可通知结果";
+"data_source.capability.scheduled_operation" = "可设置定时操作";
+"data_source.kind.api" = "API / JSON";
+"data_source.kind.api.example" = "JSON API、Webhook 输出、结构化接口";
+"data_source.kind.calendar_feed" = "日历订阅";
+"data_source.kind.calendar_feed.example" = "iCalendar、ICS 订阅";
+"data_source.kind.custom" = "自定义来源";
+"data_source.kind.custom.example" = "任何 Nola 可以读取并转成上下文的来源";
+"data_source.kind.feed" = "RSS / Atom";
+"data_source.kind.feed.example" = "RSS、Atom、博客/新闻订阅";
+"data_source.kind.file" = "文件";
+"data_source.kind.file.example" = "PDF、Markdown、文本、CSV 等本地文件";
+"data_source.kind.folder" = "文件夹";
+"data_source.kind.folder.example" = "可读取的本地文件夹或项目目录";
+"data_source.kind.local_reminder" = "本地提醒";
+"data_source.kind.local_reminder.example" = "只在本机触发的提醒/通知";
+"data_source.kind.search.example" = "Google/Bing/自定义搜索结果 URL 或 API";
+"data_source.kind.system" = "系统数据";
+"data_source.kind.system.example" = "通讯录、日历、提醒事项、健康";
+"data_source.kind.web_search" = "搜索结果";
+"data_source.kind.website" = "网站 / 网页";
+"data_source.kind.website.example" = "网页、文档站、公开页面";
+"data_source.url.display_name" = "可读取数据源";
+"data_source.url.supported_events" = "网站、搜索结果、RSS、iCalendar、JSON、文件/文件夹";
+"data_source.url.usage_description" = "连接任何 Nola 可以读取的来源作为资料：网站、搜索结果、订阅源、API、文件或文件夹。它们可以进入对话上下文，也可以被定时操作处理并通知结果。";
+"data_sources.capability.configure_in_chat" = "可在聊天中配置";
+"data_sources.capability.context" = "注入聊天上下文";
+"data_sources.capability.local_first" = "本地优先存储";
+"data_sources.capability.scheduled" = "定时并通知";
+"data_sources.capability.section_subtitle" = "数据源不只是 URL。它们是任何 Nola 可以读取、总结、搜索并注入上下文的来源。你可以在聊天中引用它们，也可以让 Nola 创建和调整定时动作。";
+"data_sources.capability.section_title" = "统一的数据源能力";
+"data_sources.hero.subtitle" = "任何 Nola 可以读取的数据都可以成为上下文：网站、搜索结果、文件夹、文档、系统数据和 API。";
+"data_sources.hero.title" = "数据源";
+"home.quick.chat" = "继续对话";
+"home.quick.scheduled" = "查看任务";
+"home.refresh.button" = "刷新";
+"home.refresh.last_updated" = "最近更新：%@";
+"home.refresh.loading" = "正在更新本地数据…";
+"home.refresh.not_yet" = "尚未刷新";
+"home.refresh.title" = "数据状态";
+"main.tab.data" = "数据";
+"model.center.action.download_local" = "下载本地模型";
+"model.center.action.download_local.subtitle" = "离线推理";
+"model.center.cloud_models" = "云端模型";
+"model.center.in_use" = "已启用";
+"model.center.local_models" = "本地模型";
+"model.center.host_models" = "宿主机";
+"model.center.downloaded" = "已下载";
+"model.center.parameters" = "参数";
+"model.center.quick_actions" = "常用操作";
+"model.center.subtitle" = "集中管理模型列表与推理参数，保持聊天页轻量。";
+"model.center.title" = "模型";
+"model.center.use" = "使用";
+"model.parameters.behavior" = "重复与惩罚";
+"model.parameters.cloud_hint" = "这些参数会写入 OpenAI 兼容请求，适合按任务调整稳定性、创造性和输出长度。";
+"model.parameters.cloud_title" = "云端模型参数";
+"model.parameters.custom_system_prompt.hint" = "可选：追加到内置 system prompt 后。建议写稳定的长期偏好（例如输出格式、语气、优先级）。";
+"model.parameters.frequency_penalty" = "频率惩罚";
+"model.parameters.limits" = "上下文与输出";
+"model.parameters.local_hint" = "这些参数会直接用于本地 MLX 推理；未被本地引擎支持的高级项会保留为配置。";
+"model.parameters.local_title" = "本地模型参数";
+"model.parameters.max_output" = "最大输出";
+"model.parameters.output" = "输出控制";
+"model.parameters.presence_penalty" = "存在惩罚";
+"model.parameters.repetition_penalty" = "重复惩罚";
+"model.parameters.show_thinking.hint" = "显示模型可用的思考摘要。关闭不会改变已选择的思考强度。";
+"notification.detail.field.created_at" = "创建时间";
+"notification.detail.field.dedupe_key" = "去重键";
+"notification.detail.field.delivered_at" = "送达时间";
+"notification.detail.field.read" = "已读";
+"notification.detail.field.request_id" = "请求ID";
+"notification.detail.field.retry_count" = "重试次数";
+"notification.detail.field.sent_at" = "发送时间";
+"notification.detail.field.source" = "来源";
+"notification.detail.field.status" = "状态";
+"notification.detail.field.user_action" = "用户操作";
+"notification.detail.record.title" = "通知记录";
+"notification.detail.run.field.action" = "动作";
+"notification.detail.run.field.details" = "执行细节";
+"notification.detail.run.field.error" = "错误";
+"notification.detail.run.field.events_count" = "事件数";
+"notification.detail.run.field.failure_reason" = "失败原因";
+"notification.detail.run.field.finished_at" = "结束";
+"notification.detail.run.field.reason" = "原因码";
+"notification.detail.run.field.result" = "结果";
+"notification.detail.run.field.started_at" = "开始";
+"notification.detail.run.title" = "关联执行记录";
+"onboarding.calendars.system_expectation" = "iOS 17 及以上通常会显示“完全访问”或“添加与编辑”。Nola 需要“完全访问”才能读取你已有的日程。";
+"onboarding.contacts.system_expectation" = "点继续后会出现 iOS 的通讯录授权面板；按钮文案和排版由系统决定，不会与 Nola 页面完全一致。";
+"onboarding.header.eyebrow.permissions" = "系统权限";
+"onboarding.header.eyebrow.welcome" = "开始之前";
+"onboarding.header.subtitle.permissions" = "不同系统版本的按钮文字和布局会略有不同。下面显示的是 Nola 当前检测到的真实状态。";
+"onboarding.header.subtitle.welcome" = "Nola 会先解释用途，再由系统弹出对应权限面板。所有权限都可以稍后在设置里调整。";
+"onboarding.header.title.permissions" = "接下来看到的是 iOS 原生授权界面";
+"onboarding.header.title.welcome" = "先把 Nola 的工作方式说明白";
+"onboarding.health.system_expectation" = "HealthKit 授权页由 Apple 提供。不同设备和系统版本里，看到的健康项目与排序都可能不同。";
+"onboarding.notifications.system_expectation" = "通知授权结果以 iOS 系统面板为准。某些情况下系统会直接给出临时授权，Nola 会按系统真实状态更新。";
+"onboarding.permission.status.denied" = "当前已关闭";
+"onboarding.permission.status.granted" = "已经开启";
+"onboarding.permission.status.insufficient" = "当前权限级别不足";
+"onboarding.permission.status.not_requested" = "还没发起系统请求";
+"onboarding.permission.status.requesting" = "等待系统返回结果";
+"onboarding.permission.status_desc.denied" = "iOS 通常不会再次弹出同一个权限请求。若要开启，需要到系统设置里手动修改。";
+"onboarding.permission.status_desc.granted" = "Nola 现在会按系统允许的范围读取数据，不会访问未授权的内容。";
+"onboarding.permission.status_desc.insufficient" = "系统已经给了部分能力，但仍不足以读取你现有的数据。请在设置里升级为完全访问。";
+"onboarding.permission.status_desc.not_requested" = "点击底部按钮后，iOS 会弹出对应的系统授权面板；你在系统里看到的文案可能与这里不同。";
+"onboarding.permission.status_desc.requesting" = "如果系统打开了单独的授权页或你跳到了设置页，返回 App 后这里会自动刷新。";
+"onboarding.permission.system_title" = "你即将看到的系统界面";
+"onboarding.primary.request" = "继续并请求系统授权";
+"onboarding.primary.requesting" = "等待系统返回结果";
+"onboarding.reminders.system_expectation" = "提醒事项也会显示 iOS 原生授权页。如果你只给“添加与编辑”，Nola 仍无法读取现有提醒。";
+"onboarding.secondary.finish" = "暂时跳过并进入 Nola";
+"onboarding.secondary.skip" = "稍后再设置这一项";
+"onboarding.welcome.reality_body" = "从下一步开始，权限弹窗和选项都由 iOS 系统提供。Nola 只负责解释用途、读取结果，并在你返回 App 后更新显示状态。";
+"onboarding.welcome.reality_title" = "接下来你真正看到的是什么";
+"privacy.disclosure.header" = "隐私";
+"privacy.disclosure.intro" = "Nola 是开源且本地优先的。数据默认存储在这台设备上。";
+"privacy.disclosure.nav.title" = "隐私";
+"privacy.disclosure.principle.1" = "聊天历史和设置默认保留在本地。";
+"privacy.disclosure.principle.2" = "只有你明确配置的 API 请求会发送到你选择的端点。";
+"privacy.disclosure.principle.3" = "你可以随时在设置中清除本地数据。";
+"privacy.disclosure.principles.header" = "原则";
+"scheduled.actions.ai_only.body" = "直接在 AI 聊天中创建、修改、暂停和删除自动化。例如：“每天 9:00 总结 https://news.ycombinator.com/ 的更新。”此页面只显示 Web/搜索自动化的状态和运行历史。";
+"scheduled.actions.ai_only.empty.body" = "在 AI 聊天中用一句自然语言创建，例如：“每周一 8:00 总结这个 RSS 订阅。”提醒事项会进入本地任务，而不是自动化列表。";
+"scheduled.actions.ai_only.empty.title" = "暂无自动化";
+"scheduled.actions.ai_only.title" = "用自然语言管理定时动作";
+"scheduled.actions.badge.enabled" = "已启用";
+"scheduled.actions.badge.paused" = "已暂停";
+"scheduled.actions.editor.removed.body" = "Nola 不再提供定时任务的手动表单。Web 抓取、搜索自动化、暂停、删除和编辑都可以在聊天中用自然语言完成。本地提醒会进入任务和通知系统，而不是 URL 自动化。";
+"scheduled.actions.editor.removed.title" = "在 AI 聊天中管理自动化";
+"scheduled.actions.frequency.once" = "一次";
+"scheduled.actions.local_first.body.short" = "自动化优先在本地存储和触发；本地提醒由任务和通知系统处理，不会混在这里。";
+"scheduled.actions.metric.cloud" = "云端推送";
+"scheduled.actions.metric.enabled" = "已启用";
+"scheduled.actions.metric.total" = "总数";
+"scheduled.actions.redesigned.title" = "自动化与计划";
+"scheduled.section.actions" = "任务";
+"settings.local_only_active" = "开源本地模式已启用。";
+"settings.data.export_complete" = "导出文件已准备完成。";
+"settings.section.common" = "通用";
+"url_sources.form.local_file_note" = "文件和文件夹只会在这台设备上读取，用于聊天上下文或本地定时动作。";
+"url_sources.form.pick_file" = "选择本地文件";
+"url_sources.form.pick_folder" = "选择本地文件夹";
+"url_sources.form.section_source" = "来源";
+"url_sources.form.source_kind" = "来源类型";
+"url_sources.navigation.title" = "数据源";
+"url_sources.readable.section_subtitle" = "管理可通过 URL/API 读取的来源：网站、搜索结果页、JSON API、RSS 和 iCalendar。它们可以注入聊天上下文，也可以用于带通知的定时动作。";
+"url_sources.readable.section_title" = "可读取来源";
+"url_sources.run_now_log.source_prefix" = "来源：";
+"url_sources.run_now_log.title" = "立即运行日志";
+"chat.more_settings.native_browser.title" = "原生 Chrome";
+"chat.more_settings.native_browser.capacity" = "Chrome 桥接";
+"chat.more_settings.native_browser.capacity_format" = "%d 台宿主机 • %d 个待处理 • %d 个执行中";
+"chat.more_settings.native_browser.not_configured" = "原生浏览器 Token 未配置";
+"chat.more_settings.native_browser.connected" = "已连接";
+"chat.more_settings.native_browser.disconnected" = "未连接 Chrome 桥接";
+"chat.more_settings.hybrid_device_tools" = "允许宿主机请求设备工具";
+"chat.more_settings.hybrid_device_tools.hint" = "每次请求仍需确认，设备结果仅可返回当前宿主机会话。";
+"chat.hybrid.files" = "所选文件";
+"chat.hybrid.clipboard" = "剪贴板";
+"chat.hybrid.location" = "大致位置";
+"chat.hybrid.calendar" = "日历";
+"chat.hybrid.capabilities.hint" = "只有选中的能力会展示给宿主机模型，每次实际操作仍需确认。";
+"chat.host_pairing.identity" = "已配对宿主机";
+"chat.host_pairing.forget" = "忘记宿主机配对";
+"chat.host_pairing.forget.confirm.title" = "忘记此宿主机配对？";
+"chat.host_pairing.forget.confirm.message" = "Nola 将清除可信宿主机身份，对话仍保留在此设备。";
+"chat.host_pairing.forget.confirm.action" = "忘记配对";
+"chat.permission.hybrid.title" = "宿主机请求此设备";
+"chat.permission.hybrid.hint" = "操作在此设备执行，结果将返回当前宿主机会话。";
+"chat.permission.action.read_file" = "选择并读取文件";
+"chat.permission.action.write_file" = "选择并写入文件";
+"chat.permission.action.read_clipboard" = "读取剪贴板";
+"chat.permission.action.write_clipboard" = "更新剪贴板";
+"chat.permission.action.location" = "共享位置";
+"chat.permission.action.read_calendar" = "共享日历事件";
+"chat.permission.action.create_calendar" = "创建日程";
+"chat.permission.hybrid.request_reason" = "已配对宿主机正在请求设备能力，结果只会返回当前宿主机会话。";
+"chat.permission.hybrid.run_format" = "在此设备运行 %@";
+"model.center.action.connect_host" = "连接宿主机";
+"model.center.action.connect_host.subtitle" = "由 Mac 执行模型与工具";
+"model.center.configure_host" = "配置宿主机";
+"model.web_host.title" = "宿主机连接";
+"model.web_host.url" = "宿主机 URL";
+"model.web_host.token" = "访问令牌";
+"model.web_host.connection" = "连接";
+"model.web_host.connection.footer" = "Nola 验证宿主机后，才会将令牌存入此设备的钥匙串。";
+"model.web_host.trust" = "信任";
+"model.web_host.certificate_pin" = "证书 SHA-256（可选）";
+"model.web_host.certificate_pin.footer" = "HTTPS 宿主机可粘贴带或不带冒号的叶证书指纹；系统证书和主机名验证仍会执行。";
+"model.web_host.security_summary" = "配对前，Nola 会验证令牌、权限协议和宿主机身份；每个宿主机或设备工具仍遵循各自的授权策略。";
+"model.web_host.error_format" = "连接错误：%@";
+"model.web_host.connect" = "连接";
+"model.web_host.connect.accessibility_hint" = "验证宿主机并绑定其身份后再保存。";
+"model.web_host.invalid_url" = "请输入有效的 HTTP 或 HTTPS 宿主机 URL。";
+"model.web_host.missing_token" = "请输入此宿主机的访问令牌。";
+"model.web_host.invalid_pin" = "证书指纹必须恰好包含 64 个十六进制字符。";
+"model.web_host.pin_requires_https" = "证书 pin 仅适用于 HTTPS 宿主机 URL。";
+"model.web_host.public_http_forbidden" = "公网 Web Host 必须使用 HTTPS；HTTP 仅限此设备或私有局域网。";
+"chat.host_pairing.transport" = "传输安全";
+"chat.host_pairing.transport.pinned_https" = "已固定 HTTPS 证书";
+"chat.host_pairing.transport.system_https" = "系统 HTTPS 验证";
+"chat.host_pairing.transport.encrypted_lan" = "加密局域网桥接";
+"chat.model.group.device" = "本机运行";
+"chat.model.group.host" = "宿主机";
+"chat.model.group.cloud" = "云端";
+"chat.model.not_configured" = "尚未配置";
+"chat.model.parameters.accessibility" = "%@ 参数";
+"chat.tool_activity" = "工具活动";
+"chat.tool_activity.running_format" = "%d 个运行中";
+"chat.tool_activity.failed_format" = "%d 个失败";
+"chat.tool_activity.completed_format" = "%d 个已完成";
+"common.expand" = "展开";
+"common.collapse" = "收起";
+"chat.error.dismiss" = "关闭";
+"chat.error.edit_retry" = "编辑后重试";
+"chat.error.switch_model" = "切换模型";
+
+"data_sources.runtime.hero.title" = "实时上下文";
+"data_sources.runtime.hero.subtitle" = "只有 Nola 真正读取成功后，数据源才会显示为可用。";
+"data_sources.runtime.device_section" = "这台设备";
+"data_sources.runtime.metric.ready" = "可用";
+"data_sources.runtime.metric.attention" = "需处理";
+"data_sources.runtime.metric.updating" = "更新中";
+"data_sources.runtime.never_read" = "还没有成功读取";
+"data_sources.runtime.last_read_format" = "最近成功读取于 %1$@";
+"data_sources.runtime.status.syncing" = "更新中";
+"data_sources.runtime.status.ready" = "可用";
+"data_sources.runtime.status.needs_permission" = "需要授权";
+"data_sources.runtime.status.stale" = "可能已过期";
+"data_sources.runtime.status.error" = "刷新失败";
+"data_sources.runtime.status.unavailable" = "不可用";
+"data_sources.runtime.status.disabled" = "已关闭";
+"data_sources.runtime.detail.syncing" = "正在检查最新可用数据…";
+"data_sources.runtime.detail.ready_count_format" = "已读取 %1$d 项 · %2$@";
+"data_sources.runtime.detail.ready_empty" = "读取成功 · 暂无近期项目";
+"data_sources.runtime.detail.request_access" = "授权后，Nola 才能读取这个来源";
+"data_sources.runtime.detail.open_settings" = "访问已关闭 · 请前往系统设置修改";
+"data_sources.runtime.detail.stale_format" = "上次成功读取于 %1$@";
+"data_sources.runtime.detail.error_cached_format" = "刷新失败 · 上次读取于 %1$@";
+"data_sources.runtime.detail.error" = "还没有成功读取";
+"data_sources.runtime.detail.unavailable" = "此设备无法使用这个来源";
+"data_sources.runtime.detail.disabled" = "这个来源当前已关闭";
+"data_sources.runtime.error.no_snapshot" = "没有返回可读取的健康摘要。";
+"data_sources.runtime.detail.access_title" = "访问状态";
+"data_sources.runtime.detail.last_success" = "上次成功读取";
+"data_sources.runtime.detail.contributes_title" = "Nola 可以使用什么";
+"data_sources.runtime.action.allow" = "允许访问";
+"data_sources.runtime.action.retry" = "重试";
+"data_sources.runtime.action.turn_on" = "开启并刷新";
+
+"onboarding.core.brand_subtitle" = "与你一起进化的上下文";
+"onboarding.core.step_format" = "第 %1$d 步，共 3 步";
+"onboarding.core.loop_eyebrow" = "不只是另一个聊天应用";
+"onboarding.core.loop_title" = "让你的上下文变成真正有用的智能";
+"onboarding.core.loop_body" = "Nola 连接你选择的信息，说明每次回答用了什么，只保留值得长期记住的内容。";
+"onboarding.core.source_title" = "连接";
+"onboarding.core.source_detail" = "设备数据、文档与工具";
+"onboarding.core.answer_title" = "理解";
+"onboarding.core.answer_detail" = "回答建立在真正使用过的来源上";
+"onboarding.core.learn_title" = "进化";
+"onboarding.core.learn_detail" = "偏好和长期事实始终可以编辑";
+"onboarding.core.local_note" = "核心体验优先在本地工作。宿主机只增加能力，从来不是必需条件。";
+"onboarding.core.sources_eyebrow" = "从真正重要的内容开始";
+"onboarding.core.sources_title" = "现在连接一个来源，也可以暂时不连接";
+"onboarding.core.sources_body" = "所有来源都是可选的。只有真实读取成功后，Nola 才会显示为可用。";
+"onboarding.core.contacts_detail" = "在计划和请求中识别相关联系人";
+"onboarding.core.calendar_detail" = "回答日程与近期安排";
+"onboarding.core.reminders_detail" = "把待办纳入规划和总结";
+"onboarding.core.health_detail" = "使用近期活动、睡眠、心率和锻炼";
+"onboarding.core.notifications_detail" = "定时结果准备好后及时送达";
+"onboarding.core.sources_footer" = "之后可在“数据”页面添加文档并管理所有来源。";
+"onboarding.core.connect" = "连接";
+"onboarding.core.ready" = "可用";
+"onboarding.core.settings" = "设置";
+"onboarding.core.learning_eyebrow" = "看得见、可编辑的学习";
+"onboarding.core.learning_title" = "Nola 会进化，但不会变成黑箱";
+"onboarding.core.learning_body" = "回答可以展示依据。长期偏好被学会后，你可以打开、编辑或删除。";
+"onboarding.core.answer_sample" = "你下午 3:30 后没有安排。散步一会儿也能完成今天的活动目标。";
+"onboarding.core.sample_calendar" = "日历";
+"onboarding.core.sample_health" = "健康";
+"onboarding.core.memory_updated" = "记忆已更新";
+"onboarding.core.memory_sample" = "偏好在傍晚进行短时间散步";
+"onboarding.core.memory_control" = "点击任何记忆更新，都可以在“个人智能”中查看。";
+"onboarding.core.action.sources" = "选择我的数据源";
+"onboarding.core.action.continue" = "继续";
+"onboarding.core.action.enter" = "进入 Nola";
+"main.tab.intelligence" = "智能";
+
+"chat.learning.action" = "教会 Nola";
+"chat.learning.title" = "让 Nola 更懂你";
+"chat.learning.subtitle" = "将纠正保存到本地个人智能记录，并关联这条回答。保存不会重新生成回答。";
+"chat.learning.preview" = "本次回答";
+"chat.learning.focus.concise" = "更简洁";
+"chat.learning.focus.detailed" = "更深入";
+"chat.learning.focus.tone" = "调整语气";
+"chat.learning.focus.context" = "补充上下文";
+"chat.learning.focus.correction" = "纠正事实";
+"chat.learning.statement.concise" = "以后先给结论，并保持表达简洁。";
+"chat.learning.statement.detailed" = "以后提供更深入的分析和必要细节。";
+"chat.learning.statement.tone" = "以后按我的沟通偏好调整回答语气。";
+"chat.learning.statement.context" = "回答前更充分地使用已有对话和个人上下文。";
+"chat.learning.statement.correction" = "回答类似事实问题时，记住我的这次纠正。";
+"chat.learning.note" = "哪里需要改变？";
+"chat.learning.note.placeholder" = "具体告诉 Nola 这次回答应该如何改进";
+"chat.learning.future" = "用于今后的回答";
+"chat.learning.future.detail" = "开启后，还会保存为长期偏好，用于未来回答。关闭时只保存纠正记录，不创建长期偏好。";
+"chat.learning.save_failed" = "未能保存纠正。草稿已保留，请重试。";
+"history.detail.available" = "已加载";
+"history.detail.partial" = "已加载部分内容";
+"history.detail.not_loaded" = "尚未加载";
+"history.detail.unsupported" = "无法识别的历史格式";
+"history.detail.content" = "正文";
+"history.detail.summary" = "摘要";
+"history.detail.input" = "输入";
+"history.detail.output" = "输出";
+"history.detail.files" = "文件";
+"history.detail.name" = "名称";
+"history.detail.state" = "状态";
+"history.detail.preview_only" = "这里显示的是预览，不是完整原文。";
+"history.detail.limit" = "详情预览最多显示 32 KB。打开原始记录后，可以分页阅读原始内容。";
+"history.detail.open_original" = "阅读原始记录";
+"history.detail.diagnostics" = "技术详情";
+"history.original.explanation" = "原始记录仅供阅读，每页最多 8 KB。选择或复制文本只包含当前页，不代表完整记录。";
+"history.original.range" = "字节 %llu–%llu，共 %llu";
+"history.original.previous" = "上一页";
+"history.original.next" = "下一页";
+"history.original.empty" = "原始记录为空。";
+"chat.learning.cancel" = "取消";
+"chat.learning.save" = "保存纠正";
+
+"settings.scope.title" = "全局设置";
+"settings.scope.detail" = "这些选项会影响整个 Nola。回复风格、上下文和工具仍按当前对话生效。";
+"settings.section.connections" = "连接";
+"settings.connections.data_sources.detail" = "健康、文件、日历及其他本地数据";
+"settings.connections.models.detail" = "本地、云端和宿主机模型连接";
+"settings.section.automation" = "自动化";
+"settings.automation.scheduled.detail" = "例行任务、提醒和即将执行的操作";
+"settings.data.export.detail" = "创建一份可迁移的 Nola 数据副本";
+"settings.data.clear.detail" = "删除对话、记忆和已连接数据";
+
+"scheduled.timeline.section" = "接下来";
+"scheduled.timeline.next" = "下一项自动化";
+"scheduled.timeline.none" = "暂时没有计划";
+"scheduled.timeline.create.detail" = "在对话中描述一个例行任务，Nola 会为你安排。";
+"scheduled.timeline.enabled.count" = "%d 项启用";
+"scheduled.timeline.create" = "在对话中创建";
+"scheduled.timeline.history" = "执行记录";
+
+"chat.scope.current_conversation" = "当前对话";
+"chat.scope.across_conversations" = "跨对话";
+
+// MARK: - First-run guide v2
+"onboarding.guide.step_format" = "第 %1$d 步，共 %2$d 步";
+"onboarding.guide.runtime.eyebrow" = "选择运行方式";
+"onboarding.guide.runtime.title" = "决定 Nola 在哪里完成工作";
+"onboarding.guide.runtime.body" = "可以从自动选择开始，也可以偏好本机或已连接的宿主机。每次执行前都会明确显示实际可用能力。";
+"onboarding.guide.runtime.auto" = "自动选择";
+"onboarding.guide.runtime.auto_detail" = "使用当前配置中最合适的模型与可用工具";
+"onboarding.guide.runtime.device" = "这台设备";
+"onboarding.guide.runtime.device_detail" = "优先使用已下载模型和设备本地能力";
+"onboarding.guide.runtime.host" = "已连接宿主机";
+"onboarding.guide.runtime.host_detail" = "使用配对的 Mac 或 CLI Host 扩展工具能力";
+"onboarding.guide.runtime.note" = "这里只记录偏好，不会授予权限。每个对话都可以重新切换模型和宿主机。";
+"onboarding.guide.sources.title" = "规划你想使用的上下文";
+"onboarding.guide.sources.body" = "先选择未来可能有用的来源；只有真实任务需要时才会访问。";
+"onboarding.guide.sources.permission_note" = "系统权限会在真正使用时解释并申请。跳过任何来源都不会影响基础对话。";
+"onboarding.guide.source.documents" = "文档";
+"onboarding.guide.source.documents_detail" = "把文件直接挂在需要它的那条消息下方";
+"onboarding.guide.source.calendar" = "日历";
+"onboarding.guide.source.health" = "健康";
+"onboarding.guide.source.workspace" = "工作区";
+"onboarding.guide.source.workspace_detail" = "让 Nola 处理你明确选择的文件夹";
+"onboarding.guide.source.web" = "网页来源";
+"onboarding.guide.source.web_detail" = "保存可刷新、可查看历史的网页内容";
+"onboarding.guide.source.iphone" = "iPhone 数据";
+"onboarding.guide.source.iphone_detail" = "同步可用时使用健康摘要和设备上下文";
+"onboarding.guide.ready.eyebrow" = "准备完成真实任务";
+"onboarding.guide.ready.title" = "从结果开始，而不是寻找功能";
+"onboarding.guide.ready.body" = "直接描述要完成的结果。执行过程中，Nola 会展示来源、思考过程和工具活动。";
+"onboarding.guide.task.day" = "规划今天";
+"onboarding.guide.task.day_detail" = "把日程与未完成事项整理成可执行计划";
+"onboarding.guide.task.document" = "处理一份文档";
+"onboarding.guide.task.document_detail" = "上传文件后要求提取、比较或审阅";
+"onboarding.guide.task.research" = "研究一个主题";
+"onboarding.guide.task.research_detail" = "检索最新来源并引用证据";
+"onboarding.guide.task.project" = "审查一个项目";
+"onboarding.guide.task.project_detail" = "检查工作区、发现风险并给出计划";
+"onboarding.guide.ready.memory_note" = "长期记忆始终可选、可见、可编辑。Nola 应该与你一起学习，而不是绕过你学习。";
+"onboarding.guide.action.start" = "开始使用 Nola";
+"onboarding.guide.action.next" = "继续";
+"onboarding.guide.back" = "返回";
+"onboarding.guide.source.calendar_detail" = "在规划和日程问答中使用近期事件";
+"chat.assistant.processing" = "Nola 正在处理中";
+"chat.assistant.phase.planning" = "正在规划下一步";
+"chat.assistant.phase.compacting" = "正在整理上下文";
+"chat.assistant.phase.searching" = "正在检索来源";
+"chat.assistant.phase.tools" = "正在使用工具";
+"chat.assistant.phase.verifying" = "正在核验结果";
+"chat.assistant.phase.composing" = "正在组织回复";
+"chat.assistant.phase.waiting" = "等待确认";
+"chat.host_tool.resource.operation.read" = "读取";
+"chat.host_tool.resource.operation.unknown" = "操作未声明";
+"chat.host_tool.resource.operation.create" = "创建";
+"chat.host_tool.resource.operation.update" = "更新";
+"chat.host_tool.resource.operation.delete" = "删除";
+"chat.host_tool.resource.operation.execute" = "执行";
+"chat.host_tool.resource.operation.open" = "打开";
+"chat.host_tool.resource.operation.search" = "搜索";
+"chat.thinking.active" = "思考中";
+
+/* 数据源访问与已验证读取契约 */
+"data_source.policy.default_enabled" = "每个对话";
+"data_source.policy.conversation_opt_in" = "按对话启用";
+"data_source.policy.ask_when_relevant" = "相关时询问";
+"data_source.policy.blocked" = "已阻止";
+"data_source.policy.title" = "默认访问方式";
+"data_source.policy.section" = "上下文访问";
+"data_source.policy.note" = "选择此来源是自动使用、按对话启用、仅在相关时询问，还是完全阻止。";
+"data_source.contract.title" = "已验证读取契约";
+"data_source.contract.summary" = "%d 条记录 · %d 分钟后刷新";
+"data_source.contract.verified" = "已验证";
+"data_source.contract.needs_validation" = "需要验证";
+"data_source.contract.reader" = "读取方式";
+"data_source.contract.format" = "格式：%@";
+"data_source.contract.records" = "%d 条记录";
+"data_source.contract.validated" = "%@验证";
+"data_source.saved" = "%@ 已可用";
+"data_sources.usage.title" = "最近使用";
+"data_sources.usage.purpose.conversation_context" = "对话上下文";
+"data_sources.usage.purpose.scheduled_refresh" = "定时刷新";
+"data_sources.usage.purpose.other" = "数据访问";
+"data_sources.usage.disclosure.cloud" = "已提供给配置的云端模型";
+"data_sources.usage.disclosure.local" = "仅保留在此设备";
+"data_sources.usage.disclosure.pending" = "请求发送时记录模型路径";
+
+/* API 与本地模型显式生命周期 */
+"model.center.action.configure_api" = "配置 API";
+"model.center.action.configure_api.subtitle" = "远端模型连接";
+"model.center.selected" = "已选择";
+"model.center.running" = "运行中";
+"model.center.starting" = "正在启动";
+"model.center.start" = "启动";
+"model.center.stop" = "停止";
+"model.center.runtime_error.title" = "本地模型启动失败";
+"model.local.not_started.error" = "请先在模型中心启动已选择的本地模型，再开始对话。";
+"model.parameters.local_context_memory_hint" = "建议将 64K 作为上下文目标。实际内存占用还取决于模型架构与 KV 缓存精度；内存受限设备建议使用 0.8B，高内存设备可使用 4B。";
+"model.api.title" = "远端 API";
+"model.api.protocol" = "API 协议";
+"model.api.keychain_error" = "无法安全保存 API 密钥。";
+"model.api.base_url" = "基础 URL";
+"model.api.api_key" = "API 密钥";
+"model.api.model" = "模型名称";
+"model.api.footer" = "配置会安全保存，但不会发起请求。需要使用时，请另外选择云端模型。";
+"model.api.invalid_url" = "请输入不含用户名、密码或片段的 HTTP(S) 地址。";
+"model.center.connections" = "连接方式";
+"model.center.api_saved" = "API 配置已保存，需要使用时请另行选择云端模型。";
+"model.center.host_saved" = "宿主机已验证并保存。需要在 Mac 上运行当前对话时可选择它。";
+"model.center.local_selected_format" = "已选择 %@，准备好后再启动本地推理。";
+"model.center.remote_selected_format" = "已启用 %@。";
+"model.source.local_mlx" = "设备端 MLX";
+"settings.connections.intelligence.title" = "智能与能力";
+"settings.connections.intelligence.detail" = "管理长期记忆、技能、MCP 和学习偏好";
+"settings.section.privacy" = "隐私";
+"settings.privacy.detail" = "了解哪些数据保留在设备上，以及何时会离开设备";
+
+/* macOS 数据与能力中心 */
+
+/* macOS 扩展中心 */
+
+/* Chat Skill and MCP deletion */
+"chat.context.delete" = "删除";
+"chat.context.skills.delete_title" = "删除这个 Skill？";
+"chat.context.skills.delete_message" = "删除后将不再注入后续对话。";
+"chat.context.mcp.delete_title" = "删除这个 MCP 接口？";
+"chat.context.mcp.delete_message" = "删除后将无法再使用该接口提供的工具和资源。";
+"chat.context.mcp.endpoint_required" = "等待填写服务地址";
+
+/* macOS extension detail and Chrome manager */
+
+/* iOS settings data operations */
+"settings.data.exporting" = "正在准备导出…";
+"settings.data.clearing" = "正在清除数据…";
+"settings.data.export_failed" = "无法创建导出文件：%@";
+"settings.data.clear_complete" = "本地数据已清除。";
+"settings.data.clear_partial" = "大部分本地数据已清除，但部分对话记录无法删除。";
+"settings.operation.title" = "数据管理";
+
+/* macOS 设置 */
+
+/* macOS 窗口与命令 */
+"Detailed Logging" = "详细日志";
+"Runtime Diagnostics" = "运行诊断";
+"Runtime status, logs, and support export." = "查看运行状态、日志并导出支持信息。";
+"Pause" = "暂停";
+"Resume" = "继续";
+"Logs Paused" = "日志已暂停";
+"Detailed" = "详细";
+"%lld entries" = "%lld 条记录";
+"Level" = "级别";
+"All" = "全部";
+"Module" = "模块";
+"All modules" = "全部模块";
+"Search logs" = "搜索日志";
+"Copy" = "复制";
+"Export Logs" = "导出日志";
+"Reveal Log in Finder" = "在“访达”中显示日志";
+"Clear Logs" = "清除日志";
+"Log file unavailable." = "日志文件不可用。";
+"No log entries match current filter" = "没有符合当前筛选条件的日志";
+"Adjust the filters or search query." = "调整筛选条件或搜索内容。";
+"Waiting for log entries" = "正在等待日志";
+"Detailed logging is active. New runtime events will appear here automatically." = "详细日志已启用，新的运行事件会自动显示在这里。";
+"Detailed logging is off." = "详细日志已关闭。";
+"Only warnings and errors are recorded until debug logging is enabled in Settings." = "启用调试日志前，仅记录警告和错误。";
+"Warnings & Errors" = "警告与错误";
+"Ready" = "就绪";
+"Search templates" = "搜索模板";
+"Delete Prompt Template?" = "删除提示词模板？";
+"This removes the custom template from this Mac. This action cannot be undone." = "这会从本机删除该自定义模板，且无法撤销。";
+"This action cannot be undone." = "此操作无法撤销。";
+"Delete Web Source?" = "删除 Web 数据源？";
+"Cached content and run history for this source will be removed from this Mac." = "该数据源的缓存内容和运行历史将从本机删除。";
+"Cached Content" = "缓存内容";
+"Refreshing" = "正在刷新";
+"Enable %@" = "启用 %@";
+"settings.section.reset" = "重置";
+"settings.notifications.status.updating" = "正在检查权限…";
+"settings.notifications.status.disabled" = "已在 Nola 中关闭";
+"settings.notifications.status.ready" = "iOS 已允许";
+"settings.notifications.status.denied" = "已被 iOS 设置阻止";
+"settings.notifications.status.not_determined" = "尚未请求权限";
+"settings.notifications.status.unavailable" = "权限状态不可用";
+"settings.notifications.permission_denied" = "通知已被 iOS 阻止。你可以稍后在系统设置中允许。";
+"settings.notifications.permission_failed" = "无法更新通知权限：%@";
+"scheduled.filter.results" = "%d/%d 个自动化任务";
+"scheduled.filter.empty.title" = "没有匹配的自动化任务";
+"scheduled.filter.empty.detail" = "尝试其它名称或状态筛选。";
+"scheduled.filter.reset" = "重置筛选";
+"scheduled.filter.all" = "全部";
+"scheduled.filter.enabled" = "已启用";
+"scheduled.filter.paused" = "已暂停";
+"scheduled.filter.attention" = "需处理";
+"scheduled.filter.search" = "搜索自动化任务";
+"scheduled.timeline.enabled.total" = "已启用 %d/%d";
+"Automations" = "自动化";
+"Recurring work, explicit workspaces, and visible run history" = "周期执行、明确的工作区与可追踪的运行记录";
+"Automation Count" = "自动化数量";
+"Enabled" = "已启用";
+"Running" = "运行中";
+"Paused" = "已暂停";
+"Search automations" = "搜索自动化任务";
+"%d of %d automations" = "%d/%d 个自动化任务";
+"No Matching Automations" = "没有匹配的自动化任务";
+"Try another name, prompt, workspace, or status filter." = "尝试其它名称、提示词、工作区或状态筛选。";
+"Reset Filters" = "重置筛选";
+"No Automations" = "暂无自动化任务";
+"Schedule a prompt to run daily or weekly in a selected workspace." = "让提示词每天或每周在指定工作区中运行。";
+"Define what runs, when it runs, and which data it may use." = "定义执行内容、执行时间和允许使用的数据。";
+"Run History" = "运行记录";
+"New Automation" = "新建自动化";
+"Edit Automation" = "编辑自动化";
+"Automation Error" = "自动化错误";
+"Delete Automation?" = "删除自动化任务？";
+"This removes the schedule and its future runs. Existing run history is kept." = "这会移除计划及后续运行，已有运行记录会保留。";
+"View Run History" = "查看运行记录";
+"Edit" = "编辑";
+"Delete" = "删除";
+"Cancel" = "取消";
+"Save" = "保存";
+"More" = "更多";
+"On data change" = "数据变化时运行";
+"Run Now" = "立即运行";
+"Name" = "名称";
+"Agent prompt" = "Agent 提示词";
+"Skill" = "技能";
+"Automatic" = "自动选择";
+"Frequency" = "频率";
+"Weekday" = "星期";
+"Time" = "时间";
+"Run when selected data changes" = "所选数据变化时运行";
+"Workspace" = "工作区";
+"Choose…" = "选择…";
+"Data" = "数据";
+"Maximum data age" = "数据最长时效";
+"minutes" = "分钟";
+"No web sources" = "暂无网页数据源";
+"Reliability" = "可靠性";
+"Timeout" = "超时时间";
+"Retries after failure" = "失败后重试次数";
+"Maximum data age must be between 5 and 10,080 minutes." = "数据时效必须在 5 到 10,080 分钟之间。";
+"Timeout must be between 1 and 720 minutes." = "超时时间必须在 1 到 720 分钟之间。";
+"Retries must be between 0 and 3." = "重试次数必须在 0 到 3 之间。";
+"scheduled.runs.filter.empty.title" = "没有匹配的运行记录";
+"scheduled.runs.filter.empty.detail" = "尝试其它关键词或状态筛选。";
+"scheduled.runs.filter.reset" = "重置筛选";
+"scheduled.runs.filter.search" = "搜索运行记录";
+"scheduled.runs.filter.all" = "全部";
+"scheduled.runs.filter.success" = "成功";
+"scheduled.runs.filter.issues" = "异常";
+"scheduled.runs.filter.skipped" = "已跳过";
+"scheduled.runs.filter.summary" = "运行记录";
+"scheduled.runs.filter.results" = "%d/%d";
+"scheduled.run_detail.overview.title" = "运行概览";
+"scheduled.run_detail.technical.title" = "技术详情";
+"notifications.pending.title" = "计划通知";
+"notifications.pending.search" = "搜索计划通知";
+"notifications.pending.filtered.empty.title" = "没有匹配的通知";
+"notifications.pending.filtered.empty.detail" = "尝试其它标题或正文。";
+"notifications.pending.schedule.unavailable" = "计划时间不可用";
+"notifications.pending.count" = "%d 条已计划";
+"notifications.pending.next" = "下次发送：%@";
+"notifications.pending.next.unavailable" = "暂无可用的下次发送时间。";
+"notifications.source.calendar" = "日历";
+"notifications.source.reminder" = "提醒事项";
+"notifications.source.web" = "网页";
+"notifications.source.health" = "健康";
+"notifications.source.contact" = "联系人";
+"notifications.source.system" = "系统";
+"scheduled.actions.toggle.accessibility" = "启用%@";
+"scheduled_actions.journal.storage_unavailable" = "本地结果存储暂时不可用。";
+"scheduled_actions.journal.not_found" = "此执行结果已不存在。";
+"url_sources.health.diagnostics" = "运行诊断";
+"url_sources.health.connect" = "连接";
+"url_sources.row.toggle.accessibility" = "启用%@";
+"url_sources.preview.title" = "验证预览";
+"url_sources.discard.title" = "放弃更改？";
+"url_sources.discard.confirm" = "放弃";
+"url_sources.discard.message" = "对此数据源的未保存更改将会丢失。";
+
+/* macOS 设置工作区 */
+
+/* 个人智能能力 */
+"personal.capabilities.title" = "技能与 MCP";
+"personal.capabilities.gateway.detail" = "管理可复用工作流和外部工具连接。";
+"personal.capabilities.gateway.count" = "已启用";
+"personal.capabilities.subtitle" = "跨会话可用的复用工作流与连接工具。";
+"personal.capabilities.skills" = "技能";
+"personal.capabilities.type" = "能力类型";
+"personal.capabilities.search" = "搜索能力";
+"personal.capabilities.add_skill" = "添加技能";
+"personal.capabilities.add_mcp" = "添加 MCP";
+"personal.capabilities.no_results" = "没有匹配的能力";
+"personal.capabilities.no_results.detail" = "请尝试其他搜索词。";
+"personal.capabilities.empty" = "还没有能力";
+"personal.capabilities.empty.detail" = "创建后即可在不同会话中使用。";
+"personal.capabilities.untitled_skill" = "未命名技能";
+"personal.capabilities.saved" = "更改已保存";
+"personal.capabilities.enabled" = "已启用";
+"personal.capabilities.disabled" = "已停用";
+"personal.capabilities.edit" = "编辑";
+"personal.capabilities.delete" = "删除";
+"personal.capabilities.delete.title" = "删除这项能力？";
+"personal.capabilities.error" = "无法保存更改";
+"personal.capabilities.ok" = "好";
+"personal.capabilities.name" = "名称";
+"personal.capabilities.description" = "说明";
+"personal.capabilities.instructions" = "技能内容";
+"personal.capabilities.endpoint" = "端点";
+"personal.capabilities.characters" = "个字符";
+"personal.capabilities.invalid_endpoint" = "请输入有效的 HTTP 或 HTTPS 端点。";
+"personal.capabilities.skill" = "技能";
+"personal.capabilities.cancel" = "取消";
+"personal.capabilities.save" = "保存";
+
+/* macOS 活动中心 */
+"Refresh" = "刷新";
+"Clear" = "清空";
+"Status" = "状态";
+"Copied" = "已复制";
+
+"model.center.empty.title" = "尚未配置模型";
+"model.center.empty.message" = "使用上方入口配置 API、下载本地模型，或连接可信宿主机。";
+"Commands" = "命令";
+"Open in New Window" = "在新窗口中打开";
+"Rename…" = "重命名…";
+"What should we work on?" = "想从哪里开始？";
+"Ask a question, open a workspace, or bring in a document." = "提出问题、打开工作区，或添加一份文档。";
+"Copy as Markdown" = "复制为 Markdown";
+"Quick Look" = "快速查看";
+"Open" = "打开";
+"Reveal in Finder" = "在访达中显示";
+"Copy Path" = "复制路径";
+"System Access" = "系统访问";
+"Skills and MCP" = "技能与 MCP";
+"Diagnostics" = "诊断";
+"Conversations" = "对话";
+"notifications.load_failed.title" = "无法加载通知";
+"notifications.empty.unread.title" = "没有未读通知";
+"notifications.empty.unread.message" = "你已经处理了所有通知。";
+"notifications.empty.search.title" = "没有匹配的通知";
+"notifications.empty.search.message" = "尝试其他关键词，或清除当前搜索。";
+"notifications.empty.search.clear" = "清除搜索";
+
+
+/* Conversation execution, permissions, model editing, and learning feedback */
+"Fast, compact, and suitable for lightweight conversations." = "快速轻量，适合日常简短对话。";
+"Recommended for higher-quality writing, reasoning, and tool use." = "推荐用于更高质量的写作、推理和工具调用。";
+"chat.execution.cloud" = "云端";
+"chat.execution.device" = "本机";
+"chat.execution.device.detail" = "模型和工具均在此设备上运行";
+"chat.execution.host" = "宿主机";
+"chat.execution.host.detail" = "由已连接的宿主机运行智能体和工具";
+"chat.execution.hybrid" = "宿主机 + 本机";
+"chat.execution.hybrid.detail" = "仅在批准后共享设备访问权限";
+"chat.host_tool.files" = "文件";
+"chat.permission.connected_host" = "已连接宿主机";
+"chat.permission.current_session" = "当前会话";
+"chat.permission.data_boundary" = "数据边界";
+"chat.permission.device.hint" = "工具只访问此设备上经系统允许的数据。";
+"chat.permission.device.title" = "在此设备上运行";
+"chat.permission.device_only" = "仅此设备";
+"chat.permission.host.hint" = "工具将在已连接的宿主机上运行，并将结果返回当前对话。";
+"chat.permission.host.title" = "在宿主机上运行";
+"chat.permission.location" = "执行位置";
+"chat.permission.once" = "仅本次操作";
+"chat.permission.this_device" = "此设备";
+"chat.permission.validity" = "有效期";
+"chat.scroll.latest" = "跳至最新消息";
+"chat.streaming.active" = "正在生成";
+"common.clear" = "清除";
+"common.refresh" = "刷新";
+"model.api.discard.action" = "放弃更改";
+"model.api.discard.message" = "端点、凭据或模型更改尚未保存。";
+"model.api.discard.title" = "放弃 API 更改？";
+"model.local.unavailable.error" = "所选本地模型不可用。";
+"model.parameters.discard.action" = "放弃更改";
+"model.parameters.discard.message" = "模型参数更改尚未保存。";
+"model.parameters.discard.title" = "放弃参数更改？";
+"model.parameters.frequency_penalty.hint" = "减少词语和短语的重复。";
+"model.parameters.presence_penalty.hint" = "鼓励模型引入新主题。";
+"model.parameters.repetition_penalty.hint" = "控制本地推理中的重复。";
+"model.parameters.top_k.hint" = "仅从最可能的候选 Token 中采样。";
+"scheduled.runs.load_failed" = "运行历史暂时不可用";
+"scheduled.runs.loading" = "正在加载运行历史…";
+"settings.notifications.frequency" = "通知频率";
+
+"model.download.context_format" = "%@ 上下文";
+"model.download.runtime_memory_format" = "64K 时约 %@";
+"model.download.recommended" = "推荐";
+
+/* 个人智能面板 */
+"personal.intelligence.title" = "个人智能";
+"personal.intelligence.clear.confirm.title" = "清空所有学习数据？";
+"personal.intelligence.clear.confirm.message" = "聊天记录不会被删除，但自动观察、记忆和路线学习无法恢复。";
+"personal.intelligence.learning.active" = "持续学习中";
+"personal.intelligence.hero.title" = "你的 Nola 正在形成自己的理解";
+"personal.intelligence.hero.subtitle" = "它从对话、文件和数据变化中提炼长期记忆，并根据真实结果调整工作方式。";
+"personal.intelligence.metric.observed" = "观察";
+"personal.intelligence.metric.memories" = "有效记忆";
+"personal.intelligence.metric.confidence" = "平均确信";
+"personal.intelligence.sources.title" = "正在理解这些来源";
+"personal.intelligence.memories.title" = "自动管理的记忆";
+"personal.intelligence.memories.subtitle" = "只保留仍然有效、且有证据支持的理解";
+"personal.intelligence.memories.empty.all" = "还没有形成长期记忆";
+"personal.intelligence.memories.empty.category" = "这个类别暂时为空";
+"personal.intelligence.memories.empty.hint" = "继续自然使用即可。Nola 会在值得记住时自动整理，不需要你维护另一套资料库。";
+"personal.intelligence.evidence.format" = "%d 条证据";
+"personal.intelligence.confidence" = "确信度";
+"personal.intelligence.routes.title" = "正在学会更好地完成任务";
+"personal.intelligence.routes.subtitle" = "根据真实成功率调整模型与执行路线";
+"personal.intelligence.outcomes" = "次结果";
+"personal.intelligence.fit" = "适配分";
+"personal.intelligence.explanation.title" = "它如何形成理解";
+"personal.intelligence.explanation.subtitle" = "不是收藏夹，也不会要求你手动整理";
+"personal.intelligence.explanation.observe.title" = "观察变化";
+"personal.intelligence.explanation.observe.detail" = "从对话、文件和数据源捕捉有意义的变化。";
+"personal.intelligence.explanation.evidence.title" = "保留证据";
+"personal.intelligence.explanation.evidence.detail" = "每条记忆都关联来源，并随新证据更新或被替代。";
+"personal.intelligence.explanation.outcomes.title" = "从结果学习";
+"personal.intelligence.explanation.outcomes.detail" = "成功、失败和纠正会改变之后的模型与路线选择。";
+"personal.intelligence.clear.action" = "清空个人智能数据";
+"personal.intelligence.filter.all" = "全部";
+"personal.intelligence.filter.facts" = "事实";
+"personal.intelligence.filter.preferences" = "偏好";
+"personal.intelligence.filter.episodes" = "经历";
+"personal.intelligence.memory.preference" = "偏好";
+"personal.intelligence.memory.episode" = "经历";
+"personal.intelligence.memory.fact" = "事实";
+"personal.intelligence.source.conversations" = "对话";
+"personal.intelligence.source.health" = "健康";
+"personal.intelligence.source.files" = "文件";
+
+"data_source.policy.summary.default_enabled" = "默认加入每个对话；你仍可在单个对话中关闭。";
+"data_source.policy.summary.conversation_opt_in" = "可在对话设置中选择，只有手动启用后才会使用。";
+"data_source.policy.summary.ask_when_relevant" = "当此来源与当前任务相关时，Nola 会先询问再使用。";
+"data_source.policy.summary.blocked" = "不会提供给对话或自动化任务。";
+"data_source.policy.saved_automatically" = "更改会自动保存，并应用于之后的对话。";
+"chat.host_tool.name.search_calendar" = "搜索日历";
+"chat.host_tool.name.create_calendar_event" = "创建日历事件";
+"chat.host_tool.name.search_reminders" = "搜索提醒事项";
+"chat.host_tool.name.create_reminder" = "创建提醒事项";
+"chat.host_tool.name.update_reminder" = "更新提醒事项";
+"personal.capabilities.gateway.summary" = "%d 个技能 · %d 个 MCP";
+"prompt.templates.discard.action" = "放弃更改";
+"prompt.templates.discard.title" = "放弃未保存的更改？";
+"settings.logs.clear" = "清除日志";
+"settings.logs.clear.confirm.message" = "这将永久删除本地诊断日志文件。";
+"settings.logs.clear.confirm.title" = "清除全部日志？";
+"settings.logs.search" = "搜索日志";
+"settings.logs.share" = "共享日志";
+
+"chat.task.agent" = "后台智能体";
+
+"chat.task.guidance.pending" = "引导待送达";
+
+"chat.task.guidance.placeholder" = "补充任务指令";
+
+"chat.task.guidance.send" = "发送引导";
+"model.web_host.setup" = "连接前";
+"model.web_host.setup.start" = "在 Mac 上打开 Nola 的“设置 > 宿主机连接”，并允许设备连接。";
+"model.web_host.setup.copy" = "复制 Mac 端 Nola 显示的地址和配对令牌。请使用可信私有网络或 HTTPS。";
+"model.web_host.checking" = "正在检查宿主机";
+"model.web_host.checking.detail" = "保存前正在验证令牌、权限协议和宿主机身份。";
+"model.web_host.error.protocol" = "此宿主机使用了不受支持的权限协议。请更新宿主机上的 Nola 后重试。";
+"model.web_host.error.identity_changed" = "该地址现在对应另一台宿主机。请先忘记原有配对，再重新连接。";
+"model.web_host.error.secure_storage" = "无法在此设备上安全存储访问令牌。";
+"model.web_host.error.pairing" = "无法保存已验证的宿主机身份，请重试。";
+"model.web_host.error.timeout" = "宿主机未及时响应。请确认 Mac 版 Nola 已开启设备连接。";
+"model.web_host.error.unreachable" = "无法连接宿主机。请检查地址、网络和运行状态。";
+"model.web_host.error.unauthorized" = "访问令牌被拒绝。请从宿主机复制当前令牌后重试。";
+"model.web_host.error.generic" = "无法验证宿主机。请检查连接信息后重试。";
+
+"model.host.messaging.title" = "消息渠道";
+"model.host.messaging.summary" = "已连接 %1$lld/%2$lld · 后台处理%3$@";
+"model.host.messaging.running" = "运行中";
+"model.host.messaging.stopped" = "已停止";
+"model.host.messaging.providers" = "Telegram · WhatsApp · 微信公众号 · 企业微信";
+"model.host.messaging.manage" = "在宿主机管理";
+"chat.execution_unit.choose" = "选择核心执行单元";
+"chat.execution_unit.not_installed" = "宿主机未安装";
+"chat.execution_unit.sign_in_required" = "需要登录";
+"chat.execution_unit.incompatible" = "版本不兼容";
+"chat.execution_unit.unavailable" = "当前不可用";
+"model.host.identity_changed" = "已连接的宿主机身份已变更。请先忽略现有配对，再重新连接。";
+"chat.host_tool.status.cancelled" = "已取消";
+"chat.source.line_format" = "第 %d 行";
+"chat.source.lines_format" = "第 %d–%d 行";
+"chat.source.open_format" = "打开来源 %@";
+"chat.source.page_format" = "第 %d 页";
+"chat.source.untitled" = "来源";
+"chat.sources.title" = "来源";
+"chat.task.cancel" = "取消";
+"chat.task.data_refresh" = "数据刷新";
+"chat.task.open_result" = "打开结果";
+"chat.task.skill" = "技能任务";
+"chat.task.tool" = "后台工具";
+"chat.tool_activity.cancelled_format" = "已取消 %d 项";
+"Data Center" = "数据中心";
+"Manage sources, memory, freshness, and provenance" = "管理数据源、长期记忆、数据时效与来源";
+"Automation Center" = "自动化中心";
+"Manage schedules, triggers, and run history" = "管理计划、触发器与运行记录";
+"Model Center" = "模型中心";
+"Configure API and local models" = "配置 API 与本地模型";
+"Skills & MCP" = "技能与 MCP";
+"Browse and configure available capabilities" = "浏览和配置可用能力";
+"Create reusable instructions for conversations and automations." = "创建可在对话和自动化中重复使用的指令。";
+"onboarding.guide.selection.selected" = "已选择";
+"onboarding.guide.selection.not_selected" = "未选择";
+
+"health.dashboard.local_source" = "私密的本机数据源";
+"health.dashboard.waiting" = "等待授权";
+"health.dashboard.connected" = "已连接";
+"health.dashboard.authorize" = "授权健康数据";
+"personal.intelligence.page.subtitle" = "长期记忆、可复用能力与学习依据。";
+"chat.host_pairing.verified" = "已验证";
+"chat.host_pairing.unverified" = "未验证";
+"chat.more_settings.retrieval" = "检索已连接知识";
+"chat.more_settings.scope.current" = "上下文与记忆";
+"chat.more_settings.scope.current.hint" = "文件、上下文窗口及本对话记忆";
+"chat.more_settings.conversation.header" = "当前对话";
+"chat.more_settings.conversation.footer" = "这些选项仅影响当前对话；下方模型默认值会在使用该模型时生效。";
+
+"chat.permission.validity.choice" = "可选择本次或本对话";
+
+"chat.model.configuration.action" = "配置";
+
+"chat.model.host" = "宿主机";
+
+"chat.model.host_unconfigured" = "宿主机未连接";
+
+"chat.model.host_named" = "宿主机 · %@";
+
+"chat.empty.mode.host_unconfigured" = "宿主机尚未连接。完成配对后，可使用项目工具并处理长任务。";
+
+"chat.empty.configure_host" = "配置宿主机";
+
+"chat.host.connection.unavailable" = "无法连接宿主机。请确认 Mac 版 Nola 正在运行且两台设备位于同一网络。";
+
+"chat.model.host_checking" = "正在连接宿主机";
+
+"chat.model.host_unavailable" = "宿主机不可用";
+
+"chat.empty.mode.host_checking" = "正在连接宿主机并读取可用能力…";
+
+"chat.empty.mode.host_unavailable" = "宿主机暂时不可用。请确认 Mac 版 Nola 正在运行并检查网络。";
+
+"chat.empty.retry_host" = "重试连接";
+
+"chat.empty.host_checking" = "正在检查连接";
+
+/* Capability library read and import recovery. */
+"personal.capabilities.load_failed" = "无法加载能力列表。已保留上次结果，请重新加载后再编辑。";
+"personal.capabilities.retry" = "重试";
+"personal.capabilities.invalid_import" = "请选择非空的 UTF-8 Skill 文件，内容不能超过 48,000 个字符。";
+
+// Revision-pinned historical details
+"Historical details" = "历史详情";
+"Loading historical details…" = "正在加载历史详情…";
+"Historical content is unavailable." = "历史内容不可用。";
+"Historical content changed. Reopen its details." = "历史内容已变更，请重新打开详情。";
+"Some original fields exceed this detail view’s limit and remain available through original content retrieval." = "部分原始字段超出此详情视图的大小限制，尚未加载。";
+"Original field not loaded" = "原始字段尚未加载";
+
+"chat.permission.guidance" = "指导已记录。工具参数未改变，仍需明确批准。";
+"permission.mode.cautious" = "谨慎";
+"permission.mode.allow_all" = "全部允许";
+"permission.mode.cautious.detail" = "删除、覆盖、敏感数据访问、外发内容和新连接先确认；普通读取与新建直接执行。";
+"permission.mode.allow_all.detail" = "此会话内无需 Nola 确认，系统权限仍然生效。";
+"chat.compaction.show_sources_format" = "查看原始上下文（%d 项）";
+"model.parameters.invalid_values" = "请检查参数是否处于标注范围内；随机种子必须是整数。";
+"chat.style.inherit_model" = "继承模型默认";
+"chat.more_settings.model_output.scoped_footer" = "会话限制仅影响当前会话；高级默认参数应用于使用此模型的所有会话。";
+"chat.more_settings.conversation_model_limits" = "会话模型限制";
+"chat.more_settings.conversation_model_limits_hint" = "覆盖上下文和输出上限，或继承模型默认值。";
+"chat.more_settings.conversation_model_limits_footer" = "未设置的上限继承此模型默认值；这些设置仅影响当前会话和模型。";
+"model.parameters.max_context_length" = "上下文窗口";
+"model.parameters.max_output_tokens" = "输出 token 上限";
+"chat.host.resume_existing_run" = "继续现有任务";
+"chat.host.retry_observation" = "重新连接任务";
+"chat.host.observation_unavailable" = "暂时无法确认现有主机任务（HTTP %d）。请重新连接后再发送消息。";
+"chat.task.state.sealed" = "执行已结束";
+
+/* Exact local Run recovery */
+"chat.recovery.other_conversation" = "另一个会话有尚未确认结果的恢复决定。";
+"chat.recovery.open_conversation" = "打开对应会话";
+"chat.recovery.title" = "上次操作需要确认";
+"chat.recovery.risk" = "操作可能已经生效。重试可能重复修改；你也可以暂时保留未确认状态。";
+"chat.recovery.retry_operation" = "查看操作 %ld 的重试选项";
+"chat.recovery.keep_blocked" = "结束等待并保留未知结果";
+"chat.recovery.independent_work" = "其他工作仍在等待处理，暂时无法关闭此任务。";
+"chat.recovery.pending" = "你的决定已保存，但结果尚未确认。请检查原决定的回执，不要重新授权。";
+"chat.recovery.check_receipt" = "检查原决定";
+"chat.recovery.authorized" = "已允许原任务承担风险重试，但这不代表操作已经成功。";
+"chat.recovery.blocked" = "任务已按受阻状态关闭，上次操作的结果仍未确认。";
+"chat.recovery.changed" = "任务状态已变化，请重新检查后再作决定。";
+"chat.recovery.checking" = "正在检查任务…";
+"chat.recovery.confirm_title" = "确认恢复决定";
+"chat.recovery.confirm_retry" = "接受风险并重试";
+"chat.recovery.confirm_risk" = "上次操作可能已经成功。重试可能重复修改，也不会撤销原操作。";
+"chat.recovery.confirm_block" = "不重试，将任务按受阻状态关闭。外部执行可能仍在继续；这不会撤销或确认该操作。";
+"chat.recovery.check_status" = "检查任务状态";
+"chat.recovery.action_failed" = "暂时无法确认决定结果。再次操作前，请先检查原任务。";
+"chat.recovery.check_failed" = "暂时无法检查上次操作，请稍后重新检查；没有执行重试。";
+"chat.host_tool.status.pending" = "等待中";
+"chat.host_tool.status.waiting_input" = "等待输入";
+"chat.host_tool.status.sealed" = "已封存";
+"chat.tool_reader.open" = "在阅读器中打开";
+"chat.tool_reader.snapshot" = "显示打开时的文本快照；重新打开可查看更新。";
+
+/* Shared execution and history UI. */
+"chat.host.cancel_submission" = "取消待处理的提交";
+"chat.compaction.source_unavailable" = "此会话中的原始上下文已不可用。";
+"chat.compaction.source_load_failed" = "无法加载原始上下文。";
+"chat.compaction.source_title" = "原始上下文";
+"chat.model.failed" = "模型请求失败";
+"chat.model.fallback" = "模型回退";
+"chat.model.falling_back_format" = "正在切换到 %@";
+"chat.host_tool.summary" = "摘要";
+"chat.host_tool.preview" = "预览";
+"chat.permission.instruction.placeholder" = "补充说明";
+"chat.permission.instruction.notice" = "补充说明不会授权或修改工具参数，原调用仍需明确批准。每条限 4 KiB，最多 16 条、合计 16 KiB；达到限制仍可批准或拒绝。";
+"chat.permission.instruction.submit" = "提交说明并保持等待";
+"chat.context.skills.upload_file" = "导入 Skill 文件";
+"Done" = "完成";
+"Cancelled" = "已取消";
+"Answered" = "已回答";
+"Expanded" = "已展开";
+"Progress" = "进度";
+"Action completed" = "操作已完成";
+"Blocked" = "受阻";
+"Collapsed" = "已收起";
+"Reload" = "重新加载";
+"Historical content" = "历史内容";
+"Incomplete" = "未完成";
+"512–4,000,000" = "512–4,000,000";
+"Retry" = "重试";
+"64–1,000,000" = "64–1,000,000";
+
+/* Shared execution and history UI. */
+"Conversation %@" = "对话 %@";
+"Request %@ was accepted, but its result is not confirmed. Refresh before submitting it again." = "请求 %@ 已受理，但结果尚未确认。再次提交前请先刷新。";
+"The operation conflicted with a newer revision of %@ (%llu expected, %llu current)." = "操作与 %@ 的较新版本冲突（预期为 %llu，当前为 %llu）。";
+"chat.execution_process" = "执行过程";
+"chat.context.auxiliary.refresh_unavailable" = "已加载本地状态；当前模型适配器不能刷新原辅助来源。";
+"chat.context.auxiliary.refresh_report" = "辅助来源：已刷新 %d，仍未确认 %d，其他 Host 跳过 %d，刷新失败 %d。";
+"chat.context.auxiliary.refresh_more" = "还有其他来源；再次重载继续下一批。";
+"Some attachments could not be restored. Please attach them again." = "部分附件无法恢复，请重新添加。";
+"This draft changed in another window. Your local edits are kept; copy them before reopening the draft." = "此草稿已在其他窗口中更改。你的本地修改已保留，请在重新打开草稿前复制这些内容。";
+"This draft was deleted or submitted in another window. Your local edits are kept but cannot overwrite it." = "此草稿已在其他窗口中删除或提交。你的本地修改已保留，但无法覆盖该草稿。";
+"chat.permission_state.saving" = "正在切换权限…";
+"chat.permission_state.saved" = "权限已保存";
+"chat.permission_state.pending" = "已保存，等待当前任务生效";
+"chat.permission_state.checking" = "正在核对任务权限…";
+"chat.permission_state.active" = "当前任务已生效";
+"chat.permission_state.failed" = "保存未确认；选择已保留，可重试。";
+"room.model" = "模型";
+"room.load_more" = "加载更多";
+"room.older_messages" = "更早的消息";
+"room.latest" = "最新消息";
+"room.stop" = "停止";
+"room.resume" = "恢复";
+
+/* Room-owned submission feedback */
+"room.member_unavailable" = "成员不可用";
+"room.remove_mention" = "移除提及";
+"room.message_placeholder" = "发送消息，@ 指定助手";
+"room.retry" = "重试";
+"room.sending" = "正在发送…";
+"room.accepted" = "已接收 · 等待分派";
+"room.selected" = "已接收 · 等待开始";
+"room.executing" = "处理中";
+"room.cancel_pending" = "取消待处理消息";
+"room.failed" = "未能完成";
+"room.agent_description" = "职责与擅长事项";
+"room.completed" = "已完成";
+"room.incomplete" = "尚未完成";
+"room.blocked" = "需要处理";
+"room.not_sent" = "尚未发送";
+"room.status_unknown" = "状态未确认";
+"chat.response.failed" = "回复失败，可展开处理过程查看详情。";
+"chat.response.cancelled" = "回复已停止";
+"room.assignment_failed" = "分派失败";
+"room.cancelled" = "已取消";
+"Invalid model configuration field: %@" = "模型配置字段无效：%@";
+
+"model.center.connection_accounts" = "连接与账户";
+"model.center.connection_accounts.subtitle" = "连接服务、发现并启用模型";
+
+// Model connection management
+"model.connections.title" = "连接与账号";
+"model.connections.privacy" = "凭据保存在本机安全存储中。发现模型不会发送推理请求。";
+"model.connections.refresh" = "刷新连接";
+"model.connections.host_section" = "宿主机 API 导入与能力检查";
+"model.connections.host_import" = "OpenCode、Codex 和 Kimi Code 的来源文件属于所选宿主机。请在宿主机预览并确认，凭据仍保留在那里。此操作不会扫描 iPhone，也不会将宿主机账号复制到本机连接。";
+"model.connections.host_check" = "宿主机模型管理提供可选的单次文本能力检查，可能产生费用，执行前会明确确认。此检查不会测试 iPhone 上的本机账号。";
+"model.connections.host_login" = "Codex 和 Kimi Code 的来源登录在宿主机电脑上进行。请在该电脑浏览器打开 /models?tab=api 管理登录或取消。iPhone 无法远程启动来源进程或管理其登录。登录不会启用订阅推理，来源令牌也不会复制到本机。";
+"model.connections.connect_host" = "连接宿主机";
+"model.connections.destination" = "导入目标";
+"model.connections.choose_host" = "选择宿主机";
+"model.connections.open_host" = "打开宿主机 API 管理";
+"model.connections.continue_host" = "请在宿主机管理页继续预览并确认。导入的模型仍归该宿主机所有。";
+"model.connections.connected" = "连接已保存";
+"model.connections.disconnected" = "已断开";
+"model.connections.discover" = "发现模型 · 不发送推理";
+"model.connections.discovered" = "模型发现已完成，请选择要启用的模型。";
+"model.connections.apply" = "应用启用的模型";
+"model.connections.enabled" = "已启用的模型可在对话的模型选择器中使用。";
+"model.connections.disconnect" = "断开连接";
+"model.connections.disabled" = "连接已停用，凭据未删除。";
+"model.connections.account_section" = "连接 API 账号";
+"model.connections.name" = "连接名称";
+"model.connections.endpoint" = "API 地址";
+"model.connections.protocol" = "协议";
+"model.connections.key" = "API 密钥 · 匿名地址可留空";
+"model.connections.connect" = "连接账号";
+"model.connections.saved" = "连接已保存，请先发现并启用模型后再使用。";
+"model.connections.cancel" = "取消发现";
+"model.connections.cancelled" = "操作已取消，已刷新保存状态供检查。";
+"model.connections.done" = "完成";
+"model.connections.host_summary" = "宿主机导入的模型和凭据仍归所选宿主机所有；本机 API 账号归此设备管理。";
+"model.connections.host_details" = "导入、能力检查与登录说明";
+"chat.history.load_failed" = "无法刷新会话";
+"chat.history.retry" = "重试";
+"chat.history.error_details" = "错误详情";
+"history.detail.open_text" = "查看原文";
+"history.detail.open_reasoning" = "查看思考详情";
+"history.detail.open_tool" = "查看工具记录";
+"history.detail.open_attachment" = "查看附件详情";
+"history.detail.open_record" = "查看历史记录";
+
+"chat.history.search" = "搜索会话";
+
+"chat.history.no_messages" = "暂无消息";
+
+"chat.history.running" = "正在运行";
+
+"chat.history.awaiting_permission" = "等待审批";
+
+"chat.history.no_results" = "没有匹配的会话";
+
+"chat.history.create_failed" = "无法创建会话，请重试。";
+
+"chat.history.stop_before_delete" = "请先停止任务再删除";
+
+// Authoritative context maintenance results
+"chat.context.host.unconfirmed" = "无法确认 Host 上下文维护结果。请先重新加载 Host 状态，再决定是否重试。";
+"chat.context.host.compacted" = "Host 上下文已压缩（归档 %lld 项）。";
+"chat.context.host.no_history" = "Host 当前没有可压缩的完整历史轮次。";
+"chat.context.compact.completed" = "上下文维护已完成。";
+
+/* Store startup diagnostics */
+"Unable to open Nola data" = "无法打开 Nola 数据";
+"Your existing data has been preserved. No database was reset or converted." = "现有数据已保留，数据库未被重置或转换。";
+
+/* Localization coverage for current runtime UI. */
+"@" = "@";
+"Acknowledge A" = "确认 A";
+"Anthropic Messages" = "Anthropic 消息";
+"Chat Completions" = "聊天补全";
+"Responses" = "响应";
+"Room permission fixture" = "房间权限测试";
+"Save the draft before sending." = "发送前请先保存草稿。";
+"Submission status not confirmed. Retry checks the same request." = "发送状态尚未确认。重试会检查同一请求。";
+"Switch to B" = "切换到 B";
+"The mentioned assistant is unavailable. Remove or replace the mention." = "提及的助手不可用。请移除或替换该提及。";
+"Unknown startup error" = "未知启动错误";
+"移除未执行的表单操作" = "移除未执行的表单操作";
+"Experts" = "专家";
+"Choose who replies in this conversation. Selection does not start a reply or grant permissions." = "选择在此对话中回复的专家。选择不会开始回复，也不会授予权限。";
+"No available experts" = "暂无可用专家";
+"Retry expert reply" = "重试专家回复";
+"Search experts" = "搜索专家";
+
+"chat.mention.no_matches" = "没有匹配的专家";
+"chat.mention.experts" = "专家";
+
+/* Expert picker */
+"chat.experts.title" = "专家";
+"chat.experts.description" = "选择在此对话中回复的专家。选择不会启动回复，也不会授予权限。";
+"chat.experts.search" = "搜索专家";
+"chat.experts.empty" = "暂无可用专家";
+"chat.experts.selected" = "已选择";
+"chat.experts.not_selected" = "未选择";
+
+/* Conversation settings labels and host status */
+"chat.more_settings.permission_mode" = "权限模式";
+"chat.more_settings.scope.intelligence" = "个人智能";
+"chat.more_settings.scope.skills" = "技能库";
+"chat.more_settings.intelligence.header" = "智能与知识";
+"chat.more_settings.intelligence.footer" = "个人智能会跨对话学习。技能是在整个应用中可复用的能力。";
+"chat.more_settings.scope.global" = "应用全局设置";
+"chat.more_settings.model_output.advanced" = "高级模型默认值";
+"chat.more_settings.computer_use.title" = "桌面操作宿主机";
+"chat.more_settings.computer_use.capacity" = "桌面工具";
+"chat.more_settings.computer_use.capacity_format" = "%d 个宿主机 • %d 个工具";
+"chat.more_settings.computer_use.disabled" = "宿主机已禁用";
+"chat.more_settings.computer_use.not_configured" = "未配置宿主机令牌";
+"chat.more_settings.computer_use.connected" = "已连接";
+"chat.more_settings.computer_use.disconnected" = "未连接桌面宿主机";
+
+// Local composer commands
+"composer.command.model" = "模型";
+"composer.command.experts" = "专家";
+"composer.command.resources" = "资源";
+"composer.command.permissions" = "权限";
+"composer.command.plan" = "计划";
+"composer.command.search" = "搜索";
+"composer.command.stop" = "停止";
+"composer.command.help" = "指令";
+"composer.command.invalid" = "指令或参数无效，输入 / 查看可用指令。";
+
+"workspace.title" = "工作区";
+"workspace.sources" = "资料";
+"workspace.memory" = "记忆";
+"workspace.plans" = "计划";
+"workspace.records" = "记录";
+
+"chat.run.unresolved" = "上一项任务尚未结束，或停止结果尚未确认。请先恢复或处理该任务，再发送新消息。你的草稿已保留。";
+
+"a2ui.history.version" = "查看此记录的表单版本";
+
+"Delegated" = "已委派";
+
+/* Current prototype: Today, expert presentation and message actions. */
+"workspace.today.title" = "今日";
+"workspace.today.waiting" = "等待回应";
+"workspace.today.underway" = "正在进行";
+"workspace.today.updates" = "最近更新";
+"workspace.today.recent" = "最近对话";
+"workspace.today.markRead" = "标为已读";
+"workspace.today.empty" = "暂时没有待处理事项";
+"workspace.today.emptyDetail" = "新的更新和需要回应的会话会显示在这里。";
+"workspace.today.manage" = "管理工作区";
+"workspace.models" = "模型";
+"workspace.settings" = "设置";
+"expert.color.title" = "气泡颜色";
+"expert.color.preview" = "预览";
+"expert.color.red" = "红";
+"expert.color.orange" = "橙";
+"expert.color.yellow" = "黄";
+"expert.color.green" = "绿";
+"expert.color.teal" = "青";
+"expert.color.blue" = "蓝";
+"expert.color.purple" = "紫";
+"expert.color.pink" = "粉";
+"chat.message.edit" = "编辑重发";
+"chat.message.editWait" = "请先停止或等待当前回复完成。";
+"chat.message.editPreservesOriginal" = "重发将创建独立会话，原消息与当前输入草稿保持不变。";
+"chat.message.saveResend" = "保存并重发";
+"chat.message.resendUnavailable" = "此消息暂不能重发，需要先确认原始执行配置。";
+
+"workspace.today.upNext" = "接下来";
+"workspace.today.noQueuedPlans" = "暂无已排队的定时实例。";
+"workspace.today.queuedInstance" = "已排队的定时实例";
+"workspace.today.needsResponse" = "等待你回应";
+
+"workspace.today.moreFacts" = "更多事项可在会话和计划中查看";
+
+"workspace.today.attention" = "需要关注";
+
+"workspace.today.expertDestinationUnconfirmed" = "部分专家任务尚无法确认所属会话。";
+
+"room.pending_expert_message" = "原专家消息尚有待启动的任务。";
+"room.resume_complete_experts" = "恢复原专家消息";
+
+// Expert directory management
+"experts.manage" = "管理专家";
+"experts.edit.title" = "编辑专家";
+"experts.save" = "保存";
+"experts.archive" = "归档专家";
+"experts.restore" = "恢复专家";
+"experts.conversationModel" = "使用会话模型";
+
+"experts.template" = "提示模板";
+
+"experts.conversationTemplate" = "使用会话模板";
+
+"experts.savedModelUnavailable" = "已保存模型（当前不可用）";
+
+"experts.savedTemplateUnavailable" = "已保存模板（当前不可读取）";
+
+"experts.templateUnavailable" = "所选模板当前不可读取。";
+
+"work.tools.title" = "当前工作";
+
+"work.tools.goals" = "目标";
+
+"work.tools.execution" = "执行与权限";
+
+"work.tools.noGoal" = "暂无活动目标";
+
+"chat.experts.sourceUnavailable.title" = "此会话暂不支持本机专家";
+
+"chat.experts.sourceUnavailable.detail" = "此会话属于其他主机，或暂时无法确认其来源，不能添加本机专家。你仍可管理本机专家。";
+
+// Shared Apple model request presentation.
+"Model request pending" = "模型请求待处理";
+"Model request running" = "模型请求进行中";
+"Model request waiting" = "模型请求等待中";
+"Model request completed" = "模型请求已完成";
+"Response stopped" = "响应已停止";
+"Model request failed" = "模型请求失败";
+"Request restarted" = "请求已重新开始";
+"Model route changed" = "模型调用路线已变更";
+"Model request recorded" = "已记录模型请求";
+
+"prompt.templates.error.missing" = "所选模板不可用，请选择可用的模板。";
+
+"prompt.templates.error.denied" = "你没有读取此模板的权限。";
+
+"prompt.templates.error.identity" = "此模板的访问身份无效。";
+
+"prompt.templates.error.definition" = "此模板无法用作指令。";
+
+"prompt.templates.error.catalog" = "模板目录包含冲突的身份。";
+
+"prompt.templates.error.unavailable" = "无法读取模板目录。";
+
+"chat.message.checkOriginalRequest" = "检查原请求";
+
+"experts.manageTemplates" = "管理模板";
+"chat.request.diagnostic_details" = "诊断详情";
+
+"chat.step.failed" = "此步骤失败";
+
+"chat.expert.ui.read_only" = "专家界面暂为只读，尚不支持继续执行界面操作。";
+
+"chat.part.task" = "任务";
+"chat.task.details_unavailable" = "任务详情不可用";
+"chat.part.diagnostic.code" = "代码";
+"chat.part.diagnostic.display_key" = "显示标识";
+"chat.part.diagnostic.recoverable" = "可恢复";
+"chat.part.diagnostic.mode" = "模式";
+"chat.part.diagnostic.model_turns" = "模型轮次";
+"chat.part.diagnostic.tool_calls" = "工具调用次数";
+"chat.part.diagnostic.elapsed_ms" = "耗时（毫秒）";
+"chat.part.diagnostic.result_reference" = "结果引用";
+"chat.part.diagnostic.failure" = "错误详情";
+
+"model.connections.invalid_endpoint" = "请输入以 http:// 或 https:// 开头的 API 地址，不要包含用户名、密码、查询参数或片段。";
+
+"navigation.information" = "信息";
+
+"model.setup.title" = "配置模型";
+
+"model.setup.key_hint" = "按服务要求填写，匿名服务可留空";
+
+"model.setup.model_id" = "默认模型 ID";
+
+"model.setup.model_hint" = "服务提供的模型标识";
+
+"model.setup.model_required" = "请填写服务提供的模型 ID。";
+
+"model.setup.name_hint" = "选填连接名称";
+
+"model.setup.advanced" = "高级设置";
+
+"model.setup.summary" = "保存后启用并设为默认模型，无需先发现模型，不会发起测试请求。";
+
+"model.setup.save" = "保存并使用";
+
+"model.setup.saved" = "已保存并设为默认模型 · 未测试";
+
+"model.setup.configured" = "已配置模型";
+
+"model.setup.other" = "其他方式";
+
+"model.setup.source" = "模型来源";
+
+"model.setup.service" = "服务地址";
+
+"model.setup.missing" = "请先配置服务地址、本地模型或宿主机，再开始对话。";
+
+"model.setup.discover" = "发现模型";
+
+"model.setup.discovered" = "选择发现的模型";
+
+"model.setup.choose" = "选择模型";
+
+"model.setup.discovery_empty" = "服务没有返回模型，可手动填写模型 ID。";
+
+"model.setup.discovery_manual" = "仍可手动填写模型 ID 并保存。";
+
+"model.setup.api_key" = "API 密钥";
+
+/* Information navigation */
+"information.knowledge" = "知识点";
+"information.memory" = "长期记忆";
+"information.activity" = "活动";
+"information.knowledge.empty" = "还没有会话知识点。";
+
+/* Information reading hierarchy */
+"information.knowledge.detail" = "整理要点，保留来源对话";
+"information.sources.detail" = "文档、连接与访问策略";
+"information.memory.detail" = "分类、依据与置信度";
+"information.plans.detail" = "安排、状态与运行历史";
+"information.activity.detail" = "需要回应的事项与执行记录";
+"information.subtitle" = "把值得留下的，整理在一起。";
+"workspace.today.subtitle" = "会话进展、信息更新，还有接下来的安排。";
+
+"chat.permission_state.next_message" = "已保存，下条消息生效";
+
+"information.activity.empty" = "暂无运行记录。";
+
+// Application appearance
+"appearance.title" = "外观";
+"appearance.system" = "跟随系统";
+"appearance.light" = "浅色";
+"appearance.dark" = "深色";
+
+/* Activity plan history */
+"activity.planHistory" = "计划历史";
+
+"model.execution.reasoning" = "思考摘要";
+
+"activity.source" = "来源";
+"activity.all" = "全部";
+"activity.agent" = "智能体";
+"activity.plan" = "计划";
+"activity.localScope" = "本设备已保存的运行记录，包含已接收的远端结果。";
+"activity.localSummaries" = "本机摘要";
+"activity.loadMore" = "加载更多";
+"activity.reviewSource" = "前往来源会话处理";
+"activity.openSource" = "打开来源会话";
+"activity.sourceActions" = "授权、补充输入和恢复使用来源会话中的当前操作。";
+"activity.unavailable" = "此运行记录已不可用。";
+"activity.status.answered" = "已回答";
+"activity.status.action_completed" = "操作完成";
+"activity.status.delegation_accepted" = "已委派";
+"activity.status.incomplete" = "未完成";
+"activity.status.blocked" = "受阻";
+"activity.status.cancelled" = "已取消";
+"activity.status.failed" = "失败";
+"activity.status.queued" = "排队中";
+"activity.status.running" = "运行中";
+"activity.status.waiting_input" = "等待输入";
+
+"activity.emptyResponse" = "当前没有待回应的项目。";
+
+"activity.search" = "搜索标题、来源或结果状态";
+"activity.result" = "结果";
+"activity.sourceUnavailable" = "本设备无法访问来源会话。";
+"personal.intelligence.memories.load_more" = "加载更多记忆";
+"activity.fullResultInSource" = "完整结果请打开来源会话。";
+
+"activity.refresh" = "刷新活动";
+"activity.conversation" = "对话";
+
+"chat.checklist.checked" = "已勾选";
+"chat.checklist.unchecked" = "未勾选";
+"chat.history.group.today" = "今天";
+"chat.history.group.yesterday" = "昨天";
+"chat.history.group.earlier" = "更早";
+
+"settings.navigation.summary" = "你的习惯，而不是更多打扰。";
+"settings.navigation.appearance" = "外观";
+"settings.navigation.appearance.detail" = "主题与系统动态效果";
+"settings.navigation.notifications" = "通知";
+"settings.navigation.notifications.detail" = "提醒与需要回应的事项";
+"settings.navigation.providers" = "提供方";
+"settings.navigation.providers.detail" = "本地、API 与宿主机模型连接";
+"settings.navigation.agent" = "Agent 与连接";
+"settings.navigation.agent.detail" = "管理 Skills 与 MCP";
+"settings.navigation.memory" = "数据与记忆";
+"settings.navigation.memory.detail" = "长期记忆与依据";
+"settings.navigation.privacy" = "隐私与数据";
+"settings.navigation.privacy.detail" = "本地存储、导出与删除";
+"settings.navigation.plans" = "计划";
+"settings.navigation.plans.detail" = "例行安排与待执行动作";
+"settings.appearance.motionReduced" = "已跟随 iOS 辅助功能减少动态效果。";
+"settings.appearance.motionStandard" = "动态效果跟随 iOS 辅助功能设置。";
+"settings.appearance.theme" = "主题";
+"Task conversation · Read only" = "任务对话 · 只读";
+"Load earlier messages" = "加载更早消息";
+"Task instructions" = "任务指令";
+"Assistant" = "助手";
+"Reasoning" = "推理";
+"Task result" = "任务结果";
+"composer.command.noRun" = "当前没有运行中的任务。";
+
+/* Execution ownership and context scope */
+"activity.execution" = "本次执行";
+"activity.executionHost" = "执行位置";
+"activity.hostUnknown" = "此记录未提供执行位置";
+"activity.contextScope" = "上下文范围";
+"activity.context.task" = "任务说明、所选引用与独立工作记录；未复制全部来源会话。";
+"activity.context.conversation" = "当前会话保留的上下文与已授权引用；不包含其他会话的私有记录。";
+"activity.context.unavailable" = "无法确认此记录的上下文归属";
+"activity.executionBoundary" = "一次执行结束，不代表整个目标已完成。";
+
+/* Core-admitted reasoning tiers */
+"model.parameters.reasoning_tier" = "思考强度";
+"model.parameters.reasoning_tier.automatic" = "模型默认";
+"model.parameters.reasoning_tier.concise" = "简单";
+"model.parameters.reasoning_tier.balanced" = "中等";
+"model.parameters.reasoning_tier.detailed" = "复杂";
+
+"navigation.library" = "资料";
+"chat.history.draft" = "草稿";
+
+"chat.search.loaded.title" = "搜索本段对话";
+"chat.search.loaded.scope" = "仅搜索这台设备当前已加载的消息。";
+
+"mcp.mobile.http_execution" = "HTTP MCP 经批准后在本机运行。每次工具调用的结果都会发送给当前模型。进程型服务器需由已连接的 Host 运行。";
+
+"mcp.permission.http_server" = "已配置的 HTTP 服务器";
+"mcp.permission.server_and_model" = "HTTP 服务器与当前模型";
+
+"execution.scope.local" = "工具执行位置：本机；使用此设备可用的工具与文件。";
+"execution.scope.host" = "工具与文件来自所选 Host；连接不会自动授予本机权限。";
+"execution.scope.child" = "子任务上下文独立；能力不超出委派时的授权范围。";
+"execution.scope.noApprovalBridge" = "没有 Nola 审批桥；原生权限可能拒绝需确认的操作。";
+
+"chat.recovery.reason" = "本次决定的原因";
+
+"task.recovery.source_host" = "此任务属于宿主机。请在来源宿主机检查恢复状态；未执行本机操作。";
+
+"task.recovery.none" = "此任务当前没有待处理的恢复决定。";
+
+// Software update
+"softwareUpdate.title" = "软件更新";
+"softwareUpdate.check" = "检查更新";
+"softwareUpdate.download" = "下载更新包";
+"softwareUpdate.store" = "前往商店更新";
+"softwareUpdate.install" = "打开安装器";
+"softwareUpdate.reveal" = "显示下载文件";
+"softwareUpdate.notChecked" = "尚未检查更新";
+"softwareUpdate.working" = "正在处理更新，请稍候…";
+"softwareUpdate.failed" = "更新操作失败，请重试";
+"softwareUpdate.verified" = "下载完成，签名及完整性校验通过";
+"softwareUpdate.dataHint" = "安装前请结束运行中的任务。更新不会自动转换或重建会话数据。";
+"softwareUpdate.hostHint" = "此处更新当前连接的 Nola Host，浏览器界面随 Host 一起发布。";
+"softwareUpdate.downloadRequested" = "已请求下载；校验完成后由浏览器保存。失败信息会显示在下载窗口。";
+"softwareUpdate.status.disabled" = "尚未配置更新发布源";
+"softwareUpdate.status.not_checked" = "尚未检查更新";
+"softwareUpdate.status.up_to_date" = "已是当前发布的最新版本";
+"softwareUpdate.status.ahead" = "当前版本高于发布源中的版本";
+"softwareUpdate.status.unavailable" = "此平台暂无可用更新包";
+"softwareUpdate.status.available" = "有新版本可用";
+"softwareUpdate.installPermission" = "如系统要求，请允许 Nola 安装应用，返回后再次打开安装器。";
+"softwareUpdate.status.incompatible_data" = "新版本的数据格式不匹配，自动更新已阻止；现有数据保持不变。";

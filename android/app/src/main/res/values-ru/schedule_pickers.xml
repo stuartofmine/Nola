@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="scheduled_saving">Сохранение…</string>
+    <string name="scheduled_save_failed">Не удалось сохранить. Черновик сохранён; повторите попытку.</string>
+    <string name="scheduled_save_partial">Задача сохранена, но настроить расписание не удалось. Черновик сохранён; повторите попытку, чтобы применить расписание.</string>
+    <string name="scheduled_pick_date">Дата: %1$s</string>
+    <string name="scheduled_pick_time">Время: %1$s</string>
+    <string name="scheduled_pick_zone">Часовой пояс: %1$s</string>
+    <string name="scheduled_not_selected">Выбрать…</string>
+    <string name="scheduled_zone_wall_time">При смене часового пояса отображаемые дата и время сохраняются. Фактический момент выполнения изменится.</string>
+    <string name="scheduled_recurring_dst">Повторяется в это местное время. При переводе часов несуществующее время сдвигается вперёд на величину перевода, а повторяющееся время используется при первом наступлении.</string>
+    <string name="scheduled_dst_gap">Это местное время не существует из-за перевода часов вперёд. Выберите другое время.</string>
+    <string name="scheduled_dst_overlap">Из-за перевода часов назад это время наступает дважды. Выберите нужный вариант.</string>
+    <string name="scheduled_dst_first">Первое наступление — до перевода часов (%1$s)</string>
+    <string name="scheduled_dst_second">Второе наступление — после перевода часов (%1$s)</string>
+    <string name="scheduled_exact_time">Время выполнения: %1$s</string>
+    <string name="scheduled_zone_search">Поиск города или часового пояса</string>
+    <string name="scheduled_zone_device">Использовать часовой пояс устройства (%1$s)</string>
+    <string name="scheduled_zone_selected">Выбрано: %1$s</string>
+    <string name="scheduled_zone_no_matches">Подходящие часовые пояса не найдены.</string>
+    <string name="scheduled_frequency_unsupported">Этот редактор не поддерживает «%1$s». Текущее расписание не изменено. Чтобы заменить его, выберите поддерживаемую периодичность.</string>
+</resources>

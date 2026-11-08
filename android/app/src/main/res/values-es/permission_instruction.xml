@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="permission_add_instruction">Añadir instrucción</string>
+    <string name="permission_instruction_label">Instrucción adicional</string>
+    <string name="permission_instruction_limit">Añade indicaciones para esta operación. Aún tendrás que autorizarla antes de que se ejecute.</string>
+    <string name="permission_send_instruction">Enviar instrucción</string>
+    <string name="permission_instruction_history_full">El historial de instrucciones está lleno. Autoriza o deniega explícitamente la operación para continuar.</string>
+</resources>

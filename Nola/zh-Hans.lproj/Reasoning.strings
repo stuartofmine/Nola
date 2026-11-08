@@ -1,0 +1,10 @@
+// SPDX-License-Identifier: Apache-2.0
+"reasoning.effort.title" = "思考强度";
+"reasoning.effort.automatic" = "提供商默认";
+"reasoning.effort.none" = "无";
+"reasoning.effort.minimal" = "极低";
+"reasoning.effort.low" = "低";
+"reasoning.effort.medium" = "中";
+"reasoning.effort.high" = "高";
+"reasoning.effort.xhigh" = "极高";
+"reasoning.effort.max" = "最高";

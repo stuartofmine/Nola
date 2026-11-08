@@ -1,0 +1,9 @@
+{
+  "name": "com.nola.native_browser",
+  "description": "Nola native browser bridge",
+  "path": "__LAUNCHER_PATH__",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://__EXTENSION_ID__/"
+  ]
+}

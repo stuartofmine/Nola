@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "id": "nature-reviewer",
+  "delivery": "built-in",
+  "category": {
+    "id": "knowledge-research",
+    "name": "Knowledge & Research",
+    "name_zh": "知识与研究"
+  },
+  "source": {
+    "project": "nature-skills",
+    "commit": "8d674eb50454d4b49d3e0be625a121ad4863840b",
+    "license": "Apache-2.0"
+  },
+  "status": "stable",
+  "platforms": [
+    "macos",
+    "cli-web"
+  ],
+  "required_tools": [
+    "Skill",
+    "write_file",
+    "bash"
+  ],
+  "optional_tools": [
+    "web_search",
+    "web_fetch"
+  ],
+  "runtime_dependencies": [
+    "python3 (standard library)"
+  ],
+  "permissions": [
+    "filesystem.read",
+    "filesystem.write",
+    "network.optional"
+  ],
+  "secrets": [],
+  "validation": [
+    "scripts/prepare_review.py --source <manuscript-path>",
+    "scripts/validate_review.py --source <manuscript-path> --review <review-path>",
+    "claim pointer and source-data anchor audit",
+    "three-reviewer cross-review coverage audit",
+    "tool:read_file reopen the final peer review after all edits when the bundled validator cannot execute in the host sandbox"
+  ],
+  "execution_contract": {
+    "schemaVersion": 1,
+    "progressSteps": [
+      {
+        "id": "inspect",
+        "title": "Inspect inputs and constraints",
+        "required": true
+      },
+      {
+        "id": "execute",
+        "title": "Produce the requested outcome",
+        "required": true
+      },
+      {
+        "id": "verify",
+        "title": "Verify the outcome with evidence",
+        "required": true
+      }
+    ],
+    "artifacts": [
+      {
+        "id": "peer-review",
+        "mediaType": "text/markdown",
+        "required": false,
+        "description": "Stable reference to the final requested outcome or its persisted receipt"
+      }
+    ],
+    "verifiers": [
+      {
+        "id": "completion-audit",
+        "method": "model_judgment",
+        "description": "Record real evidence for the applicable completion checks: scripts/prepare_review.py --source <manuscript-path>; scripts/validate_review.py --source <manuscript-path> --review <review-path>; claim pointer and source-data anchor audit; three-reviewer cross-review coverage audit; tool:read_file reopen the final peer review after all edits when the bundled validator cannot execute in the host sandbox",
+        "required": true
+      }
+    ],
+    "resumePoints": [
+      "after-inspect",
+      "after-execute",
+      "after-verify"
+    ]
+  }
+}

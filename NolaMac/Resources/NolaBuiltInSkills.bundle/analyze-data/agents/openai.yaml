@@ -1,0 +1,4 @@
+interface:
+  display_name: "Analyze Data"
+  short_description: "Clean, analyze, and explain datasets"
+  default_prompt: "Analyze this dataset and produce reproducible findings."

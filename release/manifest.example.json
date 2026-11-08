@@ -1,0 +1,21 @@
+{
+    "schema_version": 1,
+    "channel": "internal",
+    "version": "1.0.1",
+    "build": 2,
+    "issued_at": 0,
+    "expires_at": 0,
+    "store_schema": 83,
+    "store_epoch": 8,
+    "notes": "Replace with plain-text release notes.",
+    "targets": [
+        {
+            "target": "cli-macos-aarch64",
+            "artifact": {
+                "kind": "archive",
+                "url": "https://github.com/stuartofmine/Nola/releases/download/v1.0.1/Nola-cli-macos-aarch64-1.0.1.zip",
+                "filename": "Nola-cli-macos-aarch64-1.0.1.zip"
+            }
+        }
+    ]
+}

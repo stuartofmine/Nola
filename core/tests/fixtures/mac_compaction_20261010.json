@@ -1,0 +1,16 @@
+{
+  "source": "Mac 2026-10-10 20:11; metadata only, no conversation text or credentials",
+  "strategy": "incremental_summary",
+  "initial_segments": 14,
+  "output_limit": 8000,
+  "attempts": [
+    {"elapsed_ms":98299,"input_tokens":13820,"output_tokens":8000,"output_bytes":32644,"finish_reason":"max_output_tokens"},
+    {"elapsed_ms":90344,"input_tokens":7209,"output_tokens":7616,"output_bytes":30112,"finish_reason":"stop"},
+    {"elapsed_ms":75959,"input_tokens":9575,"output_tokens":6401,"output_bytes":23495,"finish_reason":"stop"},
+    {"elapsed_ms":84605,"input_tokens":17176,"output_tokens":7119,"output_bytes":26191,"finish_reason":"stop"},
+    {"elapsed_ms":21792,"failure_code":"cancelled"}
+  ],
+  "completed_segments":3,
+  "remaining_segments":12,
+  "segment_splits":1
+}

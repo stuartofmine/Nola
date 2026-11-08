@@ -1,0 +1,4 @@
+interface:
+  display_name: "Work with PDF"
+  short_description: "Read, transform, and validate PDF files"
+  default_prompt: "Work with this PDF safely and verify the result."

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="historical_details">Historische Details</string>
+    <string name="historical_unavailable">Der frühere Inhalt ist nicht verfügbar oder wurde geändert. Öffne die Details erneut.</string>
+    <string name="historical_limited">Einige ursprüngliche Felder wurden wegen der Größenbeschränkung dieser Detailansicht nicht geladen.</string>
+    <string name="historical_field_deferred">Ursprüngliches Feld nicht geladen</string>
+    <string name="historical_reload">Neu laden / Erneut versuchen</string>
+</resources>

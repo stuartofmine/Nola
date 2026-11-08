@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="reasoning_effort_title">思考の強さ</string>
+    <string name="reasoning_effort_automatic">プロバイダーの既定値</string>
+    <string name="reasoning_effort_none">なし</string>
+    <string name="reasoning_effort_minimal">最小</string>
+    <string name="reasoning_effort_low">低</string>
+    <string name="reasoning_effort_medium">中</string>
+    <string name="reasoning_effort_high">高</string>
+    <string name="reasoning_effort_xhigh">非常に高い</string>
+    <string name="reasoning_effort_max">最大</string>
+</resources>

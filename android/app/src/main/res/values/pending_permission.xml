@@ -1,0 +1,6 @@
+<resources>
+    <plurals name="chat_pending_permission_review">
+        <item quantity="one">%1$d pending authorization · Review %2$s</item>
+        <item quantity="other">%1$d pending authorizations · Review %2$s</item>
+    </plurals>
+</resources>

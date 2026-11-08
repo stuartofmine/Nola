@@ -1,0 +1,158 @@
+{
+  "schema_version": 1,
+  "budget_seconds": 480,
+  "cases": [
+    {
+      "id": "external_benchmark_integrity",
+      "category": "accuracy",
+      "weight": 1,
+      "timeout_seconds": 15,
+      "cwd": "root",
+      "command": [
+        "python3",
+        "scripts/validate_external_benchmarks.py"
+      ]
+    },
+    {
+      "id": "prompt_sop",
+      "category": "accuracy",
+      "weight": 2,
+      "timeout_seconds": 60,
+      "command": [
+        "cargo",
+        "test",
+        "--quiet",
+        "--test",
+        "agent_prompt_sop_contract"
+      ]
+    },
+    {
+      "id": "goal_checkpoint",
+      "category": "reliability",
+      "weight": 2,
+      "timeout_seconds": 75,
+      "command": [
+        "cargo",
+        "test",
+        "--quiet",
+        "--test",
+        "agent_goal_runtime_checkpoint_contract"
+      ]
+    },
+    {
+      "id": "task_lease_resume",
+      "category": "reliability",
+      "weight": 2,
+      "timeout_seconds": 90,
+      "command": [
+        "cargo",
+        "test",
+        "--quiet",
+        "--test",
+        "agent_task_handle_contract"
+      ]
+    },
+    {
+      "id": "semantic_routing",
+      "category": "accuracy",
+      "weight": 2,
+      "timeout_seconds": 90,
+      "command": [
+        "cargo",
+        "test",
+        "--quiet",
+        "--test",
+        "capability_skill_contract"
+      ]
+    },
+    {
+      "id": "trace_reduction",
+      "category": "performance",
+      "weight": 1,
+      "timeout_seconds": 45,
+      "command": [
+        "cargo",
+        "test",
+        "--quiet",
+        "--test",
+        "agent_trace_contract"
+      ]
+    },
+    {
+      "id": "service_cold_resume",
+      "category": "reliability",
+      "weight": 2,
+      "timeout_seconds": 120,
+      "command": [
+        "cargo",
+        "test",
+        "--quiet",
+        "-p",
+        "nola_service",
+        "--test",
+        "goal_idle_cold_restart_e2e"
+      ]
+    },
+    {
+      "id": "worker_kill_recovery_cancel",
+      "category": "reliability",
+      "weight": 3,
+      "timeout_seconds": 120,
+      "command": [
+        "cargo",
+        "test",
+        "--quiet",
+        "-p",
+        "nola_service",
+        "--test",
+        "runtime_task_worker_recovery_e2e"
+      ]
+    },
+    {
+      "id": "mac_test_build",
+      "category": "build",
+      "weight": 0,
+      "timeout_seconds": 420,
+      "cwd": "root",
+      "command": [
+        "xcodebuild",
+        "build-for-testing",
+        "-quiet",
+        "-project",
+        "Nola.xcodeproj",
+        "-scheme",
+        "NolaMac",
+        "-destination",
+        "platform=macOS,arch=arm64",
+        "-destination-timeout",
+        "10",
+        "-derivedDataPath",
+        "/tmp/nola-fast-evaluation-mac"
+      ]
+    },
+    {
+      "id": "mac_model_picker_performance",
+      "category": "performance",
+      "weight": 2,
+      "timeout_seconds": 60,
+      "cwd": "root",
+      "metrics_path": "/tmp/nola-fast-evaluation-mac-metrics.json",
+      "command": [
+        "xcodebuild",
+        "test-without-building",
+        "-quiet",
+        "-project",
+        "Nola.xcodeproj",
+        "-scheme",
+        "NolaMac",
+        "-destination",
+        "platform=macOS,arch=arm64",
+        "-destination-timeout",
+        "10",
+        "-derivedDataPath",
+        "/tmp/nola-fast-evaluation-mac",
+        "-only-testing:NolaMacTests/MacLocalModelCatalogTests"
+      ]
+    }
+  ]
+}

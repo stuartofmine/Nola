@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}首页 - Nola{% endblock %}
+
+{% block content %}
+<section class="hero">
+    <h1>欢迎来到 Nola</h1>
+    <p>智能任务管理和定时执行系统</p>
+    <a class="btn btn-primary" href="/login">登录并进入仪表板</a>
+</section>
+
+<section class="features">
+    <h2>主要功能</h2>
+    <div class="grid">
+        <div class="feature-card">
+            <h3>📋 任务管理</h3>
+            <p>创建、编辑和管理你的任务列表</p>
+        </div>
+        <div class="feature-card">
+            <h3>⏰ 定时执行</h3>
+            <p>设置定时任务，自动执行周期性工作</p>
+        </div>
+        <div class="feature-card">
+            <h3>🔔 智能通知</h3>
+            <p>任务完成时收到实时通知</p>
+        </div>
+        <div class="feature-card">
+            <h3>📊 数据统计</h3>
+            <p>查看任务执行统计和分析</p>
+        </div>
+    </div>
+</section>
+{% endblock %}

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="historical_details">Detalles del historial</string>
+    <string name="historical_unavailable">El contenido anterior no está disponible o ha cambiado. Vuelve a abrir sus detalles.</string>
+    <string name="historical_limited">Algunos campos originales no se han cargado por el límite de tamaño de esta vista de detalles.</string>
+    <string name="historical_field_deferred">Campo original sin cargar</string>
+    <string name="historical_reload">Recargar / Reintentar</string>
+</resources>

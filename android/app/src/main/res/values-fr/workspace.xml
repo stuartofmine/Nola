@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="workspace_title">Espace de travail</string>
+    <string name="workspace_sources">Documents</string>
+    <string name="workspace_memory">Mémoire à long terme</string>
+    <string name="workspace_plans">Plans</string>
+    <string name="workspace_records">Activité</string>
+    <string name="composer_commands">Commandes</string>
+    <string name="composer_command_invalid">Commande ou paramètres invalides. Saisissez /.</string>
+    <string name="composer_command_no_run">Aucune tâche en cours.</string>
+    <string name="workspace_knowledge">Connaissances</string>
+    <string name="workspace_knowledge_empty">Aucune connaissance issue des conversations n’a encore été enregistrée.</string>
+    <string name="workspace_knowledge_failed">Impossible de charger les connaissances de la conversation. Réessayez.</string>
+    <string name="workspace_knowledge_open">Ouvrir la conversation d’origine</string>
+</resources>

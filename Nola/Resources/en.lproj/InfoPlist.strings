@@ -1,0 +1,9 @@
+/* Localized Info.plist strings */
+"CFBundleDisplayName" = "Nola";
+"CFBundleName" = "Nola";
+"NSContactsUsageDescription" = "Nola needs access to your contacts to read birthday information and remind you of important dates. All data is processed locally on your device and never uploaded to any server.";
+"NSCalendarsUsageDescription" = "Nola uses your calendar for summaries and actions you approve. Calendar data stays on this device unless you explicitly approve sharing a specific result with a paired host.";
+"NSRemindersUsageDescription" = "Nola needs access to your reminders to detect upcoming tasks, such as bill payments, and ensure you don't miss important items. All data is processed locally on your device and never uploaded to any server.";
+"NSHealthShareUsageDescription" = "Nola needs HealthKit read access to surface personalized medication and activity insights. All processing happens on-device and respects your privacy.";
+"NSHealthUpdateUsageDescription" = "Nola needs HealthKit write access to record summary metrics so you can track trends and share insights with compatible health services.";
+"NSLocalNetworkUsageDescription" = "Nola connects to your self-hosted Web service on the local network when you choose a Nola Web host model.";

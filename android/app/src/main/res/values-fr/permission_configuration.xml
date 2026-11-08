@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="chat_permission_state_saving">Modification des autorisations…</string>
+    <string name="chat_permission_state_saved">Autorisations enregistrées</string>
+    <string name="chat_permission_state_pending">Enregistrées ; en attente de la tâche</string>
+    <string name="chat_permission_state_checking">Vérification des autorisations de la tâche…</string>
+    <string name="chat_permission_state_active">Actives pour la tâche en cours</string>
+    <string name="chat_permission_state_failed">Enregistrement non confirmé. Votre choix est conservé pour réessayer.</string>
+    <string name="chat_context_estimated_request">Estimation de la prochaine requête</string>
+    <string name="chat_context_measured_request">Contexte mesuré de la requête</string>
+    <string name="chat_cache_conversation_rate">Taux de réussite du cache de la conversation</string>
+    <string name="chat_cache_request_identity">Requête : %1$s</string>
+    <string name="chat_cache_coverage">Signalées : %1$d · Non signalées : %2$d</string>
+</resources>

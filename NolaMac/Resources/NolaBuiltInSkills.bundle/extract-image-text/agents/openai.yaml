@@ -1,0 +1,4 @@
+interface:
+  display_name: "Extract Text from Images"
+  short_description: "Extract structured text from images"
+  default_prompt: "Extract and verify the information in this image."

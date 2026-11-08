@@ -1,0 +1,6 @@
+"NSCalendarsFullAccessUsageDescription" = "Nola читает и изменяет события календаря только для одобренных вами действий ассистента.";
+"NSRemindersFullAccessUsageDescription" = "Nola читает и изменяет напоминания только для одобренных вами действий ассистента.";
+"NSContactsUsageDescription" = "Nola читает контакты только для одобренных вами действий ассистента.";
+"NSAppleEventsUsageDescription" = "Nola управляет другими приложениями только при запуске одобренного инструмента автоматизации.";
+"NSMicrophoneUsageDescription" = "Nola использует микрофон только когда вы запускаете голосовой ввод.";
+"NSLocalNetworkUsageDescription" = "Nola подключается к серверам моделей и хостам Nola в вашей локальной сети, когда вы их выбираете.";

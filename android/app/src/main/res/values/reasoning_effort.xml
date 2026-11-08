@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="reasoning_effort_title">Thinking effort</string>
+    <string name="reasoning_effort_automatic">Provider default</string>
+    <string name="reasoning_effort_none">None</string>
+    <string name="reasoning_effort_minimal">Minimal</string>
+    <string name="reasoning_effort_low">Low</string>
+    <string name="reasoning_effort_medium">Medium</string>
+    <string name="reasoning_effort_high">High</string>
+    <string name="reasoning_effort_xhigh">Extra high</string>
+    <string name="reasoning_effort_max">Maximum</string>
+</resources>

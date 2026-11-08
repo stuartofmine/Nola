@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="permission_add_instruction">Добавить инструкцию</string>
+    <string name="permission_instruction_label">Дополнительная инструкция</string>
+    <string name="permission_instruction_limit">Добавьте указания для этой операции. Перед выполнением её всё равно потребуется разрешить.</string>
+    <string name="permission_send_instruction">Отправить инструкцию</string>
+    <string name="permission_instruction_history_full">История инструкций заполнена. Чтобы продолжить, явно разрешите или отклоните операцию.</string>
+</resources>

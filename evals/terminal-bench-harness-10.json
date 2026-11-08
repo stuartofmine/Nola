@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "name": "terminal-bench-harness-10",
+  "selection_policy": "Ten existing pinned upstream tasks covering all seven categories, with low and medium expert-effort bands and no required MCP servers for the current Harbor adapter. Original task instructions, environments and verifiers are unchanged.",
+  "run_settings": {
+    "timeout_seconds": 600,
+    "terminal_max_iterations": 0,
+    "concurrency": 1,
+    "smoke_case_id": "freight-dispatch-shift",
+    "note": "Pass these settings explicitly to scripts/run_external_benchmark.py; selection-file loads case IDs only. The 600-second limit covers agent execution; environment setup and official verification are separate. Zero iterations means unbounded, with no tool-call count cap."
+  },
+  "benchmarks": {
+    "terminal-bench": {
+      "cases": [
+        "vllm-deepseek-streaming",
+        "embedding-drift-monitor",
+        "foodstuff-beta-activity",
+        "freecad-platform-drawing",
+        "freight-dispatch-shift",
+        "html-js-filter",
+        "music-harmony",
+        "photonic-waveguide-routing",
+        "vf2-speedup-networkx",
+        "wdm-design"
+      ]
+    }
+  }
+}

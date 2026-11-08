@@ -1,0 +1,4 @@
+interface:
+  display_name: "Plan Schedule and Tasks"
+  short_description: "Plan calendars, tasks, and reminders"
+  default_prompt: "Help me plan these tasks around my schedule."

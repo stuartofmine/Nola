@@ -1,0 +1,239 @@
+[
+  {
+    "schema_version": 1,
+    "trace_id": "trace_contract_long_task",
+    "run_id": "run_contract_long_task",
+    "conversation_id": "conversation_contract",
+    "message_id": "assistant_contract",
+    "turn_id": "turn_contract",
+    "event_id": "event_001",
+    "sequence": 1,
+    "emitted_at": "2026-07-19T00:00:00.001Z",
+    "kind": "run.started",
+    "parent_span_id": "turn_contract",
+    "status": "running",
+    "visibility": "summary",
+    "payload": {
+      "summary": "run_started"
+    }
+  },
+  {
+    "schema_version": 1,
+    "trace_id": "trace_contract_long_task",
+    "run_id": "run_contract_long_task",
+    "conversation_id": "conversation_contract",
+    "message_id": "assistant_contract",
+    "turn_id": "turn_contract",
+    "event_id": "event_002",
+    "sequence": 2,
+    "emitted_at": "2026-07-19T00:00:00.002Z",
+    "kind": "phase.changed",
+    "parent_span_id": "turn_contract",
+    "status": "running",
+    "visibility": "summary",
+    "payload": {
+      "phase": "planning",
+      "summary": "planning"
+    }
+  },
+  {
+    "schema_version": 1,
+    "trace_id": "trace_contract_long_task",
+    "run_id": "run_contract_long_task",
+    "conversation_id": "conversation_contract",
+    "message_id": "assistant_contract",
+    "turn_id": "turn_contract",
+    "event_id": "event_004",
+    "sequence": 3,
+    "emitted_at": "2026-07-19T00:00:00.004Z",
+    "kind": "tool.started",
+    "span_id": "tool_search_1",
+    "parent_span_id": "turn_contract",
+    "status": "running",
+    "visibility": "summary",
+    "payload": {
+      "summary": "searching",
+      "tool_name": "web_search",
+      "call_id": "tool_search_1",
+      "arguments": {
+        "query": "2026年7月伊朗局势"
+      },
+      "resources": [
+        {
+          "uri": "search://2026年7月伊朗局势",
+          "operation": "search",
+          "display_name": "2026年7月伊朗局势"
+        }
+      ]
+    }
+  },
+  {
+    "schema_version": 1,
+    "trace_id": "trace_contract_long_task",
+    "run_id": "run_contract_long_task",
+    "conversation_id": "conversation_contract",
+    "message_id": "assistant_contract",
+    "turn_id": "turn_contract",
+    "event_id": "event_005",
+    "sequence": 4,
+    "emitted_at": "2026-07-19T00:00:00.005Z",
+    "kind": "tool.progress",
+    "span_id": "tool_search_1",
+    "parent_span_id": "turn_contract",
+    "status": "running",
+    "visibility": "summary",
+    "payload": {
+      "summary": "reading_search_results",
+      "tool_name": "web_search",
+      "call_id": "tool_search_1",
+      "progress": 0.6
+    }
+  },
+  {
+    "schema_version": 1,
+    "trace_id": "trace_contract_long_task",
+    "run_id": "run_contract_long_task",
+    "conversation_id": "conversation_contract",
+    "message_id": "assistant_contract",
+    "turn_id": "turn_contract",
+    "event_id": "event_006",
+    "sequence": 5,
+    "emitted_at": "2026-07-19T00:00:00.006Z",
+    "kind": "tool.completed",
+    "span_id": "tool_search_1",
+    "parent_span_id": "turn_contract",
+    "status": "succeeded",
+    "visibility": "summary",
+    "payload": {
+      "summary": "20_results",
+      "tool_name": "web_search",
+      "call_id": "tool_search_1",
+      "result": {
+        "count": 20
+      }
+    }
+  },
+  {
+    "schema_version": 1,
+    "trace_id": "trace_contract_long_task",
+    "run_id": "run_contract_long_task",
+    "conversation_id": "conversation_contract",
+    "message_id": "assistant_contract",
+    "turn_id": "turn_contract",
+    "event_id": "event_006",
+    "sequence": 5,
+    "emitted_at": "2026-07-19T00:00:00.006Z",
+    "kind": "tool.completed",
+    "span_id": "tool_search_1",
+    "parent_span_id": "turn_contract",
+    "status": "succeeded",
+    "visibility": "summary",
+    "payload": {
+      "summary": "20_results",
+      "tool_name": "web_search",
+      "call_id": "tool_search_1",
+      "result": {
+        "count": 20
+      }
+    }
+  },
+  {
+    "schema_version": 1,
+    "trace_id": "trace_contract_long_task",
+    "run_id": "run_contract_long_task",
+    "conversation_id": "conversation_contract",
+    "message_id": "assistant_contract",
+    "turn_id": "turn_contract",
+    "event_id": "event_007",
+    "sequence": 6,
+    "emitted_at": "2026-07-19T00:00:00.007Z",
+    "kind": "tool.started",
+    "span_id": "tool_read_1",
+    "parent_span_id": "turn_contract",
+    "status": "running",
+    "visibility": "summary",
+    "payload": {
+      "summary": "reading_file",
+      "tool_name": "read_file",
+      "call_id": "tool_read_1",
+      "arguments": {
+        "path": "Doc/软件架构设计/总体设计/SOFTWARE_DESIGN.md",
+        "start_line": 1,
+        "line_count": 120
+      },
+      "resources": [
+        {
+          "uri": "Doc/软件架构设计/总体设计/SOFTWARE_DESIGN.md",
+          "operation": "read",
+          "display_name": "SOFTWARE_DESIGN.md",
+          "mime_type": "text/markdown"
+        }
+      ]
+    }
+  },
+  {
+    "schema_version": 1,
+    "trace_id": "trace_contract_long_task",
+    "run_id": "run_contract_long_task",
+    "conversation_id": "conversation_contract",
+    "message_id": "assistant_contract",
+    "turn_id": "turn_contract",
+    "event_id": "event_008",
+    "sequence": 7,
+    "emitted_at": "2026-07-19T00:00:00.008Z",
+    "kind": "tool.completed",
+    "span_id": "tool_read_1",
+    "parent_span_id": "turn_contract",
+    "status": "succeeded",
+    "visibility": "summary",
+    "payload": {
+      "summary": "120_lines_read",
+      "tool_name": "read_file",
+      "call_id": "tool_read_1",
+      "result": {
+        "line_count": 120,
+        "truncated": false
+      }
+    }
+  },
+  {
+    "schema_version": 1,
+    "trace_id": "trace_contract_long_task",
+    "run_id": "run_contract_long_task",
+    "conversation_id": "conversation_contract",
+    "message_id": "assistant_contract",
+    "turn_id": "turn_contract",
+    "event_id": "event_011",
+    "sequence": 8,
+    "emitted_at": "2026-07-19T00:00:00.011Z",
+    "kind": "usage.snapshot",
+    "parent_span_id": "turn_contract",
+    "status": "running",
+    "visibility": "detail",
+    "payload": {
+      "usage": {
+        "used_tokens": 8192,
+        "context_window_tokens": 131072,
+        "prompt_token_limit": 114688
+      }
+    }
+  },
+  {
+    "schema_version": 1,
+    "trace_id": "trace_contract_long_task",
+    "run_id": "run_contract_long_task",
+    "conversation_id": "conversation_contract",
+    "message_id": "assistant_contract",
+    "turn_id": "turn_contract",
+    "event_id": "event_012",
+    "sequence": 9,
+    "emitted_at": "2026-07-19T00:00:00.012Z",
+    "kind": "run.completed",
+    "parent_span_id": "turn_contract",
+    "status": "succeeded",
+    "visibility": "summary",
+    "payload": {
+      "reason": "completed"
+    }
+  }
+]

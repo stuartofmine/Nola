@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+    <meta id="metaDescription" name="description" content="Nola 是开源的个人智能助理：可自定义 LLM 端点和 Key，数据默认本地保存，支持多语言与跨平台。">
+    <meta property="og:title" content="Nola">
+    <meta id="metaOgDescription" property="og:description" content="开源、可自定义、隐私优先，让 AI 成为你的日常助手。">
+    <title>Nola</title>
+    <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+<header class="site-header" id="siteHeader">
+    <div class="wrap nav-wrap">
+        <a class="brand" href="#top" aria-label="Nola 首页">
+            <span class="brand-dot"></span>Nola
+        </a>
+        <nav class="nav" aria-label="主导航">
+            <a href="#overview" data-i18n="nav_overview">概览</a>
+            <a href="#features" data-i18n="nav_features">能力</a>
+            <a href="#flow" data-i18n="nav_flow">流程</a>
+            <a href="#platform" data-i18n="nav_platform">平台</a>
+            <a href="#pricing" data-i18n="nav_pricing">价格</a>
+            <a href="#faq" data-i18n="nav_faq">FAQ</a>
+        </nav>
+        <div class="nav-cta">
+            <label class="sr-only" for="langSelect" data-i18n="lang_label">Language</label>
+            <div class="lang-switch">
+                <select id="langSelect" aria-label="Language selector">
+                    <option value="zh-CN">中文</option>
+                    <option value="en">English</option>
+                    <option value="es">Español</option>
+                    <option value="fr">Français</option>
+                    <option value="de">Deutsch</option>
+                    <option value="ja">日本語</option>
+                    <option value="ko">한국어</option>
+                    <option value="ru">Русский</option>
+                    <option value="pt-BR">Português</option>
+                    <option value="ar">العربية</option>
+                    <option value="hi">हिन्दी</option>
+                </select>
+            </div>
+            <a class="chip" href="#contact" data-i18n="nav_contact_chip">联系体验 →</a>
+            <button class="menu-btn" id="menuBtn" aria-label="切换菜单" aria-expanded="false">
+                <span></span><span></span><span></span>
+            </button>
+        </div>
+    </div>
+    <div class="mobile-menu" id="mobileMenu">
+        <a href="#overview" data-i18n="nav_overview">概览</a>
+        <a href="#features" data-i18n="nav_features">能力</a>
+        <a href="#flow" data-i18n="nav_flow">流程</a>
+        <a href="#platform" data-i18n="nav_platform">平台</a>
+        <a href="#pricing" data-i18n="nav_pricing">价格</a>
+        <a href="#faq" data-i18n="nav_faq">FAQ</a>
+        <a href="#contact" data-i18n="nav_contact">联系我们</a>
+    </div>
+</header>
+
+<main id="top">
+    <section class="hero" id="overview">
+        <div class="hero-bg" aria-hidden="true">
+            <div class="blob blob-1"></div>
+            <div class="blob blob-2"></div>
+            <div class="blob blob-3"></div>
+        </div>
+        <div class="wrap hero-inner">
+            <p class="eyebrow reveal" data-i18n="hero_eyebrow">Open Source • Private • Multilingual</p>
+            <h1 class="hero-title reveal">
+                <span data-i18n="hero_title_top">让 AI 成为</span><br>
+                <span class="grad-text" data-i18n="hero_title_focus">你日常的一部分</span>
+            </h1>
+            <p class="hero-sub reveal">
+                <span data-i18n="hero_sub_1">Nola 是开源助手，你可以自由配置 LLM 端点和 Key。</span><br>
+                <span data-i18n="hero_sub_2">你的个人数据默认保存在本地，体验由你掌控。</span>
+            </p>
+            <div class="hero-actions reveal">
+                <a class="btn btn-solid" href="#contact" data-i18n="hero_cta_primary">立即体验</a>
+                <a class="btn btn-link" href="#features"><span data-i18n="hero_cta_secondary">了解功能</span> <span aria-hidden="true">›</span></a>
+            </div>
+
+            <div class="hero-device reveal" aria-hidden="true">
+                <div class="phone">
+                    <div class="phone-notch"></div>
+                    <div class="phone-screen">
+                        <div class="bar-top">
+                            <span>Nola</span>
+                            <span class="dot-online"></span>
+                        </div>
+                        <div class="msg msg-in" data-i18n="phone_msg_in">今天要用哪个模型？</div>
+                        <div class="msg msg-out" data-i18n="phone_msg_out">切到我的端点，9 点推送摘要</div>
+                        <div class="msg msg-in typing">
+                            <span></span><span></span><span></span>
+                        </div>
+                        <div class="msg msg-in card-msg">
+                            <p class="card-msg-title" data-i18n="phone_card_title">任务已创建</p>
+                            <p class="card-msg-meta" data-i18n="phone_card_meta">Key 本地保存 · 每日 09:00</p>
+                            <div class="card-msg-tag" data-i18n="phone_card_tag">Private ✓</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="phone-glow"></div>
+            </div>
+        </div>
+    </section>
+
+    <section class="stats wrap">
+        <div class="stat reveal">
+            <div class="stat-num"><span data-count="4">0</span></div>
+            <div class="stat-label" data-i18n-html="stat_1">平台路线<br>iOS · Web · Android · CLI</div>
+        </div>
+        <div class="stat reveal">
+            <div class="stat-num"><span data-count="24">0</span><em>/7</em></div>
+            <div class="stat-label" data-i18n-html="stat_2">自动化执行<br>让重复工作消失</div>
+        </div>
+        <div class="stat reveal">
+            <div class="stat-num"><span data-count="100">0</span><em>%</em></div>
+            <div class="stat-label" data-i18n-html="stat_3">本地优先<br>数据由你掌控</div>
+        </div>
+        <div class="stat reveal">
+            <div class="stat-num"><em>∞</em></div>
+            <div class="stat-label" data-i18n-html="stat_4">多语言体验<br>覆盖常见语言</div>
+        </div>
+    </section>
+
+    <section class="section" id="features">
+        <div class="wrap">
+            <p class="kicker reveal" data-i18n="features_kicker">What makes Nola different</p>
+            <h2 class="section-title reveal">
+                <span data-i18n="features_title_main">更少设置，更快得到结果。</span><br>
+                <span class="muted" data-i18n="features_title_sub">专注体验，而不是复杂配置。</span>
+            </h2>
+
+            <div class="feature-grid">
+                <article class="feature big reveal">
+                    <div class="feature-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.58 7.15L4 20.5l1.35-5.35A8 8 0 1 1 21 12Z"/></svg>
+                    </div>
+                    <h3 data-i18n="f1_title">可自定义的 AI 助手</h3>
+                    <p data-i18n="f1_desc">你可以连接自己的 LLM 端点和 Key，用你熟悉的模型工作。</p>
+                    <ul class="feature-bullets">
+                        <li data-i18n="f1_b1">自定义端点</li>
+                        <li data-i18n="f1_b2">自定义 Key</li>
+                        <li data-i18n="f1_b3">多会话管理</li>
+                    </ul>
+                </article>
+
+                <article class="feature reveal">
+                    <div class="feature-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                    </div>
+                    <h3 data-i18n="f2_title">定时任务自动完成</h3>
+                    <p data-i18n="f2_desc">一次设置，按时执行，自动汇总并提醒。</p>
+                </article>
+
+                <article class="feature reveal">
+                    <div class="feature-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 17h5l-1.4-1.4A7 7 0 0 0 19 11a7 7 0 0 0-14 0c0 1.7.6 3.3 1.6 4.6L5 17h5"/><path d="M9 17a3 3 0 0 0 6 0"/></svg>
+                    </div>
+                    <h3 data-i18n="f3_title">结果可持续追问</h3>
+                    <p data-i18n="f3_desc">收到结果后可继续对话，让每一次输出都能延展。</p>
+                </article>
+
+                <article class="feature reveal">
+                    <div class="feature-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 10h18"/></svg>
+                    </div>
+                    <h3 data-i18n="f4_title">本地优先的数据策略</h3>
+                    <p data-i18n="f4_desc">配置与个人数据默认保存在本地，隐私边界更清晰。</p>
+                </article>
+
+                <article class="feature reveal">
+                    <div class="feature-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 6v6c0 5 3.5 8.5 8 10 4.5-1.5 8-5 8-10V6z"/></svg>
+                    </div>
+                    <h3 data-i18n="f5_title">全语言本地化</h3>
+                    <p data-i18n="f5_desc">支持常见语言，让全球用户都能自然上手。</p>
+                </article>
+            </div>
+        </div>
+    </section>
+
+    <section class="showcase" id="flow">
+        <div class="wrap">
+            <p class="kicker reveal" data-i18n="flow_kicker">How it works</p>
+            <h2 class="section-title reveal"><span data-i18n="flow_title_main">三步开始使用。</span> <span class="muted" data-i18n="flow_title_sub">体验优先，学习成本更低。</span></h2>
+        </div>
+
+        <div class="showcase-row wrap reveal">
+            <div class="showcase-text">
+                <p class="step-num">01</p>
+                <h3 data-i18n="step1_title">开箱即用，连接模型就开始</h3>
+                <p data-i18n="step1_desc">无需额外配置流程，连上你的模型端点与 Key 即可直接使用。</p>
+            </div>
+            <div class="showcase-visual">
+                <div class="mock-card">
+                    <div class="mock-row"><span data-i18n="mock_r1_l">体验</span><b data-i18n="mock_r1_v">开箱即用</b></div>
+                    <div class="mock-row"><span data-i18n="mock_r2_l">平台</span><b data-i18n="mock_r2_v">iOS / Web</b></div>
+                    <div class="mock-row"><span data-i18n="mock_r3_l">端点</span><b data-i18n="mock_r3_v">Custom Endpoint</b></div>
+                    <div class="mock-row"><span data-i18n="mock_r4_l">Key</span><b data-i18n="mock_r4_v">Local Only</b></div>
+                    <div class="mock-btn" data-i18n="mock_btn">开始使用</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="showcase-row wrap reveal reverse">
+            <div class="showcase-text">
+                <p class="step-num">02</p>
+                <h3 data-i18n="step2_title">把重复任务交给 Nola</h3>
+                <p data-i18n="step2_desc">从收集、整理到提醒，重复流程自动完成，减少无效消耗。</p>
+            </div>
+            <div class="showcase-visual">
+                <div class="mock-pipeline">
+                    <div class="node" data-i18n="node_input">输入</div>
+                    <div class="line"></div>
+                    <div class="node highlight" data-i18n="node_process">处理</div>
+                    <div class="line"></div>
+                    <div class="node" data-i18n="node_output">结果</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="showcase-row wrap reveal">
+            <div class="showcase-text">
+                <p class="step-num">03</p>
+                <h3 data-i18n="step3_title">结果送达，继续对话</h3>
+                <p data-i18n="step3_desc">任务完成即时提醒，历史可追踪，下一步直接延续当前上下文。</p>
+            </div>
+            <div class="showcase-visual">
+                <div class="mock-notify">
+                    <div class="notify-head">
+                        <div class="notify-icon">N</div>
+                        <div>
+                            <p class="notify-title">Nola</p>
+                            <p class="notify-sub" data-i18n="notify_sub">你的任务已完成</p>
+                        </div>
+                        <span class="notify-time">09:00</span>
+                    </div>
+                    <p class="notify-body" data-i18n="notify_body">摘要已生成，点击查看并继续追问。</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="section alt" id="platform">
+        <div class="wrap">
+            <p class="kicker reveal" data-i18n="platform_kicker">Roadmap</p>
+            <h2 class="section-title reveal" data-i18n="platform_title">开源路线，持续扩展。</h2>
+
+            <div class="arch-grid">
+                <div class="arch-card reveal">
+                    <div class="arch-tag" data-i18n="p1_tag">Now</div>
+                    <h3 data-i18n="p1_title">iOS + Web</h3>
+                    <p data-i18n="p1_desc">当前已可用的双入口，覆盖移动端与浏览器场景。</p>
+                </div>
+                <div class="arch-card reveal">
+                    <div class="arch-tag" data-i18n="p2_tag">Next</div>
+                    <h3 data-i18n="p2_title">Android + CLI</h3>
+                    <p data-i18n="p2_desc">后续将支持 Android 与 CLI，覆盖更广泛的使用场景。</p>
+                </div>
+                <div class="arch-card reveal">
+                    <div class="arch-tag" data-i18n="p3_tag">Open Source</div>
+                    <h3 data-i18n="p3_title">社区共建</h3>
+                    <p data-i18n="p3_desc">Nola 是开源项目，欢迎贡献代码、反馈建议与共同迭代。</p>
+                </div>
+            </div>
+
+            <div class="tech-pills reveal">
+                <span data-i18n="pill_1">Open Source</span>
+                <span data-i18n="pill_2">Custom Endpoint</span>
+                <span data-i18n="pill_3">Bring Your Own Key</span>
+                <span data-i18n="pill_4">Local-first</span>
+                <span data-i18n="pill_5">iOS</span>
+                <span data-i18n="pill_6">Web</span>
+                <span data-i18n="pill_7">Android (Planned)</span>
+                <span data-i18n="pill_8">CLI (Planned)</span>
+            </div>
+        </div>
+    </section>
+
+    <section class="section alt" id="pricing">
+        <div class="wrap">
+            <p class="kicker reveal" data-i18n="pricing_kicker">Deploy</p>
+            <h2 class="section-title reveal">
+                <span data-i18n="pricing_title">Run Nola your way.</span><br>
+                <span class="muted" data-i18n="pricing_subtitle">Open source, self-hostable, and ready for your own model endpoint.</span>
+            </h2>
+            <div class="pricing-grid pricing-grid-2">
+
+                <div class="pricing-card reveal">
+                    <div class="plan-header">
+                        <p class="plan-name" data-i18n="plan_free_name">Open Source</p>
+                        <div class="plan-price-wrap">
+                            <span class="plan-price" data-i18n="plan_free_price">$0</span>
+                            <span class="plan-period" data-i18n="plan_free_period">forever</span>
+                        </div>
+                        <p class="plan-desc" data-i18n="plan_free_desc">Bring your own LLM endpoint and key.</p>
+                    </div>
+                    <ul class="plan-features" data-i18n-html="plan_free_features"></ul>
+                    <a class="plan-cta" href="https://github.com/stuartofmine/safariExtension" target="_blank" rel="noopener" data-i18n="plan_free_cta">View on GitHub</a>
+                </div>
+
+                <div class="pricing-card pricing-featured reveal">
+                    <div class="plan-header">
+                        <p class="plan-name" data-i18n="plan_pro_name">Self-hosted</p>
+                        <div class="plan-price-wrap">
+                            <span class="plan-price" data-i18n="plan_pro_price">$0</span>
+                            <span class="plan-period" data-i18n="plan_pro_period">optional</span>
+                        </div>
+                        <p class="plan-desc" data-i18n="plan_pro_desc">Run your own backend and connect your own AI provider.</p>
+                    </div>
+                    <ul class="plan-features" data-i18n-html="plan_pro_features"></ul>
+                    <a class="plan-cta plan-cta-primary" href="#contact" data-i18n="plan_pro_cta">Contact us</a>
+                </div>
+
+            </div>
+            <p class="pricing-note reveal" data-i18n="pricing_note">Use your own infrastructure and model provider.</p>
+        </div>
+    </section>
+
+    <section class="section" id="faq">
+        <div class="wrap">
+            <p class="kicker reveal">FAQ</p>
+            <h2 class="section-title reveal" data-i18n="faq_title">你关心的问题</h2>
+            <div class="faq-list reveal">
+                <details>
+                    <summary data-i18n="faq_q1">Nola 是开源项目吗？</summary>
+                    <p data-i18n="faq_a1">是。Nola 是开源项目，欢迎查看、使用并参与共建。</p>
+                </details>
+                <details>
+                    <summary data-i18n="faq_q2">可以设置自己的 LLM 端点和 Key 吗？</summary>
+                    <p data-i18n="faq_a2">可以。你可以自由设置自己的端点和 Key，按自己的偏好工作。</p>
+                </details>
+                <details>
+                    <summary data-i18n="faq_q3">数据存在哪里？</summary>
+                    <p data-i18n="faq_a3">默认保存在本地。你对自己的数据拥有完整控制权。</p>
+                </details>
+                <details>
+                    <summary data-i18n="faq_q4">除了 iOS 和 Web，后面还有什么？</summary>
+                    <p data-i18n="faq_a4">后续将支持 Android 和 CLI，覆盖更多设备与工作流。</p>
+                </details>
+                <details>
+                    <summary data-i18n="faq_q5">支持多语言吗？</summary>
+                    <p data-i18n="faq_a5">支持。官网与产品会覆盖常见语言本地化。</p>
+                </details>
+            </div>
+        </div>
+    </section>
+
+    <section class="cta" id="contact">
+        <div class="wrap cta-inner reveal">
+            <h2 data-i18n="cta_title">准备开始了吗？</h2>
+            <p data-i18n="cta_desc">告诉我们你的使用场景，我们会尽快回复。</p>
+            <div class="hero-actions">
+                <a class="btn btn-solid" href="mailto:hello@nola.ai" data-i18n="cta_contact">联系我们</a>
+                <a class="btn btn-link" href="#overview"><span data-i18n="cta_back">回到顶部</span> <span aria-hidden="true">↑</span></a>
+            </div>
+        </div>
+    </section>
+</main>
+
+<footer class="site-footer">
+    <div class="wrap footer-wrap">
+        <div class="footer-brand">
+            <span class="brand-dot"></span>Nola
+        </div>
+        <p class="footer-meta" data-i18n="footer_meta">© 2026 Nola. Built with community.</p>
+        <div class="footer-links">
+            <a href="#overview" data-i18n="footer_overview">概览</a>
+            <a href="#features" data-i18n="footer_features">能力</a>
+            <a href="#contact" data-i18n="footer_contact">联系</a>
+        </div>
+    </div>
+</footer>
+
+<script src="./main.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,28 @@
+import type { Locale } from '../i18n';
+
+const languages: Locale[] = ['zh-Hans', 'en', 'de', 'es', 'fr', 'ja', 'ru'];
+const entries: Record<string, readonly [string, string, string, string, string, string, string]> = {
+    confirmRemove: ['移除此会话中的“{name}”？已打开的预览标签也会关闭。', 'Remove “{name}” from this conversation? Its open preview tab will also close.', '„{name}“ aus diesem Gespräch entfernen? Der Vorschautab wird ebenfalls geschlossen.', '¿Eliminar «{name}» de esta conversación? También se cerrará su pestaña de vista previa.', 'Supprimer « {name} » de cette conversation ? Son onglet d’aperçu sera également fermé.', 'この会話から「{name}」を削除しますか？開いているプレビュータブも閉じます。', 'Удалить «{name}» из этого диалога? Открытая вкладка предпросмотра тоже закроется.'],
+    fallback: ['如果浏览器无法内嵌显示，请在新窗口打开或下载 PDF。', 'If your browser cannot display the embedded preview, open the PDF in a new window or download it.', 'Falls die eingebettete Vorschau nicht verfügbar ist, öffne das PDF in einem neuen Fenster oder lade es herunter.', 'Si el navegador no muestra la vista integrada, abre el PDF en otra ventana o descárgalo.', 'Si le navigateur ne peut pas afficher cet aperçu, ouvrez le PDF dans une nouvelle fenêtre ou téléchargez-le.', '埋め込み表示ができない場合は、新しいウィンドウで開くかPDFをダウンロードしてください。', 'Если встроенный просмотр недоступен, откройте PDF в новом окне или скачайте его.'],
+    download: ['下载 PDF', 'Download PDF', 'PDF herunterladen', 'Descargar PDF', 'Télécharger le PDF', 'PDFをダウンロード', 'Скачать PDF'],
+    openTab: ['在标签页打开', 'Open in tab', 'In Tab öffnen', 'Abrir en pestaña', 'Ouvrir dans un onglet', 'タブで開く', 'Открыть во вкладке'],
+    title: ['PDF 预览', 'PDF preview', 'PDF-Vorschau', 'Vista previa de PDF', 'Aperçu PDF', 'PDF プレビュー', 'Просмотр PDF'],
+    previewOnly: ['PDF 保存在此会话中，移除前可预览；尚不会作为消息附件发送给模型。', 'PDFs stay in this conversation for preview until removed; they are not yet sent to the model as attachments.', 'PDFs bleiben zur Vorschau in dieser Unterhaltung, bis sie entfernt werden; sie werden noch nicht als Anhang an das Modell gesendet.', 'Los PDF permanecen en esta conversación para su vista previa hasta que se eliminen; aún no se envían al modelo como adjuntos.', 'Les PDF restent dans cette conversation pour aperçu jusqu’à leur suppression ; ils ne sont pas encore envoyés au modèle en pièce jointe.', 'PDF は削除するまでこの会話に保存され、プレビューできます。まだモデルには添付送信されません。', 'PDF хранятся в этом диалоге для просмотра до удаления; пока они не отправляются модели как вложения.'],
+    upload: ['选择 PDF', 'Choose PDF', 'PDF auswählen', 'Elegir PDF', 'Choisir un PDF', 'PDF を選択', 'Выбрать PDF'],
+    refresh: ['刷新列表', 'Refresh list', 'Liste aktualisieren', 'Actualizar lista', 'Actualiser la liste', '一覧を更新', 'Обновить список'],
+    loading: ['正在加载 PDF 列表…', 'Loading PDFs…', 'PDFs werden geladen…', 'Cargando archivos PDF…', 'Chargement des PDF…', 'PDF を読み込み中…', 'Загрузка PDF…'],
+    loadingPreview: ['正在打开 PDF…', 'Opening PDF…', 'PDF wird geöffnet…', 'Abriendo PDF…', 'Ouverture du PDF…', 'PDF を開いています…', 'Открытие PDF…'],
+    empty: ['此会话还没有 PDF。', 'No PDFs in this conversation.', 'Keine PDFs in dieser Unterhaltung.', 'No hay archivos PDF en esta conversación.', 'Aucun PDF dans cette conversation.', 'この会話には PDF がありません。', 'В этом диалоге пока нет PDF.'],
+    remove: ['移除', 'Remove', 'Entfernen', 'Eliminar', 'Supprimer', '削除', 'Удалить'],
+    previewTitle: ['预览 {name}', 'Preview {name}', 'Vorschau für {name}', 'Vista previa de {name}', 'Aperçu de {name}', '{name} をプレビュー', 'Просмотр {name}'],
+    openSeparate: ['在新窗口打开', 'Open in a new window', 'In neuem Fenster öffnen', 'Abrir en una ventana nueva', 'Ouvrir dans une nouvelle fenêtre', '新しいウィンドウで開く', 'Открыть в новом окне'],
+    loadFailed: ['无法加载 PDF，请重试。', 'Could not load PDFs. Try again.', 'PDFs konnten nicht geladen werden. Bitte erneut versuchen.', 'No se pudieron cargar los PDF. Inténtalo de nuevo.', 'Impossible de charger les PDF. Réessayez.', 'PDF を読み込めません。再試行してください。', 'Не удалось загрузить PDF. Повторите попытку.'],
+    uploadFailed: ['上传未确认；请刷新列表核对后再重试。', 'Upload was not confirmed; refresh the list before retrying.', 'Upload nicht bestätigt; Liste vor erneutem Versuch aktualisieren.', 'No se confirmó la carga; actualiza la lista antes de reintentar.', 'Envoi non confirmé ; actualisez la liste avant de réessayer.', 'アップロードを確認できません。再試行前に一覧を更新してください。', 'Загрузка не подтверждена; перед повтором обновите список.'],
+    invalidFile: ['请选择不超过 8 MiB 的 PDF 文件。', 'Choose a PDF file no larger than 8 MiB.', 'Wählen Sie eine PDF-Datei mit höchstens 8 MiB.', 'Elige un PDF de 8 MiB como máximo.', 'Choisissez un PDF de 8 Mio au maximum.', '8 MiB 以下の PDF を選択してください。', 'Выберите PDF размером не более 8 МиБ.'],
+    deleteFailed: ['无法移除 PDF，请重试。', 'Could not remove the PDF. Try again.', 'PDF konnte nicht entfernt werden. Bitte erneut versuchen.', 'No se pudo eliminar el PDF. Inténtalo de nuevo.', 'Impossible de supprimer le PDF. Réessayez.', 'PDF を削除できません。再試行してください。', 'Не удалось удалить PDF. Повторите попытку.'],
+    previewFailed: ['无法预览此 PDF，可刷新列表后重试。', 'Could not preview this PDF. Refresh the list and try again.', 'PDF-Vorschau fehlgeschlagen. Liste aktualisieren und erneut versuchen.', 'No se pudo previsualizar este PDF. Actualiza la lista e inténtalo de nuevo.', 'Impossible de prévisualiser ce PDF. Actualisez la liste et réessayez.', 'この PDF をプレビューできません。一覧を更新して再試行してください。', 'Не удалось просмотреть PDF. Обновите список и повторите попытку.'],
+};
+
+export const chatResourceMessages: Record<Locale, Record<string, string>> = Object.fromEntries(languages.map((language, index) => [language,
+    Object.fromEntries(Object.entries(entries).map(([key, values]) => [`chatResource.${key}`, values[index]])),
+])) as Record<Locale, Record<string, string>>;

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="intelligence_editor_save_failed">Die Änderungen konnten nicht bestätigt werden. Ihr Entwurf bleibt hier erhalten. Sichern Sie vor einem erneuten Versuch Ihre Änderungen und öffnen Sie diesen Eintrag erneut, um den aktuellen Inhalt zu prüfen.</string>
+    <string name="intelligence_profile_load_failed">Die aktuellen Daten konnten nicht geladen werden. Vorhandene Daten wurden nicht geändert. Versuchen Sie es vor der Bearbeitung erneut.</string>
+</resources>

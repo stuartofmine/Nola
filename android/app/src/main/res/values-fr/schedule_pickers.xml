@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="scheduled_saving">Enregistrement…</string>
+    <string name="scheduled_save_failed">Enregistrement impossible. Votre brouillon est conservé ; réessayez.</string>
+    <string name="scheduled_save_partial">La tâche a été enregistrée, mais sa planification a échoué. Votre brouillon est conservé ; réessayez pour appliquer la programmation.</string>
+    <string name="scheduled_pick_date">Date : %1$s</string>
+    <string name="scheduled_pick_time">Heure : %1$s</string>
+    <string name="scheduled_pick_zone">Fuseau horaire : %1$s</string>
+    <string name="scheduled_not_selected">Choisir…</string>
+    <string name="scheduled_zone_wall_time">Changer de fuseau horaire conserve la date et l’heure affichées. L’instant réel d’exécution change.</string>
+    <string name="scheduled_recurring_dst">Répétition à cette heure locale. Lors d’un changement d’heure, une heure inexistante est décalée vers l’avant de la durée du changement ; une heure répétée est exécutée à sa première occurrence.</string>
+    <string name="scheduled_dst_gap">Cette heure locale n’existe pas en raison du passage à l’heure d’été. Choisissez une autre heure.</string>
+    <string name="scheduled_dst_overlap">Le recul de l’horloge fait apparaître cette heure deux fois. Choisissez l’occurrence à utiliser.</string>
+    <string name="scheduled_dst_first">Première occurrence — avant le changement d’heure (%1$s)</string>
+    <string name="scheduled_dst_second">Deuxième occurrence — après le changement d’heure (%1$s)</string>
+    <string name="scheduled_exact_time">Heure d’exécution : %1$s</string>
+    <string name="scheduled_zone_search">Rechercher une ville ou un fuseau horaire</string>
+    <string name="scheduled_zone_device">Utiliser le fuseau horaire de l’appareil (%1$s)</string>
+    <string name="scheduled_zone_selected">Sélection : %1$s</string>
+    <string name="scheduled_zone_no_matches">Aucun fuseau horaire correspondant.</string>
+    <string name="scheduled_frequency_unsupported">Cet éditeur ne prend pas en charge « %1$s ». La programmation existante reste inchangée. Choisissez une fréquence prise en charge pour la remplacer.</string>
+</resources>
