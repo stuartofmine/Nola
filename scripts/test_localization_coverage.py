@@ -13,6 +13,17 @@ SPEC.loader.exec_module(localization)
 
 
 class LocalizationCoverageTests(unittest.TestCase):
+    def test_swift_concatenated_key_is_not_a_literal_prefix(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "View.swift").write_text(
+                'NSLocalizedString("reasoning.effort." + value, comment: "")\n'
+                'String(localized: "dynamic."\n + suffix)\n'
+                'LocalizedStringKey("interpolated.\\(value)")\n'
+                'Text("screen.title")\nNSLocalizedString("missing.key", comment: "")'
+            )
+            self.assertEqual(localization.swift_keys(root), {"screen.title", "missing.key"})
+
     def web_snapshot(self):
         catalogs = [{locale: {"screen.title": f"Translated {locale} {{name}}"}
                      for locale in localization.WEB_LOCALES}]

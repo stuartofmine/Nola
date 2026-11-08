@@ -35,13 +35,13 @@ IOS_LOCALES = ("de", "es", "fr", "ja", "ru", "zh-Hans")
 WEB_LOCALES = ("zh-Hans", "en", "de", "es", "fr", "ja", "ru")
 
 SWIFT_KEY_PATTERNS = (
-    re.compile(r'String\(localized:\s*"([^"\\]+)"'),
-    re.compile(r'NSLocalizedString\(\s*"([^"\\]+)"'),
-    re.compile(r'LocalizedStringKey\(\s*"([^"\\]+)"'),
+    re.compile(r'String\(localized:\s*"([^"\\]+)"(?!\s*\+)'),
+    re.compile(r'NSLocalizedString\(\s*"([^"\\]+)"(?!\s*\+)'),
+    re.compile(r'LocalizedStringKey\(\s*"([^"\\]+)"(?!\s*\+)'),
     re.compile(
-        r'\b(?:Text|Label|Button|Toggle|Picker|Section|GroupBox|Menu|Link|TextField|SecureField|ContentUnavailableView|SettingsLink|LabeledContent|ShareLink|ProgressView)\(\s*"([^"\\]+)"'
+        r'\b(?:Text|Label|Button|Toggle|Picker|Section|GroupBox|Menu|Link|TextField|SecureField|ContentUnavailableView|SettingsLink|LabeledContent|ShareLink|ProgressView)\(\s*"([^"\\]+)"(?!\s*\+)'
     ),
-    re.compile(r'\.(?:navigationTitle|help|accessibilityLabel|accessibilityHint)\(\s*"([^"\\]+)"'),
+    re.compile(r'\.(?:navigationTitle|help|accessibilityLabel|accessibilityHint)\(\s*"([^"\\]+)"(?!\s*\+)'),
     re.compile(r'\b[A-Za-z][A-Za-z0-9]*Text\(\s*"([^"\\]+)"\s*,'),
     re.compile(r'\b[A-Za-z][A-Za-z0-9_]*Text\(\s*"([^"\\]+)"\s*,'),
 )
