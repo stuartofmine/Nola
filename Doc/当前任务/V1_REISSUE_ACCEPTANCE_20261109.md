@@ -52,6 +52,15 @@ Mac 首轮在金样本改名期间发生旧资源路径复制失败；下一轮�
 
 ## 本次重发制品
 
-完整 CLI 包：183022136 字节，SHA-256 `8a24f5b7b93d1f0dc4900484d2fc13815b554129bd5adba3917ec746fafaacf1`。本机签名 feed 经真实 Rust 验证，声明 Store schema/epoch 1。实际上传和匿名下载结果将在远端验证后追加。
+完整 CLI 包：183022136 字节，SHA-256 `8a24f5b7b93d1f0dc4900484d2fc13815b554129bd5adba3917ec746fafaacf1`。本机签名 feed 经真实 Rust 验证，声明 Store schema/epoch 1。GitHub 已替换原有三个开发制品并逐个核对上传 SHA-256/大小。`v1.0.0` 标签已按维护者重发授权，从旧开发快照指向 `f3000fe3a614cdce16746f920a392d1fa1cac555`；源码 main 正常快进推送，没有改写私有仓库历史。
+
+公开发行页：https://github.com/stuartofmine/Nola/releases/tag/v1.0.0 。Release 说明明确此次重发替代旧上传、旧开发格式不迁移、未来兼容基线为 1、安装范围与测试限制。
+
+匿名线上验证通过：
+
+- `activate_source.py --dry-run` 对公开 raw feed 验签，并全量下载实际新包校验大小与摘要，`/tmp/nola-reissue-live-activation.log`。
+- 真正的 Release CLI 在损坏的项目模型配置下仍返回 up_to_date，未创建会话数据库，`nola-v1-live-check-6d8_cy_4/receipt.json`。
+- 隔离发布夹具模拟较低 build，通过真实 Rust Host 执行 check/recheck、GitHub HTTPS 跳转、下载、长度/哈希校验与原子写入；Mac GUI 缺包返回 unavailable。没有执行下载包或改变安装版本，临时例程已删除。证据 `nola-v1-rust-live-download-vc4_7gmz/probe.log`。
+- 最终发布工具 13 项、变更文件凭据扫描与 diff 格式检查通过。签名密钥和本地数据均未进入源码或发行包。每周续签机制保留；这次重发没有引入 Cloudflare 更新托管。
 
 非法 Host manifest 的旧测试曾期待继续启用工具，与现行 fail-closed 实现不符。已加强该断言：无 manifest 保留正常默认值；提供损坏或未知版本 manifest 时所有相关能力拒绝启用，产品校验没有放宽。专项日志 `/tmp/nola-reissue-cli-manifest-verified.log`。
