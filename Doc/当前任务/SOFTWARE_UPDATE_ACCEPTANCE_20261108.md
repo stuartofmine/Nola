@@ -6,6 +6,16 @@
 
 源码公开采用独立初始历史的审查快照，不推送原私有仓库历史，不复制证书、签名密钥、数据库、日志或构建目录。现有 GitHub 凭据写入 Actions Secret 返回 403；维护者将自行添加 NOLA_UPDATE_SIGNING_KEY，确认存在并完成工作流验证之前不宣称自动续签已启用。
 
+## 首次公开发布
+
+- 公开源码根提交 `4e56147849ae1f706d1a328cf102d6b67cf803d7`，无父提交，独立于私有开发历史。审查快照 7205 文件，排除 cer 目录中的证书/私钥及 Android local.properties。
+- 真实 Release：https://github.com/stuartofmine/Nola/releases/tag/v1.0.0 （明确标为开发预览）。仅包含 macOS Apple Silicon 完整 CLI，无其他平台安装器，不冒充 Developer ID 公证包。
+- Release 优化构建成功；完整包 183020819 字节，SHA-256 `dca9be4e40446c1e4ff0efc999e97a443f2542ca08bb431792acd151fb42148e`，GitHub 上传返回摘要和大小一致。
+- ZIP 完整性、解压后 CLI 1.0.0/build 1、托管 Node v24.20.0、隔离数据库/配置的 Web HTTP 启动通过；没有调用模型或访问用户会话。
+- 新增 GitHub 有限 HTTPS 跳转与缺失平台状态用例后 Host 14 项、CLI 3 项契约通过；OpenSSL 3 发布工具 9 项通过。macOS 自带旧版 openssl 不支持所需 Ed25519，工具/文档要求 OpenSSL 3。
+- 初次打包因依赖文件时间早于 1980 失败；修正 ZIP 时间戳处理，并采用暂存后不覆盖发布，重建包和完整解压验收通过。失败产物没有上传。
+- 当前 Secret 名称核对发现 `NOLA_UPDATE_SIGNNING_KEY` 拼写与工作流不同，已请求更正；自动续签仍待实跑验收。
+
 ## 早期实现与验证记录
 
 # 软件更新机制实现与验收
