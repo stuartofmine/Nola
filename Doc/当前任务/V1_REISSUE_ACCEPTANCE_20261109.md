@@ -62,6 +62,15 @@ Mac 首轮在金样本改名期间发生旧资源路径复制失败；下一轮�
 
 最终完整 CLI 包：183022194 字节，SHA-256 `01e395e0e0a2ee22d36fe1010a1ab881a01d614db89025374ea2d0f9a0949e31`。此前摘要为 `8a24…` 的中间包被替代，不作为最终发布依据。三个最终可执行文件都包含 `nola.tool_result.v1`，无旧 v2 标记。解压运行验证版本 1.0.0(1)、Web HTTP 200、实际创建数据库 schema/epoch 1；没有调用模型或修改用户数据库。
 
-公开发行页：https://github.com/stuartofmine/Nola/releases/tag/v1.0.0 。发布工具只操作本次三个制品；签名密钥、本地数据库及私有 Git 历史不进入公开仓库。每周签名续期保留，更新托管使用 GitHub。最终线上验证结果在发布后补记。
+公开发行页：https://github.com/stuartofmine/Nola/releases/tag/v1.0.0 。发布工具只操作本次三个制品；签名密钥、本地数据库及私有 Git 历史不进入公开仓库。每周签名续期保留，更新托管使用 GitHub。最终线上验证结果如下。
 
 非法 Host manifest 的旧测试曾期待继续启用工具，与现行 fail-closed 实现不符。已加强该断言：无 manifest 保留正常默认值；提供损坏或未知版本 manifest 时所有相关能力拒绝启用，产品校验没有放宽。专项日志 `/tmp/nola-reissue-cli-manifest-verified.log`。
+
+## 最终线上验证
+
+最终代码标签 `v1.0.0` 指向 `283df33`。公开 Release 的三个制品已替换并逐个核对 GitHub 返回的大小和 SHA-256；源码 main 正常快进推送，重发标签使用明确旧 SHA 的 force-with-lease。
+
+- 匿名 `activate_source.py --dry-run`：实际公开 feed 验签、完整 183022194 字节下载与 SHA-256 验证通过，日志 `/tmp/nola-v1-final-live-activation.log`。
+- 最终 Release CLI 在隔离 HOME、损坏的项目模型配置下执行 `update check` 返回 `up_to_date`，没有创建数据库。证据 `nola-v1-final-live-check-kakgxd5w/receipt.json`。
+- 真实 Rust 更新器：当前 build 检查、未发布 Mac GUI 目标返回 `unavailable`、隔离较低 build 夹具 check/recheck、GitHub HTTPS 跳转、完整包下载、签名长度/摘要校验及原子写入全部通过。证据 `nola-v1-final-rust-download-baq1varb/probe.log`；临时测试例程已删除，未执行下载包或改变安装。
+- 发布工具最终 15 项通过，统一 App 版本检查通过，变更路径凭据扫描与 diff 格式检查通过。完整 CLI 扫描的既有失败仍按前述记录保留，不宣称全量通过。
