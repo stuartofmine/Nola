@@ -1,6 +1,10 @@
+# This project is still in early-stage
+
 # Nola
 
+
 A local-first personal AI assistant for macOS, iOS, Android, Windows, the Web and the terminal.
+
 
 [中文](README.zh-CN.md) · [Source](https://github.com/stuartofmine/Nola) · [Downloads](https://github.com/stuartofmine/Nola/releases) · [Documentation](Doc/README.md)
 
