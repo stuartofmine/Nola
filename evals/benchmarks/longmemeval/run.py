@@ -30,7 +30,7 @@ DEFAULT_OUTPUT_ROOT = ROOT / ".artifacts" / "evals" / "longmemeval-runs"
 JUDGE_MAX_TOKENS = 4096
 FULL_HISTORY_MODE = "full-history"
 MEMORY_ARCHITECTURE_MODE = "memory-architecture"
-EVALUATOR_SCHEMA_VERSION = 4
+EVALUATOR_SCHEMA_VERSION = 1
 BENCHMARK_DATE_PATTERN = re.compile(
     r"^(?P<date>\d{4}/\d{2}/\d{2})(?: \([^)]*\))?(?: (?P<time>\d{2}:\d{2}))?$"
 )
@@ -1459,7 +1459,7 @@ def write_report(
             ],
         }
     report = {
-        "schema_version": 2,
+        "schema_version": 1,
         "benchmark": "longmemeval",
         "variant": "s-cleaned-20",
         "evaluation_mode": mode,

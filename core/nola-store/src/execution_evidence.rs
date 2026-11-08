@@ -159,7 +159,7 @@ pub(crate) fn read_source(
             }
             let output = &response.payload["output"];
             let receipt: Option<ExecutionReceipt> = match output.get("contract") {
-                Some(Value::String(contract)) if contract == "nola.tool_result.v2" => {
+                Some(Value::String(contract)) if contract == "nola.tool_result.v1" => {
                     // Explicit null means the Host supplied no receipt. Missing
                     // fields remain invalid; never synthesize a receipt here.
                     serde_json::from_value(output.get("execution").cloned().ok_or_else(invalid)?)?

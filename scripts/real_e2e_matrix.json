@@ -466,17 +466,43 @@
     },
     {
       "id": "mac-permission-denial-recovery",
-      "platforms": ["mac"],
+      "platforms": [
+        "mac"
+      ],
       "layer": "product-runtime",
-      "suite": ["full"],
+      "suite": [
+        "full"
+      ],
       "timeoutSeconds": 1200,
       "realModel": true,
       "command": "./scripts/test_real_mac_permission_denial.sh",
       "evidence": {
-        "platforms": ["mac"],
-        "modules": ["chat", "agent", "core", "provider", "tools", "permissions", "persistence", "recovery"],
-        "boundaries": ["mac-product-runtime", "agent-host", "provider", "permission-runtime", "persistence"],
-        "requiredObservationKinds": ["provider_trace", "event_stream", "persistence_store", "persistence_audit"],
+        "platforms": [
+          "mac"
+        ],
+        "modules": [
+          "chat",
+          "agent",
+          "core",
+          "provider",
+          "tools",
+          "permissions",
+          "persistence",
+          "recovery"
+        ],
+        "boundaries": [
+          "mac-product-runtime",
+          "agent-host",
+          "provider",
+          "permission-runtime",
+          "persistence"
+        ],
+        "requiredObservationKinds": [
+          "provider_trace",
+          "event_stream",
+          "persistence_store",
+          "persistence_audit"
+        ],
         "requireAssertionEvidence": true
       },
       "contractId": "mac-permission-overwrite",
@@ -1770,11 +1796,27 @@
   ],
   "contracts": {
     "mac-permission-overwrite": {
-      "requiredAssertions": ["exact_pending_permission_audited", "original_fixture_intact_before_decision", "permission_result_sealed", "permission_execution_count_verified", "permission_final_bytes_verified"],
+      "requiredAssertions": [
+        "exact_pending_permission_audited",
+        "original_fixture_intact_before_decision",
+        "permission_result_sealed",
+        "permission_execution_count_verified",
+        "permission_final_bytes_verified"
+      ],
       "minimumSteps": 1,
       "perPlatformSteps": true,
-      "validators": ["provider_real", "event_terminal", "assistant_nonempty", "persistence_present"],
-      "requiredObservationKinds": ["provider_trace", "event_stream", "persistence_store", "persistence_audit"]
+      "validators": [
+        "provider_real",
+        "event_terminal",
+        "assistant_nonempty",
+        "persistence_present"
+      ],
+      "requiredObservationKinds": [
+        "provider_trace",
+        "event_stream",
+        "persistence_store",
+        "persistence_audit"
+      ]
     },
     "core-contract-suite": {
       "requiredAssertions": [

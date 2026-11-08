@@ -197,7 +197,7 @@ def collect(database: Path) -> dict:
             'journal_manifest_chunks': 'SELECT owner, part_id, field, generation, chunk_index, digest, byte_count, result_root FROM assistant_journal_manifest_chunks ORDER BY owner, part_id, field, generation, chunk_index',
         }
         return {
-            'schema_version': 3,
+            'schema_version': 1,
             'scope': 'isolated_evaluation_database',
             'seal_digests_verified': False,
             'referenced_bodies_materialized': False,

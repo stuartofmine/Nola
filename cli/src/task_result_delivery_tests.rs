@@ -442,7 +442,7 @@ fn saved_and_ephemeral_results_commit_before_ack_and_retry_the_same_committed_re
         )
         .unwrap();
         let output = nola_host_protocol::tool_result::ToolResult {
-            contract: nola_host_protocol::tool_result::ToolResultContract::V2,
+            contract: nola_host_protocol::tool_result::ToolResultContract::V1,
             data: Some(data),
             presentation: nola_host_protocol::tool_result::ToolPresentation {
                 text: "presentation is not authority".into(),

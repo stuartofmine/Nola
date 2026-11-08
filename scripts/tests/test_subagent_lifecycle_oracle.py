@@ -49,7 +49,7 @@ class SubagentLifecycleOracleTests(unittest.TestCase):
     def test_foreign_owner_requires_both_actual_denials(self):
         calls = [{"status": "failed", "payload": {"tool_name": name, "call_id": name, "arguments": {"task_id": "task"}}}
                  for name in ["read_task", "stop_task"]]
-        outputs = {name: {"contract": "nola.tool_result.v2", "data": None,
+        outputs = {name: {"contract": "nola.tool_result.v1", "data": None,
                          "presentation": {"text": "Unknown task: task", "summary": "Unknown task: task"},
                          "execution": None, "full_output_ref": None, "memory_usage": None}
                    for name in ["read_task", "stop_task"]}
@@ -67,11 +67,11 @@ class SubagentLifecycleOracleTests(unittest.TestCase):
     def test_foreign_owner_rejects_old_or_malformed_envelope(self):
         calls = [{"status": "failed", "payload": {"tool_name": name, "call_id": name, "arguments": {"task_id": "task"}}}
                  for name in ["read_task", "stop_task"]]
-        valid = {"contract": "nola.tool_result.v2", "data": None,
+        valid = {"contract": "nola.tool_result.v1", "data": None,
                  "presentation": {"text": "Unknown task: task", "summary": "Unknown task: task"},
                  "execution": None, "full_output_ref": None, "memory_usage": None}
         for invalid in [{"error": True, "text": "Unknown task: task"},
-                        dict(valid, contract="nola.tool_result.v1"),
+                        dict(valid, contract="nola.tool_result.v2"),
                         {key: value for key, value in valid.items() if key != "execution"},
                         dict(valid, presentation={"text": "Unknown task: task"}),
                         dict(valid, data={"error": "Unknown task: task"}),

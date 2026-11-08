@@ -59,7 +59,7 @@ final class AgentCorePromptComposerTests: XCTestCase {
         let envelopeData = try JSONSerialization.data(withJSONObject: envelope, options: [.sortedKeys])
         let provider = Self.requestBuilderProvider
         let requestData = try provider.buildRequestBody(
-            system: "__NOLA_CORE_CONTEXT_V3__",
+            system: "__NOLA_CORE_CONTEXT_V1__",
             userContent: String(decoding: envelopeData, as: UTF8.self),
             attachments: [],
             stream: true,
@@ -102,7 +102,7 @@ final class AgentCorePromptComposerTests: XCTestCase {
         )
 
         let prompt = try provider.buildPrompt(for: input)
-        XCTAssertEqual(prompt.system, "__NOLA_CORE_CONTEXT_V3__")
+        XCTAssertEqual(prompt.system, "__NOLA_CORE_CONTEXT_V1__")
         XCTAssertEqual(prompt.userContent, envelopeJSON)
 
         let bodyData = try provider.buildRequestBody(

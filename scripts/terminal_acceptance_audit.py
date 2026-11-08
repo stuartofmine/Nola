@@ -33,7 +33,7 @@ def verify(capture: Path, frames_path: Path, actions_path: Path, metrics_path: P
     frames = [json.loads(line) for line in frames_path.read_text().splitlines()]
     actions = [json.loads(line) for line in actions_path.read_text().splitlines()]
     metrics, audit = json.loads(metrics_path.read_text()), json.loads(audit_path.read_text())
-    if not raw or not frames or not actions or metrics.get("schemaVersion") != 2:
+    if not raw or not frames or not actions or metrics.get("schemaVersion") != 1:
         raise ValueError("raw/committed frame/action observations are empty or obsolete")
     requests = [{"operation": "feed", "bytes_base64": base64.b64encode(raw[index:index + 65536]).decode()}
                 for index in range(0, len(raw), 65536)]

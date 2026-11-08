@@ -1708,7 +1708,7 @@ public actor DeviceAgentCoordinator {
 
     private static func toolResult(_ data: AgentCoreJSONValue, state: String) -> AgentCoreJSONValue {
         .object([
-            "contract": .string("nola.tool_result.v2"),
+            "contract": .string("nola.tool_result.v1"),
             "data": data,
             "presentation": .object(["text": .string(""), "summary": .string("")]),
             "execution": .object(["state": .string(state), "local_stop": .null, "effects": .array([]), "checks": .array([])]),

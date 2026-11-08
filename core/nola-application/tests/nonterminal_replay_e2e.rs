@@ -396,7 +396,7 @@ impl Fixture {
             &mut tool,
             HostResponse::ToolCompleted {
                 call_id,
-                output: json!({"contract":"nola.tool_result.v2",
+                output: json!({"contract":"nola.tool_result.v1",
                     "data":{"content":format!("result {round} {}", "工具结果🙂".repeat(tool_repeats))},
                     "presentation":{"text":"Fixture read completed","summary":"Read completed"},
                     "execution":{"state":"completed","local_stop":null,"effects":[{

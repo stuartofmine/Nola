@@ -8,7 +8,7 @@
 
 - 中英文 README 重写，说明原生客户端、Svelte Web、Rust CLI / Application Service / Store / Host、实际发行目标、构建与测试。移除 Worker/D1/Jinja 和旧 Backend 部署步骤。
 - `dev.sh` 只构建前端与 Rust Host，默认绑定 loopback，不启动 Worker，也不按端口杀其他进程。贡献说明和 CI 移除 Backend 前提。
-- 当前 Nola 数字协议、ABI、schema、epoch 归一为 1；同步 Rust、Swift、Kotlin、Web 生产者/消费者、头文件、冻结调用、恢复快照、摘要域和金样本。外部 MCP / A2UI / 模型供应商标准版本保持原值。
+- 当前 Nola 数字及字符串协议、ABI、schema、epoch 归一为 1；同步 Rust、Swift、Kotlin、Web 生产者/消费者、头文件、冻结调用、恢复快照、摘要域和金样本。外部 MCP / A2UI / 模型供应商标准版本保持原值。
 - 文件恢复记录统一为版本 1，使用显式 `resource_scoped` 表达授权模式；保留逐资源身份、路径和预算检查，不用版本号代替模式字段。
 - 原先“仅有一个未发布版本”的文档约束替换为发布兼容规则。后续变更须维护本次已发布基线；数据库格式变化必须先提供明确、可回滚的升级路径和旧版回归夹具。当前只有格式 1，不虚构未来迁移器。
 - 数据库格式不匹配仍严格拒绝，错误信息不再建议“删除重建”。新增对开发格式 83 拒绝且文件字节不变的测试。
@@ -50,17 +50,18 @@ Mac 首轮在金样本改名期间发生旧资源路径复制失败；下一轮�
 - 隔离配置目录后单独运行配置解析用例为 71 通过、1 失败；剩余用例手工拼出的 Host receipt 缺现行必填策略输入，解码器继续拒绝，不增加兼容回退来放行测试。
 - 另有 SOP 等待完成证明、外部执行器初始化/会话身份、缺字段的控制令牌金样本等场景失败。当前协议基线/平台专项验证通过不代表这些问题已解决；未放宽安全校验、移除失败测试或把全仓库 CI 标为全绿。
 
+## 最终字符串协议复核与补测
+
+发布前复核发现 `nola.tool_result.v2` 和 Apple Core context V3 标记未被第一轮数字常量检查覆盖。已同步所有生产者、消费者和测试为 v1/V1，旧 v2 明确拒绝；发布打包器检查三个实际可执行文件，拒绝仍包含 v2 的包。稳定的资源 ID、文件名和外部协议版本不作为格式号改名。
+
+最终构建补测：Rust Agent 589、Store 464（4 跳过）、Host 38、执行证据 13、Python 工具审计 27、证据/矩阵/评估工具 142、发布工具与基线检查 15 均通过；Mac Test 配置 40 通过；iOS 模拟器上下文专项 9 通过；Android 687 通过、2 跳过，应用与测试 APK 构建成功。上述早期 Web、领域、Store 集成等专项结果仍保留；不把早期测试称为最终全量平台 UI 验收。
+
+最终日志：`/tmp/nola-v1-tag-{state-tests,host-tests,evidence-tests,oracle-tests,android,mac,ios,release-build}.log`、`/tmp/nola-v1-owned-evidence-verified.log`、`/tmp/nola-v1-tag-publisher-verified.log`。Mac/iOS 结果为 `/tmp/nola-v1-tag-{mac,ios}.xcresult`。
+
 ## 本次重发制品
 
-完整 CLI 包：183022136 字节，SHA-256 `8a24f5b7b93d1f0dc4900484d2fc13815b554129bd5adba3917ec746fafaacf1`。本机签名 feed 经真实 Rust 验证，声明 Store schema/epoch 1。GitHub 已替换原有三个开发制品并逐个核对上传 SHA-256/大小。`v1.0.0` 标签已按维护者重发授权，从旧开发快照指向 `f3000fe3a614cdce16746f920a392d1fa1cac555`；源码 main 正常快进推送，没有改写私有仓库历史。
+最终完整 CLI 包：183022194 字节，SHA-256 `01e395e0e0a2ee22d36fe1010a1ab881a01d614db89025374ea2d0f9a0949e31`。此前摘要为 `8a24…` 的中间包被替代，不作为最终发布依据。三个最终可执行文件都包含 `nola.tool_result.v1`，无旧 v2 标记。解压运行验证版本 1.0.0(1)、Web HTTP 200、实际创建数据库 schema/epoch 1；没有调用模型或修改用户数据库。
 
-公开发行页：https://github.com/stuartofmine/Nola/releases/tag/v1.0.0 。Release 说明明确此次重发替代旧上传、旧开发格式不迁移、未来兼容基线为 1、安装范围与测试限制。
-
-匿名线上验证通过：
-
-- `activate_source.py --dry-run` 对公开 raw feed 验签，并全量下载实际新包校验大小与摘要，`/tmp/nola-reissue-live-activation.log`。
-- 真正的 Release CLI 在损坏的项目模型配置下仍返回 up_to_date，未创建会话数据库，`nola-v1-live-check-6d8_cy_4/receipt.json`。
-- 隔离发布夹具模拟较低 build，通过真实 Rust Host 执行 check/recheck、GitHub HTTPS 跳转、下载、长度/哈希校验与原子写入；Mac GUI 缺包返回 unavailable。没有执行下载包或改变安装版本，临时例程已删除。证据 `nola-v1-rust-live-download-vc4_7gmz/probe.log`。
-- 最终发布工具 13 项、变更文件凭据扫描与 diff 格式检查通过。签名密钥和本地数据均未进入源码或发行包。每周续签机制保留；这次重发没有引入 Cloudflare 更新托管。
+公开发行页：https://github.com/stuartofmine/Nola/releases/tag/v1.0.0 。发布工具只操作本次三个制品；签名密钥、本地数据库及私有 Git 历史不进入公开仓库。每周签名续期保留，更新托管使用 GitHub。最终线上验证结果在发布后补记。
 
 非法 Host manifest 的旧测试曾期待继续启用工具，与现行 fail-closed 实现不符。已加强该断言：无 manifest 保留正常默认值；提供损坏或未知版本 manifest 时所有相关能力拒绝启用，产品校验没有放宽。专项日志 `/tmp/nola-reissue-cli-manifest-verified.log`。

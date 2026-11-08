@@ -238,7 +238,7 @@ mod resource_evidence_tests {
             assert!(!data["verification_message"].as_str().unwrap().is_empty());
             assert!(projected.text.chars().count() <= 2000);
             let wire = nola_host_protocol::tool_result::ToolResult {
-                contract:nola_host_protocol::tool_result::ToolResultContract::V2,
+                contract:nola_host_protocol::tool_result::ToolResultContract::V1,
                 presentation:nola_host_protocol::tool_result::ToolPresentation {text:projected.text,summary:projected.display},
                 data:projected.data,execution:projected.execution,
                 full_output_ref:projected.full_output_ref,memory_usage:None,

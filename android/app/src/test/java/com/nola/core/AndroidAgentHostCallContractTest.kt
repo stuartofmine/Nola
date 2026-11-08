@@ -15,7 +15,7 @@ class AndroidAgentHostCallContractTest {
     fun nativeReceiptsNeverInventLocalStopEvidence() {
         listOf("not_started", "completed", "unknown", "partial", "deferred").forEach { state ->
             val result = androidToolResult(JsonObject(emptyMap()), state)
-            assertEquals("nola.tool_result.v2", result.getValue("contract").jsonPrimitive.content)
+            assertEquals("nola.tool_result.v1", result.getValue("contract").jsonPrimitive.content)
             val receipt = result.getValue("execution").jsonObject
             assertEquals(state, receipt.getValue("state").jsonPrimitive.content)
             assertEquals(JsonNull, receipt.getValue("local_stop"))
@@ -109,7 +109,7 @@ class AndroidAgentHostCallContractTest {
         assertEquals("failed", result["outcome"]?.jsonPrimitive?.content)
         assertEquals(0, result["artifacts"]?.jsonArray?.size)
         val envelope = result["output"]!!.jsonObject
-        assertEquals("nola.tool_result.v2", envelope["contract"]?.jsonPrimitive?.content)
+        assertEquals("nola.tool_result.v1", envelope["contract"]?.jsonPrimitive?.content)
         assertEquals("not_started", envelope["execution"]!!.jsonObject["state"]?.jsonPrimitive?.content)
         assertEquals(kotlinx.serialization.json.JsonNull, envelope["execution"]!!.jsonObject.getValue("local_stop"))
         val output = envelope["data"]!!.jsonObject

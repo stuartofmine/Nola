@@ -188,7 +188,7 @@ def main() -> int:
         request_json("/api/web/login", {"token": token_path.read_text().strip()})
         catalog = request_json("/api/agent/settings").get("execution_backends", [])
         by_id = {item.get("id"): item for item in catalog}
-        if not catalog or any(item.get("schema_version") != 2 for item in catalog):
+        if not catalog or any(item.get("schema_version") != 1 for item in catalog):
             raise RuntimeError(f"execution backend catalog is not current schema v2: {catalog}")
         codex_descriptor = by_id.get("codex", {})
         if codex_descriptor.get("transport") != "json_rpc_stdio":

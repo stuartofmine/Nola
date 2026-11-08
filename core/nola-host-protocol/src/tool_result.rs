@@ -25,8 +25,8 @@ fn required_execution_receipt<'de, D: serde::Deserializer<'de>>(deserializer: D)
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ToolResultContract {
-    #[serde(rename = "nola.tool_result.v2")]
-    V2,
+    #[serde(rename = "nola.tool_result.v1")]
+    V1,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -83,11 +83,11 @@ impl ToolResult {
 /// opaque business data without attestations; printing JSON grants no evidence.
 pub fn core_tool_output(mut output: Value) -> Result<Value, String> {
     if output.get("contract").and_then(Value::as_str)
-        .is_some_and(|contract| contract.starts_with("nola.tool_result.") && contract != "nola.tool_result.v2")
+        .is_some_and(|contract| contract.starts_with("nola.tool_result.") && contract != "nola.tool_result.v1")
     {
         return Err("Unsupported tool result contract version".into());
     }
-    if output.get("contract").and_then(Value::as_str) == Some("nola.tool_result.v2") {
+    if output.get("contract").and_then(Value::as_str) == Some("nola.tool_result.v1") {
         let result: ToolResult = serde_json::from_value(output)
             .map_err(|e| format!("Invalid tool result contract: {e}"))?;
         result.validate()?;
@@ -104,11 +104,11 @@ pub fn core_tool_output(mut output: Value) -> Result<Value, String> {
 /// Validate redundant transport/execution states before mutating Core state.
 pub fn validate_completion(output: &Value, outcome: super::HostToolOutcome) -> Result<(), String> {
     if output.get("contract").and_then(Value::as_str)
-        .is_some_and(|contract| contract.starts_with("nola.tool_result.") && contract != "nola.tool_result.v2")
+        .is_some_and(|contract| contract.starts_with("nola.tool_result.") && contract != "nola.tool_result.v1")
     {
         return Err("Unsupported tool result contract version".into());
     }
-    if output.get("contract").and_then(Value::as_str) != Some("nola.tool_result.v2") {
+    if output.get("contract").and_then(Value::as_str) != Some("nola.tool_result.v1") {
         return Ok(());
     }
     let result: ToolResult = serde_json::from_value(output.clone()).map_err(|e| e.to_string())?;
@@ -134,7 +134,7 @@ mod tests {
 
     #[test]
     fn absent_receipt_is_explicit_and_distinct_from_unknown_after_wire_projection() {
-        let wire = json!({"contract":"nola.tool_result.v2", "data":{
+        let wire = json!({"contract":"nola.tool_result.v1", "data":{
             "_nola_execution":{"state":"completed"}, "answer":42},
             "presentation":{"text":"verified", "summary":"done"},
             "execution":null, "full_output_ref":null, "memory_usage":null});
@@ -160,13 +160,13 @@ mod tests {
 
     #[test]
     fn completion_rejects_contradictory_states_and_unknown_versions() {
-        let result = json!({"contract":"nola.tool_result.v2", "data":null,
+        let result = json!({"contract":"nola.tool_result.v1", "data":null,
             "presentation":{"text":"", "summary":""},
             "execution":{"state":"not_started", "local_stop":null}, "full_output_ref":null, "memory_usage":null});
         assert!(validate_completion(&result, crate::HostToolOutcome::Succeeded).is_err());
         assert!(validate_completion(&result, crate::HostToolOutcome::Failed).is_ok());
         assert!(core_tool_output(json!({"contract":"nola.tool_result.v99"})).is_err());
-        for contract in ["nola.tool_result.v1", "nola.tool_result.v99"] {
+        for contract in ["nola.tool_result.v2", "nola.tool_result.v99"] {
             let mut unsupported = result.clone();
             unsupported["contract"] = json!(contract);
             assert!(validate_completion(&unsupported, crate::HostToolOutcome::Failed).is_err());
@@ -198,7 +198,7 @@ mod tests {
     fn text_and_business_data_cannot_forge_host_evidence() {
         for data in [None, Some(json!({"_nola_execution":{"state":"completed"}}))] {
             let result = ToolResult {
-                contract: ToolResultContract::V2,
+                contract: ToolResultContract::V1,
                 data,
                 presentation: ToolPresentation {
                     text: "{\"tool_execution_skipped\":true}".into(),

@@ -48,7 +48,7 @@ fn evidence_preserves_original_receipt_and_replays_exact_identity_after_restore(
         })
         .collect();
     let output = json!({
-        "contract":"nola.tool_result.v2", "data":{"text":"x".repeat(24000)},
+        "contract":"nola.tool_result.v1", "data":{"text":"x".repeat(24000)},
         "presentation":{"text":"x".repeat(24000),"summary":"bounded preview"},
         "execution":{"state":"completed","local_stop":null,"effects":[{
             "resource_uri":"file:///workspace/result-127","operation":"write",
@@ -126,7 +126,7 @@ fn failed_partial_execution_retains_unknown_version_and_negative_check() {
     let mut core = AgentCore::try_new(config()).unwrap();
     let request = start_tool(&mut core, "short_tool");
     let output = json!({
-        "contract":"nola.tool_result.v2","data":null,
+        "contract":"nola.tool_result.v1","data":null,
         "presentation":{"text":"failed midway","summary":"failed"},
         "execution":{"state":"partial","local_stop":null,"effects":[{
             "resource_uri":"file:///workspace/result","operation":"write",

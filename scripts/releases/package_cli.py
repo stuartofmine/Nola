@@ -12,6 +12,13 @@ import tempfile
 import zipfile
 
 
+def verify_contract_marker(path):
+    """Do not ship stale executables from before the reissued v1 baseline."""
+    data = path.read_bytes()
+    if b'nola.tool_result.v1' not in data or b'nola.tool_result.v2' in data:
+        raise ValueError('Executable does not use the v1 tool-result contract: ' + path.name)
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output',required=True,type=Path)
@@ -32,6 +39,7 @@ def main():
         for binary in ['nola','nola-agent-host','nola-service']:
             path=root/'target/release'/binary
             if not path.is_file():raise SystemExit('Release executable missing: '+binary)
+            verify_contract_marker(path)
             shutil.copy2(path,bundle/'bin'/binary)
         for folder in ['app/static','app/templates']:
             path=root/'web'/folder
@@ -48,6 +56,7 @@ export NOLA_PLAYWRIGHT_BRIDGE="${NOLA_PLAYWRIGHT_BRIDGE:-$NOLA_BUNDLE_ROOT/web/p
 exec "$NOLA_BUNDLE_ROOT/bin/nola" "$@"
 ''');(bundle/'nola').chmod(0o755)
         (bundle/'README.txt').write_text('Nola '+version+' ('+str(source['build'])+') — macOS Apple Silicon CLI preview\n\n'
+            'First supported baseline: Nola contracts and Store schema/epoch 1.\n'
             'Run ./nola --version, ./nola --help, or ./nola web. Keep the complete folder together.\n'
             'This preview is not Apple Developer ID notarized. Native installers for other platforms are not included.\n'
             'Finish active tasks before manually replacing a previous installation. User data is not migrated or reset.\n'

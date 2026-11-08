@@ -99,7 +99,7 @@ def tool_execution(connection: sqlite3.Connection, events: list, run: str,
             and binding[7] == sequence and json.loads(binding[8]) == fact,
             "execution evidence lacks its durable Host source binding")
     output = response["output"]
-    require(isinstance(output, dict) and output.get("contract") == "nola.tool_result.v2"
+    require(isinstance(output, dict) and output.get("contract") == "nola.tool_result.v1"
             and "execution" in output, "current ToolResult V2 with explicit execution is required")
     execution = output["execution"]
     # This audit covers direct file writes/reads, not an owned OS process. It

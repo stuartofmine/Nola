@@ -523,7 +523,7 @@ public final class OpenAIProvider: LLMClient, AgentPromptCacheIdentityClient, LL
             guard let payload = input.userPrefs["prepared_core_payload_json"], !payload.isEmpty else {
                 throw NolaError.llm(.invalidInput(reason: "Core prepared an empty model payload"))
             }
-            return ("__NOLA_CORE_CONTEXT_V3__", payload, input.attachments)
+            return ("__NOLA_CORE_CONTEXT_V1__", payload, input.attachments)
         }
 
         let isChat = input.candidates.isEmpty && input.userPrefs["message"] != nil
@@ -942,7 +942,7 @@ public final class OpenAIProvider: LLMClient, AgentPromptCacheIdentityClient, LL
         var coreTools: [Any] = []
         var parallelToolCalls = false
         var coreToolChoice: Any?
-        if system == "__NOLA_CORE_CONTEXT_V3__",
+        if system == "__NOLA_CORE_CONTEXT_V1__",
            let data = userContent.data(using: .utf8),
            let envelope = try JSONSerialization.jsonObject(with: data) as? [String: Any],
            let typedSystemPrompt = envelope["system_prompt"] as? String,
@@ -1850,7 +1850,7 @@ extension OpenAIProvider {
         var tools: [[String: Any]] = []
         var parallelToolCalls = false
         var toolChoice: Any?
-        if prompt.system == "__NOLA_CORE_CONTEXT_V3__" {
+        if prompt.system == "__NOLA_CORE_CONTEXT_V1__" {
             guard let data = prompt.userContent.data(using: .utf8),
                   let envelope = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let system = envelope["system_prompt"] as? String,

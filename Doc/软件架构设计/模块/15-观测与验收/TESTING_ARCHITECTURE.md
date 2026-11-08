@@ -50,7 +50,7 @@ runtime evidence.
 
 ## Evidence rules
 
-Real scenarios use schema 2 receipts produced by
+Real scenarios use schema 1 receipts produced by
 `scripts/real_e2e_evidence.py`.
 
 Each assertion references one or more observations. Required observations are

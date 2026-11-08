@@ -112,7 +112,7 @@ def verify_foreign(calls, task_id, outputs):
         output = outputs[call["payload"]["call_id"]]
         assert set(output) == {"contract", "data", "presentation", "execution", "full_output_ref", "memory_usage"}, \
             "Expected the current typed Host tool-result envelope"
-        assert output["contract"] == "nola.tool_result.v2", "Unsupported tool-result contract"
+        assert output["contract"] == "nola.tool_result.v1", "Unsupported tool-result contract"
         presentation = output["presentation"]
         assert isinstance(presentation, dict) and set(presentation) == {"text", "summary"}
         assert isinstance(presentation["text"], str) and isinstance(presentation["summary"], str)

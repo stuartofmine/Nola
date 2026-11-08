@@ -165,7 +165,7 @@ class JsonRun:
         ]
         require(canonical_events, f"{label}: missing canonical Core projection: {counts}")
         require(
-            all(event.get("protocol_version") == 2 for event in canonical_events),
+            all(event.get("protocol_version") == 1 for event in canonical_events),
             f"{label}: invalid Core event protocol version: {counts}",
         )
         cursors = [int(event.get("cursor") or 0) for event in canonical_events]

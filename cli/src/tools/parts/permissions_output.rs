@@ -4266,7 +4266,7 @@ fn large_text_output_is_a_typed_canonical_preview_without_double_json() {
     assert_eq!(preview.as_bytes(), &original.as_bytes()[..offset]);
     assert_eq!(outcome.full_output_ref.as_deref(), Some("/fixture/tool-output.txt"));
     let core = nola_host_protocol::tool_result::ToolResult {
-        contract: nola_host_protocol::tool_result::ToolResultContract::V2,
+        contract: nola_host_protocol::tool_result::ToolResultContract::V1,
         presentation: nola_host_protocol::tool_result::ToolPresentation { text: outcome.text.clone(), summary: outcome.display.clone() },
         data: outcome.data.clone(),
         execution: Default::default(),
@@ -4596,7 +4596,7 @@ fn shell_projection_preserves_diagnostics_before_host_and_core_bounding() {
     assert!(output.get("command").is_none());
     assert!(output.get("preview_end_byte_offset").is_none());
     let core = nola_host_protocol::tool_result::ToolResult {
-        contract: nola_host_protocol::tool_result::ToolResultContract::V2,
+        contract: nola_host_protocol::tool_result::ToolResultContract::V1,
         presentation: nola_host_protocol::tool_result::ToolPresentation {text:result.text, summary:result.display},
         data:result.data, execution:Default::default(), full_output_ref:result.full_output_ref, memory_usage:None,
     }.into_core_output();

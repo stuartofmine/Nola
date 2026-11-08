@@ -244,7 +244,7 @@ class Host:
                 and count(admitted["sequence"]) >= count(admission["sequence"]), "Seal/admission epoch or frontier differs")
         if admitted["sequence"] == admission["sequence"]:
             require(admitted == admission, "Admission digest differs")
-        require(seal["protocol_version"] == 2 and isinstance(seal["core_session_id"], str) and seal["core_session_id"].strip()
+        require(seal["protocol_version"] == 1 and isinstance(seal["core_session_id"], str) and seal["core_session_id"].strip()
                 and isinstance(seal["transition_id"], str) and seal["transition_id"].strip()
                 and type(seal["completed_at_ms"]) is int and 0 <= seal["completed_at_ms"] <= 2**63 - 1, "Invalid seal")
         require(count(seal["checkpoint_revision"]) > 0 and count(seal["core_revision"]) > 0 and count(seal["heads_count"]) > 0, "Empty terminal frontier")

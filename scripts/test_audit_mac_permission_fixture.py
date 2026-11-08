@@ -107,11 +107,11 @@ def fixture(tmp_path, decision):
              "timestamp_ms": start_sequence + 2, "snapshot_in": "part"})
 
     if decision == "allow_once":
-        executed("write", "write_file", 4, {"contract": "nola.tool_result.v2", "execution": {"state": "completed", "local_stop": None,
+        executed("write", "write_file", 4, {"contract": "nola.tool_result.v1", "execution": {"state": "completed", "local_stop": None,
             "checks": [], "effects": [{"operation": "write", "resource_uri": target.as_uri(),
                 "before_version": "sha256:" + digest(original), "after_version": "sha256:" + digest(expected)}]},
             "presentation": {"summary": "Wrote fixture", "text": "Wrote fixture"}})
-        executed("read", "read_file", 7, {"contract": "nola.tool_result.v2", "execution": None,
+        executed("read", "read_file", 7, {"contract": "nola.tool_result.v1", "execution": None,
             "presentation": {"summary": "Read fixture", "text": "# " + str(target) + "\nlines: 1-1 of 1\n\n   1 | approved"}})
     event(20, "run_result_decided", {"decision": {"result_id": "result", "value": result["value"]}})
     event(21, "turn_completed", {"turn_id": "run"})
@@ -136,10 +136,10 @@ def mutate_json(connection, table, column, where, mutate):
 
 
 @pytest.mark.parametrize("call", ["write", "read"])
-def test_only_tool_result_v2_is_admitted_without_a_v1_fallback(tmp_path, call):
+def test_only_tool_result_v1_is_admitted_and_development_v2_is_rejected(tmp_path, call):
     connection, presentation, original, expected = fixture(tmp_path, "allow_once")
     mutate_json(connection, "host_event_inbox", "payload_json", f"event_id='{call}-event'",
-        lambda value: value["payload"]["output"].update(contract="nola.tool_result.v1"))
+        lambda value: value["payload"]["output"].update(contract="nola.tool_result.v2"))
     with pytest.raises(ValueError, match="ToolResult V2"):
         auditor.audit(connection, presentation, tmp_path, "allow_once", original, expected)
 

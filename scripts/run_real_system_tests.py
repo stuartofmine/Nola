@@ -32,7 +32,7 @@ SKIP_MARKERS = (
 
 def load_matrix(path: Path) -> list[dict]:
     value = json.loads(path.read_text(encoding="utf-8"))
-    if value.get("schemaVersion") != 6:
+    if value.get("schemaVersion") != 1:
         raise ValueError(f"unsupported matrix schema: {value.get('schemaVersion')!r}")
     contracts = value.get("contracts")
     if not isinstance(contracts, dict) or not contracts:

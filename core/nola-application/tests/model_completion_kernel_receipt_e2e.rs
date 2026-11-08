@@ -271,7 +271,7 @@ fn compact_requirement_assessment_commits_and_survives_cold_replay() {
     tool.resume_after_sequence = Some(tool.resume_after_sequence.unwrap_or(0) + 1);
     support::open_runtime(&database).unwrap().execute(response_command(&tool, &run, &digest,
         HostResponse::ToolCompleted { call_id:"read-result".into(), outcome:HostToolOutcome::Succeeded,
-            output:json!({"contract":"nola.tool_result.v2","data":{"content":"fixture result"},
+            output:json!({"contract":"nola.tool_result.v1","data":{"content":"fixture result"},
                 "presentation":{"text":"fixture result","summary":"Read fixture"},
                 "execution":{"state":"completed","local_stop":null,"effects":[{
                     "resource_uri":"file:///fixture/result","operation":"read",

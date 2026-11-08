@@ -1833,7 +1833,7 @@ internal fun androidRejectedToolCallPayload(
 
 
 internal fun androidToolResult(data: JsonElement, state: String): JsonObject = buildJsonObject {
-    put("contract", "nola.tool_result.v2")
+    put("contract", "nola.tool_result.v1")
     put("data", data)
     put("presentation", buildJsonObject { put("text", ""); put("summary", "") })
     put("execution", buildJsonObject {

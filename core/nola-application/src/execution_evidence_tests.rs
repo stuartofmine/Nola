@@ -399,7 +399,7 @@ fn receipt() -> ExecutionReceipt {
 }
 
 fn typed_output(receipt: &ExecutionReceipt) -> serde_json::Value {
-    serde_json::json!({"contract":"nola.tool_result.v2","data":{"text":"x".repeat(12000)},
+    serde_json::json!({"contract":"nola.tool_result.v1","data":{"text":"x".repeat(12000)},
         "presentation":{"text":"long original output","summary":"Read completed"},"execution":receipt,
         "full_output_ref":null,"memory_usage":null})
 }

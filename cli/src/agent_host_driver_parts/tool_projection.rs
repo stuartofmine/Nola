@@ -706,7 +706,7 @@ mod effect_delivery_start_barrier_tests {
         use nola_host_protocol::tool_result::{ToolResult, ToolResultContract, ToolPresentation};
         let root = tempfile::tempdir().unwrap();
         let output = serde_json::to_value(ToolResult {
-            contract: ToolResultContract::V2,
+            contract: ToolResultContract::V1,
             data: Some(json!({"effect":"investigate","_nola_execution":{"state":"completed"}})),
             presentation: ToolPresentation {text:"Read completed; process stopped".into(),summary:"Done".into()},
             execution: None, full_output_ref: None, memory_usage: None,

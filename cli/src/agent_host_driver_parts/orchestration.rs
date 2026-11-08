@@ -1173,7 +1173,7 @@ fn external_tool_result(
 ) -> Value {
     use nola_host_protocol::tool_result::*;
     serde_json::to_value(ToolResult {
-        contract: ToolResultContract::V2,
+        contract: ToolResultContract::V1,
         presentation: ToolPresentation {
             text: data.to_string(),
             summary: data.get("_nola_display").and_then(Value::as_str)
@@ -1198,7 +1198,7 @@ fn tool_result_contract(
 ) -> nola_host_protocol::tool_result::ToolResult {
     use nola_host_protocol::tool_result::*;
     ToolResult {
-        contract: ToolResultContract::V2,
+        contract: ToolResultContract::V1,
         data: outcome.data.clone(),
         presentation: ToolPresentation {
             text: outcome.text.clone(),

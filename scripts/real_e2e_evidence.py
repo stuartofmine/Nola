@@ -14,8 +14,7 @@ from typing import Any, Iterable
 from provider_trace_metrics import provider_trace_metrics
 
 
-SCHEMA_VERSION = 3
-LEGACY_SCHEMA_VERSIONS = (1, 2)
+SCHEMA_VERSION = 1
 
 
 def _strings(values: Iterable[str]) -> list[str]:
@@ -118,6 +117,8 @@ def record_step(
 
     if path.exists():
         receipt = json.loads(path.read_text(encoding="utf-8"))
+        if receipt.get("schemaVersion") != SCHEMA_VERSION:
+            raise RuntimeError("refusing to append to an unsupported evidence receipt schema")
         if receipt.get("scenarioId") != scenario_id or receipt.get("executionId") != execution_id:
             raise RuntimeError("refusing to append to a stale or foreign E2E receipt")
     else:
@@ -275,6 +276,8 @@ def attach_observation(
 ) -> None:
     """Attach runner-produced evidence to an existing current execution receipt."""
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    if receipt.get("schemaVersion") != SCHEMA_VERSION:
+        raise ValueError("unsupported evidence receipt schema")
     steps = receipt.get("steps") if isinstance(receipt.get("steps"), list) else []
     step = next((item for item in steps if item.get("id") == step_id), None)
     if step is None:
@@ -314,6 +317,8 @@ def attach_visual_review(
 ) -> None:
     """Record a review only after a person or visual agent opened the artifact."""
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    if receipt.get("schemaVersion") != SCHEMA_VERSION:
+        raise ValueError("unsupported evidence receipt schema")
     steps = receipt.get("steps") if isinstance(receipt.get("steps"), list) else []
     step = next((item for item in steps if item.get("id") == step_id), None)
     if step is None:
@@ -366,7 +371,7 @@ def validate_receipt(path: Path, scenario: dict, execution_id: str) -> tuple[dic
     except (OSError, json.JSONDecodeError) as error:
         return None, [f"structured evidence receipt is unreadable: {error}"]
 
-    if receipt.get("schemaVersion") not in (*LEGACY_SCHEMA_VERSIONS, SCHEMA_VERSION):
+    if receipt.get("schemaVersion") != SCHEMA_VERSION:
         errors.append("unsupported evidence receipt schema")
     if receipt.get("scenarioId") != scenario.get("id"):
         errors.append("receipt scenario ID does not match the running scenario")
@@ -383,10 +388,10 @@ def validate_receipt(path: Path, scenario: dict, execution_id: str) -> tuple[dic
     required_observation_kinds = set(contract.get("requiredObservationKinds", [])) | set(
         scenario_contract.get("requiredObservationKinds", [])
     )
-    if required_observation_kinds and receipt.get("schemaVersion") not in (2, SCHEMA_VERSION):
+    if required_observation_kinds and receipt.get("schemaVersion") != SCHEMA_VERSION:
         errors.append("scenario requires structured evidence observations")
     if scenario.get("execution", {}).get("realUI") and receipt.get("schemaVersion") != SCHEMA_VERSION:
-        errors.append("real UI scenarios require evidence schema 3 visual reviews")
+        errors.append("real UI scenarios require current evidence schema visual reviews")
     minimum_steps = max(
         int(contract.get("minimumSteps", 1)),
         int(scenario_contract.get("minimumSteps", 1)),

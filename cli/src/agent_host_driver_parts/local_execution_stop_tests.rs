@@ -99,7 +99,7 @@ fn old_nonce_foreign_owner_call_effect_and_delivery_never_prove_current_stop() {
     assert!(!terminal_response_proves_local_stop(&response(expected.clone(), ExecutionState::NotStarted), false, Some(&expected)));
     let no_proof = HostResponse::ToolCompleted {
         call_id:"stop-call".into(), output:serde_json::to_value(ToolResult {
-            contract:ToolResultContract::V2, data:Some(json!({"local_stop":identity(),"process_tree_stop":"confirmed"})),
+            contract:ToolResultContract::V1, data:Some(json!({"local_stop":identity(),"process_tree_stop":"confirmed"})),
             presentation:ToolPresentation{text:"Stopped".into(),summary:"Done".into()},
             execution:Some(ExecutionReceipt {state:ExecutionState::Unknown,..Default::default()}),
             full_output_ref:None,memory_usage:None,

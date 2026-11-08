@@ -93,7 +93,7 @@ pub fn command(input:Value) -> Result<Value,String> {
 }
 fn result(call:&str,data:Value,state:&str,error:bool,activation:Value,artifacts:Value)->Value {
     json!({"type":"tool_completed","call_id":call,
-        "output":{"contract":"nola.tool_result.v2","data":data,"presentation":{"text":"","summary":""},
+        "output":{"contract":"nola.tool_result.v1","data":data,"presentation":{"text":"","summary":""},
           "execution":{"state":state,"local_stop":null,"effects":[],"checks":[]},"full_output_ref":null,"memory_usage":null},
         "outcome":if error {"failed"} else {"succeeded"},"activation":activation,"full_output_ref":null,"artifacts":artifacts})
 }

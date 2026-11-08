@@ -65,7 +65,7 @@ fn admit_external_fixture_workspace(config: &mut AgentCoreConfig) {
 // Explicit simulated Host observations, never inferred from model arguments.
 fn observed_output(data: Value, effects: &[(&str, &str)], checks: &[(&str, &str)]) -> Value {
     json!({
-        "contract": "nola.tool_result.v2", "data": data,
+        "contract": "nola.tool_result.v1", "data": data,
         "presentation": {"text": data.to_string(), "summary": "Host result"},
         "execution": {"state": "completed", "local_stop":null,
             "effects": effects.iter().map(|(uri, version)| json!({
@@ -1408,7 +1408,7 @@ fn conflicting_execution_receipt_does_not_consume_pending_response() {
         matches!(request, HostRequest::ExecuteTool { .. })
     });
     let before = serde_json::to_value(core.checkpoint(CheckpointReason::Manual).state).unwrap();
-    let mut output = json!({"contract":"nola.tool_result.v2", "data":{"text":"done"},
+    let mut output = json!({"contract":"nola.tool_result.v1", "data":{"text":"done"},
         "presentation":{"text":"done","summary":"done"},
         "execution":{"state":"not_started", "local_stop":null}, "full_output_ref":null,"memory_usage":null});
     let response = |output| HostResponse::ToolCompleted {

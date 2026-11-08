@@ -845,7 +845,7 @@ class LongMemEvalModeTests(unittest.TestCase):
                     timeout=10,
                 )
             run.assert_not_called()
-            self.assertEqual(result["evaluator_schema_version"], 4)
+            self.assertEqual(result["evaluator_schema_version"], 1)
             self.assertEqual(result["case_name"], case["question"])
             self.assertEqual(result["temporal_scope"]["future_reference_session_count"], 1)
 

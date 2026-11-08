@@ -180,6 +180,9 @@ class EvidenceTests(unittest.TestCase):
             with sqlite3.connect(path) as db:
                 db.executescript('''
                     CREATE TABLE runs(id,conversation_id,status,created_at_ms,completed_at_ms);
+                    CREATE TABLE run_attempts(id,run_id,operation_id,state,record_json);
+                    CREATE TABLE durable_tasks(id,kind,status,owner_session_id,parent_task_id,child_session_id,agent_type,created_at_ms,started_at_ms,ended_at_ms);
+                    CREATE TABLE run_events(run_id,sequence,event_kind,created_at_ms,payload_json);
                     CREATE TABLE messages(id,conversation_id,run_id,role,status,ordinal);
                     CREATE TABLE message_parts(id,message_id,kind,ordinal,state,content_text);
                     CREATE TABLE message_part_body_references(part_id,field,reference_json);
@@ -208,7 +211,7 @@ class EvidenceTests(unittest.TestCase):
             self.assertEqual(evidence['seals'], [])
             self.assertIsNone(evidence['runs'][0]['completed_at_ms'])
             self.assertFalse(evidence['seal_digests_verified'])
-            self.assertEqual(evidence['schema_version'], 3)
+            self.assertEqual(evidence['schema_version'], 1)
             self.assertEqual(bytes.fromhex(evidence['journal_chunks'][0]['bytes_hex']).decode('utf-8'), '完整输出')
             self.assertFalse(evidence['stream_bodies_materialized'])
             self.assertEqual(evidence['stream_heads'][0]['head_json'], '{"generation":1}')

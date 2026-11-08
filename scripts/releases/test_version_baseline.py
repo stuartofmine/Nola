@@ -36,6 +36,28 @@ class FirstReleaseBaselineTests(unittest.TestCase):
         kotlin = (ROOT / 'android/app/src/main/java/com/nola/core/AgentCoreRuntime.kt').read_text()
         self.assertIn('abi == 1 && protocol == 1', kotlin)
 
+    def test_string_tagged_contracts_and_their_platform_producers_are_v1(self):
+        codec = (ROOT / 'core/nola-host-protocol/src/tool_result.rs').read_text()
+        self.assertIn('#[serde(rename = "nola.tool_result.v1")]', codec)
+        self.assertIn('    V1,', codec)
+        self.assertNotIn('    V2,', codec)
+        for name in ['Nola/Services/DeviceAgentCoordinator.swift',
+                     'android/app/src/main/java/com/nola/core/DeviceAgentCoordinator.kt',
+                     'core/nola-mcp-host/src/mobile.rs', 'core/nola-store/src/execution_evidence.rs']:
+            text = (ROOT / name).read_text()
+            self.assertIn('nola.tool_result.v1', text)
+            self.assertNotIn('nola.tool_result.v2', text)
+        provider = (ROOT / 'Nola/LLM/OpenAIProvider.swift').read_text()
+        self.assertIn('__NOLA_CORE_CONTEXT_V1__', provider)
+        self.assertNotIn('__NOLA_CORE_CONTEXT_V3__', provider)
+
+    def test_owned_evidence_and_matrix_formats_match_the_first_baseline(self):
+        import json
+        self.assertIn('SCHEMA_VERSION = 1', (ROOT / 'scripts/real_e2e_evidence.py').read_text())
+        self.assertNotIn('LEGACY_SCHEMA_VERSIONS', (ROOT / 'scripts/real_e2e_evidence.py').read_text())
+        self.assertEqual(json.loads((ROOT / 'scripts/real_e2e_matrix.json').read_text())['schemaVersion'], 1)
+        self.assertIn('EVALUATOR_SCHEMA_VERSION = 1', (ROOT / 'evals/benchmarks/longmemeval/run.py').read_text())
+
     def test_store_initialization_and_release_example_match(self):
         import json
         self.assertIn("VALUES ('schema_epoch','1')", (ROOT / 'core/nola-store/src/schema.sql').read_text())
