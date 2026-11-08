@@ -72,7 +72,7 @@ python3 scripts/releases/activate_source.py --source release/update-source.json 
 
 该守卫先调用当前 Rust 协议验证器，再流式核对线上包。失败不写源，不能把 404 或错误签名当成“最新”。源是构建时数据，已安装的旧二进制不会被脚本偷偷改写。
 
-feed 有效期为 28 天。`refresh-update-feed.yml` 每周验证原签名并仅更新时间戳，不改变版本、目标、说明或包摘要，生成新签名并经 Rust 再验证后提交。需要仓库 Actions Secret **NOLA_UPDATE_SIGNING_KEY**；私钥通过 GitHub 加密 Secret 保存，不放进 workflow 文本或日志。没有 Secret 时明确跳过续签，首次本机签名发布仍可用，但维护者必须在到期前手动续签。
+feed 有效期为 28 天。`refresh-update-feed.yml` 在其配置变更后和每周验证原签名并仅更新时间戳，不改变版本、目标、说明或包摘要，生成新签名并经 Rust 再验证后提交。需要仓库 Actions Secret **NOLA_UPDATE_SIGNING_KEY**；私钥通过 GitHub 加密 Secret 保存，不放进 workflow 文本或日志。没有 Secret 时明确跳过续签，首次本机签名发布仍可用，但维护者必须在到期前手动续签。
 
 ```sh
 python3 scripts/releases/refresh_feed.py --openssl /path/to/openssl-3 \

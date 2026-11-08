@@ -17,7 +17,7 @@
 - 匿名线上验收通过：`activate_source.py --dry-run` 使用公开 raw feed，经 Rust 验签并完整下载实际 183 MB Release 包核对 SHA-256；真实 Release CLI 在损坏的项目配置下返回 up_to_date，未创建会话数据库。
 - 临时隔离发布夹具模拟较低 build，使用真实 Rust Host 完成线上 check/recheck、GitHub 有限重定向、流式下载、长度/哈希和原子写文件；macOS GUI 缺包返回 unavailable。夹具不修改已安装版本，也不执行下载的包；临时例程已删除。证据 `nola-rust-live-download-8oz15ql8/probe.log`。
 - 公开仓库 CI 尚非全绿：Linux 更新合同通过；首次在线本地化检查将 Swift 动态拼接 key 前缀误认为完整 key，已修正提取器并加回归测试。10 项检查器测试及 iOS/Android/Web 质量检查通过，不添加虚假翻译 key 或关闭检查。Mac 质量审计另发现大量原有缺失翻译（9700 项），未作为本次发布修复范围，不能宣称全平台本地化完整。macOS 更新 job 被取消，Windows job 仍运行。
-- 维护者已更正 Secret 名称；自动续签工作流已请求实跑，最终结果待补充。
+- 维护者已更正 Secret 名称并经元数据确认。手动 dispatch API 返回 403（当前发布凭据缺少 Actions 写权限），配置变更触发验收与每周续签使用 GitHub 自身受限 contents:write token；正在实际验收，不改变客户端权限。
 
 ## 早期实现与验证记录
 
