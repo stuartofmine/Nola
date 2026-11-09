@@ -23,8 +23,6 @@ cli/target
 !/SECURITY.md
 !/LICENSE
 !/LICENSE.*
-!/.github/pull_request_template.md
-!/.github/ISSUE_TEMPLATE/*.md
 !/Doc/**/*.md
 !/docs/design/nola-ui-prototype/docs/MOBILE-IM-V24.md
 !/backend/LOGGING.md
@@ -125,3 +123,6 @@ web/app/static/ui-tests/
 /.claude/
 /.vscode/
 /.cargo/
+
+# Private automation configuration must not be published
+/.github/
