@@ -2205,7 +2205,8 @@ mod background_lifecycle_tests {
             .background_task(&task_id)
             .unwrap()
             .expect("promoted task must be durable");
-        assert!(persisted.pid > 0);
+        // Promotion records the admitted task before the asynchronous worker
+        // has necessarily published its physical PID (notably on Windows).
         assert_eq!(persisted.sop_invocation, Some(invocation));
 
         let deadline = Instant::now() + Duration::from_secs(3);
@@ -2227,6 +2228,8 @@ mod background_lifecycle_tests {
         assert_eq!(status.data.as_ref().unwrap()["terminal"], true);
         assert_eq!(status.data.as_ref().unwrap()["exit_code"], 0, "{}", status.text);
         assert!(status.text.contains("beginend"), "{}", status.text);
+        assert!(crate::store::background_task_from_runtime(store.runtime_task(&task_id).unwrap().unwrap()).unwrap().pid > 0,
+            "the completed task must retain its actual execution PID");
 
         unsafe {
             env::remove_var("NOLA_DB_PATH");
