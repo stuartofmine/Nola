@@ -350,3 +350,190 @@ impl AgentRuntime {
         self.request_model(&turn_id, events, effects)
     }
 }
+
+#[cfg(test)]
+mod long_run_tests {
+    use super::*;
+
+    #[test]
+    fn later_business_generations_can_compact_again_in_the_same_run() {
+        let mut model = crate::agent::code_mode::capability_descriptors(&Default::default())
+            .unwrap()
+            .remove(0);
+        model.id = "model.stream".into();
+        model.route = HostCapabilityRoute::Model;
+        let mut reader = model.clone();
+        reader.id = "fixture_read".into();
+        reader.route = HostCapabilityRoute::Tool;
+        reader.exposure = HostCapabilityExposure::Visible;
+        reader.permission_domain = Some("fixture.read".into());
+        reader.input_normalization = Default::default();
+        reader.input_schema = json!({"type":"object","properties":{"record":{"type":"integer"}},"required":["record"]});
+        let mut catalog = crate::agent::host::HostCapabilityCatalog::empty("long-context-host");
+        catalog.capabilities.insert(model.id.clone(), model);
+        catalog.capabilities.insert(reader.id.clone(), reader);
+        let mut runtime = AgentRuntime::try_new(AgentCoreConfig {
+            session_id: Some(SessionId::from_string("long-context-session".into())),
+            turn_identity: crate::agent::model_capability::test_host_identity(),
+            host_catalog: Some(catalog),
+            permission_rules: crate::agent::permissions::PermissionRuleSet { rules: vec![crate::agent::permissions::PermissionRule {
+                capability_pattern: "fixture.read".into(), resource_pattern: "*".into(),
+                decision: RuleDecision::Allow, source: crate::agent::permissions::PermissionRuleSource::UserGlobal,
+            }] },
+            tools: vec![json!({"type":"function","function":{"name":"fixture_read","parameters":{"type":"object","properties":{}}}})],
+            context_window: crate::agent::context_window::ContextWindowConfig {
+                context_window_tokens: 32_000, reserved_output_tokens: 2_000,
+                auto_compact_tokens: Some(6_000), compaction_target_tokens: Some(3_000),
+                ..Default::default()
+            },
+            ..Default::default()
+        }).unwrap();
+        runtime
+            .dispatch(AgentCommand::SubmitInput {
+                origin: Default::default(),
+                items: vec![AgentItem::user_message(
+                    ItemId::from_string("long-input".into()),
+                    "Continue the requested long task",
+                )],
+                turn_context_items: vec![],
+                turn_context_platform: Default::default(),
+                turn_context_components: vec![],
+                submission_id: Some("long-submit".into()),
+                submitted_at_epoch_ms: Some(1000),
+                delivery: AgentInputDelivery::CurrentTurn,
+            })
+            .unwrap();
+        let turn_id = runtime
+            .session
+            .execution
+            .active_turn
+            .as_ref()
+            .unwrap()
+            .turn_id
+            .clone();
+        let mut compacted = 0;
+        for index in 0..12 {
+            while runtime
+                .session
+                .conversation
+                .context_window
+                .compaction_in_progress
+            {
+                compacted += 1;
+                assert!(
+                    compacted <= 20,
+                    "maintenance did not yield to another business generation"
+                );
+                runtime.dispatch(AgentCommand::CompactionCompleted {
+                    summary: format!("Earlier checkpoints through generation {index}; the user task is unfinished."),
+                    usage: Default::default(),
+                }).unwrap();
+            }
+            assert_eq!(
+                runtime
+                    .session
+                    .execution
+                    .active_turn
+                    .as_ref()
+                    .unwrap()
+                    .status,
+                AgentTurnStatus::AwaitingModel,
+                "generation {index}, failure={:?}, compacted={compacted}",
+                runtime
+                    .session
+                    .execution
+                    .active_turn
+                    .as_ref()
+                    .unwrap()
+                    .failure
+            );
+            runtime
+                .dispatch(AgentCommand::ModelCompleted {
+                    turn_id: turn_id.clone(),
+                    items: vec![],
+                    tool_calls: vec![crate::agent::protocol::ModelToolCall {
+                        call_id: CallId::from_string(format!("progress-{index}")),
+                        name: "fixture_read".into(),
+                        permission_scope: None,
+                        permission_rationale: None,
+                        arguments: json!({"record":index}),
+                    }],
+                    usage: Default::default(),
+                    output_limited: false,
+                    effect_elapsed_millis: 1,
+                })
+                .unwrap();
+            let tool = runtime
+                .session
+                .execution
+                .active_turn
+                .as_ref()
+                .unwrap()
+                .tools
+                .last()
+                .unwrap();
+            assert_eq!(
+                tool.status,
+                ToolCallStatus::Running,
+                "generation {index}: {tool:?}"
+            );
+            let call_id = tool.call_id.clone();
+            runtime
+                .dispatch(AgentCommand::ToolCompleted {
+                    turn_id: turn_id.clone(),
+                    call_id,
+                    capability_id: "fixture_read".into(),
+                    evidence: None,
+                    output: json!({"record":index,"content":"Checkpoint detail. ".repeat(160)}),
+                    outcome: crate::agent::host::HostToolOutcome::Succeeded,
+                    activation: None,
+                    full_output_ref: None,
+                    artifacts: vec![],
+                    skill_invocation: None,
+                    skill_runtime_update: None,
+                    effect_elapsed_millis: 1,
+                })
+                .unwrap();
+        }
+        while runtime
+            .session
+            .conversation
+            .context_window
+            .compaction_in_progress
+        {
+            compacted += 1;
+            assert!(compacted <= 20);
+            runtime
+                .dispatch(AgentCommand::CompactionCompleted {
+                    summary:
+                        "Earlier checkpoint progress; continue the original unfinished user task."
+                            .into(),
+                    usage: Default::default(),
+                })
+                .unwrap();
+        }
+        assert!(compacted >= 2, "later tool/model progress must retain further compaction opportunities; got {compacted}");
+        assert_eq!(
+            runtime
+                .session
+                .execution
+                .active_turn
+                .as_ref()
+                .unwrap()
+                .turn_id,
+            turn_id
+        );
+        assert_eq!(
+            runtime
+                .session
+                .execution
+                .active_turn
+                .as_ref()
+                .unwrap()
+                .status,
+            AgentTurnStatus::AwaitingModel
+        );
+        assert!(runtime.session.conversation.model_context.iter().any(|item|
+            matches!(item, AgentItem::Message { id, role: AgentRole::User, content } if id.as_str() == "long-input" && content == "Continue the requested long task")));
+    }
+}

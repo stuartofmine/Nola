@@ -1131,6 +1131,15 @@ impl AgentRuntime {
                     Some(model_effect_capability),
                     None,
                 );
+                // This is fresh business-generation progress, not another
+                // maintenance retry of the same pending model request. A long
+                // Run may need compaction again after later tool rounds grow
+                // its history. Keep the retry cap between generations, rather
+                // than consuming its allowance for the entire Run.
+                if !items.is_empty() || !tool_calls.is_empty() {
+                    self.require_turn_mut(&turn_id, AgentTurnStatus::AwaitingModel)?
+                        .automatic_compaction_count = 0;
+                }
                 self.require_turn(&turn_id, AgentTurnStatus::AwaitingModel)?;
                 let mut tool_calls = tool_calls;
                 // Account for the completed attempt even when recovery rejects

@@ -377,11 +377,18 @@ mod unix {
             projection_waiters: Mutex::new(Vec::new()),
         });
         let connections = super::connection_budget::ConnectionBudget::for_process();
+        let mut retiring = false;
         loop {
-            if parent_pid.is_some_and(|pid| !parent_process_is_alive(pid)) {
-                return Ok(());
+            if !retiring && parent_pid.is_some_and(|pid| !parent_process_is_alive(pid)) {
+                // Stop new connects before relinquishing database ownership,
+                // but settle every connection already accepted or queued. The
+                // launcher is not the only client: exiting immediately here
+                // tears down another process's potentially committed request.
+                fs::remove_file(socket_path)
+                    .map_err(|error| format!("retire service socket failed: {error}"))?;
+                retiring = true;
             }
-            if parent_pid.is_some() && !listener_is_ready(&listener)? {
+            if !retiring && parent_pid.is_some() && !listener_is_ready(&listener)? {
                 continue;
             }
             match listener.accept() {
@@ -417,7 +424,15 @@ mod unix {
                         });
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if retiring {
+                        while !connections.is_idle() {
+                            thread::sleep(Duration::from_millis(1));
+                        }
+                        return Ok(());
+                    }
+                    continue;
+                }
                 Err(error)
                     if matches!(
                         error.raw_os_error(),

@@ -645,24 +645,23 @@ impl ApplicationServiceClient {
                 cancellation.map(|cancellation| &cancellation.inner),
             )
         };
-        let response = match send() {
-            Ok(response) => response,
-            Err(error)
-                if envelope.command.command_type != "health"
-                    && is_pre_send_connect_failure(&error) =>
-            {
-                // A short-lived CLI may exit after the next process's health
-                // probe but before that process sends its first command. A
-                // connect failure proves that no request bytes were written,
-                // so starting/taking over the service and replaying the same
-                // envelope is safe. Never apply this to write/read failures,
-                // whose durable outcome may be unknown.
-                self.ensure_running().map_err(|recovery| {
-                    format!("{error}; service recovery before send failed: {recovery}")
-                })?;
-                send()?
+        // A parent-bound owner can exit between each health probe and connect.
+        // Only a failed connect proves the envelope is still unsent. Retain its
+        // identity across a bounded election retry; never replay write/read
+        // failures or an outcome that may already have committed.
+        let mut connect_recoveries = 0;
+        let response = loop {
+            match send() {
+                Ok(response) => break response,
+                Err(error) if envelope.command.command_type != "health"
+                    && is_pre_send_connect_failure(&error) && connect_recoveries < 3 => {
+                    connect_recoveries += 1;
+                    self.ensure_running().map_err(|recovery| {
+                        format!("{error}; service recovery before send failed: {recovery}")
+                    })?;
+                }
+                Err(error) => return Err(error),
             }
-            Err(error) => return Err(error),
         };
         response
             .validate()
@@ -850,6 +849,35 @@ mod platform {
         let lock = Arc::new(Mutex::new(()));
         locks.insert(socket.to_path_buf(), Arc::downgrade(&lock));
         Ok(lock)
+    }
+
+    fn startup_process_lock(socket: &Path, timeout: Duration) -> Result<std::fs::File, String> {
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+        let lock_path = socket.with_extension("startup.lock");
+        let file = std::fs::OpenOptions::new().read(true).write(true).create(true)
+            .mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(&lock_path).map_err(|error| format!("open service startup lock failed: {error}"))?;
+        let metadata = file.metadata().map_err(|error| error.to_string())?;
+        if !metadata.is_file() || metadata.uid() != unsafe { libc::geteuid() } || metadata.mode() & 0o077 != 0 {
+            return Err("service startup lock is not a private file owned by the current user".into());
+        }
+        let deadline = Instant::now() + timeout;
+        loop {
+            if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+                return Ok(file);
+            }
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::Interrupted { continue; }
+            if error.kind() != std::io::ErrorKind::WouldBlock {
+                return Err(format!("acquire service startup lock failed: {error}"));
+            }
+            if Instant::now() >= deadline {
+                return Err("service startup coordination deadline expired".into());
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        // Keep the inode; closing this non-inherited descriptor releases the
+        // cross-process lock, including after a client crashes.
     }
 
     struct StderrCapture {
@@ -1243,6 +1271,9 @@ mod platform {
         let _startup_guard = startup
             .lock()
             .map_err(|_| "application service startup lock is poisoned".to_string())?;
+        // The registry mutex coordinates threads only. Independent CLI/native
+        // clients share this kernel lock while electing the database owner.
+        let _process_startup_guard = startup_process_lock(client.socket_path(), Duration::from_secs(5))?;
         // Another caller may have completed startup while we waited. Never
         // spawn based on the health result observed before taking this lock.
         if client.health().is_ok() {
@@ -1261,81 +1292,136 @@ mod platform {
                 return Err(format!("owned Application Service is alive but not responding; no replacement was launched: {last_health_error}"));
             }
         }
-        let (executable, embedded_entry) = service_executable()?;
-        let mut command = Command::new(&executable);
-        if embedded_entry {
-            command.arg("--nola-application-service");
-        }
-        let mut child = command
-            .arg("--database")
-            .arg(client.database_path())
-            .arg("--socket")
-            .arg(client.socket_path())
-            .arg("--parent-pid")
-            .arg(std::process::id().to_string())
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|error| format!("launch {} failed: {error}", executable.display()))?;
-
-        let stderr = match StderrCapture::start(child.stderr.take().expect("piped service stderr"))
-        {
-            Ok(stderr) => stderr,
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(error);
-            }
-        };
-        let mut service = OwnedService {
-            child,
-            stderr,
-            socket_path: client.socket_path().to_path_buf(),
-        };
         let deadline = Instant::now() + Duration::from_secs(5);
-        while Instant::now() < deadline {
-            if let Some(status) = service
-                .child
-                .try_wait()
-                .map_err(|error| format!("inspect application service process failed: {error}"))?
+        'startup: for attempt in 0..2 {
+            let (executable, embedded_entry) = service_executable()?;
+            let mut command = Command::new(&executable);
+            if embedded_entry {
+                command.arg("--nola-application-service");
+            }
+            let mut child = command
+                .arg("--database")
+                .arg(client.database_path())
+                .arg("--socket")
+                .arg(client.socket_path())
+                .arg("--parent-pid")
+                .arg(std::process::id().to_string())
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()
+                .map_err(|error| format!("launch {} failed: {error}", executable.display()))?;
+
+            let stderr = match StderrCapture::start(child.stderr.take().expect("piped service stderr"))
             {
-                let detail = service.stderr.detail();
-                return Err(format!(
-                    "Nola Application Service exited with {status}: {}; last health probe: {}",
-                    detail.trim(),
-                    last_health_error
-                ));
-            }
-            match client.health() {
-                Ok(_) => {
-                    OWNED_SERVICES
-                        .get_or_init(|| Mutex::new(Vec::new()))
-                        .lock()
-                        .map_err(|_| {
-                            "application service process registry is poisoned".to_string()
-                        })?
-                        .push(service);
-                    return Ok(());
+                Ok(stderr) => stderr,
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(error);
                 }
-                Err(error) => last_health_error = error,
+            };
+            let mut service = OwnedService {
+                child,
+                stderr,
+                socket_path: client.socket_path().to_path_buf(),
+            };
+            while Instant::now() < deadline {
+                if let Some(status) = service
+                    .child
+                    .try_wait()
+                    .map_err(|error| format!("inspect application service process failed: {error}"))?
+                {
+                    let detail = service.stderr.detail();
+                    // Another parent-bound owner can be finishing shutdown after
+                    // unlinking its socket. No application envelope was sent to
+                    // this failed child. Observe a winning owner first, then allow
+                    // one bounded relaunch of the SAME service executable. Never
+                    // replay a request whose transport may have sent bytes.
+                    let election_deadline = (Instant::now() + Duration::from_millis(250)).min(deadline);
+                    while Instant::now() < election_deadline {
+                        match client.health() {
+                            Ok(_) => return Ok(()),
+                            Err(error) => last_health_error = error,
+                        }
+                        thread::sleep(Duration::from_millis(25));
+                    }
+                    if attempt == 0 && Instant::now() < deadline {
+                        continue 'startup;
+                    }
+                    return Err(format!(
+                        "Nola Application Service exited with {status}: {}; last health probe: {}",
+                        detail.trim(),
+                        last_health_error
+                    ));
+                }
+                match client.health() {
+                    Ok(_) => {
+                        OWNED_SERVICES
+                            .get_or_init(|| Mutex::new(Vec::new()))
+                            .lock()
+                            .map_err(|_| {
+                                "application service process registry is poisoned".to_string()
+                            })?
+                            .push(service);
+                        return Ok(());
+                    }
+                    Err(error) => last_health_error = error,
+                }
+                thread::sleep(Duration::from_millis(25));
             }
-            thread::sleep(Duration::from_millis(25));
+            let _ = service.child.kill();
+            let _ = service.child.wait();
+            let detail = service.stderr.detail();
+            return Err(format!(
+                "Nola Application Service did not become ready at {}: {}; last health probe: {}",
+                client.socket_path().display(),
+                detail.trim(),
+                last_health_error
+            ));
         }
-        let _ = service.child.kill();
-        let _ = service.child.wait();
-        let detail = service.stderr.detail();
-        Err(format!(
-            "Nola Application Service did not become ready at {}: {}; last health probe: {}",
-            client.socket_path().display(),
-            detail.trim(),
-            last_health_error
-        ))
+        Err("Application Service startup attempts exhausted".into())
     }
 
     #[cfg(test)]
     mod stderr_tests {
         use super::*;
+
+        #[test]
+        fn process_startup_lock_excludes_other_processes_and_releases_on_exit() {
+            let socket = PathBuf::from(format!("/tmp/nola-startup-process-{}.sock", next_request_id()));
+            let lock_path = socket.with_extension("startup.lock");
+            let held = startup_process_lock(&socket, Duration::from_millis(50)).unwrap();
+            let script = "import fcntl,sys; f=open(sys.argv[1], 'r+'); fcntl.flock(f,fcntl.LOCK_EX|fcntl.LOCK_NB)";
+            let blocked = Command::new("python3").args(["-c", script]).arg(&lock_path)
+                .stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap();
+            assert!(!blocked.success(), "a second process acquired an occupied startup lock");
+            assert!(startup_process_lock(&socket, Duration::from_millis(20)).is_err());
+            drop(held);
+            let acquired = Command::new("python3").args(["-c", script]).arg(&lock_path)
+                .stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap();
+            assert!(acquired.success(), "descriptor close did not release the startup lock");
+            drop(startup_process_lock(&socket, Duration::from_millis(50)).unwrap());
+            std::fs::remove_file(lock_path).unwrap();
+        }
+
+        #[test]
+        fn startup_lock_rejects_symlinks_and_non_private_files() {
+            use std::os::unix::fs::{symlink, PermissionsExt};
+            let socket = PathBuf::from(format!("/tmp/nola-startup-private-{}.sock", next_request_id()));
+            let lock_path = socket.with_extension("startup.lock");
+            let target = lock_path.with_extension("target");
+            std::fs::write(&target, b"preserve").unwrap();
+            symlink(&target, &lock_path).unwrap();
+            assert!(startup_process_lock(&socket, Duration::from_millis(10)).is_err());
+            assert_eq!(std::fs::read(&target).unwrap(), b"preserve");
+            std::fs::remove_file(&lock_path).unwrap();
+            std::fs::write(&lock_path, b"").unwrap();
+            std::fs::set_permissions(&lock_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+            assert!(startup_process_lock(&socket, Duration::from_millis(10)).is_err());
+            std::fs::remove_file(lock_path).unwrap();
+            std::fs::remove_file(target).unwrap();
+        }
 
         fn health_envelope() -> CommandEnvelope {
             CommandEnvelope {

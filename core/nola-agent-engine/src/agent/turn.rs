@@ -3567,6 +3567,8 @@ pub struct AgentTurnState {
     /// tool-capable model iteration budget is exhausted.
     #[serde(default)]
     pub iteration_budget_final_synthesis: bool,
+    /// Consecutive automatic maintenance attempts since the last completed
+    /// nonempty business generation, not a lifetime limit on a long Run.
     #[serde(default)]
     pub automatic_compaction_count: u8,
     #[serde(default)]

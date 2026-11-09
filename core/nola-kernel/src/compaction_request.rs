@@ -6,7 +6,8 @@ use nola_domain::{
     EmptyCompactionArchiveAction,
 };
 
-/// Returns the admitted per-turn automatic count without mutating rejected state.
+/// Returns the admitted consecutive-maintenance count without mutating rejected
+/// state. Core rearms it after fresh business-generation progress in a long Run.
 pub fn admit_compaction_request(
     facts: CompactionRequestFacts,
 ) -> Result<Option<u8>, CompactionRequestRejection> {
@@ -74,7 +75,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn automatic_budget_is_per_turn_and_manual_requests_do_not_consume_it() {
+    fn consecutive_automatic_attempts_are_bounded_and_manual_requests_do_not_consume_them() {
         let mut facts = CompactionRequestFacts {
             reason: CompactionReason::ThresholdReached,
             compaction_in_progress: false,

@@ -36,6 +36,10 @@ impl ConnectionBudget {
         }
     }
 
+    pub(super) fn is_idle(&self) -> bool {
+        self.active.load(Ordering::Acquire) == 0
+    }
+
     pub(super) fn try_acquire(&self) -> Option<ConnectionPermit> {
         self.active
             .try_update(Ordering::AcqRel, Ordering::Acquire, |active| {
@@ -71,11 +75,14 @@ mod tests {
     #[test]
     fn permits_are_bounded_and_released_on_unwind() {
         let budget = ConnectionBudget::new(1);
+        assert!(budget.is_idle());
         let _ = std::panic::catch_unwind(|| {
             let _permit = budget.try_acquire().unwrap();
             assert!(budget.try_acquire().is_none());
+            assert!(!budget.is_idle());
             panic!("fixture worker failure");
         });
+        assert!(budget.is_idle());
         assert!(budget.try_acquire().is_some());
     }
 

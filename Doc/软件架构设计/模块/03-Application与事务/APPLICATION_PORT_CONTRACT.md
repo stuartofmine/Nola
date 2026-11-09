@@ -172,3 +172,23 @@ the resulting product behavior to be observed.
 ## 当前命令入口（2026-10-28核对）
 
 ApplicationCommand当前包含235个顶层wire tag（以本次源码映射为准），Model/Memory/Skill/Plugin等为嵌套用例。Service与embedded Application共用业务命令，不将HTTP handler直接写库作为另一条业务入口。具体声明与源码链接见[接口索引](../01-领域与协议/INTERFACE_CATALOG.md)。
+
+## Local Service Ownership and Retirement
+
+Startup election is scoped to the exact database socket and coordinates both
+threads and independent client processes. The process lock is a private,
+current-user-owned regular file, opened without following symlinks and released
+by descriptor close or process death. Waiting and same-build startup attempts
+are bounded; startup never converts or resets an incompatible store.
+
+A parent-bound service stops accepting new connections when its launching
+parent dies, unlinks its listener, then drains queued and accepted connections
+before releasing database ownership. The launcher is not the only possible
+client; its exit cannot tear down another client's in-flight transaction or
+response. Existing connection/frame deadlines still apply.
+
+Only a failed connect proves that an application envelope is unsent. A bounded
+pre-send recovery preserves its exact client/request identity. Write, read,
+and lost-response failures retain uncertain outcomes and require original
+receipt reconciliation; they must never be replayed as a new application
+command merely because the service is available again.

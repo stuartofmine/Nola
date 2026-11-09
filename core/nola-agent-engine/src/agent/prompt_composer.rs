@@ -573,13 +573,13 @@ mod extension_contract_tests {
         assert_eq!(
             composition
                 .rendered
-                .matches("Only the active capability manifest defines tools")
+                .matches("Only the active manifest defines tools")
                 .count(),
             1
         );
         assert!(composition
             .stable_prefix
-            .contains("Prefer the narrowest structured operation"));
+            .contains("Prefer narrow structured operations"));
         assert_eq!(
             composition
                 .rendered
@@ -598,7 +598,7 @@ mod extension_contract_tests {
             .contains("including progress and permission explanations"));
         assert!(composition
             .rendered
-            .contains("After denial, do not repeat or route around an equivalent operation"));
+            .contains("After denial, do not repeat, bypass, or request equivalent authority again"));
         assert!(composition.rendered.contains(
             "do not negotiate permissions in prose"
         ));
@@ -991,6 +991,6 @@ mod tests {
             .contains("distinguish generated text from created artifacts"));
         assert!(result
             .stable_prefix
-            .contains("Explaining, drafting, or showing content does not authorize files"));
+            .contains("Explanation and drafts do not authorize files"));
     }
 }

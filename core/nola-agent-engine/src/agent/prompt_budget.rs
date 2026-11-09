@@ -97,11 +97,11 @@ mod tests {
         for tier in [ReasoningTier::Concise, ReasoningTier::Balanced, ReasoningTier::Detailed] {
             let policy = policy_fragments(tier);
             let scope = &policy.iter().find(|f| f.id == "nola.core.action-scope").unwrap().content;
-            assert!(scope.contains("Requested implementation permits necessary reversible local scratch work"));
-            assert!(scope.contains("focused validation, and project-local setup"));
+            assert!(scope.contains("Implementation permits necessary reversible local scratch work"));
+            assert!(scope.contains("validation, and project-local setup"));
             assert!(scope.contains("subject to tool permissions"));
-            assert!(scope.contains("Preserve out-of-scope state"));
-            assert!(scope.contains("require explicit authorization for that concrete scope"));
+            assert!(scope.contains("Preserve unrelated state"));
+            assert!(scope.contains("require explicit scope authorization or a valid durable grant"));
             let clarification = &policy.iter().find(|f| f.id == "nola.core.investigate-before-question").unwrap().content;
             assert!(clarification.contains("routine implementation choices within scope")
                 || clarification.contains("routine in-scope choices"));
@@ -117,7 +117,7 @@ mod tests {
             let feedback = &policy.iter().find(|f| f.id == "nola.core.permission-feedback").unwrap().content;
             assert!(feedback.contains("consumed allow_once or expired grant is not denial"));
             assert!(feedback.contains("fresh Core approval"));
-            assert!(feedback.contains("After denial, do not repeat or route around an equivalent operation"));
+            assert!(feedback.contains("After denial, do not repeat, bypass, or request equivalent authority again"));
             assert!(feedback.contains("without reusing the grant"));
         }
     }
