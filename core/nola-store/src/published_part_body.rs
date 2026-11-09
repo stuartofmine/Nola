@@ -86,7 +86,7 @@ fn resolve_field_with_lifecycle(
     let row: Option<(String, String, Option<u64>, Option<String>, Option<String>)> = connection
         .query_row(
             &format!(
-                "SELECT m.status,p.state,length(CAST(p.{name} AS BLOB)),r.part_id,
+                "SELECT m.status,p.state,octet_length(p.{name}),r.part_id,
             CASE WHEN length(CAST(r.reference_json AS BLOB))<=4096 THEN r.reference_json END
          FROM message_parts p JOIN messages m ON m.id=p.message_id
          LEFT JOIN message_part_body_references r ON r.part_id=p.id AND r.field=?4
@@ -206,7 +206,13 @@ pub(super) fn field_range(
         _ => {}
     }
     let name = field_name(field);
-    let mut bytes:Vec<u8>=connection.query_row(&format!("SELECT COALESCE(substr(CAST({name} AS BLOB),?2,?3),X'') FROM message_parts WHERE id=?1"),params![part_id,offset as i64+1,limit as i64],|row|row.get(0))?;
+    // SQLite incremental reads work for TEXT too. substr(CAST(... AS BLOB))
+    // copies the entire value for every small range (quadratic archive scans).
+    let row_id: i64 = connection.query_row(
+        "SELECT rowid FROM message_parts WHERE id=?1", [part_id], |row| row.get(0))?;
+    let blob = connection.blob_open(rusqlite::DatabaseName::Main, "message_parts", name, row_id, true)?;
+    let mut bytes = vec![0; limit.min((total - offset) as usize)];
+    blob.read_at_exact(&mut bytes, offset as usize)?;
     match std::str::from_utf8(&bytes) {
         Ok(_) => {}
         Err(error) if error.error_len().is_none() && error.valid_up_to() > 0 => {

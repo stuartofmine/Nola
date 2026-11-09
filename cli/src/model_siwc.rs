@@ -151,12 +151,11 @@ pub struct InferenceOutcome {
     pub usage: Option<Value>,
 }
 
-/// flock covers multiple Host processes, not only tasks inside one process.
+/// Native file locks cover multiple Host processes on Unix and Windows.
 struct SessionLock(File);
 impl Drop for SessionLock {
     fn drop(&mut self) {
-        use std::os::fd::AsRawFd;
-        unsafe { libc::flock(self.0.as_raw_fd(), libc::LOCK_UN); }
+        let _ = self.0.unlock();
     }
 }
 
@@ -180,14 +179,30 @@ impl SiwcHost {
     }
 
     fn lock(&self, account: &str) -> Result<SessionLock, String> {
-        use std::os::{fd::AsRawFd, unix::fs::OpenOptionsExt};
         let digest = hex::encode(Sha256::digest(account.as_bytes()));
         let path = self.database.with_extension(format!("siwc-{digest}.lock"));
-        let file = OpenOptions::new().read(true).write(true).create(true).mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW).open(path).map_err(|_| "siwc_lock_unavailable")?;
-        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-            return Err("siwc_account_busy".into());
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).create(true);
+        #[cfg(unix)] {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
         }
+        #[cfg(windows)] {
+            use std::os::windows::fs::OpenOptionsExt;
+            options.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT);
+        }
+        let file = options.open(path).map_err(|_| "siwc_lock_unavailable")?;
+        #[cfg(windows)] {
+            use std::os::windows::fs::MetadataExt;
+            if file.metadata().map_err(|_| "siwc_lock_unavailable")?.file_attributes()
+                & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                return Err("siwc_lock_unavailable".into());
+            }
+        }
+        file.try_lock().map_err(|error| match error {
+            std::fs::TryLockError::WouldBlock => "siwc_account_busy",
+            std::fs::TryLockError::Error(_) => "siwc_lock_unavailable",
+        })?;
         Ok(SessionLock(file))
     }
 
@@ -556,6 +571,41 @@ fn consume_stream(reader: impl Read, event: &mut impl FnMut(&Value)->Result<(),S
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 #[path = "model_siwc_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod lock_tests {
+    use super::*;
+
+#[test]
+fn account_lock_rejects_a_competing_host_and_releases_on_drop() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("owner.db");
+    File::create(&database).unwrap();
+    let first = SiwcHost::open(&database).unwrap();
+    let second = SiwcHost::open(&database).unwrap();
+    let account = uuid::Uuid::new_v4().to_string();
+    let lock = first.lock(&account).unwrap();
+    assert_eq!(second.lock(&account).err().as_deref(), Some("siwc_account_busy"));
+    drop(lock);
+    drop(second.lock(&account).expect("released native lock"));
+}
+
+}
+
+#[cfg(all(test, not(unix)))]
+mod unsupported_vault_tests {
+    use super::*;
+    #[test]
+    fn unavailable_private_storage_fails_closed() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("owner.db");
+        File::create(&database).unwrap();
+        let host = SiwcHost::open(&database).unwrap();
+        let error = host.snapshot(&uuid::Uuid::new_v4().to_string()).err().unwrap();
+        assert!(error.contains("protected Unix file permissions"));
+        assert!(!directory.path().join(".nola-host-secrets").exists());
+    }
+}

@@ -75,7 +75,7 @@ fn exact_expired_recovery_respects_heartbeat_and_reclaims_original_run_after_col
         "endpoint_query_sha256":null, "endpoint_query_source":{"kind":"none"},
         "credential_sha256":"a".repeat(64), "credential_source":{"kind":"ephemeral"}});
     let binding: nola_host_protocol::HostInvocationBinding = serde_json::from_value(serde_json::json!({
-        "version":8, "primary":route.clone(), "fallbacks":[], "execution_policy_sha256":"b".repeat(64),
+        "version":nola_host_protocol::HOST_INVOCATION_BINDING_VERSION, "primary":route.clone(), "fallbacks":[], "execution_policy_sha256":"b".repeat(64),
         "generation":{"temperature":0,"top_p":1,"max_output_tokens":1024,"max_retries":0,
             "parallel_tool_calls":false,"reasoning_selection":null,"sampling_override":false,
             "reasoning_tier":"balanced",

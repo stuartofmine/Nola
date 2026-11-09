@@ -42,7 +42,7 @@ fn event(sequence: u64, kind: AgentTraceKind, status: AgentTraceStatus) -> Agent
         run_id: "run-cold".into(),
         conversation_id: "conversation-cold".into(),
         message_id: Some("message-cold".into()),
-        turn_id: "turn-cold".into(),
+        turn_id: "run-cold".into(),
         event_id: format!("event-{sequence}"),
         sequence,
         emitted_at: format!("2026-01-01T00:00:0{sequence}Z"),
@@ -60,6 +60,47 @@ fn trace_events_and_envelopes_survive_real_service_restarts() {
     let directory = tempfile::tempdir().expect("temporary state");
     let database = directory.path().join("nola.db");
     let socket = directory.path().join("nola.sock");
+    let mut store = nola_store::NolaStore::open(&database).unwrap();
+    let message = String::from("message-cold");
+    let part = String::from("assistant-part-cold");
+    let input = nola_store::BeginTurnInput {
+        user_part_kind: "text".into(),
+        expected_configuration_revision: None,
+        expected_parent_message_id: None,
+        initial_events: Vec::new(),
+        conversation_id: "conversation-cold".into(),
+        conversation_title: "Journal planning".into(),
+        user_message_id: "user-cold".into(),
+        user_part_id: "user-part-cold".into(),
+        user_text: "继续 / continue".into(),
+        user_content_json: None,
+        additional_user_parts: vec![],
+        assistant_message_id: message.clone(),
+        assistant_part_id: part.clone(),
+        initial_assistant_part_mutations: vec![],
+        assistant_turn_bindings: vec![
+            nola_domain::AssistantTurnBinding::Admission {
+                turn_id: "run-cold".into(),
+                assistant_message_id: message.clone(),
+            },
+            nola_domain::AssistantTurnBinding::Part { turn_id: "run-cold".into(), assistant_message_id: message.clone(), part_id: part.clone() },
+        ],
+        run_id: "run-cold".into(),
+        context_checkpoint_id: None,
+        checkpoint_revision: 1,
+        checkpoint_event_cursor: 0,
+        checkpoint_json: "{}".into(),
+        invocation_config_json: "{}".into(),
+        invocation_config_digest: "fixture".into(),
+        outbox_effects: vec![],
+        model_attempt_mutations: vec![],
+        delegated_invocation_mutations: vec![],
+        delegated_permission_mutations: vec![],
+        memory_usage_entries: vec![],
+        created_at_ms: 1,
+    };
+    store.begin_turn(&input).unwrap();
+    drop(store);
     let client = ApplicationServiceClient::with_socket(&database, &socket);
     let mut first = start_service(&database, &socket);
     ready(&client, &mut first);

@@ -81,11 +81,9 @@ pub(crate) fn execute(operation:&str, account:Option<&str>, revision:Option<i64>
             if !confirm(interactive,"Authorize Nola as an independent local open-source app with your ChatGPT account? This does not reuse Codex credentials or start inference.")? {return Ok(());}
             let attempt=host.begin_sign_in(&id,session_revision)?;
             let cancellation=attempt.cancellation();
-            let mut signals=signal_hook::iterator::Signals::new([signal_hook::consts::SIGINT,signal_hook::consts::SIGTERM]).map_err(|_| "siwc_signal_unavailable")?;
-            let handle=signals.handle();
-            let worker=std::thread::spawn(move || {for _ in signals.forever() {cancellation.cancel();}});
+            let signals = crate::execution_signals::ExecutionSignals::install_callback(move || cancellation.cancel())?;
             println!("Open this one-time authorization URL in a browser on this computer. Ctrl-C cancels local waiting; it does not revoke already granted access.\n{}",attempt.authorization_url());
-            let result=host.finish_sign_in(attempt);handle.close();let _=worker.join();result?
+            let result=host.finish_sign_in(attempt);drop(signals);result?
         },
         "refresh"=>host.refresh(&id,session_revision)?,
         "sign-out"=>{

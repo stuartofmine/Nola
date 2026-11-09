@@ -74,9 +74,7 @@ mod model_source_account;
 mod model_source_login;
 mod model_kimi_login;
 mod model_opencode_login;
-#[cfg(unix)]
 pub mod model_siwc;
-#[cfg(unix)]
 mod model_siwc_cli;
 mod i18n;
 #[cfg(any(feature = "terminal-ui", test))]
