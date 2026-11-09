@@ -2122,6 +2122,11 @@ fn run_shell_task(request: ShellTaskProcessRequest) -> i32 {
             "safe_to_retry": false,
         })))]),
     };
+    #[cfg(test)]
+    if exit_code != 0 || budget_failure.is_some() {
+        eprintln!("shell fixture settlement: task={} code={} budget={:?} tree={:?}",
+            task.id, exit_code, budget_failure, child.stop_fact());
+    }
     let finished = crate::runtime_task_port::finish_detailed_with_event_now(
         &lease,
         terminal_status,

@@ -340,7 +340,7 @@ fn verification_review(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutc
     }
     let outside_review = changed_paths.iter().filter(|changed| {
         !target_paths.iter().any(|selected| *changed == selected || changed.starts_with(selected))
-    }).map(|path| path.strip_prefix(&root).unwrap_or(path).display().to_string())
+    }).map(|path| crate::platform_paths::shell_path(path.strip_prefix(&root).unwrap_or(path)))
         .collect::<Vec<_>>();
     let (diagnostics, commands, related_tests, validation_targets) =
         validation_plan_items(&root, &target_paths, true);
@@ -396,7 +396,7 @@ fn verification_review(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutc
             format!("review_scope: {}", if scoped_review { "selected_paths" } else { "all_changed_paths" }),
             "This is a scoped static review and validation plan, not an executed build or whole-delivery acceptance. Check the actual delivery file set, including tests/scratch files inside delivery directories; do not delete files automatically.".to_string(),
             "## Reviewed paths".to_string(),
-            target_paths.iter().map(|path| format!("- {}", path.strip_prefix(&root).unwrap_or(path).display())).collect::<Vec<_>>().join("\n"),
+            target_paths.iter().map(|path| format!("- {}", crate::platform_paths::shell_path(path.strip_prefix(&root).unwrap_or(path)))).collect::<Vec<_>>().join("\n"),
             "## Changed paths outside review".to_string(),
             if outside_review.is_empty() { "(none detected; ignored/untracked directory contents may require explicit delivery inspection)".to_string() } else { outside_review.iter().map(|path| format!("- {path}")).collect::<Vec<_>>().join("\n") },
             format!("scanned_files: {scanned}"),

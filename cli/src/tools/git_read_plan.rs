@@ -329,7 +329,7 @@ mod tests {
         }
         for command in ["git status --porcelain=v1", "git diff --stat"] {
             let plan = parse(command, dir.path()).unwrap();
-            let result = std::process::Command::new("/bin/sh")
+            let result = std::process::Command::new(crate::platform_paths::bash_program())
                 .args(["-c", &plan.command])
                 .current_dir(dir.path())
                 .output()

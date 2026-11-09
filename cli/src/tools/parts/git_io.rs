@@ -86,7 +86,7 @@ fn git_private_index_output(
     arguments: &[&str],
 ) -> Result<Vec<u8>, String> {
     let mut command = git_operation_command(root);
-    command.env("GIT_INDEX_FILE", index);
+    command.env("GIT_INDEX_FILE", git_path_argument(index)?);
     git_operation_output(command, arguments)
 }
 
@@ -124,4 +124,9 @@ fn git_index_entries(root: &Path) -> Result<BTreeMap<String, String>, String> {
         entries.insert(path.into(), object.into());
     }
     Ok(entries)
+}
+
+fn git_path_argument(path: &Path) -> Result<String, String> {
+    path.to_str().ok_or("Git path must be UTF-8")?;
+    Ok(crate::platform_paths::shell_path(path))
 }

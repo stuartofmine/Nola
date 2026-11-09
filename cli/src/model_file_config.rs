@@ -206,7 +206,8 @@ mod tests {
         let json = home.path().join(".nola").join("config.json");
         std::fs::write(&json, "{}").unwrap();
         assert_eq!(selected_path_from(None, Some(home.path())).unwrap(), json.to_str().unwrap());
-        assert_eq!(selected_path_from(Some("/explicit/config.json"), Some(home.path())).unwrap(), "/explicit/config.json");
+        let explicit = home.path().join("explicit").join("config.json");
+        assert_eq!(selected_path_from(explicit.to_str(), Some(home.path())).unwrap(), explicit.to_str().unwrap());
         assert!(selected_path_from(Some("relative.json"), Some(home.path())).is_err());
         assert!(selected_path_from(None, None).is_err());
     }

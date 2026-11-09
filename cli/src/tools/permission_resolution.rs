@@ -1428,7 +1428,7 @@ mod tests {
         let cases: Vec<Value> = serde_json::from_str(include_str!("../../tests/fixtures/permissions/source_search_commands.json")).unwrap();
         assert_eq!(cases.len(), 26);
         for case in cases {
-            let command = case["command"].as_str().unwrap().replace("{workspace}", directory.path().to_str().unwrap());
+            let command = case["command"].as_str().unwrap().replace("{workspace}", &crate::platform_paths::shell_path(directory.path()));
             let expected = if case["ordinary_read"] == true { PermissionOperationRisk::OrdinaryRead }
                 else { PermissionOperationRisk::Unknown };
             assert_eq!(facts(&context, "bash", json!({"command":command,"operation_kind":"inspect"})).bindings[0].observation,
@@ -1534,8 +1534,8 @@ mod tests {
         assert_eq!(facts(&context,"bash",json!({"command":"cat .env","operation_kind":"inspect"})).bindings[0].observation,
             PermissionOperationRisk::SensitiveRead);
         let pinned = verified_read_only_shell_command(&context,json!({"command":"cat notes.txt"}).as_object().unwrap()).unwrap();
-        assert!(pinned.contains("'/bin/cat'") || pinned.contains("'/usr/bin/cat'"));
-        assert!(pinned.starts_with("'/usr/bin/env' '-i'"));
+        assert!(pinned.contains(&crate::platform_paths::system_utility("cat").unwrap()));
+        assert!(pinned.starts_with(&format!("'{}' '-i'", crate::platform_paths::system_utility("env").unwrap())));
     }
     #[cfg(unix)]
     #[test]

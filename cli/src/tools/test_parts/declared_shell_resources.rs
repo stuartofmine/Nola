@@ -268,8 +268,8 @@ fn shell_creates_new_directory_outside_cwd_and_replays_exact_observed_outputs() 
         &cwd,
         format!(
             "mkdir -p '{}' && cp input.txt '{}'",
-            target.parent().unwrap().display(),
-            target.display()
+            crate::platform_paths::shell_path(target.parent().unwrap()),
+            crate::platform_paths::shell_path(&target)
         ),
         json!([{"path":target,"operation":"create"}]),
     );
@@ -323,7 +323,7 @@ fn admitted_resource_checkpoint_restores_external_files_after_cwd_scope_changes(
         &cwd,
         format!(
             "cp input.txt local.txt && cp input.txt '{}'",
-            remote.display()
+            crate::platform_paths::shell_path(&remote)
         ),
         json!([{"path":local,"operation":"edit"},{"path":remote,"operation":"edit"}]),
     );
@@ -394,7 +394,7 @@ fn approved_operation_can_create_outputs_outside_workspace() {
     let request = resource_request(
         "outside-grant-output",
         &cwd,
-        format!("cp input.txt '{}'", target.display()),
+        format!("cp input.txt '{}'", crate::platform_paths::shell_path(&target)),
         json!([{"path":target,"operation":"create"}]),
     );
     let denied = execute_authorized_tool(&request, &ctx, ExecutionAuthority::CoreApproved(nola_domain::PermissionProfile::Cautious));
@@ -419,7 +419,7 @@ fn resource_checkpoint_backup_budget_rejects_before_shell_changes_any_target() {
         &cwd,
         format!(
             "cp input.txt executed.txt && cp input.txt '{}'",
-            target.display()
+            crate::platform_paths::shell_path(&target)
         ),
         json!([{"path":marker,"operation":"create"},{"path":target,"operation":"edit"}]),
     );
@@ -443,7 +443,7 @@ fn cancelled_resource_operation_does_not_spawn_a_command_for_approved_outputs() 
     let request = resource_request(
         "cancelled-output",
         &cwd,
-        format!("cp input.txt '{}'", target.display()),
+        format!("cp input.txt '{}'", crate::platform_paths::shell_path(&target)),
         json!([{"path":target,"operation":"create"}]),
     );
     ctx.cancellation.request();
@@ -460,7 +460,7 @@ fn sensitive_external_shell_read_executes_only_after_invocation_approval() {
     let ctx = resource_context(vec![cwd.clone()]);
     let secret = outside.join(".env");
     fs::write(&secret, "SYNTHETIC_PERMISSION_FIXTURE=approved\n").unwrap();
-    let args = json!({"command":format!("cat '{}'", secret.display()),
+    let args = json!({"command":format!("cat '{}'", crate::platform_paths::shell_path(&secret)),
         "cwd":cwd,"operation_kind":"inspect", "sensitive_read_reason":"Read test fixture credentials"});
     let blocked = run_bash_execution(args.as_object().unwrap(), &ctx, false);
     assert!(blocked.error);
@@ -480,7 +480,7 @@ fn approved_shell_redirect_to_external_temporary_directory_is_not_blocked() {
     let ctx = resource_context(vec![cwd.clone()]);
     let target = outside.join("summary.txt");
     let request = ToolRequest {id:"external-redirect".into(),name:"bash".into(),
-        args:json!({"command":format!("printf summary > '{}'",target.display()),
+        args:json!({"command":format!("printf summary > '{}'",crate::platform_paths::shell_path(&target)),
             "cwd":cwd,"operation_kind":"execute"}).as_object().unwrap().clone()};
     let admitted = execute_authorized_tool(&request,&ctx,
         ExecutionAuthority::CoreApproved(nola_domain::PermissionProfile::Cautious));

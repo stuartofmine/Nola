@@ -133,6 +133,21 @@ mod tests {
     }
 
     #[test]
+    fn owned_job_runs_the_native_bash_interpreter_before_reaping_it() {
+        for mode in ["-c", "-lc"] {
+            let mut command = Command::new(crate::platform_paths::bash_program());
+            command.args([mode, "printf actual-owned-bash"]).stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+            let (child, job, thread) = OwnedJob::prepare(&mut command).unwrap();
+            OwnedJob::resume(&thread, &child).unwrap();
+            let output = child.wait_with_output().unwrap();
+            assert!(output.status.success(), "{mode}: {:?}: {}", output.status, String::from_utf8_lossy(&output.stderr));
+            assert_eq!(output.stdout, b"actual-owned-bash");
+            drop(job);
+        }
+    }
+
+    #[test]
     fn closing_the_owned_job_stops_an_unreaped_live_child() {
         let root = tempfile::tempdir().unwrap();
         let marker = root.path().join("started.txt");

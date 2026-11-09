@@ -7,7 +7,7 @@
 fn git_change_inventory(repository_root: &Path, observed_root: &Path) -> Result<Value, String> {
     let output = git_command_output(repository_root, &[
         "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames", "--",
-        observed_root.to_str().ok_or("Non-UTF8 observed root")?,
+        &git_path_argument(observed_root)?,
     ])?;
     git_inventory_from_status(&output, repository_root, observed_root)
 }
@@ -201,7 +201,8 @@ fn git_commit_selected(
         } else {
             supplied_path.to_path_buf()
         };
-        let path = relative.to_str().ok_or("Selected path is not UTF-8")?;
+        let normalized_path = git_path_argument(&relative)?;
+        let path = normalized_path.as_str();
         if path.is_empty()
             || path.contains('\0')
             || Path::new(path)

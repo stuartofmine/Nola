@@ -95,12 +95,12 @@ fn snapshot_tree(root:&Path,state:&SourceState,directory:&Path)->Result<String,S
     let mut updates=Vec::new();
     for entry in &state.entries {
         let object=if let Some(path)=&entry.captured {
-            git_commit_text(root,&["hash-object","-w","--no-filters","--",path.to_str().ok_or("Non-UTF8 private snapshot path")?])?
+            git_commit_text(root,&["hash-object","-w","--no-filters","--",&git_path_argument(path)?])?
         } else {"0".repeat(state.plan.source_head.len())};
         updates.extend_from_slice(format!("{:o} {object}\t{}\0",entry.mode,entry.path).as_bytes());
     }
     let input=directory.join("index-info");fs::write(&input,updates).map_err(|error|error.to_string())?;
-    let output=git_operation_command(root).env("GIT_INDEX_FILE",&index).args(["update-index","-z","--index-info"])
+    let output=git_operation_command(root).env("GIT_INDEX_FILE",git_path_argument(&index)?).args(["update-index","-z","--index-info"])
         .stdin(Stdio::from(fs::File::open(input).map_err(|error|error.to_string())?)).output().map_err(|error|error.to_string())?;
     if !output.status.success() {return Err("Private source snapshot index preparation failed".into());}
     Ok(String::from_utf8(git_private_index_output(root,&index,&["write-tree"])?).map_err(|error|error.to_string())?.trim().into())
@@ -174,9 +174,9 @@ mod git_worktree_source_snapshot_tests {
             git_command_output(&seed,&["add","."]).unwrap();git_command_output(&seed,&["commit","--quiet","-m","base"]).unwrap();
             let root=if bare {
                 let common=parent.join("repo.git");
-                git_command_output(&seed,&["clone","--quiet","--bare","--local",seed.to_str().unwrap(),common.to_str().unwrap()]).unwrap();
+                git_command_output(&seed,&["clone","--quiet","--bare","--local",&git_path_argument(&seed).unwrap(),&git_path_argument(&common).unwrap()]).unwrap();
                 for args in [vec!["config","user.name","Fixture"],vec!["config","user.email","fixture@localhost"],vec!["config","commit.gpgsign","false"]] {git_command_output(&common,&args).unwrap();}
-                let source=parent.join("source");git_command_output(&common,&["worktree","add","--quiet","--detach",source.to_str().unwrap(),"HEAD"]).unwrap();source
+                let source=parent.join("source");git_command_output(&common,&["worktree","add","--quiet","--detach",&git_path_argument(&source).unwrap(),"HEAD"]).unwrap();source
             } else {seed};
             fs::write(root.join("code.txt"),"user staged\n").unwrap();git_command_output(&root,&["add","code.txt"]).unwrap();
             fs::write(root.join("code.txt"),"user working\n").unwrap();fs::remove_file(root.join("gone.txt")).unwrap();

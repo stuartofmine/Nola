@@ -349,7 +349,7 @@ fn git_worktree_create(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutc
         } else {(expected_head.clone(),None)};
         let target = crate::platform_paths::shell_path(&destination);
         let no_hooks = tempfile::tempdir().map_err(|error| error.to_string())?;
-        let hooks_setting = format!("core.hooksPath={}", no_hooks.path().to_str().ok_or("Non-UTF8 private hook directory")?);
+        let hooks_setting = format!("core.hooksPath={}", git_path_argument(no_hooks.path())?);
         let mut checkout_args = vec!["-c".to_string(), hooks_setting, "-c".into(), "submodule.recurse=false".into()];
         // Explicitly disable all configured conversion drivers for this checkout
         // too; never rely on a global driver being absent or on mutable defaults.
@@ -517,7 +517,8 @@ fn git_worktree_integrate(args: &Map<String, Value>, ctx: &ToolContext) -> ToolO
         // in a user configuration. Git rejects unsafe/escaping patch paths.
         let mut file = tempfile::NamedTempFile::new().map_err(|error|error.to_string())?;
         std::io::Write::write_all(&mut file,&patch).map_err(|error|error.to_string())?;
-        let patch_path = file.path().to_str().ok_or("Invalid temporary patch path")?;
+        let patch_argument = git_path_argument(file.path())?;
+        let patch_path = patch_argument.as_str();
         git_command_output(&root,&["apply","--check","--binary","--",patch_path])?;
         validate()?;
         if ctx.cancellation.is_requested() {return Err("Integration cancelled before apply".into());}
@@ -569,12 +570,12 @@ mod git_worktree_tests {
             git_command_output(&seed,&["commit","--quiet","-m","base"]).unwrap();
             let root = if bare {
                 let common = parent.join("repo.git");
-                git_command_output(&seed,&["clone","--quiet","--bare","--local",seed.to_str().unwrap(),common.to_str().unwrap()]).unwrap();
+                git_command_output(&seed,&["clone","--quiet","--bare","--local",&git_path_argument(&seed).unwrap(),&git_path_argument(&common).unwrap()]).unwrap();
                 for args in [vec!["config","user.name","Fixture"],vec!["config","user.email","fixture@localhost"],vec!["config","commit.gpgsign","false"]] {
                     git_command_output(&common,&args).unwrap();
                 }
                 let source = parent.join("source");
-                git_command_output(&common,&["worktree","add","--quiet","--detach",source.to_str().unwrap(),"HEAD"]).unwrap();
+                git_command_output(&common,&["worktree","add","--quiet","--detach",&git_path_argument(&source).unwrap(),"HEAD"]).unwrap();
                 source
             } else {seed};
             let ctx = ToolContext {

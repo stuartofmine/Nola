@@ -2796,7 +2796,7 @@ fn git_diff(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
             &[
                 "diff".into(), "--no-ext-diff".into(), "--no-textconv".into(),
                 "--no-index".into(), "--".into(), "/dev/null".into(),
-                path.to_string_lossy().into_owned(),
+                crate::platform_paths::shell_path(path),
             ],
         ));
         if !matches!(diff.status.code(), Some(0 | 1)) {

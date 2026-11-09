@@ -2151,7 +2151,7 @@ mod permission_recovery_entrypoint_tests {
                         } else {
                             format!("for (let i = 0; i < 2; i++) {{ text(await tools.write_file({{path: {}, content: 'write-' + i}})); }}", serde_json::to_string(&server_target).unwrap())
                         };
-                        serde_json::json!({"tool_calls":[{"index":0,"id":"parent-code-call","type":"function","function":{"name":"code_mode_exec","arguments":serde_json::json!({"source":source,"initial_wait_ms":1000}).to_string()}}]})
+                        serde_json::json!({"tool_calls":[{"index":0,"id":"parent-code-call","type":"function","function":{"name":"code_mode_exec","arguments":serde_json::json!({"source":source,"initial_wait_ms":10000}).to_string()}}]})
                     } else if nested {
                         serde_json::json!({"content":"Nested permission fixture complete."})
                     } else if ordinal == 0 {
@@ -2281,7 +2281,8 @@ mod permission_recovery_entrypoint_tests {
         if nested {
             fixture.stop.store(true, Ordering::SeqCst);
             server.join().unwrap();
-            assert_eq!(resolver_calls.load(Ordering::SeqCst), 2, "each actual nested call requires its own authorization");
+            assert_eq!(resolver_calls.load(Ordering::SeqCst), 2, "each actual nested call requires its own authorization; committed tool results: {:?}",
+                events.lock().unwrap().iter().filter_map(|event| event.pointer("/trace/payload/output")).take(8).collect::<Vec<_>>());
             if network {
                 assert_eq!(uploads.load(Ordering::SeqCst), 1, "denied second shell must not send another network request");
             } else {

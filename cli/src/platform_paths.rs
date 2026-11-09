@@ -200,7 +200,7 @@ mod tests {
 /// Native Bash, never the Windows WSL launcher named bash.exe on PATH.
 pub(crate) fn bash_program() -> &'static str {
     #[cfg(windows)]
-    { r"C:\Program Files\Git\bin\bash.exe" }
+    { r"C:\Program Files\Git\usr\bin\bash.exe" }
     #[cfg(not(windows))]
     { "/bin/bash" }
 }

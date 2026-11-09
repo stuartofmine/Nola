@@ -19,6 +19,8 @@ pub(super) struct ShellLeaseHeartbeat {
     watchdog: Option<std::thread::JoinHandle<()>>,
     lost: Arc<AtomicBool>,
     child: Arc<Mutex<Option<TrackedChild>>>,
+    #[cfg(test)]
+    confirmed_expiry: Arc<AtomicI64>,
 }
 
 struct TrackedChild {
@@ -221,7 +223,14 @@ impl ShellChild {
                 let guard = self.child.lock().map_err(|_| "Shell child ownership is poisoned")?;
                 guard.as_ref().ok_or("Shell child ownership is missing")?.job.try_clone().map_err(|error|error.to_string())?
             };
-            job.active_processes().map_err(|error| error.to_string())
+            let deadline = Instant::now() + timeout;
+            loop {
+                let active = job.active_processes().map_err(|error| error.to_string())?;
+                // The Job accounting transition can lag the root's signalled
+                // process handle. Confirm zero; never infer it from root exit.
+                if active == 0 || Instant::now() >= deadline { return Ok(active); }
+                std::thread::sleep(Duration::from_millis(10));
+            }
         }
     }
 
@@ -314,6 +323,8 @@ impl ShellLeaseHeartbeat {
         }
         let expiry = Arc::new(AtomicI64::new(expiry));
         let renewed_expiry = Arc::clone(&expiry);
+        #[cfg(test)]
+        let confirmed_expiry = Arc::clone(&expiry);
         let (stop, receiver) = mpsc::channel();
         let lost = Arc::new(AtomicBool::new(false));
         let failure = Arc::clone(&lost);
@@ -371,7 +382,8 @@ impl ShellLeaseHeartbeat {
                 return Err(format!("start Shell lease deadline watchdog failed: {error}"));
             }
         };
-        Ok(Self { stop, thread: Some(thread), watchdog_stop, watchdog: Some(watchdog), lost, child })
+        Ok(Self { stop, thread: Some(thread), watchdog_stop, watchdog: Some(watchdog), lost, child,
+            #[cfg(test)] confirmed_expiry })
     }
 
     pub(super) fn lost(&self) -> bool { self.lost.load(Ordering::Acquire) }
@@ -745,18 +757,33 @@ mod tests {
 
     #[test]
     fn blocked_sampler_cannot_block_the_independent_lease_heartbeat() {
-        let renewed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let count = Arc::clone(&renewed);
+        let (renewed, progress) = mpsc::channel();
         let mut heartbeat = ShellLeaseHeartbeat::start_with_renewal(90, move || {
-            count.fetch_add(1, Ordering::Relaxed);
-            Ok(nola_runtime_driver::monotonic_epoch_millis() + 90)
+            let _ = renewed.send(());
+            Ok(nola_runtime_driver::monotonic_epoch_millis() + 30_000)
         }).unwrap();
-        let mut command = std::process::Command::new("sh");
-        command.args(["-c", "sleep 10"]);
-        assert!(bounded_process_output(command, Duration::from_millis(250), 64).is_err());
-        heartbeat.stop();
-        assert!(renewed.load(Ordering::Relaxed) >= 3);
+        let root = tempfile::tempdir().unwrap();
+        let ready = root.path().join("sampler-ready");
+        let marker = ready.clone();
+        let (finished, result) = mpsc::channel();
+        let sampler = std::thread::spawn(move || {
+            let mut command = std::process::Command::new("sh");
+            command.args(["-c", "printf ready > \"$1\"; sleep 10", "sampler"]).arg(marker);
+            finished.send(bounded_process_output(command, Duration::from_secs(3), 64)).unwrap();
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !ready.exists() {
+            assert!(Instant::now() < deadline, "sampler did not become ready");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        while progress.try_recv().is_ok() {}
+        // These renewals occur after the sampler's real child is ready.
+        for _ in 0..2 { progress.recv_timeout(Duration::from_secs(2)).unwrap(); }
+        assert!(matches!(result.try_recv(), Err(mpsc::TryRecvError::Empty)));
         assert!(!heartbeat.lost());
+        assert!(result.recv_timeout(Duration::from_secs(5)).unwrap().is_err());
+        sampler.join().unwrap();
+        heartbeat.stop();
     }
 
     #[test]
@@ -789,14 +816,17 @@ mod tests {
         use std::os::unix::process::CommandExt;
         let mut initial = true;
         let (release, blocked) = mpsc::channel();
+        let (entered, observed) = mpsc::channel();
         let mut heartbeat = ShellLeaseHeartbeat::start_with_renewal(120, move || {
             if initial { initial = false; }
-            else { blocked.recv().unwrap(); }
-            Ok(nola_runtime_driver::monotonic_epoch_millis() + 120)
+            else { entered.send(()).unwrap(); blocked.recv().unwrap(); }
+            Ok(nola_runtime_driver::monotonic_epoch_millis() + 30_000)
         }).unwrap();
         let mut command = std::process::Command::new("sh");
         command.args(["-c", "sleep 10"]).process_group(0);
         let mut child = heartbeat.track(command.spawn().unwrap());
+        observed.recv_timeout(Duration::from_secs(5)).unwrap();
+        heartbeat.confirmed_expiry.store(nola_runtime_driver::monotonic_epoch_millis() - 1, Ordering::Release);
         let started = Instant::now();
         loop {
             if let Some(status) = child.try_wait().unwrap() {
@@ -900,9 +930,9 @@ mod tests {
         let mut heartbeat = ShellLeaseHeartbeat::start_with_renewal(120, move || {
             if initial { initial = false; }
             else { entered.send(()).unwrap(); blocked.recv().unwrap(); }
-            Ok(nola_runtime_driver::monotonic_epoch_millis() + 120)
+            Ok(nola_runtime_driver::monotonic_epoch_millis() + 30_000)
         }).unwrap();
-        observed.recv_timeout(Duration::from_secs(2)).unwrap();
+        observed.recv_timeout(Duration::from_secs(5)).unwrap();
         let started = Instant::now();
         heartbeat.stop();
         assert!(started.elapsed() < Duration::from_secs(1), "renewal drain is bounded independently of its blocked operation");
