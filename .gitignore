@@ -120,3 +120,8 @@ web/app/static/ui-tests/
 *.keystore
 *.mobileprovision
 !/release/README.md
+
+# Machine-local editor, assistant and Cargo preferences
+/.claude/
+/.vscode/
+/.cargo/
