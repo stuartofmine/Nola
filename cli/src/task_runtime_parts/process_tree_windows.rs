@@ -153,8 +153,9 @@ mod tests {
         let stdout = root.path().join("output.txt");
         let stderr = root.path().join("error.txt");
         let evidence = root.path().join("exit.txt");
-        let output = std::fs::OpenOptions::new().create(true).append(true).open(&stdout).unwrap();
-        let error = std::fs::OpenOptions::new().create(true).append(true).open(&stderr).unwrap();
+        std::fs::write(&stdout, "prior-").unwrap();
+        let output = crate::task_runtime::open_shell_output_file(&stdout).unwrap();
+        let error = crate::task_runtime::open_shell_output_file(&stderr).unwrap();
         let mut command = Command::new(crate::platform_paths::bash_program());
         command.args(["-o", "pipefail", "-lc", &crate::tools::shell_evidence_script("printf actual-file-output")])
             .env("NOLA_SHELL_EVIDENCE_PATH", crate::platform_paths::shell_path(&evidence))
@@ -172,7 +173,7 @@ mod tests {
         let output = std::fs::read_to_string(stdout).unwrap();
         let error = std::fs::read_to_string(stderr).unwrap();
         assert!(status.success(), "{status:?}: stdout={output:?}, stderr={error:?}, evidence={:?}", std::fs::read_to_string(&evidence));
-        assert_eq!(output, "actual-file-output");
+        assert_eq!(output, "prior-actual-file-output");
         assert!(crate::tools::read_shell_exit_evidence(&evidence, 0).is_some());
         heartbeat.stop();
     }

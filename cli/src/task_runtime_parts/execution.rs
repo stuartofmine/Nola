@@ -1673,6 +1673,35 @@ fn durable_required_process_sandbox_missing_never_launches_or_drops_policy() {
     assert!(result.error.as_deref().unwrap_or_default().contains("Required process sandbox unavailable"));
 }
 
+/// The admitted worker is the sole writer of each output stream. Windows
+/// MSYS children need a writable handle; append-only FILE_APPEND_DATA handles
+/// are not usable as their inherited stdout/stderr (rust-lang/rust#92136).
+/// Seek the exclusive writer to EOF without truncating existing output.
+pub(crate) fn open_shell_output_file(path: &Path) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true);
+    #[cfg(windows)]
+    {
+        use std::io::Seek;
+        let mut file = options.write(true).truncate(false).open(path)?;
+        file.seek(std::io::SeekFrom::End(0))?;
+        Ok(file)
+    }
+    #[cfg(not(windows))]
+    { options.append(true).open(path) }
+}
+
+#[test]
+fn shell_output_writer_preserves_prior_output() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("output.txt");
+    std::fs::write(&path, b"prior-").unwrap();
+    let mut file = open_shell_output_file(&path).unwrap();
+    file.write_all(b"next").unwrap();
+    drop(file);
+    assert_eq!(std::fs::read(&path).unwrap(), b"prior-next");
+}
+
 fn run_shell_task(request: ShellTaskProcessRequest) -> i32 {
     let task = request.task.clone();
     let lease = crate::runtime_task_port::register_runtime_task_attempt(
@@ -1790,10 +1819,7 @@ fn run_shell_task(request: ShellTaskProcessRequest) -> i32 {
         }
     };
     let started = Instant::now();
-    let stdout = match std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&task.stdout_path)
+    let stdout = match open_shell_output_file(Path::new(&task.stdout_path))
     {
         Ok(file) => file,
         Err(error) => {
@@ -1804,10 +1830,7 @@ fn run_shell_task(request: ShellTaskProcessRequest) -> i32 {
             )
         }
     };
-    let stderr = match std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&task.stderr_path)
+    let stderr = match open_shell_output_file(Path::new(&task.stderr_path))
     {
         Ok(file) => file,
         Err(error) => {
