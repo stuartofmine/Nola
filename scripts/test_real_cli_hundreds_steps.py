@@ -178,6 +178,26 @@ def verified_provider_recoveries(path):
     return recovered
 
 
+def provider_window_audit(path, window=65536, prompt_limit=54068):
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    rows = [row for row in rows if row.get("forwarded") is not False
+        and row.get("status") == 200 and not row.get("error")]
+    assert rows, "no successful provider usage to audit"
+    inputs, allocations = [], []
+    for row in rows:
+        used = (row.get("responseUsage") or {}).get("input_tokens")
+        reserved = row.get("requestedOutputTokens")
+        assert isinstance(used, int) and isinstance(reserved, int), "provider window evidence is incomplete"
+        inputs.append(used)
+        allocations.append(used + reserved)
+        assert used + reserved <= window, "actual input plus requested output exceeds the configured model window"
+    return {"configured_window": window, "estimated_input_admission_limit": prompt_limit,
+        "requests_with_usage": len(rows), "max_actual_input": max(inputs),
+        "max_actual_input_plus_requested_output": max(allocations),
+        "requests_exceeding_estimated_input_limit": sum(value > prompt_limit for value in inputs),
+        "remaining_window_at_peak": window - max(allocations)}
+
+
 def verify_evidence(root):
     """Recheck immutable evidence offline; retain the original run receipt."""
     from real_e2e_events import summarize
@@ -210,11 +230,12 @@ def verify_evidence(root):
     provider = provider_totals(root / "provider.ndjson")
     assert provider["successful_requests"] >= count and provider["selected_models"] == [original["model"]]
     recovered = verified_provider_recoveries(root / "provider.ndjson")
+    window = provider_window_audit(root / "provider.ndjson")
     result = {"passed": True, "hundreds_step_qualified": True, "offline_verification": True,
         "original_receipt_passed": original["passed"], "original_receipt_error": original.get("error"),
         "binary_sha256": original["binary_sha256"], "nodes_verified": count,
         "file_oracle": files, "canonical": canonical, "store": store, "provider": provider,
-        "observed_transport_recoveries": recovered}
+        "observed_transport_recoveries": recovered, "provider_window_audit": window}
     write_json(root / "verified-receipt.json", result)
     print(json.dumps({"evidence": str(root), **result}, ensure_ascii=False), flush=True)
     return 0
@@ -396,6 +417,7 @@ def main():
             totals = provider_totals(root / "provider.ndjson")
             receipt["provider"] = totals
             receipt["observed_transport_recoveries"] = verified_provider_recoveries(root / "provider.ndjson")
+            receipt["provider_window_audit"] = provider_window_audit(root / "provider.ndjson")
             assert totals["injected_responses"] == 0 and totals["selected_models"] == [model]
             receipt["passed"] = True
             receipt["hundreds_step_qualified"] = not args.smoke

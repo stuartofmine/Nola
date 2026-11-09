@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from test_real_cli_hundreds_steps import EventObserver, check_files, make_chain, verified_provider_recoveries
+from test_real_cli_hundreds_steps import EventObserver, check_files, make_chain, provider_window_audit, verified_provider_recoveries
 
 
 class HundredsStepOracleTests(unittest.TestCase):
@@ -53,6 +53,23 @@ class HundredsStepOracleTests(unittest.TestCase):
             (project / expected["names"][0]).write_text("changed input")
             with self.assertRaisesRegex(AssertionError, "input evidence"):
                 check_files(project, expected)
+
+    def test_provider_usage_must_fit_the_window_with_requested_output_reserved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "provider.ndjson"
+            row = {"status": 200, "requestedOutputTokens": 8192, "responseUsage": {"input_tokens": 55122}}
+            path.write_text(json.dumps(row))
+            audit = provider_window_audit(path)
+            self.assertEqual(audit["remaining_window_at_peak"], 2222)
+            self.assertEqual(audit["requests_exceeding_estimated_input_limit"], 1)
+            row["responseUsage"]["input_tokens"] = 58000
+            path.write_text(json.dumps(row))
+            with self.assertRaisesRegex(AssertionError, "exceeds the configured model window"):
+                provider_window_audit(path)
+            del row["responseUsage"]
+            path.write_text(json.dumps(row))
+            with self.assertRaisesRegex(AssertionError, "evidence is incomplete"):
+                provider_window_audit(path)
 
     def test_transport_failure_requires_an_observed_successful_retry_of_identical_input(self):
         with tempfile.TemporaryDirectory() as directory:
