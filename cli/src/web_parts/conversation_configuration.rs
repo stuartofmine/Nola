@@ -336,7 +336,8 @@ mod session_override_translation_tests {
             let request = session_override_request(&json!({"seed":{"kind":"value","value":seed.to_string()}}), &Value::Null, "chat_completions").unwrap();
             assert_eq!(request["generation_options"]["seed"].as_i64(), Some(seed));
         }
-        for invalid in [json!(0), Value::Null, json!({"kind":"value","value":"-0"}), json!({"kind":"clear","value":"0"})] {
+        assert_eq!(session_override_request(&json!({"seed":null}), &Value::Null, "chat_completions").unwrap(), inherited);
+        for invalid in [json!(0), json!({"kind":"value","value":"-0"}), json!({"kind":"clear","value":"0"})] {
             assert!(session_override_request(&json!({"seed":invalid}), &Value::Null, "chat_completions").is_err());
         }
     }

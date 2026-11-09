@@ -2074,15 +2074,18 @@ fi
 if [ "${1:-}" = "auth" ]; then
   exit 0
 fi
+IFS= read -r initialize
+printf '%s\n' '{"type":"control_response","response":{"subtype":"success","request_id":"nola-initialize","response":{}}}'
+IFS= read -r prompt
 printf '%s\n' '{"type":"system","subtype":"init","session_id":"external-session-crash-1"}'
 if [ ! -f "$state/first-process-crashed" ]; then
   : > "$state/first-process-crashed"
-  printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"external-call-1","name":"write_file","input":{"path":"remote-record"}}]}}'
+  printf '%s\n' '{"type":"assistant","session_id":"external-session-crash-1","message":{"content":[{"type":"tool_use","id":"external-call-1","name":"write_file","input":{"path":"remote-record"}}]}}'
   printf '%s\n' record > "$state/remote-record"
   printf '%s\n' effect >> "$state/effect-count"
   exit 23
 fi
-printf '%s\n' "{\"type\":\"user\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"external-call-1\",\"content\":{\"text\":\"remote record written\",\"_meta\":{\"nola/artifacts\":[{\"uri\":\"file://$state/remote-record\",\"name\":\"remote-record\",\"mime_type\":\"text/plain\",\"operation\":\"create\"}]}},\"is_error\":false}]}}"
+printf '%s\n' "{\"type\":\"user\",\"session_id\":\"external-session-crash-1\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"external-call-1\",\"content\":{\"text\":\"remote record written\",\"_meta\":{\"nola/artifacts\":[{\"uri\":\"file://$state/remote-record\",\"name\":\"remote-record\",\"mime_type\":\"text/plain\",\"operation\":\"create\"}]}},\"is_error\":false}]}}"
 printf '%s\n' '{"type":"result","session_id":"external-session-crash-1","is_error":false,"result":"complete","usage":{"input_tokens":10,"output_tokens":4}}'
 "#,
         )
@@ -2317,12 +2320,12 @@ while IFS= read -r line; do
       printf '%s\n' '{"id":10,"result":{"turn":{"id":"external-codex-turn-1"}}}'
       if [ ! -f "$state/first-codex-process-crashed" ]; then
         : > "$state/first-codex-process-crashed"
-        printf '%s\n' '{"method":"item/started","params":{"item":{"id":"external-codex-call-1","type":"commandExecution","command":"write remote record","cwd":"/tmp","status":"inProgress","commandActions":[]}}}'
+        printf '%s\n' '{"method":"item/started","params":{"threadId":"external-codex-thread-1","turnId":"external-codex-turn-1","item":{"id":"external-codex-call-1","type":"commandExecution","command":"write remote record","cwd":"/tmp","status":"inProgress","commandActions":[]}}}'
         printf '%s\n' effect >> "$state/codex-effect-count"
         exit 23
       fi
-      printf '%s\n' '{"method":"item/completed","params":{"item":{"id":"external-codex-call-1","type":"commandExecution","command":"write remote record","cwd":"/tmp","status":"completed","commandActions":[],"aggregatedOutput":"remote record written","exitCode":0}}}'
-      printf '%s\n' '{"method":"turn/completed","params":{"turn":{"id":"external-codex-turn-1","status":"completed","items":[]}}}'
+      printf '%s\n' '{"method":"item/completed","params":{"threadId":"external-codex-thread-1","turnId":"external-codex-turn-1","item":{"id":"external-codex-call-1","type":"commandExecution","command":"write remote record","cwd":"/tmp","status":"completed","commandActions":[],"aggregatedOutput":"remote record written","exitCode":0}}}'
+      printf '%s\n' '{"method":"turn/completed","params":{"threadId":"external-codex-thread-1","turn":{"id":"external-codex-turn-1","status":"completed","items":[]}}}'
       exit 0
       ;;
   esac
@@ -2483,7 +2486,7 @@ while IFS= read -r line; do
         printf '%s\n' effect >> "$state/opencode-effect-count"
         exit 23
       fi
-      printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"external-opencode-session-1","update":{"sessionUpdate":"tool_call_update","toolCallId":"external-opencode-call-1","title":"write_file","kind":"edit","status":"completed","rawOutput":"remote record written"}}}'
+      printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"external-opencode-session-1","update":{"sessionUpdate":"tool_call_update","toolCallId":"external-opencode-call-1","title":"write_file","kind":"edit","status":"completed","rawInput":{"path":"remote-record"},"rawOutput":"remote record written"}}}'
       printf '%s\n' '{"jsonrpc":"2.0","id":4,"result":{"stopReason":"end_turn"}}'
       exit 0
       ;;

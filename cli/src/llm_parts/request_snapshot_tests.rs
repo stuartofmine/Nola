@@ -159,7 +159,7 @@ fn runtime_budget_tail_preserves_hot_fork_for_selected_last_user_and_tool_result
             let snapshot = PreparedModelRequest { config:cfg.clone(), body:body.clone(), completed_response:vec![], started_at:Instant::now() };
             let restored = PreparedModelRequest::restore(&snapshot.durable_value(), &cfg).unwrap();
             let fork = restored.fork(&archive, "Summarize selected evidence", 1024, 128000,
-                &LlmUsage {input_tokens: Some(5000), ..Default::default()}, Default::default()).unwrap();
+                &LlmUsage {input_tokens: Some(5000), cached_input_tokens: Some(0), cache_write_input_tokens: Some(0), ..Default::default()}, Default::default()).unwrap();
             let mut prefix = fork.body.clone();
             let instruction = prefix[key].as_array_mut().unwrap().pop().unwrap();
             assert_eq!(prefix, body, "{provider}: preserve every physical block and cache marker");
@@ -194,7 +194,7 @@ fn private_user_provenance_does_not_change_any_provider_body_or_source_alignment
         let body = project(&tagged).unwrap();
         assert_eq!(body, project(&plain).unwrap(), "{provider}");
         let snapshot = PreparedModelRequest {config:cfg.clone(),body,completed_response:vec![],started_at:Instant::now()};
-        let usage = LlmUsage {input_tokens: Some(5000),..Default::default()};
+        let usage = LlmUsage {input_tokens: Some(5000), cached_input_tokens: Some(0), cache_write_input_tokens: Some(0),..Default::default()};
         let plain_fork = snapshot.fork(&plain[1..2], "summary", 1024,128000,&usage,Default::default()).unwrap();
         let tagged_fork = snapshot.fork(&tagged[1..2], "summary",1024,128000,&usage,Default::default()).unwrap();
         assert_eq!(plain_fork.body, tagged_fork.body, "{provider}: metadata changed selection");
@@ -208,7 +208,7 @@ fn anthropic_block_selection_rejects_ambiguous_and_partial_text_matches() {
     let body = super::super::provider_protocols::anthropic_request_body(&cfg,
         &[repeated.clone(), repeated.clone()], &tools(), "auto").unwrap();
     let snapshot = PreparedModelRequest {config:cfg, body, completed_response:vec![], started_at:Instant::now()};
-    let usage = LlmUsage {input_tokens: Some(5000), ..Default::default()};
+    let usage = LlmUsage {input_tokens: Some(5000), cached_input_tokens: Some(0), cache_write_input_tokens: Some(0), ..Default::default()};
     assert_eq!(snapshot.fork(&[repeated], "summary", 1024, 128000, &usage, Default::default()).err(), Some("archive_range_not_unique"));
     assert_eq!(snapshot.fork(&[json!({"role":"user","content":"exact repeated"})], "summary", 1024, 128000, &usage, Default::default()).err(), Some("archive_not_in_snapshot"));
 }

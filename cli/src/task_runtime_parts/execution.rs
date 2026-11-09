@@ -1836,7 +1836,7 @@ fn run_shell_task(request: ShellTaskProcessRequest) -> i32 {
         Err(error) => return finish_shell_start_failure(&request, &lease, &format!("PTY setup failed: {error}")),
     };
     let _ = std::fs::remove_file(&evidence_path);
-    let mut command = Command::new(if prepared_sandbox.is_some() {"/bin/bash"} else {"bash"});
+    let mut command = Command::new(crate::platform_paths::bash_program());
     if prepared_sandbox.is_some() {
         crate::process_sandbox::isolate_shell_supervisor_environment(&mut command);
         command.args(["--noprofile","--norc"]).env_remove("BASH_ENV").env_remove("ENV");
@@ -1847,7 +1847,7 @@ fn run_shell_task(request: ShellTaskProcessRequest) -> i32 {
         .arg("pipefail")
         .arg(if prepared_sandbox.is_some() {"-c"}else{"-lc"})
         .arg(tools::shell_evidence_script(&execution_command))
-        .env("NOLA_SHELL_EVIDENCE_PATH", &evidence_path)
+        .env("NOLA_SHELL_EVIDENCE_PATH", crate::platform_paths::shell_path(&evidence_path))
         .current_dir(&task.cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout))

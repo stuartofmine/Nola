@@ -148,7 +148,15 @@ pub fn freeze_configuration(value:&Value, server:&str) -> Result<(String,String)
     let requested = PathBuf::from(&config.command);
     let command = if requested.is_absolute() {requested} else if requested.components().count() > 1 {cwd.join(requested)} else {
         std::env::split_paths(&std::ffi::OsString::from(config.environment.get("PATH").cloned().unwrap_or_default()))
-            .filter(|directory|directory.is_absolute()).map(|directory|directory.join(&requested)).find(|path|path.is_file())
+            .filter(|directory|directory.is_absolute()).flat_map(|directory| {
+                let path = directory.join(&requested);
+                #[allow(unused_mut)]
+                let mut candidates = vec![path.clone()];
+                // CreateProcess launches executable images, not implicit batch interpreters.
+                #[cfg(windows)]
+                if path.extension().is_none() { candidates.push(path.with_extension("exe")); candidates.push(path.with_extension("com")); }
+                candidates
+            }).find(|path|path.is_file())
             .ok_or_else(||McpHostError::new("mcp_program_missing","MCP program is not available on the frozen PATH"))?
     }.canonicalize().map_err(|error|McpHostError::new("mcp_program_missing",error.to_string()))?;
     config.command = command.to_str().ok_or_else(||McpHostError::new("mcp_program_missing","MCP program path is not UTF-8"))?.into();
@@ -939,6 +947,20 @@ impl Drop for StdioMcpClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    #[test]
+    fn frozen_path_resolves_native_executable_extension_without_current_directory_search() {
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("fixture.exe");
+        std::fs::write(&executable, b"not launched").unwrap();
+        let configured = json!({"type":"stdio","command":"fixture","cwd":directory.path(),
+            "env":{"PATH":directory.path()}});
+        let (program, _) = freeze_configuration(&configured, "native-extension").unwrap();
+        assert_eq!(PathBuf::from(program), executable.canonicalize().unwrap());
+        let missing = json!({"type":"stdio","command":"fixture","cwd":directory.path(),"env":{"PATH":""}});
+        assert!(freeze_configuration(&missing, "no-cwd-search").is_err());
+    }
+
     #[test]
     fn stdio_registration_freezes_private_minimal_environment_without_launching() {
         let directory = tempfile::tempdir().unwrap();

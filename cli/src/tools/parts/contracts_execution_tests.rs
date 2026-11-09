@@ -887,7 +887,7 @@ mod safe_read_only_bash_tests {
         fs::write(root.join("budget.xlsx"), "fixture\n").unwrap();
         let command = format!(
             "python3 -c \"\nimport zipfile\nwith zipfile.ZipFile('{}/budget.xlsx') as archive:\n    namespace = '{{http://schemas.openxmlformats.org/spreadsheetml/2006/main}}'\n    print('.//row', namespace, archive.namelist())\n\"",
-            root.display()
+            format!("'{}'", crate::platform_paths::shell_path(&root))
         );
         assert!(bash_command_paths_stay_in_allowed_dirs(
             &command,
@@ -982,7 +982,7 @@ mod safe_read_only_bash_tests {
             "[package]\nname='fixture'\nversion='0.1.0'\n",
         )
         .unwrap();
-        let root_text = root.to_string_lossy();
+        let root_text = format!("'{}'", crate::platform_paths::shell_path(&root));
         for command in [
             format!("cd {root_text} && cargo check --quiet 2>&1 | head -100"),
             format!("cargo check --manifest-path {root_text}/Cargo.toml 2>&1 | head -100"),
@@ -1063,7 +1063,7 @@ mod safe_read_only_bash_tests {
         fs::write(root.join("input.csv"), "value\n42\n").unwrap();
         let command = format!(
             "cd {} && python3 validate.py --input input.csv && echo \"--- exit=$? ---\"",
-            root.display()
+            format!("'{}'", crate::platform_paths::shell_path(&root))
         );
         assert!(bash_command_paths_stay_in_allowed_dirs(
             &command,

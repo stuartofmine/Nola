@@ -3605,7 +3605,7 @@ fn bash_inline_program_paths_stay_in_allowed_dirs(
 
 fn bash_token_is_sensitive_path(token: &str) -> bool {
     let lower = token.to_ascii_lowercase();
-    lower.split('/').any(|component| {
+    lower.split(['/', '\\']).any(|component| {
         component == ".env"
             || (component.starts_with(".env.")
                 && !matches!(component, ".env.example" | ".env.sample" | ".env.template"))
@@ -4798,4 +4798,15 @@ pub(crate) fn finish_tool_work_step_transaction(
 /// These adapters only edit their declared files; no process/plugin execution.
 pub(crate) fn tool_has_bounded_file_writes(name:&str)->bool {
     matches!(name,"write_file"|"edit_file"|"edit_file_lines"|"delete_file")
+}
+
+#[cfg(test)]
+mod native_sensitive_path_tests {
+    #[test]
+    fn sensitive_resources_use_both_native_path_separators() {
+        for path in [r"C:\Users\fixture\.env", r"\\?\C:\fixture\.ssh\id_rsa", "/fixture/.env"] {
+            assert!(super::bash_token_is_sensitive_path(path), "{path}");
+        }
+        assert!(!super::bash_token_is_sensitive_path(r"C:\fixture\.env.example"));
+    }
 }

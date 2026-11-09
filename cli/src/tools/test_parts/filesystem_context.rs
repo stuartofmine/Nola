@@ -71,7 +71,7 @@ fn session_permission_scopes_do_not_share_runtime_grants() {
 }
 
 #[test]
-fn conversation_approval_reuses_only_the_matching_bash_scope() {
+fn conversation_approval_reuses_only_the_exact_bash_command() {
     let _lock = test_lock();
     let scope = SessionPermissionScope::default();
     let _scope = scope.enter();
@@ -84,6 +84,7 @@ fn conversation_approval_reuses_only_the_matching_bash_scope() {
         args: object_args(json!({"command": "python3 build.py"})),
     };
     remember_session_approval(&approved);
+    assert!(session_tool_allow_rule_for(&approved).is_some());
 
     let later = ToolRequest {
         id: "bash-later".to_string(),
@@ -91,8 +92,8 @@ fn conversation_approval_reuses_only_the_matching_bash_scope() {
         args: object_args(json!({"command": "python3 build.py --verbose"})),
     };
     assert!(
-        session_tool_allow_rule_for(&later).is_some(),
-        "the approved command scope should be reusable in this conversation"
+        session_tool_allow_rule_for(&later).is_none(),
+        "additional argv require a distinct approval"
     );
 
     let unrelated = ToolRequest {
@@ -107,7 +108,7 @@ fn conversation_approval_reuses_only_the_matching_bash_scope() {
 }
 
 #[test]
-fn conversation_approval_reuses_rm_within_the_same_working_directory_only() {
+fn conversation_approval_binds_rm_to_exact_arguments_and_working_directory() {
     let _lock = test_lock();
     let scope = SessionPermissionScope::default();
     let _scope = scope.enter();
@@ -126,7 +127,8 @@ fn conversation_approval_reuses_rm_within_the_same_working_directory_only() {
         name: "bash".to_string(),
         args: object_args(json!({"command": "rm second.txt", "cwd": "/tmp/project"})),
     };
-    assert!(session_tool_allow_rule_for(&same_scope).is_some());
+    assert!(session_tool_allow_rule_for(&approved).is_some());
+    assert!(session_tool_allow_rule_for(&same_scope).is_none(), "same cwd does not authorize another deletion target");
 
     let different_directory = ToolRequest {
         id: "rm-other-directory".to_string(),

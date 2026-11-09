@@ -84,13 +84,11 @@ impl GitReadPlan {
             if !allowed {
                 return None;
             }
-            let program = [format!("/usr/bin/{name}"), format!("/bin/{name}")]
-                .into_iter()
-                .find(|p| Path::new(p).is_file())?;
+            let program = crate::platform_paths::system_utility(name)?;
             plan.command.push_str(" | ");
             plan.command.push_str(&format!(
-                "'/usr/bin/env' '-i' 'PATH=/usr/bin:/bin' '{}'",
-                program
+                "'{}' '-i' 'PATH=/usr/bin:/bin' '{}'",
+                crate::platform_paths::system_utility("env")?, program
             ));
             for arg in args {
                 plan.command
@@ -102,7 +100,7 @@ impl GitReadPlan {
 
     pub fn parse(tokens: &[String], cwd: &Path) -> Option<Self> {
         if !matches!(tokens.first()?.as_str(), "git" | "/usr/bin/git")
-            || !Path::new("/usr/bin/git").is_file()
+            || !Path::new(crate::platform_paths::git_program()).is_file()
         {
             return None;
         }
@@ -177,7 +175,7 @@ impl GitReadPlan {
             return None;
         }
         let mut argv = vec![
-            "/usr/bin/env".to_owned(),
+            crate::platform_paths::system_utility("env")?,
             "-i".into(),
             "PATH=/usr/bin:/bin".into(),
             "GIT_CONFIG_NOSYSTEM=1".into(),
@@ -185,7 +183,7 @@ impl GitReadPlan {
             "GIT_OPTIONAL_LOCKS=0".into(),
             "GIT_NO_LAZY_FETCH=1".into(),
             "GIT_TERMINAL_PROMPT=0".into(),
-            "/usr/bin/git".into(),
+            crate::platform_paths::git_program().into(),
             "--no-pager".into(),
             "-c".into(),
             "core.fsmonitor=false".into(),
@@ -196,7 +194,7 @@ impl GitReadPlan {
             "-c".into(),
             "protocol.allow=never".into(),
             "-C".into(),
-            root.to_str()?.into(),
+            crate::platform_paths::shell_path(&root),
             operation.into(),
         ];
         match operation {
@@ -217,8 +215,9 @@ impl GitReadPlan {
     pub fn has_passive_configuration(&self) -> bool {
         // Even status/diff can run clean/process filters. Keep their semantics
         // intact and require explicit approval instead of disabling the filters.
-        std::process::Command::new("/usr/bin/git")
+        std::process::Command::new(crate::platform_paths::git_program())
             .env_clear()
+            .env("SystemRoot", std::env::var_os("SystemRoot").unwrap_or_default())
             .env("PATH", "/usr/bin:/bin")
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -249,7 +248,7 @@ mod tests {
     #[test]
     fn inspection_is_not_authority_for_mutations_or_executables() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(std::process::Command::new("/usr/bin/git")
+        assert!(std::process::Command::new(crate::platform_paths::git_program())
             .args(["init", "--quiet"])
             .arg(dir.path())
             .status()
@@ -310,7 +309,7 @@ mod tests {
     #[test]
     fn real_repository_inspection_does_not_execute_fsmonitor_or_diff_helpers() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(std::process::Command::new("/usr/bin/git")
+        assert!(std::process::Command::new(crate::platform_paths::git_program())
             .args(["init", "--quiet"])
             .arg(dir.path())
             .status()
@@ -320,7 +319,7 @@ mod tests {
             ("core.fsmonitor", "touch SHOULD_NOT_EXIST"),
             ("diff.external", "touch SHOULD_NOT_EXIST"),
         ] {
-            assert!(std::process::Command::new("/usr/bin/git")
+            assert!(std::process::Command::new(crate::platform_paths::git_program())
                 .arg("-C")
                 .arg(dir.path())
                 .args(["config", key, value])
@@ -342,7 +341,7 @@ mod tests {
             );
         }
         assert!(!dir.path().join("SHOULD_NOT_EXIST").exists());
-        assert!(std::process::Command::new("/usr/bin/git")
+        assert!(std::process::Command::new(crate::platform_paths::git_program())
             .arg("-C")
             .arg(dir.path())
             .args(["config", "filter.custom.clean", "touch SHOULD_NOT_EXIST"])

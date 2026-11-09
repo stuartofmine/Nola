@@ -137,9 +137,24 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    // Decoder fixtures start from a real sealed ordinary tool record, then
+    // replace only its capability identity to exercise malformed declarations.
+    // Core itself never emits a caller-chosen invalid goal_complete payload.
+    fn declaration_fixture(tools: &[(&str, serde_json::Value)], text: &str)
+        -> (crate::application_port::CliApplicationPort, crate::source_journal::SourceRunJournal) {
+        let ordinary = tools.iter().map(|(_, output)| ("read_file", output.clone())).collect::<Vec<_>>();
+        let (port, mut journal) = crate::source_journal::source_tests::completed_source(&ordinary, text);
+        for part in journal.parts.values_mut() {
+            if let nola_domain::assistant_journal_operations::JournalPartMetadata::Tool(tool) = &mut part.head.metadata {
+                if tool.capability_id == "read_file" { tool.capability_id = "goal_complete".into(); }
+            }
+        }
+        (port, journal)
+    }
+
     #[test]
     fn committed_claim_requires_seal_and_not_renderer() {
-        let (_, mut journal) = crate::source_journal::source_tests::completed_source(
+        let (_, mut journal) = declaration_fixture(
             &[(
                 "goal_complete",
                 json!({"goal_status":"needs_user", "summary":"Need input", "claims":[]}),
@@ -167,7 +182,7 @@ mod tests {
 
     #[test]
     fn malformed_committed_declaration_is_not_silently_accepted() {
-        let (_, journal) = crate::source_journal::source_tests::completed_source(
+        let (_, journal) = declaration_fixture(
             &[("goal_complete", json!({"goal_status":"completed"}))],
             "done",
         );
@@ -178,7 +193,7 @@ mod tests {
     fn latest_failed_declaration_does_not_restore_an_earlier_claim() {
         use nola_domain::assistant_journal_operations::JournalPartMetadata;
         let value = json!({"goal_status":"needs_user","summary":"Ask owner"});
-        let (_, mut journal) = crate::source_journal::source_tests::completed_source(
+        let (_, mut journal) = declaration_fixture(
             &[("goal_complete", value.clone()), ("goal_complete", value)],
             "done",
         );
@@ -202,7 +217,7 @@ mod tests {
             json!({"goal_status":"unknown","summary":"x"}),
             json!({"goal_status":"completed","summary":"  "}),
         ] {
-            let (_, journal) = crate::source_journal::source_tests::completed_source(
+            let (_, journal) = declaration_fixture(
                 &[("goal_complete", value)],
                 "done",
             );

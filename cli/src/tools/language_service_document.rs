@@ -99,7 +99,7 @@ mod tests {
 
     #[test]
     fn positions_handle_unicode_crlf_and_trailing_empty_lines() {
-        let (document, _) = Document::open(Path::new("/workspace/a.rs"), "rust", "中🦀a\r\n\n".into()).unwrap();
+        let (document, _) = Document::open(&std::env::temp_dir().join("a.rs"), "rust", "中🦀a\r\n\n".into()).unwrap();
         assert_eq!(document.position(1, 3).unwrap(), json!({"line":0,"character":3}));
         assert_eq!(document.position(1, 4).unwrap()["character"], 4);
         assert_eq!(document.position(3, 1).unwrap(), json!({"line":2,"character":0}));
@@ -110,7 +110,7 @@ mod tests {
 
     #[test]
     fn snapshots_reject_stale_responses_and_oversized_updates() {
-        let (mut document, open) = Document::open(Path::new("/workspace/a b.rs"), "rust", "old".into()).unwrap();
+        let (mut document, open) = Document::open(&std::env::temp_dir().join("a b.rs"), "rust", "old".into()).unwrap();
         assert!(open["params"]["textDocument"]["uri"].as_str().unwrap().contains("a%20b.rs"));
         let initial = document.identity();
         assert!(document.matches(&initial, "old"));

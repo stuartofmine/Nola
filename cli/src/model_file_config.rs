@@ -200,10 +200,10 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         assert!(selected_path_from(None, Some(home.path())).is_err());
         std::fs::create_dir(home.path().join(".nola")).unwrap();
-        let jsonc = home.path().join(".nola/config.jsonc");
+        let jsonc = home.path().join(".nola").join("config.jsonc");
         std::fs::write(&jsonc, "{}").unwrap();
         assert_eq!(selected_path_from(None, Some(home.path())).unwrap(), jsonc.to_str().unwrap());
-        let json = home.path().join(".nola/config.json");
+        let json = home.path().join(".nola").join("config.json");
         std::fs::write(&json, "{}").unwrap();
         assert_eq!(selected_path_from(None, Some(home.path())).unwrap(), json.to_str().unwrap());
         assert_eq!(selected_path_from(Some("/explicit/config.json"), Some(home.path())).unwrap(), "/explicit/config.json");

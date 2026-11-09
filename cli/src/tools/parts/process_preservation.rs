@@ -17,7 +17,7 @@ impl ProcessPreservation {
 
     fn command(&self) -> Result<Command, String> {
         if !self.active() {
-            return Ok(Command::new("/bin/bash"));
+            return Ok(Command::new(crate::platform_paths::bash_program()));
         }
         #[cfg(target_os = "macos")]
         {

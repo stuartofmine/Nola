@@ -16,8 +16,12 @@ fn stream_journal_notifications(
     mut after: nola_domain::assistant_journal::AssistantJournalCursor,
     tx: mpsc::Sender<Vec<u8>>, token: Option<String>, source_host_id: String,
 ) -> Result<JournalNotificationStream, String> {
-    let crate::application_port::CliApplicationPort::Service(client) =
-        crate::application_port::CliApplicationPort::persistent_default()? else {
+    let port = crate::application_port::CliApplicationPort::persistent_default()?;
+    #[cfg(test)]
+    if !matches!(port, crate::application_port::CliApplicationPort::Service(_)) {
+        return stream_in_process_fixture_journal(port, after, tx, token, source_host_id);
+    }
+    let crate::application_port::CliApplicationPort::Service(client) = port else {
         return Err("journal subscription requires the source service".into());
     };
     let cancellation = nola_service_client::ApplicationServiceRequestCancellation::new();
@@ -107,4 +111,33 @@ mod notification_delivery_tests {
         subscription.as_mut().unwrap().worker.take().unwrap().join().unwrap();
         assert!(!observe_journal_for_stream(&mut subscription, &owner, &event, &tx, &None, "host"));
     }
+}
+
+// Unit Host fixtures intentionally compose Application in-process. Observe its
+// actual committed head here; production always uses the Service wait protocol,
+// whose wakeup and cancellation contracts have separate IPC tests.
+#[cfg(test)]
+fn stream_in_process_fixture_journal(
+    mut port: crate::application_port::CliApplicationPort,
+    mut after: nola_domain::assistant_journal::AssistantJournalCursor,
+    tx: mpsc::Sender<Vec<u8>>, token: Option<String>, source_host_id: String,
+) -> Result<JournalNotificationStream, String> {
+    let cancellation = nola_service_client::ApplicationServiceRequestCancellation::new();
+    let stop = cancellation.clone();
+    let identity = after.identity.clone();
+    let worker = std::thread::Builder::new().name("fixture-source-journal".into()).spawn(move || {
+        while !stop.is_cancelled() {
+            let head: Result<nola_domain::assistant_journal::AssistantJournalCursor, String> = port.execute(
+                nola_application::ApplicationCommand::LocalAssistantJournalHead { identity: after.identity.clone() });
+            let Ok(head) = head else { break };
+            if head.sequence > after.sequence {
+                let event = json!({"type":"assistant_journal_committed_v1",
+                    "session_id":head.identity.conversation_id,"source_host_id":source_host_id,"through":head});
+                if tx.send(mobile_sse_event(event, token.as_deref())).is_err() { break; }
+            }
+            after = head;
+            std::thread::sleep(StdDuration::from_millis(10));
+        }
+    }).map_err(|error| error.to_string())?;
+    Ok(JournalNotificationStream { identity, cancellation, worker: Some(worker) })
 }

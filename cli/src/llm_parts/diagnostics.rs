@@ -429,7 +429,6 @@ pub(super) fn model_response_debug_payload(cfg: &LlmConfig, choice: &StreamedCho
 
     json!({
         "type": "provider_response",
-        "provider":cfg.provider,"model":cfg.model,
         "request_sha256":choice.request_snapshot.as_ref().map(|s| {
             use sha2::{Digest,Sha256};format!("{:x}",Sha256::digest(s.body.to_string().as_bytes()))
         }),

@@ -84,9 +84,12 @@ if '--version' in sys.argv or (len(sys.argv)>1 and sys.argv[1]=='auth'):
     with (root/'probes').open('a') as f: f.write('probe\n')
     print('fake-claude 1.0')
     sys.exit(0)
-# Consume the real Host prompt before publishing events; production writes the
-# stream-json input to stdin before it starts reading stdout.
-sys.stdin.read()
+# Complete the control handshake, then consume one prompt. The permission
+# channel deliberately remains open during execution.
+initial=json.loads(sys.stdin.readline())
+assert initial['request']['subtype']=='initialize'
+print(json.dumps({'type':'control_response','response':{'subtype':'success','request_id':initial['request_id'],'response':{}}}),flush=True)
+assert json.loads(sys.stdin.readline())['type']=='user'
 read_fd, write_fd=os.pipe()
 child=os.fork()
 if child==0:
@@ -263,7 +266,8 @@ os.read(read_fd,1)
                 assert_eq!(invocation["revision"], 2);
             } else {
                 assert_eq!(invocation["backend_session_id"], "delegated-commit-backend");
-                assert_eq!(invocation["revision"], 3);
+                assert_eq!(invocation["revision"], if rejected_event == "completed" { 4 } else { 3 },
+                    "terminal usage is a distinct committed accounting observation");
             }
         }
         assert_eq!(db.query_row::<i64, _, _>("SELECT count(*) FROM run_attempts", [], |r| r.get(0)).unwrap(), 0,

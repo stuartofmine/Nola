@@ -463,10 +463,13 @@ mod git_commit_tests {
         let fixture = fixture();
         let root = fixture.path().canonicalize().unwrap();
         fs::create_dir(root.join("nested")).unwrap();
-        fs::write(root.join("nested/a\nb.txt"), "new").unwrap();
+        // Win32 forbids control characters; retain adversarial Unicode/space
+        // coverage there and the newline filename on POSIX.
+        let name = if cfg!(windows) { "nested/a 中 b.txt" } else { "nested/a\nb.txt" };
+        fs::write(root.join(name), "new").unwrap();
         let inventory = git_change_inventory(&root, &root.join("nested")).unwrap();
         assert_eq!(inventory["total_entries"], 1);
-        assert_eq!(inventory["entries"][0]["path"], "nested/a\nb.txt");
+        assert_eq!(inventory["entries"][0]["path"], name);
         assert_eq!(inventory["entries"][0]["tracking"], "untracked");
         assert_eq!(inventory["repository_scope_complete"], false);
         assert_eq!(inventory["content_audited"], false);
@@ -674,16 +677,16 @@ mod git_commit_tests {
         let root = fixture();
         git_command_output(root.path(), &["add", "README.md"]).unwrap();
         fs::write(root.path().join("README.md"), "whole worktree version\n").unwrap();
-        for name in ["-file", "a[1]:file.rs", "a1:file.rs"] {
+        for name in ["-file", "a[1]-file.rs", "a1-file.rs"] {
             fs::write(root.path().join(name), "literal\n").unwrap();
         }
         let args =
-            json!({"paths":["README.md", "-file", "a[1]:file.rs"], "message":"literal selection"});
+            json!({"paths":["README.md", "-file", "a[1]-file.rs"], "message":"literal selection"});
         let receipt =
             git_commit_verified(args.as_object().unwrap(), root.path(), &mut false).unwrap();
         assert_eq!(
             receipt["paths"],
-            json!(["-file", "README.md", "a[1]:file.rs"])
+            json!(["-file", "README.md", "a[1]-file.rs"])
         );
         assert_eq!(
             git_commit_text(root.path(), &["show", "HEAD:README.md"]).unwrap(),
@@ -694,6 +697,6 @@ mod git_commit_tests {
             &["ls-files", "--others", "--exclude-standard", "-z"]
         )
         .unwrap()
-        .contains("a1:file.rs"));
+        .contains("a1-file.rs"));
     }
 }

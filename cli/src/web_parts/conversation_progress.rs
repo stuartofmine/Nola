@@ -80,6 +80,7 @@ mod paired_progress_tests {
 // replacement Goal projection. Host time and current execution config stay here.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(test, derive(Clone))]
 struct PairedGoalControlRequest {
     expected_host_id: String,
     conversation_id: String,
@@ -116,6 +117,27 @@ fn dispatch_paired_goal_control(source_host_id: &str, input: PairedGoalControlRe
 #[cfg(test)]
 mod paired_goal_control_tests {
     use super::*;
+
+    fn settled_paired_goal_control(host: &str, input: PairedGoalControlRequest, config: &Config) -> (StatusCode, Value) {
+        let first = dispatch_paired_goal_control(host, input.clone(), config);
+        if first.0 != StatusCode(202) { return first; }
+        assert_eq!(first.1["controlPending"], true);
+        assert_eq!(first.1["authoritative"], false);
+        let _ = crate::core_agent_runtime::drain_parent_agent_task_inbox(&input.conversation_id);
+        let mut application = crate::application_port::CliApplicationPort::persistent_default().unwrap();
+        if let Some(active) = application.active_run(&input.conversation_id).unwrap() {
+            let pending = application.load_committed_host_requests(&active.run_id).unwrap();
+            if pending.requests.iter().any(|request| matches!(request.payload, nola_core::agent::host::HostRequest::Cancel { .. })) {
+                assert!(pending.requests.iter().all(|request| matches!(request.payload, nola_core::agent::host::HostRequest::Cancel { .. })));
+                let mut output = crate::native_runtime_output::NativeRuntimeOutput::with_event_sink(|_| {});
+                crate::core_agent_runtime::resume_frozen_core_agent_run(&input.conversation_id, &active.run_id,
+                    &mut output, RuntimeExecutionControl::default()).unwrap();
+            }
+        }
+        // Retry the same operation, never invent a new control identity.
+        dispatch_paired_goal_control(host, input, config)
+    }
+
 
     #[test]
     fn paired_goal_controls_share_guarded_core_transitions_and_source_checks() {
@@ -162,31 +184,31 @@ mod paired_goal_control_tests {
             expected_host_id: host.into(), conversation_id: conversation.into(),
             control: serde_json::from_value(control).unwrap(),
         }};
-        let (status, _) = dispatch_paired_goal_control("host", input("foreign", "paired-goal",
+        let (status, _) = settled_paired_goal_control("host", input("foreign", "paired-goal",
             json!({"action":"start","objective":"Verify paired Goal"})), &config);
         assert_eq!(status, StatusCode(409));
         assert!(crate::session::load_session_goal_projection("paired-goal").unwrap().is_none());
-        let (status, _) = dispatch_paired_goal_control("host", input("host", "missing",
+        let (status, _) = settled_paired_goal_control("host", input("host", "missing",
             json!({"action":"start","objective":"Verify paired Goal"})), &config);
         assert_eq!(status, StatusCode(404));
-        let (status, started) = dispatch_paired_goal_control("host", input("host", "paired-goal",
+        let (status, started) = settled_paired_goal_control("host", input("host", "paired-goal",
             json!({"action":"start","objective":"Verify paired Goal"})), &config);
         assert_eq!(status, StatusCode(200), "{started}");
         assert_eq!(started["source_host_id"], "host");
         assert_eq!(started["goalProjection"]["active"]["status"], "running");
         let goal_id = started["goalProjection"]["active"]["id"].clone();
         let initial_token = started["goalProjection"]["control_token"].clone();
-        let (status, paused) = dispatch_paired_goal_control("host", input("host", "paired-goal",
+        let (status, paused) = settled_paired_goal_control("host", input("host", "paired-goal",
             json!({"action":"pause","expectedGoalId":goal_id,"expectedControlToken":initial_token})), &config);
         assert_eq!(status, StatusCode(200), "{paused}");
         assert_eq!(paused["goalProjection"]["active"]["status"], "paused");
         // A stale request cannot resume or cancel a newer control generation.
-        let (status, stale) = dispatch_paired_goal_control("host", input("host", "paired-goal",
+        let (status, stale) = settled_paired_goal_control("host", input("host", "paired-goal",
             json!({"action":"resume","expectedGoalId":goal_id,"expectedControlToken":initial_token})), &config);
         assert_eq!(status, StatusCode(409), "{stale}");
         assert_eq!(stale["goalProjection"]["active"]["status"], "paused");
         assert!(stale["goalProjection"]["applied_operations"][stale["operationId"].as_str().unwrap()]["rejection"].is_string());
-        let (status, resumed) = dispatch_paired_goal_control("host", input("host", "paired-goal",
+        let (status, resumed) = settled_paired_goal_control("host", input("host", "paired-goal",
             json!({"action":"resume","expectedGoalId":goal_id,
                 "expectedControlToken":paused["goalProjection"]["control_token"]})), &config);
         assert_eq!(status, StatusCode(200), "{resumed}");
@@ -197,7 +219,7 @@ mod paired_goal_control_tests {
         disabled.enabled = false;
         disabled.revision += 1;
         store.upsert_model_profile(disabled).unwrap();
-        let (status, cancelled) = dispatch_paired_goal_control("host", input("host", "paired-goal",
+        let (status, cancelled) = settled_paired_goal_control("host", input("host", "paired-goal",
             json!({"action":"cancel","expectedGoalId":goal_id,
                 "expectedControlToken":resumed["goalProjection"]["control_token"]})), &config);
         assert_eq!(status, StatusCode(200), "{cancelled}");

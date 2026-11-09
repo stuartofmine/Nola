@@ -2,6 +2,12 @@ use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 
 pub(crate) fn home_dir() -> Option<PathBuf> {
+    #[cfg(test)]
+    return Some(std::env::var_os("NOLA_HOME").map(PathBuf::from).unwrap_or_else(|| {
+        static TEST_APPLICATION_HOME: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+        TEST_APPLICATION_HOME.get_or_init(|| tempfile::tempdir().expect("isolated test application home")).path().to_path_buf()
+    }));
+    #[cfg(not(test))]
     home_dir_from(
         std::env::var_os("NOLA_HOME"),
         std::env::var_os("HOME"),
@@ -189,4 +195,38 @@ mod tests {
             ))
         );
     }
+}
+
+/// Native Bash, never the Windows WSL launcher named bash.exe on PATH.
+pub(crate) fn bash_program() -> &'static str {
+    #[cfg(windows)]
+    { r"C:\Program Files\Git\bin\bash.exe" }
+    #[cfg(not(windows))]
+    { "/bin/bash" }
+}
+
+/// Host-installed executable roots; never consult a repository's PATH.
+pub(crate) fn git_program() -> &'static str {
+    if cfg!(windows) { "C:/Program Files/Git/cmd/git.exe" } else { "/usr/bin/git" }
+}
+
+pub(crate) fn system_utility(name: &str) -> Option<String> {
+    if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') { return None; }
+    #[cfg(windows)]
+    let candidates = vec![format!("C:/Program Files/Git/usr/bin/{name}.exe")];
+    #[cfg(not(windows))]
+    let candidates = vec![format!("/usr/bin/{name}"), format!("/bin/{name}")];
+    candidates.into_iter().find(|path| std::path::Path::new(path).is_file())
+}
+
+/// MSYS/Git receive ordinary drive/UNC paths, not Win32 verbatim prefixes.
+pub(crate) fn shell_path(path: &std::path::Path) -> String {
+    let native = path.to_string_lossy();
+    #[cfg(windows)]
+    let native = native.strip_prefix(r"\\?\UNC\").map(|path| format!("//{path}"))
+        .unwrap_or_else(|| native.strip_prefix(r"\\?\").unwrap_or(&native).to_owned());
+    #[cfg(windows)]
+    { native.replace('\\', "/") }
+    #[cfg(not(windows))]
+    { native.into_owned() }
 }

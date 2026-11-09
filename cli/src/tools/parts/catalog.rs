@@ -185,7 +185,7 @@ fn specs_with_skills(skills: &SkillRuntimeContext) -> Vec<ToolSpec<'static>> {
         },
         ToolSpec {
             name: "read_file",
-            description: "Read/inspect allowed files. Text results expose content (raw UTF-8 source, without display line numbers), content_kind, complete and next_start_line; parse content for structured files, never the numbered display. Check complete before treating a bounded range as the whole file; continue with start_line/line_count. PDF/Excel extraction is not raw source. Images: PNG/JPEG/GIF/WebP; PDF visual=true (30 MiB, capable model/provider required). Audio: MP3, WAV/PCM, FLAC, Ogg/Vorbis, AAC/M4A (64 MiB, 15 minutes); mono metadata/RMS/FFT peaks, not transcription, source separation or pitch tracking.",
+            description: "Read allowed files with bounded previews. Text content is raw UTF-8; parse content, not numbered display. Check complete; continue with start_line/line_count. PDF/Excel extraction is not raw source. PNG/JPEG/GIF/WebP; PDF visual=true (30 MiB, capable model/provider required). Audio decode: MP3, WAV/PCM, FLAC, Ogg/Vorbis, AAC/M4A (64 MiB, at most 15 minutes); mono waveform frequencies/metadata and RMS/FFT peaks, not transcription or pitch tracking.",
             read_only: true,
             parameters: json!({
                 "type": "object",
@@ -1208,7 +1208,7 @@ fn specs_with_skills(skills: &SkillRuntimeContext) -> Vec<ToolSpec<'static>> {
         },
         ToolSpec {
             name: "workspace_access",
-            description: "Request OS directory access for a native sandbox. This does not expand a Run's frozen filesystem or managed-worktree scope; those roots require Host authorization. CLI paths need no OS directory grant. For sensitive reads, set sensitive_read_reason on the read call to request approval. Success changes neither default cwd nor mutation approval.",
+            description: "Request native sandbox OS directory access; never expands frozen Run filesystem/worktree scope (Host authorization required). CLI paths need no directory grant. Sensitive reads: set sensitive_read_reason on the read call for approval. Success changes neither default cwd nor mutation approval.",
             read_only: false,
             parameters: json!({
                 "type": "object",

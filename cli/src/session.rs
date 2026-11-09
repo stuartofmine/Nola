@@ -776,6 +776,8 @@ impl SessionStore {
         continue_last: bool,
         project_root: &str,
     ) -> Result<Self, String> {
+        let normalized_project = normalized_project_root(project_root);
+        let project_root = normalized_project.as_str();
         let mut application_port = CliApplicationPort::persistent_default()?;
         let id = if continue_last {
             latest_canonical_session_id(&mut application_port, project_root)?
@@ -851,6 +853,8 @@ impl SessionStore {
     /// after process exit. `--no-save` changes retention, not execution
     /// semantics: every Turn still uses the canonical Store/outbox protocol.
     pub fn open_ephemeral(requested_id: Option<&str>, project_root: &str) -> Result<Self, String> {
+        let normalized_project = normalized_project_root(project_root);
+        let project_root = normalized_project.as_str();
         let mut application_port = CliApplicationPort::ephemeral()?;
         let id = requested_id
             .map(str::trim)
@@ -1873,13 +1877,20 @@ fn first_user_text(messages: &[Value]) -> Option<String> {
     })
 }
 
+fn normalized_project_root(project_root: &str) -> String {
+    if project_root.is_empty() { return String::new(); }
+    std::path::Path::new(project_root).canonicalize()
+        .map(|path| path.to_string_lossy().into_owned()).unwrap_or_else(|_| project_root.to_owned())
+}
+
 fn latest_canonical_session_id(
     store: &mut CliApplicationPort,
     project_root: &str,
 ) -> Result<Option<String>, String> {
+    let project = normalized_project_root(project_root);
     Ok(store
         .list_conversation_page(
-            (!project_root.is_empty()).then_some(project_root),
+            (!project_root.is_empty()).then_some(project.as_str()),
             true,
             1,
             0,
@@ -1989,6 +2000,8 @@ fn canonical_resume_sessions(
     if limit == 0 {
         return Ok(Vec::new());
     }
+    let normalized_project = project_root.map(normalized_project_root);
+    let project_root = normalized_project.as_deref();
     let mut application = application_port_default()?;
     let mut summaries = Vec::new();
     while summaries.len() < limit {

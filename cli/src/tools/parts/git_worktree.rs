@@ -347,9 +347,7 @@ fn git_worktree_create(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutc
             let (head,snapshot)=prepare_source_snapshot(&root,plan,&ctx.cancellation)?;
             (head,Some(snapshot))
         } else {(expected_head.clone(),None)};
-        let target = destination
-            .to_str()
-            .ok_or("Non-UTF8 worktree destination")?;
+        let target = crate::platform_paths::shell_path(&destination);
         let no_hooks = tempfile::tempdir().map_err(|error| error.to_string())?;
         let hooks_setting = format!("core.hooksPath={}", no_hooks.path().to_str().ok_or("Non-UTF8 private hook directory")?);
         let mut checkout_args = vec!["-c".to_string(), hooks_setting, "-c".into(), "submodule.recurse=false".into()];

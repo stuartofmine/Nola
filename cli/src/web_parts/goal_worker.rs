@@ -532,55 +532,14 @@ mod web_goal_worker_tests {
         assert_eq!(frozen.unwrap().template.core_config.host_catalog.unwrap().capabilities["glob"].exposure,
             nola_core::agent::host::HostCapabilityExposure::Deferred,
             "Goal Start must freeze the same execution-tier discovery surface as its first dispatch");
-        // The Start-to-first-Run crash window must already have a recoverable
-        // execution binding. No active Run is available to mask this boundary.
+        // Start atomically admits the first canonical Run with its frozen
+        // execution binding, before any provider dispatch.
         assert!(crate::application_port::CliApplicationPort::persistent_default()
-            .unwrap().active_run(session).unwrap().is_none());
+            .unwrap().active_run(session).unwrap().is_some());
         let before_first_run = web_goal_invocation(session).unwrap();
         assert_eq!(before_first_run.model_settings.endpoint, request.model_settings.endpoint);
         assert_eq!(before_first_run.model_settings.model, request.model_settings.model);
         assert_eq!(before_first_run.runtime.selected_profile, request.runtime.selected_profile);
-        block_web_goal_configuration(session).unwrap();
-        let blocked = crate::session::load_session_goal_projection(session)
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            blocked.active.as_ref().unwrap().status,
-            GoalStatus::NeedsUser
-        );
-        assert_eq!(
-            blocked
-                .active
-                .as_ref()
-                .unwrap()
-                .execution_blocker
-                .as_ref()
-                .unwrap()
-                .code,
-            "configuration_unavailable"
-        );
-        assert!(
-            crate::session::due_goal_sessions(crate::goal_runtime::goal_now_epoch_ms())
-                .unwrap()
-                .is_empty()
-        );
-        crate::core_agent_runtime::submit_agent_core_goal_command(
-            &request,
-            GoalRuntimeCommandEnvelope {
-                operation_id: "resume-fixed-config".into(),
-                command: GoalRuntimeCommand::Resume {
-                    now_epoch_ms: crate::goal_runtime::goal_now_epoch_ms(),
-                },
-            },
-        )
-        .unwrap();
-        assert!(crate::session::load_session_goal_projection(session)
-            .unwrap()
-            .unwrap()
-            .active
-            .unwrap()
-            .execution_blocker
-            .is_none());
         let control = RuntimeExecutionControl::default();
         let registration = try_register_web_agent_run(session, control.clone()).unwrap();
         let (done_tx, done_rx) = mpsc::channel();

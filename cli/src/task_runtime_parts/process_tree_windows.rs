@@ -134,12 +134,28 @@ mod tests {
 
     #[test]
     fn closing_the_owned_job_stops_an_unreaped_live_child() {
-        let mut command = Command::new("cmd.exe");
-        command.args(["/D", "/C", "ping -n 30 127.0.0.1 >nul"]);
+        let root = tempfile::tempdir().unwrap();
+        let marker = root.path().join("started.txt");
+        let mut command = Command::new("powershell.exe");
+        command.args(["-NoProfile", "-NonInteractive", "-Command", &format!(
+            "[IO.File]::WriteAllText('{}','started'); Start-Sleep -Seconds 30",
+            marker.to_string_lossy().replace('\'', "''"))]);
         let (mut child, job, thread) = OwnedJob::prepare(&mut command).unwrap();
         OwnedJob::resume(&thread, &child).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !marker.exists() {
+            assert!(std::time::Instant::now() < deadline, "child readiness timeout");
+            assert!(child.try_wait().unwrap().is_none(), "child exited before readiness");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(child.try_wait().unwrap().is_none());
         drop(job);
-        assert!(!child.wait().unwrap().success());
+        while child.try_wait().unwrap().is_none() {
+            assert!(std::time::Instant::now() < deadline, "closing the job left a live process");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        // KILL_ON_JOB_CLOSE need not produce a nonzero process exit code.
+        child.wait().unwrap();
     }
 
     #[test]

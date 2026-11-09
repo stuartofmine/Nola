@@ -300,7 +300,7 @@ mod web_unknown_effect_recovery_tests {
         let mut application = crate::application_port::CliApplicationPort::ephemeral().unwrap();
         admit(&mut application);
         let result = execute_web_recovery(&mut application,"source",WebRecoveryRequest::Inspect {owner:owner()}).unwrap();
-        assert_eq!(result["result"]["inspection"]["targets"], json!([]), "unclaimed work is not an unknown attempt");
+        assert!(result["result"]["inspection"].is_null(), "unclaimed work has no unknown-effect recovery inspection");
         for field in ["expected_host_id", "client_id", "conversation_id", "run_id", "assistant_message_id"] {
             let mut wrong = serde_json::to_value(owner()).unwrap(); wrong[field] = "foreign".into();
             assert!(execute_web_recovery(&mut application,"source",WebRecoveryRequest::Inspect {

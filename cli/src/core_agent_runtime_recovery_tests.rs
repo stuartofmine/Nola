@@ -33,10 +33,14 @@ pub(crate) fn fixture_completion_audit(input: &[u8]) -> serde_json::Value {
 mod permission_recovery_entrypoint_tests {
     use super::*;
     fn mac_launch_fixture(config: &HostInvocationRequest) -> nola_host_protocol::HostMacLaunchDescriptor {
+        // The Mac transport descriptor is a wire fixture, independent of the
+        // native temporary directory used by this Host execution fixture.
+        let project = if cfg!(windows) { std::path::PathBuf::from("/fixture/mac-workspace") } else { config.tool_settings.project_root.clone() };
+        let directories = if cfg!(windows) { vec![project.clone()] } else { config.tool_settings.allowed_dirs.clone() };
         let descriptor: nola_host_protocol::HostMacLaunchDescriptor = serde_json::from_value(serde_json::json!({
-            "version": 1, "input_origin": "interactive_user", "project_path": config.tool_settings.project_root,
-            "authorized_workspace_paths": config.tool_settings.allowed_dirs,
-            "allowed_directory_arguments": config.tool_settings.allowed_dirs.iter().flat_map(|path| ["--allow-dir".to_string(), path.to_string_lossy().into_owned()]).collect::<Vec<_>>(),
+            "version": 1, "input_origin": "interactive_user", "project_path": project,
+            "authorized_workspace_paths": directories,
+            "allowed_directory_arguments": directories.iter().flat_map(|path| ["--allow-dir".to_string(), path.to_string_lossy().into_owned()]).collect::<Vec<_>>(),
             "skill_directory_arguments": ["--no-skills"], "active_skill_ids": [],
             "model_profile_id": "fixture-profile", "model_profile_revision":null, "fallback_profile_ids": [],
             "permission_mode": "cautious", "memory_enabled": false,
@@ -795,7 +799,7 @@ mod permission_recovery_entrypoint_tests {
     }
 
     #[test]
-    fn goal_controls_preserve_the_exact_pending_run_in_warm_and_cold_hosts() {
+    fn guarded_goal_controls_preserve_the_exact_pending_run_in_warm_and_cold_hosts() {
         use nola_core::agent::goal::{GoalRecordStatus, GoalRequirement, GoalRuntimeCommand, GoalStatus};
         let _environment = crate::store::test_env_lock();
         for cold in [false, true] {
@@ -819,45 +823,47 @@ mod permission_recovery_entrypoint_tests {
                     }], now_epoch_ms: 1000,
                 },
             }).unwrap();
-            let shared = acquire_core_agent_host(&config, Vec::new()).unwrap();
-            let run_id = {
-                let mut host = shared.lock().unwrap();
-                host.session_store.as_ref().unwrap().apply_initial_creation_boundary(&mut config.session).unwrap();
-                let input = host_user_input_items(&config, "Continue the owned work");
-                let submission = AgentSubmission::UserInput {
-                    items: input.clone(), turn_context_items: Vec::new(),
-                    turn_context_platform: Default::default(), turn_context_components: Vec::new(),
-                    submission_id: Some("goal-owned-run".into()),
-                    submitted_at_epoch_ms: Some(1100), delivery: AgentInputDelivery::CurrentTurn,
-                };
-                let begin = canonical_begin_turn_input(&config, &fixture.session, &input,
-                    host.runtime.core_config().unwrap().clone(), submission).unwrap();
-                let accepted = host.session_store.as_mut().unwrap().begin_core_turn(begin).unwrap();
-                host.runtime.adopt_execution_state(accepted.execution).unwrap();
-                accepted.begin.run_id
-            };
+            let _shared = acquire_core_agent_host(&config, Vec::new()).unwrap();
+            // Starting a Goal already admits its canonical Run. The retained
+            // Host must recover that Run, never manufacture another user turn.
             let mut application = crate::application_port::CliApplicationPort::persistent_default().unwrap();
+            let run_id = application.active_run(&fixture.session).unwrap().unwrap().run_id;
             let pending = application.load_committed_host_requests(&run_id).unwrap();
             assert!(!pending.requests.is_empty(), "fixture must retain actual pending execution");
             if cold {
                 invalidate_core_agent_session(&fixture.session).unwrap();
             }
-            for (operation, command, status) in [
+            for (operation, command, _status) in [
                 ("pause", GoalRuntimeCommand::Pause { status: GoalStatus::Paused,
                     wake_at_epoch_ms: None, now_epoch_ms: 1200 }, GoalStatus::Paused),
                 ("resume", GoalRuntimeCommand::Resume { now_epoch_ms: 1300 }, GoalStatus::Running),
             ] {
-                submit_agent_core_goal_command(&config, GoalRuntimeCommandEnvelope {
+                let current = crate::session::load_session_goal_projection(&fixture.session).unwrap().unwrap();
+                let command = GoalRuntimeCommand::GuardedControl {
+                    expected_goal_id: current.active.as_ref().unwrap().id.clone(),
+                    expected_control_token: current.control_token().unwrap(), control: Box::new(command),
+                };
+                let result = submit_agent_core_goal_command(&config, GoalRuntimeCommandEnvelope {
                     operation_id: format!("goal-control:{operation}"), command,
-                }).unwrap();
+                });
+                if operation == "resume" {
+                    assert!(result.unwrap_err().contains("pending exact Run stop confirmation"));
+                } else { result.unwrap(); }
+                assert_eq!(crate::session::load_session_goal_projection(&fixture.session)
+                    .unwrap().unwrap().active.unwrap().status, GoalStatus::Paused);
                 let active = application.active_run(&fixture.session).unwrap().unwrap();
                 assert_eq!(active.run_id, run_id);
-                assert_eq!(crate::session::load_session_goal_projection(&fixture.session)
-                    .unwrap().unwrap().active.unwrap().status, status);
                 let remaining = application.load_committed_host_requests(&run_id).unwrap();
-                assert_eq!(serde_json::to_value(&remaining.requests).unwrap(),
-                    serde_json::to_value(&pending.requests).unwrap(),
-                    "Goal control must not replace, execute, or drop pending Host requests");
+                assert!(!remaining.requests.is_empty());
+                for request in &remaining.requests {
+                    match &request.payload {
+                        nola_core::agent::host::HostRequest::Cancel { target_effect_id, .. } => {
+                            assert!(pending.requests.iter().any(|original| original.effect_id == *target_effect_id),
+                                "cancellation must target the original owned request");
+                        }
+                        _ => panic!("pause/resume must not dispatch another model request before cancellation reconciles"),
+                    }
+                }
             }
         }
     }
@@ -1598,7 +1604,7 @@ mod permission_recovery_entrypoint_tests {
             .unwrap();
         // Observe an actual isolated child exit, not a guessed OS PID. No
         // provider or user's process is launched or signalled by this fixture.
-        let mut child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
+        let mut child = crate::process_observation::test_exited_child();
         let dead_pid = child.id();
         assert!(child.wait().unwrap().success());
         assert!(!crate::process_observation::process_id_is_alive(dead_pid));

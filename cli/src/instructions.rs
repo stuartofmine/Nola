@@ -53,6 +53,7 @@ impl InstructionBundle {
                 .then(left.source.source_id.cmp(&right.source.source_id))
         });
         enforce_instruction_budget(&mut entries);
+        let native_paths = entries.iter().map(|entry| (entry.source.source_id.clone(), entry.path.clone())).collect::<std::collections::HashMap<_, _>>();
         let sources = entries
             .into_iter()
             .map(|entry| entry.source)
@@ -69,7 +70,7 @@ impl InstructionBundle {
             .sources
             .iter()
             .map(|source| InstructionEntry {
-                path: PathBuf::from(&source.origin_uri),
+                path: native_paths[&source.source_id].clone(),
                 content: source.content.clone(),
                 source: source.clone(),
             })

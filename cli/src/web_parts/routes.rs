@@ -408,6 +408,7 @@ struct SessionMemoryInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(test, derive(Clone))]
 struct GoalControlInput {
     // Browser transport binds here; paired transport binds its outer envelope.
     expected_host_id: Option<String>,
@@ -4968,7 +4969,7 @@ mod goal_control_token_wire_tests {
     #[test]
     fn goal_control_accepts_only_current_opaque_token_contract() {
         let parsed: GoalControlInput = serde_json::from_value(json!({
-            "action":"pause", "expectedGoalId":"goal", "expectedControlToken":"core-token"
+            "action":"pause", "operationId":"pause-fixture", "expectedGoalId":"goal", "expectedControlToken":"core-token"
         })).unwrap();
         assert_eq!(parsed.expected_control_token.as_deref(), Some("core-token"));
         assert!(serde_json::from_value::<GoalControlInput>(json!({

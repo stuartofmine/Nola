@@ -858,7 +858,7 @@ fn inspect_read_only_shell(context: &ToolContext, input: &Value) -> Result<(Perm
         if sensitive_path(&plan.root, context) { return Ok(unknown()); }
         if !plan.has_passive_configuration() { return Ok(unknown()); }
         return Ok((PermissionOperationRisk::OrdinaryRead,json!({
-            "program":"/usr/bin/git", "cwd":cwd, "resources":[path_identity(&plan.root)?],
+            "program":crate::platform_paths::git_program(), "cwd":cwd, "resources":[path_identity(&plan.root)?],
             "verified_command":plan.command, "input":input
         })));
     }
@@ -1394,7 +1394,7 @@ mod tests {
     #[test]
     fn git_read_plan_drives_both_permission_and_execution() {
         let directory = tempfile::tempdir().unwrap();
-        assert!(std::process::Command::new("/usr/bin/git").args(["init", "--quiet"]).arg(directory.path()).status().unwrap().success());
+        assert!(std::process::Command::new(crate::platform_paths::git_program()).args(["init", "--quiet"]).arg(directory.path()).status().unwrap().success());
         let context = context(directory.path());
         let input = json!({"command":"git status --porcelain=v1 | cut -c1-2 | sort | uniq -c", "operation_kind":"execute"});
         assert_eq!(facts(&context,"bash",input.clone()).bindings[0].observation, PermissionOperationRisk::OrdinaryRead);
@@ -1406,13 +1406,13 @@ mod tests {
         let observed = resolve_permission_resources(&context,&request,&input).unwrap();
         assert!(!nola_core::agent::permissions::permission_contract_requires_confirmation(&contract,Some(&(request,observed))));
         let command = verified_read_only_shell_command(&context,input.as_object().unwrap()).unwrap();
-        assert!(command.contains("'/usr/bin/git'"));
+        assert!(command.contains(crate::platform_paths::git_program()));
         assert!(command.contains("core.fsmonitor=false"));
         for command in ["git commit -m x", "git push", "git status && git commit -m x"] {
             assert_eq!(facts(&context,"bash",json!({"command":command,"operation_kind":"inspect"})).bindings[0].observation, PermissionOperationRisk::Unknown);
         }
         let other = tempfile::tempdir().unwrap();
-        assert!(std::process::Command::new("/usr/bin/git").args(["init", "--quiet"]).arg(other.path()).status().unwrap().success());
+        assert!(std::process::Command::new(crate::platform_paths::git_program()).args(["init", "--quiet"]).arg(other.path()).status().unwrap().success());
         let command = format!("git -C '{}' status",other.path().display());
         assert_eq!(facts(&context,"bash",json!({"command":command})).bindings[0].observation,PermissionOperationRisk::OrdinaryRead);
     }
@@ -1463,9 +1463,9 @@ mod tests {
             assert!(!nola_core::agent::permissions::permission_contract_requires_confirmation(
                 &contract, Some(&(request, observed))), "{command}");
             let pinned = verified_read_only_shell_command(&context, input.as_object().unwrap()).unwrap();
-            let original = std::process::Command::new("/bin/bash").args(["-o", "pipefail", "-c", command])
+            let original = std::process::Command::new(crate::platform_paths::bash_program()).args(["-o", "pipefail", "-c", command])
                 .current_dir(directory.path()).env_clear().env("PATH", "/usr/bin:/bin").output().unwrap();
-            let actual = std::process::Command::new("/bin/bash").args(["-o", "pipefail", "-c", &pinned])
+            let actual = std::process::Command::new(crate::platform_paths::bash_program()).args(["-o", "pipefail", "-c", &pinned])
                 .current_dir(directory.path()).env_clear().env("PATH", "/usr/bin:/bin").output().unwrap();
             assert_eq!(actual.status.code(), original.status.code(), "{command}");
             assert_eq!(actual.stdout, original.stdout, "{command}");

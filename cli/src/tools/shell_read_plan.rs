@@ -128,13 +128,11 @@ impl ShellReadPlan {
             let tokens = nola_core::agent::permissions::supported_shell_tokens(&segment.source)?;
             let executable = tokens.first()?;
             let name = Path::new(executable).file_name()?.to_str()?;
-            let program = [format!("/usr/bin/{name}"), format!("/bin/{name}")]
-                .into_iter()
-                .find(|p| Path::new(p).is_file())?;
+            let program = crate::platform_paths::system_utility(name)?;
             if executable.contains('/') && executable != &program {
                 // /bin and /usr/bin can both contain the system program.
                 if ![format!("/bin/{name}"), format!("/usr/bin/{name}")].contains(executable)
-                    || !Path::new(executable).is_file()
+                    || (!cfg!(windows) && !Path::new(executable).is_file())
                 {
                     return None;
                 }
@@ -315,7 +313,7 @@ impl ShellReadPlan {
                 plan.paths.push(path);
             }
             plan.command
-                .push_str("'/usr/bin/env' '-i' 'PATH=/usr/bin:/bin' ");
+                .push_str(&format!("{} '-i' 'PATH=/usr/bin:/bin' ", quote(&crate::platform_paths::system_utility("env")?)));
             plan.command.push_str(&quote(&program));
             for arg in args {
                 plan.command.push(' ');

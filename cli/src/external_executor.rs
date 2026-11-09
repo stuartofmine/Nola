@@ -4312,7 +4312,7 @@ wait
         descriptor.executable_path = Some("/fixture/opencode".into());
         let command = command_for(&descriptor, Path::new("/fixture/workspace"),
             Some("original-child"), Some("openai/selected-model"), None).unwrap();
-        assert_eq!(command.arguments, ["acp", "--cwd", "/fixture/workspace"]);
+        assert_eq!(command.arguments, ["acp", "--cwd", "/fixture/workspace", "--print-logs", "--log-level", "ERROR"]);
     }
 
     #[test]

@@ -494,11 +494,11 @@ mod resource_supervisor_tests {
             )
             .expect("external executor must eventually acquire the shared slot");
             acquired_tx.send(()).unwrap();
-            let status = std::process::Command::new("sh")
+            let status = std::process::Command::new(crate::platform_paths::bash_program())
                 .arg("-c")
                 .arg(format!(
-                    "printf 'external-started\\n' > {}",
-                    worker_marker.display()
+                    "printf 'external-started\\n' > '{}'",
+                    crate::platform_paths::shell_path(&worker_marker)
                 ))
                 .status()
                 .expect("start real external test process");

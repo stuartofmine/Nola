@@ -3354,10 +3354,15 @@ mod model_text_presentation_gate_tests {
         }
         #[cfg(windows)]
         assert!(!catalog.capabilities.contains_key("terminal_input"));
+        #[cfg(windows)]
+        assert!(!catalog.capabilities.contains_key("language_service_query"));
+        #[cfg(unix)]
+        {
         let semantic_query = catalog.capabilities.get("language_service_query").unwrap();
         assert_eq!(semantic_query.permission_domain.as_deref(), Some("bash"));
         assert_eq!(semantic_query.input_normalization.permission_contract.risk,
             nola_domain::permission_resource_plan::PermissionOperationRisk::Unknown);
+        }
     }
 
     #[test]

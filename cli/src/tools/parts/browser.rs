@@ -3216,30 +3216,13 @@ fn browser_file_url_path(url: &str) -> Result<PathBuf, ToolOutcome> {
     if !value.to_ascii_lowercase().starts_with("file://") {
         return Err(error("only file:// URLs are allowed".to_string()));
     }
-    let rest = &value[7..];
-    let rest = rest.split(['?', '#']).next().unwrap_or("");
-    let path_part = if rest.starts_with('/') {
-        rest.to_string()
-    } else {
-        let (authority, path) = rest
-            .split_once('/')
-            .ok_or_else(|| error("file URL path is required".to_string()))?;
-        let host = authority.trim_matches('.').to_ascii_lowercase();
-        if host != "localhost" {
-            return Err(error(
-                "file URL host must be empty or localhost".to_string(),
-            ));
-        }
-        format!("/{path}")
-    };
-    if !path_part.starts_with('/') {
-        return Err(error("file URL path must be absolute".to_string()));
+    let url = url::Url::parse(value).map_err(|_| error("invalid file URL".to_string()))?;
+    if url.host_str().is_some_and(|host| !host.eq_ignore_ascii_case("localhost")) {
+        return Err(error("file URL host must be empty or localhost".to_string()));
     }
-    let decoded = percent_decode(&path_part)?;
-    if decoded.contains('\0') {
-        return Err(error("file URL path is invalid".to_string()));
-    }
-    Ok(PathBuf::from(decoded))
+    let path = url.to_file_path().map_err(|_| error("file URL path must be absolute".to_string()))?;
+    if path.as_os_str().to_string_lossy().contains('\0') { return Err(error("file URL path is invalid".to_string())); }
+    Ok(path)
 }
 
 fn percent_decode(value: &str) -> Result<String, ToolOutcome> {
@@ -3278,22 +3261,8 @@ fn hex_value(value: u8) -> Option<u8> {
 
 #[cfg(test)]
 fn file_url_for_path(path: &Path) -> Result<String, ToolOutcome> {
-    let raw = path
-        .to_str()
-        .ok_or_else(|| error("file URL path must be valid UTF-8".to_string()))?;
-    let mut url = String::from("file://");
-    if !raw.starts_with('/') {
-        url.push('/');
-    }
-    for byte in raw.as_bytes() {
-        match *byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
-                url.push(char::from(*byte))
-            }
-            other => url.push_str(&format!("%{other:02X}")),
-        }
-    }
-    Ok(url)
+    url::Url::from_file_path(path).map(|url| url.to_string())
+        .map_err(|_| error("file URL path must be absolute".to_string()))
 }
 
 fn http_url_host(url: &str) -> Option<String> {

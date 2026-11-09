@@ -1007,11 +1007,13 @@ mod tests {
 
     #[test]
     fn language_service_configuration_replaces_atomically_and_freezes_for_host() {
-        let source = Path::new("/config.json");
+        let root = tempfile::tempdir().unwrap();
+        let source_path = root.path().join("config.json");
+        let source = source_path.as_path();
         let mut runtime = RuntimeConfig::default();
         let service = serde_json::json!({
-            "id":"rust","executable":"/tools/rust-analyzer","arguments":[],
-            "project_root":"/workspace","language_ids":["rust"],"environment":{},"timeout_ms":10000
+            "id":"rust","executable":root.path().join("rust-analyzer"),"arguments":[],
+            "project_root":root.path(),"language_ids":["rust"],"environment":{},"timeout_ms":10000
         });
         runtime.merge_value(serde_json::json!({"language_services":[service]}), source).unwrap();
         let frozen = runtime.host_runtime_options();

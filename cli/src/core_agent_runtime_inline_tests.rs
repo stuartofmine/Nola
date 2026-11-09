@@ -385,7 +385,7 @@ mod tests {
         assert!(!stable_policy.contains("Do not install dependencies"));
         assert!(stable_policy.contains("necessary reversible local scratch work"));
         assert!(stable_policy.contains("project-local setup, subject to tool permissions"));
-        assert!(stable_policy.contains("does not authorize unrelated repair, system-wide installation"));
+        assert!(stable_policy.contains("no unrelated repair, system installation"));
         assert!(context.prompt_identity.fragment_ids.iter()
             .any(|id| id == "nola-host-workspace-facts-v1"));
         assert!(!context.prompt_identity.fragment_ids.iter()

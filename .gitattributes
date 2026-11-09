@@ -1,3 +1,6 @@
+* text=auto eol=lf
+*.pdf -text
+*.xlsx -text
 # Pinned external fixtures are verified byte-for-byte against their manifests.
 # Preserve upstream whitespace and avoid rendering multi-megabyte JSON records as text diffs.
 evals/benchmarks/terminal-bench/tasks/** -whitespace

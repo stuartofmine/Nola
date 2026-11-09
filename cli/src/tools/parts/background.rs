@@ -3380,7 +3380,7 @@ fn run_bash_execution(
         }
     }
     child_command
-        .env("NOLA_SHELL_EVIDENCE_PATH", &evidence_path)
+        .env("NOLA_SHELL_EVIDENCE_PATH", crate::platform_paths::shell_path(&evidence_path))
         .current_dir(&cwd)
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));

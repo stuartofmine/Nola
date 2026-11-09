@@ -16,6 +16,8 @@ fn model_opencode_login_owner_prompts_callback_and_unknown_are_bound() {
     let writes = Arc::new(AtomicUsize::new(0));
     let stop = Arc::new(AtomicBool::new(false));
     let (s, w, done) = (state.clone(), writes.clone(), stop.clone());
+    let fixture_directory = std::env::temp_dir().to_string_lossy().into_owned();
+    let reported_directory = fixture_directory.clone();
     let worker = std::thread::spawn(move || {
         while !done.load(Ordering::SeqCst) {
             let Some(mut request) = server.recv_timeout(Duration::from_millis(20)).unwrap() else {
@@ -34,7 +36,7 @@ fn model_opencode_login_owner_prompts_callback_and_unknown_are_bound() {
                 }
                 "/global/health" => json!({"healthy":true,"version":"fixture-release"}),
                 "/path" => {
-                    json!({"home":"/fixture/home","state":"/fixture/state","config":"/fixture/config","worktree":"/fixture/project","directory":if phase == 2 {"/changed"} else {"/fixture/project"}})
+                    json!({"home":"/fixture/home","state":"/fixture/state","config":"/fixture/config","worktree":"/fixture/project","directory":if phase == 2 {"/changed"} else {reported_directory.as_str()}})
                 }
                 "/provider/auth" => {
                     json!({"fixture":[{"type":"oauth","label":if phase == 3 {"Changed"} else {"Login"},"prompts":[{"type":"select","key":"region","message":"Region","options":[{"label":"Fixture","value":"fixture"}]}]}]})
@@ -75,7 +77,7 @@ fn model_opencode_login_owner_prompts_callback_and_unknown_are_bound() {
             expected_revision: None,
             display_name: "Fixture".into(),
             origin: address,
-            directory: "/fixture/project".into(),
+            directory: fixture_directory,
             username: "fixture".into(),
             password: "not-a-real-secret".into(),
             acknowledge_local_service_access: true,

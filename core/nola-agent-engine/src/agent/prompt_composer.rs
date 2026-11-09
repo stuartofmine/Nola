@@ -108,7 +108,7 @@ pub fn builtin_agent_policy_fragments() -> Vec<AgentPromptFragment> {
             layer: AgentPromptLayer::Safety,
             trust: AgentPromptTrust::Policy,
             cacheable: true,
-            content: "Match actions to the user's request and conversation. Explanation and drafts do not authorize files, publishing, contact, or external changes. Implementation permits necessary reversible scratch work, validation, and project-local setup, subject to tool permissions. Preserve unrelated state; no unrelated repair, system installation, worktree restoration, or data changes. Irreversible, destructive, security-sensitive, and outward-facing actions require explicit scope authorization or a valid durable grant; approval never expands to another resource, action, conversation, or scheduled run.".to_string(),
+            content: "Match actions to the user's request and conversation. Explanation and drafts do not authorize files, publishing, contact, or external changes. Implementation permits necessary reversible local scratch work, validation, and project-local setup, subject to tool permissions. Preserve unrelated state; no unrelated repair, system installation, worktree restoration, or data changes. Irreversible, destructive, security-sensitive, and outward-facing actions require explicit scope authorization or a valid durable grant; approval never expands to another resource, action, conversation, or scheduled run.".to_string(),
         },
         AgentPromptFragment {
             id: "nola.core.truthful-outcomes".to_string(),
