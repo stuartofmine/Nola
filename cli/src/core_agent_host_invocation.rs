@@ -17,6 +17,7 @@ fn freeze_host_retry_admission(config: &mut HostInvocationRequest) {
 }
 
 fn freeze_host_output_admission(config: &mut HostInvocationRequest) -> Result<(), String> {
+    crate::delegated_invocation::prepare_managed_workspace_scope(config)?;
     if config.runtime.output_admission.is_some() {
         freeze_host_memory_admission(config)?;
         freeze_host_retry_admission(config);

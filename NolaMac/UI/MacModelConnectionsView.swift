@@ -168,9 +168,9 @@ struct MacModelConnectionsView: View {
                 prompt: Text("https://api.example.com/v1"))
                 .autocorrectionDisabled()
             Picker(String(localized: "Protocol", table: "ModelCenter"), selection: $wire) {
-                Text("Responses").tag("responses")
-                Text("Chat Completions").tag("chat_completions")
-                Text("Anthropic Messages").tag("anthropic")
+                Text(verbatim: "Responses").tag("responses")
+                Text(verbatim: "Chat Completions").tag("chat_completions")
+                Text(verbatim: "Anthropic Messages").tag("anthropic")
             }
             SecureField(String(localized: "API key · optional for anonymous endpoints", table: "ModelCenter"), text: $secret)
             Button(String(localized: "Connect account", table: "ModelCenter")) {
@@ -394,15 +394,13 @@ struct MacModelConnectionsView: View {
             if target == .imports { sourceImportSection }
             if target == .accounts {
             Section(String(localized: "ChatGPT authorization on this Mac", table: "ModelCenter")) {
-                Text(String(localized: "Authorize Nola independently for this Mac’s account store. This does not reuse Codex login or change a paired Host.", table: "ModelCenter"))
+                Text(String(localized: "Connect your ChatGPT account, then choose the models to use on this Mac.", table: "ModelCenter"))
                     .font(.callout).foregroundStyle(.secondary)
-                Text(String(localized: "The local runtime owns this authorization. Discover and enable models explicitly; signing in does not itself verify inference.", table: "ModelCenter"))
-                    .font(.callout).foregroundStyle(.secondary)
-                Button(String(localized: "Add ChatGPT Authorization", table: "ModelCenter")) { siwcAccount = nil; showingSiwc = true }
+                Button(String(localized: "Sign in with ChatGPT", table: "ModelCenter")) { siwcAccount = nil; showingSiwc = true }
                 ForEach(accounts.filter { $0.account.source == "nola_chatgpt" }) { account in
                     MacSiwcAccountManagementView(application: service.application, account: account, changed: reload,
-                        modelsDiscovered: { id in selectedConnectionID = id; workspace = .connections })
-                    Button(String(localized: "Reauthorize account", table: "ModelCenter") + " · " + account.account.display_name) { siwcAccount = account; showingSiwc = true }
+                        modelsDiscovered: { id in selectedConnectionID = id; workspace = .connections },
+                        reauthorize: { siwcAccount = account; showingSiwc = true })
                 }
             }
             }
@@ -431,11 +429,14 @@ struct MacModelConnectionsView: View {
             probeSheet
         }
         .sheet(isPresented: $showingSiwc, onDismiss: reload) {
-            MacSiwcSignInView(application: service.application, account: siwcAccount) {
+            MacSiwcSignInView(application: service.application, account: siwcAccount, showAccounts: {
+                showingSiwc = false; workspace = .accounts; reload()
+            }, saved: { connectionID in
                 showingSiwc = false
-                workspace = .accounts
                 reload()
-            }
+                selectedConnectionID = connectionID
+                workspace = .connections
+            })
         }
         .onDisappear { operationTask?.cancel(); cancelImport(); cancelProbe() }
     }
@@ -591,9 +592,9 @@ struct MacModelConnectionsView: View {
             Text(String(localized: "Select a source file, preview its connections, then confirm. Imported API keys stay in this Mac’s Keychain. Source files are never changed.", table: "ModelCenter"))
                 .font(.callout).foregroundStyle(.secondary)
             Picker(String(localized: "Source", table: "ModelCenter"), selection: $importSource) {
-                Text("OpenCode").tag("open_code")
-                Text("Codex").tag("codex")
-                Text("Kimi Code CLI").tag("kimi_code")
+                Text(verbatim: "OpenCode").tag("open_code")
+                Text(verbatim: "Codex").tag("codex")
+                Text(verbatim: "Kimi Code CLI").tag("kimi_code")
             }.onChange(of: importSource) { _, _ in
                 invalidateImport(); sourceURL = nil; credentialURL = nil
             }
@@ -613,10 +614,10 @@ struct MacModelConnectionsView: View {
                 Toggle(String(localized: "Allow explicitly named environment variables", table: "ModelCenter"), isOn: $allowEnvironment)
                     .onChange(of: allowEnvironment) { _, _ in invalidateImport() }
             }
-            Text(String(localized: "Codex and Kimi subscription logins are not API keys. Authorize ChatGPT separately on this Mac; existing Nola ChatGPT authorizations support token refresh.", table: "ModelCenter"))
+            Text(String(localized: "To use a ChatGPT account, sign in in your browser. Use file import for API connections.", table: "ModelCenter"))
                 .font(.callout).foregroundStyle(.secondary)
-            Button(String(localized: "ChatGPT authorization on this Mac", table: "ModelCenter")) {
-                cancelImport(); workspace = .accounts
+            Button(String(localized: "Sign in with ChatGPT", table: "ModelCenter")) {
+                cancelImport(); siwcAccount = nil; showingSiwc = true
             }
             Button(String(localized: "Source login on a Nola Host", table: "ModelCenter")) {
                 cancelImport(); workspace = .host

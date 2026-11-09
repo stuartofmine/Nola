@@ -93,6 +93,7 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
     let mut previous_workspace: Option<PathBuf> = None;
     let mut queued_user_inputs: VecDeque<String> = VecDeque::new();
     let mut pending_draft: Option<String> = None;
+    let mut goal_entry = false;
     let mut view_session = interactive_config.session_id.clone();
     let (mut view_store, saved_view) = open_interactive_view_state(&interactive_config);
     let _active_view = crate::cli_view_state::ActiveView::bind(view_store.clone());
@@ -231,7 +232,7 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
             crate::conversation_invocation::persist(&interactive_config)?;
         }
         crate::conversation_invocation::refresh_unmodified(&mut interactive_config)?;
-        if offer_user_questions && !interactive_config.json_output {
+        if offer_user_questions && !goal_entry && !interactive_config.json_output {
             offer_user_questions = false;
             if let Some(conversation) = interactive_config.session_id.as_deref() {
                 let include_children = std::mem::take(&mut include_child_questions);
@@ -263,7 +264,9 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
             }
         }
         queued_user_inputs.extend(interaction::take_interactive_queued_inputs());
-        let prompt_footer = if !interactive_config.json_output {
+        let prompt_footer = if goal_entry {
+            Some(ui_text(UiText::GoalInputHint).to_string())
+        } else if !interactive_config.json_output {
             interactive_prompt_footer_line(
                 &interactive_config,
                 interactive_config.session_id.as_deref(),
@@ -272,12 +275,13 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
         } else {
             None
         };
-        let maybe_prompt = if let Some(queued) = queued_user_inputs.pop_front() {
+        let maybe_prompt = if let Some(queued) = (!goal_entry).then(|| queued_user_inputs.pop_front()).flatten() {
             if !interactive_config.json_output {
                 commit_interactive_user_history_line(&queued);
             }
-            Some(queued)
+            Some(InteractivePromptInput::Submitted(queued))
         } else {
+            let mut goal_view_store = None;
             read_interactive_prompt_line(
                 &input_history,
                 &mut history_cursor,
@@ -285,29 +289,37 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
                 prompt_footer.as_deref(),
                 &interactive_config,
                 pending_draft.take().as_deref(),
-                &mut view_store,
+                if goal_entry { &mut goal_view_store } else { &mut view_store },
+                goal_entry,
             )
             .map_err(|err| format!("{} {err}", tr(Message::FailedReadPromptPrefix)))?
         };
-        let Some(prompt) = maybe_prompt else {
-            break;
+        let prompt = match maybe_prompt {
+            None => break,
+            Some(InteractivePromptInput::CancelGoal) => {
+                goal_entry = false;
+                pending_draft = Some(String::new());
+                interaction::clear_interactive_execution_draft();
+                continue;
+            }
+            Some(InteractivePromptInput::Submitted(prompt)) => prompt,
         };
         if prompt.is_empty() {
             continue;
         }
-        if prompt == "/questions" {
+        if !goal_entry && prompt == "/questions" {
             offer_user_questions = true;
             include_child_questions = true;
             continue;
         }
-        if is_exit_command(prompt.as_str()) {
+        if !goal_entry && is_exit_command(prompt.as_str()) {
             if !interactive_config.json_output {
                 clear_interactive_prompt_area(prompt_footer.as_deref())
                     .map_err(|err| format!("{} {err}", tr(Message::FailedFlushPromptPrefix)))?;
             }
             break;
         }
-        if is_resume_command(prompt.as_str()) || is_continue_command(prompt.as_str()) {
+        if !goal_entry && (is_resume_command(prompt.as_str()) || is_continue_command(prompt.as_str())) {
             match select_interactive_session_restore(&interactive_config, is_continue_command(prompt.as_str())) {
                 Ok(Some(next)) => return Ok(InteractiveSessionExit::Switch(Box::new(next))),
                 Ok(None) => {},
@@ -321,7 +333,7 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
             pending_draft = Some(prompt);
             continue;
         }
-        if prompt == "/" {
+        if !goal_entry && prompt == "/" {
             print_interactive_help();
             continue;
         }
@@ -334,7 +346,9 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
                 }
             }
         }
-        match handle_interactive_slash_command(
+        let submitted_command = if goal_entry {
+            begin_interactive_goal_input(&prompt, &interactive_config, &mut goal_target, &mut goal_constraints)
+        } else { handle_interactive_slash_command(
             &prompt,
             &mut interactive_config,
             &mut goal_target,
@@ -342,8 +356,18 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
             &mut previous_workspace,
             &mut last_context_usage,
             turn,
-        )? {
+        ) };
+        let command_result = match submitted_command {
+            Ok(result) => result,
+            Err(error) => {
+                terminal_notice!("{}", format_error(&error));
+                pending_draft = Some(prompt);
+                continue;
+            }
+        };
+        match command_result {
             SlashCommandResult::RunGoalPrompt(run_prompt) => {
+                goal_entry = false;
                 if recovery_blocked {
                     terminal_notice!("恢复尚未完成，未启动新任务。请用 /resume 重试或选择其他会话。");
                     pending_draft = Some(prompt);
@@ -358,7 +382,7 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
                 let run_result = if let Some(goal) = goal_target.clone() {
                     let requirements = goal_constraints
                         .clone()
-                        .unwrap_or_else(|| default_goal_requirements(&interactive_config, &goal));
+                        .unwrap_or_default();
                     let goal_result = run_goal_prompt_cycle(
                         &mut interactive_config,
                         run_prompt.as_str(),
@@ -397,6 +421,13 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
                 turn = turn.saturating_add(1);
                 continue;
             }
+            SlashCommandResult::GoalEntry => {
+                goal_entry = true;
+                pending_draft = Some(String::new());
+                if !interactive_config.json_output { terminal_notice!("  {}", ui_text(UiText::GoalIntro)); }
+                continue;
+            }
+            SlashCommandResult::Draft(draft) => { pending_draft = Some(draft); continue; }
             SlashCommandResult::Handled => continue,
             SlashCommandResult::WorkspaceChanged | SlashCommandResult::SessionReset => {
                 interaction::select_interactive_composer(interactive_composer_key(&interactive_config)?);
@@ -668,6 +699,13 @@ fn print_interactive_welcome(config: &Config) -> Result<(), String> {
     Ok(())
 }
 
+enum InteractivePromptInput { Submitted(String), CancelGoal }
+thread_local! { static GOAL_COMPOSER_ACTIVE: Cell<bool> = const { Cell::new(false) }; }
+struct GoalComposerScope(bool);
+impl Drop for GoalComposerScope {
+    fn drop(&mut self) { GOAL_COMPOSER_ACTIVE.with(|active| active.set(self.0)); }
+}
+
 fn read_interactive_prompt_line(
     input_history: &[String],
     history_cursor: &mut Option<usize>,
@@ -676,7 +714,9 @@ fn read_interactive_prompt_line(
     config: &Config,
     initial_draft: Option<&str>,
     view_store: &mut Option<crate::cli_view_state::ViewStore>,
-) -> io::Result<Option<String>> {
+    goal_entry: bool,
+) -> io::Result<Option<InteractivePromptInput>> {
+    let _purpose = GoalComposerScope(GOAL_COMPOSER_ACTIVE.with(|active| active.replace(goal_entry)));
     if !io::stdin().is_terminal() {
         let mut raw_line = String::new();
         let read = io::stdin().read_line(&mut raw_line)?;
@@ -687,7 +727,7 @@ fn read_interactive_prompt_line(
             &raw_line,
             input_history,
             history_cursor,
-        ));
+        ).map(InteractivePromptInput::Submitted));
     }
     let Ok(_raw_mode) = InteractiveRawModeGuard::new() else {
         let mut raw_line = String::new();
@@ -699,7 +739,7 @@ fn read_interactive_prompt_line(
             &raw_line,
             input_history,
             history_cursor,
-        ));
+        ).map(InteractivePromptInput::Submitted));
     };
     // terminal_ui remains the sole owner of the bottom surface in both idle
     // and running phases. The former hand-off to a second ANSI renderer was
@@ -879,12 +919,12 @@ fn read_interactive_prompt_line(
                 finish_interactive_prompt_line(&line, prompt_footer)?;
                 interaction::clear_interactive_execution_draft();
                 if line.is_empty() {
-                    return Ok(Some(String::new()));
+                    return Ok(Some(InteractivePromptInput::Submitted(String::new())));
                 }
                 let prompt = expand_interactive_pasted_content(&line, &pasted_contents)
                     .trim()
                     .to_string();
-                return Ok(Some(prompt));
+                return Ok(Some(InteractivePromptInput::Submitted(prompt)));
             }
             if key.kind != KeyEventKind::Press {
                 continue;
@@ -895,20 +935,24 @@ fn read_interactive_prompt_line(
             }
             match key.code {
                 KeyCode::Esc => {
+                    if goal_entry {
+                        clear_interactive_composer_frame();
+                        return Ok(Some(InteractivePromptInput::CancelGoal));
+                    }
                     line.clear();
                     cursor = 0;
                     pasted_contents.clear();
                     redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
                 }
                 KeyCode::Tab => {
-                    if let Some(command) = first_matching_slash_completion(&line, config) {
+                    if let Some(command) = (!goal_entry).then(|| first_matching_slash_completion(&line, config)).flatten() {
                         line = command.name.to_string();
                         cursor = line.len();
                         pasted_contents.clear();
                         redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
                     }
                 }
-                KeyCode::Up => {
+                KeyCode::Up if !goal_entry => {
                     if let Some(history) =
                         interactive_history_prompt("\x1b[A", input_history, history_cursor)
                     {
@@ -918,7 +962,7 @@ fn read_interactive_prompt_line(
                         redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
                     }
                 }
-                KeyCode::Down => {
+                KeyCode::Down if !goal_entry => {
                     if let Some(history) =
                         interactive_history_prompt("\x1b[B", input_history, history_cursor)
                     {
@@ -935,6 +979,7 @@ fn read_interactive_prompt_line(
                 }
                 KeyCode::Char('c' | 'C') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     interaction::clear_interactive_execution_draft();
+                    if goal_entry { return Ok(Some(InteractivePromptInput::CancelGoal)); }
                     if !line.is_empty() {
                         line.clear();
                         cursor = 0;
@@ -1313,7 +1358,7 @@ fn draw_interactive_prompt_area(
     footer: Option<&str>,
     config: &Config,
 ) -> io::Result<()> {
-    let completion_line = composer_slash_completion_line(line, config);
+    let completion_line = if GOAL_COMPOSER_ACTIVE.with(Cell::get) { None } else { composer_slash_completion_line(line, config) };
     let dynamic_footer = interactive_footer_with_background_status(footer, config);
     draw_composer_frame(
         line,
@@ -1535,7 +1580,8 @@ fn interactive_input_bar_line_with_color(
         truncate_display_width_tail(text, line_width.saturating_sub(display_width(prefix)));
     let use_placeholder = is_placeholder && visible_line.is_empty();
     let visible = if use_placeholder {
-        tr(Message::InteractiveInputPlaceholder)
+        if GOAL_COMPOSER_ACTIVE.with(Cell::get) { ui_text(UiText::GoalPlaceholder) }
+        else { tr(Message::InteractiveInputPlaceholder) }
     } else {
         visible_line.as_str()
     };
@@ -2836,7 +2882,7 @@ fn interactive_model_completion_parts(rest: &str) -> (&str, &str) {
 
 fn interactive_goal_subcommand_matches(query: &str) -> Vec<SlashCompletion> {
     let query = query.trim().to_ascii_lowercase();
-    ["status", "resume", "off"]
+    ["status", "resume", "pause", "off", "start"]
         .into_iter()
         .filter(|subcommand| query.is_empty() || subcommand.starts_with(&query))
         .map(|subcommand| SlashCompletion {
@@ -2849,6 +2895,8 @@ enum SlashCommandResult {
     Handled,
     PassThrough,
     RunGoalPrompt(String),
+    Draft(String),
+    GoalEntry,
     WorkspaceChanged,
     SessionReset,
 }
@@ -3302,8 +3350,8 @@ fn handle_interactive_slash_command(
             return Ok(SlashCommandResult::Handled);
         }
         "/goal" => {
-            let target_raw = parts.collect::<Vec<_>>().join(" ");
-            let action = target_raw.trim().to_ascii_lowercase();
+            let target_raw = trimmed.split_once(char::is_whitespace).map(|(_, rest)| rest.trim()).unwrap_or("");
+            let action = target_raw.to_ascii_lowercase();
             if target_raw.trim().is_empty() || action == "status" {
                 if let Some(goal) = interactive_goal_snapshot(
                     config,
@@ -3317,11 +3365,10 @@ fn handle_interactive_slash_command(
                         interactive_goal_state_text(&goal.status)
                     );
                 } else {
-                    terminal_notice!(
-                        "  {} {}",
-                        tr(Message::InteractiveGoalStatusPrefix),
-                        tr(Message::InteractiveStatusOff)
-                    );
+                    if target_raw.is_empty() {
+                        return Ok(SlashCommandResult::GoalEntry);
+                    }
+                    terminal_notice!("  {} {}", tr(Message::InteractiveGoalStatusPrefix), tr(Message::InteractiveStatusOff));
                 }
                 terminal_notice!("  {}", tr(Message::InteractiveSlashGoalUsage));
                 return Ok(SlashCommandResult::Handled);
@@ -3331,7 +3378,9 @@ fn handle_interactive_slash_command(
                 let project_root = config.project_root.to_string_lossy().to_string();
                 task_runtime::reconcile_for_resume_snapshot(&config.host_invocation_request()?);
                 let goal = if let Some(snapshot) =
-                    session::load_resume_snapshot_for_project(&project_root, goal_now_epoch_ms())?
+                    if config.session_id.is_none() {
+                        session::load_resume_snapshot_for_project(&project_root, goal_now_epoch_ms())?
+                    } else { None }
                 {
                     config.session_id = Some(snapshot.projection.conversation_id.clone());
                     let goal = interactive_goal_snapshot_from_projection(
@@ -3361,19 +3410,9 @@ fn handle_interactive_slash_command(
                 };
 
                 if goal.status != "running" {
-                    let session_id = config
-                        .session_id
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                        .ok_or_else(|| "Goal runtime requires a durable session id".to_string())?;
-                    submit_goal_command(
-                        config,
-                        format!("goal:{session_id}:resume:{}", uuid::Uuid::new_v4()),
-                        GoalRuntimeCommand::Resume {
-                            now_epoch_ms: goal_now_epoch_ms(),
-                        },
-                    )?;
+                    if !submit_interactive_goal_control(config, nola_application::goal_control_intent::GoalControlAction::Resume)? {
+                        return Ok(SlashCommandResult::Handled);
+                    }
                 }
 
                 *goal_target = Some(goal.target.clone());
@@ -3391,32 +3430,51 @@ fn handle_interactive_slash_command(
                 return Ok(SlashCommandResult::RunGoalPrompt(String::new()));
             }
 
-            let (target, constraints) = parse_goal_target_and_constraints(&target_raw);
-            if target.eq_ignore_ascii_case("off") {
+            if matches!(action.as_str(), "pause" | "off" | "cancel") {
                 if let Some(session_id) = config.session_id.as_deref() {
-                    if session::load_session_goal_projection(session_id)?
-                        .and_then(|projection| projection.active)
-                        .is_some_and(|goal| !goal.status.is_terminal())
-                    {
-                        submit_goal_command(
-                            config,
-                            format!("goal:{session_id}:cancel:{}", uuid::Uuid::new_v4()),
-                            GoalRuntimeCommand::Cancel {
-                                now_epoch_ms: goal_now_epoch_ms(),
-                            },
-                        )?;
+                    if session::load_session_goal_projection(session_id)?.and_then(|p| p.active)
+                        .is_some_and(|goal| !goal.status.is_terminal()) {
+                        if !submit_interactive_goal_control(config, if action == "pause" {
+                            nola_application::goal_control_intent::GoalControlAction::Pause
+                        } else { nola_application::goal_control_intent::GoalControlAction::Cancel })? {
+                            return Ok(SlashCommandResult::Handled);
+                        }
+                    } else {
+                        terminal_notice!("  {}", tr(Message::InteractiveGoalNoResumable));
+                        return Ok(SlashCommandResult::Handled);
                     }
+                } else {
+                    terminal_notice!("  {}", tr(Message::InteractiveGoalNoResumable));
+                    return Ok(SlashCommandResult::Handled);
                 }
+
                 *goal_target = None;
                 *goal_constraints = None;
-                terminal_notice!(
-                    "  {} {}",
-                    tr(Message::InteractiveGoalStatusPrefix),
-                    tr(Message::InteractiveStatusOff)
-                );
+                terminal_notice!("  {} {}", tr(Message::InteractiveGoalStatePrefix),
+                    if action == "pause" { interactive_goal_state_text("paused") }
+                    else { tr(Message::InteractiveStatusOff).to_string() });
                 return Ok(SlashCommandResult::Handled);
             }
 
+            let target_input = if action == "start" { "" } else {
+                target_raw.split_once(char::is_whitespace)
+                    .filter(|(head, _)| head.eq_ignore_ascii_case("start"))
+                    .map(|(_, rest)| rest).unwrap_or(target_raw)
+            };
+            if target_input.trim().is_empty() {
+                return Ok(SlashCommandResult::GoalEntry);
+            }
+            let (target, constraints) = match parse_goal_target_and_constraints(target_input) {
+                Ok(input) => input,
+                Err(error) => {
+                    terminal_notice!("{}", format_error(&error));
+                    return Ok(SlashCommandResult::Draft(prompt.to_string()));
+                }
+            };
+            if interactive_goal_snapshot(config, goal_target.as_deref(), goal_constraints.as_deref())?.is_some() {
+                terminal_notice!("  {}", tr(Message::InteractiveGoalAlreadyActive));
+                return Ok(SlashCommandResult::Draft(prompt.to_string()));
+            }
             *goal_target = Some(target.to_string());
             if let Some(constraints) = constraints {
                 *goal_constraints = Some(constraints);

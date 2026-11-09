@@ -44,6 +44,7 @@ struct MacMessageEditSheet: View {
                 .accessibilityIdentifier("mac-message-edit-error") }
             HStack {
                 Button("Cancel", action: cancel).buttonStyle(MacActionButtonStyle()).keyboardShortcut(.cancelAction).disabled(submitting)
+                    .accessibilityIdentifier("mac-message-edit-cancel")
                 Spacer()
                 if submitting { ProgressView().controlSize(.small) }
                 Button("Save and resend") {

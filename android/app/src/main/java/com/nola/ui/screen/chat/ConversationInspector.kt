@@ -54,6 +54,7 @@ internal fun ConversationInspectorButtons(selected: ConversationInspector?, sele
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun ConversationProgressPanel(state: ChatUiState, load: suspend (String) -> ConversationProgress,
     pendingControl: suspend (String) -> Boolean,
@@ -67,11 +68,14 @@ internal fun ConversationProgressPanel(state: ChatUiState, load: suspend (String
     var objective by rememberSaveable(owner) { mutableStateOf("") }
     var pending by remember(owner, host) { mutableStateOf(false) }
     var submitting by remember(owner, host) { mutableStateOf(false) }
+    var cancelRequest by remember(owner, host) { mutableStateOf<JsonObject?>(null) }
+    val operationFailedMessage = stringResource(R.string.goal_operation_failed)
     var controlError by remember(owner, host) { mutableStateOf<String?>(null) }
-    fun submit(action: String?) {
+    fun submit(action: String?, prepared: JsonObject? = null) {
+        if (submitting || (action == "start" && objective.isBlank())) return
         val capturedOwner = owner ?: return
         val observed = value?.goalControl
-        val control = action?.let {
+        val control = prepared ?: action?.let {
             com.nola.data.local.remoteGoalControlInput(java.util.UUID.randomUUID().toString(), it,
                 observed?.goalId, observed?.controlToken, if (it == "start") objective else "")
         }
@@ -79,8 +83,13 @@ internal fun ConversationProgressPanel(state: ChatUiState, load: suspend (String
         scope.launch {
             try { value = submitControl(capturedOwner, control) }
             catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-            catch (error: Exception) { controlError = error.message }
-            finally { pending = pendingControl(capturedOwner); submitting = false }
+            catch (error: Exception) { controlError = error.message?.takeIf { it.isNotBlank() } ?: operationFailedMessage }
+            finally {
+                try { pending = pendingControl(capturedOwner) }
+                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (_: Exception) { pending = true; controlError = operationFailedMessage }
+                finally { submitting = false }
+            }
         }
     }
     var refresh by remember(owner, host) { mutableIntStateOf(0) }
@@ -94,6 +103,13 @@ internal fun ConversationProgressPanel(state: ChatUiState, load: suspend (String
             catch (_: Exception) { failed = true }
         }
         loading = false
+    }
+    cancelRequest?.let { observed ->
+        AlertDialog(onDismissRequest = { cancelRequest = null },
+            title = { Text(stringResource(R.string.goal_cancel)) },
+            text = { Text(stringResource(R.string.goal_cancel_explanation)) },
+            confirmButton = { TextButton(onClick = { cancelRequest = null; submit("cancel", observed) }) { Text(stringResource(R.string.goal_cancel)) } },
+            dismissButton = { TextButton(onClick = { cancelRequest = null }) { Text(stringResource(R.string.common_cancel)) } })
     }
     Column(Modifier.fillMaxSize()) {
         NolaTopAppBar(title = stringResource(R.string.inspector_progress), onBack = onClose) {
@@ -114,33 +130,54 @@ internal fun ConversationProgressPanel(state: ChatUiState, load: suspend (String
                             Text(stringResource(R.string.goal_operation_retry))
                         }
                     } else if (progress.status == null || progress.status in setOf("completed", "cancelled")) {
+                        Text(stringResource(R.string.goal_guidance), color = MaterialTheme.colorScheme.onSurfaceVariant)
                         OutlinedTextField(value = objective, onValueChange = { objective = it },
-                            label = { Text(stringResource(R.string.goal_objective)) }, modifier = Modifier.fillMaxWidth())
+                            label = { Text(stringResource(R.string.goal_objective)) },
+                            placeholder = { Text(stringResource(R.string.goal_example)) }, minLines = 3, maxLines = 8,
+                            enabled = !submitting, modifier = Modifier.fillMaxWidth())
                         Button(onClick = { submit("start") }, enabled = !submitting && objective.isNotBlank()) {
                             Text(stringResource(R.string.goal_start))
                         }
                     } else {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             if (progress.goalControl?.canPause == true) TextButton(onClick = { submit("pause") }, enabled = !submitting) { Text(stringResource(R.string.goal_pause)) }
                             if (progress.goalControl?.canResume == true) TextButton(onClick = { submit("resume") }, enabled = !submitting) { Text(stringResource(R.string.goal_resume)) }
-                            if (progress.goalControl?.canCancel == true) TextButton(onClick = { submit("cancel") }, enabled = !submitting) { Text(stringResource(R.string.goal_cancel)) }
+                            if (progress.goalControl?.canCancel == true) TextButton(onClick = {
+                                progress.goalControl?.let { observed ->
+                                    cancelRequest = com.nola.data.local.remoteGoalControlInput(java.util.UUID.randomUUID().toString(), "cancel",
+                                        observed.goalId, observed.controlToken, "")
+                                }
+                            }, enabled = !submitting) { Text(stringResource(R.string.goal_cancel)) }
                         }
                     }
                 }
                 progress.objective?.let { Text(it, style = MaterialTheme.typography.titleMedium) }
-                progress.status?.let { Text(it, style = MaterialTheme.typography.labelMedium) }
+                progress.status?.let { Text(progressStatusText(it), style = MaterialTheme.typography.labelMedium) }
                 if (progress.requirements.isEmpty() && progress.todos.isEmpty()) Text(stringResource(R.string.inspector_no_plan), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 ProgressItems(stringResource(R.string.inspector_requirements), progress.requirements)
                 ProgressItems(stringResource(R.string.inspector_plan), progress.todos)
             }
-            if (owner == null) Text(stringResource(R.string.inspector_no_plan))
+            if (owner == null) Text(stringResource(R.string.inspector_conversation_needed))
             state.coreTaskProjection.orderedTasks.filter { owner != null && it.ownerSessionId == state.coreTaskProjection.sessionId }.forEach { task ->
                 HorizontalDivider()
                 Text(task.currentStep ?: task.id, style = MaterialTheme.typography.bodyMedium)
-                Text(task.state.wireValue, style = MaterialTheme.typography.labelMedium)
+                Text(progressStatusText(task.state.wireValue), style = MaterialTheme.typography.labelMedium)
             }
         }
     }
+}
+
+@Composable
+private fun progressStatusText(status: String): String = when (status) {
+    "running" -> stringResource(R.string.canonical_running)
+    "completed", "succeeded" -> stringResource(R.string.canonical_completed)
+    "cancelled" -> stringResource(R.string.canonical_cancelled)
+    "failed" -> stringResource(R.string.canonical_failed)
+    "paused", "suspended" -> stringResource(R.string.scheduled_paused)
+    "pending", "queued", "planned" -> stringResource(R.string.canonical_pending)
+    "needs_user", "waiting_input" -> stringResource(R.string.goal_needs_user)
+    "waiting_permission" -> stringResource(R.string.canonical_waiting_permission)
+    else -> stringResource(R.string.chat_cache_unknown) + " · " + status
 }
 
 @Composable
@@ -149,7 +186,7 @@ internal fun ProgressItems(title: String, entries: List<ConversationProgressItem
     Text(title, style = MaterialTheme.typography.titleSmall)
     Text(stringResource(R.string.inspector_completed_count, entries.count { it.status == "completed" }, entries.size))
     entries.forEach { item ->
-        Column { Text(item.text, style = MaterialTheme.typography.bodyLarge); Text(item.status, style = MaterialTheme.typography.labelMedium) }
+        Column { Text(item.text, style = MaterialTheme.typography.bodyLarge); Text(progressStatusText(item.status), style = MaterialTheme.typography.labelMedium) }
     }
 }
 

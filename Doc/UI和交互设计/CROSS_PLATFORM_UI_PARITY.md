@@ -70,6 +70,14 @@ the affected platform. Request semantics require captured HTTP assertions, not
 only view snapshots. Web/Mac parity requires matched fixtures and actions.
 Window-level conversation acceptance follows VISUAL_ACCEPTANCE_CONTRACT.md.
 
+## 当前逐页验收补充（2026-11-09）
+
+设置分类入口使用主题语义色提供悬停、按下和足够内边距；嵌入式页面沿用宿主导航标题及转场。数据刷新不插值整页文本换行。共享组件的静态文案和动态状态都必须进入各客户端的本地化覆盖检查。
+
+资料页的返回操作保留实际来源：从设置进入返回设置，从信息入口进入返回信息；显示返回标签和系统返回使用相同路径，不清除来源页面来硬编码目标。清单读取或保存回执不完整时保留编辑状态并显示可恢复错误；未确认保存不自动重复提交。
+
+本轮覆盖、失败记录和未验证的平台边界见[逐页验收记录](../当前任务/CROSS_PLATFORM_PAGE_MATRIX_20261109.md)。该记录不把所有验收清单勾选为完成。
+
 ## 历史证据
 
 此前日期化进度、旧模板运行时差距和验证流水已移入[历史证据](../历史任务/实施与审计/CROSS_PLATFORM_UI_PARITY_EVIDENCE_20260922.md)。不再把其中“下一步”当作现行待办。

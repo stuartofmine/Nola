@@ -95,6 +95,22 @@ final class MacEditedResendTests: XCTestCase {
         XCTAssertThrowsError(try MacEditedResendModelResolver.uniqueHTTPMatch(route, credentials: []))
     }
 
+    func testChatGPTResendRequiresTheExactReadyAccountWithoutAnAPIKey() throws {
+        let id = UUID().uuidString.lowercased()
+        let raw: MacCanonicalJSONValue = .object(["account_id": .string(id), "account_revision": .number(3),
+            "credential_ref": .string("siwc:" + id), "client_id": .string("fixture-client"), "subject": .string("fixture-subject")])
+        func account(revision: Int64 = 3, state: String = "ready", source: String = "nola_chatgpt", reference: String? = nil) -> MacModelAccountSnapshot {
+            .init(revision: revision, account: .init(id: id, display_name: "Fixture",
+                source: source, credential_ref: reference ?? "siwc:" + id, state: state))
+        }
+        XCTAssertTrue(MacEditedResendModelResolver.matchesSiwcAccount(raw, account: account()))
+        XCTAssertFalse(MacEditedResendModelResolver.matchesSiwcAccount(raw, account: account(revision: 4)))
+        XCTAssertFalse(MacEditedResendModelResolver.matchesSiwcAccount(raw, account: account(state: "needs_reauthorization")))
+        XCTAssertFalse(MacEditedResendModelResolver.matchesSiwcAccount(raw, account: account(source: "api")))
+        XCTAssertFalse(MacEditedResendModelResolver.matchesSiwcAccount(raw, account: account(reference: "siwc:foreign")))
+        XCTAssertFalse(MacEditedResendModelResolver.matchesSiwcAccount(.null, account: account()))
+    }
+
     func testEditedNativePayloadUsesNewOwnerAndOnlyFrozenModelFields() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -114,7 +130,7 @@ final class MacEditedResendTests: XCTestCase {
             "temperature": .number(0.2), "top_p": .number(0.8), "max_output_tokens": .number(2000),
             "thinking_enabled": .bool(false), "prompt_cache": .bool(false), "prompt_cache_retention": .null,
             "prompt_cache_key_sha256": .null, "prompt_cache_key_prefix_sha256": .null
-        ]), output_admission: .object(["version": .number(6), "preference": .string("default"), "configured_context_window": .number(32000),
+        ]), output_admission: .object(["version": .number(1), "preference": .string("default"), "configured_context_window": .number(32000),
             "routes": .array([.object(["route": route, "max_input_tokens": .null, "max_output_tokens": .number(2000), "max_total_tokens": .null])]),
             "resolved": .object(["tokens": .number(2000), "source": .string("known_capability_default")])]), model_capability: .object([
             "profile_id": .string("fixture-model"), "revision": .number(1), "instruction_profile": .string("generic"),
@@ -142,5 +158,17 @@ final class MacEditedResendTests: XCTestCase {
                        environment.sessionWorkspaceURL(for: target).standardizedFileURL.resolvingSymlinksInPath().path)
         XCTAssertNil(payload["resume"])
         XCTAssertNil(payload["fresh_resend_policy"], "Only the trusted Host may attest its actual Core configuration")
+        for field in ["max_output_tokens", "omitted"] {
+            var frozenRoute = try XCTUnwrap(request.editedResendModel)
+            guard case .object(var fields) = frozenRoute.primary else { return XCTFail() }
+            fields["output_token_field"] = .string(field)
+            frozenRoute = .init(version: frozenRoute.version, primary: .object(fields), fallbacks: frozenRoute.fallbacks,
+                generation: frozenRoute.generation, output_admission: frozenRoute.output_admission, model_capability: frozenRoute.model_capability)
+            request.editedResendModel = frozenRoute
+            let adapted = try await MacAgentHostRuntime().initialRequestData(for: request)
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: adapted) as? [String: Any])
+            XCTAssertEqual(object["chat_output_token_field"] as? String, "auto")
+        }
+
     }
 }

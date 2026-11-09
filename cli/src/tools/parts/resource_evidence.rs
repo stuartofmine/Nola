@@ -129,6 +129,69 @@ fn validation_snapshot(
     Ok(snapshot)
 }
 
+/// A Host-derived identity for one unchanged regression harness. The model
+/// declares test files, but cannot supply the command or content hashes.
+/// All files must already belong to the normal concrete validation scope.
+fn regression_check_predicate(
+    args: &Map<String, Value>, ctx: &ToolContext, snapshot: &BTreeMap<String, String>,
+) -> Result<Option<String>, String> {
+    let Some(files) = args.get("regression_test_files") else { return Ok(None); };
+    let files = files.as_array().filter(|files| !files.is_empty() && files.len() <= 100)
+        .ok_or("regression_test_files requires 1..100 test files")?;
+    let cwd = args.get("cwd").and_then(Value::as_str).map(PathBuf::from)
+        .or_else(|| ctx.allowed_dirs.first().cloned()).ok_or("Missing command working directory")?;
+    let cwd = fs::canonicalize(cwd).map_err(|err| err.to_string())?;
+    let mut tests = BTreeMap::new();
+    for file in files {
+        let path = file.as_str().filter(|value| !value.trim().is_empty()).ok_or("Invalid regression test file")?;
+        let path = if Path::new(path).is_absolute() { PathBuf::from(path) } else { cwd.join(path) };
+        let path = resolve_allowed_entry(&path.to_string_lossy(), &ctx.allowed_dirs).map_err(|err| err.text)?;
+        let uri = url::Url::from_file_path(&path).map_err(|_| "Non-absolute regression file")?.to_string();
+        let version = snapshot.get(&uri).filter(|version| version.starts_with("sha256:"))
+            .ok_or("Regression test files must be existing regular files included in validation_targets; declare all assertion code, fixtures and local test dependencies")?;
+        tests.insert(uri, version);
+    }
+    let command = args.get("command").and_then(Value::as_str).ok_or("Missing regression command")?;
+    use sha2::{Digest, Sha256};
+    let identity = json!({"command":command,"cwd":cwd,"tests":tests,
+        "targets":snapshot.keys().collect::<Vec<_>>()});
+    Ok(Some(format!("regression_process_exit:sha256:{:x}", Sha256::digest(identity.to_string().as_bytes()))))
+}
+
+/// Keep real failures as failed checks instead of throwing away the original
+/// counterexample. No timeout, signal, deferred job or permission denial can
+/// be recast as a settled regression result.
+fn attach_regression_evidence(
+    outcome: ToolOutcome, before: BTreeMap<String, String>,
+    after: Result<BTreeMap<String, String>, String>, predicate: String,
+) -> ToolOutcome {
+    use nola_host_protocol::tool_result::*;
+    let exit = outcome.data.as_ref().filter(|data| data["type"] == "shell_execution"
+        && matches!(data["state"].as_str(), Some("completed" | "failed"))
+        && data["signal"].is_null()).and_then(|data| data["exit_code"].as_i64());
+    let Some(exit) = exit else { return outcome; };
+    if outcome.execution.as_ref().is_some_and(|receipt| receipt.state == ExecutionState::Deferred) { return outcome; }
+    let after = match after {
+        Ok(after) if before == after => after,
+        Ok(_) => return validation_evidence_unavailable(outcome, "scope_changed_during_validation",
+            "Regression target or test files changed during execution; no stable check was issued.".into()),
+        Err(message) => return validation_evidence_unavailable(outcome, "snapshot_unavailable", message),
+    };
+    if exit == 0 && outcome.error { return outcome; }
+    let passed = exit == 0;
+    let mut outcome = if passed { attach_validation_evidence(outcome, before, Ok(after.clone())) } else { outcome };
+    let receipt = outcome.execution.get_or_insert_with(ExecutionReceipt::default);
+    receipt.state = ExecutionState::Completed;
+    receipt.checks.extend(after.into_iter().map(|(resource_uri, version)| PostconditionCheck {
+        kind: ExecutionCheckKind::ProcessExit, resource_uri, version, predicate: predicate.clone(), passed,
+    }));
+    if let Some(data) = outcome.data.as_mut().filter(|value| value.is_object()) {
+        data["regression_check"] = json!({"predicate":predicate,"passed":passed,
+            "authority":"pinned_process_exit_not_business_acceptance"});
+    }
+    outcome
+}
+
 fn validation_evidence_unavailable(mut outcome: ToolOutcome, code: &str, message: String) -> ToolOutcome {
     outcome.error = true;
     outcome.text.push_str(&format!("\n{message}"));
@@ -192,6 +255,88 @@ fn attach_validation_evidence(
 #[cfg(test)]
 mod resource_evidence_tests {
     use super::*;
+
+    #[test]
+    fn real_regression_failure_and_repair_pin_assertions_command_and_final_resource() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("subject.py"), "print(1)\n").unwrap();
+        let test = "import subprocess, sys\nassert subprocess.check_output([sys.executable, 'subject.py'], text=True).strip() == '2'\n";
+        fs::write(root.path().join("regression.py"), test).unwrap();
+        let ctx = ToolContext {
+            memory_binding:nola_domain::memory_owner::MemoryExecutionBinding::local_profile(),
+            language_services:Default::default(), skills:Default::default(), allowed_dirs:vec![root.path().into()],
+            policy:crate::tools::ToolExecutionPolicy::new(vec![], true, "allow".into(), vec![]),
+            permission_scope:Default::default(), cancellation:Default::default(), plan_state:Default::default(),
+            output_store:ToolOutputStore::for_test(), browser:BrowserRuntime::new(root.path().join("browser")),
+        };
+        let args = json!({"command":"python3 regression.py","cwd":root.path(),"operation_kind":"validate",
+            "validation_targets":["subject.py","regression.py"],"regression_test_files":["regression.py"]});
+        let failure = run_bash_with_permission(args.as_object().unwrap(), &ctx, true);
+        assert!(failure.error, "{}", failure.text);
+        assert_ne!(failure.data.as_ref().unwrap()["exit_code"], 0);
+        let failed = failure.execution.unwrap();
+        assert_eq!(failed.state, nola_host_protocol::tool_result::ExecutionState::Completed);
+        assert_eq!(failed.checks.len(), 2);
+        assert!(failed.checks.iter().all(|check| !check.passed));
+        let predicate = failed.checks[0].predicate.clone();
+        assert!(predicate.starts_with("regression_process_exit:sha256:"));
+        fs::write(root.path().join("subject.py"), "print(2)\n").unwrap();
+        let passed = run_bash_with_permission(args.as_object().unwrap(), &ctx, true);
+        assert!(!passed.error, "{}", passed.text);
+        let checks = passed.execution.unwrap().checks;
+        let repaired: Vec<_> = checks.iter().filter(|check| check.predicate == predicate).collect();
+        assert_eq!(repaired.len(), 2);
+        assert!(repaired.iter().all(|check| check.passed && check.kind == nola_host_protocol::tool_result::ExecutionCheckKind::ProcessExit));
+        let before = failed.checks.iter().find(|check| check.resource_uri.ends_with("/subject.py")).unwrap();
+        let after = repaired.iter().find(|check| check.resource_uri == before.resource_uri).unwrap();
+        assert_ne!(before.version, after.version);
+        let original = regression_check_predicate(args.as_object().unwrap(), &ctx,
+            &validation_snapshot(args.as_object().unwrap(), &ctx).unwrap()).unwrap();
+        fs::write(root.path().join("regression.py"), "assert True\n").unwrap();
+        let weakened = regression_check_predicate(args.as_object().unwrap(), &ctx,
+            &validation_snapshot(args.as_object().unwrap(), &ctx).unwrap()).unwrap();
+        assert_ne!(weakened, original, "changing expectations cannot close the old review");
+        fs::write(root.path().join("regression.py"), test).unwrap();
+        for field in ["command", "validation_targets", "regression_test_files"] {
+            let mut changed = args.clone();
+            changed[field] = match field {
+                "command" => json!("python3 -I regression.py"),
+                "validation_targets" => json!(["regression.py"]),
+                _ => json!(["subject.py"]),
+            };
+            let predicate = regression_check_predicate(changed.as_object().unwrap(), &ctx,
+                &validation_snapshot(changed.as_object().unwrap(), &ctx).unwrap()).unwrap();
+            assert_ne!(predicate, original, "{field} must be bound");
+        }
+        let mut invalid = args.clone();
+        invalid["validation_targets"] = json!(["subject.py"]);
+        let denied = run_bash_with_permission(invalid.as_object().unwrap(), &ctx, true);
+        assert_eq!(denied.data.as_ref().unwrap()["tool_execution_skipped"], true);
+        for mode in ["background", "foreground"] {
+            invalid = args.clone(); invalid["execution_mode"] = json!(mode);
+            if mode == "foreground" { invalid["operation_kind"] = json!("inspect"); }
+            let denied = run_bash_with_permission(invalid.as_object().unwrap(), &ctx, true);
+            assert_eq!(denied.data.as_ref().unwrap()["tool_execution_skipped"], true);
+        }
+    }
+
+    #[test]
+    fn regression_denials_signals_deferred_and_unstable_snapshots_never_become_counterexamples() {
+        let before: BTreeMap<String,String> = [("file:///subject".into(), "broken".into())].into();
+        let predicate = format!("regression_process_exit:sha256:{}", "a".repeat(64));
+        for data in [json!({"error":"permission_denied"}),
+            json!({"type":"shell_execution","state":"deferred","exit_code":1}),
+            json!({"type":"shell_execution","state":"failed","exit_code":null,"signal":15}),
+            json!({"type":"shell_execution","state":"failed","exit_code":0})] {
+            let mut outcome = error_data(data); outcome.execution = None;
+            let result = attach_regression_evidence(outcome, before.clone(), Ok(before.clone()), predicate.clone());
+            assert!(result.execution.is_none(), "{}", result.text);
+        }
+        let outcome = error_data(json!({"type":"shell_execution","state":"failed","exit_code":1,"signal":null}));
+        let result = attach_regression_evidence(outcome, before, Ok([("file:///subject".into(), "changed".into())].into()), predicate);
+        assert!(result.execution.is_none_or(|receipt| receipt.checks.is_empty()));
+        assert_eq!(result.data.unwrap()["verification_error"], "scope_changed_during_validation");
+    }
 
     #[test]
     fn content_versions_and_tombstones_are_host_observations() {

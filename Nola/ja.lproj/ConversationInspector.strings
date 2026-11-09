@@ -24,3 +24,17 @@
 "inspector.state.unknown" = "不明な状態";
 "inspector.state.suspended" = "中断中";
 "inspector.state.retry_waiting" = "再試行待ち";
+
+"goal.guidance" = "達成したい結果を入力してください。Nola は作業を進め、確認や権限が必要な場合に一時停止します。";
+
+"goal.example" = "例：プロジェクトの資料を整理し、出典付きの要約を作成。";
+
+"goal.optional_constraints" = "制約（任意）";
+
+"goal.cancel_title" = "この目標を終了しますか？";
+
+"goal.cancel_explanation" = "この目標の自動実行を停止します。会話と完了した結果は保持されます。";
+
+"goal.model_note" = "この会話で選択したモデルと現在のツール権限を使用します。";
+
+"inspector.conversation_needed" = "会話を開始するか開くと、進捗の確認や目標の設定ができます。";

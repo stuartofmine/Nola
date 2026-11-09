@@ -3119,3 +3119,13 @@
 "softwareUpdate.status.available" = "Hay una actualización disponible";
 "softwareUpdate.installPermission" = "Si se solicita, permite instalar aplicaciones a Nola, vuelve y abre el instalador.";
 "softwareUpdate.status.incompatible_data" = "El formato de datos es distinto. Se bloqueó la actualización; se conservan los datos.";
+
+"model.delete.failed" = "No se pudo eliminar el modelo. Inténtalo de nuevo.";
+
+"model.action.pause" = "Pausar descarga";
+
+"model.action.cancel" = "Cancelar descarga";
+
+"model.action.resume" = "Reanudar descarga";
+
+"chat.context.cannot_fit.recovery" = "La ventana de contexto de este modelo es demasiado pequeña. Elige un modelo con una ventana mayor y vuelve a intentarlo. La conversación se conserva.";

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Lossless bounded rolling maintenance plan shared by Host adapters.
+//! Bounded semantic-summary maintenance plan shared by Host adapters.
 use serde_json::{json, Value};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -55,6 +55,16 @@ impl CompactionSummaryPlan {
         let mut chunk = String::new();
         for message in messages {
             let mut projected = message.clone();
+            // Provider continuation is an opaque transport envelope, not text
+            // the summarizer can interpret. Project only the public reasoning
+            // fields; preserve the canonical item and its original fingerprint.
+            // This is independent of continuation survival policy: Preserve
+            // still applies to normal provider replay, not textual summaries.
+            if projected["type"] == "reasoning" {
+                if let Some(fields) = projected.as_object_mut() {
+                    fields.remove("provider_continuation");
+                }
+            }
             // Only shorten tool evidence, never user instructions or earlier checkpoints.
             // Canonical bodies remain untouched and accessible by their original IDs.
             let tool = projected["type"] == "tool_result" || projected["role"] == "tool";
@@ -237,6 +247,52 @@ fn compaction_summary_instructions(instructions: &str, _output: u64, _recovery: 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn opaque_continuations_never_enter_semantic_summary_or_cold_plan() {
+        for policy in ["clear_on_compaction", "preserve"] {
+            let opaque = "OPAQUE-CONTINUATION-CANARY".repeat(10_000);
+            let source = vec![json!({"type":"reasoning","id":"reasoning-7",
+                "content":"public reasoning text","summary":"public conclusion",
+                "provider_continuation":{"provider_namespace":"fixture","model_id":"fixture",
+                    "response_id":"response-7","integrity_kind":"encrypted","compaction_policy":policy,
+                    "state":{"response_items":[{"encrypted_content":opaque}],"route_identity":"private-route"}}})];
+            let canonical = serde_json::to_string(&source).unwrap();
+            let mut plan = CompactionSummaryPlan::new(&source, 16_000, 2000, "retain").unwrap();
+            assert_eq!(plan.remaining_segments(), 1, "opaque envelope must not create summary requests");
+            let checkpoint = serde_json::to_string(&plan).unwrap();
+            assert!(!checkpoint.contains("OPAQUE-CONTINUATION-CANARY"));
+            assert!(!checkpoint.contains("private-route"));
+            plan = serde_json::from_str(&checkpoint).unwrap();
+            let wire = plan.messages("retain", 2000).unwrap();
+            let archive: Value = serde_json::from_str(wire[1]["content"].as_str().unwrap()).unwrap();
+            let entry: Value = serde_json::from_str(archive["next_archive_segment"].as_str().unwrap().trim()).unwrap();
+            assert_eq!(entry, json!({"type":"reasoning","id":"reasoning-7",
+                "content":"public reasoning text","summary":"public conclusion"}));
+            assert_eq!(serde_json::to_string(&source).unwrap(), canonical, "normal replay and source fingerprints remain intact");
+        }
+    }
+
+    #[test]
+    fn semantic_projection_preserves_empty_reasoning_identity_and_arbitrary_payload_keys() {
+        let source = vec![
+            json!({"type":"reasoning","id":"opaque-only","summary":"","content":"",
+                "provider_continuation":{"integrity_kind":"encrypted","state":"opaque"}}),
+            json!({"type":"message","role":"user","content":"exact user constraint",
+                "provider_continuation":"literal user data"}),
+            json!({"type":"tool_result","id":"tool-3","output":{
+                "type":"reasoning","provider_continuation":"literal tool data","content":"diagnostic"}}),
+        ];
+        let mut plan = CompactionSummaryPlan::new(&source, 16_000, 2000, "retain").unwrap();
+        let wire = plan.messages("retain", 2000).unwrap();
+        let archive: Value = serde_json::from_str(wire[1]["content"].as_str().unwrap()).unwrap();
+        let entries: Vec<Value> = archive["next_archive_segment"].as_str().unwrap().lines()
+            .map(|line| serde_json::from_str(line).unwrap()).collect();
+        assert_eq!(entries[0], json!({"type":"reasoning","id":"opaque-only","summary":"","content":""}));
+        assert_eq!(entries[1..], source[1..], "only the typed top-level reasoning envelope is projected");
+        let only_opaque = CompactionSummaryPlan::new(&source[..1], 16_000, 2000, "retain").unwrap();
+        assert_eq!(only_opaque.remaining_segments(), 1);
+    }
+
     #[test]
     fn growing_checkpoint_repacks_source_without_consuming_provider_retry_budget() {
         let source = vec![json!({"role":"user", "content":"中文\\\"constraint\n".repeat(3000)})];

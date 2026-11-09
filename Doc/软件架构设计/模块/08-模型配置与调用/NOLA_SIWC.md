@@ -2,7 +2,7 @@
 
 # Nola 独立 ChatGPT 计划授权与推理
 
-2026-10-19；本文件为实施设计，不表示真实授权/推理已验收。
+2026-10-19 初始实施设计；2026-11-09 补充了首请求真实重放验证，未扩大为完整授权生命周期或全部模型能力验收。
 
 ## 官方资格与独立身份
 
@@ -87,4 +87,14 @@ Swift只识别siwc_responses并提交Core profile ID/精确revision，不走Keyc
 
 `FrozenSiwcTools`只做无副作用协议映射：从已准入Chat function schemas生成固定`nola` namespace，保留名称/description/parameters/strict，未指定strict时显式false避免服务隐式收紧schema；拒绝重复名字、非法名字及defer_loading。冻结body可重建同一精确映射。响应added和completed均以独立(namespace,name)二元组查询本次冻结catalog；未知、缺namespace、前后身份改变都拒绝，不取点号后缀、不按提示词路由。映射返回Core原canonical name，执行/权限仍由既有Core负责。
 
+Core 投影的 function envelope 可以包含布尔型 `x-nola-read-only`。这是 Host 内部目录标记：SIWC 接受该已知、正确类型的标记，并在构造 provider namespace 时仅投影 function 的公开字段；不修改原目录、参数 schema 或 Core 执行权限。未知顶层扩展、错误类型、重复/非法名称及 hosted/custom 工具仍拒绝；provider wire 不接受这个内部标记。不得为了“你好”绕过工具目录或强制关闭工具。
+
+2026-11-09 的 Mac 首请求曾因该标记被误拒，在 HTTP 发出前退化为 `provider_failed`。现将确定的本地工具 schema 预检失败投影为脱敏的 `invalid_tool_schema` 和可操作提示；不把原始错误、账户材料或 provider body 放入公开失败记录。已使用保存的首请求消息、21 个工具声明和所选账户/模型实际重放，收到完整文本回复且无工具调用；真实目录、多语输入和严格拒绝边界另有确定性回归。详情见 [Mac SIWC 首请求修复](../../../当前任务/MAC_SIWC_FIRST_REQUEST_FIX_20261109.md)。该验证不等于完整工具执行链、全部模型或平台的验收。
+
 历史中真实provider function_call保留独立namespace/name/arguments/call_id及原始其他字段，不删namespace、不把已不在当前catalog的历史记录当新工具授权。由Core正常tool_calls投影重建的项仅通过显式encode接口补确定的`nola` namespace；function_call_output以原call_id关联，原有namespace/name如存在必须合法一致。本轮只支持function，不把custom/hosted项偷偷改写。fixture覆盖schema、冻结body、未知namespace与同名混淆、多语工具description/参数原样、历史已撤销工具、added/terminal调用解析。完整Responses工具往返、Core权限与usage回归未完成前catalog仍不声明已验证工具能力。
+
+## Mac 引导状态机（2026-11-10）
+
+用户点击“使用 ChatGPT 登录”即明确启动这一流程；Swift 在首次收到合法授权 URL 时自动交系统浏览器，轮询不重复开页，延迟出现的 URL 仍会打开。`authorized` 后自动发送一次 `finish`，不再要求重复保存确认。不确定提交结果只引导检查账户，不盲目重放。
+
+`committed` 后以“选择模型”为下一步；只有再次明确点击才先取新账户/session revision、再读取模型目录，成功返回 connection ID 并打开该连接的编辑页。目录失败保留已保存账户；过期授权引导重新登录。保存、目录读取、启用选择、推理验证是独立结果。关闭和取消推进本地 generation，使旧异步回执不能触发保存或导航；取消未确认时保留账户检查入口。协议仍为 1。界面测试使用隔离传输，不代替真实 OAuth 验收。

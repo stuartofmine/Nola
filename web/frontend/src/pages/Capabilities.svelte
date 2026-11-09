@@ -11,7 +11,7 @@
     const pageLocation = workspacePageLocation();
     import { onMount, tick } from 'svelte';
     import { api as unscopedApi, ApiError, errorMessage } from '../lib/api';
-    import { builtin, capabilityName, capabilityDraft, capabilityMutation, updatedCapability, capabilityCatalog, capabilitySections, restoredSkill, stdioMcp, CapabilityValidationError } from '../lib/capabilities';
+    import { builtin, capabilitySnapshot, capabilityName, capabilityDraft, capabilityMutation, updatedCapability, capabilityCatalog, capabilitySections, restoredSkill, stdioMcp, CapabilityValidationError } from '../lib/capabilities';
     import { locale, t } from '../lib/i18n';
     import type { Capability, CapabilityMode, CapabilitySettings } from '../lib/capabilities';
     import ConfirmationDialog from '../components/ConfirmationDialog.svelte';
@@ -51,7 +51,7 @@
         read?.abort(); const controller = new AbortController(); read = controller;
         busy = true;
         try {
-            const result = await api<CapabilitySettings & {execution_backends: typeof executionBackends}>('/api/agent/settings', { signal: controller.signal });
+            const result = capabilitySnapshot(await api<unknown>('/api/agent/settings', { signal: controller.signal }));
             if (!controller.signal.aborted) {
                 const restoreResultFocus = !!retryButton && document.activeElement === retryButton;
                 executionBackends = result.execution_backends;
@@ -106,11 +106,13 @@
         if (busy || !settings) return;
         busy = true; error = ''; notice = '';
         try {
-            const result = await api<CapabilitySettings>('/api/agent/settings', { method: 'POST', body: JSON.stringify(capabilityMutation(settings, mode, selected, replacement)) });
-            settings = { skills: result.skills ?? settings.skills, mcp_servers: result.mcp_servers ?? settings.mcp_servers, skill_settings_backup_key: result.skill_settings_backup_key ?? settings.skill_settings_backup_key };
+            const result = capabilitySnapshot(await api<unknown>('/api/agent/settings', { method: 'POST', body: JSON.stringify(capabilityMutation(settings, mode, selected, replacement)) }));
+            settings = result;
+            executionBackends = result.execution_backends;
             dialog.close(); original = undefined; notice = replacement ? 'capability.saved' : 'capability.deleted';
         } catch (cause) {
-            showError(cause);
+            showError(cause instanceof CapabilityValidationError && cause.key === 'capability.loadFailed'
+                ? new CapabilityValidationError('capability.requestFailed') : cause);
         } finally { busy = false; }
     }
     async function save(event: SubmitEvent) {

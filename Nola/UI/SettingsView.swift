@@ -72,7 +72,9 @@ struct SettingsView: View {
 
     private var content: some View {
         settingsPage(title: L10n.settings, showsHeading: false) {
-            Text(L10n.settings).font(.headline).frame(maxWidth: .infinity).frame(minHeight: 44)
+            if ownsNavigationStack {
+                Text(L10n.settings).font(.headline).frame(maxWidth: .infinity).frame(minHeight: 44)
+            }
             ForEach(categoryGroups.indices, id: \.self) { group in
                 VStack(spacing: 0) {
                     ForEach(categoryGroups[group], id: \.rawValue) { category in

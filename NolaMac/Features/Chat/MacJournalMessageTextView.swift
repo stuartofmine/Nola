@@ -511,6 +511,12 @@ nonisolated enum MacJournalActivityTitle {
 }
 
 nonisolated enum MacJournalFailurePresentation {
+    static func canOpenModelSettings(for code: String) -> Bool {
+        ["provider_failed", "authentication_failed", "chatgpt_reauthorization_required",
+         "model_account_changed", "invalid_model_request", "model_unavailable",
+         "quota_exhausted", "responses_protocol_error"].contains(code)
+    }
+
     // Presentation only: exact committed codes, never provider-text matching.
     // Unknown failures retain their original journal body.
     static func message(for code: String, bundle: Bundle = .main) -> String? {
@@ -521,7 +527,10 @@ nonisolated enum MacJournalFailurePresentation {
         case "responses_transport_error": key = "The model connection was interrupted before usable output arrived."
         case "responses_tool_transaction_incomplete": key = "The model did not finish its tool request. No tools from this response were executed."
         case "responses_provider_failed": key = "The model service reported a failure. Check its status or choose another model."
-        case "provider_failed": key = "The model request failed."
+        case "provider_failed": key = "The model request failed. Check the model connection and account status in model settings before retrying."
+        case "chatgpt_reauthorization_required": key = "Open model settings and sign in to or reauthorize your ChatGPT account, then retry."
+        case "model_account_changed": key = "The selected model account changed. Select its current model in model settings, then retry."
+        case "invalid_model_request": key = "The selected model cannot accept these request settings. Review the model protocol and conversation overrides."
         case "model_repetitive_reasoning": key = "The model repeated its reasoning without making progress. Generation was stopped; retry or select another model."
         case "responses_protocol_error": key = "The model returned an invalid response. Check the connection's API protocol."
         case "content_filtered": key = "The model service stopped this response because of its content policy."
@@ -1370,6 +1379,7 @@ private struct MacJournalFailureView: View {
     let reference: MacJournalMessageReference
     let part: MacAssistantJournalPart
     let failure: MacAssistantJournalMetadata.Failure
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -1380,6 +1390,11 @@ private struct MacJournalFailureView: View {
             }.foregroundStyle(.red)
             if let summary = MacJournalFailurePresentation.message(for: failure.code) {
                 Text(verbatim: summary).textSelection(.enabled)
+                if MacJournalFailurePresentation.canOpenModelSettings(for: failure.code) {
+                    Button("mac.window.model_center") { openWindow(id: "model-center") }
+                        .buttonStyle(MacPressFeedbackButtonStyle())
+                        .accessibilityIdentifier("chat.journal.failure.open-model-settings")
+                }
                 DisclosureGroup {
                     Text(verbatim: failure.code).font(.caption).textSelection(.enabled)
                     failureBody

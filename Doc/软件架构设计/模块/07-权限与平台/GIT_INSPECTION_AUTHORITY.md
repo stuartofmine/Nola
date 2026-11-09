@@ -25,3 +25,9 @@ linked worktree、外部对象库、clean/process filter 配置、后台执行�
 隔离临时仓库测试固定执行程序、普通检查和受限管道、恶意选项、普通外部仓库、敏感资源、fsmonitor/外部 diff、filter 回退，以及权限事实与执行命令的一致性。不在用户仓库执行测试提交，不更改用户权限或 Git 配置。
 
 2026-10-20 的目录与敏感读取规则及验证范围见 [Permission Boundary Contract](PERMISSION_BOUNDARY_CONTRACT.md#filesystem-scope-and-model-requested-sensitive-reads)。包含 `awk`/`sed` 或未受支持控制流的命令仍可能按未知进程效果确认；移除工作区目录限制不等于把所有 Git Shell 文本自动判为只读。
+
+## 提交身份与恢复快照
+
+`git_commit` 在执行 filter 或修改真实索引前检查 author/committer 身份；可传显式 `author.name/email`，仅通过本次 Git 调用参数使用，不修改仓库或全局配置。新文件的 intent-to-add 先在私有索引准备，再在独占 index.lock 下以精确 HEAD/索引前像比较发布。提交失败时，仅在 HEAD 和索引仍与本工具登记状态完全一致时恢复前像；并发变化或锁冲突保留现场，不覆盖其他写者。已有 hooks/signing 仍执行，恢复索引不等于撤销 hook 的其他副作用。
+
+工作区检查点使用私有索引生成 stash 对象，真实索引不刷新、不清空、不改暂存区。intent-to-add 仅在私有索引中归一化，以保留实际文件内容；活跃 conversion filter 明确拒绝。内部快照对象使用明确的 Host 检查点身份，不依赖用户的 Git 提交身份。恢复命令因此不再被先前失败提交产生的 intent-to-add 状态闭锁。快照仍不承诺保留未跟踪文件，也不自动修改用户数据。

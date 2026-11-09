@@ -21,7 +21,10 @@ final class MacSecondaryPageCatalogCoverageTests: XCTestCase {
             catalogPath: "NolaMac/ModelCenter.xcstrings",
             sourcePaths: [
                 "NolaMac/UI/MacModelCenterView.swift",
-                "NolaMac/Services/MacModelCatalogService.swift"
+                "NolaMac/Services/MacModelCatalogService.swift",
+                "NolaMac/UI/MacSiwcSignInView.swift",
+                "NolaMac/UI/MacSiwcAccountManagementView.swift",
+                "NolaMac/Services/MacSiwcAccountBridge.swift"
             ],
             patterns: [#"String\(localized: \"([^\"]+)\", table: \"ModelCenter\""#]
         )
@@ -90,6 +93,20 @@ final class MacSecondaryPageCatalogCoverageTests: XCTestCase {
                 #"String\(localized: \"([^\"]+)\"(?!\s*,\s*table:)\)"#
             ]
         )
+    }
+
+    func testSharedSoftwareUpdateLabelsAndDynamicStatusesHaveTranslations() throws {
+        try assertCatalogCoverage(catalogPath: "NolaMac/Localizable.xcstrings",
+            sourcePaths: ["Shared/Presentation/AppleSoftwareUpdateSection.swift"],
+            patterns: [#"(?:Text|Button)\(\"(softwareUpdate\.[^\"]+)\""#], excludingInterpolatedLiterals: true)
+        let strings = try loadStrings("NolaMac/Localizable.xcstrings")
+        for status in ["disabled", "not_checked", "up_to_date", "ahead", "unavailable", "available", "incompatible_data"] {
+            for locale in ["en"] + requiredLocales {
+                let value = try localizedValue(strings: strings, key: "softwareUpdate.status." + status, locale: locale)
+                XCTAssertFalse(value.isEmpty)
+                XCTAssertFalse(value.hasPrefix("softwareUpdate."))
+            }
+        }
     }
 
     func testChineseSecondaryPageHeadingsDoNotFallBackToEnglish() throws {

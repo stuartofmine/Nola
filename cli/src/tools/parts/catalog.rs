@@ -1979,6 +1979,10 @@ fn specs_with_skills(skills: &SkillRuntimeContext) -> Vec<ToolSpec<'static>> {
                         "enum": ["inspect", "mutate", "validate", "execute"],
                         "description": "Declare this command's purpose: inspect=read, mutate=change, validate=run checks, execute=unknown effects. Legacy omission is execute, never validation credit. For requested/adopted checks use validate with exact validation_targets. Declare changed files in output_artifacts. Split modification and verification into separate calls. Purpose never grants permission."
                     },
+                    "regression_test_files": {
+                        "type":"array","minItems":1,"maxItems":100,"items":{"type":"string","minLength":1},
+                        "description":"For an adopted review finding, pin all regression assertion code, fixtures and local test dependencies (regular files also included in validation_targets). Foreground validate only. Host hashes their contents, literal command, cwd and target identities into regression_process_exit:sha256:... checks. Run before repair to capture a real nonzero failure, then rerun unchanged after repair on the final resource. Changing tests, fixtures, command or targets changes the check identity and cannot close the original finding. Assert independently derived expected outcomes and fail nonzero; normal exit is not whole-task acceptance."
+                    },
                     "validation_targets": {
                         "type": "array",
                         "maxItems": 100,
@@ -2034,7 +2038,8 @@ fn specs_with_skills(skills: &SkillRuntimeContext) -> Vec<ToolSpec<'static>> {
             parameters: json!({"type":"object", "properties": {
                 "root":{"type":"string", "description":"Absolute Git repository root in the allowed workspace."},
                 "paths":{"type":"array", "minItems":1, "maxItems":1000, "items":{"type":"string", "minLength":1}, "description":"Exact requested files, repository-relative or absolute under root; encoded file URIs total at most 128 KiB. Includes relevant untracked additions alongside tracked edits/deletions. For one requested commit, select the complete requested set; for split commits, select this group's files. Commits whole working-tree content, not staged hunks. Leaves all other paths untouched."},
-                "message":{"type":"string", "minLength":1, "maxLength":4000}
+                "message":{"type":"string", "minLength":1, "maxLength":4000},
+                "author":{"type":"object", "properties":{"name":{"type":"string", "minLength":1},"email":{"type":"string", "minLength":1}},"required":["name","email"],"additionalProperties":false,"description":"Explicit invocation-local author/committer identity; use the requested identity or a clearly identified agent identity. Never impersonate the user or change persistent Git config."}
             }, "required":["root","paths","message"], "additionalProperties":false}),
         },
         ToolSpec {
@@ -2047,7 +2052,7 @@ fn specs_with_skills(skills: &SkillRuntimeContext) -> Vec<ToolSpec<'static>> {
         },
         ToolSpec {
             name: "git_worktree_integrate",
-            description: "After reviewing and committing the child delivery, apply its exact commits as unstaged changes to the unchanged, unchanged source checkout (including an exact tracked dirty snapshot). Requires normal overwrite approval. Rejects dirty files, changed source baseline, changed child commit or replaced worktree. Never merges, resets, commits, deletes or silently overwrites user changes. Review and test the applied result before accepting the task.",
+            description: "After reviewing and committing the child delivery, apply its exact commits as unstaged changes to the unchanged source checkout (including an exact tracked dirty snapshot). Requires normal overwrite approval. Rejects dirty files, changed source baseline, changed child commit or replaced worktree. Never merges, resets, commits, deletes or silently overwrites user changes. Returns repository integration identity plus actual per-file create/write/delete effects and content versions. Review and test the applied result before accepting the task.",
             read_only: false,
             parameters: json!({"type":"object","properties":{
                 "root":{"type":"string","description":"Absolute original source checkout root."},
@@ -2076,7 +2081,7 @@ fn specs_with_skills(skills: &SkillRuntimeContext) -> Vec<ToolSpec<'static>> {
                 "properties": {
                     "task_id": {"type": "string", "description": "Optional task id; omit to list known background tasks"},
                     "input_request_id": {"type": "string", "description": "Inspect one terminal input receipt by exact request ID; requires task_id. Otherwise at most 16 receipts in request-ID order are returned."},
-                    "max_bytes": {"type": "integer", "default": 20000},
+                    "max_bytes": {"type": "integer", "minimum": 1000, "maximum": MAX_BACKGROUND_OUTPUT_BYTES, "default": 20000},
                     "stdout_after_seq": {"type": "integer", "minimum": 0, "description": "Previously returned stdout_next_seq; omit on first read for the latest bounded chunk."},
                     "stderr_after_seq": {"type": "integer", "minimum": 0, "description": "Previously returned stderr_next_seq; omit on first read for the latest bounded chunk."}
                 },
@@ -2093,7 +2098,7 @@ fn specs_with_skills(skills: &SkillRuntimeContext) -> Vec<ToolSpec<'static>> {
                     "task_id": {"type": "string"},
                     "timeout_sec": {"type": "integer", "default": 30, "description": "Maximum wait for this call, 1-300 seconds."},
                     "poll_interval_ms": {"type": "integer", "default": 250, "description": "Internal status interval, 100-5000 milliseconds."},
-                    "max_bytes": {"type": "integer", "default": 20000},
+                    "max_bytes": {"type": "integer", "minimum": 1000, "maximum": MAX_BACKGROUND_OUTPUT_BYTES, "default": 20000},
                     "stdout_after_seq": {"type": "integer", "minimum": 0},
                     "stderr_after_seq": {"type": "integer", "minimum": 0}
                 },
@@ -2109,7 +2114,7 @@ fn specs_with_skills(skills: &SkillRuntimeContext) -> Vec<ToolSpec<'static>> {
                 "type": "object",
                 "properties": {
                     "task_id": {"type": "string"},
-                    "max_bytes": {"type": "integer", "default": 20000},
+                    "max_bytes": {"type": "integer", "minimum": 1000, "maximum": MAX_BACKGROUND_OUTPUT_BYTES, "default": 20000},
                     "stdout_after_seq": {"type": "integer", "minimum": 0},
                     "stderr_after_seq": {"type": "integer", "minimum": 0}
                 },

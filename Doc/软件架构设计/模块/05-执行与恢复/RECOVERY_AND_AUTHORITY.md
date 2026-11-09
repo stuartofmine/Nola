@@ -594,3 +594,11 @@ Run canonical seal 的 Blocked 结果，再加载投影，不由 UI 设置成功
 cancel_requested且已有binding时另走cancellation_only：有效前任lease仍等待；到期后必须存在同bound active Run和原assistant，使用原取消时间提交持久取消。沿原attempt作为身份见证返回，不续普通执行lease，不创建新模型/工具工作。未bound的取消任务不会借此创建child。最终Task回执从bound Run terminal核对，父Run answered不替代child结果。
 
 故障反例：审批界面退出、协程CancellationException或流onTermination只能detach；若将其转换成业务Interrupt，会把父取消级联给本应继续的child。恢复时禁止清除cancel_requested、换task ID、换DB或把原失败抹成新任务成功。
+
+## 同次恢复的验证复用（2026-11-10）
+
+`load_exact_run_invocation_with_config` 在一次 repository 快照内校验 Run 归属、终态、冻结配置摘要及检查点，向 Application 内部同时返回身份见证与已解码配置。原生和移动恢复权限检查共用这份结果，不再分别重新读取、计算同一配置摘要。需要回放时，先证明回放记录中的配置字节和已验证配置完全一致，再传递已解码值；独立读取仍在入口校验。
+
+恢复规划的 `RecoveryCheckpoint` 仅存活于单条记录的事务闭包，多个规划分支共用一次校验和回放。已核对的配置也在该事务内复用。更换记录、结束事务或发起下一次恢复均不能复用旧见证；没有跨事务的“已验证”标记，也不改变 Store、协议或摘要字段。
+
+纯内存缓存及已持有内容的等值判断使用字段或原文比较，不额外计算密码学摘要。发布签名、外部协议、凭据指纹及持久内容身份仍遵循各自约定。现有 SHA-256 字段不改算法；ARM 构建使用运行时检测的硬件加速，并保留软件回退。

@@ -44,6 +44,18 @@ pub fn load_exact_run_invocation<R: RunRecoveryInspectionRepository + ?Sized>(
     expected_run_id: String,
     assistant_message_id: String,
 ) -> Result<Option<ExactRunInvocation>, String> {
+    load_exact_run_invocation_with_config(store, conversation_id, expected_run_id, assistant_message_id)
+        .map(|value| value.map(|(exact, _)| exact))
+}
+
+// Carry the already-verified configuration through the same pinned read.
+// Native/remote callers still receive only the stable public witness above.
+pub(crate) fn load_exact_run_invocation_with_config<R: RunRecoveryInspectionRepository + ?Sized>(
+    store: &R,
+    conversation_id: String,
+    expected_run_id: String,
+    assistant_message_id: String,
+) -> Result<Option<(ExactRunInvocation, AgentCoreConfig)>, String> {
     if [&conversation_id, &expected_run_id, &assistant_message_id]
         .iter()
         .any(|value| value.trim().is_empty())
@@ -139,7 +151,9 @@ pub fn load_exact_run_invocation<R: RunRecoveryInspectionRepository + ?Sized>(
                 });
                 let current = match memo {
                     Some(current) => current,
-                    None => crate::session_projection::materialize_local_recovery(proof.recovery)?,
+                    None => crate::session_projection::materialize_local_recovery_with_config(
+                        proof.recovery, config.clone(),
+                    )?,
                 };
                 let checkpoint: CoreCheckpoint<AgentThreadState> =
                     serde_json::from_str(&current.checkpoint_json)
@@ -268,7 +282,7 @@ pub fn load_exact_run_invocation<R: RunRecoveryInspectionRepository + ?Sized>(
                 )
             }
         };
-    Ok(Some(ExactRunInvocation {
+    Ok(Some((ExactRunInvocation {
         remote_tool_plan: config.turn_identity.remote_tool_plan.clone(),
         conversation_id,
         run_id: expected_run_id,
@@ -281,5 +295,5 @@ pub fn load_exact_run_invocation<R: RunRecoveryInspectionRepository + ?Sized>(
         checkpoint_revision,
         checkpoint_event_cursor,
         checkpoint_sha256,
-    }))
+    }, config)))
 }

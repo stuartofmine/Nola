@@ -30,6 +30,7 @@ impl CompactionPlan {
         &self,
         target_tokens: usize,
         prompt_limit: usize,
+        handoff: bool,
     ) -> Result<usize, String> {
         let window_budget = nola_kernel::compaction_plan::summary_token_budget(
             self.kept_items.iter().map(AgentItem::estimated_tokens),
@@ -41,7 +42,12 @@ impl CompactionPlan {
             .fold(0usize, |total, item| total.saturating_add(item.estimated_tokens()));
         // Reserve summary framing and require a real reduction. Available
         // window space is not permission to expand a tiny archive.
-        let savings_budget = source_tokens.saturating_sub(4) / 2;
+        // A handoff may already consist mostly of concise checkpoints. Do not
+        // demand another 2x reduction of those facts just because immutable
+        // current input makes the complete-request 50% target unattainable.
+        // Five tokens reserve framing plus a strictly positive reduction.
+        let savings_budget = if handoff { source_tokens.saturating_sub(5) }
+            else { source_tokens.saturating_sub(4) / 2 };
         if savings_budget == 0 {
             return Err("compaction archive is too small to summarize profitably".into());
         }
@@ -67,31 +73,7 @@ pub fn plan_compaction(items: &[AgentItem], target_tokens: usize) -> CompactionP
             kept_items: items.iter().filter(|item| !matches!(item, AgentItem::Compaction { .. })).cloned().collect(),
         };
     }
-    let facts = items
-        .iter()
-        .map(|item| CompactionItemFact {
-            estimated_tokens: item.estimated_tokens(),
-            kind: match item {
-                AgentItem::Message {
-                    role: AgentRole::System | AgentRole::Developer,
-                    ..
-                } => CompactionItemKind::PersistentInstruction,
-                // Retention classification only: summaries remain historical
-                // data, never system instructions or permission grants.
-                AgentItem::Compaction { .. } => CompactionItemKind::PersistentInstruction,
-                AgentItem::UiAction { .. } | AgentItem::Message {
-                    role: AgentRole::User, ..
-                } => CompactionItemKind::UserMessage,
-                AgentItem::ToolCall { call_id, .. } => CompactionItemKind::ToolCall {
-                    call_id: call_id.0.clone(),
-                },
-                AgentItem::ToolResult { call_id, .. } => CompactionItemKind::ToolResult {
-                    call_id: call_id.0.clone(),
-                },
-                _ => CompactionItemKind::Other,
-            },
-        })
-        .collect::<Vec<_>>();
+    let facts = compaction_facts(items, false);
     let plan = nola_kernel::compaction_plan::plan_compaction(&facts, target_tokens);
     CompactionPlan {
         items_to_summarize: plan
@@ -104,6 +86,43 @@ pub fn plan_compaction(items: &[AgentItem], target_tokens: usize) -> CompactionP
             .into_iter()
             .map(|i| items[i].clone())
             .collect(),
+    }
+}
+
+fn compaction_facts(items: &[AgentItem], handoff: bool) -> Vec<CompactionItemFact> {
+    items
+        .iter()
+        .map(|item| CompactionItemFact {
+            estimated_tokens: item.estimated_tokens(),
+            kind: match item {
+                AgentItem::Message {
+                    role: AgentRole::System | AgentRole::Developer,
+                    ..
+                } => CompactionItemKind::PersistentInstruction,
+                // Retention classification only: summaries remain historical
+                // data, never system instructions or permission grants.
+                AgentItem::Compaction { .. } if !handoff => CompactionItemKind::PersistentInstruction,
+                AgentItem::Attachment { .. } if handoff => CompactionItemKind::PersistentInstruction,
+                AgentItem::UiAction { .. } | AgentItem::Message {
+                    role: AgentRole::User, ..
+                } => CompactionItemKind::UserMessage,
+                AgentItem::ToolCall { call_id, .. } => CompactionItemKind::ToolCall {
+                    call_id: call_id.0.clone(),
+                },
+                AgentItem::ToolResult { call_id, .. } => CompactionItemKind::ToolResult {
+                    call_id: call_id.0.clone(),
+                },
+                _ => CompactionItemKind::Other,
+            },
+        })
+        .collect::<Vec<_>>()
+}
+
+pub(crate) fn plan_context_handoff(items: &[AgentItem]) -> CompactionPlan {
+    let indices = nola_kernel::compaction_plan::plan_context_handoff(&compaction_facts(items, true));
+    CompactionPlan {
+        items_to_summarize: indices.summarize_indices.into_iter().map(|i| items[i].clone()).collect(),
+        kept_items: indices.kept_indices.into_iter().map(|i| items[i].clone()).collect(),
     }
 }
 
@@ -470,7 +489,7 @@ mod tests {
             kept_items: Vec::new(),
         };
         let source = plan.items_to_summarize[0].estimated_tokens();
-        let budget = plan.summary_token_budget(57_600, 128_000).unwrap();
+        let budget = plan.summary_token_budget(57_600, 128_000, false).unwrap();
         assert!(budget + 4 < source);
         assert!(budget < 20);
     }
@@ -822,7 +841,26 @@ mod tests {
             .iter()
             .map(AgentItem::estimated_tokens)
             .sum();
-        assert_eq!(plan.summary_token_budget(1, retained + 5).unwrap(), 1);
-        assert!(plan.summary_token_budget(1, retained + 4).is_err());
+        assert_eq!(plan.summary_token_budget(1, retained + 5, false).unwrap(), 1);
+        assert!(plan.summary_token_budget(1, retained + 4, false).is_err());
+    }
+}
+
+#[cfg(test)]
+mod handoff_budget_tests {
+    use super::*;
+    #[test]
+    fn existing_concise_checkpoint_is_not_forced_to_halve_again() {
+        let plan = CompactionPlan {
+            items_to_summarize: vec![AgentItem::user_message(ItemId::from_string("fact".into()), "x".repeat(384))],
+            kept_items: vec![],
+        };
+        let original = plan.items_to_summarize[0].estimated_tokens();
+        let ordinary = plan.summary_token_budget(1000, 10000, false).unwrap();
+        let handoff = plan.summary_token_budget(1000, 10000, true).unwrap();
+        assert_eq!(handoff + 5, original);
+        assert!(handoff > ordinary);
+        assert!(handoff + 4 < original, "even a handoff must reduce history");
+        assert_eq!(plan.summary_token_budget(10, 10000, true).unwrap(), 6);
     }
 }

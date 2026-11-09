@@ -1314,4 +1314,10 @@
     <string name="software_update_status_available">有新版本可用</string>
     <string name="software_update_install_permission">如系统要求，请允许 Nola 安装应用，返回后再次打开安装器。</string>
     <string name="software_update_status_incompatible_data">新版本的数据格式不匹配，自动更新已阻止；现有数据保持不变。</string>
+    <string name="goal_guidance">描述你希望完成的结果。Nola 会持续推进，需要你补充信息或授权时暂停。</string>
+    <string name="goal_example">例如：整理项目资料，给出带来源的总结。</string>
+    <string name="goal_cancel_explanation">此目标的自动执行将停止，对话和已完成的结果会保留。</string>
+    <string name="goal_operation_failed">无法确认目标操作，请先刷新状态再重试。</string>
+    <string name="goal_needs_user">等待你补充信息或授权</string>
+    <string name="inspector_conversation_needed">请先开始或打开一个对话，再查看进度或设置目标。</string>
 </resources>

@@ -34,8 +34,12 @@ extension IOSApplicationRuntime {
              "read_local_assistant_run_terminal_manifest", "run_message_admission_reception_state",
              "assistant_journal_reception_state", "get_product_setting", "get_sync_cursor",
              "resolve_model_reasoning", "resolve_remote_model_profile", "query_automation_occurrences", "resolve_chat_model", "admit_host_output",
+             "step_compaction_summary", "evaluate_compaction_maintenance",
              "load_auxiliary_source_slot", "load_auxiliary_operation", "list_conversation_auxiliary_sources":
             return true
+        case "context":
+            let kind = (arguments["command"] as? [String: Any])?["type"] as? String
+            return ["count_checkpoints", "prepare_compaction", "prepare_maintenance", "load_checkpoint"].contains(kind ?? "")
         case "conversation_plan":
             let kind = (arguments["command"] as? [String: Any])?["type"] as? String
             return ["get", "history", "diff"].contains(kind ?? "")

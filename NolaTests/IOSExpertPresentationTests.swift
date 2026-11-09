@@ -35,7 +35,7 @@ final class IOSExpertPresentationTests: XCTestCase {
 
     func testWorkspaceManagementRetainsAllExistingDestinations() {
         XCTAssertEqual(Set(IOSWorkspaceDestination.allCases.map(\.rawValue)),
-            Set(["sources", "memory", "plans", "records", "models", "settings"]))
+            Set(["sources", "knowledge", "memory", "plans", "records", "models", "settings"]))
         XCTAssertNil(IOSWorkspaceDestination(page: -1))
         XCTAssertEqual(IOSWorkspaceDestination(page: 0), .sources)
         XCTAssertEqual(IOSWorkspaceDestination(page: 3), .records)

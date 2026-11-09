@@ -348,7 +348,7 @@ pub fn recover_interrupted_goal_contract<H: Default>(config: &dyn GoalRuntimePor
     apply_partial_goal_audit(config, &contract_id, "Interrupted round will be replanned")
 }
 
-pub fn begin_core_goal_round<H: Default>(config: &dyn GoalRuntimePort<Handoff = H>, request: &str, run_id: &str) -> Result<String, String> {
+pub fn begin_core_goal_round<H: Default>(config: &dyn GoalRuntimePort<Handoff = H>, _request: &str, run_id: &str) -> Result<String, String> {
     let projection = config.load_projection()?
         .ok_or_else(|| "Goal checkpoint is missing".to_string())?;
     let goal = projection
@@ -378,7 +378,7 @@ pub fn begin_core_goal_round<H: Default>(config: &dyn GoalRuntimePort<Handoff = 
             contract: GoalSubtaskContract { execution_run_id: None,
                 id: contract_id.clone(),
                 round,
-                objective: request.to_string(),
+                objective: goal.objective.clone(),
                 proposed_checks: criteria,
                 requirement_versions,
                 additional_execution_constraints: goal.constraints,
@@ -778,8 +778,8 @@ pub fn compose_goal_prompt(
         format!("Goal: {goal}"),
         "Answer in the same language as the user's request unless the user explicitly asks for another language.".to_string(),
         "Keep working toward this goal without waiting for the user to type \"continue\".".to_string(),
-        "Plan, inspect, edit, run focused validation, and iterate until the goal is complete or truly blocked.".to_string(),
-        "Use runtime permission prompts for environment repair, dependency installation, network access, and destructive operations. Use request_user_input only for consequential product or environment decisions that cannot be inferred. Never request secret or credential values in the transcript; ask the user to configure them outside the session, then report needs_user.".to_string(),
+        "Choose actions that serve the exact user objective. For implementation work, inspect, edit, validate, and iterate until complete or truly blocked. For questions or investigations, deliver the requested answer and supporting evidence without inventing a code change.".to_string(),
+        "Preserve the user's objective and explicit constraints. Do not reinterpret an ambiguous objective as an unrelated earlier task; request focused clarification when needed. Follow the current runtime permission policy and existing user authorization; do not invent additional scope restrictions or require approval for every network request or validation command. Use request_user_input for missing information or consequential decisions that cannot be inferred. Never request secret or credential values in the transcript; ask the user to configure them outside the session, then report needs_user.".to_string(),
         "Use only the current Host’s advertised tools and supported execution modes. If a required capability is unavailable, retain the current evidence and report blocked or needs_user; do not assume another platform’s shell, filesystem, or background execution capability.".to_string(),
     ];
     if !goal_requirements.trim().is_empty() {
@@ -935,7 +935,8 @@ mod tests {
         let mut projection = GoalProjection::default();
         projection.apply(create_goal_command("action", "Goal", "", 1)).unwrap();
         let mut port = Port { projection: RefCell::new(projection), paused: None, nonce: Cell::new(0) };
-        begin_core_goal_round(&port, "Goal", "exact-run").unwrap();
+        begin_core_goal_round(&port, "Autonomous goal mode active. Runtime instructions are not the objective.", "exact-run").unwrap();
+        assert_eq!(port.projection.borrow().active.as_ref().unwrap().contracts[0].objective, "Goal");
         assert_eq!(run_goal_cycle(&mut port, "", "Goal", "").unwrap_err(), "recovery transport failed after Pause");
         assert_eq!(port.projection.borrow().clone(), port.paused.unwrap());
         let goal = port.projection.borrow().active.clone().unwrap();

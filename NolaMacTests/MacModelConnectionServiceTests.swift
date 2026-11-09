@@ -60,6 +60,7 @@ import XCTest
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [CatalogFixtureProtocol.self]
         for path in ["oversized", "declared", "redirect"] {
+            let started = ContinuousClock.now
             do {
                 _ = try await AppleModelCatalogTransport.fetch(
                     URLRequest(url: URL(string: "https://catalog.invalid/" + path)!),
@@ -68,7 +69,30 @@ import XCTest
             } catch let error as URLError {
                 XCTAssertEqual(error.code, path == "redirect" ? .badServerResponse : .dataLengthExceedsMaximum)
             }
+            XCTAssertLessThan(ContinuousClock.now - started, .seconds(5), "A buffered catalog response must not spend seconds iterating individual bytes")
         }
+        let (data, _) = try await AppleModelCatalogTransport.fetch(
+            URLRequest(url: URL(string: "https://catalog.invalid/valid")!), configuration: configuration)
+        XCTAssertEqual(String(data: data, encoding: .utf8), "{\"data\":[]}")
+    }
+
+    func testCancellingActiveCatalogReadSettlesAndReleasesCapacity() async throws {
+        let started = expectation(description: "Catalog request reached its transport")
+        CatalogFixtureProtocol.observer.set { started.fulfill() }
+        defer { CatalogFixtureProtocol.observer.set(nil) }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [CatalogFixtureProtocol.self]
+        let request = Task {
+            try await AppleModelCatalogTransport.fetch(
+                URLRequest(url: URL(string: "https://catalog.invalid/waiting")!), configuration: configuration)
+        }
+        defer { request.cancel() }
+        await fulfillment(of: [started], timeout: 2)
+        request.cancel()
+        do {
+            _ = try await request.value
+            XCTFail("A cancelled catalog read cannot report a completed catalog")
+        } catch is CancellationError {} catch { XCTFail("Unexpected cancellation result: \(error)") }
         let (data, _) = try await AppleModelCatalogTransport.fetch(
             URLRequest(url: URL(string: "https://catalog.invalid/valid")!), configuration: configuration)
         XCTAssertEqual(String(data: data, encoding: .utf8), "{\"data\":[]}")
@@ -121,11 +145,20 @@ import XCTest
     }
 }
 
+private nonisolated final class CatalogFixtureObserver: @unchecked Sendable {
+    private let lock = NSLock()
+    private var started: (() -> Void)?
+    func set(_ callback: (() -> Void)?) { lock.withLock { started = callback } }
+    func notify() { let callback = lock.withLock { started }; callback?() }
+}
+
 private final class CatalogFixtureProtocol: URLProtocol, @unchecked Sendable {
+    static let observer = CatalogFixtureObserver()
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "catalog.invalid" }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         let path = request.url!.lastPathComponent
+        if path == "waiting" { Self.observer.notify(); return }
         let response = HTTPURLResponse(url: request.url!, statusCode: path == "redirect" ? 302 : 200,
             httpVersion: "HTTP/1.1", headerFields: path == "declared" ? ["Content-Length": "2097153"] : [:])!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)

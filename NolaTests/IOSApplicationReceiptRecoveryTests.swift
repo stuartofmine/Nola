@@ -26,7 +26,7 @@ final class IOSApplicationReceiptRecoveryTests: XCTestCase {
                     return XCTFail("Expected original Store open failure, received \(error)")
                 }
                 XCTAssertTrue(detail.contains(database.path))
-                XCTAssertTrue(detail.lowercased().contains("schema"), detail)
+                XCTAssertTrue(detail.lowercased().contains("unsupported database format"), detail)
             }
             XCTAssertEqual(try Data(contentsOf: database), original)
         }

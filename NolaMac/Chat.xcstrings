@@ -5282,6 +5282,23 @@
         }
       }
     },
+    "Open model settings and sign in to or reauthorize your ChatGPT account, then retry." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open model settings and sign in to or reauthorize your ChatGPT account, then retry."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请打开模型设置，登录或重新授权 ChatGPT 账户后重试。"
+          }
+        }
+      }
+    },
     "Open Pages" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -7317,6 +7334,23 @@
         }
       }
     },
+    "The model request failed. Check the model connection and account status in model settings before retrying." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The model request failed. Check the model connection and account status in model settings before retrying."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型请求失败。请在模型设置中检查连接和账户状态后重试。"
+          }
+        }
+      }
+    },
     "The model request was restarted." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -7625,6 +7659,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "执行记录仍处于活动状态；检查状态不会重新启动执行。"
+          }
+        }
+      }
+    },
+    "The selected model account changed. Select its current model in model settings, then retry." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The selected model account changed. Select its current model in model settings, then retry."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "所选模型的账户已变更。请在模型设置中重新选择该账户下的模型后重试。"
+          }
+        }
+      }
+    },
+    "The selected model cannot accept these request settings. Review the model protocol and conversation overrides." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The selected model cannot accept these request settings. Review the model protocol and conversation overrides."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "所选模型不支持当前请求设置。请检查模型协议及本会话的参数覆盖。"
           }
         }
       }

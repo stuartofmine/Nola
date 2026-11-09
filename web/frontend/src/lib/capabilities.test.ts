@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { builtin, capabilityCatalog, capabilityDraft, capabilityMutation, updatedCapability, capabilitySections, restoredSkill, CapabilityValidationError, capabilityName } from './capabilities.ts';
+import { builtin, capabilitySnapshot, capabilityCatalog, capabilityDraft, capabilityMutation, updatedCapability, capabilitySections, restoredSkill, CapabilityValidationError, capabilityName } from './capabilities.ts';
 import { capabilityMessages } from './locales/capabilities.ts';
 
 test('capability display labels and validation errors resolve in all seven languages', () => {
@@ -104,4 +104,15 @@ test('MCP catalog rejects non-object groups and renders descriptors as text', ()
     const groups = capabilityCatalog({ tools: [], resources: null, prompts: { a: { title: '<script>not markup</script>' } } });
     assert.deepEqual(groups.map(group => group.entries.length), [0, 0, 0, 1]);
     assert.equal(groups[3].entries[0].name, '<script>not markup</script>');
+});
+
+
+test('capability snapshot rejects incomplete catalogs atomically instead of crashing the renderer', () => {
+    const snapshot = {skill_settings_backup_key: null, skills: [{name: 'Read'}], mcp_servers: [], execution_backends: [{id: 'nola', display_name: 'Nola', capabilities: {supports_permission_bridge: true}}]};
+    assert.deepEqual(capabilitySnapshot(snapshot), snapshot);
+    for (const value of [null, {}, {...snapshot, execution_backends: undefined}, {...snapshot, skills: [null]},
+        {...snapshot, execution_backends: [{id: 'nola', display_name: 'Nola', capabilities: {}}]},
+        {...snapshot, execution_backends: [...snapshot.execution_backends, ...snapshot.execution_backends]}]) {
+        assert.throws(() => capabilitySnapshot(value), error => error instanceof CapabilityValidationError && error.key === 'capability.loadFailed');
+    }
 });

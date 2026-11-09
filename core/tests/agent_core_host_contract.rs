@@ -9667,7 +9667,7 @@ fn compaction_host_stop_without_admitted_cancellation_cannot_forge_user_cancel()
 }
 
 #[test]
-fn incremental_compaction_preserves_previous_block_and_appends_new_block() {
+fn first_summary_keeps_old_blocks_when_target_fits_and_consolidates_before_request_when_needed() {
     let previous = AgentItem::Compaction {
         id: ItemId::from_string("previous-summary".into()),
         summary: "User requires offline operation; prior validation succeeded.".into(),
@@ -9718,16 +9718,21 @@ fn incremental_compaction_preserves_previous_block_and_appends_new_block() {
     let started = core.submit(AgentSubmission::Compact { operation_id: "incremental-compact-again".into() }).unwrap();
     let compact = request_matching(&started.host_requests, |payload| matches!(payload, HostRequest::Compact { .. }));
     let pending = core.checkpoint(CheckpointReason::Manual).state.conversation.context_window.pending_compaction.unwrap();
-    assert!(retained_blocks.iter().all(|item| !pending.source_item_ids.contains(item.id())));
-    submit_response(&mut core, &compact, 1, HostResponse::CompactionCompleted {
-        summary: "Additional constraints recorded; new work remains pending.".into(), usage: serde_json::json!({}),
+    assert!(pending.handoff);
+    assert!(retained_blocks.iter().all(|item| pending.source_item_ids.contains(item.id())));
+    let HostRequest::Compact { instructions, .. } = &compact.payload else { unreachable!() };
+    assert!(instructions.contains("50% reduction of the COMPLETE model context"));
+    let completed = submit_response(&mut core, &compact, 1, HostResponse::CompactionCompleted {
+        summary: "Offline operation is required. Additional constraints recorded; new work remains pending.".into(), usage: serde_json::json!({}),
     });
+    assert!(!completed.host_requests.iter().any(|request| matches!(request.payload, HostRequest::Compact { .. })));
     let final_checkpoint = core.checkpoint(CheckpointReason::Manual);
     let blocks = final_checkpoint.state.conversation.model_context.iter()
         .filter(|item| matches!(item, AgentItem::Compaction { .. })).collect::<Vec<_>>();
-    assert_eq!(blocks.len(), 3);
-    assert_eq!(blocks[0], &retained_blocks[0]);
-    assert_eq!(blocks[1], &retained_blocks[1]);
+    assert_eq!(blocks.len(), 1);
+    assert!(matches!(blocks[0], AgentItem::Compaction { source_item_ids, .. }
+        if retained_blocks.iter().all(|item| source_item_ids.contains(item.id()))));
+    assert!(final_checkpoint.state.conversation.transcript.iter().any(|item| item == &previous));
 }
 
 #[test]
@@ -10082,7 +10087,8 @@ fn manual_compaction_after_a_completed_turn_does_not_restart_the_model() {
             content: format!("historical message {index} {}", "x".repeat(160)),
         })
         .collect::<Vec<_>>();
-    let mut core = AgentCore::try_new(core_config(initial_items)).expect("create Core");
+    let config = core_config(initial_items);
+    let mut core = AgentCore::try_new(config.clone()).expect("create Core");
 
     let started = core
         .submit(user_input(
@@ -10120,6 +10126,14 @@ fn manual_compaction_after_a_completed_turn_does_not_restart_the_model() {
         nola_core::agent::AgentTurnStatus::Compacting
     );
 
+    let HostRequest::Compact { instructions, .. } = &compact.payload else { unreachable!() };
+    assert!(instructions.contains("50% reduction of the COMPLETE model context"));
+    assert!(instructions.contains(&format!("at most {} tokens", requested.snapshot.context_used_tokens / 2)));
+    let checkpoint = checkpoint_after(&core, &requested);
+    assert!(checkpoint.state.conversation.context_window.pending_compaction.as_ref().unwrap().handoff);
+    // Cold restore continues the first planned summary; there is no second
+    // default summary round even when immutable content prevents a 50% gain.
+    core = AgentCore::restore(config, checkpoint).unwrap();
     let completed = submit_response(
         &mut core,
         &compact,
@@ -10141,10 +10155,16 @@ fn manual_compaction_after_a_completed_turn_does_not_restart_the_model() {
             .any(|request| matches!(request.payload, HostRequest::ModelStream { .. })),
         "manual compaction restarted a completed turn"
     );
-    assert_eq!(
-        completed.snapshot.turn_status,
-        nola_core::agent::AgentTurnStatus::Completed
-    );
+    assert!(!completed.host_requests.iter().any(|request| matches!(request.payload,
+        HostRequest::Compact { .. } | HostRequest::ModelStream { .. })));
+    assert_eq!(completed.snapshot.turn_status, nola_core::agent::AgentTurnStatus::Completed);
+    let final_state = core.checkpoint(CheckpointReason::Manual);
+    let history_tokens = final_state.state.conversation.model_context.iter()
+        .fold(0usize, |sum,item| sum.saturating_add(item.estimated_tokens()));
+    assert!(completed.snapshot.context_used_tokens > history_tokens,
+        "sealing must not falsely erase the fixed request prefix");
+    assert_eq!(final_state.state.conversation.transcript.iter()
+        .filter(|item| matches!(item, AgentItem::Compaction { .. })).count(), 1);
 }
 
 #[test]

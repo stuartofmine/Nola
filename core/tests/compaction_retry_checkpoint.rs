@@ -12,6 +12,7 @@ fn archive(content: &str) -> Vec<AgentItem> {
 
 fn plan(content: &str) -> PendingCompactionPlan {
     PendingCompactionPlan {
+        handoff: false,
         reason: nola_core::agent::CompactionReason::Manual,
         working_set_item_count: archive(content).len(),
         working_set_fingerprint: compaction_source_fingerprint(&archive(content)).unwrap(),

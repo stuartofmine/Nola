@@ -2520,6 +2520,10 @@ fn run_bash_with_permission(
     approved_by_permission: bool,
 ) -> ToolOutcome {
     let operation = args.get("operation_kind").and_then(Value::as_str);
+    if args.contains_key("regression_test_files")
+        && (operation != Some("validate") || args.get("execution_mode").and_then(Value::as_str) == Some("background")) {
+        return error_data(json!({"error":"invalid_regression_validation", "message":"regression_test_files requires foreground operation_kind=validate; keep the original regression unchanged across repair", "tool_execution_skipped":true}));
+    }
     if operation != Some("validate") {
         // Declared output settlement emits file-version effects, never
         // verification credit from an opaque combined command's label.
@@ -2529,7 +2533,14 @@ fn run_bash_with_permission(
         Ok(snapshot) => snapshot,
         Err(message) => return error_data(json!({"error":"validation_scope_required", "message":message, "tool_execution_skipped":true})),
     };
+    let regression = match regression_check_predicate(args, ctx, &before) {
+        Ok(predicate) => predicate,
+        Err(message) => return error_data(json!({"error":"invalid_regression_validation", "message":message,"tool_execution_skipped":true})),
+    };
     let outcome = run_bash_execution(args, ctx, approved_by_permission);
+    if let Some(predicate) = regression {
+        return attach_regression_evidence(outcome, before, validation_snapshot(args, ctx), predicate);
+    }
     if outcome.error || outcome.execution.as_ref().is_some_and(|receipt| receipt.state == nola_host_protocol::tool_result::ExecutionState::Deferred) { return outcome; }
     attach_validation_evidence(outcome, before, validation_snapshot(args, ctx))
 }

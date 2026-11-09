@@ -34,6 +34,49 @@ final class MacSecondaryHeaderNavigationTests: XCTestCase {
         }
     }
 
+    func testEverySettingsCategoryCanOpenAndReturnInBothThemes() async throws {
+        let session = try MacHostedAccessibilitySession()
+        defer { session.restore() }
+        let preferencesName = "settings-navigation-\(UUID())"
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: preferencesName))
+        defer { preferences.removePersistentDomain(forName: preferencesName) }
+        for dark in [false, true] {
+            for width: CGFloat in [520, 1040] {
+                let host = NSHostingView(rootView: MacSettingsView(snapshotHostState: .notConfigured, embedsInWorkspace: true)
+                    .defaultAppStorage(preferences)
+                    .environment(\.colorScheme, dark ? .dark : .light)
+                    .environment(\.accessibilityEnabled, true)
+                    .transaction { $0.animation = nil; $0.disablesAnimations = true }
+                    .frame(width: width, height: 760))
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 760),
+                    styleMask: [.borderless], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                window.contentView = host
+                window.orderFrontRegardless()
+                defer { window.close() }
+                for section in ["general", "providers", "agent", "connections", "notifications", "data", "diagnostics"] {
+                    try await pressIdentifier("settings.category." + section, in: host)
+                    try await pressIdentifier("settings.back", in: host)
+                }
+                window.close()
+            }
+        }
+    }
+
+    private func pressIdentifier(_ identifier: String, in host: NSView) async throws {
+        let deadline = Date().addingTimeInterval(4)
+        repeat {
+            host.layoutSubtreeIfNeeded()
+            if let button = accessibilityObjects(host).first(where: { ($0.accessibilityIdentifier?() ?? nil) == identifier }) {
+                XCTAssertTrue(button.accessibilityPerformPress?() ?? false, identifier)
+                try await Task.sleep(for: .milliseconds(60))
+                return
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        } while Date() < deadline
+        XCTFail("Mounted settings page has no accessible action: \(identifier)")
+    }
+
     private func pressNavigation<Content: View>(in content: Content, width: CGFloat) async throws {
         let host = NSHostingView(rootView: content.frame(width: width, height: 640)
             .environment(\.accessibilityEnabled, true))

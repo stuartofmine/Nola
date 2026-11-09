@@ -1,10 +1,31 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import XCTest
+import HealthKit
 @testable import Nola
 
 @MainActor
 final class HealthDashboardStoreTests: XCTestCase {
+    func testInitialHealthAuthorizationWaitIsNotPresentedAsRefreshFailure() async {
+        let store = HealthDashboardStore {
+            throw NSError(domain: HKErrorDomain, code: HKError.Code.errorAuthorizationNotDetermined.rawValue)
+        }
+        await store.load()
+        XCTAssertNil(store.snapshot)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertFalse(store.isLoading)
+    }
+
+    func testDeniedHealthAuthorizationStillSurfacesFailure() async {
+        let store = HealthDashboardStore {
+            throw NSError(domain: HKErrorDomain, code: HKError.Code.errorAuthorizationDenied.rawValue)
+        }
+        await store.load()
+        XCTAssertNil(store.snapshot)
+        XCTAssertNotNil(store.errorMessage)
+        XCTAssertFalse(store.isLoading)
+    }
+
     func testConcurrentLoadsWaitForTheSameSnapshotRequest() async {
         let gate = HealthDashboardTestGate()
         let completion = HealthDashboardTestFlag()

@@ -10,6 +10,17 @@ durable session 时不得返回本地“已暂停”成功。暂停分支采用 
 默认映射状态。详细证据不足原因保留在前置 Partial 审计，不依赖一个不写数据的 verifier JSON。
 此清理及无会话拒绝反例仅完成源码，尚未运行验收。
 
+## CLI Goal 输入与控制（2026-11-09）
+
+- 无目标时 `/goal` 和 `/goal start` 将 `/goal start ` 放回现有 composer，等待用户输入，不能用空目标启动。已有目标时 `/goal` 显示当前目标和状态。
+- `/goal [start] <objective>` 保留目标的空格、Unicode 和换行；`start` 可显式输入名为 `status`、`pause` 等保留词的目标。`-c` / `--constraints` 是明确的命令参数，必须同时有目标和约束；引号内的参数示例和 `--` 后面的文字按原文保留。
+- CLI 不再生成额外的“默认约束”：当前工作目录不自动成为用户禁止越界的语义约束，权限仍由既有 Core/Host 策略判断。运行指导和约束来源分离，回合 contract 的 objective 使用持久 Goal 原文，不保存整段运行指导。
+- `/goal pause`、`/goal resume`、`/goal off`（兼容 `cancel`）通过共享 Goal control intent 提交 observed Goal ID/control token，排队不代表已经应用。无目标时不伪报暂停成功。
+- 已选择会话的 `/goal resume` 只恢复该会话；只有尚无会话时才查找项目恢复快照。未完成目标不能被新的输入悄悄覆盖；先明确取消，再创建。终态投影优先于客户端残留变量。
+- 输入校验和控制提交错误保留草稿并返回 composer，不退出整个交互会话。普通消息仍是普通 user Turn，不自动视为 Goal continuation。
+
+参考本机 `参考资料/codex-main/codex-rs/tui/src/chatwidget/goal_menu.rs`、`tests/goal_validation.rs` 的独立目标输入、显式操作和多行原文测试；没有复制其实现或新增持久协议字段。具体验证与仍未解决的问题见 `Doc/当前任务/CLI_GOAL_INPUT_AUDIT_20261109.md`。
+
 ## 当前所有权与类型
 
 实体、数据/上下文所有权及本轮范围以[会话、Run、Goal 与子任务边界](AGENT_THREAD_ARCHITECTURE.md)为统一入口。`continue` 自动推进，`incomplete` 结束本次尝试并保留未完成 Goal，不自动唤醒；profile 轮次是默认值，Task 显式预算沿既有范围覆盖并冻结。
@@ -309,3 +320,9 @@ canonical Task 历史始终可查询。若只进入易失 renderer queue，不�
 Application Service 的连接工作线程显式预留 16 MiB 栈，用于当前完整冻结快照的恢复/校验（含未优化 Host）；这是 Host 运行资源，不改变 Goal 预算、重试、权限或验收规则。
 
 前台 Host 续接等待已保留的同一 Host，并在取得后重新校验精确 Run。若其他消费者已将该 Run 封存，适配器返回“无需执行”并立即交回原 StepGoal 消费/验收；不将此情况当恢复失败，也不要求用户再次唤醒。后台 Busy 仍走既有延后路径，不替换活跃 Host；owner、lease、冻结绑定及终态校验不变。
+
+## 客户端目标输入（2026-11-10）
+
+CLI 裸 `/goal` 进入明确的目标输入状态，目标原文通过类型化入口提交，不能重新走 slash 命令解析。输入期间不消费普通聊天历史或排队消息，Esc 只取消表单。图形客户端先说明目标用途与示例，附加约束可选；没有当前会话时先引导建立会话。停止确认绑定显示时的目标 ID 和 control token，切换会话后废弃旧确认。状态和权限仍由共享 Core 决定，客户端不添加隐式目标约束。
+
+Goal 执行端口可在单个发布事务内缓存已解析的目标投影；提交、创建回合和日志回放前使缓存失效。它不是持久化协议或跨请求缓存，未知格式继续明确拒绝。交互细节与本轮验证范围见[检查记录](../../../当前任务/UI_INTERACTION_AUDIT_20261110.md)。

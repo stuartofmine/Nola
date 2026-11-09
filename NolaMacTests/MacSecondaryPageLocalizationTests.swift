@@ -541,14 +541,33 @@ final class MacSecondaryPageVisualEndToEndTests: XCTestCase {
         try await assertRenderedPage(MacPromptLibraryView(), name: "prompt-library-compact", size: CGSize(width: 680, height: 720))
     }
 
+    func testSettingsSectionsAndUtilityPagesRenderInBothAppearances() async throws {
+        for section in ["general", "providers", "agent", "connections", "notifications", "data", "diagnostics"] {
+            for width: CGFloat in [520, 1040] {
+                try await assertRenderedPage(
+                    MacSettingsView(snapshotHostState: .notConfigured, embedsInWorkspace: true, initialCategory: section),
+                    name: "settings-\(section)-\(Int(width))", size: CGSize(width: width, height: 760))
+            }
+        }
+        for width: CGFloat in [520, 1040] {
+            try await assertRenderedPage(MacMemoryCenterPage(), name: "memory-\(Int(width))", size: CGSize(width: width, height: 760))
+            try await assertRenderedPage(MacHealthSummaryView(), name: "health-\(Int(width))", size: CGSize(width: width, height: 760))
+            try await assertRenderedPage(MacNotificationCenterView(), name: "notifications-\(Int(width))", size: CGSize(width: width, height: 760))
+            try await assertRenderedPage(MacModelTestView(), name: "model-test-\(Int(width))", size: CGSize(width: width, height: 760))
+        }
+    }
+
     private func assertRenderedPage<Page: View>(
         _ page: Page,
         name: String,
         size: CGSize
     ) async throws {
-        let host = NSHostingView(rootView: page.frame(width: size.width, height: size.height))
+        for dark in [false, true] {
+        let name = name + (dark ? "-dark" : "-light")
+        let host = NSHostingView(rootView: page.frame(width: size.width, height: size.height)
+            .environment(\.colorScheme, dark ? .dark : .light))
         host.frame = NSRect(origin: .zero, size: size)
-        host.appearance = NSAppearance(named: .aqua)
+        host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.borderless],
@@ -578,6 +597,10 @@ final class MacSecondaryPageVisualEndToEndTests: XCTestCase {
         attachment.name = name
         attachment.lifetime = .keepAlways
         XCTContext.runActivity(named: name) { $0.add(attachment) }
+        let output = URL(fileURLWithPath: "/tmp/nola-native-page-matrix", isDirectory: true)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        try png.write(to: output.appendingPathComponent(name + ".png"), options: .atomic)
+        }
     }
 }
 

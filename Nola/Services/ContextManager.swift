@@ -1206,10 +1206,17 @@ public final class DefaultContextManager {
         if let previous = archive.existingSummary, !previous.isEmpty {
             source.insert(.object(["role": .string("assistant"), "content": .string(previous)]), at: 0)
         }
-        var stage = try step(["type": .string("start"), "messages": .array(source),
-            "context_window_tokens": .signedInteger(Int64(window)),
-            "output_tokens": .signedInteger(Int64(plan.input.budget.reservedOutputTokens)),
-            "target_tokens": .signedInteger(Int64(archive.targetSummaryTokens)), "instructions": .string(instructions)])
+        var stage: [String: AgentCoreJSONValue]
+        do {
+            stage = try step(["type": .string("start"), "messages": .array(source),
+                "context_window_tokens": .signedInteger(Int64(window)),
+                "output_tokens": .signedInteger(Int64(plan.input.budget.reservedOutputTokens)),
+                "target_tokens": .signedInteger(Int64(archive.targetSummaryTokens)), "instructions": .string(instructions)])
+        } catch IOSApplicationRuntimeError.rejected {
+            // A pure plan can refuse an insufficient summary window. Nothing
+            // was sent to a model or committed; retain the original context.
+            throw ContextOutboundPreparationError.cannotFit
+        }
         var correction = ""
         var rewrites = 0
         while true {

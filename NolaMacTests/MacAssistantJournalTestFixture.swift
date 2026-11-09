@@ -35,8 +35,14 @@ enum MacCanonicalTranscriptEvidence {
 // Originating-request fixture: prepares and freezes the actual semantic input,
 // but deliberately creates no Run. Only the source fixture's receipt admits it.
 extension MacApplicationPort {
+    func ensureFixtureConversation(id: String, title: String) throws {
+        if try loadConversation(id) == nil {
+            _ = try createConversation(.init(id: id, title: title, settingsJSON: nil, createdAtMs: 1, updatedAtMs: 1))
+        }
+    }
     @discardableResult
     func prepareFixtureRemoteSubmission(_ input: MacPrepareRemoteSubmissionInput) throws -> MacRemoteSubmissionIntent {
+        try ensureFixtureConversation(id: input.conversationID, title: input.conversationTitle)
         let prepared = try prepareRemoteSubmission(input)
         let request: [String: Any] = ["conversationId":input.conversationID, "expected_host_id":input.sourceHostID,
             "client_id":input.clientID, "submission_id":input.submissionID, "user_message_id":input.userMessageID,

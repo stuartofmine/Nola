@@ -32,3 +32,18 @@
 
 /* Named task/result/context groups replace the undifferentiated eight-icon strip. */
 .grouped-tools .tool-group{display:inline-flex;align-items:center;gap:5px;height:36px;padding:0 9px;border-radius:6px;font-size:12px;color:var(--muted);white-space:nowrap}.grouped-tools .tool-group svg{width:16px;height:16px}.grouped-tools .tool-group:hover{background:var(--hover)}.grouped-tools .tool-group.selected{background:var(--bg);color:var(--fg)}
+
+/* Shared management state previews; no application runtime or network effects. */
+.update-preview{max-width:680px;display:grid;gap:16px;padding:20px 0}
+.update-preview h2{font-size:20px;line-height:1.4}.update-preview p{line-height:1.65;overflow-wrap:anywhere}
+.update-preview .action-wrap{margin:0;gap:10px;flex-wrap:wrap}
+.update-preview button,.catalog-recovery button,.prototype-state-controls button{min-height:36px;padding:8px 14px;border-radius:8px}
+.update-status[role=alert],.save-recovery{color:var(--danger);line-height:1.6}
+.prototype-state-controls{margin:16px 0;padding-top:12px;border-top:1px solid var(--line)}
+.prototype-state-controls summary{min-height:36px;padding:8px 0;cursor:pointer;color:var(--muted)}
+.prototype-state-controls p{font-size:13px;line-height:1.65;color:var(--muted);margin:10px 0}
+.prototype-state-controls button[aria-pressed=true]{outline:1px solid var(--focus);outline-offset:-1px}
+.catalog-recovery{padding:18px 0}.catalog-recovery h2{font-size:18px}.catalog-recovery p{line-height:1.65;margin:10px 0}
+.save-recovery{padding:12px 0}.im-sheet-action{padding:12px 14px;min-height:44px;width:100%;text-align:left}
+@media(hover:hover){.objects>.object-row:hover,.update-preview button:not(.primary):hover,.prototype-state-controls button:hover{background:var(--hover)}}
+.objects>.object-row:active{background:var(--soft)}

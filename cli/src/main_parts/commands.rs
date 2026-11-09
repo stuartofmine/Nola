@@ -161,53 +161,27 @@ fn data_source_display_name(location: &str) -> String {
 }
 
 fn print_goal_mode_summary(goal: &str, constraints: Option<&str>) {
-    let rule = interactive_layer_rule(Some("goal"));
-    let mut lines = Vec::new();
-    if !rule.is_empty() {
-        lines.push(rule);
+    let mut lines = vec![interactive_layer_rule(Some(ui_text(UiText::AutonomousGoal))),
+        format!("  {}: {goal}", ui_text(UiText::AutonomousGoal))];
+    if let Some(constraints) = constraints.filter(|value| !value.trim().is_empty()) {
+        lines.push(format!("  {}: {constraints}", ui_text(UiText::Constraints)));
     }
-    if interactive_color_enabled() {
-        lines.push(format!(
-            "  {INTERACTIVE_ACCENT}{}{INTERACTIVE_RESET}  {goal}",
-            ui_text(UiText::AutonomousGoal)
-        ));
-        if let Some(constraints) = constraints {
-            let preview = truncate_display_width(constraints, 180);
-            lines.push(format!(
-                "  {INTERACTIVE_DIM}{}{INTERACTIVE_RESET}  {preview}",
-                ui_text(UiText::Constraints)
-            ));
-        } else {
-            lines.push(format!(
-                "  {INTERACTIVE_DIM}{}{INTERACTIVE_RESET}  {}",
-                ui_text(UiText::Constraints),
-                ui_text(UiText::DefaultSafeConstraints)
-            ));
-        }
-        lines.push(format!(
-            "  {INTERACTIVE_DIM}{}{INTERACTIVE_RESET}  {}",
-            ui_text(UiText::Mode),
-            ui_text(UiText::AutonomousUntilComplete)
-        ));
-    } else {
-        lines.push(format!("  {}: {goal}", ui_text(UiText::AutonomousGoal)));
-        if let Some(constraints) = constraints {
-            let preview = truncate_display_width(constraints, 180);
-            lines.push(format!("  {}: {preview}", ui_text(UiText::Constraints)));
-        } else {
-            lines.push(format!(
-                "  {}: {}",
-                ui_text(UiText::Constraints),
-                ui_text(UiText::DefaultSafeConstraints)
-            ));
-        }
-        lines.push(format!(
-            "  {}: {}",
-            ui_text(UiText::Mode),
-            ui_text(UiText::AutonomousUntilComplete)
-        ));
-    }
+    lines.push(format!("  {}", ui_text(UiText::GoalLifecycle)));
     crate::terminal_ui::commit_history(&format!("{}\n", lines.join("\n")));
+}
+
+fn begin_interactive_goal_input(target: &str, config: &Config,
+    goal_target: &mut Option<String>, goal_constraints: &mut Option<String>) -> Result<SlashCommandResult, String> {
+    if target.trim().is_empty() { return Ok(SlashCommandResult::GoalEntry); }
+    if interactive_goal_snapshot(config, goal_target.as_deref(), goal_constraints.as_deref())?.is_some() {
+        return Err(tr(Message::InteractiveGoalAlreadyActive).to_string());
+    }
+    // This is an explicit Goal form. Its text is an objective, never slash
+    // syntax, flags, or a replacement for an ordinary chat message.
+    *goal_target = Some(target.trim().to_string());
+    *goal_constraints = None;
+    print_goal_mode_summary(target.trim(), None);
+    Ok(SlashCommandResult::RunGoalPrompt(target.trim().to_string()))
 }
 
 #[derive(Debug, Clone)]
@@ -239,6 +213,8 @@ fn interactive_goal_snapshot(
                     status: status.to_string(),
                 }));
             }
+            // Persisted completion/cancellation wins over a stale local draft.
+            return Ok(None);
         }
     }
     Ok(goal_target.map(|target| InteractiveGoalSnapshot {
@@ -270,6 +246,20 @@ fn interactive_goal_snapshot_from_projection(
     })
 }
 
+fn submit_interactive_goal_control(config: &Config, action: nola_application::goal_control_intent::GoalControlAction) -> Result<bool, String> {
+    let session = config.session_id.as_deref().ok_or("Goal requires a conversation")?;
+    let projection = session::load_session_goal_projection(session)?.ok_or("Goal state is unavailable")?;
+    let goal = projection.active.as_ref().filter(|goal| !goal.status.is_terminal())
+        .ok_or_else(|| tr(Message::InteractiveGoalNoResumable).to_string())?;
+    let confirmed = crate::goal_control_port::submit_existing(nola_application::goal_control_intent::PrepareGoalControlIntent {
+        conversation_id: session.into(), operation_id: format!("cli-goal:{}", uuid::Uuid::new_v4()),
+        action, expected_goal_id: Some(goal.id.clone()), expected_control_token: projection.control_token(),
+        objective: String::new(), constraints: Vec::new(), wake_at_epoch_ms: None,
+    })?;
+    if !confirmed { terminal_notice!("  {}", tr(Message::InteractiveGoalControlPending)); }
+    Ok(confirmed)
+}
+
 fn interactive_goal_state_text(status: &str) -> String {
     match status {
         "running" => tr(Message::InteractiveGoalStateRunning).to_string(),
@@ -280,80 +270,45 @@ fn interactive_goal_state_text(status: &str) -> String {
     }
 }
 
-fn parse_goal_target_and_constraints(input: &str) -> (String, Option<String>) {
-    let mut parts: Vec<&str> = input.split_whitespace().collect();
-    if parts.is_empty() {
-        return (String::new(), None);
-    }
-
-    let mut marker_index: Option<usize> = None;
-    let mut marker_value: Option<String> = None;
-    for (index, token) in parts.iter().enumerate() {
-        if *token == "-c" || *token == "--constraints" {
-            marker_index = Some(index);
-            if index + 1 < parts.len() {
-                let constraints = parts[index + 1..].join(" ").trim().to_string();
-                if !constraints.is_empty() {
-                    marker_value = Some(constraints);
-                }
-            }
-            break;
+/// Parse only explicit command syntax; preserve the objective's Unicode,
+/// spacing and newlines. Quoted examples and text after `--` are literal.
+fn parse_goal_target_and_constraints(input: &str) -> Result<(String, Option<String>), String> {
+    let input = input.trim();
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, ch) in input.char_indices() {
+        if escaped { escaped = false; continue; }
+        if ch == '\\' { escaped = true; continue; }
+        if matches!(ch, '\'' | '"') {
+            if quote == Some(ch) { quote = None; }
+            else if quote.is_none() && (index == 0 || input[..index].ends_with(char::is_whitespace)) { quote = Some(ch); }
+            continue;
         }
-        if let Some(value) = token.strip_prefix("--constraints=") {
-            marker_index = Some(index);
-            let mut values = Vec::new();
-            if !value.is_empty() {
-                values.push(value.to_string());
-            }
-            if index + 1 < parts.len() {
-                let tail = parts[index + 1..].join(" ");
-                if !tail.is_empty() {
-                    values.push(tail);
-                }
-            }
-            if !values.is_empty() {
-                marker_value = Some(values.join(" ").trim().to_string());
-            }
-            break;
+        if quote.is_some() || (index > 0 && !input[..index].ends_with(char::is_whitespace)) { continue; }
+        let rest = &input[index..];
+        let token_end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+        let token = &rest[..token_end];
+        if token == "--" {
+            let target = format!("{}{}", &input[..index], rest[token_end..].trim_start());
+            return validate_goal_input(target.trim().to_string(), None);
         }
-        if let Some(value) = token.strip_prefix("-c=") {
-            marker_index = Some(index);
-            let mut values = Vec::new();
-            if !value.is_empty() {
-                values.push(value.to_string());
-            }
-            if index + 1 < parts.len() {
-                let tail = parts[index + 1..].join(" ");
-                if !tail.is_empty() {
-                    values.push(tail);
-                }
-            }
-            if !values.is_empty() {
-                marker_value = Some(values.join(" ").trim().to_string());
-            }
-            break;
+        let constraints = if matches!(token, "-c" | "--constraints") {
+            Some(rest[token_end..].trim())
+        } else { token.strip_prefix("--constraints=").or_else(|| token.strip_prefix("-c="))
+            .map(|_| rest.split_once('=').unwrap().1.trim()) };
+        if let Some(constraints) = constraints {
+            if constraints.is_empty() { return Err(tr(Message::InteractiveSlashGoalUsage).to_string()); }
+            return validate_goal_input(input[..index].trim().to_string(), Some(constraints.to_string()));
         }
     }
-
-    if let Some(marker_index) = marker_index {
-        parts.truncate(marker_index);
-        let target = parts.join(" ");
-        return (
-            target.trim().to_string(),
-            marker_value.filter(|value| !value.trim().is_empty()),
-        );
-    }
-
-    (input.trim().to_string(), None)
+    validate_goal_input(input.to_string(), None)
 }
 
-fn default_goal_requirements(config: &Config, goal: &str) -> String {
-    let root = compact_home_path(&config.project_root.to_string_lossy());
-    let clean_goal = goal.trim();
-    format!(
-        "默认约束：\n- 在当前项目根目录 {root} 范围内完成，不越界到无关目录。\n- 以最小改动原则解决请求，优先复用现有实现与约定。\n- 除非用户明确要求，不新增临时文件或实验性脚本。\n- 避免重复询问用户，默认持续推进到目标可验证完成。\n- 环境修复、依赖安装、网络访问、破坏性操作或产品决策必须征得用户同意；被拒绝或无法确认时暂停目标。\n- 完成后给出可复现的证据（改动路径、命令输出、测试结果）。\n- 目标：{clean_goal}"
-    )
+fn validate_goal_input(target: String, constraints: Option<String>) -> Result<(String, Option<String>), String> {
+    if target.trim().is_empty() { return Err(tr(Message::InteractiveSlashGoalUsage).to_string()); }
+    Ok((target, constraints))
 }
+
 
 fn select_interactive_model(config: &mut Config, model_id: &str) -> Result<(), String> {
     if let Some(id) = model_id.strip_prefix("configured:") {

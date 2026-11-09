@@ -6,19 +6,28 @@ import Combine
 import Observation
 import SwiftUI
 
+@MainActor
 final class MacInspectorNavigationState: ObservableObject {
     @Published var selectedTab: MacChatInspector.InspectorTab {
-        didSet { expandedSections.insert(selectedTab); revealRevision &+= 1 }
+        didSet { expandedSections.insert(selectedTab); revealedKnowledge = nil; revealRevision &+= 1 }
     }
     @Published private(set) var revealRevision = 0
+    @Published private(set) var revealedKnowledge: MacInspectorKnowledgePane?
+    var revealID: String { revealedKnowledge.map { "knowledge-" + $0.rawValue } ?? selectedTab.rawValue }
     @Published var knowledgePane: MacInspectorKnowledgePane {
-        didSet { expandedKnowledge.insert(knowledgePane) }
+        didSet {
+            expandedKnowledge.insert(knowledgePane)
+            selectedTab = .context
+            revealedKnowledge = knowledgePane
+            revealRevision &+= 1
+        }
     }
+    let goalDrafts = MacInspectorGoalDraftStore()
     @Published var expandedKnowledge: Set<MacInspectorKnowledgePane> = [.points]
     @Published var expandedSections: Set<MacChatInspector.InspectorTab> = [.overview]
 
     func select(_ tab: MacChatInspector.InspectorTab, isVisible: Bool) -> Bool {
-        let remainsVisible = !isVisible || selectedTab != tab
+        let remainsVisible = !isVisible || selectedTab != tab || !expandedSections.contains(tab)
         selectedTab = tab
         expandedSections.insert(tab)
         return remainsVisible
@@ -31,6 +40,7 @@ final class MacInspectorNavigationState: ObservableObject {
         knowledgePane = pane ?? .points
         expandedKnowledge.insert(knowledgePane)
         expandedSections.insert(selectedTab)
+        revealedKnowledge = pane
     }
 }
 
@@ -151,7 +161,8 @@ struct MacChatInspector: View {
                                     .font(.system(size: 13, weight: .semibold))
                                     .frame(minHeight: 32, alignment: .leading)
                             }
-                            .id(section)
+                            .disclosureGroupStyle(MacRowDisclosureStyle())
+                            .id(section.rawValue)
                             .accessibilityIdentifier("mac-inspector-section-" + section.rawValue)
                             .padding(.horizontal, 4)
                             Divider().opacity(0.5)
@@ -159,11 +170,12 @@ struct MacChatInspector: View {
                     }
                     .padding(12)
                 }
-                .onChange(of: navigation.revealRevision) { _, _ in
-                    let section = selectedTab
-                    navigation.expandedSections.insert(section)
+                .task(id: navigation.revealRevision) {
+                    // Wait for newly expanded content to enter the layout tree.
+                    await Task.yield()
+                    guard !Task.isCancelled else { return }
                     withAnimation(reduceMotion ? nil : .smooth(duration: 0.24)) {
-                        reader.scrollTo(section, anchor: .top)
+                        reader.scrollTo(navigation.revealID, anchor: .top)
                     }
                 }
                 .animation(reduceMotion ? nil : .smooth(duration: 0.22), value: navigation.expandedSections)
@@ -187,13 +199,13 @@ struct MacChatInspector: View {
     }
 
     @ViewBuilder
-    private func inspectorContent(_ section: InspectorTab) -> some View {
+    func inspectorContent(_ section: InspectorTab) -> some View {
         switch section {
         case .overview: MacInspectorDecisionOverview(model: model, select: { selectedTab = $0 })
         case .review: MacInspectorReviewView(model: model, openReview: openReview)
         case .artifacts: MacInspectorArtifactsView(model: model, canReadLocalFiles: canReadLocalFiles, inspectFile: inspectFile)
         case .progress: MacInspectorProgressView(model: model, mode: .progress)
-        case .goal: MacInspectorProgressView(model: model, mode: .goal)
+        case .goal: MacInspectorProgressView(model: model, mode: .goal, draftStore: navigation.goalDrafts)
         case .execution:
             MacInspectorProgressView(model: model, mode: .execution)
             MacInspectorActivityView(model: model, chromeSnapshot: chrome.snapshot)

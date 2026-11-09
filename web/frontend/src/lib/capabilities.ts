@@ -1,6 +1,22 @@
 export type CapabilityMode = 'skills' | 'mcp';
 export type Capability = Record<string, unknown> & { name?: string; display_name?: string; server_id?: string; revision?: number; enabled?: boolean };
-export type CapabilitySettings = { skills: Capability[]; mcp_servers: Capability[]; skill_settings_backup_key?: string };
+export type CapabilitySettings = { skills: Capability[]; mcp_servers: Capability[]; skill_settings_backup_key?: string | null };
+export type ExecutionBackendSummary = { id: string; display_name: string; capabilities: { supports_permission_bridge: boolean } };
+/** Reject incomplete Host catalogs before publishing any part of the snapshot. */
+export function capabilitySnapshot(value: unknown): CapabilitySettings & { execution_backends: ExecutionBackendSummary[] } {
+    const object = (item: unknown): item is Record<string, unknown> => !!item && typeof item === 'object' && !Array.isArray(item);
+    if (!object(value) || !Array.isArray(value.skills) || !value.skills.every(object)
+        || !Array.isArray(value.mcp_servers) || !value.mcp_servers.every(object)
+        || !Array.isArray(value.execution_backends)
+        || !value.execution_backends.every(item => object(item) && typeof item.id === 'string' && !!item.id.trim()
+            && typeof item.display_name === 'string' && !!item.display_name.trim()
+            && object(item.capabilities) && typeof item.capabilities.supports_permission_bridge === 'boolean')
+        || new Set(value.execution_backends.map(item => item.id)).size !== value.execution_backends.length
+        || (value.skill_settings_backup_key !== undefined && value.skill_settings_backup_key !== null && typeof value.skill_settings_backup_key !== 'string')) {
+        throw new CapabilityValidationError('capability.loadFailed');
+    }
+    return value as CapabilitySettings & { execution_backends: ExecutionBackendSummary[] };
+}
 export function builtin(item: Capability) { return item.built_in === true || item.source === 'built_in' || item.builtin === true || item.isBuiltin === true || item.source === 'builtin'; }
 export function capabilityName(item: Capability, fallback = '') { return String(item.display_name || item.name || item.title || item.server_id || fallback); }
 export class CapabilityValidationError extends Error {

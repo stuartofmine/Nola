@@ -880,6 +880,44 @@ mod platform {
         // cross-process lock, including after a client crashes.
     }
 
+    fn database_owner_is_busy(database: &Path) -> Result<bool, String> {
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+        let canonical = if database.exists() {
+            std::fs::canonicalize(database).map_err(|error| error.to_string())?
+        } else {
+            let parent = database.parent().filter(|path| !path.as_os_str().is_empty()).unwrap_or(Path::new("."));
+            let parent = match std::fs::canonicalize(parent) {
+                Ok(parent) => parent,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+                Err(error) => return Err(error.to_string()),
+            };
+            parent.join(database.file_name().ok_or("database path has no file name")?)
+        };
+        let mut lock_path = canonical.into_os_string();
+        lock_path.push(".service.lock");
+        let file = match std::fs::OpenOptions::new().read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC).open(PathBuf::from(lock_path)) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(format!("inspect database owner lock failed: {error}")),
+        };
+        let metadata = file.metadata().map_err(|error| error.to_string())?;
+        if !metadata.is_file() || metadata.uid() != unsafe { libc::geteuid() } || metadata.mode() & 0o077 != 0 {
+            return Err("database owner lock is not a private file owned by the current user".into());
+        }
+        loop {
+            if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) } == 0 {
+                return Ok(false);
+            }
+            let error = std::io::Error::last_os_error();
+            match error.kind() {
+                std::io::ErrorKind::WouldBlock => return Ok(true),
+                std::io::ErrorKind::Interrupted => continue,
+                _ => return Err(format!("inspect database ownership failed: {error}")),
+            }
+        }
+    }
+
     struct StderrCapture {
         tail: Arc<Mutex<Vec<u8>>>,
         cancelled: Arc<AtomicBool>,
@@ -1294,6 +1332,19 @@ mod platform {
         }
         let deadline = Instant::now() + Duration::from_secs(5);
         'startup: for attempt in 0..2 {
+            // A retiring owner has already unlinked its listener but may still
+            // be settling accepted requests. Observe the actual ownership lock,
+            // not a fixed grace sleep or another doomed child launch.
+            while database_owner_is_busy(client.database_path())? {
+                match client.health() {
+                    Ok(_) => return Ok(()),
+                    Err(error) => last_health_error = error,
+                }
+                if Instant::now() >= deadline {
+                    return Err(format!("database owner is still draining or unavailable; no replacement was launched: {last_health_error}"));
+                }
+                thread::sleep(Duration::from_millis(25));
+            }
             let (executable, embedded_entry) = service_executable()?;
             let mut command = Command::new(&executable);
             if embedded_entry {
@@ -1386,6 +1437,31 @@ mod platform {
     #[cfg(test)]
     mod stderr_tests {
         use super::*;
+
+        #[test]
+        fn owner_probe_observes_the_real_lock_without_changing_database_or_lock_inode() {
+            use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+            let directory = std::env::temp_dir().join(format!("nola-owner-probe-{}", next_request_id()));
+            std::fs::create_dir(&directory).unwrap();
+            let database = directory.join("fixture.db");
+            std::fs::write(&database, b"untouched database").unwrap();
+            assert!(!database_owner_is_busy(&database).unwrap());
+            let path = directory.join("fixture.db.service.lock");
+            let owner = std::fs::OpenOptions::new().read(true).write(true).create_new(true).mode(0o600).open(&path).unwrap();
+            let inode = owner.metadata().unwrap().ino();
+            assert_eq!(unsafe { libc::flock(owner.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, 0);
+            assert!(database_owner_is_busy(&database).unwrap());
+            assert_eq!(std::fs::metadata(&path).unwrap().ino(), inode);
+            // Parallel tests spawn children. A child can briefly inherit the
+            // descriptor before CLOEXEC, so release this fixture's lock
+            // explicitly rather than depending on its last inherited close.
+            assert_eq!(unsafe { libc::flock(owner.as_raw_fd(), libc::LOCK_UN) }, 0);
+            drop(owner);
+            assert!(!database_owner_is_busy(&database).unwrap());
+            assert_eq!(std::fs::read(&database).unwrap(), b"untouched database");
+            assert_eq!(std::fs::metadata(&path).unwrap().ino(), inode);
+            std::fs::remove_dir_all(directory).unwrap();
+        }
 
         #[test]
         fn process_startup_lock_excludes_other_processes_and_releases_on_exit() {

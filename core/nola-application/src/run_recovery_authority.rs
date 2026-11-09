@@ -8,7 +8,6 @@ use nola_host_protocol::HostInvocationBinding;
 use nola_store_port::run_recovery_inspection::RunRecoveryInspectionRepository;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -36,50 +35,8 @@ pub fn validate_run_recovery_authority<R: RunRecoveryInspectionRepository + ?Siz
     expected_invocation_config_digest: String,
     current: RunRecoveryAuthority,
 ) -> Result<RunRecoveryAuthorityReceipt, String> {
-    let exact = crate::load_exact_run_invocation(
-        store,
-        conversation_id.clone(),
-        expected_run_id.clone(),
-        assistant_message_id.clone(),
-    )?
-    .ok_or("Recovery Run is unavailable")?;
-    if exact.invocation_config_digest != expected_invocation_config_digest
-        || exact.status == "sealed"
-    {
-        return Err("Recovery invocation witness changed".into());
-    }
-    let stored = store
-        .load_exact_run_invocation(&conversation_id, &expected_run_id, &assistant_message_id)
-        .map_err(|e| e.to_string())?
-        .ok_or("Recovery Run is unavailable")?;
-    if stored.conversation_id != conversation_id
-        || stored.run_id != expected_run_id
-        || stored.assistant_message_id != assistant_message_id
-        || stored.invocation_config_digest != expected_invocation_config_digest
-        || stored.status != exact.status
-        || stored.status == "sealed"
-        || stored.terminal.is_some()
-        || stored.completed_at_ms.is_some()
-        || format!(
-            "{:x}",
-            Sha256::digest(stored.invocation_config_json.as_bytes())
-        ) != expected_invocation_config_digest
-    {
-        return Err("Recovery invocation integrity changed".into());
-    }
-    let frozen: AgentCoreConfig = serde_json::from_str(&stored.invocation_config_json)
-        .map_err(|_| "Invalid frozen recovery policy")?;
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|_| "Recovery clock is unavailable")?
-        .as_millis() as u64;
-    validate_facts(&frozen, &current, now_ms)?;
-    Ok(RunRecoveryAuthorityReceipt {
-        conversation_id,
-        run_id: expected_run_id,
-        assistant_message_id,
-        invocation_config_digest: expected_invocation_config_digest,
-    })
+    validate_recovery_authority(store, conversation_id, expected_run_id, assistant_message_id,
+        expected_invocation_config_digest, current, false)
 }
 
 /// Reconstitute only Core-installed capabilities for an embedded Host. The
@@ -88,19 +45,34 @@ pub fn validate_run_recovery_authority<R: RunRecoveryInspectionRepository + ?Siz
 pub fn validate_mobile_run_recovery_authority<R: RunRecoveryInspectionRepository + ?Sized>(
     store: &R, conversation_id: String, expected_run_id: String,
     assistant_message_id: String, expected_invocation_config_digest: String,
-    mut current: RunRecoveryAuthority,
+    current: RunRecoveryAuthority,
 ) -> Result<RunRecoveryAuthorityReceipt, String> {
-    let stored = store.load_exact_run_invocation(&conversation_id, &expected_run_id, &assistant_message_id)
-        .map_err(|e| e.to_string())?.ok_or("Mobile recovery Run is unavailable")?;
-    if stored.invocation_config_digest != expected_invocation_config_digest
-        || format!("{:x}", Sha256::digest(stored.invocation_config_json.as_bytes())) != expected_invocation_config_digest {
-        return Err("Mobile recovery invocation integrity changed".into());
+    validate_recovery_authority(store, conversation_id, expected_run_id, assistant_message_id,
+        expected_invocation_config_digest, current, true)
+}
+
+fn validate_recovery_authority<R: RunRecoveryInspectionRepository + ?Sized>(
+    store: &R, conversation_id: String, expected_run_id: String,
+    assistant_message_id: String, expected_invocation_config_digest: String,
+    mut current: RunRecoveryAuthority, mobile: bool,
+) -> Result<RunRecoveryAuthorityReceipt, String> {
+    // One repository snapshot proves ownership, terminal state, checkpoint and
+    // configuration. Re-reading and hashing it in each adapter adds no proof.
+    let (exact, frozen) = crate::run_invocation_recovery::load_exact_run_invocation_with_config(
+        store, conversation_id.clone(), expected_run_id.clone(), assistant_message_id.clone(),
+    )?.ok_or("Recovery Run is unavailable")?;
+    if exact.invocation_config_digest != expected_invocation_config_digest || exact.status == "sealed" {
+        return Err("Recovery invocation witness changed".into());
     }
-    let frozen: AgentCoreConfig = serde_json::from_str(&stored.invocation_config_json)
-        .map_err(|_| "Invalid frozen mobile configuration")?;
-    restore_core_delegation_observation(&frozen, &mut current)?;
-    validate_run_recovery_authority(store, conversation_id, expected_run_id,
-        assistant_message_id, expected_invocation_config_digest, current)
+    if mobile { restore_core_delegation_observation(&frozen, &mut current)?; }
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| "Recovery clock is unavailable")?.as_millis() as u64;
+    validate_facts(&frozen, &current, now_ms)?;
+    Ok(RunRecoveryAuthorityReceipt {
+        conversation_id, run_id: expected_run_id, assistant_message_id,
+        invocation_config_digest: expected_invocation_config_digest,
+    })
 }
 
 fn restore_core_delegation_observation(
@@ -266,6 +238,52 @@ mod tests {
         };
         (frozen, current)
     }
+    struct SingleSnapshot {
+        value: nola_store_port::run_recovery_inspection::StoredExactRunInvocation,
+        reads: std::cell::Cell<usize>,
+    }
+    impl RunRecoveryInspectionRepository for SingleSnapshot {
+        type Error = String;
+        fn load_exact_run_invocation(&self, conversation: &str, run: &str, assistant: &str)
+            -> Result<Option<nola_store_port::run_recovery_inspection::StoredExactRunInvocation>, String> {
+            assert_eq!((conversation, run, assistant), ("conversation", "run", "assistant"));
+            self.reads.set(self.reads.get() + 1);
+            assert_eq!(self.reads.get(), 1, "authority must use one pinned invocation snapshot");
+            Ok(Some(self.value.clone()))
+        }
+        fn list_recoverable_runs(&self, _: Option<&str>, _: usize)
+            -> Result<Vec<nola_store_port::run_recovery_inspection::RecoverableRunRef>, String> { unreachable!() }
+        fn inspect_unknown_effect_recovery(&self, _: &str, _: &str, _: &str)
+            -> Result<Option<nola_store_port::run_recovery_inspection::StoredUnknownEffectRecoveryInspection>, String> { unreachable!() }
+        fn inspect_exact_run(&self, _: &str)
+            -> Result<Option<nola_store_port::run_recovery_inspection::StoredRunRecoveryInspection>, String> { unreachable!() }
+    }
+    #[test]
+    fn authority_uses_one_verified_snapshot_and_still_rejects_tampered_bytes() {
+        use sha2::{Digest, Sha256};
+        for mobile in [false, true] {
+            for tampered in [false, true] {
+                let (mut frozen, mut current) = fixture();
+                frozen.tools[0]["x_nola"]["manifest_valid_until_ms"] = json!(u64::MAX);
+                current.tools = frozen.tools.clone();
+                let json = serde_json::to_string(&frozen).unwrap();
+                let digest = format!("{:x}", Sha256::digest(json.as_bytes()));
+                let snapshot = SingleSnapshot {
+                    value: nola_store_port::run_recovery_inspection::StoredExactRunInvocation {
+                        conversation_id: "conversation".into(), run_id: "run".into(), assistant_message_id: "assistant".into(),
+                        status: "running".into(), completed_at_ms: None, terminal: None, core_checkpoint: None,
+                        invocation_config_json: if tampered { format!("{json} ") } else { json },
+                        invocation_config_digest: digest.clone(),
+                    }, reads: std::cell::Cell::new(0),
+                };
+                let result = validate_recovery_authority(&snapshot, "conversation".into(), "run".into(),
+                    "assistant".into(), digest, current, mobile);
+                assert_eq!(result.is_err(), tampered);
+                assert_eq!(snapshot.reads.get(), 1);
+            }
+        }
+    }
+
     #[test]
     fn mobile_parent_restores_only_its_frozen_core_capability() {
         let mut base = crate::user_input_wait_tests::config();

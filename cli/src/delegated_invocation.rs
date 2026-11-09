@@ -171,6 +171,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn host_workspace_scope_is_private_independent_and_idempotent() {
+        let _environment = crate::store::test_env_lock();
+        let project = tempfile::tempdir().unwrap();
+        let status = std::process::Command::new(crate::platform_paths::git_program())
+            .args(["init", "--quiet"]).current_dir(project.path()).status().unwrap();
+        assert!(status.success());
+        assert!(std::process::Command::new(crate::platform_paths::git_program())
+            .args(["-c", "user.name=Fixture", "-c", "user.email=fixture@localhost", "commit", "--allow-empty", "-qm", "baseline"])
+            .current_dir(project.path()).status().unwrap().success());
+        let root = project.path().canonicalize().unwrap();
+        let mut parent = HostInvocationRequest::for_test().unwrap();
+        parent.tool_settings.project_root = root.clone();
+        parent.tool_settings.allowed_dirs = vec![root.clone()];
+        parent.tool_settings.tools_enabled = true;
+        prepare_managed_workspace_scope(&mut parent).unwrap();
+        assert_eq!(parent.tool_settings.allowed_dirs.len(), 2);
+        let scratch = parent.tool_settings.allowed_dirs[1].clone();
+        assert!(!scratch.starts_with(&root));
+        assert_ne!(scratch, std::path::Path::new("/"));
+        assert!(scratch.is_dir());
+        #[cfg(unix)] {
+            use std::os::unix::fs::MetadataExt;
+            assert_eq!(std::fs::metadata(&scratch).unwrap().mode() & 0o077, 0);
+        }
+        prepare_managed_workspace_scope(&mut parent).unwrap();
+        assert_eq!(parent.tool_settings.allowed_dirs.len(), 2);
+        std::fs::remove_dir(&scratch).unwrap(); // This test's empty Host container only.
+    }
+
+    #[test]
     fn child_roundtrip_freezes_model_parameters_and_profile_without_serializing_keys() {
         let _environment = crate::store::test_env_lock();
         let root = tempfile::tempdir().unwrap();
@@ -377,6 +407,54 @@ impl CredentialReferenceExt for CredentialReference {
 
 /// Translate composed Host facts once, before Core admission. This adapter
 /// removes secrets and live handles; profile selection/capture lives in Core.
+/// Host-owned scratch scope, frozen before the Run is admitted. It authorizes
+/// only this project's independent workspace container, never its parent or `/`.
+pub(crate) fn prepare_managed_workspace_scope(parent: &mut HostInvocationRequest) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    use std::path::Path;
+    if !parent.tool_settings.tools_enabled || parent.tool_settings.task_worktree.is_some()
+        || parent.session.host_task_execution.is_some()
+        || crate::tools::observe_parent_repository(&parent.tool_settings.project_root)?.is_none() {
+        return Ok(());
+    }
+    let project = parent.tool_settings.project_root.canonicalize().map_err(|e| e.to_string())?;
+    let database = crate::platform_paths::application_database_path()?;
+    let identity = serde_json::to_vec(&(&project, &database)).map_err(|e| e.to_string())?;
+    let digest = format!("{:x}", Sha256::digest(identity));
+    let directory = std::env::temp_dir().join(format!("nola-workspaces-{}", &digest[..32]));
+    if directory.starts_with(&project) {
+        return Err("Managed workspaces require an independent Host scratch directory outside the source project".into());
+    }
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)] {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    match builder.create(&directory) {
+        Ok(()) => (),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
+        Err(e) => return Err(format!("Prepare managed workspace scope: {e}")),
+    }
+    let metadata = std::fs::symlink_metadata(&directory).map_err(|e| e.to_string())?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err("Managed workspace scope is not an owned directory; no existing entry was replaced".into());
+    }
+    #[cfg(unix)] {
+        use std::os::unix::fs::MetadataExt;
+        if metadata.uid() != unsafe { libc::geteuid() } || metadata.mode() & 0o077 != 0 {
+            return Err("Managed workspace scope must be private to this Host user; no permissions were changed".into());
+        }
+    }
+    let directory = directory.canonicalize().map_err(|e| e.to_string())?;
+    if directory.starts_with(&project) || directory == Path::new("/") {
+        return Err("Managed workspace scope is not independent of the source project".into());
+    }
+    if !parent.tool_settings.allowed_dirs.contains(&directory) {
+        parent.tool_settings.allowed_dirs.push(directory);
+    }
+    Ok(())
+}
+
 pub(crate) fn parent_snapshot(
     parent: &HostInvocationRequest,
     store: &NolaStore,

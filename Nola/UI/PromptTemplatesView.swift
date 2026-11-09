@@ -288,6 +288,7 @@ struct PromptTemplateRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
+                Button(action: onSelect) {
                 VStack(alignment: .leading) {
                     HStack(spacing: 6) {
                         Text(template.name)
@@ -299,8 +300,8 @@ struct PromptTemplateRow: View {
                                 .font(.caption.weight(.semibold))
                                 .padding(.horizontal, 7)
                                 .padding(.vertical, 3)
-                                .background(Color.blue.opacity(0.2))
-                                .foregroundColor(.blue)
+                                .background(DesignTokens.primaryColor.opacity(0.12))
+                                .foregroundColor(DesignTokens.primaryColor)
                                 .clipShape(Capsule())
                         }
 
@@ -317,7 +318,9 @@ struct PromptTemplateRow: View {
                         .lineLimit(2)
                 }
 
-                Spacer()
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                }.buttonStyle(.plain)
+                    .accessibilityAddTraits(isSelected ? [.isSelected] : [])
 
                 Button {
                     onPreview()
@@ -331,11 +334,6 @@ struct PromptTemplateRow: View {
         }
         .padding(.vertical, 3)
         .contentShape(Rectangle())
-        .onTapGesture {
-            if !isSelected {
-                onSelect()
-            }
-        }
         .contextMenu {
             Button {
                 onPreview()

@@ -68,6 +68,7 @@ final class MacWorkspacePresentationLifecycleTests: XCTestCase {
             model.updateRemoteHostConfigurationState(true)
             model.setFixtureRemoteModels([host.fixtureProfile])
             model.selectModel(try XCTUnwrap(model.configuredModelOptions.first))
+            try await model.waitForModelConfigurationCommit()
             model.draft = "The presentation lifetime must not own execution cancellation"
             model.send()
             try await waitUntil { host.runContinuation != nil }
@@ -112,6 +113,7 @@ final class MacWorkspacePresentationLifecycleTests: XCTestCase {
             model.updateRemoteHostConfigurationState(true)
             model.setFixtureRemoteModels([host.fixtureProfile])
             model.selectModel(try XCTUnwrap(model.configuredModelOptions.first))
+            try await model.waitForModelConfigurationCommit()
             let conversation = try XCTUnwrap(model.selectedConversationID)
             model.draft = "Reveal this committed answer across presentation detachment"
             model.send()

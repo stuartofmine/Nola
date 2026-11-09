@@ -71,7 +71,8 @@ def tool_schema_metrics(request: dict) -> dict:
         ascii_count = sum(ord(char) < 128 for char in text)
         tokens += max(1, (ascii_count + 3) // 4 + len(text) - ascii_count)
     return {"toolSchemaUtf8Bytes": sum(len(text.encode("utf-8")) for text in texts),
-            "toolSchemaEstimatedTokens": tokens, "toolSchemaTokenMethod": "ascii4_nonascii1_json"}
+            "toolSchemaEstimatedTokens": tokens, "toolSchemaTokenMethod": "ascii4_nonascii1_json",
+            "toolSchemaSha256": hashlib.sha256(json.dumps(tools, sort_keys=True, separators=(",", ":")).encode()).hexdigest()}
 
 
 def output_limit(request: dict) -> int | None:

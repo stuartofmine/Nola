@@ -17,7 +17,11 @@ import UIKit
 
     func testFullRoomCandidatesPermissionProcessingAndRoomSwitch() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("room-full-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700])
+        defer {
+            if FileManager.default.fileExists(atPath: root.path) { try? FileManager.default.removeItem(at: root) }
+        }
         let runtime = try IOSApplicationRuntime(databaseURL: root.appendingPathComponent("fixture.sqlite"))
         let container = ServiceContainer(applicationRuntime: runtime)
         container.conversationStore = try LocalConversationStore(applicationRuntime: runtime)

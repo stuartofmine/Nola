@@ -43,6 +43,9 @@ final class MacInspectorProgressTests: XCTestCase {
         XCTAssertFalse(state.begin(owner: "a"))
         XCTAssertTrue(state.loaded)
         XCTAssertFalse(state.failed)
+        XCTAssertFalse(state.controlsConfirmed, "Retry must not re-enable the last stale control token")
+        state.finish(succeeded: true)
+        XCTAssertTrue(state.controlsConfirmed)
     }
 
     func testDifferentConversationNeverDisplaysPreviousFacts() {
@@ -87,6 +90,45 @@ final class MacInspectorProgressTests: XCTestCase {
             XCTAssertThrowsError(try JSONDecoder().decode(MacInspectorProgressSnapshot.self,
                 from: JSONSerialization.data(withJSONObject: object)))
         }
+    }
+
+    func testActiveGoalWithoutCurrentControlTokenCannotBecomeAStartForm() throws {
+        let json = #"{"can_submit":true,"can_pause":false,"can_resume":false,"can_cancel":false,"active":{"id":"g","objective":"Keep working","status":"running","requirements":{},"work":{"entries":[]}}}"#
+        let snapshot = try JSONDecoder().decode(MacInspectorProgressSnapshot.self, from: Data(json.utf8))
+        XCTAssertFalse(MacInspectorGoalControlPolicy.canStart(snapshot))
+        XCTAssertFalse(MacInspectorGoalControlPolicy.canControl(snapshot))
+    }
+
+    func testGoalControlsRequireSourceAdmissionAndNonemptyToken() throws {
+        func snapshot(active: String, token: String, admitted: Bool) throws -> MacInspectorProgressSnapshot {
+            let json = "{\"can_submit\":\(admitted),\"control_token\":\"\(token)\",\"can_pause\":false,\"can_resume\":false,\"can_cancel\":false,\"active\":\(active)}"
+            return try JSONDecoder().decode(MacInspectorProgressSnapshot.self, from: Data(json.utf8))
+        }
+        XCTAssertFalse(MacInspectorGoalControlPolicy.canStart(try snapshot(active: "null", token: "", admitted: false)))
+        XCTAssertTrue(MacInspectorGoalControlPolicy.canStart(try snapshot(active: "null", token: "", admitted: true)))
+        let active = #"{"id":"g","objective":"Work","status":"running","requirements":{},"work":{"entries":[]}}"#
+        XCTAssertFalse(MacInspectorGoalControlPolicy.canControl(try snapshot(active: active, token: "", admitted: true)))
+        XCTAssertTrue(MacInspectorGoalControlPolicy.canControl(try snapshot(active: active, token: "current-source-token", admitted: false)))
+    }
+
+    @MainActor
+    func testGoalDraftsSurviveDisclosureAndIsolateLateSubmissionResults() {
+        let navigation = MacInspectorNavigationState()
+        let first = navigation.goalDrafts.draft(for: "first")
+        first.objective = "Research with sources"
+        first.constraints = "Keep the original files"
+        first.isSubmitting = true
+        navigation.expandedSections.remove(.goal)
+        navigation.expandedSections.insert(.goal)
+        XCTAssertTrue(first === navigation.goalDrafts.draft(for: "first"))
+        let second = navigation.goalDrafts.draft(for: "second")
+        second.objective = "Another task"
+        first.error = "The first request failed"
+        first.isSubmitting = false
+        XCTAssertEqual(navigation.goalDrafts.draft(for: "first").objective, "Research with sources")
+        XCTAssertEqual(second.objective, "Another task")
+        XCTAssertNil(second.error)
+        XCTAssertFalse(second.isSubmitting)
     }
 
     func testMalformedGoalIsNotAnEmptyPlan() {

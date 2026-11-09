@@ -682,6 +682,7 @@
 				"$(SRCROOT)/NolaMac/ModelCenter.xcstrings",
 				"$(SRCROOT)/NolaMac/Services",
 				"$(SRCROOT)/NolaMac/UI",
+				"$(SRCROOT)/Shared/Presentation/AppleSoftwareUpdateSection.swift",
 				"$(SRCROOT)/scripts/bundle_repository_fixtures.sh",
 			);
 			name = "Bundle Repository Fixtures";

@@ -7,12 +7,18 @@
     let top = $state(56);
     let right = $state(12);
     const id = $props.id();
+    function afterToggle(event: ToggleEvent) {
+        if (event.newState === 'open') {
+            queueMicrotask(() => { if (panel.matches(':popover-open')) panel.querySelector<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled)')?.focus(); });
+        } else if (panel.contains(document.activeElement)) { trigger.focus(); }
+    }
 </script>
+<svelte:window onresize={() => { if (panel?.matches(':popover-open')) panel.hidePopover(); }} />
 <button class="toolbar-more" type="button" bind:this={trigger} onclick={() => {
     const bounds = trigger.getBoundingClientRect();
     top = bounds.bottom + 8; right = Math.max(12, window.innerWidth - bounds.right);
 }} popovertarget={id} aria-label={label} title={label} aria-haspopup="dialog"><PrototypeIcon name="more" /></button>
-<div id={id} popover="auto" role="dialog" aria-label={label} class="toolbar-popover" tabindex="-1" style:top={`${top}px`} style:right={`${right}px`} style:--popover-top={`${top}px`} bind:this={panel} onkeydown={event => { if (event.key === 'Escape') { panel.hidePopover(); trigger.focus(); } }} onclick={event => {
+<div id={id} popover="auto" role="dialog" aria-label={label} class="toolbar-popover" tabindex="-1" style:top={`${top}px`} style:right={`${right}px`} style:--popover-top={`${top}px`} bind:this={panel} ontoggle={afterToggle} onkeydown={event => { if (event.key === 'Escape') { panel.hidePopover(); trigger.focus(); } }} onclick={event => {
     const button = event.target instanceof Element ? event.target.closest('button') : null;
     if (button && !button.disabled) panel.hidePopover();
 }}>{@render children()}</div>

@@ -130,29 +130,37 @@ struct MacInspectorBrowserView: View {
                     .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 8) {
-                    Button {
-                        chrome.installAndOpenExtensions()
-                        chrome.openExtensions()
-                    } label: {
-                        Label(
-                            String(localized: "Install Extension", table: "Chat"),
-                            systemImage: "square.and.arrow.down"
-                        )
-                    }
-                    Button {
-                        chrome.openExtensions()
-                    } label: {
-                        Label(
-                            String(localized: "Open Chrome", table: "Chat"),
-                            systemImage: "arrow.up.right.square"
-                        )
-                    }
+                ViewThatFits(in: .horizontal) {
+                    chromeActions(horizontal: true)
+                    chromeActions(horizontal: false)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                if let error = chrome.actionError {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
+    }
+
+    @ViewBuilder private func chromeActions(horizontal: Bool) -> some View {
+        let layout = horizontal
+            ? AnyLayout(HStackLayout(spacing: 8))
+            : AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+        layout {
+            Button {
+                chrome.installAndOpenExtensions()
+            } label: {
+                Label(String(localized: "Install Extension", table: "Chat"), systemImage: "square.and.arrow.down")
+            }
+            Button {
+                chrome.openExtensions()
+            } label: {
+                Label(String(localized: "Open Chrome", table: "Chat"), systemImage: "arrow.up.right.square")
+            }
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
     }
 
     private func browserPageTabs(_ pages: [MacConversationBrowserPage]) -> some View {

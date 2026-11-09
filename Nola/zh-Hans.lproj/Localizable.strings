@@ -3268,3 +3268,13 @@
 "softwareUpdate.status.available" = "有新版本可用";
 "softwareUpdate.installPermission" = "如系统要求，请允许 Nola 安装应用，返回后再次打开安装器。";
 "softwareUpdate.status.incompatible_data" = "新版本的数据格式不匹配，自动更新已阻止；现有数据保持不变。";
+
+"model.delete.failed" = "模型未能删除，请重试。";
+
+"model.action.pause" = "暂停下载";
+
+"model.action.cancel" = "取消下载";
+
+"model.action.resume" = "继续下载";
+
+"chat.context.cannot_fit.recovery" = "当前模型的上下文窗口不足。请在模型菜单中选择上下文窗口更大的模型后重试。原会话内容已保留。";

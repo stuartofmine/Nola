@@ -84,7 +84,7 @@ fn compaction_continuation_preserves_each_protocols_physical_prefix() {
         let body = match protocol {
             ModelProtocol::SiwcResponses => unreachable!("API tool fixture excludes SIWC"),
             ModelProtocol::Responses => super::super::responses::responses_body(&cfg, &history(), &tools(), "auto"),
-            ModelProtocol::Anthropic => super::super::provider_protocols::anthropic_request_body(&cfg, &history(), &tools(), "auto"),
+            ModelProtocol::Anthropic => super::super::provider_protocols::anthropic_request_body(&cfg, &history(), &tools(), "none"),
             ModelProtocol::ChatCompletions => super::super::streaming::openai_request_body(&cfg, &history(), &tools(), "auto"),
         }.unwrap();
         let key = if protocol == ModelProtocol::Responses { "input" } else { "messages" };
@@ -103,6 +103,7 @@ fn compaction_continuation_preserves_each_protocols_physical_prefix() {
         }
         let mut rewrite_prefix = rewritten.body.clone();
         rewrite_prefix[key] = body[key].clone();
+        rewrite_prefix["tool_choice"] = body["tool_choice"].clone();
         assert_eq!(rewrite_prefix, body);
         assert!(rewritten.body.to_string().contains("2048 Unicode characters"));
         assert!(rewritten.body.to_string().contains("including headings and whitespace"));
@@ -110,6 +111,7 @@ fn compaction_continuation_preserves_each_protocols_physical_prefix() {
         let count = body[key].as_array().unwrap().len();
         assert_eq!(&continued.body[key].as_array().unwrap()[..count],body[key].as_array().unwrap());
         let mut normalized = continued.body.clone(); normalized[key] = body[key].clone();
+        normalized["tool_choice"] = body["tool_choice"].clone();
         assert_eq!(normalized,body);
         if protocol == ModelProtocol::Responses {
             assert_eq!(continued.body[key][count],choice.response_items[0]);
@@ -151,7 +153,7 @@ fn runtime_budget_tail_preserves_hot_fork_for_selected_last_user_and_tool_result
             let body = match protocol {
                 ModelProtocol::SiwcResponses => unreachable!("API tool fixture excludes SIWC"),
                 ModelProtocol::Responses => super::super::responses::responses_body(&cfg, &physical, &tools(), "auto"),
-                ModelProtocol::Anthropic => super::super::provider_protocols::anthropic_request_body(&cfg, &physical, &tools(), "auto"),
+                ModelProtocol::Anthropic => super::super::provider_protocols::anthropic_request_body(&cfg, &physical, &tools(), "none"),
                 ModelProtocol::ChatCompletions => super::super::streaming::openai_request_body(&cfg, &physical, &tools(), "auto"),
             }.unwrap();
             assert!(!body.to_string().contains("_nola_user_input"), "{provider}: private provenance leaked");
@@ -162,6 +164,7 @@ fn runtime_budget_tail_preserves_hot_fork_for_selected_last_user_and_tool_result
                 &LlmUsage {input_tokens: Some(5000), cached_input_tokens: Some(0), cache_write_input_tokens: Some(0), ..Default::default()}, Default::default()).unwrap();
             let mut prefix = fork.body.clone();
             let instruction = prefix[key].as_array_mut().unwrap().pop().unwrap();
+            prefix["tool_choice"] = body["tool_choice"].clone();
             assert_eq!(prefix, body, "{provider}: preserve every physical block and cache marker");
             assert!(prefix.to_string().contains("remaining_ms=50000"));
             if protocol == ModelProtocol::Anthropic {
@@ -188,7 +191,7 @@ fn private_user_provenance_does_not_change_any_provider_body_or_source_alignment
         let project = |messages: &[Value]| match protocol {
             ModelProtocol::SiwcResponses => unreachable!("API tool fixture excludes SIWC"),
             ModelProtocol::Responses => super::super::responses::responses_body(&cfg, messages, &tools(), "auto"),
-            ModelProtocol::Anthropic => super::super::provider_protocols::anthropic_request_body(&cfg, messages, &tools(), "auto"),
+            ModelProtocol::Anthropic => super::super::provider_protocols::anthropic_request_body(&cfg, messages, &tools(), "none"),
             ModelProtocol::ChatCompletions => super::super::streaming::openai_request_body(&cfg, messages, &tools(), "auto"),
         };
         let body = project(&tagged).unwrap();
@@ -206,7 +209,7 @@ fn anthropic_block_selection_rejects_ambiguous_and_partial_text_matches() {
     let cfg = config("anthropic", "http://127.0.0.1:1/v1".into());
     let repeated = json!({"role":"user","content":"exact repeated evidence"});
     let body = super::super::provider_protocols::anthropic_request_body(&cfg,
-        &[repeated.clone(), repeated.clone()], &tools(), "auto").unwrap();
+        &[repeated.clone(), repeated.clone()], &tools(), "none").unwrap();
     let snapshot = PreparedModelRequest {config:cfg, body, completed_response:vec![], started_at:Instant::now()};
     let usage = LlmUsage {input_tokens: Some(5000), cached_input_tokens: Some(0), cache_write_input_tokens: Some(0), ..Default::default()};
     assert_eq!(snapshot.fork(&[repeated], "summary", 1024, 128000, &usage, Default::default()).err(), Some("archive_range_not_unique"));
@@ -245,7 +248,10 @@ fn cache_identity_tracks_sent_tools_system_policy_and_actual_route_not_history_g
     assert_ne!(discovered.tool_manifest_sha256, original.tool_manifest_sha256);
     assert_ne!(discovered.stable_prefix_sha256, original.stable_prefix_sha256);
     request.body["tool_choice"] = json!("none");
+    assert_eq!(request.prompt_cache_identity().stable_prefix_sha256, discovered.stable_prefix_sha256);
+    request.body["tool_choice"] = json!("required");
     assert_ne!(request.prompt_cache_identity().stable_prefix_sha256, discovered.stable_prefix_sha256);
+    request.body["tool_choice"] = json!("none");
     let policy = request.prompt_cache_identity();
     request.config.endpoint = "https://another-host.invalid/v1".into();
     assert_ne!(request.prompt_cache_identity().stable_prefix_sha256, policy.stable_prefix_sha256);
@@ -294,6 +300,7 @@ fn compaction_fork_matches_tool_results_with_host_artifact_metadata() {
     let fork = snapshot.fork(&archive, "summarize", 2048, 128000, &usage, Default::default()).unwrap();
     let mut restored = fork.body.clone();
     restored["messages"] = body["messages"].clone();
+    restored["tool_choice"] = body["tool_choice"].clone();
     assert_eq!(restored, body, "only append to the actual physical request");
     let mut changed = archive;
     changed[1]["content"] = json!("different edit result");
@@ -380,7 +387,7 @@ fn compaction_fork_preserves_actual_http_request_prefix_for_all_protocols() {
         });
         let history = history();
         let choice =
-            super::super::streaming::stream_chat_checked(&cfg, &history, &tools(), "auto", |_| {
+            super::super::streaming::stream_chat_checked(&cfg, &history, &tools(), if provider == "anthropic" {"none"} else {"auto"}, |_| {
                 Ok(())
             })
             .unwrap();
@@ -424,6 +431,8 @@ fn compaction_fork_preserves_actual_http_request_prefix_for_all_protocols() {
         };
         assert_eq!(normalized_fork[budget], 8192);
         normalized_fork[budget] = requests[0][budget].clone();
+        assert_eq!(requests[1]["tool_choice"], if provider == "anthropic" {json!({"type":"none"})} else {json!("none")});
+        normalized_fork["tool_choice"] = requests[0]["tool_choice"].clone();
         assert_eq!(
             serde_json::to_vec(&normalized_fork).unwrap(),
             serde_json::to_vec(&requests[0]).unwrap(),
@@ -582,7 +591,7 @@ fn compaction_includes_completed_response_after_restart_without_rewriting_prefix
         let messages = history();
         snapshot.body = match provider {
             "anthropic" => super::super::provider_protocols::anthropic_request_body(
-                &snapshot.config, &messages, &tools(), "auto"),
+                &snapshot.config, &messages, &tools(), "none"),
             "openai-responses" => super::super::responses::responses_body(
                 &snapshot.config, &messages, &tools(), "auto"),
             _ => super::super::streaming::openai_request_body(
@@ -609,11 +618,12 @@ fn compaction_includes_completed_response_after_restart_without_rewriting_prefix
         let fork = restored.fork(&source, "summarize", 2048, 128000, &usage, Default::default())
             .unwrap_or_else(|error| panic!("{provider}: {error}"));
         let key = if provider == "openai-responses" { "input" } else { "messages" };
+        assert_eq!(fork.body["tool_choice"], if provider == "anthropic" {json!({"type":"none"})} else {json!("none")});
         let original = snapshot.body[key].as_array().unwrap();
         let extended = fork.body[key].as_array().unwrap();
         assert_eq!(&extended[..original.len()], original.as_slice(), "{provider}");
         assert_eq!(extended.len(), original.len() + if provider == "openai-responses" {3} else {2}, "{provider}");
-        for field in ["tools", "system", "instructions", "tool_choice", "thinking", "reasoning"] {
+        for field in ["tools", "system", "instructions", "thinking", "reasoning"] {
             assert_eq!(snapshot.body[field], fork.body[field], "{provider}: {field}");
         }
     }
@@ -637,4 +647,17 @@ fn history_cache_marker_alignment_preserves_text_and_ignores_only_hints() {
     let marked=json!({"role":"user","content":[{"type":"input_text","text":"history","prompt_cache_breakpoint":{"mode":"explicit"}}]});
     assert_eq!(without_cache_markers(&marked),json!({"role":"user","content":"history"}));
     assert!(marked["content"][0].get("prompt_cache_breakpoint").is_some());
+}
+
+#[test]
+fn anthropic_tool_policy_change_uses_bounded_summary_instead_of_invalidated_message_cache() {
+    let cfg = config("anthropic", "https://api.anthropic.com".into());
+    let body = super::super::provider_protocols::anthropic_request_body(&cfg, &history(), &tools(), "auto").unwrap();
+    let request = PreparedModelRequest {config:cfg.clone(),body,completed_response:vec![],started_at:Instant::now()};
+    assert_eq!(request.fork(&history()[1..2], "summary", 1024, 128000,
+        &LlmUsage {input_tokens:Some(5000),..Default::default()}, Default::default()).err(),
+        Some("tool_choice_changes_message_cache"));
+    let disabled = super::super::provider_protocols::anthropic_request_body(&cfg, &history(), &tools(), "none").unwrap();
+    assert_eq!(disabled["tool_choice"], json!({"type":"none"}));
+    assert_eq!(disabled["tools"], request.body["tools"]);
 }

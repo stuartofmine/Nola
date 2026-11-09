@@ -104,6 +104,8 @@ impl ProviderFailure {
             };
         }
         let projection = model_failure_projection(error);
+        super::diagnostics::log_local_debug_payload("model_attempt_failure",
+            &super::diagnostics::model_failure_debug_payload(error));
         let exhausts_target = structured_provider_error_is_exhausted_quota(error);
         Self {
             code: projection.code.to_string(),
@@ -1200,6 +1202,40 @@ pub(crate) struct ModelFailureProjection {
 }
 
 pub(crate) fn model_failure_projection(error: &str) -> ModelFailureProjection {
+    // These are exact Host-owned preflight errors, not words inferred from a
+    // prompt or provider response. Never copy bearer/session data into a receipt.
+    let account_failure = match error {
+        "siwc_sign_in_required" | "siwc_reauthorization_required" | "siwc_refresh_required"
+        | "siwc_plan_consent_required" | "siwc_refresh_result_unknown" => Some((
+            "chatgpt_reauthorization_required",
+            "Open model settings and sign in to or reauthorize your ChatGPT account, then retry.",
+        )),
+        "siwc_execution_identity_changed" | "siwc_core_owner_changed" | "siwc_core_account_unavailable" => Some((
+            "model_account_changed",
+            "The selected model account changed. Select its current model in model settings, then retry.",
+        )),
+        "siwc_network_unavailable" | "siwc_transport_unavailable" => Some((
+            "responses_transport_error",
+            "The model connection could not be established. Check the network before retrying.",
+        )),
+        "SIWC supports only admitted function tools" | "SIWC invalid Nola tool annotation"
+        | "SIWC function schema missing" | "SIWC unsupported function schema field"
+        | "SIWC duplicate function name" | "SIWC invalid function schema" => Some((
+            "invalid_tool_schema",
+            "The local tool catalog cannot be encoded for this model connection. Review the tool configuration or update Nola, then retry.",
+        )),
+        "SIWC does not support sampling overrides or cache retention"
+        | "Responses does not support these Chat Completions generation parameters; clear their conversation overrides or use a compatible protocol"
+        | "unsupported SIWC request fields" | "unsupported SIWC input item"
+        | "SIWC request model does not match its bound profile" => Some((
+            "invalid_model_request",
+            "The selected model cannot accept these request settings. Review the model protocol and conversation overrides.",
+        )),
+        _ => None,
+    };
+    if let Some((code, message)) = account_failure {
+        return ModelFailureProjection { code, message, retryable: false };
+    }
     let status = provider_error_status(error);
     let (code, message) =
         if structured_provider_error_is_context_limit(error) == Some(true) || status == Some(413) {
@@ -1856,6 +1892,30 @@ mod retry_policy_tests {
         assert!(is_retryable_llm_error(
             r#"{"choices":[],"errors":[{"status_code":"503","type":"upstream_error"}]}"#
         ));
+    }
+
+    #[test]
+    fn account_preflight_failures_keep_actionable_codes_without_secret_text() {
+        for (error, code) in [
+            ("siwc_sign_in_required", "chatgpt_reauthorization_required"),
+            ("siwc_reauthorization_required", "chatgpt_reauthorization_required"),
+            ("siwc_refresh_result_unknown", "chatgpt_reauthorization_required"),
+            ("siwc_core_owner_changed", "model_account_changed"),
+            ("siwc_network_unavailable", "responses_transport_error"),
+            ("unsupported SIWC request fields", "invalid_model_request"),
+        ] {
+            let value = model_failure_projection(error);
+            assert_eq!(value.code, code);
+            assert!(!value.retryable, "Account or settings repairs require user action");
+            assert!(!value.message.contains(error));
+        }
+        assert_eq!(model_failure_projection("a quoted siwc_sign_in_required secret").code, "provider_failed");
+        let schema=model_failure_projection("SIWC supports only admitted function tools");
+        assert_eq!(schema.code,"invalid_tool_schema");
+        assert!(!schema.retryable);
+        assert!(schema.message.contains("tool catalog"));
+        assert_eq!(model_failure_projection("provider text SIWC supports only admitted function tools").code,"provider_failed");
+
     }
 
     #[test]

@@ -59,10 +59,12 @@ final class MacChatProductPathIntegrationTests: XCTestCase {
         let testPath = MacActivityStore.shared.persistenceURL.standardizedFileURL.path
 
         XCTAssertNotEqual(testPath, productionPath)
-        XCTAssertTrue(
-            testPath.contains("nola-tests-"),
-            "XCTest must never persist activity records into the user's real Nola history: \(testPath)"
-        )
+        let expected = MacAppEnvironment.shared.supportRoot
+            .appendingPathComponent("Activity/history.json").standardizedFileURL.path
+        XCTAssertEqual(testPath, expected)
+        let temporary = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().path + "/"
+        XCTAssertTrue(URL(fileURLWithPath: testPath).resolvingSymlinksInPath().path.hasPrefix(temporary),
+            "XCTest activity records must remain inside this run's temporary environment")
     }
 
     func testTerminalContextSnapshotDoesNotDuplicateFactsInConversationMetadata() throws {
@@ -330,6 +332,7 @@ final class MacChatProductPathIntegrationTests: XCTestCase {
         model.setFixtureRemoteModels([host.fixtureProfile])
         model.selectModel(try XCTUnwrap(model.configuredModelOptions.first))
         let conversationID = try XCTUnwrap(model.selectedConversationID)
+        try await model.waitForModelConfigurationCommit(conversationID: conversationID)
         let staleLoad = Task { await model.loadSelectedConversationIfNeeded() }
         model.draft = "Keep this active turn"
         model.send()

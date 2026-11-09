@@ -894,7 +894,9 @@ mod tests {
             vec![
                 "/goal status".to_string(),
                 "/goal resume".to_string(),
+                "/goal pause".to_string(),
                 "/goal off".to_string(),
+                "/goal start".to_string(),
             ]
         );
         assert_eq!(
@@ -904,6 +906,81 @@ mod tests {
             Some("/goal resume")
         );
         assert!(matching_slash_commands_inner("/goal finish parser", None).is_empty());
+    }
+
+    #[test]
+    fn background_output_schema_matches_the_actual_validation_limits() {
+        let schemas = tools::tool_schemas_for_host();
+        for name in ["bash_background_status", "bash_background_wait"] {
+            let schema = schemas.iter().find(|s| s["function"]["name"] == name).unwrap();
+            let bytes = &schema["function"]["parameters"]["properties"]["max_bytes"];
+            assert_eq!(bytes["minimum"], 1000);
+            assert_eq!(bytes["maximum"], 100000);
+        }
+    }
+
+    #[test]
+    fn goal_input_preserves_pasted_text_and_explicit_constraints() {
+        for (input, objective, constraints) in [
+            ("检查  CLI\n然后修复", "检查  CLI\n然后修复", None),
+            ("fix  editor\nthen verify -c keep  API\nrun tests", "fix  editor\nthen verify", Some("keep  API\nrun tests")),
+            ("fix --constraints=keep  data", "fix", Some("keep  data")),
+            ("fix user's editor -c preserve API", "fix user's editor", Some("preserve API")),
+            ("explain `gcc` and \"-c flag\"", "explain `gcc` and \"-c flag\"", None),
+            ("-- explain -c literally", "explain -c literally", None),
+        ] {
+            let (target, actual) = parse_goal_target_and_constraints(input).unwrap();
+            assert_eq!(target, objective);
+            assert_eq!(actual.as_deref(), constraints);
+        }
+        for input in ["", "  ", "-c constraint without objective", "fix -c", "fix --constraints="] {
+            assert!(parse_goal_target_and_constraints(input).is_err(), "{input}");
+        }
+    }
+
+    #[test]
+    fn goal_composer_validates_without_starting_or_losing_the_draft() {
+        let mut config = Config::for_test().unwrap();
+        config.session_id = None;
+        let mut goal = None;
+        let mut constraints = None;
+        let mut workspace = None;
+        let mut usage = None;
+        for input in ["/goal", "/goal start", "/goal -c only constraints", "/goal fix --constraints="] {
+            let result = handle_interactive_slash_command(input, &mut config, &mut goal,
+                &mut constraints, &mut workspace, &mut usage, 0).unwrap();
+            assert!(matches!(result, SlashCommandResult::Draft(_) | SlashCommandResult::GoalEntry), "{input}");
+            assert!(goal.is_none() && constraints.is_none());
+        }
+        let result = handle_interactive_slash_command("/goal start status\n  explain current search", &mut config,
+            &mut goal, &mut constraints, &mut workspace, &mut usage, 0).unwrap();
+        assert!(matches!(result, SlashCommandResult::RunGoalPrompt(ref text) if text == "status\n  explain current search"));
+        assert_eq!(goal.as_deref(), Some("status\n  explain current search"));
+        assert!(constraints.is_none(), "do not invent user constraints");
+        let result = handle_interactive_slash_command("/goal another", &mut config,
+            &mut goal, &mut constraints, &mut workspace, &mut usage, 0).unwrap();
+        assert!(matches!(result, SlashCommandResult::Draft(_)));
+        assert_eq!(goal.as_deref(), Some("status\n  explain current search"));
+    }
+
+    #[test]
+    fn goal_form_treats_commands_and_flags_as_literal_objective_text() {
+        let mut config = Config::for_test().unwrap();
+        config.session_id = None;
+        for objective in ["/exit", "-c", "status", "检查 current search\n不要改写 -c 参数"] {
+            let mut goal = None;
+            let mut constraints = None;
+            let result = begin_interactive_goal_input(objective, &config, &mut goal, &mut constraints).unwrap();
+            assert!(matches!(result, SlashCommandResult::RunGoalPrompt(ref text) if text == objective));
+            assert_eq!(goal.as_deref(), Some(objective));
+            assert!(constraints.is_none());
+        }
+        assert!(matches!(begin_interactive_goal_input("  ", &config, &mut None, &mut None).unwrap(), SlashCommandResult::GoalEntry));
+        let old = GOAL_COMPOSER_ACTIVE.with(|active| active.replace(true));
+        let scope = GoalComposerScope(old);
+        assert!(interactive_input_bar_line_with_color("", true, true, "", 80, false).contains(ui_text(UiText::GoalPlaceholder)));
+        drop(scope);
+        assert!(!GOAL_COMPOSER_ACTIVE.with(Cell::get));
     }
 
     #[test]
@@ -917,6 +994,8 @@ mod tests {
             None,
         );
         assert!(initial.contains("current Host’s advertised tools and supported execution modes"));
+        assert!(initial.contains("exact user objective"));
+        assert!(initial.contains("do not invent additional scope restrictions"));
         assert!(initial.contains("report blocked or needs_user"));
         assert!(!initial.contains("execution_mode=foreground"), "shared Goal guidance must not assume a Bash-capable client");
         assert!(initial.contains("Current request: run the workflow"));

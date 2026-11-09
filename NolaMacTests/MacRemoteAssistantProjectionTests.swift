@@ -111,6 +111,7 @@ final class MacRemoteAssistantProjectionTests: XCTestCase {
         let host = PermissionEnvelopeRemoteHost()
         host.applicationPort = port
         host.allowsRun = true
+        host.allowsEmptyUIQueue = true
         let model = MacWorkspaceModel(canonicalRepository: repository,
             localAgentRuntime: PersistenceTestLocalRuntime(), remoteHost: host, readinessIssue: { _ in nil })
         defer { model.presentationDidDetach() }
@@ -120,6 +121,7 @@ final class MacRemoteAssistantProjectionTests: XCTestCase {
         model.updateRemoteHostConfigurationState(true)
         model.setFixtureRemoteModels([host.fixtureProfile])
         model.selectModel(try XCTUnwrap(model.configuredModelOptions.first))
+            try await model.waitForModelConfigurationCommit()
         model.draft = "Continue a running answer"
         model.send()
         try await waitUntil { host.runContinuation != nil }

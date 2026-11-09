@@ -142,3 +142,5 @@
 依据：Magpie `internal/provider/chatgpt_api.go` 将独立 SIWC 和 Codex backend 分开；OpenAI 官方 SIWC 文档要求 client、用户/workspace 与 host 绑定。参考源码并不使跨 client 复制 token 合法，也不替代实际账号资格与授权确认。
 
 应用更新入口、状态、下载与平台安装交接见[软件更新交互](SOFTWARE_UPDATE_EXPERIENCE.md)。
+
+2026-11-10 的目标输入、ChatGPT 账户登录、焦点与错误恢复变更见[跨平台交互检查](../当前任务/UI_INTERACTION_AUDIT_20261110.md)。

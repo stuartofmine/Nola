@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 // Current Core facts only; work reports never imply verified completion.
 import SwiftUI
+import Observation
 
 // Refreshes are not navigations: retain visible facts until their replacement arrives.
 nonisolated struct MacInspectorRefreshState {
     private(set) var owner: String?
     private(set) var loaded = false
     private(set) var failed = false
+    private(set) var controlsConfirmed = false
 
     mutating func begin(owner next: String?) -> Bool {
         let changed = owner != next
-        if changed { owner = next; loaded = false }
+        if changed { owner = next; loaded = false; controlsConfirmed = false }
         failed = false
         return changed
     }
@@ -18,6 +20,7 @@ nonisolated struct MacInspectorRefreshState {
     mutating func finish(succeeded: Bool) {
         if succeeded { loaded = true }
         failed = !succeeded
+        controlsConfirmed = succeeded
     }
 }
 
@@ -71,6 +74,42 @@ nonisolated struct MacInspectorProgressSnapshot: Decodable, Equatable, Sendable 
     let applied_operations: [String: AppleGoalOperation]?
 }
 
+// Drafts survive disclosure removal, and belong to a conversation rather than
+// whichever conversation happens to be selected when an asynchronous action ends.
+@MainActor @Observable
+final class MacInspectorGoalDraft {
+    var objective = ""
+    var constraints = ""
+    var wakeAt = Date().addingTimeInterval(3600)
+    var isSubmitting = false
+    var error: String?
+}
+
+@MainActor
+final class MacInspectorGoalDraftStore {
+    private var values: [String: MacInspectorGoalDraft] = [:]
+    func draft(for owner: String) -> MacInspectorGoalDraft {
+        if let value = values[owner] { return value }
+        let value = MacInspectorGoalDraft()
+        values[owner] = value
+        return value
+    }
+}
+
+nonisolated enum MacInspectorGoalControlPolicy {
+    static func canStart(_ snapshot: MacInspectorProgressSnapshot?) -> Bool {
+        guard snapshot?.can_submit != false else { return false }
+        guard let active = snapshot?.active else { return true }
+        return ["completed", "cancelled"].contains(active.status)
+    }
+
+    static func canControl(_ snapshot: MacInspectorProgressSnapshot?) -> Bool {
+        guard let active = snapshot?.active, !["completed", "cancelled"].contains(active.status),
+              let token = snapshot?.control_token, !token.isEmpty else { return false }
+        return true
+    }
+}
+
 enum MacInspectorProgressMode { case progress, goal, execution }
 
 struct MacInspectorProgressView: View {
@@ -81,19 +120,38 @@ struct MacInspectorProgressView: View {
     @State private var todos: [MacInspectorProgressSnapshot.Todo] = []
     @State private var tasks: [MacInspectorProgressSnapshot.Tasks.Item] = []
     @State private var retry = 0
-    @State private var objective = ""
-    @State private var constraints = ""
-    @State private var controlBusy = false
+    var draftStore: MacInspectorGoalDraftStore? = nil
+    @State private var localDrafts = MacInspectorGoalDraftStore()
+    @State private var goalToCancel: AppleGoalControl?
+    private var draft: MacInspectorGoalDraft { (draftStore ?? localDrafts).draft(for: model.selectedConversationID ?? "") }
+    private var objective: String {
+        get { draft.objective }
+        nonmutating set { draft.objective = newValue }
+    }
+    private var constraints: String {
+        get { draft.constraints }
+        nonmutating set { draft.constraints = newValue }
+    }
+    private var controlBusy: Bool { draft.isSubmitting }
     @State private var controlPending = false
-    @State private var controlError: String?
-    @State private var wakeAt = Date().addingTimeInterval(3600)
+    private var controlError: String? {
+        get { draft.error }
+        nonmutating set { draft.error = newValue }
+    }
+    private var wakeAt: Date {
+        get { draft.wakeAt }
+        nonmutating set { draft.wakeAt = newValue }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Label(model.inspectorSelectedConversationIsRunning
                   ? String(localized: "inspector.state.running", table: "ConversationInspector") : String(localized: "inspector.state.idle", table: "ConversationInspector"),
                   systemImage: "circle.dotted")
-            if refresh.owner != model.selectedConversationID || (!refresh.loaded && !refresh.failed) {
+            if model.selectedConversationID == nil {
+                Text(String(localized: "inspector.conversation_needed", table: "ConversationInspector"))
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            } else if refresh.owner != model.selectedConversationID || (!refresh.loaded && !refresh.failed) {
                 ProgressView()
             } else {
               if refresh.failed {
@@ -102,7 +160,9 @@ struct MacInspectorProgressView: View {
                 Button(String(localized: "Retry")) { retry += 1 }
               }
               if refresh.loaded {
-                  if mode == .goal { goalControls }
+                  if mode == .goal {
+                      goalControls.disabled(!refresh.controlsConfirmed || refresh.owner != model.selectedConversationID)
+                  }
                   MacInspectorProgressContent(snapshot: mode == .goal ? snapshot : nil,
                       todos: mode == .progress ? todos : [], tasks: mode == .goal ? [] : tasks)
                       .equatable()
@@ -114,6 +174,7 @@ struct MacInspectorProgressView: View {
             let requestedOwner = model.selectedConversationID
             if refresh.begin(owner: requestedOwner) {
                 snapshot = nil; todos = []; tasks = []
+                controlPending = false
             }
             guard let requestedOwner else { refresh.finish(succeeded: true); return }
             repeat {
@@ -164,12 +225,12 @@ struct MacInspectorProgressView: View {
 
     @ViewBuilder private var goalControls: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let error = controlError ?? model.goalControlError { Text(error).font(.caption).foregroundStyle(.red) }
+            if let error = controlError { Text(error).font(.caption).foregroundStyle(.red) }
             if controlPending {
                 Text("Goal action awaiting confirmation").font(.caption).foregroundStyle(.secondary)
                 Button("Retry saved action") { submit(nil) }.disabled(controlBusy).accessibilityIdentifier("mac-goal-retry")
-            } else if let goal = snapshot?.active, let token = snapshot?.control_token,
-                      !["completed", "cancelled"].contains(goal.status) {
+            } else if MacInspectorGoalControlPolicy.canControl(snapshot),
+                      let goal = snapshot?.active, let token = snapshot?.control_token {
                 HStack {
                     if snapshot?.can_pause == true {
                         Button("Pause") { submit(.init(action: .pause, expectedGoalId: goal.id, expectedControlToken: token)) }.accessibilityIdentifier("mac-goal-pause")
@@ -178,35 +239,71 @@ struct MacInspectorProgressView: View {
                         Button("Resume") { submit(.init(action: .resume, expectedGoalId: goal.id, expectedControlToken: token)) }.accessibilityIdentifier("mac-goal-resume")
                     }
                     if snapshot?.can_cancel == true {
-                        Button("Cancel", role: .destructive) { submit(.init(action: .cancel, expectedGoalId: goal.id, expectedControlToken: token)) }.accessibilityIdentifier("mac-goal-cancel")
+                        Button("Cancel", role: .destructive) { goalToCancel = .init(action: .cancel, expectedGoalId: goal.id, expectedControlToken: token) }.accessibilityIdentifier("mac-goal-cancel")
                     }
                 }.disabled(controlBusy)
-                DatePicker("Resume at", selection: $wakeAt)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Resume at").font(.caption).foregroundStyle(.secondary)
+                    DatePicker("Resume at", selection: Binding(get: { wakeAt }, set: { wakeAt = $0 }), in: Date()...).labelsHidden()
+                }
                 Button("Schedule resume") {
                     submit(.init(action: .schedule, expectedGoalId: goal.id, expectedControlToken: token,
                         wakeAtEpochMs: Int64(wakeAt.timeIntervalSince1970 * 1000)))
                 }.disabled(controlBusy)
-            } else {
-                TextField("Goal", text: $objective, axis: .vertical).accessibilityIdentifier("mac-goal-objective")
-                TextField("goal.constraints", text: $constraints, axis: .vertical)
+            } else if MacInspectorGoalControlPolicy.canStart(snapshot) {
+                Text(String(localized: "goal.guidance", table: "ConversationInspector"))
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                MacInspectorDocumentEditor(text: Binding(get: { objective }, set: { objective = $0 }), placeholder: String(localized: "goal.example", table: "ConversationInspector"), minHeight: 88)
+                    .accessibilityLabel(String(localized: "Goal"))
+                    .accessibilityIdentifier("mac-goal-objective")
+                DisclosureGroup(String(localized: "goal.optional_constraints", table: "ConversationInspector")) {
+                    MacInspectorDocumentEditor(text: Binding(get: { constraints }, set: { constraints = $0 }), placeholder: String(localized: "goal.constraints"), minHeight: 64)
+                        .accessibilityLabel(String(localized: "goal.constraints"))
+                }
                 Button("goal.start") {
                     submit(.init(action: .start, objective: objective,
                         constraints: constraints.split(separator: "\n").map(String.init)))
-                }.disabled(controlBusy || objective.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty).accessibilityIdentifier("mac-goal-start")
+                }.disabled(controlBusy || model.selectedConversationID == nil || objective.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty).accessibilityIdentifier("mac-goal-start")
+            } else {
+                Text("Goal controls are unavailable. Refresh to confirm the current goal state.", tableName: "ConversationInspector")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button(String(localized: "Refresh")) { retry += 1 }
+                    .buttonStyle(MacPressFeedbackButtonStyle())
             }
         }
+        .onChange(of: model.selectedConversationID) { _, _ in goalToCancel = nil }
+        .confirmationDialog(String(localized: "goal.cancel_title", table: "ConversationInspector"), isPresented: Binding(
+            get: { goalToCancel != nil }, set: { if !$0 { goalToCancel = nil } })) {
+            Button(String(localized: "Cancel"), role: .destructive) {
+                guard let observed = goalToCancel else { return }
+                goalToCancel = nil; submit(observed)
+            }
+            Button(String(localized: "Close"), role: .cancel) { goalToCancel = nil }
+        } message: { Text(String(localized: "goal.cancel_explanation", table: "ConversationInspector")) }
     }
 
     private func submit(_ control: AppleGoalControl?) {
-        guard let owner = model.selectedConversationID else { return }
-        controlBusy = true; controlError = nil
+        guard let owner = model.selectedConversationID,
+              refresh.owner == owner, refresh.controlsConfirmed else { return }
+        let submittedDraft = draft
+        guard !submittedDraft.isSubmitting else { return }
+        submittedDraft.isSubmitting = true; submittedDraft.error = nil
         Task { @MainActor in
-            defer { controlBusy = false; retry += 1 }
+            defer {
+                submittedDraft.isSubmitting = false
+                if model.selectedConversationID == owner { retry += 1 }
+            }
             do {
                 let applied = try await model.controlGoal(conversationID: owner, control: control)
+                if applied, control?.action == .start {
+                    submittedDraft.objective = ""; submittedDraft.constraints = ""
+                }
+                guard model.selectedConversationID == owner else { return }
                 controlPending = !applied
-                if applied, control?.action == .start { objective = ""; constraints = "" }
-            } catch { controlError = error.localizedDescription }
+            } catch {
+                submittedDraft.error = error.localizedDescription
+            }
         }
     }
 

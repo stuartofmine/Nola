@@ -3,6 +3,7 @@
 
 import Charts
 import Combine
+import HealthKit
 import SwiftUI
 
 @MainActor
@@ -74,6 +75,11 @@ final class HealthDashboardStore: ObservableObject {
             ))
         } catch is CancellationError {
             return
+        } catch let error as HKError where error.code == .errorAuthorizationNotDetermined {
+            // Initial permission is a waiting state, not a failed refresh.
+            // The surrounding source card provides the explicit authorization action.
+            snapshot = nil
+            errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
         }

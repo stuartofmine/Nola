@@ -10,6 +10,125 @@ import XCTest
 
 @MainActor
 final class MacRealProductUIEndToEndTests: XCTestCase {
+    func testRealOrdinaryMessageEditResendFollowupAndColdRestore() async throws {
+        let env = ProcessInfo.processInfo.environment
+        guard env["NOLA_REAL_LLM_E2E"] == "1", let config = realLLMConfiguration(env) else {
+            throw XCTSkip("Use the isolated real-provider Mac runner")
+        }
+        let accessibility = try MacHostedAccessibilitySession()
+        defer { accessibility.restore() }
+        let database = URL(fileURLWithPath: try XCTUnwrap(env["NOLA_DB_PATH"]))
+        guard database.path.hasPrefix("/tmp/nola-mac-real-memory."), env["NOLA_USE_REAL_KEYCHAIN_IN_TESTS"] == "0" else {
+            throw MacApplicationPortError.invalidResponse
+        }
+        let port = try MacApplicationPort(databaseURL: database)
+        let store = MacAppleChatConfigurationStore(applicationPort: port)
+        let wire = try XCTUnwrap(MacModelWireProtocol(rawValue: env["NOLA_REAL_LLM_WIRE_PROTOCOL"] ?? ""))
+        try store.replaceEndpoints([.init(id: "edit-real-endpoint", name: "Real editing acceptance", baseURL: config.endpoint,
+            apiKey: config.apiKey, models: [.init(id: "edit-real-model", modelName: config.model,
+                executionCapabilities: .init(toolCalls: true, reasoning: true, samplingParameters: false))], wireProtocol: wire)])
+        let repository = MacCanonicalConversationRepository(store: port)
+        let model = MacWorkspaceModel(canonicalRepository: repository, localAgentRuntime: MacAgentHostRuntime.shared,
+            remoteHost: PersistenceTestRemoteHost(), modelApplication: port)
+        let root = MacChatWorkspaceView(forcesInspectorVisible: true, canonicalRepository: repository,
+            localAgentRuntime: MacAgentHostRuntime.shared, remoteHost: PersistenceTestRemoteHost(),
+            inspectorDependencies: .init(dataRegistry: MacDataSourceRegistry.shared, platformData: MacPlatformDataService.shared,
+                webSources: MacWebSourceStore.shared, chromeMessaging: MacChromeMessagingService.shared), model: model)
+            .frame(width: 1200, height: 820)
+        let hosting = NSHostingView(rootView: root)
+        hosting.frame = NSRect(x: 0, y: 0, width: 1200, height: 820)
+        let window = NSWindow(contentRect: hosting.bounds, styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = hosting; window.makeKeyAndOrderFront(nil)
+        defer {
+            if model.isRunning { model.stop(reason: "isolated editing test cleanup") }
+            model.presentationDidDetach(); window.orderOut(nil); window.contentView = nil; window.close()
+        }
+        await settle(hosting)
+        model.newConversation()
+        await model.loadSelectedConversationIfNeeded()
+        try await model.waitForModelConfigurationCommit()
+        await settle(hosting)
+        func send(_ text: String) async throws -> [MacChatMessage] {
+            try await typeRealComposer(text, in: hosting, window: window)
+            let button = try XCTUnwrap(accessibilityElement(hosting, identifier: "mac-composer-send"), accessibilityTree(hosting))
+            XCTAssertEqual(button.isAccessibilityEnabled?(), true)
+            XCTAssertEqual(button.accessibilityPerformPress?(), true)
+            XCTAssertTrue(model.isRunning)
+            let deadline = ContinuousClock.now + .seconds(180)
+            while model.isRunning && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(100)) }
+            XCTAssertFalse(model.isRunning, "Real request timed out")
+            await model.loadSelectedConversationIfNeeded(); await settle(hosting)
+            return model.selectedMessages
+        }
+        let source = try XCTUnwrap(model.selectedConversationID)
+        let original = try await send("Do not use tools. Compute 31 * 29. Reply ORIGINAL= followed by the numeric result, with no other text.")
+        XCTAssertTrue(original.contains { $0.role == .assistant && $0.text.contains("ORIGINAL=899") }, accessibilityTree(hosting))
+        let user = try XCTUnwrap(original.first { $0.role == .user })
+        let preservedDraft = "UNSENT_SOURCE_DRAFT_8217"
+        try await typeRealComposer(preservedDraft, in: hosting, window: window)
+        let beforeCancel = model.conversations.map(\.id)
+        let edit = try XCTUnwrap(accessibilityElement(hosting, identifier: "mac-message-edit-" + user.id.uuidString))
+        XCTAssertEqual(edit.accessibilityPerformPress?(), true)
+        let sheetDeadline = ContinuousClock.now + .seconds(15)
+        while window.attachedSheet == nil && ContinuousClock.now < sheetDeadline { try await Task.sleep(for: .milliseconds(50)) }
+        let sheet = try XCTUnwrap(window.attachedSheet)
+        let sheetContent = try XCTUnwrap(sheet.contentView)
+        await settle(sheetContent)
+        let field = try XCTUnwrap(accessibilityElement(sheetContent, identifier: "mac-message-edit-text"))
+        let originalEditorValue: Any? = field.accessibilityValue?() ?? nil
+        XCTAssertEqual(originalEditorValue as? String, user.text)
+        let cancel = try XCTUnwrap(accessibilityElement(sheetContent, identifier: "mac-message-edit-cancel"))
+        XCTAssertEqual(cancel.accessibilityPerformPress?(), true)
+        while window.attachedSheet != nil && ContinuousClock.now < sheetDeadline { try await Task.sleep(for: .milliseconds(50)) }
+        XCTAssertNil(window.attachedSheet)
+        XCTAssertEqual(model.selectedConversationID, source)
+        XCTAssertEqual(model.conversations.map(\.id), beforeCancel)
+        XCTAssertEqual(model.draft, preservedDraft)
+        let target = try await editVisibleUserMessage(user, source: source,
+            text: "Do not use tools. Compute 47 * 13. Reply EDITED= followed by the numeric result, with no other text.", model: model, in: hosting, window: window)
+        let prepared = try XCTUnwrap(port.loadPreparedEditedResend(target))
+        let edited = try await waitForRealTerminal(conversation: target, run: prepared.run_id, repository: repository, application: port)
+        XCTAssertTrue(edited.messages.contains { $0.role == .assistant && $0.text.contains("EDITED=611") })
+        let settleDeadline = ContinuousClock.now + .seconds(15)
+        while model.isRunning && ContinuousClock.now < settleDeadline { try await Task.sleep(for: .milliseconds(100)) }
+        let continued = try await send("Do not use tools. Add 1 to the result you just gave. Reply FOLLOWUP= followed by the numeric result, with no other text.")
+        XCTAssertTrue(continued.contains { $0.role == .assistant && $0.text.contains("FOLLOWUP=612") })
+        try await selectRealConversation(source, model: model, in: hosting)
+        XCTAssertEqual(model.draft, preservedDraft)
+        XCTAssertEqual(model.selectedMessages.first(where: { $0.role == .user })?.text, user.text)
+        let second = try await editVisibleUserMessage(user, source: source,
+            text: "Do not use tools. Compute 19 * 17. Reply REEDITED= followed by the numeric result, with no other text.", model: model, in: hosting, window: window)
+        XCTAssertNotEqual(second, target)
+        let secondPrepared = try XCTUnwrap(port.loadPreparedEditedResend(second))
+        let secondReply = try await waitForRealTerminal(conversation: second, run: secondPrepared.run_id, repository: repository, application: port)
+        XCTAssertTrue(secondReply.messages.contains { $0.role == .assistant && $0.text.contains("REEDITED=323") })
+        let coldRepository = MacCanonicalConversationRepository(store: try MacApplicationPort(databaseURL: database))
+        let loadedCold = try await coldRepository.loadAsync(conversationID: target)
+        let cold = try XCTUnwrap(loadedCold)
+        XCTAssertEqual(cold.messages.filter { $0.role == .user }.count, 2)
+        XCTAssertTrue(cold.messages.contains { $0.role == .assistant && $0.text.contains("FOLLOWUP=612") })
+        let finalDeadline = ContinuousClock.now + .seconds(15)
+        while model.isRunning && ContinuousClock.now < finalDeadline { try await Task.sleep(for: .milliseconds(100)) }
+        XCTAssertFalse(model.isRunning)
+        await settle(hosting)
+        let renderDeadline = ContinuousClock.now + .seconds(15)
+        while !accessibilityTree(hosting).contains("REEDITED=323") && ContinuousClock.now < renderDeadline {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTAssertTrue(accessibilityTree(hosting).contains("REEDITED=323"), "The visible reply must reach the canonical terminal text")
+        // AX text is current before the drawing-only append reveal settles.
+        // Do not label an intermediate animation frame as a final screenshot.
+        try await Task.sleep(for: .seconds(AppleStreamingRevealTiming.duration + 0.2))
+        await settle(hosting)
+        try capturePNG(hosting, to: artifactURL(env, "NOLA_MAC_REAL_UI_SCREENSHOT").deletingLastPathComponent().appendingPathComponent("edited-resend-final.png"))
+        try persistCanonicalTranscript(original + continued + secondReply.messages, to: artifactURL(env, "NOLA_MAC_REAL_UI_TRANSCRIPT"))
+        try JSONSerialization.data(withJSONObject: [["stage":"edit-followup-reedit-cold", "running":false,
+            "assistantCharacters":secondReply.messages.last?.text.count ?? 0]])
+            .write(to: artifactURL(env, "NOLA_MAC_REAL_UI_TIMELINE"))
+        try accessibilityTree(hosting).write(to: artifactURL(env, "NOLA_MAC_REAL_UI_ACCESSIBILITY"), atomically: true, encoding: .utf8)
+        try capturePNG(hosting, to: artifactURL(env, "NOLA_MAC_REAL_UI_SCREENSHOT"))
+    }
+
     /// Opt-in real acceptance. The supplied mirror must come from the same
     /// actual paired submission; this test never manufactures task projections.
     func testRealTaskGuidanceLostResponseKeepsOriginalIntent() async throws {
@@ -2521,7 +2640,13 @@ final class MacRealProductUIEndToEndTests: XCTestCase {
 
     // The Python gate compares this production-validated result with the same
     // persisted seal. It never infers completion from legacy Parts or Trace.
+    private static var evidenceByTest: [String: [MacChatMessage]] = [:]
     private func persistCanonicalTranscript(_ messages: [MacChatMessage], to url: URL) throws {
-        try MacCanonicalTranscriptEvidence.persist(messages, to: url)
+        // A batch shares one isolated Store and one evidence destination.
+        // Keep each test's latest complete transcript instead of overwriting
+        // earlier real Runs with whichever test happened to execute last.
+        Self.evidenceByTest[name] = messages
+        let combined = Self.evidenceByTest.keys.sorted().flatMap { Self.evidenceByTest[$0] ?? [] }
+        try MacCanonicalTranscriptEvidence.persist(combined, to: url)
     }
 }

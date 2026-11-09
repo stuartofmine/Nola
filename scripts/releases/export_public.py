@@ -15,15 +15,15 @@ RULES = {
     'provider_key': re.compile(r'\b(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{30,}|AIza[A-Za-z0-9_-]{30,}|AKIA[A-Z0-9]{16})\b'),
     'secret_assignment': re.compile(r'''(?i)(?:api[_-]?key|client[_-]?secret|secret[_-]?key|access[_-]?token|password)\s*[=:]\s*["']([A-Za-z0-9_+/=-]{24,})["']'''),
 }
-SECRET_EXTENSIONS={'.p8','.p12','.pfx','.jks','.keystore','.mobileprovision','.pem','.db','.sqlite','.sqlite3'}
-PRIVATE_PARTS={'.git','.nola','.nola-host-secrets','node_modules','target','build','DerivedData','.artifacts','.wrangler','xcuserdata','__pycache__','.pytest_cache','.gradle','.cxx','.kotlin'}
+SECRET_EXTENSIONS={'.p8','.p12','.pfx','.jks','.keystore','.mobileprovision','.pem','.db','.sqlite','.sqlite3','.profraw','.profdata'}
+PRIVATE_PARTS={'.git','.github','.vscode','.claude','.cargo','.codex','.idea','.nola','.nola-host-secrets','node_modules','target','build','DerivedData','.artifacts','.wrangler','xcuserdata','__pycache__','.pytest_cache','.gradle','.cxx','.kotlin'}
 
 
 def excluded(name):
     path=Path(name)
     return (path.is_absolute() or '..' in path.parts or path.parts[0]=='cer' or
-            bool(set(path.parts)&PRIVATE_PARTS) or path.suffix.lower() in SECRET_EXTENSIONS or
-            path.name in {'.env','.dev.vars','.netrc','.npmrc','local.properties'} or
+            bool(set(path.parts)&PRIVATE_PARTS) or any(part.endswith(('.xcresult','.dSYM')) for part in path.parts) or path.suffix.lower() in SECRET_EXTENSIONS or
+            path.name in {'.DS_Store','.env','.dev.vars','.netrc','.npmrc','local.properties'} or
             (path.name.startswith('.env.') and not path.name.endswith('.example')) or path.name.endswith(('.log','.db-wal','.db-shm')))
 
 

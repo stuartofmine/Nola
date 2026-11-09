@@ -469,17 +469,15 @@ private fun NolaNavigationHost(
                 })
             }
             composable(WORKSPACE_ROUTE) {
-                val returnToInformation: () -> Unit = {
-                    navController.navigate(NolaTab.Information.route) {
-                        popUpTo(WORKSPACE_ROUTE) { inclusive = true }
-                        launchSingleTop = true
+                val returnFromWorkspace: () -> Unit = {
+                    if (!navController.popBackStack()) {
+                        navController.navigate(NolaTab.Information.route) { launchSingleTop = true }
                     }
                 }
-                BackHandler(enabled = compact, onBack = returnToInformation)
+                BackHandler(enabled = compact, onBack = returnFromWorkspace)
                 DataWorkspaceScreen(initialPage = workspacePage, showSwitcher = !compact,
-                    backToInformation = compact, onBack = {
-                        if (compact) returnToInformation() else navController.popBackStack()
-                    },
+                    backToInformation = compact && navController.previousBackStackEntry?.destination?.route == NolaTab.Information.route,
+                    onBack = returnFromWorkspace,
                     onOpenConversation = { owner ->
                         openChat(owner)
                     }, onCreateInChat = {
@@ -501,8 +499,6 @@ private fun NolaNavigationHost(
                         workspacePage = 0
                         navController.navigate(WORKSPACE_ROUTE) {
                             launchSingleTop = true
-                            popUpTo(navController.graph.startDestinationId) { saveState = true }
-                            restoreState = true
                         }
                     },
                     onOpenModels = {

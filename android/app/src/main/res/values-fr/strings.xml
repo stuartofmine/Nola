@@ -1315,4 +1315,10 @@
     <string name="software_update_status_available">Une mise à jour est disponible</string>
     <string name="software_update_install_permission">Si nécessaire, autorisez Nola à installer des applications, puis revenez ouvrir le programme d’installation.</string>
     <string name="software_update_status_incompatible_data">Le format de données diffère. La mise à jour est bloquée ; les données sont conservées.</string>
+    <string name="goal_guidance">Décrivez le résultat souhaité. Nola continue et s’arrête si une précision ou une autorisation est nécessaire.</string>
+    <string name="goal_example">Exemple : organisez les documents du projet et préparez une synthèse avec les sources.</string>
+    <string name="goal_cancel_explanation">Le travail automatique sur cet objectif s’arrête. La conversation et les résultats terminés sont conservés.</string>
+    <string name="goal_operation_failed">Action non confirmée. Vérifiez son état avant de réessayer.</string>
+    <string name="goal_needs_user">En attente d’une précision ou autorisation</string>
+    <string name="inspector_conversation_needed">Démarrez ou ouvrez une conversation pour voir la progression et définir un objectif.</string>
 </resources>

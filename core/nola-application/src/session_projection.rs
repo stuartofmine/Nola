@@ -85,38 +85,42 @@ pub fn load_session_projection<R: SessionProjectionRepository + nola_store_port:
 }
 
 pub(crate) fn materialize_local_recovery(
+    record: nola_store_port::remote_session::StoredLocalSessionRecovery,
+) -> Result<nola_store_port::run_effect::StoredCheckpoint, String> {
+    if record.recovery.replay_inputs.is_empty() {
+        return Ok(record.recovery.checkpoint);
+    }
+    use sha2::{Digest, Sha256};
+    let base = record.recovery.replay_base.as_ref().ok_or("session replay has no Run owner")?;
+    let invocation = record.invocation.as_ref().ok_or("session replay has no invocation configuration")?;
+    if invocation.run_id != base.run_id
+        || format!("{:x}", Sha256::digest(invocation.invocation_config_json.as_bytes()))
+            != invocation.invocation_config_digest {
+        return Err("session replay invocation identity or integrity mismatch".into());
+    }
+    let config = serde_json::from_str(&invocation.invocation_config_json)
+        .map_err(|error| error.to_string())?;
+    materialize_local_recovery_with_config(record, config)
+}
+
+/// Internal continuation of a verified read. The caller must have validated
+/// the frozen bytes and their equality with this record's invocation. Do not
+/// use this path for an independently loaded or client-supplied configuration.
+pub(crate) fn materialize_local_recovery_with_config(
     mut record: nola_store_port::remote_session::StoredLocalSessionRecovery,
+    mut config: nola_agent_engine::agent::protocol::AgentCoreConfig,
 ) -> Result<nola_store_port::run_effect::StoredCheckpoint, String> {
     if !record.recovery.replay_inputs.is_empty() {
-        use sha2::{Digest, Sha256};
-        let base = record
-            .recovery
-            .replay_base
-            .as_ref()
-            .ok_or("session replay has no Run owner")?;
-        let invocation = record
-            .invocation
-            .as_ref()
-            .ok_or("session replay has no invocation configuration")?;
-        if invocation.run_id != base.run_id
-            || format!(
-                "{:x}",
-                Sha256::digest(invocation.invocation_config_json.as_bytes())
-            ) != invocation.invocation_config_digest
-        {
+        let base = record.recovery.replay_base.as_ref().ok_or("session replay has no Run owner")?;
+        let invocation = record.invocation.as_ref().ok_or("session replay has no invocation configuration")?;
+        if invocation.run_id != base.run_id {
             return Err("session replay invocation identity or integrity mismatch".into());
         }
         let checkpoint = serde_json::from_str::<CoreCheckpoint<AgentThreadState>>(
             &record.recovery.checkpoint.checkpoint_json,
-        )
-        .map_err(|error| error.to_string())?;
-        let mut config = serde_json::from_str(&invocation.invocation_config_json)
-            .map_err(|error| error.to_string())?;
+        ).map_err(|error| error.to_string())?;
         crate::delegated_invocation::bind_restore_configuration(
-            &mut config,
-            &checkpoint,
-            &base.run_id,
-            &record.delegated_invocations,
+            &mut config, &checkpoint, &base.run_id, &record.delegated_invocations,
         )?;
         let reason = checkpoint.reason;
         let core = nola_agent_engine::agent::AgentCore::restore(config, checkpoint)

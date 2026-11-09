@@ -257,7 +257,8 @@
         {:else if goalLoaded}<p class="muted">{t($locale, 'chatActivity.noneGoal')}</p>{/if}
         {#if goalLoaded && actions.includes('start')}
             <form onsubmit={event => { event.preventDefault(); void control('start'); }}>
-                <label>{t($locale, 'chatActivity.objective')}<textarea bind:value={objective} oninput={event => draftStore.write(conversationId, event.currentTarget.value)} rows="2" maxlength="20000" disabled={locked}></textarea></label>
+                <p class="muted">{t($locale, 'chatActivity.guidance')}</p>
+                <label>{t($locale, 'chatActivity.objective')}<textarea bind:value={objective} oninput={event => draftStore.write(conversationId, event.currentTarget.value)} rows="3" placeholder={t($locale, 'chatActivity.example')} maxlength="20000" disabled={locked}></textarea></label>
                 <button type="submit" disabled={busy || locked || !objective.trim()}>{t($locale, 'chatActivity.start')}</button>
             </form>
         {/if}

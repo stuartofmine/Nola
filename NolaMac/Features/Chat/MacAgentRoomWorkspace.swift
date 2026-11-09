@@ -337,15 +337,6 @@ nonisolated struct MacRoomDraft: Codable, Equatable, Sendable {
         defer { startingExecutions.remove(receipt.id) }
         let service = service
         do {
-            if let context = receipt.contextConversationID,
-               try await Task.detached(operation: { try service.executionExists(contextID: context, executionID: receipt.executionID ?? receipt.id) }).value {
-                executionService?.observe(contextID: context)
-                if let latest = try await Task.detached(operation: { try service.submission(roomID: receipt.input.roomID, submissionID: receipt.id) }).value {
-                    applyReceipt(latest); observeExecution(latest)
-                    errors[receipt.input.roomID] = nil
-                }
-                return
-            }
             let persisted = try await Task.detached { try service.executionIntent(receipt) }.value
             let intent: MacAgentRoomService.ExecutionIntent
             if let persisted { intent = persisted } else { intent = try await prepareOwner(receipt) }
@@ -386,7 +377,9 @@ nonisolated struct MacRoomDraft: Codable, Equatable, Sendable {
                 return
             }
             try await executeOwner(claim.submission, intent)
-            if try await Task.detached(operation: { try service.executionExists(contextID: context, executionID: intent.execution_id) }).value {
+            if case .remoteHost = intent.envelope {
+                errors[receipt.input.roomID] = nil
+            } else if try await Task.detached(operation: { try service.executionExists(contextID: context, executionID: intent.execution_id) }).value {
                 errors[receipt.input.roomID] = nil
             }
             if let owner = receipt.input.conversationID, let parent = receipt.input.parentMessageID {

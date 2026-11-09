@@ -284,7 +284,8 @@ final class MacAssistantJournalTransportTests: XCTestCase {
         let codes = ["responses_incomplete", "responses_timeout", "responses_transport_error",
                      "responses_tool_transaction_incomplete", "responses_provider_failed",
                      "responses_protocol_error", "provider_failed", "content_filtered", "authentication_failed",
-                     "quota_exhausted", "rate_limited", "model_unavailable", "context_length_exceeded"]
+                     "quota_exhausted", "rate_limited", "model_unavailable", "context_length_exceeded",
+                     "chatgpt_reauthorization_required", "model_account_changed", "invalid_model_request"]
         for code in codes {
             let message = try XCTUnwrap(MacJournalFailurePresentation.message(for: code, bundle: chinese))
             XCTAssertTrue(message.contains("模型") || message.contains("会话"), "Missing translation: \(code)")
@@ -942,7 +943,7 @@ final class MacAssistantJournalTransportTests: XCTestCase {
         XCTAssertFalse(displayed.contains("protocol_version"))
         XCTAssertTrue(displayed.contains("9007199254740993"))
         XCTAssertTrue(displayed.contains("18446744073709551615"))
-        XCTAssertThrowsError(try input.display(#"{"protocol_version":1,"value":{}}"#, complete: true))
+        XCTAssertThrowsError(try input.display(#"{"protocol_version":99,"value":{}}"#, complete: true))
         XCTAssertThrowsError(try input.display(#"{"protocol_version":1,"resources":[]}"#, complete: true))
         XCTAssertThrowsError(try input.display("{", complete: true))
         let resources = try MacJournalBodyPresentation.toolField("tool_resources")

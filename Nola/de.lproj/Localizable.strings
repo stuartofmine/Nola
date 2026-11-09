@@ -3120,3 +3120,13 @@
 "softwareUpdate.status.available" = "Ein Update ist verfügbar";
 "softwareUpdate.installPermission" = "Erlauben Sie Nola bei Aufforderung die App-Installation, kehren Sie zurück und öffnen Sie den Installer erneut.";
 "softwareUpdate.status.incompatible_data" = "Das neue Datenformat weicht ab. Das Update ist gesperrt; vorhandene Daten bleiben erhalten.";
+
+"model.delete.failed" = "Das Modell konnte nicht gelöscht werden. Erneut versuchen.";
+
+"model.action.pause" = "Download pausieren";
+
+"model.action.cancel" = "Download abbrechen";
+
+"model.action.resume" = "Download fortsetzen";
+
+"chat.context.cannot_fit.recovery" = "Das Kontextfenster dieses Modells ist zu klein. Wähle ein Modell mit größerem Kontextfenster und versuche es erneut. Die Unterhaltung bleibt erhalten.";

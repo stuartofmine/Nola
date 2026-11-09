@@ -219,6 +219,7 @@ final class MacRemotePermissionConsumptionTests: XCTestCase {
         let model = MacWorkspaceModel(initialConversationID: source.conversationID,
             canonicalRepository: MacCanonicalConversationRepository(store: port),
             localAgentRuntime: PersistenceTestLocalRuntime(), remoteHost: host, readinessIssue: { _ in nil })
+        await model.loadSelectedConversationIfNeeded()
         model.executionHost = .remote
         try await model.waitForModelConfigurationCommit()
         model.presentationDidAttach()
@@ -710,6 +711,7 @@ final class MacRemotePermissionConsumptionTests: XCTestCase {
             model.updateRemoteHostConfigurationState(true)
             model.setFixtureRemoteModels([host.fixtureProfile])
             model.selectModel(try XCTUnwrap(model.configuredModelOptions.first))
+        try await model.waitForModelConfigurationCommit()
             let terminalRevision = model.selectedTerminalTranscriptRevision
             model.draft = "Original input"
             model.send()
@@ -747,6 +749,7 @@ final class MacRemotePermissionConsumptionTests: XCTestCase {
         model.updateRemoteHostConfigurationState(true)
         model.setFixtureRemoteModels([host.fixtureProfile])
         model.selectModel(try XCTUnwrap(model.configuredModelOptions.first))
+        try await model.waitForModelConfigurationCommit()
         model.draft = "Run requiring confirmation"
         model.send()
         let continuation = try await waitForValue { host.runContinuation }
@@ -802,6 +805,7 @@ final class MacRemotePermissionConsumptionTests: XCTestCase {
         model.updateRemoteHostConfigurationState(true)
         model.setFixtureRemoteModels([host.fixtureProfile])
         model.selectModel(try XCTUnwrap(model.configuredModelOptions.first))
+        try await model.waitForModelConfigurationCommit()
         model.draft = "Cancel before the first trace"
         model.send()
         let continuation = try await waitForValue { host.runContinuation }
@@ -826,6 +830,7 @@ final class MacRemotePermissionConsumptionTests: XCTestCase {
         let host = PermissionEnvelopeRemoteHost()
         host.applicationPort = port
         host.allowsRun = true
+        host.allowsEmptyUIQueue = true
         let model = MacWorkspaceModel(canonicalRepository: repository,
             localAgentRuntime: PersistenceTestLocalRuntime(), remoteHost: host, readinessIssue: { _ in nil })
         defer { model.selectedConversationID = nil }
@@ -834,6 +839,7 @@ final class MacRemotePermissionConsumptionTests: XCTestCase {
         model.updateRemoteHostConfigurationState(true)
         model.setFixtureRemoteModels([host.fixtureProfile])
         model.selectModel(try XCTUnwrap(model.configuredModelOptions.first))
+        try await model.waitForModelConfigurationCommit()
         model.draft = "Original unresolved Run"
         model.send()
         let continuation = try await waitForValue { host.runContinuation }
@@ -916,6 +922,7 @@ final class MacRemotePermissionConsumptionTests: XCTestCase {
         let host = PermissionEnvelopeRemoteHost()
         host.applicationPort = port
         host.allowsRun = true
+        host.allowsEmptyUIQueue = true
         let model = MacWorkspaceModel(canonicalRepository: repository,
             localAgentRuntime: PersistenceTestLocalRuntime(), remoteHost: host, readinessIssue: { _ in nil })
         defer { model.selectedConversationID = nil }
@@ -924,6 +931,7 @@ final class MacRemotePermissionConsumptionTests: XCTestCase {
         model.updateRemoteHostConfigurationState(true)
         model.setFixtureRemoteModels([host.fixtureProfile])
         model.selectModel(try XCTUnwrap(model.configuredModelOptions.first))
+        try await model.waitForModelConfigurationCommit()
         model.draft = "Complete through the stream and subscription together"
         model.send()
         let continuation = try await waitForValue { host.runContinuation }
@@ -1150,6 +1158,7 @@ final class MacRemotePermissionConsumptionTests: XCTestCase {
         model.updateRemoteHostConfigurationState(true)
         model.setFixtureRemoteModels([host.fixtureProfile])
         model.selectModel(try XCTUnwrap(model.configuredModelOptions.first))
+        try await model.waitForModelConfigurationCommit()
         model.draft = "Keep the original permission transport owned"
         model.send()
         let continuation = try await waitForValue { host.runContinuation }

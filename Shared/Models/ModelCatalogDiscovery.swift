@@ -2,8 +2,16 @@
 import Foundation
 
 /// Directory reads never follow redirects or accumulate an unbounded response.
-nonisolated final class AppleModelCatalogTransport: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+nonisolated final class AppleModelCatalogTransport: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private static let budget = AppleModelCatalogBudget()
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<(Data, URLResponse), Error>?
+    private var session: URLSession?
+    private var response: URLResponse?
+    private var body = Data()
+    private var finished = false
+    private let limit = 2 * 1024 * 1024
+
     static func fetch(_ request: URLRequest, configuration: URLSessionConfiguration = .ephemeral) async throws -> (Data, URLResponse) {
         try Task.checkCancellation()
         guard budget.acquire() else { throw URLError(.resourceUnavailable) }
@@ -13,23 +21,90 @@ nonisolated final class AppleModelCatalogTransport: NSObject, URLSessionTaskDele
         configuration.urlCache = nil
         configuration.timeoutIntervalForRequest = 10
         configuration.timeoutIntervalForResource = 10
-        let session = URLSession(configuration: configuration, delegate: AppleModelCatalogTransport(), delegateQueue: nil)
-        defer { session.invalidateAndCancel() }
-        let (bytes, response) = try await session.bytes(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
-        let limit = 2 * 1024 * 1024
-        guard response.expectedContentLength <= Int64(limit) else { throw URLError(.dataLengthExceedsMaximum) }
-        var data = Data()
-        for try await byte in bytes {
-            try Task.checkCancellation()
-            guard data.count < limit else { throw URLError(.dataLengthExceedsMaximum) }
-            data.append(byte)
+        let transport = AppleModelCatalogTransport()
+        // Consume bounded data chunks on URLSession's delegate queue. Iterating
+        // millions of individual AsyncBytes could keep the model picker busy
+        // long after the response arrived.
+        let result = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                transport.start(request, configuration: configuration, continuation: continuation)
+            }
+        } onCancel: {
+            transport.finish(.failure(CancellationError()))
         }
         try Task.checkCancellation()
-        return (data, response)
+        return result
     }
+
+    private func start(_ request: URLRequest, configuration: URLSessionConfiguration,
+                       continuation: CheckedContinuation<(Data, URLResponse), Error>) {
+        lock.lock()
+        guard !finished else {
+            lock.unlock()
+            continuation.resume(throwing: CancellationError())
+            return
+        }
+        self.continuation = continuation
+        let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+        self.session = session
+        let task = session.dataTask(with: request)
+        lock.unlock()
+        task.resume()
+    }
+
+    private func finish(_ result: Result<(Data, URLResponse), Error>) {
+        lock.lock()
+        guard !finished else { lock.unlock(); return }
+        finished = true
+        let continuation = continuation, session = session
+        self.continuation = nil; self.session = nil
+        body = Data(); response = nil
+        lock.unlock()
+        session?.invalidateAndCancel()
+        continuation?.resume(with: result)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
+                    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            completionHandler(.cancel)
+            finish(.failure(URLError(.badServerResponse)))
+            return
+        }
+        guard response.expectedContentLength <= Int64(limit) else {
+            completionHandler(.cancel)
+            finish(.failure(URLError(.dataLengthExceedsMaximum)))
+            return
+        }
+        lock.lock()
+        let active = !finished
+        if active { self.response = response }
+        lock.unlock()
+        completionHandler(active ? .allow : .cancel)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        lock.lock()
+        guard !finished else { lock.unlock(); return }
+        guard data.count <= limit - body.count else {
+            lock.unlock()
+            finish(.failure(URLError(.dataLengthExceedsMaximum)))
+            return
+        }
+        body.append(data)
+        lock.unlock()
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        lock.lock()
+        let result: Result<(Data, URLResponse), Error>
+        if let error { result = .failure(error) }
+        else if let response { result = .success((body, response)) }
+        else { result = .failure(URLError(.badServerResponse)) }
+        lock.unlock()
+        finish(result)
+    }
+
     func urlSession(_ session: URLSession, task: URLSessionTask,
                     willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest,

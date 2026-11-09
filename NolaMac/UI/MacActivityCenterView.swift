@@ -539,6 +539,7 @@ struct MacActivityDetail: View {
     var compact = false
     let openConversation: () -> Void
     @State private var copiedOutput = false
+    @State private var feedbackID = UUID()
     @State private var manuallyCopyOutput = false
 
     var body: some View {
@@ -588,8 +589,11 @@ struct MacActivityDetail: View {
                                     withAnimation(.easeOut(duration: 0.16)) {
                                         copiedOutput = true
                                     }
+                                    feedbackID = UUID()
+                                    let feedback = feedbackID
                                     Task { @MainActor in
-                                        try? await Task.sleep(for: .seconds(1.4))
+                                        do { try await Task.sleep(for: .seconds(1.4)) } catch { return }
+                                        guard feedbackID == feedback else { return }
                                         withAnimation(.easeOut(duration: 0.16)) {
                                             copiedOutput = false
                                         }

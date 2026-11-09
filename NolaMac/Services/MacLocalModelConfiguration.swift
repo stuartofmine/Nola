@@ -191,8 +191,13 @@ final class MacLocalModelConfigurationStore {
     }
 
     func isReady(_ model: ModelDownloader.ModelType) -> Bool {
+        // Resolving a catalog profile also reads the installed catalog. The
+        // picker must consult its readiness cache before doing that work.
+        if let cached = readinessByProfileID[model.rawValue] { return cached }
         guard let profile = MacLocalModelProfile.resolve(model.rawValue) else {
-            return model.validatesDownloadedFiles(at: modelDirectory(for: model))
+            let ready = model.validatesDownloadedFiles(at: modelDirectory(for: model))
+            readinessByProfileID[model.rawValue] = ready
+            return ready
         }
         return isReady(profile)
     }

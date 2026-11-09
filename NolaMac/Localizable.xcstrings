@@ -1,9 +1,7 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "" : {
-
-    },
+    "" : {},
     "—" : {
       "localizations" : {
         "de" : {
@@ -1850,9 +1848,7 @@
         }
       }
     },
-    "%@ ms" : {
-
-    },
+    "%@ ms" : {},
     "%@ steps · %@ kcal" : {
       "localizations" : {
         "de" : {
@@ -6096,6 +6092,48 @@
             "state" : "translated",
             "value" : "本机摘要"
           }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lokale Zusammenfassungen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resúmenes locales"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Résumés locaux"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ローカル要約"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "로컬 요약"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Локальные сводки"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本機摘要"
+          }
         }
       }
     },
@@ -8742,9 +8780,7 @@
         }
       }
     },
-    "Anthropic Messages" : {
-
-    },
+    "Anthropic Messages" : {},
     "Any language" : {
       "localizations" : {
         "de" : {
@@ -15973,6 +16009,18 @@
             "state" : "translated",
             "value" : "气泡颜色"
           }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "말풍선 색상"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "對話氣泡顏色"
+          }
         }
       }
     },
@@ -18054,9 +18102,7 @@
         }
       }
     },
-    "Chat Completions" : {
-
-    },
+    "Chat Completions" : {},
     "Chat Only" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -18234,9 +18280,7 @@
         }
       }
     },
-    "chat.conversation.default_title" : {
-
-    },
+    "chat.conversation.default_title" : {},
     "chat.experts.description" : {
       "localizations" : {
         "de" : {
@@ -23018,9 +23062,7 @@
         }
       }
     },
-    "Codex" : {
-
-    },
+    "Codex" : {},
     "Collaborate in Figma" : {
       "localizations" : {
         "de" : {
@@ -23995,12 +24037,52 @@
             "state" : "translated",
             "value" : "关闭"
           }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schließen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cerrar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fermer"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "閉じる"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "닫기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Закрыть"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "關閉"
+          }
         }
       }
     },
-    "common.retry" : {
-
-    },
+    "common.retry" : {},
     "Communication" : {
       "localizations" : {
         "de" : {
@@ -25013,6 +25095,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "配置 %@ · 气泡颜色"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 설정 · 말풍선 색상"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設定 %@ · 對話氣泡顏色"
           }
         }
       }
@@ -30310,9 +30404,7 @@
         }
       }
     },
-    "Decision" : {
-
-    },
+    "Decision" : {},
     "Declare only capabilities supported by this endpoint and model. Thinking does not control answer length." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -30580,9 +30672,7 @@
         }
       }
     },
-    "Default model" : {
-
-    },
+    "Default model" : {},
     "Default Model" : {
       "localizations" : {
         "de" : {
@@ -30814,6 +30904,48 @@
           }
         },
         "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已委派"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delegiert"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delegado"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Délégué"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "委任済み"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "위임됨"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Делегировано"
+          }
+        },
+        "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "已委派"
@@ -33654,6 +33786,18 @@
             "state" : "translated",
             "value" : "编辑重发"
           }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "수정 후 다시 보내기"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "編輯並重新傳送"
+          }
         }
       }
     },
@@ -34009,9 +34153,7 @@
         }
       }
     },
-    "Effort" : {
-
-    },
+    "Effort" : {},
     "en, zh-Hans…" : {
       "localizations" : {
         "de" : {
@@ -34804,9 +34946,7 @@
         }
       }
     },
-    "Error" : {
-
-    },
+    "Error" : {},
     "Errors" : {
       "localizations" : {
         "de" : {
@@ -35355,9 +35495,7 @@
         }
       }
     },
-    "Execution Host" : {
-
-    },
+    "Execution Host" : {},
     "Execution Model" : {
       "localizations" : {
         "de" : {
@@ -38106,9 +38244,7 @@
         }
       }
     },
-    "Full output" : {
-
-    },
+    "Full output" : {},
     "General" : {
       "localizations" : {
         "de" : {
@@ -38344,10 +38480,78 @@
       }
     },
     "Goal" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ziel"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Goal"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Objetivo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Objectif"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "目標"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "목표"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Цель"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "目标"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "目標"
+          }
+        }
+      }
     },
     "Goal action awaiting confirmation" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Goal action awaiting confirmation"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "目标操作等待确认"
+          }
+        }
+      }
     },
     "goal.constraints" : {
       "localizations" : {
@@ -39553,9 +39757,7 @@
         }
       }
     },
-    "HTTP %@" : {
-
-    },
+    "HTTP %@" : {},
     "http://mac.local:5001" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -40024,9 +40226,7 @@
         }
       }
     },
-    "Icon could not be rendered" : {
-
-    },
+    "Icon could not be rendered" : {},
     "Immediate" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -40526,9 +40726,7 @@
         }
       }
     },
-    "Input" : {
-
-    },
+    "Input" : {},
     "Inspect and improve Figma designs while preserving components, variables, and layout behavior." : {
       "localizations" : {
         "de" : {
@@ -40865,6 +41063,18 @@
             "state" : "translated",
             "value" : "检查器宽度"
           }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "사이드바 너비"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "側邊欄寬度"
+          }
         }
       }
     },
@@ -41045,9 +41255,7 @@
     "Invalid model configuration field: %@" : {
       "comment" : "Model configuration field decoding error"
     },
-    "Invalid permission configuration. Select a valid permission mode before starting." : {
-
-    },
+    "Invalid permission configuration. Select a valid permission mode before starting." : {},
     "Invalid thinking configuration. Check the supported efforts, three ordered budgets, and output limit." : {
       "localizations" : {
         "de" : {
@@ -41573,9 +41781,7 @@
         }
       }
     },
-    "Kimi Code CLI" : {
-
-    },
+    "Kimi Code CLI" : {},
     "km" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -42161,9 +42367,7 @@
         }
       }
     },
-    "Line" : {
-
-    },
+    "Line" : {},
     "Line %lld" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -87139,9 +87343,7 @@
         }
       }
     },
-    "Model turns" : {
-
-    },
+    "Model turns" : {},
     "model-name" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -88476,6 +88678,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "有多个已授权配置匹配原模型，无法证明唯一的精确选择。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "원래 모델과 일치하는 승인된 프로필이 여러 개여서 정확한 프로필을 확인할 수 없습니다."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有多個已授權設定符合原始模型，無法確認確切設定。"
           }
         }
       }
@@ -92867,6 +93081,48 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Nola 已委派任务"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nola hat die Aufgabe delegiert"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nola delegó la tarea"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nola a délégué la tâche"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nola がタスクを委任しました"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nola가 작업을 위임했습니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nola делегировала задачу"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nola 已委派任務"
           }
         }
       }
@@ -99102,12 +99358,22 @@
             "state" : "translated",
             "value" : "在标签页打开"
           }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "탭에서 열기"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在分頁中開啟"
+          }
         }
       }
     },
-    "Open Link" : {
-
-    },
+    "Open Link" : {},
     "Open Local Models" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -99752,9 +100018,7 @@
         }
       }
     },
-    "OpenCode" : {
-
-    },
+    "OpenCode" : {},
     "openFDA label result" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -100424,9 +100688,7 @@
         }
       }
     },
-    "Page" : {
-
-    },
+    "Page" : {},
     "Parameters" : {
       "localizations" : {
         "de" : {
@@ -100888,9 +101150,7 @@
         }
       }
     },
-    "Pending" : {
-
-    },
+    "Pending" : {},
     "Per Conversation" : {
       "localizations" : {
         "de" : {
@@ -100949,9 +101209,7 @@
         }
       }
     },
-    "Permission" : {
-
-    },
+    "Permission" : {},
     "Permission Mode" : {
       "localizations" : {
         "de" : {
@@ -101184,9 +101442,7 @@
         }
       }
     },
-    "Permissions" : {
-
-    },
+    "Permissions" : {},
     "Pin" : {
       "localizations" : {
         "de" : {
@@ -102281,9 +102537,7 @@
         }
       }
     },
-    "Preparing required tools" : {
-
-    },
+    "Preparing required tools" : {},
     "Preparing the answer" : {
       "localizations" : {
         "de" : {
@@ -102354,7 +102608,56 @@
       }
     },
     "Preview" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vorschau"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vista previa"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aperçu"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "プレビュー"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "미리 보기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Предпросмотр"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "预览"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "預覽"
+          }
+        }
+      }
     },
     "Previous File" : {
       "extractionState" : "manual",
@@ -104709,9 +105012,7 @@
         }
       }
     },
-    "Reason" : {
-
-    },
+    "Reason" : {},
     "Reasoning effort" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -107271,6 +107572,18 @@
             "state" : "translated",
             "value" : "尚未确认重发准入。已保留准备好的操作，重试会先核实其状态再发送。"
           }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "재전송 승인을 확인하지 못했습니다. 준비된 작업은 유지되며, 다시 시도하면 전송 전에 상태를 확인합니다."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未確認重新傳送是否獲准。已保留準備好的操作，重試時會先檢查狀態再傳送。"
+          }
         }
       }
     },
@@ -107438,9 +107751,7 @@
         }
       }
     },
-    "Resources" : {
-
-    },
+    "Resources" : {},
     "Respond to Peer Review" : {
       "localizations" : {
         "de" : {
@@ -107639,9 +107950,7 @@
         }
       }
     },
-    "Responses" : {
-
-    },
+    "Responses" : {},
     "Responses is selected in the draft. Review each model's reasoning capabilities and supported efforts, then save. The probe does not verify effort support." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -108168,7 +108477,20 @@
       }
     },
     "Resume at" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resume at"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "恢复时间"
+          }
+        }
+      }
     },
     "Retries after failure" : {
       "extractionState" : "stale",
@@ -108400,11 +108722,22 @@
         }
       }
     },
-    "Retry expert reply" : {
-
-    },
+    "Retry expert reply" : {},
     "Retry saved action" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Retry saved action"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重试已保存的操作"
+          }
+        }
+      }
     },
     "Retrying with" : {
       "localizations" : {
@@ -110993,6 +111326,18 @@
             "state" : "translated",
             "value" : "保存并重新发送"
           }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "저장 후 다시 보내기"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "儲存並重新傳送"
+          }
         }
       }
     },
@@ -111528,7 +111873,20 @@
       }
     },
     "Schedule resume" : {
-
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schedule resume"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "安排恢复"
+          }
+        }
+      }
     },
     "Scheduled" : {
       "extractionState" : "stale",
@@ -114185,9 +114543,7 @@
         }
       }
     },
-    "SHA-256 · %@" : {
-
-    },
+    "SHA-256 · %@" : {},
     "Shell and Git" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -115435,40 +115791,1233 @@
       }
     },
     "softwareUpdate.check" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nach Updates suchen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Check for updates"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Buscar actualizaciones"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rechercher des mises à jour"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更新を確認"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "업데이트 확인"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверить обновления"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "检查更新"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "檢查更新"
+          }
+        }
+      }
     },
     "softwareUpdate.dataHint" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Beenden Sie laufende Aufgaben vor der Installation. Updates konvertieren oder erstellen Gesprächsdaten nicht automatisch neu."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Finish running tasks before installing. Updates never automatically convert or rebuild conversation data."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Finaliza las tareas antes de instalar. La actualización no convierte ni reconstruye los datos de conversación automáticamente."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Terminez les tâches avant l’installation. Les données de conversation ne sont jamais converties ou recréées automatiquement."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "インストール前に実行中のタスクを終了してください。会話データを自動変換・再作成しません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "설치 전에 실행 중인 작업을 완료하세요. 업데이트는 대화 데이터를 자동으로 변환하거나 다시 만들지 않습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Завершите задачи перед установкой. Данные бесед не преобразуются и не пересоздаются автоматически."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "安装前请结束运行中的任务。更新不会自动转换或重建会话数据。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "安裝前請先完成執行中的工作。更新不會自動轉換或重建對話資料。"
+          }
+        }
+      }
     },
     "softwareUpdate.download" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Update herunterladen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Download update"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Descargar actualización"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Télécharger la mise à jour"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更新をダウンロード"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "업데이트 다운로드"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скачать обновление"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下载更新包"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下載更新"
+          }
+        }
+      }
+    },
+    "softwareUpdate.downloadRequested" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Download angefordert. Der Browser speichert nach der Prüfung; Fehler erscheinen im Downloadfenster."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Download requested. The browser saves the package after verification; failures appear in the download window."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Descarga solicitada. El navegador guarda tras verificar; los errores aparecen en la ventana de descarga."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Téléchargement demandé. Le navigateur enregistre après vérification ; les erreurs apparaissent dans la fenêtre de téléchargement."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ダウンロードを要求しました。検証後に保存されます。失敗はダウンロード画面に表示されます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다운로드를 요청했습니다. 검증 후 브라우저가 패키지를 저장합니다. 실패 여부는 다운로드 창에서 확인하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Загрузка запрошена. Браузер сохранит пакет после проверки; ошибки появятся в окне загрузки."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已请求下载；校验完成后由浏览器保存。失败信息会显示在下载窗口。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已請求下載。驗證後由瀏覽器儲存套件；失敗資訊會顯示在下載視窗。"
+          }
+        }
+      }
     },
     "softwareUpdate.failed" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Update fehlgeschlagen. Bitte erneut versuchen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Update failed. Please try again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Error de actualización. Inténtalo de nuevo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Échec de la mise à jour. Réessayez."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更新に失敗しました。再試行してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "업데이트에 실패했습니다. 다시 시도하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ошибка обновления. Повторите попытку."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更新操作失败，请重试"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更新失敗，請重試。"
+          }
+        }
+      }
+    },
+    "softwareUpdate.hostHint" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Updates gelten für den verbundenen Nola-Host. Die Browseroberfläche wird mit dem Host geliefert."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Updates apply to the connected Nola Host. The browser UI ships with the Host."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Se actualiza el Host Nola conectado. La interfaz web se distribuye con el Host."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La mise à jour concerne le Host Nola connecté. L’interface web est livrée avec le Host."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "接続中の Nola Host を更新します。ブラウザー UI は Host と一緒に配布されます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "업데이트는 연결된 Nola Host에 적용됩니다. 브라우저 UI는 Host에 포함됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обновляется подключённый Nola Host. Веб-интерфейс поставляется вместе с Host."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此处更新当前连接的 Nola Host，浏览器界面随 Host 一起发布。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更新套用至連線的 Nola Host，瀏覽器介面隨 Host 發布。"
+          }
+        }
+      }
     },
     "softwareUpdate.install" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Installer öffnen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open installer"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Abrir instalador"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ouvrir le programme d’installation"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "インストーラを開く"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "설치 프로그램 열기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть установщик"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开安装器"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "開啟安裝程式"
+          }
+        }
+      }
+    },
+    "softwareUpdate.installPermission" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erlauben Sie Nola bei Aufforderung die App-Installation, kehren Sie zurück und öffnen Sie den Installer erneut."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "If prompted, allow Nola to install apps, return here and open the installer again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Si se solicita, permite instalar aplicaciones a Nola, vuelve y abre el instalador."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Si nécessaire, autorisez Nola à installer des applications, puis revenez ouvrir le programme d’installation."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "必要に応じて Nola のアプリインストールを許可し、戻ってもう一度開いてください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "요청이 표시되면 Nola의 앱 설치를 허용한 다음 돌아와 설치 프로그램을 다시 여세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "При запросе разрешите Nola устанавливать приложения, затем вернитесь и снова откройте установщик."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "如系统要求，请允许 Nola 安装应用，返回后再次打开安装器。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "若出現提示，請允許 Nola 安裝應用程式，再回到此處重新開啟安裝程式。"
+          }
+        }
+      }
     },
     "softwareUpdate.notChecked" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Noch nicht nach Updates gesucht"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Updates have not been checked"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aún no se han buscado actualizaciones"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mises à jour non vérifiées"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "まだ更新を確認していません"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "아직 업데이트를 확인하지 않았습니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверка ещё не выполнена"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未检查更新"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未檢查更新"
+          }
+        }
+      }
     },
     "softwareUpdate.reveal" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Heruntergeladene Datei zeigen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show downloaded file"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mostrar archivo descargado"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Afficher le fichier téléchargé"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ダウンロードしたファイルを表示"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다운로드한 파일 보기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показать скачанный файл"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示下载文件"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "顯示下載的檔案"
+          }
+        }
+      }
     },
-    "softwareUpdate.status.%@" : {
-
+    "softwareUpdate.status.%@" : {},
+    "softwareUpdate.status.ahead" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieser Build ist neuer als die veröffentlichte Version"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This build is newer than the published release"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esta compilación es más reciente que la publicada"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cette version est plus récente que la publication"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "現在のビルドは公開版より新しいです"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 빌드는 공개 버전보다 최신입니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эта сборка новее опубликованной"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前版本高于发布源中的版本"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此版本比公開發布版本更新"
+          }
+        }
+      }
+    },
+    "softwareUpdate.status.available" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ein Update ist verfügbar"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "An update is available"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hay una actualización disponible"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Une mise à jour est disponible"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新しいバージョンがあります"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "새 업데이트가 있습니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доступно обновление"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有新版本可用"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有可用的更新"
+          }
+        }
+      }
+    },
+    "softwareUpdate.status.disabled" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Updatequelle nicht konfiguriert"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Update publishing is not configured"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se ha configurado la fuente de actualizaciones"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Source de mises à jour non configurée"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更新の配信元が未設定です"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "업데이트 배포가 설정되지 않았습니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Источник обновлений не настроен"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未配置更新发布源"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未設定更新發布"
+          }
+        }
+      }
+    },
+    "softwareUpdate.status.incompatible_data" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das neue Datenformat weicht ab. Das Update ist gesperrt; vorhandene Daten bleiben erhalten."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The new data format differs. Updating is blocked; existing data is preserved."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El formato de datos es distinto. Se bloqueó la actualización; se conservan los datos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le format de données diffère. La mise à jour est bloquée ; les données sont conservées."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新しいデータ形式が異なるため更新を停止しました。既存データは保持されます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "새 데이터 형식이 다릅니다. 업데이트를 차단하고 기존 데이터를 보존합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Формат данных отличается. Обновление заблокировано; данные сохранены."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新版本的数据格式不匹配，自动更新已阻止；现有数据保持不变。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新版資料格式不同，已阻止更新並保留現有資料。"
+          }
+        }
+      }
+    },
+    "softwareUpdate.status.not_checked" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Noch nicht geprüft"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Updates have not been checked"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aún no se ha comprobado"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pas encore vérifié"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "まだ確認していません"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "아직 업데이트를 확인하지 않았습니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверка ещё не выполнена"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未检查更新"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未檢查更新"
+          }
+        }
+      }
+    },
+    "softwareUpdate.status.unavailable" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kein Updatepaket für diese Plattform verfügbar"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No update package is available for this platform"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No hay paquete para esta plataforma"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aucun paquet disponible pour cette plateforme"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このプラットフォーム用の更新はありません"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 플랫폼의 업데이트 패키지가 없습니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для этой платформы нет пакета обновления"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此平台暂无可用更新包"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此平台尚無可用的更新套件"
+          }
+        }
+      }
+    },
+    "softwareUpdate.status.up_to_date" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die aktuelle veröffentlichte Version ist installiert"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You have the latest published version"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tienes la última versión publicada"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vous disposez de la dernière version publiée"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "公開されている最新版です"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "최신 공개 버전입니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Установлена последняя опубликованная версия"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已是当前发布的最新版本"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "目前已是最新公開版本"
+          }
+        }
+      }
     },
     "softwareUpdate.store" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Im Store aktualisieren"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Update in store"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Actualizar en la tienda"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mettre à jour dans la boutique"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ストアで更新"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "스토어에서 업데이트"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обновить в магазине"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "前往商店更新"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "前往商店更新"
+          }
+        }
+      }
     },
     "softwareUpdate.title" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Softwareupdate"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Software update"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Actualización de software"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mise à jour du logiciel"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ソフトウェア更新"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "소프트웨어 업데이트"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обновление приложения"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "软件更新"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "軟體更新"
+          }
+        }
+      }
     },
     "softwareUpdate.verified" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Download abgeschlossen; Signatur und Integrität geprüft"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Download complete; signature and integrity verified"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Descarga completa; firma e integridad verificadas"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Téléchargement terminé ; signature et intégrité vérifiées"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ダウンロード完了。署名と整合性を確認済み"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다운로드 완료. 서명과 무결성을 확인했습니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Загрузка завершена; подпись и целостность проверены"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下载完成，签名及完整性校验通过"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下載完成，已驗證簽章與完整性"
+          }
+        }
+      }
     },
     "softwareUpdate.working" : {
-
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Update wird verarbeitet…"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Working on the update…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Procesando actualización…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Traitement de la mise à jour…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更新を処理中…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "업데이트 처리 중…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обработка обновления…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在处理更新，请稍候…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在處理更新…"
+          }
+        }
+      }
     },
     "Source" : {
       "localizations" : {
@@ -116811,9 +118360,7 @@
         }
       }
     },
-    "Step" : {
-
-    },
+    "Step" : {},
     "Step guidance" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -117608,9 +119155,7 @@
         }
       }
     },
-    "Summary" : {
-
-    },
+    "Summary" : {},
     "Sunday" : {
       "localizations" : {
         "de" : {
@@ -122899,6 +124444,18 @@
             "state" : "translated",
             "value" : "原会话和输入草稿保持不变。新分支从修改后的这条消息开始。"
           }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "원래 대화와 초안은 그대로 유지됩니다. 새 분기는 수정한 이 메시지에서 시작됩니다."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "原始對話及草稿會保留。新分支將從這則編輯後的訊息開始。"
+          }
         }
       }
     },
@@ -122945,6 +124502,18 @@
             "state" : "translated",
             "value" : "无法核实原消息及其发送快照。"
           }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "원래 메시지와 전송 시점의 상태를 확인할 수 없습니다."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法驗證原始訊息與傳送時的快照。"
+          }
         }
       }
     },
@@ -122990,6 +124559,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "原模型的凭据或配置已改变，未准入重发。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "원래 모델의 인증 정보 또는 설정이 변경되어 재전송이 승인되지 않았습니다."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "原始模型的憑據或設定已變更，未獲准重新傳送。"
           }
         }
       }
@@ -124556,6 +126137,12 @@
             "state" : "translated",
             "value" : "此产物需要来源 Host 提供预览。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此成果需要來源 Host 提供預覽。"
+          }
         }
       }
     },
@@ -125538,6 +127125,18 @@
             "state" : "translated",
             "value" : "当前可信编辑重发适配器尚不能重建该原模型。"
           }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "신뢰할 수 있는 수정 후 재전송 경로에서 이 원래 모델을 아직 복원할 수 없습니다."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "目前尚無法透過可信任的編輯重送介面還原此原始模型。"
+          }
         }
       }
     },
@@ -125583,6 +127182,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "此准备好的重发包含不同的修改。请取消并重新打开编辑。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "준비된 재전송에 다른 수정 내용이 들어 있습니다. 취소한 뒤 새로 수정하세요."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此準備好的重送操作包含不同的編輯內容。請取消後重新編輯。"
           }
         }
       }
@@ -126131,9 +127742,7 @@
         }
       }
     },
-    "Title" : {
-
-    },
+    "Title" : {},
     "Today" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -126425,9 +128034,7 @@
         }
       }
     },
-    "Tool calls" : {
-
-    },
+    "Tool calls" : {},
     "Tools" : {
       "localizations" : {
         "de" : {
@@ -126951,9 +128558,7 @@
         }
       }
     },
-    "Unable to copy message" : {
-
-    },
+    "Unable to copy message" : {},
     "Unable to create a pointer event." : {
       "localizations" : {
         "de" : {
@@ -127186,9 +128791,7 @@
         }
       }
     },
-    "Unable to open attachment" : {
-
-    },
+    "Unable to open attachment" : {},
     "Unable to Preview File" : {
       "localizations" : {
         "de" : {
@@ -127469,9 +129072,7 @@
         }
       }
     },
-    "Unknown" : {
-
-    },
+    "Unknown" : {},
     "Unpin" : {
       "localizations" : {
         "de" : {
@@ -131395,6 +132996,18 @@
             "state" : "translated",
             "value" : "显示或收起活动与结果"
           }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "활동 및 결과 표시 또는 숨기기"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "顯示或收起活動與結果"
+          }
         }
       }
     },
@@ -131488,6 +133101,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "计划"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "계획"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "計畫"
           }
         }
       }
@@ -132269,36 +133894,16 @@
         }
       }
     },
-    "使用所示日期或时间" : {
-
-    },
-    "关闭" : {
-
-    },
-    "放弃编辑，使用当前值" : {
-
-    },
-    "查询上次表单提交结果" : {
-
-    },
-    "查询提交结果" : {
-
-    },
-    "此组件暂不可显示：%@" : {
-
-    },
-    "清除" : {
-
-    },
-    "移除未执行的表单操作" : {
-
-    },
-    "重新校验" : {
-
-    },
-    "重新读取表单" : {
-
-    }
+    "使用所示日期或时间" : {},
+    "关闭" : {},
+    "放弃编辑，使用当前值" : {},
+    "查询上次表单提交结果" : {},
+    "查询提交结果" : {},
+    "此组件暂不可显示：%@" : {},
+    "清除" : {},
+    "移除未执行的表单操作" : {},
+    "重新校验" : {},
+    "重新读取表单" : {}
   },
   "version" : "1.0"
 }

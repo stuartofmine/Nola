@@ -54,6 +54,16 @@ strip = "debuginfo"
 split-debuginfo = "off"
 incremental = false
 
+# Recovery verifies immutable checkpoint/configuration digests on every cold
+# admission. Keep the compression kernel optimized in development and tests;
+# unoptimized SHA-256 makes large tool catalogs stall otherwise idle clients.
+# Callers and all identity checks retain their normal development settings.
+[profile.dev.package.sha2]
+opt-level = 3
+
+[profile.test.package.sha2]
+opt-level = 3
+
 # Explicit opt-in for LLDB variable inspection, isolated from ordinary builds:
 # cargo build --profile dev-debug (or NOLA_BUILD_PROFILE=dev-debug in Xcode).
 [profile.dev-debug]

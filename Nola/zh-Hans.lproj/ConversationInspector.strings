@@ -35,5 +35,17 @@
 "goal.start" = "开始目标";
 "goal.sending" = "正在发送目标操作";
 "goal.objective" = "这个目标要完成什么？";
-"goal.model_note" = "使用此 Host 会话明确配置的模型。请先在 Host 配置模型，再开始目标。";
+"goal.model_note" = "使用此对话选定的模型，并遵循当前工具权限。";
 "goal.wake" = "继续时间";
+
+"goal.guidance" = "描述你希望完成的结果。Nola 会持续推进，需要你补充信息或授权时暂停。";
+
+"goal.example" = "例如：整理项目资料，给出带来源的总结。";
+
+"goal.optional_constraints" = "约束（可选）";
+
+"goal.cancel_title" = "结束此目标？";
+
+"goal.cancel_explanation" = "此目标的自动执行将停止，对话和已完成的结果会保留。";
+
+"inspector.conversation_needed" = "请先开始或打开一个对话，再查看进度或设置目标。";

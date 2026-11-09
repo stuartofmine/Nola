@@ -822,17 +822,24 @@ impl HostEffectJournal {
             return Err("frozen model input changed effect identity or response policy".into());
         }
         let raw = effect.request.as_ref().ok_or("pending model input is missing")?;
-        let mut generated_payload = raw.get("payload").cloned().ok_or("pending model payload missing")?;
+        let generated_payload = raw.get("payload").ok_or("pending model payload missing")?
+            .as_object().ok_or("model payload is not an object")?;
         let frozen_payload = serde_json::to_value(&request.payload).map_err(|e| e.to_string())?;
-        let mut frozen_identity = frozen_payload.clone();
-        for payload in [&mut generated_payload, &mut frozen_identity] {
-            let object = payload.as_object_mut().ok_or("model payload is not an object")?;
+        let frozen_identity = frozen_payload.as_object().ok_or("model payload is not an object")?;
+        for object in [generated_payload, frozen_identity] {
             if object.get("type").and_then(|v| v.as_str()) != Some("model_stream") {
                 return Err("frozen input materialization only accepts model streams".into());
             }
-            for field in ["messages", "tools", "settings"] { object.remove(field); }
         }
-        if generated_payload != frozen_identity {
+        // Compare borrowed identity fields. Cloning complete prompt/tool trees
+        // just to remove them makes every cold projection replay needlessly
+        // expensive. Unknown fields remain part of the exact comparison, and
+        // object ordering is deliberately irrelevant.
+        let identity_field = |key: &str| !matches!(key, "messages" | "tools" | "settings");
+        if generated_payload.keys().filter(|key| identity_field(key)).count()
+            != frozen_identity.keys().filter(|key| identity_field(key)).count()
+            || generated_payload.iter().filter(|(key, _)| identity_field(key))
+                .any(|(key, value)| frozen_identity.get(key) != Some(value)) {
             return Err("frozen model input changed model or output part identity".into());
         }
         let mut control = previous;
@@ -1373,6 +1380,12 @@ mod tests {
         if let HostRequest::ModelStream { text_part_id, .. } = &mut foreign.payload { *text_part_id = "other-part".into(); }
         assert!(journal.restore_committed_model_input(&foreign).is_err());
         assert_eq!(serde_json::to_vec(&journal).unwrap(), before);
+        let mut unknown = journal.clone();
+        unknown.effects.get_mut(&original.effect_id.0).unwrap().request.as_mut().unwrap()["payload"]
+            .as_object_mut().unwrap().insert("unknown_identity".into(), json!(true));
+        let unchanged = serde_json::to_vec(&unknown).unwrap();
+        assert!(unknown.restore_committed_model_input(&original).is_err());
+        assert_eq!(serde_json::to_vec(&unknown).unwrap(), unchanged, "rejection must not mutate the pending effect");
     }
 
     #[test]

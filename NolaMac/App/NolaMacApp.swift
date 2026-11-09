@@ -1032,7 +1032,9 @@ struct MacSettingsView: View {
                             Image("nola-chevron").renderingMode(.template).resizable().scaledToFit()
                                 .frame(width: 14, height: 14).foregroundStyle(.secondary)
                         }.frame(maxWidth: .infinity, minHeight: 64, alignment: .leading).contentShape(Rectangle())
-                    }.buttonStyle(.plain)
+                    }
+                    .buttonStyle(MacPressFeedbackButtonStyle(contentInsets: EdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 12)))
+                    .accessibilityIdentifier("settings.category.\(category.rawValue)")
                 }
             }.padding(24).frame(maxWidth: 840, alignment: .topLeading)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -1046,7 +1048,9 @@ struct MacSettingsView: View {
                     Label { Text(String(localized: "Settings")) } icon: {
                         Image("nola-back").renderingMode(.template).resizable().scaledToFit().frame(width: 14, height: 14)
                     }
-                }.buttonStyle(.plain).help(String(localized: "Settings"))
+                }.buttonStyle(MacPressFeedbackButtonStyle())
+                    .help(String(localized: "Settings"))
+                    .accessibilityIdentifier("settings.back")
                 Divider().frame(height: 16)
             }
             selectedCategory.image.renderingMode(.template).resizable().scaledToFit()
@@ -1759,7 +1763,7 @@ struct MacSettingsView: View {
                         }
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(.blue)
+                    .tint(MacDesignColor.brand)
                     .controlSize(.large)
                     .disabled({
                         if case .checking = hostConnectionState { return true }

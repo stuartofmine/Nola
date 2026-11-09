@@ -85,8 +85,8 @@
     .im-context-strip button span {overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
     .im-context-strip svg {width:13px;height:13px;}
     .im-demo-link {white-space:nowrap;}
-    .im-composer {display:flex;align-items:flex-end;gap:3px;margin:0;}
-    .im-composer textarea {resize:none;min-width:0;flex:1;border:0;background:var(--im-bg);border-radius:20px;color:var(--im-text);font:inherit;font-size:1rem;line-height:1.5;padding:10px 14px;min-height:44px;max-height:128px;outline-offset:-2px;}
+    .im-composer {display:flex;flex-direction:column;gap:2px;margin:8px 0 0;padding:4px;border:1px solid var(--im-line);border-radius:20px;background:var(--im-surface);}
+    .im-composer textarea {resize:none;min-width:0;width:100%;flex:none;border:0;background:transparent;border-radius:20px;color:var(--im-text);font:inherit;font-size:1rem;line-height:1.5;padding:10px 14px;min-height:44px;max-height:128px;outline-offset:-2px;}
     .im-composer textarea::placeholder {color:var(--im-muted);}
     .im-send {background:var(--im-accent);color:var(--im-accent-text);border-radius:50%;}
     .im-send svg {width:21px;height:21px;}
@@ -171,3 +171,29 @@
 html.reduced .im-jump{animation:none}
 }
 @media(prefers-reduced-motion:reduce){.im-jump{animation:none!important}.im-send:active{transform:none}}
+
+/* 2026-11-09: management stays readable and keeps the originating navigation. */
+@media(max-width:700px){
+    .im-preview-tools{margin:22px 16px 0}.im-preview-tools>summary{min-height:44px;padding:10px 12px;color:var(--im-muted);cursor:pointer}
+    .im-preview-tools .im-group{margin-inline:0}
+    .im-management-content{padding:20px 16px;--bg:var(--im-surface);--fg:var(--im-text);--muted:var(--im-muted);--line:var(--im-line);--soft:var(--im-active);--hover:var(--im-active);--button:var(--im-accent);--inverse:var(--im-accent-text)}
+    .im-management-content button{min-height:44px;padding:10px 14px;white-space:normal;overflow-wrap:anywhere}
+    .im-management-content .tabs{overflow-x:auto;flex-wrap:nowrap;gap:8px}
+    .im-management-content .tabs button{flex-shrink:0}
+    .im-management-content .object-row{width:100%;text-align:left;padding:14px;min-height:64px}
+    .im-management-content h2{font-size:1.125rem;line-height:1.5}
+    .im-management-content p{line-height:1.65;overflow-wrap:anywhere}
+    .im-message-actions [data-action^="im:copy:"]{border:0!important;background:transparent!important;box-shadow:none!important}
+    .im-group .im-setting-row{border-radius:10px}
+    @media(hover:hover){.im-setting-row:hover,.im-preview-tools>summary:hover{background:var(--im-active)}}
+    .im-setting-row:active{background:var(--im-active)}
+}
+@media(max-width:700px){
+    .im-composer-wrap{border-top:0}
+    .im-composer-toolbar{display:flex;align-items:center;gap:2px;width:100%;min-width:0}
+    .im-toolbar-space{flex:1;min-width:0}
+    .im-model-control,.im-effort-control{display:inline-flex;align-items:center;gap:4px;min-height:44px;min-width:0;padding:6px;border-radius:8px;font-size:.75rem;color:var(--im-muted)}
+    .im-model-control{max-width:44%;flex:0 1 auto}.im-model-control span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+    .im-model-control svg,.im-effort-control svg{width:12px;height:12px;flex-shrink:0}
+    .im-effort-control{flex-shrink:0}.im-composer .im-icon{flex-shrink:0}
+}

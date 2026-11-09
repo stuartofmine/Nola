@@ -1042,6 +1042,8 @@ private struct MacCodeBlockView: View {
     var animatesInitialContent = true
     var suppressReveal = false
     @State private var copied = false
+    @State private var copyFailed = false
+    @State private var feedbackID = UUID()
     @State private var highlightCache = MacInlineCodeHighlightCache()
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -1075,10 +1077,13 @@ private struct MacCodeBlockView: View {
                 Spacer()
                 Button {
                     NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(source, forType: .string)
+                    guard NSPasteboard.general.setString(source, forType: .string) else { copied = false; feedbackID = UUID(); copyFailed = true; return }
                     copied = true
+                    feedbackID = UUID()
+                    let feedback = feedbackID
                     Task { @MainActor in
-                        try? await Task.sleep(for: .seconds(1.2))
+                        do { try await Task.sleep(for: .seconds(1.2)) } catch { return }
+                        guard feedbackID == feedback else { return }
                         copied = false
                     }
                 } label: {
@@ -1108,6 +1113,10 @@ private struct MacCodeBlockView: View {
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+        }
+        .onChange(of: source) { _, _ in feedbackID = UUID(); copied = false }
+        .alert(String(localized: "Nola could not update the clipboard."), isPresented: $copyFailed) {
+            Button("OK", role: .cancel) {}
         }
         .background(Color(nsColor: .textBackgroundColor).opacity(0.72), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
         .overlay {

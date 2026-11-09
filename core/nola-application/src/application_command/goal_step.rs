@@ -239,6 +239,9 @@ struct Port<'a, R> {
     now: i64,
     handoff: Cell<bool>,
     run: RefCell<Option<String>>,
+    // This Port lives inside one publication transaction. Avoid reparsing the
+    // full frozen catalog for repeated Goal-only reads between mutations.
+    projection: RefCell<Option<GoalProjection>>,
 }
 impl<R: AgentRuntimeCommandRepositories> Port<'_, R> {
     fn binding(&self) -> Result<crate::goal_execution::GoalExecutionBinding, String> {
@@ -278,6 +281,7 @@ impl<R: AgentRuntimeCommandRepositories> Port<'_, R> {
         Ok(binding)
     }
     fn round(&self, run: &str) -> Result<Round, String> {
+        self.projection.borrow_mut().take();
         if let Some(result) = sealed_round(&mut **self.store.borrow_mut(), &self.owner, run)? {
             return Ok(result);
         }
@@ -307,16 +311,18 @@ impl<R: AgentRuntimeCommandRepositories> GoalRuntimePort for Port<'_, R> {
         &self.owner
     }
     fn load_projection(&self) -> Result<Option<GoalProjection>, String> {
-        Ok(Some(
-            checkpoint(&**self.store.borrow(), &self.owner)?
-                .state
-                .goal_projection,
-        ))
+        if let Some(projection) = self.projection.borrow().as_ref() {
+            return Ok(Some(projection.clone()));
+        }
+        let projection = checkpoint(&**self.store.borrow(), &self.owner)?.state.goal_projection;
+        *self.projection.borrow_mut() = Some(projection.clone());
+        Ok(Some(projection))
     }
     fn submit(
         &self,
         envelope: nola_agent_engine::agent::GoalRuntimeCommandEnvelope,
     ) -> Result<(), String> {
+        self.projection.borrow_mut().take();
         let mut store = self.store.borrow_mut();
         let active = store.active_run(&self.owner).map_err(|e| e.to_string())?;
         // The shared active-submission transaction owns Interrupt selection;
@@ -434,6 +440,7 @@ impl<R: AgentRuntimeCommandRepositories> GoalRuntimePort for Port<'_, R> {
             "user_part_id":format!("{run}:user:text"),"user_text":if visible{prompt}else{""},"user_content_json":null,
             "assistant_message_id":format!("{run}:assistant"),"context_checkpoint_id":null,"core_config":core,"submission":submission,"created_at_ms":self.now}))
             .map_err(|_|"invalid embedded Goal admission")?;
+        self.projection.borrow_mut().take();
         crate::begin_assistant_turn(&mut **self.store.borrow_mut(), input)?;
         self.round(run)
     }
@@ -441,6 +448,8 @@ impl<R: AgentRuntimeCommandRepositories> GoalRuntimePort for Port<'_, R> {
         self.round(run)
     }
     fn sealed_round_result(&self, run: &str) -> Result<Option<Round>, String> {
+        // Journal reads may materialize pending replay before returning.
+        self.projection.borrow_mut().take();
         sealed_round(&mut **self.store.borrow_mut(), &self.owner, run)
     }
     fn round_handoff_pending(&self) -> bool {
@@ -624,6 +633,7 @@ fn advance_in_transaction<R: AgentRuntimeCommandRepositories>(
                 now,
                 handoff: Cell::new(false),
                 run: RefCell::new(None),
+                projection: RefCell::new(None),
             };
             port.submit(envelope)?;
         }
@@ -657,6 +667,7 @@ fn advance_in_transaction<R: AgentRuntimeCommandRepositories>(
                 now,
                 handoff: Cell::new(false),
                 run: RefCell::new(None),
+                projection: RefCell::new(None),
             };
             interrupted_run = port.active_run_id()?.filter(|run| {
                 goal.as_ref().is_some_and(|goal| {
@@ -690,6 +701,7 @@ fn advance_in_transaction<R: AgentRuntimeCommandRepositories>(
             now,
             handoff: Cell::new(false),
             run: RefCell::new(None),
+            projection: RefCell::new(None),
         };
         port.submit(nola_agent_engine::agent::GoalRuntimeCommandEnvelope {
             operation_id: format!("embedded-due:{}:{now}", goal.id),
@@ -709,6 +721,7 @@ fn advance_in_transaction<R: AgentRuntimeCommandRepositories>(
         now,
         handoff: Cell::new(false),
         run: RefCell::new(None),
+        projection: RefCell::new(None),
     };
     // A scheduled wake cannot implicitly resume paused/needs-user/incomplete work.
     crate::goal_coordinator::run_goal_cycle(

@@ -7,6 +7,7 @@ struct MacEditedResendResolvedModel {
     let nativeRevision: Int64?
     let fallbacks: [MacRemoteModelFallback]
     let frozen: AppleFrozenResendModel<MacCanonicalJSONValue>
+    var siwcProfile: MacSiwcProfileSelection? = nil
 }
 
 nonisolated enum MacEditedResendError: LocalizedError {
@@ -27,9 +28,13 @@ nonisolated enum MacEditedResendError: LocalizedError {
 enum MacEditedResendModelResolver {
     static func resolve(_ model: AppleFrozenResendModel<MacCanonicalJSONValue>, application: MacApplicationPort) throws -> MacEditedResendResolvedModel {
         guard case .object(let primary) = model.primary else { throw MacEditedResendError.unsupportedModel }
-        guard case .object(let generation) = model.generation,
-              generation["prompt_cache_key_sha256"] == .null, generation["prompt_cache_key_prefix_sha256"] == .null else {
+        guard model.version == 1, case .object = model.generation else {
             throw MacEditedResendError.unsupportedModel
+        }
+        // Cache material is recovered and digest-checked by the private Host
+        // factory. Swift neither reconstructs a key from its hash nor drops it.
+        if let account = primary["siwc_account"], account != .null {
+            return try resolveSiwc(model, application: application)
         }
 
         if primary["kind"] == .string("native") {
@@ -65,6 +70,56 @@ enum MacEditedResendModelResolver {
             return .init(profileID: credential.profileID, endpointName: "", endpoint: credential.endpoint, apiKey: secret, model: credential.model)
         }
         return .init(profileID: resolvedPrimary.0.profileID, nativeRevision: nil, fallbacks: fallbacks, frozen: model)
+    }
+
+    private struct SiwcBinding: Decodable {
+        let account_id: String
+        let account_revision: Int64
+        let credential_ref: String
+        let client_id: String
+        let subject: String
+    }
+
+    private static func resolveSiwc(_ model: AppleFrozenResendModel<MacCanonicalJSONValue>,
+                                    application: MacApplicationPort) throws -> MacEditedResendResolvedModel {
+        guard case .object(let primary) = model.primary,
+              primary["kind"] == .string("http"), primary["protocol"] == .string("siwc_responses"),
+              primary["endpoint"] == .string("https://api.openai.com/v1"),
+              primary["endpoint_query_sha256"] == .null,
+              primary["credential_sha256"] == .string(MacRunModelCredential.digest("")),
+              model.fallbacks == .array([]), let raw = primary["siwc_account"] else {
+            throw MacEditedResendError.unsupportedModel
+        }
+        let binding = try JSONDecoder().decode(SiwcBinding.self, from: JSONEncoder().encode(raw))
+        let account: MacModelAccountSnapshot? = try MacModelConnectionService(application: application).command([
+            "type": .string("get_account"), "id": .string(binding.account_id)])
+        guard let account, matchesSiwcAccount(raw, account: account) else { throw MacEditedResendError.modelUnavailable }
+        let candidates = try application.listModelProfiles().filter { profile in
+            guard profile.enabled, profile.deletedAtMs == nil, profile.runtime == "remote", profile.provider == "nola-chatgpt",
+                  primary["model"] == .string(profile.modelName),
+                  let source = try? JSONDecoder().decode([String: MacCanonicalJSONValue].self, from: Data(profile.sourceJSON.utf8)) else { return false }
+            return source["accountID"] == .string(binding.account_id) && source["wireProtocol"] == .string("siwc_responses")
+                && source["baseURL"] == primary["endpoint"] && source["endpointEnabled"] == .bool(true)
+                && source["modelEnabled"] == .bool(true)
+        }
+        guard candidates.count == 1, let profile = candidates.first else {
+            throw candidates.isEmpty ? MacEditedResendError.modelUnavailable : .ambiguousModel
+        }
+        let selection = MacSiwcProfileSelection(profileID: profile.id, revision: profile.revision)
+        try MacAppleChatConfigurationStore(applicationPort: application).validateSiwcProfile(selection)
+        // Host execution_binding rechecks the original client/subject, account
+        // revision and private session immediately before dispatch. No bearer
+        // or API-key representation is requested by this adapter.
+        return .init(profileID: profile.id, nativeRevision: nil, fallbacks: [], frozen: model, siwcProfile: selection)
+    }
+
+    nonisolated static func matchesSiwcAccount(_ raw: MacCanonicalJSONValue, account: MacModelAccountSnapshot) -> Bool {
+        guard let binding = try? JSONDecoder().decode(SiwcBinding.self, from: JSONEncoder().encode(raw)) else { return false }
+        return binding.account_revision > 0 && binding.account_revision == account.revision
+            && binding.account_id == account.id && account.account.source == "nola_chatgpt"
+            && account.account.state == "ready" && binding.credential_ref == "siwc:" + account.id
+            && binding.credential_ref == account.account.credential_ref
+            && !binding.client_id.isEmpty && !binding.subject.isEmpty
     }
 
     nonisolated static func uniqueHTTPMatch(_ route: MacCanonicalJSONValue, credentials: [MacRunModelCredential]) throws -> Int {

@@ -3150,3 +3150,13 @@
 "softwareUpdate.status.available" = "Une mise à jour est disponible";
 "softwareUpdate.installPermission" = "Si nécessaire, autorisez Nola à installer des applications, puis revenez ouvrir le programme d’installation.";
 "softwareUpdate.status.incompatible_data" = "Le format de données diffère. La mise à jour est bloquée ; les données sont conservées.";
+
+"model.delete.failed" = "Le modèle n’a pas pu être supprimé. Réessayez.";
+
+"model.action.pause" = "Suspendre le téléchargement";
+
+"model.action.cancel" = "Annuler le téléchargement";
+
+"model.action.resume" = "Reprendre le téléchargement";
+
+"chat.context.cannot_fit.recovery" = "La fenêtre de contexte de ce modèle est trop petite. Choisissez un modèle avec une fenêtre plus grande, puis réessayez. La conversation est conservée.";

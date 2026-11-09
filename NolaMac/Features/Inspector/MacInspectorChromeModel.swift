@@ -18,6 +18,7 @@ extension MacChromeMessagingService: MacInspectorChromeMessaging {}
 final class MacInspectorChromeModel {
     private let service: any MacInspectorChromeMessaging
     private(set) var snapshot: MacChromeBridgeSnapshot
+    private(set) var actionError: String?
 
     init(service: any MacInspectorChromeMessaging) {
         self.service = service
@@ -29,13 +30,18 @@ final class MacInspectorChromeModel {
     }
 
     func installAndOpenExtensions() {
-        try? service.reinstall()
-        _ = service.openChromeExtensions()
-        refresh()
+        actionError = nil
+        do {
+            try service.reinstall()
+            openExtensions()
+        } catch {
+            actionError = String(localized: "The Chrome extension could not be installed. Check file access and try again.", table: "ConversationInspector")
+            refresh()
+        }
     }
 
     func openExtensions() {
-        _ = service.openChromeExtensions()
+        actionError = service.openChromeExtensions() ? nil : String(localized: "Chrome could not be opened. Install Chrome and try again.", table: "ConversationInspector")
         refresh()
     }
 }

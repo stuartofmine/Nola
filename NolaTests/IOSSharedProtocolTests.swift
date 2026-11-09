@@ -72,4 +72,39 @@ final class IOSSharedProtocolTests: XCTestCase {
         XCTAssertEqual(models.map(\.displayName), ["A", "b"])
         XCTAssertThrowsError(try AppleModelCatalogDiscovery.parse(data: Data(#"{"models":[]}"#.utf8), response: response))
     }
+
+    @MainActor func testCatalogReadConsumesBoundedChunksWithoutBlockingThePicker() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [IOSCatalogFixtureProtocol.self]
+        for path in ["oversized", "declared", "redirect"] {
+            let started = ContinuousClock.now
+            do {
+                _ = try await AppleModelCatalogTransport.fetch(
+                    URLRequest(url: URL(string: "https://catalog.invalid/" + path)!), configuration: configuration)
+                XCTFail("Expected catalog rejection: " + path)
+            } catch let error as URLError {
+                XCTAssertEqual(error.code, path == "redirect" ? .badServerResponse : .dataLengthExceedsMaximum)
+            }
+            XCTAssertLessThan(ContinuousClock.now - started, .seconds(5))
+        }
+        let (data, _) = try await AppleModelCatalogTransport.fetch(
+            URLRequest(url: URL(string: "https://catalog.invalid/valid")!), configuration: configuration)
+        XCTAssertEqual(String(data: data, encoding: .utf8), "{\"data\":[]}")
+    }
+
+}
+
+
+private nonisolated final class IOSCatalogFixtureProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "catalog.invalid" }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        let path = request.url!.lastPathComponent
+        let response = HTTPURLResponse(url: request.url!, statusCode: path == "redirect" ? 302 : 200,
+            httpVersion: "HTTP/1.1", headerFields: path == "declared" ? ["Content-Length": "2097153"] : [:])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: path == "oversized" ? Data(repeating: 32, count: 2097153) : Data("{\"data\":[]}".utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
 }

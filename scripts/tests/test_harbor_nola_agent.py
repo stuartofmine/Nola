@@ -165,6 +165,8 @@ class HarborArtifactContractTests(unittest.TestCase):
         self.assertNotIn('--expected-artifact', ' '.join(environment.commands))
         self.assertNotIn('--no-save', ' '.join(environment.commands))
         self.assertIn('NOLA_DB_PATH=/tmp/nola-eval.db', ' '.join(environment.commands))
+        self.assertIn('NOLA_PERMISSION_PROFILE=allow_all', ' '.join(environment.commands))
+        self.assertEqual(context.metadata['nola_permission_profile'], 'allow_all')
         self.assertTrue(context.metadata['nola_evidence_exported'])
         export_command = next(command for command in environment.commands
                               if '/opt/nola/export_evidence.py' in command)

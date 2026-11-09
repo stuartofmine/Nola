@@ -153,7 +153,7 @@ struct NotificationCenterView: View {
                                         Button(L10n.notificationsMarkRead) {
                                             Task { await markRead(item) }
                                         }
-                                        .tint(.blue)
+                                        .tint(DesignTokens.primaryColor)
                                     }
                                 }
                                 .contextMenu {

@@ -361,6 +361,7 @@ mod tests {
                 required: vec![crate::run_requirements::RequirementResourceClaim {
                     resource_uri: format!("file:///{}", requirement.requirement_id),
                     operation: "write".into(), version: None, predicate: None,
+                    review: None,
                     source_refs: vec!["input".into()],
                 }], exclusions: vec![], interpreted_user_frontier: vec!["input".into()],
             };

@@ -97,6 +97,7 @@ struct MacInspectorKnowledgeView: View {
                     knowledgeSaveStatus
                 }
             }
+            .id("knowledge-points")
             DisclosureGroup(String(localized: "Conversation Wiki", table: "Chat"), isExpanded: Binding(
                 get: { navigation.expandedKnowledge.contains(.wiki) },
                 set: { expanded in
@@ -120,6 +121,7 @@ struct MacInspectorKnowledgeView: View {
                     knowledgeSaveStatus
                 }
             }
+            .id("knowledge-wiki")
             DisclosureGroup(String(localized: "Conversation Recall", table: "Chat"), isExpanded: Binding(
                 get: { navigation.expandedKnowledge.contains(.recall) },
                 set: { expanded in
@@ -148,7 +150,8 @@ struct MacInspectorKnowledgeView: View {
                                 Image(systemName: "xmark.circle.fill")
                                     .foregroundStyle(.tertiary)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(MacPressFeedbackButtonStyle(contentInsets: .init(top: 2, leading: 2, bottom: 2, trailing: 2)))
+                            .accessibilityLabel(String(localized: "Clear"))
                         }
                     }
                     .padding(.horizontal, 10)
@@ -191,7 +194,9 @@ struct MacInspectorKnowledgeView: View {
                     }
                 }
             }
+            .id("knowledge-recall")
         }
+        .disclosureGroupStyle(MacRowDisclosureStyle())
     }
 
     @ViewBuilder

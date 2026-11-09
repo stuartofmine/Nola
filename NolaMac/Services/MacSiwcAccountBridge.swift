@@ -28,8 +28,8 @@ nonisolated enum MacSiwcBridgeFailure: Error, LocalizedError {
         case .privateSessionRetained: String(localized: "Authorization was verified, but the account changed before saving. Private authorization may remain. Check this Mac’s accounts; do not repeat the confirmation blindly.")
         case .privateSessionChanged: String(localized: "Private authorization changed. Check status again before continuing with this account.")
         case .refreshUnknown: String(localized: "The refresh result is unknown. Do not retry the old refresh. Check status and reauthorize this account if required.")
-        case .reauthorize: String(localized: "This account requires reauthorization. Use Reauthorize for this same account; Nola will not switch accounts automatically.")
-        case .consent: String(localized: "This authorization does not grant plan usage. Reauthorize with the required consent before requesting models.")
+        case .reauthorize: String(localized: "Sign in again to use models from this account.", table: "ModelCenter")
+        case .consent: String(localized: "This account needs permission to use your plan. Sign in again and approve access before choosing models.", table: "ModelCenter")
         case .unavailable: String(localized: "The account operation could not be confirmed. Check this Mac’s accounts before starting again. No inference was requested.")
         }
     }
@@ -69,6 +69,7 @@ nonisolated struct MacSiwcAccountResult: Decodable, Sendable {
 nonisolated protocol MacSiwcAccountTransport: Sendable {
     func start(accountID: String, revision: Int64?, name: String) async throws -> MacSiwcFlow
     func update(_ action: String) async throws -> MacSiwcFlow
+    func discoverModels(account: MacModelAccountSnapshot) async throws -> String
     func close()
 }
 
@@ -134,6 +135,13 @@ nonisolated final class MacSiwcAccountBridge: MacSiwcAccountTransport, @unchecke
             return flow
         }
     }
+    func discoverModels(account: MacModelAccountSnapshot) async throws -> String {
+        let status = try await manage("account_status", account: account, sessionRevision: nil)
+        guard let session = status.session, session.signed_in else { throw MacSiwcBridgeFailure.reauthorize }
+        let result = try await manage("models", account: status.account, sessionRevision: session.session_revision)
+        guard let connection = result.connection, !connection.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw Self.failure() }
+        return connection.id
+    }
     func manage(_ action: String, account: MacModelAccountSnapshot, sessionRevision: Int64?, acknowledgeSignOut: Bool = false) async throws -> MacSiwcAccountResult {
         try await operation { [self] in
             guard ["account_status", "models", "refresh", "sign_out"].contains(action) else { throw Self.failure() }
@@ -154,7 +162,7 @@ nonisolated final class MacSiwcAccountBridge: MacSiwcAccountTransport, @unchecke
                   result.account.revision >= account.revision,
                   result.account.account.source == "nola_chatgpt", !result.inference_performed,
                   result.session == nil || result.session?.account_id == account.id,
-                  result.connection == nil || result.connection?.document.connection.account_id == account.id else { throw Self.failure() }
+                  result.connection == nil || (result.connection?.document.format_version == 1 && result.connection?.document.connection.account_id == account.id) else { throw Self.failure() }
             return result
         }
     }

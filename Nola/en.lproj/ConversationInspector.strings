@@ -35,5 +35,17 @@
 "goal.start" = "Start a Goal";
 "goal.sending" = "Sending Goal action";
 "goal.objective" = "What should this Goal achieve?";
-"goal.model_note" = "Uses the model explicitly configured for this Host conversation. Configure it on the Host before starting.";
+"goal.model_note" = "Uses this conversation’s selected model and current tool permissions.";
 "goal.wake" = "Continue at";
+
+"goal.guidance" = "Describe the result you want. Nola keeps working and pauses when it needs your input or permission.";
+
+"goal.example" = "Example: organize the project material and prepare a summary with sources.";
+
+"goal.optional_constraints" = "Constraints (optional)";
+
+"goal.cancel_title" = "End this goal?";
+
+"goal.cancel_explanation" = "Automatic work on this goal will stop. Your conversation and completed results remain.";
+
+"inspector.conversation_needed" = "Start or open a conversation to view progress and set a goal.";

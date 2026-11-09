@@ -6,6 +6,7 @@ struct MacSiwcAccountManagementView: View {
     let account: MacModelAccountSnapshot
     let changed: () -> Void
     var modelsDiscovered: ((String) -> Void)? = nil
+    var reauthorize: (() -> Void)? = nil
     @State private var result: MacSiwcAccountResult?
     @State private var bridge: MacSiwcAccountBridge?
     @State private var task: Task<Void, Never>?
@@ -18,10 +19,14 @@ struct MacSiwcAccountManagementView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(account.account.display_name).font(.headline)
-            Text(String(localized: "Owner: This Mac’s Nola account store", table: "ModelCenter")).font(.callout).foregroundStyle(.secondary)
             if let session = result?.session {
                 Text(session.signed_in ? String(localized: "Signed in", table: "ModelCenter") : String(localized: "Signed out", table: "ModelCenter"))
-                if session.reauthorization_required { Text(String(localized: "Reauthorization is required before using this account.", table: "ModelCenter")) }
+                if !session.signed_in || session.reauthorization_required || !session.plan_usage_authorized {
+                    Text(String(localized: "Sign in again to use models from this account.", table: "ModelCenter"))
+                    if let reauthorize {
+                        Button(String(localized: "Sign in again", table: "ModelCenter"), action: reauthorize).disabled(busy)
+                    }
+                }
                 if session.revocation_unconfirmed {
                     Text(String(localized: "Local credentials were cleared, but remote revocation was not confirmed. Revoke Nola’s access in ChatGPT settings.", table: "ModelCenter"))
                         .foregroundStyle(.secondary)
@@ -48,12 +53,12 @@ struct MacSiwcAccountManagementView: View {
     }
     @ViewBuilder private var actions: some View {
         Button(String(localized: "Check Status", table: "ModelCenter")) { perform("account_status") }.disabled(busy)
-        Button(String(localized: "Discover Models · No Inference", table: "ModelCenter")) { perform("models") }
-            .disabled(busy || result?.session?.signed_in != true)
+        Button(String(localized: "Choose models", table: "ModelCenter")) { perform("models") }
+            .disabled(busy || result?.session?.signed_in != true || result?.session?.reauthorization_required == true || result?.session?.plan_usage_authorized != true)
         Button(String(localized: "Refresh Authorization", table: "ModelCenter")) { perform("refresh") }
-            .disabled(busy || result?.session?.signed_in != true)
+            .disabled(busy || result?.session?.signed_in != true || result?.session?.reauthorization_required == true)
         Button(String(localized: "Sign Out", table: "ModelCenter"), role: .destructive) { confirmingSignOut = true }
-            .disabled(busy || result?.session == nil)
+            .disabled(busy || result?.session?.signed_in != true)
     }
     private func perform(_ action: String, confirmed: Bool = false) {
         guard !busy else { return }

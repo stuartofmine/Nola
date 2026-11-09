@@ -194,9 +194,15 @@ pub(crate) fn capture_viewport_bookmark() -> ViewportBookmark {
     let visible = state.history_layout.as_ref().and_then(|(_, _, lines)| lines.iter()
         .skip(start).take(8).enumerate().find(|(_, line)| strip_ansi(line).chars().any(char::is_alphanumeric))
         .map(|(offset, line)| (offset, line.clone())));
-    let source_occurrence = digest.as_ref().map_or(0, |digest| state.history_tail.iter()
-        .take(anchor.as_ref().map_or(0, |anchor| anchor.cell_id.saturating_sub(state.history_first_cell_id) as usize))
-        .filter(|cell| source_digest(cell.source()) == *digest).count());
+    // We already hold the source text here. Counting equal occurrences does
+    // not require hashing every history cell (or accepting digest collisions).
+    let source_occurrence = anchor.as_ref()
+        .and_then(|anchor| anchor.cell_id.checked_sub(state.history_first_cell_id))
+        .map_or(0, |index| {
+            let Some(source) = state.history_tail.get(index as usize).map(|cell| cell.source()) else { return 0; };
+            state.history_tail.iter().take(index as usize)
+                .filter(|cell| cell.source() == source).count()
+        });
     let line_occurrence = visible.as_ref().map_or(0, |(offset, line)| state.history_layout.as_ref()
         .map_or(0, |(_, _, lines)| lines.iter().take(start + offset).filter(|candidate| *candidate == line).count()));
     ViewportBookmark {

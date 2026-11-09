@@ -98,6 +98,43 @@ pub fn plan_compaction(items: &[CompactionItemFact], target_tokens: usize) -> Co
     plan
 }
 
+/// Consolidate all settled history, including earlier checkpoints. Preserve
+/// instruction anchors and the complete suffix of any unresolved transaction.
+pub fn plan_context_handoff(items: &[CompactionItemFact]) -> CompactionIndexPlan {
+    let mut retained = items.iter().enumerate().filter_map(|(index, item)|
+        matches!(item.kind, CompactionItemKind::PersistentInstruction).then_some(index))
+        .collect::<BTreeSet<_>>();
+    if let Some(index) = items.iter().rposition(|item| matches!(item.kind, CompactionItemKind::UserMessage)) {
+        retained.insert(index);
+    }
+    let mut calls = std::collections::BTreeMap::<&str, (Vec<usize>, Vec<usize>)>::new();
+    for (index, item) in items.iter().enumerate() {
+        match &item.kind {
+            CompactionItemKind::ToolCall { call_id } => calls.entry(call_id).or_default().0.push(index),
+            CompactionItemKind::ToolResult { call_id } => calls.entry(call_id).or_default().1.push(index),
+            _ => {}
+        }
+    }
+    for (call, result) in calls.values() {
+        if call.len() != 1 || result.len() != 1 || call[0] >= result[0] {
+            if let Some(first) = call.iter().chain(result).min() {
+                retained.extend(*first..items.len());
+            }
+        }
+    }
+    // A parallel batch may start before its unresolved member. Closing the
+    // suffix over call/result partners prevents an orphaned retained result.
+    for (call, result) in calls.values() {
+        if call.iter().chain(result).any(|index| retained.contains(index)) {
+            retained.extend(call.iter().chain(result).copied());
+        }
+    }
+    CompactionIndexPlan {
+        summarize_indices: (0..items.len()).filter(|i| !retained.contains(i)).collect(),
+        kept_indices: retained.into_iter().collect(),
+    }
+}
+
 pub fn summary_token_budget(
     retained_item_tokens: impl IntoIterator<Item = usize>,
     target_tokens: usize,
@@ -375,6 +412,42 @@ mod tests {
             ),
         ] {
             assert_eq!(summary_token_budget(retained, target, limit), expected);
+        }
+    }
+}
+
+#[cfg(test)]
+mod handoff_tests {
+    use super::*;
+    fn item(kind: CompactionItemKind) -> CompactionItemFact { CompactionItemFact { kind, estimated_tokens:100 } }
+    #[test]
+    fn handoff_consolidates_settled_history_but_retains_live_instructions_and_open_transactions() {
+        use CompactionItemKind::*;
+        let facts = vec![item(PersistentInstruction), item(UserMessage), item(Other),
+            item(ToolCall {call_id:"done".into()}), item(ToolResult {call_id:"done".into()}),
+            item(UserMessage), item(ToolCall {call_id:"open".into()}), item(Other)];
+        let plan = plan_context_handoff(&facts);
+        assert_eq!(plan.summarize_indices, vec![1,2,3,4]);
+        assert_eq!(plan.kept_indices, vec![0,5,6,7]);
+    }
+    #[test]
+    fn unresolved_parallel_batch_keeps_both_sides_of_completed_partners() {
+        use CompactionItemKind::*;
+        let facts = vec![item(Other),item(ToolCall {call_id:"a".into()}),
+            item(ToolCall {call_id:"b".into()}), item(ToolResult {call_id:"a".into()})];
+        let plan = plan_context_handoff(&facts);
+        assert_eq!(plan.summarize_indices, vec![0]);
+        assert_eq!(plan.kept_indices, vec![1,2,3]);
+    }
+    #[test]
+    fn orphaned_reversed_or_duplicate_tool_protocol_is_never_summarized_as_completed() {
+        use CompactionItemKind::*;
+        for facts in [
+            vec![item(ToolResult {call_id:"x".into()}), item(Other)],
+            vec![item(ToolResult {call_id:"x".into()}),item(ToolCall {call_id:"x".into()})],
+            vec![item(ToolCall {call_id:"x".into()}),item(ToolCall {call_id:"x".into()}),item(ToolResult {call_id:"x".into()})],
+        ] {
+            assert!(plan_context_handoff(&facts).summarize_indices.is_empty());
         }
     }
 }

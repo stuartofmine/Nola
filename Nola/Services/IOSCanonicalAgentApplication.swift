@@ -1108,8 +1108,9 @@ nonisolated final class IOSCanonicalAgentApplication: @unchecked Sendable {
         ]))
     }
 
-    /// Consume a durable configuration notice through Application. This method
-    /// cannot manufacture policy from a picker or revive a resolved challenge.
+    /// Consume durable Task and configuration notices through Application.
+    /// This worker path cannot manufacture policy from a picker or revive a
+    /// resolved challenge; an empty queue never claims an Agent command.
     func applyPendingPermissionPolicy() throws -> AgentCoreJSONValue? {
         let now = Int64(Date().timeIntervalSince1970 * 1_000)
         let (_, leaseOwner) = try encodedWorkerIdentity()

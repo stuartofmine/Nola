@@ -1317,4 +1317,10 @@
     <string name="software_update_status_available">新しいバージョンがあります</string>
     <string name="software_update_install_permission">必要に応じて Nola のアプリインストールを許可し、戻ってもう一度開いてください。</string>
     <string name="software_update_status_incompatible_data">新しいデータ形式が異なるため更新を停止しました。既存データは保持されます。</string>
+    <string name="goal_guidance">達成したい結果を入力してください。Nola は作業を進め、確認や権限が必要な場合に一時停止します。</string>
+    <string name="goal_example">例：プロジェクトの資料を整理し、出典付きの要約を作成。</string>
+    <string name="goal_cancel_explanation">この目標の自動実行を停止します。会話と完了した結果は保持されます。</string>
+    <string name="goal_operation_failed">目標の操作を確認できません。再試行の前に状態を確認してください。</string>
+    <string name="goal_needs_user">入力または権限の確認待ち</string>
+    <string name="inspector_conversation_needed">会話を開始するか開くと、進捗の確認や目標の設定ができます。</string>
 </resources>

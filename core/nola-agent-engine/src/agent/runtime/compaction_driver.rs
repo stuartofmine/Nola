@@ -64,10 +64,6 @@ impl AgentRuntime {
         ) {
             turn.automatic_compaction_count = count;
         }
-        self.session
-            .conversation
-            .context_window
-            .rebase_estimate(&self.session.conversation.model_context);
         let context_config = &self
             .session
             .execution
@@ -84,17 +80,41 @@ impl AgentRuntime {
             ),
         ));
         let full_prompt_limit = context_config.prompt_token_limit();
-        let target_tokens = nola_kernel::compaction_request_target(
-            reason,
-            configured_target_tokens,
-            self.session.conversation.context_window.used_tokens,
+        // The first request targets half of the complete input, after reserving
+        // immutable instructions, tool schemas and calibrated provider framing.
+        let half_history_target = self.session.conversation.context_window.history_budget_for_model_limit(
+            full_request_estimate / 2, history_tokens,
         );
-        let target_tokens = nola_kernel::compaction_history_target(
-            target_tokens, prompt_limit, history_tokens,
+        let configured_target_tokens = nola_kernel::compaction_request_target(
+            reason, configured_target_tokens, history_tokens,
         );
-        let plan = plan_compaction(&self.session.conversation.model_context, target_tokens);
+        let mut target_tokens = if half_history_target > 0 {
+            if configured_target_tokens == 0 { half_history_target.min(prompt_limit) }
+            else { configured_target_tokens.min(half_history_target).min(prompt_limit) }
+        } else {
+            // An unreachable complete-input goal must not become a one-token
+            // contract. Make the best bounded reduction without deleting input.
+            nola_kernel::compaction_history_target(configured_target_tokens, prompt_limit, history_tokens)
+        };
+        let preferred = plan_compaction(&self.session.conversation.model_context, target_tokens);
+        let preferred_retained = preferred.kept_items.iter()
+            .fold(0usize, |sum,item| sum.saturating_add(item.estimated_tokens()));
+        // Select the broader archive BEFORE any paid summary request when the
+        // recent tail / old checkpoints would consume the half-context target.
+        let handoff = half_history_target == 0
+            || preferred_retained.saturating_add(4) >= target_tokens;
+        let plan = if handoff {
+            super::super::compaction_planner::plan_context_handoff(&self.session.conversation.model_context)
+        } else { preferred };
         let retained_tokens = plan.kept_items.iter()
             .fold(0usize, |sum, item| sum.saturating_add(item.estimated_tokens()));
+        if handoff && retained_tokens.saturating_add(4) >= target_tokens {
+            // Even the minimum safe retained context can exceed the 50% goal.
+            // Keep a useful bounded summary budget rather than forcing one token.
+            target_tokens = nola_kernel::compaction_history_target(
+                configured_target_tokens, prompt_limit, history_tokens,
+            );
+        }
         // If even an empty summary cannot bring this request below the existing
         // automatic trigger, this prefix cannot solve its pressure. In
         // particular, mandatory schemas plus the current transaction must not
@@ -115,13 +135,14 @@ impl AgentRuntime {
         // Do not spend a model round summarizing a greeting while a large
         // indivisible tail dominates the context. Hard overflow recovery keeps
         // its separate projection/error path.
-        if reason == CompactionReason::ThresholdReached && archive_tokens < 64 {
+        if reason == CompactionReason::ThresholdReached
+            && full_request_estimate < full_prompt_limit && archive_tokens < 64 {
             return self.request_model_after_compaction(events, effects);
         }
         let summary_budget = if plan.items_to_summarize.is_empty() {
             None
         } else {
-            match plan.summary_token_budget(target_tokens, prompt_limit) {
+            match plan.summary_token_budget(target_tokens, prompt_limit, handoff) {
                 Ok(budget) => Some(budget),
                 Err(error) => {
                     if history_budget.is_some() {
@@ -133,6 +154,11 @@ impl AgentRuntime {
                 }
             }
         };
+        if summary_budget.is_some_and(|budget| nola_kernel::defer_low_gain_compaction(
+            reason, archive_tokens, budget, full_request_estimate, full_prompt_limit,
+        )) {
+            return self.request_model_after_compaction(events, effects);
+        }
         let items_to_summarize = plan.items_to_summarize;
         if items_to_summarize.is_empty() {
             if reason == CompactionReason::ContextLimitRecovery {
@@ -297,6 +323,7 @@ impl AgentRuntime {
         let source_item_count = source_item_ids.len();
         self.session.conversation.context_window.begin_compaction(
             super::super::context_window::PendingCompactionPlan {
+                handoff,
                 reason,
                 working_set_item_count: self.session.conversation.model_context.len(),
                 working_set_fingerprint: super::super::context_window::compaction_source_fingerprint(
@@ -322,12 +349,13 @@ impl AgentRuntime {
         events.push(RuntimeEvent::CompactionRequested {
             reason,
             item_count: self.session.conversation.model_context.len(),
-            estimated_tokens: self.session.conversation.context_window.used_tokens,
+            estimated_tokens: full_request_estimate,
             source_fingerprint,
             source_item_count,
             original_token_count,
         });
         effects.push(AgentEffect::CompactContext {
+            handoff,
             session_id: self.session.session_id.clone(),
             items_to_summarize,
             target_tokens: summary_budget.expect("non-empty archive has a summary budget"),
@@ -412,6 +440,7 @@ mod long_run_tests {
             .turn_id
             .clone();
         let mut compacted = 0;
+        let mut handoffs = 0;
         for index in 0..12 {
             while runtime
                 .session
@@ -419,6 +448,11 @@ mod long_run_tests {
                 .context_window
                 .compaction_in_progress
             {
+                if !runtime.session.conversation.context_window.pending_compaction.as_ref().unwrap().handoff {
+                    assert!(runtime.session.conversation.context_window.used_tokens >= 6000,
+                        "pending incremental compaction must retain full request pressure");
+                }
+                handoffs += usize::from(runtime.session.conversation.context_window.pending_compaction.as_ref().unwrap().handoff);
                 compacted += 1;
                 assert!(
                     compacted <= 20,
@@ -501,6 +535,7 @@ mod long_run_tests {
             .context_window
             .compaction_in_progress
         {
+            handoffs += usize::from(runtime.session.conversation.context_window.pending_compaction.as_ref().unwrap().handoff);
             compacted += 1;
             assert!(compacted <= 20);
             runtime
@@ -512,6 +547,7 @@ mod long_run_tests {
                 })
                 .unwrap();
         }
+        assert!(handoffs > 0, "automatic low-yield compaction must request a handoff");
         assert!(compacted >= 2, "later tool/model progress must retain further compaction opportunities; got {compacted}");
         assert_eq!(
             runtime

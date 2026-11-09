@@ -16,6 +16,7 @@ pub use nola_domain::CompactionReason;
 /// an immutable working-set witness, not a second mutable copy of its tail.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PendingCompactionPlan {
+    pub handoff: bool,
     pub reason: CompactionReason,
     pub working_set_item_count: usize,
     pub working_set_fingerprint: String,
@@ -233,6 +234,15 @@ impl ContextWindowState {
         }
     }
 
+    /// Sealing is not a new model projection. Keep its complete input estimate
+    /// or provider observation, especially after a committed handoff. Replacing
+    /// it with history alone would falsely report the fixed prefix as reclaimed.
+    pub(crate) fn seal_estimate(&mut self, items: &[AgentItem]) {
+        if self.model_estimate_tokens == 0 {
+            self.refresh_estimate(items);
+        }
+    }
+
     pub fn refresh_estimate(&mut self, items: &[AgentItem]) {
         self.refresh_estimate_with_additional_tokens(items, 0);
     }
@@ -402,17 +412,22 @@ impl ContextWindowState {
         self.pending_compaction.take()
     }
 
-    pub fn finish_compaction(&mut self, items: &[AgentItem], usage: &TokenUsage) -> bool {
-        let previous_used_tokens = self.used_tokens;
+    pub fn finish_compaction(
+        &mut self, items: &[AgentItem], usage: &TokenUsage, previous_working_tokens: usize,
+    ) -> bool {
         let facts = self.lifecycle_facts();
-        // Even a Host without cache metrics must not calibrate ordinary prompts
-        // from a structurally different summary request.
+        let non_history_tokens = self.model_estimate_tokens.saturating_sub(previous_working_tokens);
+        let current_working_tokens = items.iter().fold(0usize,
+            |sum, item| sum.saturating_add(item.estimated_tokens()));
+        // Maintenance usage belongs to a different request. Preserve ordinary
+        // calibration, then estimate the replacement with its non-history cost.
         let model_estimate = std::mem::take(&mut self.model_estimate_tokens);
         self.record_provider_usage(usage);
         self.model_estimate_tokens = model_estimate;
-        self.rebase_estimate(items);
-        let transition =
-            nola_kernel::finish_compaction(&facts, previous_used_tokens, self.used_tokens);
+        self.refresh_model_estimate(items, non_history_tokens);
+        let transition = nola_kernel::finish_compaction(
+            &facts, previous_working_tokens, current_working_tokens,
+        );
         self.apply_lifecycle(transition.state);
         transition.made_progress
     }
@@ -464,6 +479,31 @@ mod usage_snapshot_tests {
         assert_eq!(state.used_tokens, 3200);
         assert_eq!(state.usage_origin, UsageOrigin::Estimated);
         assert_eq!(state.cumulative_usage.input_tokens, Some(2000));
+    }
+
+    #[test]
+    fn compaction_retains_full_request_pressure_and_measures_history_progress() {
+        let mut state = ContextWindowState::new(ContextWindowConfig::default());
+        let old = AgentItem::user_message(ItemId::from_string("old".into()), "a".repeat(400));
+        let previous = old.estimated_tokens();
+        state.refresh_model_estimate(&[old], 9000);
+        state.record_provider_usage(&TokenUsage {
+            input_tokens: Some((previous + 9000) * 2), ..Default::default()
+        });
+        let larger = AgentItem::user_message(ItemId::from_string("replacement".into()), "a".repeat(800));
+        let current = larger.estimated_tokens();
+        let maintenance = TokenUsage {
+            input_tokens: Some(50_000),
+            cache_usage: Some(nola_domain::PromptCacheUsage::measured(Some(50_000), Some(0), None, true)),
+            ..Default::default()
+        };
+        assert!(!state.finish_compaction(&[larger], &maintenance, previous));
+        assert!(state.automatic_compaction_blocked);
+        assert_eq!(state.used_tokens, (9000 + current) * 2);
+        let mut restored: ContextWindowState = serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+        assert!(restored.finish_compaction(&[], &maintenance, current));
+        assert_eq!(restored.used_tokens, 18000);
+        assert!(!restored.automatic_compaction_blocked);
     }
 
     #[test]
@@ -551,6 +591,7 @@ mod usage_snapshot_tests {
         let mut state = ContextWindowState::new(ContextWindowConfig::default());
         state
             .begin_compaction(PendingCompactionPlan {
+                handoff: false,
                 reason: super::CompactionReason::Manual,
                 working_set_item_count: 1,
                 working_set_fingerprint: super::compaction_source_fingerprint(&[kept.clone()]).unwrap(),
@@ -562,9 +603,11 @@ mod usage_snapshot_tests {
             })
             .unwrap();
 
+        state.pending_compaction.as_mut().unwrap().handoff = true;
         let encoded = serde_json::to_vec(&state).unwrap();
         let mut restored: ContextWindowState = serde_json::from_slice(&encoded).unwrap();
         let pending = restored.take_pending_compaction().unwrap();
+        assert!(pending.handoff, "cold restore must not restart incremental maintenance");
 
         assert_eq!(pending.working_set_item_count, 1);
         assert_eq!(pending.working_set_fingerprint,
@@ -578,6 +621,7 @@ mod usage_snapshot_tests {
     fn restored_compaction_plan_rejects_expansion_even_with_a_large_old_budget() {
         let source = vec![AgentItem::user_message(ItemId::from_string("greeting".into()), "hello")];
         let plan = PendingCompactionPlan {
+            handoff: false,
             reason: super::CompactionReason::ThresholdReached,
             working_set_item_count: source.len(),
             working_set_fingerprint: super::compaction_source_fingerprint(&source).unwrap(),
@@ -697,6 +741,7 @@ mod lifecycle_checkpoint_tests {
     }
     fn plan(source: &str) -> PendingCompactionPlan {
         PendingCompactionPlan {
+            handoff: false,
             reason: super::CompactionReason::Manual,
             working_set_item_count: 1,
             working_set_fingerprint: source.into(),
@@ -750,7 +795,7 @@ mod lifecycle_checkpoint_tests {
             total_tokens: Some(120),
             ..Default::default()
         };
-        assert!(!state.finish_compaction(&[], &usage));
+        assert!(!state.finish_compaction(&[], &usage, 0));
         state = cold(state);
         assert_eq!(state.compaction_generation, 1);
         assert_eq!(state.consecutive_compaction_failures, 1);
@@ -760,7 +805,7 @@ mod lifecycle_checkpoint_tests {
         state.used_tokens = 10;
         state.begin_compaction(plan("changed")).unwrap();
         state.take_pending_compaction().unwrap();
-        assert!(state.finish_compaction(&[], &usage));
+        assert!(state.finish_compaction(&[], &usage, 10));
         state = cold(state);
         assert!(!state.automatic_compaction_blocked);
         assert_eq!(state.consecutive_compaction_failures, 0);

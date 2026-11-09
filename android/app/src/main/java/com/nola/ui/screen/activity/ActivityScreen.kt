@@ -20,6 +20,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.sp
 import com.nola.ui.components.nolaPageGutter
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -62,7 +63,7 @@ internal fun ActivityScreen(onOpenConversation: (String) -> Unit, onOpenPlans: (
             item {
                 OutlinedTextField(value = searchDraft, onValueChange = { searchDraft = it },
                     modifier = Modifier.fillMaxWidth(), singleLine = true,
-                    label = { Text(stringResource(R.string.activity_search_title)) },
+                    label = { Text(stringResource(R.string.activity_search_title), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     keyboardActions = KeyboardActions(onSearch = { submitSearch() }),
                     trailingIcon = { TextButton(onClick = ::submitSearch) { Text(stringResource(R.string.activity_search)) } })

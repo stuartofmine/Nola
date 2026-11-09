@@ -127,7 +127,7 @@ class EventObserver:
                     self.reads.append({"name": name, "call_id": call,
                         "succeeded": trace.get("status") == "succeeded"})
             elif tool not in {"write_file", "apply_patch", "edit_file", "update_agent_todos",
-                    "tool_search", "read_tool_output", "request_completion_review", "task_scope_update", "task_observe",
+                    "tool_search", "tool_output_read", "request_completion_review", "task_scope_update", "task_observe",
                     "task_assess", "task_result"}:
                 self.other_tools.add(tool)
 
@@ -204,7 +204,9 @@ def verify_evidence(root):
     original = json.loads((root / "receipt.json").read_text())
     expected = json.loads((root / "independent-oracle.json").read_text())
     count = len(expected["names"])
-    assert 300 <= count <= 500 and not original["smoke"]
+    focus = original.get("compaction_focus", False)
+    assert not original["smoke"]
+    assert (64 <= count <= 160) if focus else (300 <= count <= 500)
     assert original["main"]["exit_code"] == 0 and original["main"]["stop_reason"] is None
     assert hashlib.sha256((root / "bin/nola").read_bytes()).hexdigest() == original["binary_sha256"]
     project, database = root / "case/project", root / "case/nola.db"
@@ -231,7 +233,7 @@ def verify_evidence(root):
     assert provider["successful_requests"] >= count and provider["selected_models"] == [original["model"]]
     recovered = verified_provider_recoveries(root / "provider.ndjson")
     window = provider_window_audit(root / "provider.ndjson")
-    result = {"passed": True, "hundreds_step_qualified": True, "offline_verification": True,
+    result = {"passed": True, "hundreds_step_qualified": not focus, "compaction_focus": focus, "offline_verification": True,
         "original_receipt_passed": original["passed"], "original_receipt_error": original.get("error"),
         "binary_sha256": original["binary_sha256"], "nodes_verified": count,
         "file_oracle": files, "canonical": canonical, "store": store, "provider": provider,
@@ -350,7 +352,11 @@ def main():
     parser.add_argument("--config", type=Path, default=Path.home() / ".nola/config.json")
     parser.add_argument("--verify-evidence", type=Path, help="Offline re-verification; preserves the original receipt")
     parser.add_argument("--smoke", action="store_true", help="Four nodes; never qualifies as hundreds-step acceptance")
+    parser.add_argument("--compaction-focus", action="store_true",
+        help="64..160 sequential nodes to audit compaction; never qualifies as hundreds-step acceptance")
     parser.add_argument("--nodes", type=int, default=320)
+    parser.add_argument("--compaction-threshold", type=int, default=30000,
+        help="Achievable full-request pressure above the declared tool/policy prefix; window stays 65536")
     parser.add_argument("--timeout", type=int, default=3600)
     parser.add_argument("--max-requests", type=int, default=480)
     parser.add_argument("--max-input-tokens", type=int, default=14_000_000)
@@ -358,7 +364,12 @@ def main():
     args = parser.parse_args()
     if args.verify_evidence:
         return verify_evidence(args.verify_evidence.resolve())
-    if not args.smoke and not 300 <= args.nodes <= 500:
+    if args.smoke and args.compaction_focus:
+        parser.error("Choose smoke or compaction focus")
+    if args.compaction_focus:
+        if not 64 <= args.nodes <= 160:
+            parser.error("Compaction focus requires 64..160 nodes")
+    elif not args.smoke and not 300 <= args.nodes <= 500:
         parser.error("A full acceptance requires 300..500 nodes")
     count = 4 if args.smoke else args.nodes
     binary = args.binary.resolve()
@@ -371,11 +382,12 @@ def main():
     binary = root / "bin/nola"
     marker = "CONTINUITY_" + secrets.token_hex(16)
     receipt = {"passed": False, "hundreds_step_qualified": False, "smoke": args.smoke,
-        "nodes_requested": count, "model": model, "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest()}
+        "compaction_focus": args.compaction_focus, "nodes_requested": count, "model": model, "compaction_threshold": args.compaction_threshold,
+        "context_window": 65536, "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest()}
     print(json.dumps({"evidence": str(root), **receipt}), flush=True)
     try:
         with observed_provider(upstream, model, secret, root / "provider.ndjson") as endpoint:
-            project, env, config = fixture(root / "case", model, endpoint, profile="cautious", threshold=18000)
+            project, env, config = fixture(root / "case", model, endpoint, profile="cautious", threshold=args.compaction_threshold)
             expected = make_chain(project, count)
             write_json(root / "independent-oracle.json", {**expected, "marker": marker})
             apply_config(binary, project, env, config, root)
@@ -420,7 +432,7 @@ def main():
             receipt["provider_window_audit"] = provider_window_audit(root / "provider.ndjson")
             assert totals["injected_responses"] == 0 and totals["selected_models"] == [model]
             receipt["passed"] = True
-            receipt["hundreds_step_qualified"] = not args.smoke
+            receipt["hundreds_step_qualified"] = not args.smoke and not args.compaction_focus
     except Exception as error:
         receipt["error"] = f"{type(error).__name__}: {error}"
         receipt["provider"] = provider_totals(root / "provider.ndjson")

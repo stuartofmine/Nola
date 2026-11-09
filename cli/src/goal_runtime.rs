@@ -14,6 +14,8 @@ pub(crate) use nola_application::goal_coordinator::{terminal_reason_pauses_goal,
 
 pub(crate) trait GoalRoundDriver {
     fn stop_requested(&self) -> bool { false }
+    /// Exact-Run drivers restore and validate their own immutable configuration.
+    fn restores_exact_run_configuration(&self) -> bool { false }
     fn resume(&mut self, request: &HostInvocationRequest, run_id: &str) -> Result<Option<PromptRunResult>, String>;
 }
 
@@ -79,7 +81,7 @@ fn run_goal_cycle_with_dispatch(request: &mut HostInvocationRequest, user_prompt
     }
     request.session.save_session = true;
     let owner = request.session.session_id.clone().unwrap();
-    if session::load_session_goal_projection(&owner)?.and_then(|p|p.active).is_none() {
+    if session::load_session_goal_projection(&owner)?.and_then(|p|p.active).is_none_or(|g| g.status.is_terminal()) {
         core_agent_runtime::submit_agent_core_goal_command(request,
             nola_application::goal_coordinator::create_goal_command(&format!("goal-start:{}",uuid::Uuid::new_v4()), objective, constraints, goal_now_epoch_ms()))?;
     }
@@ -103,7 +105,9 @@ fn run_goal_cycle_with_dispatch(request: &mut HostInvocationRequest, user_prompt
                 let run = result["instruction"]["run_id"].as_str().ok_or("Goal execution instruction has no Run")?;
                 if previous_run.as_deref()==Some(run) {return Ok(GoalCycleOutcome::Yielded(handoff.take().unwrap_or_default()));}
                 let goal = result["goal"]["id"].as_str().ok_or("Goal execution instruction has no Goal")?;
-                *request = restore_goal_execution_request(&owner, goal)?;
+                if !driver.restores_exact_run_configuration() {
+                    *request = restore_goal_execution_request(&owner, goal)?;
+                }
                 let outcome = driver.resume(request, run)?;
                 previous_run=Some(run.into());
                 if let Some(mut outcome) = outcome {
@@ -183,6 +187,7 @@ impl CoreGoalRoundDriver<'_> {
     }
 }
 impl GoalRoundDriver for CoreGoalRoundDriver<'_> {
+    fn restores_exact_run_configuration(&self) -> bool { true }
     fn stop_requested(&self) -> bool { self.control.is_requested() }
     fn resume(&mut self, request: &HostInvocationRequest, run_id: &str) -> Result<Option<PromptRunResult>, String> {
         let session = request.session.session_id.as_deref().ok_or("Goal recovery requires a session")?;

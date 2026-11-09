@@ -13,6 +13,8 @@ rm -rf "$FIXTURES"
 mkdir -p "$FIXTURES" "$(dirname "$DEPENDENCY_FILE")"
 ditto "$ROOT/NolaMac/UI" "$FIXTURES/UI"
 ditto "$ROOT/NolaMac/Services" "$FIXTURES/Services"
+mkdir -p "$OUTPUT_ROOT/Shared/Presentation"
+install -m 644 "$ROOT/Shared/Presentation/AppleSoftwareUpdateSection.swift" "$OUTPUT_ROOT/Shared/Presentation/AppleSoftwareUpdateSection.swift"
 for catalog in AutomationCenter.xcstrings Localizable.xcstrings ModelCenter.xcstrings; do
   install -m 644 "$ROOT/NolaMac/$catalog" "$FIXTURES/$catalog"
 done
@@ -32,6 +34,7 @@ escape_dependency_path() {
     "$ROOT/NolaMac/AutomationCenter.xcstrings" \
     "$ROOT/NolaMac/Localizable.xcstrings" \
     "$ROOT/NolaMac/ModelCenter.xcstrings" \
+    "$ROOT/Shared/Presentation/AppleSoftwareUpdateSection.swift" \
     "$ROOT/scripts/bundle_repository_fixtures.sh"; do
     printf ' %s' "$(escape_dependency_path "$path")"
   done

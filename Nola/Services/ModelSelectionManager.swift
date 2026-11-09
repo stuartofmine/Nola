@@ -656,6 +656,12 @@ private static func canonicalProfile(
     if let sourceData, let fields = try? JSONSerialization.jsonObject(with: sourceData) as? [String: Any] {
         source.merge(fields) { _, new in new }
     }
+    // This publication API explicitly creates a chat profile. Record that
+    // declaration for Core admission; never infer tools, vision or reasoning.
+    // Preserve an existing explicit capability set, including a chat denial.
+    if !model.isLocal, !model.isWebBackend, source["capabilities"] == nil {
+        source["capabilities"] = ["chat"]
+    }
     let sourceJSON = (try? JSONSerialization.data(withJSONObject: source, options: [.sortedKeys]))
         .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
     let parameterData = try? JSONEncoder().encode(ModelParameters.defaults(isLocal: model.isLocal))

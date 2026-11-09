@@ -23,8 +23,14 @@ impl FrozenSiwcTools {
     pub fn from_chat_tools(tools:&[Value])->Result<Self,String> {
         let mut functions=Vec::new();let mut names=BTreeSet::new();
         for tool in tools {
-            if tool["type"]!="function" || tool.as_object().is_none_or(|v|v.keys().any(|k|!matches!(k.as_str(),"type"|"function"))) {
+            if tool["type"]!="function" || tool.as_object().is_none_or(|v|v.keys().any(|k|!matches!(k.as_str(),"type"|"function"|"x-nola-read-only"))) {
                 return Err("SIWC supports only admitted function tools".into());
+            }
+            // Core's typed catalog annotation is Host-local. It neither grants
+            // authority nor belongs in the provider namespace declaration.
+            // Accept only this known annotation; keep rejecting unknown fields.
+            if tool.get("x-nola-read-only").is_some_and(|value| !value.is_boolean()) {
+                return Err("SIWC invalid Nola tool annotation".into());
             }
             let mut function=tool["function"].as_object().cloned().ok_or("SIWC function schema missing")?;
             if function.keys().any(|k|!matches!(k.as_str(),"name"|"description"|"parameters"|"strict")) {
@@ -123,6 +129,29 @@ mod tests {
         let call=encode_history_call("c1","read_file","{}").unwrap();assert_eq!(restored.resolve_call(&call).unwrap(),"read_file");
         assert_eq!(restored.schema(),frozen.schema());
     }
+    #[test]
+    fn core_catalog_read_only_annotations_are_local_and_do_not_change_wire_or_admission() {
+        let original=tools();
+        let expected=FrozenSiwcTools::from_chat_tools(&original).unwrap().schema();
+        for read_only in [true,false] {
+            let mut annotated=original.clone();annotated[0]["x-nola-read-only"]=json!(read_only);
+            let frozen=FrozenSiwcTools::from_chat_tools(&annotated).unwrap();
+            assert_eq!(frozen.schema(),expected);
+            assert_eq!(annotated[0]["x-nola-read-only"],read_only,"canonical catalog is unchanged");
+            let restored=FrozenSiwcTools::from_body(&json!({"tools":frozen.schema()})).unwrap();
+            assert_eq!(restored.resolve_call(&encode_history_call("c1","read_file","{}").unwrap()).unwrap(),"read_file");
+            assert!(restored.resolve_call(&encode_history_call("c2","unknown","{}").unwrap()).is_err());
+        }
+        for value in [Value::Null,json!("true"),json!(1)] {
+            let mut annotated=original.clone();annotated[0]["x-nola-read-only"]=value;
+            assert!(FrozenSiwcTools::from_chat_tools(&annotated).is_err());
+        }
+        let mut unknown=original;unknown[0]["x-unknown"]=json!(true);
+        assert!(FrozenSiwcTools::from_chat_tools(&unknown).is_err());
+        let mut provider=expected;provider[0]["tools"][0]["x-nola-read-only"]=json!(true);
+        assert!(FrozenSiwcTools::from_body(&json!({"tools":provider})).is_err(),"provider wire does not admit Host annotations");
+    }
+
     #[test]
     fn model_siwc_namespace_none_preserves_schema_without_authorizing_calls() {
         let original=FrozenSiwcTools::from_chat_tools(&tools()).unwrap();

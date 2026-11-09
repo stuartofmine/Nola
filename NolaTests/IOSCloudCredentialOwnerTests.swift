@@ -169,7 +169,8 @@ final class IOSCloudCredentialOwnerTests: XCTestCase {
         upstream: String = "model", protocol wireProtocol: ModelWireProtocol = .chatCompletions,
         secret: String?) -> ModelInfo {
         ModelInfo(id: id, name: "Fixture", source: "Fixture", isLocal: false,
-            baseURL: endpoint, apiKey: secret, upstreamModelId: upstream, wireProtocol: wireProtocol)
+            baseURL: endpoint, apiKey: secret, upstreamModelId: upstream, wireProtocol: wireProtocol,
+            executionCapabilities: .init(samplingParameters: true))
     }
 }
 

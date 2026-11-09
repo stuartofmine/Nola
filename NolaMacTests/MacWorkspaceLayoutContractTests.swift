@@ -46,7 +46,7 @@ final class MacWorkspaceLayoutContractTests: XCTestCase {
         data.showWebSources()
         let otherData = MacDataCenterNavigationState()
         XCTAssertEqual(data.section, .usage)
-        XCTAssertEqual(otherData.section, .overview)
+        XCTAssertEqual(otherData.section, .sources)
         XCTAssertEqual(otherData.route, .overview)
 
         let automations = MacAutomationCenterNavigationState()

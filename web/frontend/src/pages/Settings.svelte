@@ -4,6 +4,7 @@
     const api = workspacePageApi(unscopedApi);
     import { workspaceElements } from '../lib/workspacePageLocation';
     const pageElements = workspaceElements();
+    import DesktopSettings from '../components/DesktopSettings.svelte';
     import SoftwareUpdateSettings from '../components/SoftwareUpdateSettings.svelte';
     import LanguagePreference from '../components/LanguagePreference.svelte';
     import { workspacePageLocation } from '../lib/workspacePageLocation';
@@ -139,6 +140,7 @@
         <option value="system">{t($locale, 'shell.appearanceSystem')}</option><option value="light">{t($locale, 'shell.appearanceLight')}</option><option value="dark">{t($locale, 'shell.appearanceDark')}</option>
     </select></label></section>
     <SoftwareUpdateSettings />
+    <DesktopSettings />
 
     </div>
     <div role={narrow ? "region" : "tabpanel"} id="settings-panel-agent" aria-labelledby={narrow ? "settings-mobile-title" : "settings-tab-agent"} hidden={selected !== 'agent'}>

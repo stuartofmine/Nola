@@ -7,11 +7,20 @@ contextBridge.exposeInMainWorld("NolaDesktop", Object.freeze({
     retryHost: () => ipcRenderer.invoke("desktop:retry-host"),
     openLogFolder: () => ipcRenderer.invoke("desktop:open-log-folder"),
     openWorkspace: () => ipcRenderer.invoke("desktop:open-workspace"),
+    loginItem: () => ipcRenderer.invoke("desktop:login-item"),
+    setLoginItem: (enabled: boolean) => ipcRenderer.invoke("desktop:set-login-item", enabled),
 }));
 
 window.addEventListener("DOMContentLoaded", () => {
-    document.getElementById("nola-retry-host")?.addEventListener("click", () => {
-        void ipcRenderer.invoke("desktop:retry-host");
+    const retry = document.getElementById("nola-retry-host");
+    retry?.addEventListener("click", () => {
+        if (!(retry instanceof HTMLButtonElement) || retry.disabled) return;
+        retry.disabled = true; retry.setAttribute("aria-busy", "true");
+        void ipcRenderer.invoke("desktop:retry-host").then((accepted: boolean) => {
+            if (!accepted && retry.isConnected) { retry.disabled = false; retry.removeAttribute("aria-busy"); }
+        }).catch(() => {
+            if (retry.isConnected) { retry.disabled = false; retry.removeAttribute("aria-busy"); }
+        });
     });
     document.getElementById("nola-open-logs")?.addEventListener("click", () => {
         void ipcRenderer.invoke("desktop:open-log-folder");
@@ -25,48 +34,6 @@ window.addEventListener("DOMContentLoaded", () => {
             badge.textContent = `${runtime.backend.toUpperCase()} · ${(runtime.architecture ?? "").toUpperCase()}`;
             badge.title = "llama.cpp";
             engineState.appendChild(badge);
-        });
-    }
-    if (location.pathname === "/settings") {
-        void ipcRenderer.invoke("desktop:login-item").then((state: {
-            available: boolean;
-            enabled: boolean;
-            labels: { title: string; body: string; enabled: string; disabled: string; unavailable: string };
-        } | null) => {
-            if (!state) return;
-            const container = document.querySelector(".settings, .settings-page, .subpage, main.main-content");
-            if (!container || document.getElementById("desktopLoginItemCard")) return;
-            const section = document.createElement("section");
-            section.id = "desktopLoginItemCard";
-            section.className = "section-card desktop-login-card";
-
-            const copy = document.createElement("div");
-            const title = document.createElement("strong");
-            const body = document.createElement("p");
-            title.textContent = state.labels.title;
-            body.textContent = state.labels.body;
-            copy.append(title, body);
-
-            const button = document.createElement("button");
-            button.type = "button";
-            button.className = "btn btn-secondary desktop-login-toggle";
-            const render = (enabled: boolean, available: boolean) => {
-                button.textContent = available
-                    ? (enabled ? state.labels.enabled : state.labels.disabled)
-                    : state.labels.unavailable;
-                button.disabled = !available;
-                button.classList.toggle("is-enabled", enabled);
-                button.setAttribute("aria-pressed", String(enabled));
-            };
-            render(state.enabled, state.available);
-            button.addEventListener("click", async () => {
-                button.disabled = true;
-                const next = await ipcRenderer.invoke("desktop:set-login-item", !button.classList.contains("is-enabled")) as { available: boolean; enabled: boolean } | null;
-                if (next) render(next.enabled, next.available);
-                else render(false, false);
-            });
-            section.append(copy, button);
-            container.appendChild(section);
         });
     }
 });

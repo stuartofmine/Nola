@@ -476,6 +476,7 @@ fn git_worktree_create(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutc
 /// New baselines/conflicts require another review, never an implicit merge.
 fn git_worktree_integrate(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
     let mut started = false;
+    let mut file_effects = Vec::new();
     let result: Result<Value,String> = (|| {
         let raw = required_string(args,"root").map_err(|error|error.text)?;
         if !Path::new(&raw).is_absolute() { return Err("Source root must be absolute".into()); }
@@ -520,6 +521,29 @@ fn git_worktree_integrate(args: &Map<String, Value>, ctx: &ToolContext) -> ToolO
         let patch_argument = git_path_argument(file.path())?;
         let patch_path = patch_argument.as_str();
         git_command_output(&root,&["apply","--check","--binary","--",patch_path])?;
+        // The repository patch identity cannot stand in for the bytes of the
+        // delivered files. Observe each exact changed path, including both
+        // ends of renames and deletion tombstones, before and after apply.
+        let names = git_command_output(child,&["diff","--name-only","-z","--no-renames",
+            "--no-ext-diff","--no-textconv",&selection.expected_head,&child_head,"--","."])?;
+        let paths = names.split(|byte| *byte == 0).filter(|name| !name.is_empty())
+            .map(|name| {
+                let relative = Path::new(std::str::from_utf8(name).map_err(|_| "Non-UTF-8 delivery path")?);
+                if !relative.components().all(|part| matches!(part,std::path::Component::Normal(_))) {
+                    return Err("Unsafe delivery path".to_string());
+                }
+                Ok(root.join(relative))
+            }).collect::<Result<Vec<_>,String>>()?;
+        if paths.is_empty() || paths.len() > 4096 { return Err("Delivery exceeds the 4096-file evidence bound".into()); }
+        let capture = || -> Result<Vec<String>,String> {
+            let mut remaining = 256 * 1024 * 1024u64;
+            paths.iter().map(|path| {
+                remaining = remaining.checked_sub(fs::symlink_metadata(path).map(|metadata|metadata.len()).unwrap_or(0))
+                    .ok_or("Delivery exceeds the 256 MiB version-evidence budget")?;
+                resource_content_version(path)
+            }).collect()
+        };
+        let before = capture()?;
         validate()?;
         if ctx.cancellation.is_requested() {return Err("Integration cancelled before apply".into());}
         started = true;
@@ -527,6 +551,14 @@ fn git_worktree_integrate(args: &Map<String, Value>, ctx: &ToolContext) -> ToolO
         git_command_output(&root,&["apply","--reverse","--check","--binary","--",patch_path])?;
         if git_commit_text(&root,&["rev-parse","HEAD"])? != source_head {
             return Err("Source HEAD changed during integration; inspect retained effects".into());
+        }
+        let after = capture()?;
+        for ((path, before), after) in paths.iter().zip(before).zip(after) {
+            let operation = if after == "absent:v1" { "delete" } else if before == "absent:v1" { "create" } else { "write" };
+            file_effects.push(nola_host_protocol::tool_result::ResourceEffect {
+                resource_uri:url::Url::from_file_path(path).map_err(|_| "Non-absolute delivery path")?.to_string(),
+                operation:operation.into(),before_version:Some(before),after_version:Some(after),
+            });
         }
         Ok(json!({"root":root,"worktree":selection.root,"base_head":selection.expected_head,"source_head":source_head,"child_head":child_head,
             "status":"applied_unstaged","patch_sha256":format!("{:x}",<sha2::Sha256 as sha2::Digest>::digest(&patch)),
@@ -540,7 +572,8 @@ fn git_worktree_integrate(args: &Map<String, Value>, ctx: &ToolContext) -> ToolO
             let version = data["patch_sha256"].as_str().unwrap().to_owned();
             let mut outcome = ok_data(data,"Applied reviewed child delivery as unstaged source changes; worktree retained".into());
             outcome.execution = Some(ExecutionReceipt {state:ExecutionState::Completed,
-                effects:vec![ResourceEffect {resource_uri:resource.clone(),operation:"git.worktree.integrate".into(),before_version:None,after_version:Some(version.clone())}],
+                effects:std::iter::once(ResourceEffect {resource_uri:resource.clone(),operation:"git.worktree.integrate".into(),before_version:None,after_version:Some(version.clone())})
+                    .chain(file_effects).collect(),
                 checks:vec![PostconditionCheck {kind:ExecutionCheckKind::Postcondition,resource_uri:resource,version,
                     predicate:"git.worktree.reviewed_patch_applied".into(),passed:true}],..Default::default()});
             outcome
@@ -566,6 +599,8 @@ mod git_worktree_tests {
                 git_command_output(&seed,&args).unwrap();
             }
             fs::write(seed.join("code.txt"),"base\n").unwrap();
+            fs::write(seed.join("remove.txt"),"removed\n").unwrap();
+            fs::write(seed.join("rename original.txt"),"renamed\n").unwrap();
             git_command_output(&seed,&["add","."]).unwrap();
             git_command_output(&seed,&["commit","--quiet","-m","base"]).unwrap();
             let root = if bare {
@@ -595,6 +630,8 @@ mod git_worktree_tests {
             let selection = made.data.unwrap()["task_worktree_selection"].clone();
             fs::write(child.join("code.txt"),"reviewed implementation\n").unwrap();
             fs::write(child.join("new.txt"),"reviewed new file\n").unwrap();
+            fs::remove_file(child.join("remove.txt")).unwrap();
+            fs::rename(child.join("rename original.txt"),child.join("renamed final.txt")).unwrap();
             let mut args = json!({"root":root,"worktree":selection,"expected_child_head":info["head"]});
             assert!(git_worktree_integrate(args.as_object().unwrap(),&ctx).error,"uncommitted child delivery must not be inferred");
             git_command_output(&child,&["add","."]).unwrap();
@@ -607,6 +644,17 @@ mod git_worktree_tests {
             fs::write(root.join("code.txt"),"base\n").unwrap();
             let applied = git_worktree_integrate(args.as_object().unwrap(),&ctx);
             assert!(!applied.error,"{}",applied.text);
+            let effects = &applied.execution.as_ref().unwrap().effects;
+            for (name, operation, before) in [("code.txt","write",Some("base\n")),("new.txt","create",None),
+                ("remove.txt","delete",Some("removed\n")),("rename original.txt","delete",Some("renamed\n")),("renamed final.txt","create",None)] {
+                let effect = effects.iter().find(|effect| effect.resource_uri == url::Url::from_file_path(root.join(name)).unwrap().to_string()).unwrap();
+                assert_eq!(effect.operation, operation);
+                assert_eq!(effect.after_version, Some(resource_content_version(&root.join(name)).unwrap()));
+                if let Some(before) = before {
+                    use sha2::{Digest,Sha256};
+                    assert_eq!(effect.before_version, Some(format!("sha256:{:x}",Sha256::digest(before.as_bytes()))));
+                } else { assert_eq!(effect.before_version.as_deref(),Some("absent:v1")); }
+            }
             assert_eq!(applied.data.unwrap()["status"],"applied_unstaged");
             assert_eq!(fs::read_to_string(root.join("new.txt")).unwrap(),"reviewed new file\n");
             assert_eq!(git_commit_text(&root,&["rev-parse","HEAD"]).unwrap(),info["head"]);

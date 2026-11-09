@@ -13,7 +13,7 @@ enum ContextOutboundPreparationError: LocalizedError, Equatable {
         case .summaryStillRequired:
             return "The conversation still requires summarization before it can be sent."
         case .cannotFit:
-            return "The prepared conversation cannot fit within the model context window."
+            return NSLocalizedString("chat.context.cannot_fit.recovery", value: "This model’s context window is too small. Choose a model with a larger context window, then retry. Your conversation is preserved.", comment: "Recovery guidance when the prepared conversation does not fit")
         case .invalidCoreAction(let action):
             return "The shared context engine returned an unsupported action: \(action)."
         }

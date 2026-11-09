@@ -77,6 +77,7 @@ pub(crate) enum AgentEffect {
         errors: Vec<super::capability::RecoverableCapabilityError>,
     },
     CompactContext {
+        handoff: bool,
         session_id: SessionId,
         items_to_summarize: Vec<AgentItem>,
         target_tokens: usize,

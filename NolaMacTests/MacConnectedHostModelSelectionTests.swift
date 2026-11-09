@@ -142,11 +142,12 @@ final class MacConnectedHostModelSelectionTests: XCTestCase {
         let conversation = MacConversation(title: "Remote test", preview: "", updatedAt: .now, isPinned: false)
         try repository.restoreBackupSnapshot([MacStoredConversation(conversation: conversation, messages: [])])
         let model = MacWorkspaceModel(initialConversationID: conversation.id, canonicalRepository: repository,
-            localAgentRuntime: PersistenceTestLocalRuntime(), remoteHost: PersistenceTestRemoteHost())
+            localAgentRuntime: PersistenceTestLocalRuntime(), remoteHost: PermissionEnvelopeRemoteHost(capturedHostID: "host"))
         // This fixture exercises configuration persistence/admission without a
         // presented window. Otherwise the selection lifecycle's deferred task
         // starts live Host observation as soon as an awaited commit yields.
-        // Keep the fail-fast Host double: an actual send must still fail here.
+        // The Host double admits explicit selection writes, while an actual
+        // send or unrelated observation must still fail.
         model.presentationDidDetach()
         return (root, model)
     }

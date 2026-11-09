@@ -24,3 +24,17 @@
 "inspector.state.unknown" = "État inconnu";
 "inspector.state.suspended" = "Suspendu";
 "inspector.state.retry_waiting" = "En attente de nouvel essai";
+
+"goal.guidance" = "Décrivez le résultat souhaité. Nola continue et s’arrête si une précision ou une autorisation est nécessaire.";
+
+"goal.example" = "Exemple : organisez les documents du projet et préparez une synthèse avec les sources.";
+
+"goal.optional_constraints" = "Contraintes (facultatif)";
+
+"goal.cancel_title" = "Terminer cet objectif ?";
+
+"goal.cancel_explanation" = "Le travail automatique sur cet objectif s’arrête. La conversation et les résultats terminés sont conservés.";
+
+"goal.model_note" = "Utilise le modèle choisi pour cette conversation et les autorisations actuelles des outils.";
+
+"inspector.conversation_needed" = "Démarrez ou ouvrez une conversation pour voir la progression et définir un objectif.";

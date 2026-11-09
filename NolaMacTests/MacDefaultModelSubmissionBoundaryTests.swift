@@ -90,6 +90,8 @@ final class MacDefaultModelSubmissionBoundaryTests: XCTestCase {
         let configuration = MacRemoteHostConfigurationStore(applicationPort: port)
         try configuration.save(url: baseURL.absoluteString, token: "fixture-token", hostID: "fixture-host")
         let service = MacRemoteHostService(configurationStore: configuration)
+        try await service.saveConversationSelection(conversationID: "conversation", title: "Fixture",
+            profile: nil, allowCreate: true, target: service.captureSubmissionTarget())
         let model = MacWorkspaceModel(initialConversationID: "conversation", canonicalRepository: repository,
             localAgentRuntime: PersistenceTestLocalRuntime(), remoteHost: service, modelApplication: port)
         defer { model.presentationDidDetach() }

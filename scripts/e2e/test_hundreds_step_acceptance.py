@@ -89,6 +89,22 @@ class HundredsStepOracleTests(unittest.TestCase):
             with self.assertRaisesRegex(AssertionError, "relay changed"):
                 verified_provider_recoveries(path)
 
+    def test_current_output_slice_tool_is_allowed_but_shell_is_still_forbidden(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project, expected = self.fixture(root, 4)
+            path = root / "events.ndjson"
+            events = [{"trace":{"kind":"tool.completed","sequence":index,"status":"succeeded",
+                "payload":{"call_id":str(index),"tool_name":name,"arguments":{}}}}
+                for index, name in enumerate(["tool_output_read", "bash", "read_tool_output"], 1)]
+            path.write_text("\n".join(map(json.dumps, events)) + "\n")
+            observer = EventObserver(path, project, expected)
+            try:
+                observer.update()
+                self.assertEqual(observer.other_tools, {"bash", "read_tool_output"})
+            finally:
+                observer.handle.close()
+
     def test_duplicate_stream_receipt_is_not_another_executed_node(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

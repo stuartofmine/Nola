@@ -24,6 +24,7 @@ struct ModelDownloadView: View {
     @State private var showingDeleteAlert = false
     @State private var modelToDelete: ModelDownloader.ModelType?
     @State private var refreshTrigger = false
+    @State private var operationError: String?
     
     private var downloader: ModelDownloader {
         container.modelDownloader
@@ -31,10 +32,13 @@ struct ModelDownloadView: View {
     
     var body: some View {
         List {
+            if let operationError {
+                Section { Label(operationError, systemImage: "exclamationmark.triangle").foregroundStyle(DesignTokens.dangerColor) }
+            }
             Section {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
-                        NolaIconBadge(icon: "cpu", tint: .blue, size: DesignTokens.iconBadgeSizeLarge)
+                        NolaIconBadge(icon: "cpu", tint: DesignTokens.primaryColor, size: DesignTokens.iconBadgeSizeLarge)
                         
                         VStack(alignment: .leading) {
                             Text(L10n.modelManagementLocalTitle)
@@ -113,10 +117,10 @@ struct ModelDownloadView: View {
                 case .downloading(let progress):
                     VStack(alignment: .leading, spacing: 8) {
                         Label(L10n.modelStatusDownloading, systemImage: "arrow.down.circle.fill")
-                            .foregroundColor(.blue)
+                            .foregroundColor(DesignTokens.primaryColor)
                         
                         ProgressView(value: progress)
-                            .tint(.blue)
+                            .tint(DesignTokens.primaryColor)
                         
                             HStack {
                             Text(String(format: L10n.modelDownloadProgressFormat, Int(progress * 100)))
@@ -166,6 +170,8 @@ struct ModelDownloadView: View {
                         downloader.pauseDownload()
                     } label: {
                         Image(systemName: "pause.circle.fill")
+                            .frame(minWidth: 44, minHeight: 44)
+                            .accessibilityLabel(NSLocalizedString("model.action.pause", value: "Pause download", comment: "Local model action"))
                             .font(.title2)
                     }
                     
@@ -173,6 +179,8 @@ struct ModelDownloadView: View {
                         downloader.cancelDownload()
                     } label: {
                         Image(systemName: "xmark.circle.fill")
+                            .frame(minWidth: 44, minHeight: 44)
+                            .accessibilityLabel(NSLocalizedString("model.action.cancel", value: "Cancel download", comment: "Local model action"))
                             .font(.title2)
                             .foregroundColor(.red)
                     }
@@ -182,8 +190,10 @@ struct ModelDownloadView: View {
                     downloader.resumeDownload()
                 } label: {
                     Image(systemName: "play.circle.fill")
+                            .frame(minWidth: 44, minHeight: 44)
+                            .accessibilityLabel(NSLocalizedString("model.action.resume", value: "Resume download", comment: "Local model action"))
                         .font(.title2)
-                        .foregroundColor(.blue)
+                        .foregroundColor(DesignTokens.primaryColor)
                 }
             }
         }
@@ -193,10 +203,12 @@ struct ModelDownloadView: View {
     }
     
     private func deleteModel(_ model: ModelDownloader.ModelType) {
+        operationError = nil
         do {
             try downloader.deleteModel(model)
         } catch {
-            // Handle error
+            operationError = NSLocalizedString("model.delete.failed", value: "The model could not be deleted. Try again.", comment: "Local model deletion failed") + " " + error.localizedDescription
+            // Keep the failed model visible and report the operation inline.
             Logger.shared.log(.warn, "ModelDownloadView", NSLocalizedString("autogen.ModelDownloadView.238c0cc1", comment: "AUTOGEN: localized text"), metadata: [
                 "error": String(describing: error)
             ])
@@ -205,8 +217,14 @@ struct ModelDownloadView: View {
     }
     
     private func deleteAllModels() {
+        operationError = nil
+        var failed: [String] = []
         for model in downloader.downloadedModels {
-            try? downloader.deleteModel(model)
+            do { try downloader.deleteModel(model) }
+            catch { failed.append(model.displayName) }
+        }
+        if !failed.isEmpty {
+            operationError = NSLocalizedString("model.delete.failed", value: "The model could not be deleted. Try again.", comment: "Local model deletion failed") + " " + failed.joined(separator: ", ")
         }
     }
     
@@ -219,6 +237,8 @@ struct ModelDownloadView: View {
             } label: {
                 HStack {
                     Image(systemName: "play.circle.fill")
+                            .frame(minWidth: 44, minHeight: 44)
+                            .accessibilityLabel(NSLocalizedString("model.action.resume", value: "Resume download", comment: "Local model action"))
                         .foregroundColor(.green)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(L10n.modelLocalTestTitle)
@@ -245,7 +265,7 @@ struct ModelDownloadView: View {
             } label: {
                 HStack {
                     Image(systemName: "gearshape.2.fill")
-                        .foregroundColor(.blue)
+                        .foregroundColor(DesignTokens.primaryColor)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(L10n.modelAdvancedTestTitle)
                             .fontWeight(.medium)
@@ -270,7 +290,7 @@ struct ModelDownloadView: View {
                 Spacer()
                 if downloader.isDownloading {
                     Text(DisplayFormatters.byteSize(downloader.downloadedBytes))
-                        .foregroundColor(.blue)
+                        .foregroundColor(DesignTokens.primaryColor)
                 } else {
                     Text(DisplayFormatters.byteSize(downloader.diskUsage))
                         .foregroundColor(.secondary)
@@ -352,6 +372,8 @@ struct ModelRow: View {
                             downloader.pauseDownload()
                         } label: {
                             Image(systemName: "pause.circle.fill")
+                            .frame(minWidth: 44, minHeight: 44)
+                            .accessibilityLabel(NSLocalizedString("model.action.pause", value: "Pause download", comment: "Local model action"))
                                 .font(.title3)
                         }
                         .buttonStyle(.borderless)
@@ -360,6 +382,8 @@ struct ModelRow: View {
                             downloader.cancelDownload()
                         } label: {
                             Image(systemName: "xmark.circle.fill")
+                            .frame(minWidth: 44, minHeight: 44)
+                            .accessibilityLabel(NSLocalizedString("model.action.cancel", value: "Cancel download", comment: "Local model action"))
                                 .foregroundColor(.red)
                         }
                         .buttonStyle(.borderless)
@@ -369,7 +393,9 @@ struct ModelRow: View {
                         downloader.resumeDownload()
                     } label: {
                         Image(systemName: "play.circle.fill")
-                            .foregroundColor(.blue)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .accessibilityLabel(NSLocalizedString("model.action.resume", value: "Resume download", comment: "Local model action"))
+                            .foregroundColor(DesignTokens.primaryColor)
                     }
                     .buttonStyle(.borderless)
                 } else if downloader.isModelDownloaded(model) {
@@ -378,6 +404,8 @@ struct ModelRow: View {
                         onDelete()
                     } label: {
                         Image(systemName: "trash")
+                            .frame(minWidth: 44, minHeight: 44)
+                            .accessibilityLabel(NSLocalizedString("model.delete.confirm", value: "Delete model", comment: "Local model action"))
                             .foregroundColor(.red)
                     }
                     .buttonStyle(.borderless)
@@ -388,6 +416,8 @@ struct ModelRow: View {
                             onDelete()
                         } label: {
                             Image(systemName: "trash")
+                            .frame(minWidth: 44, minHeight: 44)
+                            .accessibilityLabel(NSLocalizedString("model.delete.confirm", value: "Delete model", comment: "Local model action"))
                                 .foregroundColor(.red)
                         }
                         .buttonStyle(.borderless)
@@ -439,7 +469,7 @@ struct ModelRow: View {
             if downloader.isTransferring(model), case .downloading(let progress) = downloader.state {
                 VStack(alignment: .leading, spacing: 6) {
                     ProgressView(value: progress)
-                        .tint(.blue)
+                        .tint(DesignTokens.primaryColor)
                     
                     HStack {
                         Text(String(format: L10n.modelDownloadProgressFormat, Int(progress * 100)))

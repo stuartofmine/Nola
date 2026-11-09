@@ -60,7 +60,17 @@ pub fn bind_model_task_scope(arguments: &Value, binding: &RequirementRequestBind
         let scope = &mut requirement["resource_scope"];
         if scope.get("interpreted_user_frontier").is_some() { return Err("model cannot supply scope frontier".into()); }
         if scope["kind"] == "declared" {
-            for claim in scope["required"].as_array_mut().ok_or("missing required resources")? { refs(&mut claim["source_refs"], &binding.sources)?; }
+            for claim in scope["required"].as_array_mut().ok_or("missing required resources")? {
+                refs(&mut claim["source_refs"], &binding.sources)?;
+                if let Some(review) = claim.get_mut("review").filter(|value| !value.is_null()) {
+                    if !review.is_object() { return Err("invalid review finding: object required".into()); }
+                    refs(&mut review["source_evidence"], &binding.evidence)?;
+                    if let Some(reference) = review.get_mut("counterexample_evidence").filter(|value| !value.is_null()) {
+                        *reference = json!(binding.evidence.get(reference.as_str().ok_or("invalid counterexample evidence")?)
+                            .ok_or("unknown frozen counterexample evidence")?);
+                    }
+                }
+            }
             for exclusion in scope["exclusions"].as_array_mut().ok_or("missing exclusions")? {
                 let map = if exclusion["provenance"] == "user_input_interpretation" { &binding.user_sources } else { &binding.sources };
                 refs(&mut exclusion["source_refs"], map)?;
@@ -189,6 +199,24 @@ mod tests {
         forged=args;
         forged["requirements"][0]["source_refs"]=json!(["input-original"]);
         assert!(bind_model_task_scope(&forged,&binding()).is_err());
+    }
+
+    #[test]
+    fn review_evidence_is_bound_to_current_observations_without_conferring_user_authority() {
+        let mut args = json!({"requirements":[{"key":"review","description":"Repair adopted finding","source_refs":["s1"],"dependencies":[],
+            "resource_scope":{"kind":"declared","required":[{"resource_uri":"file:///a","operation":"write",
+                "predicate":"regression_process_exit:sha256:example","source_refs":["s1"],
+                "review":{"source_evidence":["e1"],"counterexample_evidence":"e1"}}],"exclusions":[]}}],
+            "dispositions":[{"kind":"retain","requirement_id":"r1"}]});
+        let bound = bind_model_task_scope(&args, &binding()).unwrap();
+        let review = &bound["operations"][0]["requirements"][0]["resource_scope"]["required"][0]["review"];
+        assert_eq!(review["source_evidence"], json!(["evidence-original"]));
+        assert_eq!(review["counterexample_evidence"], "evidence-original");
+        let target = &mut args["requirements"][0]["resource_scope"]["required"][0]["review"];
+        target["counterexample_evidence"] = json!("evidence-original");
+        assert!(bind_model_task_scope(&args, &binding()).is_err(), "raw evidence IDs are not aliases");
+        args["requirements"][0]["resource_scope"]["required"][0]["review"] = json!("not-an-object");
+        assert!(bind_model_task_scope(&args, &binding()).is_err());
     }
 
     #[test]

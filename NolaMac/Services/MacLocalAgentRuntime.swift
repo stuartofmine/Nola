@@ -2424,7 +2424,16 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
             }
 
             if let field = primary["output_token_field"] {
-                payload["chat_output_token_field"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(field), options: [.fragmentsAllowed])
+                // A frozen route's physical output field is not the Chat-only
+                // preference enum. The Host reconstructs the exact Responses
+                // or SIWC route from the frozen binding after request parsing.
+                switch field {
+                case .string("max_tokens"), .string("max_completion_tokens"):
+                    payload["chat_output_token_field"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(field), options: [.fragmentsAllowed])
+                case .string("max_output_tokens"), .string("omitted"):
+                    payload["chat_output_token_field"] = "auto"
+                default: throw MacEditedResendError.unsupportedModel
+                }
             }
             // All routes were resolved against current private credentials. The
             // Host still compares its actual binding with durable Prepared.

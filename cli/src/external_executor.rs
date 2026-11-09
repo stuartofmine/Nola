@@ -3685,7 +3685,13 @@ mod tests {
         // would test an uncooperative shutdown rather than this protocol.
         let body = body.trim_end();
         let body = if exits_on_eof { body.strip_suffix("\nwait").unwrap_or(body) } else { body };
-        fs::write(&executable, format!("#!/bin/sh\nif [ \"$2\" = daemon ]; then exit 0; fi\necho $$ > process.pid\nsleep 30 &\nowned_child=$!\necho $owned_child > descendant.pid\ntrap 'kill \"$owned_child\" 2>/dev/null; wait \"$owned_child\" 2>/dev/null' EXIT\n{body}\n")).unwrap();
+        // A concurrent fork in another test can inherit a briefly open writer
+        // and make Linux execve report ETXTBSY. Write in an isolated child so
+        // unrelated test children cannot inherit the executable's write handle.
+        let mut writer = Command::new("/bin/sh").args(["-c", "cat > \"$1\"", "fixture-writer"])
+            .arg(&executable).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap();
+        writer.stdin.take().unwrap().write_all(format!("#!/bin/sh\nif [ \"$2\" = daemon ]; then exit 0; fi\necho $$ > process.pid\nsleep 30 &\nowned_child=$!\necho $owned_child > descendant.pid\ntrap 'kill \"$owned_child\" 2>/dev/null; wait \"$owned_child\" 2>/dev/null' EXIT\n{body}\n").as_bytes()).unwrap();
+        assert!(writer.wait().unwrap().success());
         fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
         let mut descriptor = ExecutionBackendDescriptor::built_in_nola();
         descriptor.id = match kind {

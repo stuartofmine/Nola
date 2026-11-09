@@ -31,7 +31,7 @@ struct MacInspectorActivityView: View {
                     status: browserStatusTitle
                 )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(MacPressFeedbackButtonStyle())
             .help(browserStatusDetail)
             toolStatus(
                 String(localized: "Computer use", table: "Chat"),
@@ -55,7 +55,7 @@ struct MacInspectorActivityView: View {
                 }
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(MacPressFeedbackButtonStyle())
             .help(String(localized: "System Access"))
             Button {
                 openWindow(id: "extensions-center")
@@ -69,7 +69,7 @@ struct MacInspectorActivityView: View {
                 }
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(MacPressFeedbackButtonStyle())
             .help(String(localized: "Skills and MCP"))
             Button {
                 openWindow(id: "diagnostics-center")
@@ -83,7 +83,7 @@ struct MacInspectorActivityView: View {
                 }
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(MacPressFeedbackButtonStyle())
             .help(String(localized: "Diagnostics"))
         }
     }

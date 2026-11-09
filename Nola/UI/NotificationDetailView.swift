@@ -1108,7 +1108,7 @@ struct SummaryDetailView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(
                             RoundedRectangle(cornerRadius: 10)
-                                .fill(Color.blue.opacity(0.05))
+                                .fill(DesignTokens.primaryColor.opacity(0.05))
                         )
                     }
                     .padding(16)
@@ -1141,10 +1141,10 @@ struct SummaryDetailView: View {
                 .padding(14)
                 .background(
                     RoundedRectangle(cornerRadius: 10)
-                        .fill(Color.blue.opacity(0.05))
+                        .fill(DesignTokens.primaryColor.opacity(0.05))
                         .overlay(
                             RoundedRectangle(cornerRadius: 10)
-                                .stroke(Color.blue.opacity(0.2), lineWidth: 1)
+                                .stroke(DesignTokens.primaryColor.opacity(0.2), lineWidth: 1)
                         )
                 )
 

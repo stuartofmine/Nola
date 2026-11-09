@@ -45,10 +45,29 @@ struct MacInspectorDataSourcesView: View {
                         .labelStyle(.titleAndIcon)
                         .font(.system(size: 10.5, weight: .medium))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(MacPressFeedbackButtonStyle())
                 .foregroundStyle(.tint)
             }
 
+            if let readError {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(readError, systemImage: "exclamationmark.triangle")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button(String(localized: "Retry")) { activation &+= 1 }
+                        .buttonStyle(MacPressFeedbackButtonStyle())
+                }
+                .accessibilityIdentifier("mac-inspector-data-source-error")
+            } else if loadedKey != key {
+                ProgressView().controlSize(.small)
+                    .accessibilityLabel(String(localized: "Loading"))
+            }
+            if let persistenceError = dataRegistry.persistenceError {
+                Label(persistenceError, systemImage: "exclamationmark.triangle")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("mac-inspector-data-source-save-error")
+            }
             VStack(spacing: 0) {
                 ForEach(platformData.snapshots.filter { $0.kind.supportsChatContext }) { snapshot in
                     conversationSourceRow(
@@ -163,7 +182,7 @@ struct MacInspectorDataSourcesView: View {
                     Image(systemName: "arrow.uturn.backward.circle")
                         .font(.system(size: 11))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(MacPressFeedbackButtonStyle())
                 .foregroundStyle(.secondary)
                 .help(String(localized: "Use Global Setting"))
                 .accessibilityLabel("\(title): \(String(localized: "Use Global Setting"))")

@@ -272,7 +272,7 @@ class NolaHarborAgent(BaseAgent):
 
         applied = await environment.exec(
             command=("HOME=/tmp/nola-home NOLA_DB_PATH=/tmp/nola-eval.db "
-                     "NOLA_BENCHMARK_TOKEN=relay-only "
+                     "NOLA_BENCHMARK_TOKEN=relay-only NOLA_PERMISSION_PROFILE=allow_all "
                      "/opt/nola/nola --project /app model apply-config "
                      "/tmp/nola-home/.nola/config.json"),
         )
@@ -315,6 +315,7 @@ class NolaHarborAgent(BaseAgent):
             "nola_native_code_memory_available": True,
             "nola_endpoint_host": self.endpoint_host,
             "nola_configured_model": self.model_name,
+            "nola_permission_profile": "allow_all",
             "nola_requested_artifacts": requested_artifacts,
             "nola_shell_purpose_contract": purpose_contract,
             "nola_task_acceptance": "configured_public_check" if acceptance else "not_configured",
@@ -334,7 +335,7 @@ class NolaHarborAgent(BaseAgent):
                         "HOME=/tmp/nola-home "
                         + (
                             "NOLA_DB_PATH=/tmp/nola-eval.db "
-                            "NOLA_BENCHMARK_TOKEN=relay-only "
+                            "NOLA_BENCHMARK_TOKEN=relay-only NOLA_PERMISSION_PROFILE=allow_all "
                             "NOLA_SKIP_ONBOARDING=1 "
                             "NOLA_EVAL_REQUEST_AUDIT_DIR=/logs/agent/model-requests "
                             f"NOLA_SHELL_PURPOSE_CONTRACT={purpose_contract} "

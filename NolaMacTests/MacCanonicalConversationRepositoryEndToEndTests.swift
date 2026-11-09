@@ -354,7 +354,7 @@ final class MacCanonicalConversationRepositoryEndToEndTests: XCTestCase {
         let object = try XCTUnwrap(
             JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any]
         )
-        XCTAssertEqual(object["version"] as? Int, 2)
+        XCTAssertEqual(object["version"] as? Int, 1)
         XCTAssertNil(object["conversation"])
         XCTAssertNil(object["id"])
         XCTAssertNil(object["title"])

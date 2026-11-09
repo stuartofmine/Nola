@@ -40,6 +40,22 @@ import XCTest
         let selected = try XCTUnwrap(configuration.siwcProfile)
         XCTAssertEqual(selected.revision, profile.revision)
         XCTAssertEqual(configuration.wireProtocol, .siwcResponses)
+        let accountBinding: MacCanonicalJSONValue = .object([
+            "account_id": .string(account.id), "account_revision": .signedInteger(account.revision),
+            "credential_ref": .string("siwc:" + account.id), "client_id": .string("fixture-client"),
+            "subject": .string("fixture-subject")])
+        let frozen = AppleFrozenResendModel<MacCanonicalJSONValue>(version: 1, primary: .object([
+            "kind": .string("http"), "endpoint": .string("https://api.openai.com/v1"),
+            "endpoint_query_sha256": .null, "protocol": .string("siwc_responses"),
+            "model": .string(configuration.model), "siwc_account": accountBinding,
+            "credential_sha256": .string(MacRunModelCredential.digest("")), "output_token_field": .string("omitted")]),
+            fallbacks: .array([]), generation: .object(["prompt_cache_key_sha256": .string(String(repeating: "a", count: 64)),
+                "prompt_cache_key_prefix_sha256": .null]), output_admission: .object([:]), model_capability: .object([:]))
+        let resend = try MacEditedResendModelResolver.resolve(frozen, application: port)
+        XCTAssertEqual(resend.siwcProfile, selected)
+        XCTAssertEqual(resend.profileID, profile.id)
+        XCTAssertTrue(resend.fallbacks.isEmpty)
+        XCTAssertNil(resend.nativeRevision)
         let plan = try XCTUnwrap(store.routePlanThrowing(preferredModel: profile.id))
         XCTAssertTrue(plan.fallbacks.isEmpty)
         let request = try MacLocalAgentRunRequest(conversationID: "fixture-room", prompt: "fixture",
@@ -69,6 +85,8 @@ import XCTest
         _ = try service.disconnect(currentConnection)
         XCTAssertThrowsError(try MacLocalAgentCredentialGate.launch(selection: captured, isResume: true,
             store: store, operation: { XCTFail("Changed profile must not dispatch") }))
+        XCTAssertThrowsError(try MacEditedResendModelResolver.resolve(frozen, application: port),
+            "An edited resend must not reuse a disconnected account/model")
         XCTAssertEqual(reads.total, 0)
     }
 }

@@ -14,6 +14,7 @@ let logStream: WriteStream | undefined;
 let quitting = false;
 let recoveryTimer: NodeJS.Timeout | undefined;
 let automaticRecoveryCount = 0;
+let restartingHost = false;
 let strings: DesktopStrings;
 let explainedBackgroundMode = false;
 let windowStateTimer: NodeJS.Timeout | undefined;
@@ -149,8 +150,9 @@ function pageHtml(mode: "starting" | "failed", detail = ""): string {
         "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
     })[character] ?? character);
     return `<!doctype html><html data-theme="auto"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:"><title>${title}</title><style>
-        :root{color-scheme:light dark;font-family:"Segoe UI Variable","Segoe UI",sans-serif;background:#f5f6f8;color:#17191f}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(circle at 50% 35%,rgba(69,115,255,.10),transparent 36%),#f5f6f8}.card{width:min(480px,calc(100vw - 40px));padding:38px;border:1px solid rgba(18,23,38,.08);border-radius:24px;background:rgba(255,255,255,.88);box-shadow:0 24px 70px rgba(27,34,56,.10);text-align:center}.mark{width:52px;height:52px;margin:0 auto 22px;display:grid;place-items:center;border-radius:16px;background:#1677ff;color:white;font-size:24px;font-weight:750;box-shadow:0 12px 30px rgba(22,119,255,.24)}h1{margin:0;font-size:24px;letter-spacing:-.025em}p{margin:10px auto 0;max-width:38ch;color:#666d7e;font-size:14px;line-height:1.65}.pulse{width:38px;height:5px;margin:26px auto 0;overflow:hidden;border-radius:999px;background:#e6e9ef}.pulse::after{display:block;width:45%;height:100%;border-radius:inherit;background:#1677ff;content:"";animation:move 1.35s ease-in-out infinite alternate}@keyframes move{to{transform:translateX(122%)}}.detail{margin-top:18px;padding:10px 12px;border-radius:10px;background:#f1f3f6;font:11px/1.5 Consolas,monospace;overflow-wrap:anywhere}.actions{display:flex;justify-content:center;gap:9px;margin-top:22px}button{min-height:38px;padding:0 15px;border:1px solid #d8dce5;border-radius:10px;background:white;color:#272b35;font:600 13px inherit;cursor:pointer}button.primary{border-color:#1677ff;background:#1677ff;color:white}@media(prefers-color-scheme:dark){body{background:radial-gradient(circle at 50% 35%,rgba(69,115,255,.15),transparent 36%),#101114;color:#f2f3f5}.card{border-color:rgba(255,255,255,.08);background:rgba(25,27,31,.92);box-shadow:0 24px 70px rgba(0,0,0,.3)}p{color:#a2a7b3}.pulse,.detail{background:#282b31}button{border-color:#3b3f48;background:#22252a;color:#f2f3f5}}
-    </style></head><body><main class="card"><div class="mark">N</div><h1>${title}</h1><p>${body}</p>${failed && safeDetail ? `<div class="detail">${safeDetail}</div>` : ""}${failed ? `<div class="actions"><button id="nola-open-logs">${strings.openLogs}</button><button class="primary" id="nola-retry-host">${strings.retry}</button></div>` : `<div class="pulse"></div>`}</main></body></html>`;
+        :root{color-scheme:light dark;font-family:"Segoe UI Variable","Segoe UI",sans-serif;background:#f5f6f8;color:#17191f}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(circle at 50% 35%,rgba(35,112,71,.08),transparent 36%),#f5f6f8}.card{width:min(480px,calc(100vw - 40px));padding:38px;border:1px solid rgba(18,23,38,.08);border-radius:24px;background:rgba(255,255,255,.88);box-shadow:0 24px 70px rgba(27,34,56,.10);text-align:center}.mark{width:52px;height:52px;margin:0 auto 22px;display:grid;place-items:center;border-radius:16px;background:#237047;color:white;font-size:24px;font-weight:750;box-shadow:0 12px 30px rgba(35,112,71,.18)}h1{margin:0;font-size:24px;letter-spacing:-.025em}p{margin:10px auto 0;max-width:38ch;color:#666d7e;font-size:14px;line-height:1.65}.pulse{width:38px;height:5px;margin:26px auto 0;overflow:hidden;border-radius:999px;background:#e6e9ef}.pulse::after{display:block;width:45%;height:100%;border-radius:inherit;background:#237047;content:"";animation:move 1.35s ease-in-out infinite alternate}@keyframes move{to{transform:translateX(122%)}}.detail{margin-top:18px;padding:10px 12px;border-radius:10px;background:#f1f3f6;font:11px/1.5 Consolas,monospace;overflow-wrap:anywhere}.actions{display:flex;justify-content:center;gap:9px;margin-top:22px}button{min-height:44px;padding:10px 16px;border:1px solid #d8dce5;border-radius:10px;background:white;color:#272b35;font:inherit;font-size:14px;font-weight:600;cursor:pointer}button.primary{border-color:#237047;background:#237047;color:white}@media(prefers-color-scheme:dark){body{background:radial-gradient(circle at 50% 35%,rgba(123,201,155,.08),transparent 36%),#101114;color:#f2f3f5}.card{border-color:rgba(255,255,255,.08);background:rgba(25,27,31,.92);box-shadow:0 24px 70px rgba(0,0,0,.3)}p{color:#a2a7b3}.pulse,.detail{background:#282b31}button{border-color:#3b3f48;background:#22252a;color:#f2f3f5}}
+        button:hover{filter:brightness(.94)}button:active{filter:brightness(.88)}button:focus-visible{outline:2px solid currentColor;outline-offset:3px}.actions{flex-wrap:wrap}@media(prefers-color-scheme:dark){button:hover{background:#343a37}button.primary{background:#7bc99b;border-color:#7bc99b;color:#101713}button.primary:hover{background:#94d5af}.pulse::after,.mark{background:#7bc99b;color:#101713}}@media(prefers-reduced-motion:reduce){.pulse::after{animation:none;width:100%}}@media(forced-colors:active){button:focus-visible{outline-color:Highlight}.card,button{border:1px solid ButtonText}}
+    </style></head><body><main class="card"><div class="mark">N</div><h1>${title}</h1><p>${body}</p>${failed && safeDetail ? `<div class="detail">${safeDetail}</div>` : ""}${failed ? `<div class="actions"><button id="nola-open-logs">${strings.openLogs}</button><button class="primary" id="nola-retry-host">${strings.retry}</button></div>` : `<div class="pulse" role="status" aria-label="${strings.startingTitle}"></div>`}</main></body></html>`;
 }
 
 async function showInternalPage(mode: "starting" | "failed", detail = ""): Promise<void> {
@@ -369,15 +371,18 @@ async function startHost(): Promise<void> {
 }
 
 async function restartHost(): Promise<void> {
+    if (restartingHost || quitting) return;
+    restartingHost = true;
+    if (recoveryTimer) { clearTimeout(recoveryTimer); recoveryTimer = undefined; }
     automaticRecoveryCount = 0;
     hostOrigin = undefined;
-    await showInternalPage("starting");
     try {
+        await showInternalPage("starting");
         if (host) await host.restart();
         else await startHost();
     } catch (error) {
         await showInternalPage("failed", error instanceof Error ? error.message : String(error));
-    }
+    } finally { restartingHost = false; }
 }
 
 function registerIpc(): void {

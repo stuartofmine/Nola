@@ -148,6 +148,13 @@ final class CanonicalConversationStoreEndToEndTests: XCTestCase {
     }
 
     private final class DeterministicSummaryClient: LLMClient {
+        var emittedReceipts = 0
+        func generateSummaryReceipt(input: ModelInput, timeout: TimeInterval?) async throws -> LLMSummaryPhysicalReceipt {
+            emittedReceipts += 1
+            return LLMSummaryPhysicalReceipt(output: try await generateSummary(input: input, timeout: timeout),
+                finishReason: "stop", hasToolCalls: false)
+        }
+
         func generateSummary(input: ModelInput, timeout: TimeInterval?) async throws -> ModelOutput {
             ModelOutput(items: [], explain: "Persisted compact summary")
         }
@@ -353,20 +360,34 @@ final class CanonicalConversationStoreEndToEndTests: XCTestCase {
             let profileStore = CanonicalChatMemoryProfileStore(applicationRuntime: canonical
             )
             let manager = DefaultContextManager(store: store, profileStore: profileStore)
-            manager.llmClient = DeterministicSummaryClient()
+            let summarizer = DeterministicSummaryClient()
+            manager.llmClient = summarizer
+            // The evidence-preserving request cannot fit an 8K window with
+            // 4K reserved output. Refusal must preserve the source and must
+            // not leave a pending mutation that blocks a larger valid plan.
+            do {
+                _ = try await manager.compactConversation(for: conversation.id, maxTokens: 8_000,
+                    preserveRecentMessages: 2, force: true)
+                XCTFail("An insufficient summary window must be refused before a model request")
+            } catch ContextOutboundPreparationError.cannotFit {
+            } catch { XCTFail("Budget refusal must not appear as an uncertain mutation: \(error)") }
+            XCTAssertEqual(summarizer.emittedReceipts, 0, "An insufficient window must not start a model call")
+            XCTAssertEqual(try store.getMessages(conversationId: conversation.id, limit: 0).map(\.text), expected.map(\.1))
+            XCTAssertTrue(try XCTUnwrap(store.getConversation(conversationId: conversation.id)).compactedMemoryEntries.isEmpty)
             let firstUsage = try await manager.compactConversation(
                 for: conversation.id,
-                maxTokens: 8_000,
+                maxTokens: 16_000,
                 preserveRecentMessages: 2,
                 force: true
             )
             XCTAssertGreaterThan(firstUsage.archivedMessageCount, 0)
+            XCTAssertGreaterThan(summarizer.emittedReceipts, 0)
             let firstEntryCount = try XCTUnwrap(
                 store.getConversation(conversationId: conversation.id)
             ).compactedMemoryEntries.count
             _ = try await manager.compactConversation(
                 for: conversation.id,
-                maxTokens: 8_000,
+                maxTokens: 16_000,
                 preserveRecentMessages: 2,
                 force: true
             )

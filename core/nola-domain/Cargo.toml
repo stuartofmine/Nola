@@ -11,5 +11,11 @@ uuid = "1.10"
 url = "2.5"
 chrono = { version = "0.4", default-features = false, features = ["serde", "std"] }
 
+# sha2 0.10 otherwise uses its software kernel on ARM. This enables runtime
+# hardware detection and SHA instructions, retaining the portable fallback and
+# the published digest format. x86 already detects accelerated instructions.
+[target.'cfg(target_arch = "aarch64")'.dependencies]
+sha2 = { version = "0.10", features = ["asm"] }
+
 [dev-dependencies]
 syn = { version = "2", features = ["full", "visit"] }

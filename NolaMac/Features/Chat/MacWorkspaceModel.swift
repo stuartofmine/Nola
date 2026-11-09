@@ -1889,6 +1889,9 @@ final class MacWorkspaceModel {
                     do {
                         let baseline = try await self.remoteHost.permissionConfiguration(identity: remoteOwner.identity,
                             target: remoteOwner.target, expectedRevision: nil, profile: nil, minimumPolicyRevision: nil)
+                        // A rejected write does not invalidate the source policy
+                        // we just observed. Keep showing the actual active mode.
+                        self.remotePermissionConfigurations[owner] = baseline
                         let saved = if baseline.permission_profile == newValue { baseline } else {
                             try await self.remoteHost.permissionConfiguration(identity: remoteOwner.identity,
                                 target: remoteOwner.target, expectedRevision: baseline.configuration_revision, profile: newValue, minimumPolicyRevision: nil)
@@ -5429,6 +5432,10 @@ final class MacWorkspaceModel {
                 if let nativeRevision = editedResend.model.nativeRevision {
                     guard localModelEndpoint?.profileRevision == nativeRevision,
                           localModelEndpoint?.modelID == editedResend.model.profileID else { throw MacEditedResendError.modelUnavailable }
+                } else if let siwc = editedResend.model.siwcProfile {
+                    guard providerConfiguration?.siwcProfile == siwc, wireProtocol == .siwcResponses,
+                          providerConfiguration?.apiKey.isEmpty == true else { throw MacEditedResendError.modelUnavailable }
+                    try MacAppleChatConfigurationStore(applicationPort: modelApplication).validateSiwcProfile(siwc)
                 } else {
                     guard let providerConfiguration, providerConfiguration.profileID == editedResend.model.profileID else { throw MacEditedResendError.modelUnavailable }
                     let credential = try MacAppleChatConfigurationStore(applicationPort: modelApplication).captureRunCredential(

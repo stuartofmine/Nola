@@ -49,10 +49,12 @@ def selected_route(path):
 
 
 @contextlib.contextmanager
-def observed_provider(upstream, model, secret, log):
+def observed_provider(upstream, model, secret, log, *, listen_port=0, request_observer=None):
     expected_path = urlsplit(upstream).path.rstrip("/") + "/responses"
     class RestrictedProbe(Probe):
         def response_override(self, path, request, headers):
+            if request_observer is not None:
+                request_observer(request)
             if path != expected_path or request.get("model") != model or not request.get("input"):
                 return 403, b'{"error":{"message":"Acceptance relay only permits its selected generation route"}}'
             return None
@@ -62,7 +64,7 @@ def observed_provider(upstream, model, secret, log):
                 del self.headers["Authorization"]
             self.headers["Authorization"] = "Bearer " + secret
             super().do_POST()
-    server = ThreadingHTTPServer(("127.0.0.1", 0), AuthorizedHandler)
+    server = ThreadingHTTPServer(("127.0.0.1", listen_port), AuthorizedHandler)
     server.probe = RestrictedProbe(upstream, log, 180)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

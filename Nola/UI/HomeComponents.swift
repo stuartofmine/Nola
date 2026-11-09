@@ -600,12 +600,14 @@ struct HomeTodayBySourceCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 10) {
-                Image(systemName: "sparkles")
-                    .foregroundColor(DesignTokens.primaryColor)
-                Text(L10n.homeSummaryTitle)
-                    .font(.title3)
-                    .fontWeight(.bold)
-                Spacer()
+                Button(action: onTap) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "sparkles").foregroundStyle(DesignTokens.primaryColor)
+                        Text(L10n.homeSummaryTitle).font(.title3.bold())
+                        Spacer()
+                        Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                    }.frame(minHeight: 44).contentShape(Rectangle())
+                }.buttonStyle(.plain)
 
                 if isLoading {
                     ProgressView()
@@ -615,11 +617,12 @@ struct HomeTodayBySourceCard: View {
                         Image(systemName: "arrow.clockwise")
                             .font(.callout.weight(.semibold))
                             .foregroundColor(DesignTokens.primaryColor)
-                            .padding(8)
+                            .frame(minWidth: 44, minHeight: 44)
                             .background(DesignTokens.mutedFillColor)
                             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(L10n.homeRefresh)
                 }
             }
 
@@ -672,8 +675,7 @@ struct HomeTodayBySourceCard: View {
             RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous)
                 .stroke(DesignTokens.borderColor, lineWidth: 1)
         )
-        .contentShape(Rectangle())
-        .onTapGesture { onTap() }
+
     }
 }
 

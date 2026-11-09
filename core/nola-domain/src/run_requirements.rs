@@ -65,7 +65,19 @@ pub struct RequirementResourceClaim {
     pub operation: String,
     pub version: Option<String>,
     pub predicate: Option<String>,
+    /// An adopted review finding remains pending until its original failing
+    /// check is followed by the same check on the repaired current resource.
+    pub review: Option<RequirementReviewFinding>,
     pub source_refs: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RequirementReviewFinding {
+    /// Actual observations containing the adopted finding, not user authority.
+    pub source_evidence: Vec<String>,
+    /// May be absent while the reproducer is still being constructed.
+    pub counterexample_evidence: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -110,10 +122,15 @@ impl RequirementResourceScope {
         let mut identities = BTreeSet::new();
         for claim in required {
             identity("resource_uri", &claim.resource_uri)?;
+            url::Url::parse(&claim.resource_uri).map_err(|_| "resource_uri must be an absolute URI (for local files use file:///...), not a filesystem path")?;
             identity("operation", &claim.operation)?;
             if !identities.insert((&claim.resource_uri, &claim.operation, &claim.version, &claim.predicate)) { return Err("duplicate resource claim".into()); }
             if let Some(version) = &claim.version { identity("version", version)?; }
             if let Some(predicate) = &claim.predicate { identity("predicate", predicate)?; }
+            if let Some(review) = &claim.review {
+                references("review.source_evidence", &review.source_evidence, true)?;
+                if let Some(id) = &review.counterexample_evidence { identity("review.counterexample_evidence", id)?; }
+            }
             check_sources(&claim.source_refs)?;
         }
         let mut excluded = BTreeSet::new();
@@ -126,6 +143,15 @@ impl RequirementResourceScope {
             check_sources(&exclusion.source_refs)?;
         }
         Ok(())
+    }
+}
+
+fn preserves_review(previous: Option<&RequirementReviewFinding>, next: Option<&RequirementReviewFinding>) -> bool {
+    match (previous, next) {
+        (None, _) => true,
+        (Some(old), Some(new)) => old.source_evidence.iter().all(|id| new.source_evidence.contains(id))
+            && old.counterexample_evidence.as_ref().is_none_or(|id| new.counterexample_evidence.as_ref() == Some(id)),
+        (Some(_), None) => false,
     }
 }
 
@@ -148,7 +174,9 @@ pub fn validate_resource_scope_revision(previous: &[RunRequirement], next: &[Run
                 let preserved = next.iter().any(|requirement| match &requirement.resource_scope {
                     RequirementResourceScope::Declared { required, .. } => required.iter().any(|candidate|
                         candidate.resource_uri == claim.resource_uri && candidate.operation == claim.operation
-                        && candidate.version == claim.version && candidate.predicate == claim.predicate),
+                        && candidate.version == claim.version
+                        && (candidate.predicate == claim.predicate || (claim.review.is_some() && claim.predicate.is_none()))
+                        && preserves_review(claim.review.as_ref(), candidate.review.as_ref())),
                     RequirementResourceScope::Undeclared => false,
                 });
                 if !preserved { return Err("resource scope narrowed without new user input".into()); }
@@ -163,7 +191,9 @@ pub fn validate_resource_scope_retirement(old: &RunRequirement, next: &[RunRequi
     let removed = required.iter().any(|claim| !next.iter().any(|requirement| match &requirement.resource_scope {
         RequirementResourceScope::Declared { required, .. } => required.iter().any(|candidate|
             candidate.resource_uri == claim.resource_uri && candidate.operation == claim.operation
-            && candidate.version == claim.version && candidate.predicate == claim.predicate),
+            && candidate.version == claim.version
+            && (candidate.predicate == claim.predicate || (claim.review.is_some() && claim.predicate.is_none()))
+            && preserves_review(claim.review.as_ref(), candidate.review.as_ref())),
         RequirementResourceScope::Undeclared => false,
     }));
     if removed && !user_refs.iter().any(|reference| !interpreted_user_frontier.contains(reference)) {
@@ -425,11 +455,47 @@ mod tests {
     use super::*;
 
     #[test]
+    fn adopted_review_cannot_be_dropped_or_its_counterexample_replaced_on_same_input() {
+        let mut old = serde_json::from_value::<RunRequirement>(serde_json::json!({
+            "requirement_id":"review","description":"Fix lifecycle defect","source_refs":["input"],"dependency_ids":[],
+            "goal_requirement_ref":null,"resource_scope":{"kind":"declared","required":[{
+                "resource_uri":"file:///artifact","operation":"write","predicate":"case-1","source_refs":["input"],
+                "review":{"source_evidence":["review-observation"],"counterexample_evidence":null}}],
+                "exclusions":[],"interpreted_user_frontier":["input"]}})).unwrap();
+        let mut next = old.clone();
+        if let RequirementResourceScope::Declared { required, .. } = &mut next.resource_scope {
+            required[0].review.as_mut().unwrap().counterexample_evidence = Some("failed-case".into());
+        }
+        assert!(validate_resource_scope_revision(&[old.clone()], &[next.clone()], &["input".into()]).is_ok());
+        old = next;
+        for review in [None, Some(RequirementReviewFinding { source_evidence: vec!["other".into()], counterexample_evidence: Some("failed-case".into()) }),
+            Some(RequirementReviewFinding { source_evidence: vec!["review-observation".into()], counterexample_evidence: Some("weaker-case".into()) })] {
+            let mut weakened = old.clone();
+            if let RequirementResourceScope::Declared { required, .. } = &mut weakened.resource_scope { required[0].review = review; }
+            assert!(validate_resource_scope_revision(&[old.clone()], &[weakened.clone()], &["input".into()]).is_err());
+            assert!(validate_resource_scope_retirement(&old, &[weakened], &["input".into()]).is_err());
+        }
+        let mut pending = old.clone();
+        if let RequirementResourceScope::Declared { required, .. } = &mut pending.resource_scope {
+            required[0].predicate = None;
+            required[0].review.as_mut().unwrap().counterexample_evidence = None;
+        }
+        assert!(validate_resource_scope_revision(&[pending.clone()], &[old.clone()], &["input".into()]).is_ok());
+        assert!(validate_resource_scope_retirement(&pending, &[old.clone()], &["input".into()]).is_ok());
+        let mut invalid = old.resource_scope.clone();
+        if let RequirementResourceScope::Declared { required, .. } = &mut invalid { required[0].resource_uri = "/path/is/not/a/uri".into(); }
+        assert!(invalid.validate(&["input".into()]).is_err());
+        let mut invalid = old.resource_scope.clone();
+        if let RequirementResourceScope::Declared { required, .. } = &mut invalid { required[0].review.as_mut().unwrap().source_evidence.clear(); }
+        assert!(invalid.validate(&["input".into()]).is_err());
+    }
+
+    #[test]
     fn assistant_exclusions_can_be_recorded_but_cannot_prove_action_completion() {
         let mut declaration = RequirementResourceScope::Declared {
             required: vec![RequirementResourceClaim {
                 resource_uri: "file:///requested".into(), operation: "export".into(),
-                version: None, predicate: None, source_refs: vec!["input-3".into()],
+                version: None, predicate: None, review: None, source_refs: vec!["input-3".into()],
             }],
             exclusions: vec![RequirementResourceExclusion {
                 resource_uri: "file:///appendix".into(), reason: "not recommended".into(),
@@ -451,7 +517,7 @@ mod tests {
     #[test]
     fn declared_resource_scope_cannot_shrink_on_same_input() {
         let mut old = scope().requirements.remove(0);
-        let claim = RequirementResourceClaim { resource_uri:"file:///a".into(),operation:"read".into(),version:None,predicate:None,source_refs:vec!["input-3".into()] };
+        let claim = RequirementResourceClaim { resource_uri:"file:///a".into(),operation:"read".into(),version:None,predicate:None,review:None,source_refs:vec!["input-3".into()] };
         old.resource_scope = RequirementResourceScope::Declared { required:vec![claim],exclusions:vec![],interpreted_user_frontier:vec!["input-3".into()] };
         let mut changed=old.clone();
         changed.resource_scope=RequirementResourceScope::Undeclared;
@@ -467,7 +533,7 @@ mod tests {
         let mut value=serde_json::to_value(scope()).unwrap();
         value["requirements"][0].as_object_mut().unwrap().remove("resource_scope");
         assert!(serde_json::from_value::<RequirementSetRevision>(value).is_err());
-        let scope=RequirementResourceScope::Declared { required:vec![RequirementResourceClaim { resource_uri:"file:///a".into(),operation:"read".into(),version:None,predicate:None,source_refs:vec!["input-3".into()] }],
+        let scope=RequirementResourceScope::Declared { required:vec![RequirementResourceClaim { resource_uri:"file:///a".into(),operation:"read".into(),version:None,predicate:None,review:None,source_refs:vec!["input-3".into()] }],
             exclusions:vec![RequirementResourceExclusion {resource_uri:"file:///a".into(),reason:"suggestion".into(),source_refs:vec!["input-3".into()],provenance:RequirementScopeInterpretationSource::AssistantSuggestion}],interpreted_user_frontier:vec!["input-3".into()] };
         assert!(scope.validate(&["input-3".into()]).is_err());
     }

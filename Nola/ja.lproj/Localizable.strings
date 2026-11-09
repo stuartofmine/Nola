@@ -3105,3 +3105,13 @@
 "softwareUpdate.status.available" = "新しいバージョンがあります";
 "softwareUpdate.installPermission" = "必要に応じて Nola のアプリインストールを許可し、戻ってもう一度開いてください。";
 "softwareUpdate.status.incompatible_data" = "新しいデータ形式が異なるため更新を停止しました。既存データは保持されます。";
+
+"model.delete.failed" = "モデルを削除できませんでした。もう一度お試しください。";
+
+"model.action.pause" = "ダウンロードを一時停止";
+
+"model.action.cancel" = "ダウンロードを中止";
+
+"model.action.resume" = "ダウンロードを再開";
+
+"chat.context.cannot_fit.recovery" = "このモデルのコンテキストウィンドウが不足しています。モデルメニューで、より大きなコンテキストウィンドウのモデルを選んで再試行してください。元の会話は保持されています。";

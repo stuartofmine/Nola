@@ -127,14 +127,18 @@ final class IOSCanonicalAgentApplicationContractTests: XCTestCase {
         XCTAssertNil(input["user_text"])
     }
 
-    func testEmptyPermissionNoticeQueueUsesOnlyReadOnlyPeek() throws {
+    func testEmptyControlQueuesNeverClaimOrReplayAgentCommands() throws {
         let identity = IOSCanonicalAgentTurnIdentity(userMessageID: UUID())
         let store = CommandStoreStub(responses: [.null])
         let application = IOSCanonicalAgentApplication(store: store, descriptor: .init(
             conversationID: "policy-owner", conversationTitle: "", identity: identity,
             userText: "", userContentJSON: nil, contextCheckpointID: nil))
         XCTAssertNil(try application.applyPendingPermissionPolicy())
-        XCTAssertEqual(store.commands, [.object(["type": .string("peek_agent_command"), "session_id": .string("policy-owner")])])
+        XCTAssertEqual(store.commands.compactMap { command -> String? in
+            guard case .object(let fields) = command, case .string(let type)? = fields["type"] else { return nil }
+            return type
+        }, ["encode_host_worker_identity", "apply_pending_task_notice", "peek_agent_command"])
+        XCTAssertEqual(store.commands.last, .object(["type": .string("peek_agent_command"), "session_id": .string("policy-owner")]))
         XCTAssertTrue(IOSApplicationRuntime.isReadOnlyCommand(type: "peek_agent_command", arguments: [:]))
     }
 
@@ -145,7 +149,8 @@ final class IOSCanonicalAgentApplicationContractTests: XCTestCase {
         let underlying = CommandStoreStub(responses: [
             .object(["execution": admissionExecutionFixture(), "invocation_config_digest": .string("digest"),
                      "events": .array([]), "traces": .array([])]), claims,
-            accepted, accepted, claims,
+            .null, accepted, // Current source execution, then the lost cancellation ACK.
+            .null, accepted, claims, // Re-observe before retrying the frozen command.
         ])
         let store = CancellationLostAcknowledgementStore(underlying)
         let application = IOSCanonicalAgentApplication(store: store, descriptor: .init(
@@ -1026,6 +1031,11 @@ private final class CommandStoreStub: IOSAgentApplicationCommandStore, @unchecke
            fields["type"] == .string("encode_host_worker_identity") {
             return .object(["worker_generation": .string("fixture-worker-generation"),
                             "lease_owner": .string("fixture-worker-owner")])
+        }
+        // This fixture has no child Task receipt source. Checking that queue
+        // must not consume a response intended for a permission/control command.
+        if case .object(let fields) = command, fields["type"] == .string("apply_pending_task_notice") {
+            return .null
         }
         guard !responses.isEmpty else {
             throw IOSCanonicalAgentApplicationError.invalidResult("Stub response exhausted")

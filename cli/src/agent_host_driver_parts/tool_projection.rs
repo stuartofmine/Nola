@@ -1418,7 +1418,7 @@ mod effect_delivery_start_barrier_tests {
             }
             if !cold {
                 assert_eq!(bodies[1]["tools"], bodies[0]["tools"]);
-                assert_eq!(bodies[1]["tool_choice"], bodies[0]["tool_choice"]);
+                assert_eq!(bodies[1]["tool_choice"], "none");
                 assert_eq!(bodies[1]["messages"].as_array().unwrap().len(), bodies[0]["messages"].as_array().unwrap().len()+1);
             }
             let metrics = events.iter().filter_map(|event| match &event.payload {

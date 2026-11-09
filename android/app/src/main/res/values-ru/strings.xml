@@ -1315,4 +1315,10 @@
     <string name="software_update_status_available">Доступно обновление</string>
     <string name="software_update_install_permission">При запросе разрешите Nola устанавливать приложения, затем вернитесь и снова откройте установщик.</string>
     <string name="software_update_status_incompatible_data">Формат данных отличается. Обновление заблокировано; данные сохранены.</string>
+    <string name="goal_guidance">Опишите желаемый результат. Nola продолжит работу и остановится, если нужны уточнения или разрешение.</string>
+    <string name="goal_example">Например: упорядочить материалы проекта и подготовить сводку с источниками.</string>
+    <string name="goal_cancel_explanation">Автоматическая работа над целью остановится. Диалог и готовые результаты сохранятся.</string>
+    <string name="goal_operation_failed">Действие не подтверждено. Проверьте состояние перед повтором.</string>
+    <string name="goal_needs_user">Ожидание ввода или разрешения</string>
+    <string name="inspector_conversation_needed">Начните или откройте диалог, чтобы увидеть ход работы и задать цель.</string>
 </resources>

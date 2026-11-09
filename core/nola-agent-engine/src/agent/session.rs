@@ -568,7 +568,7 @@ impl AgentThreadState {
     pub(crate) fn seal_completed_turn_model_context(&mut self, _turn_id: &TurnId) {
         self.conversation
             .context_window
-            .refresh_estimate(&self.conversation.model_context);
+            .seal_estimate(&self.conversation.model_context);
     }
 
     pub fn record_invoked_skill(&mut self, skill: AgentInvokedSkill) -> Vec<String> {

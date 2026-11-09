@@ -35,7 +35,10 @@ pub(super) fn source_effect_requires_worker<'a>(
             matches!(access.as_str(), "write" | "overwrite" | "remove")
                 && components.starts_with(&source)
         }
-        PermissionResource::ProcessInvocation { cwd, .. } => Path::new(cwd).starts_with(root),
+        // An invocation's cwd establishes neither a write effect nor a read
+        // guarantee. Keep its normal Host risk/permission/sandbox admission;
+        // declared source-file effects above still require a worker. Inferring
+        // edits from cwd alone prevents verification of the integrated result.
         _ => false,
     })
 }
@@ -66,17 +69,16 @@ fn eligible(parent: &DelegationParentSnapshot, arguments: &Value) -> bool {
 
 fn destination(parent: &DelegationParentSnapshot, identity: &str) -> Result<String, String> {
     let root = Path::new(&parent.project_root);
-    let directory = root
-        .parent()
-        .filter(|path| path.is_absolute())
-        .ok_or("Project has no independent workspace parent")?;
-    if !parent
-        .authorized_workspace_roots
-        .iter()
-        .any(|allowed| directory.starts_with(allowed))
-    {
-        return Err(format!("Automatic worktree preparation requires Host-authorized workspace scope for {}. workspace_access grants OS directory access only; it cannot expand frozen worktree/write authority. Ask the Host or user to authorize this directory before retrying; unchanged scope will remain blocked. No source fallback was performed.", directory.display()));
-    }
+    // Prefer the narrowest independent Host scope. A project root alone does
+    // not authorize its parent; the Host prepares a private scratch container.
+    let directory = parent.authorized_workspace_roots.iter()
+        .map(Path::new)
+        .filter(|allowed| allowed.is_absolute() && !allowed.starts_with(root))
+        .max_by_key(|allowed| allowed.components().count())
+        .ok_or("No independent Host-authorized workspace directory is available. Configure a private managed workspace scope outside the project before retrying; OS directory access alone cannot expand frozen write authority.")?;
+    let directory = if root.parent().is_some_and(|parent| parent.starts_with(directory)) {
+        root.parent().unwrap()
+    } else { directory };
     let suffix = format!("{:x}", Sha256::digest(identity.as_bytes()));
     Ok(directory
         .join(format!(".nola-task-{}", &suffix[..24]))
@@ -776,7 +778,7 @@ mod tests {
             command: "synthetic command".into(),
             cwd: cwd.to_string_lossy().into_owned(),
         };
-        assert!(source_effect_requires_worker(
+        assert!(!source_effect_requires_worker(
             &root,
             "bash",
             [&process(root.clone())].into_iter()
@@ -786,6 +788,8 @@ mod tests {
             "bash",
             [&process(std::env::temp_dir().join("managed-child"))].into_iter()
         ));
+        assert!(source_effect_requires_worker(&root, "bash",
+            [&process(root.clone()), &write].into_iter())); // Concrete writes still coordinate.
         let mut runtime = runtime();
         let original = runtime
             .session
@@ -927,7 +931,10 @@ mod tests {
             .context.configuration.turn_identity.delegation.as_ref().unwrap().snapshot().unwrap();
         parent.authorized_workspace_roots = vec![parent.project_root.clone()];
         let error = destination(&parent, "scope-fixture").unwrap_err();
-        assert!(error.contains("workspace_access grants OS directory access only"));
+        assert!(error.contains("No independent Host-authorized workspace directory"));
+        let scratch = std::env::temp_dir().join("private-host-workspaces");
+        parent.authorized_workspace_roots.push(scratch.to_string_lossy().into_owned());
+        assert_eq!(Path::new(&destination(&parent, "scope-fixture").unwrap()).parent(), Some(scratch.as_path()));
         let directory = Path::new(&parent.project_root).parent().unwrap().to_owned();
         parent.authorized_workspace_roots = vec![directory.to_string_lossy().into_owned()];
         let root = destination(&parent, "scope-fixture").unwrap();

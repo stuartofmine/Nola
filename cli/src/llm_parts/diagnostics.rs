@@ -304,6 +304,28 @@ pub(super) fn model_request_debug_payload(
     })
 }
 
+// Called on the failure path, including account/request preflight failures
+// which occur before any HTTP request can be prepared.
+pub(crate) fn model_failure_debug_payload(error: &str) -> Value {
+    let projection = super::streaming::model_failure_projection(error);
+    json!({"failure_code": projection.code, "retryable": projection.retryable})
+}
+
+#[cfg(test)]
+mod failure_debug_tests {
+    #[test]
+    fn preflight_diagnostics_keep_the_fixed_code_and_never_raw_error_text() {
+        let value = super::model_failure_debug_payload("siwc_reauthorization_required");
+        assert_eq!(value["failure_code"], "chatgpt_reauthorization_required");
+        assert_eq!(value["retryable"], false);
+        let raw = "credential-secret siwc_reauthorization_required";
+        let unknown = super::model_failure_debug_payload(raw).to_string();
+        assert!(!unknown.contains("secret"));
+        assert!(!unknown.contains(raw));
+        assert!(unknown.contains("provider_failed"));
+    }
+}
+
 // Debug-only structural evidence: never request text, commands or headers.
 pub(super) fn cache_request_projection(body: &Value, tail: Option<usize>) -> Value {
     use sha2::{Digest, Sha256};

@@ -21,6 +21,23 @@ class PublicExportTests(unittest.TestCase):
             self.assertFalse((destination/'cer').exists());self.assertFalse((destination/'.git').exists())
             self.assertEqual((destination/'source.rs').read_text(),'// public source\n');self.assertFalse(report['history_copied'])
 
+    def test_local_editor_agent_and_private_workflow_settings_never_publish(self):
+        with tempfile.TemporaryDirectory() as name:
+            root=Path(name)/'private';root.mkdir();destination=Path(name)/'public'
+            subprocess.run(['git','init','-q',str(root)],check=True)
+            for directory in ['.github','.vscode','.claude','.cargo','.codex','.idea']:
+                (root/directory).mkdir();(root/directory/'local-settings.txt').write_text('private workspace preferences')
+            (root/'README.md').write_text('Public project')
+            (root/'default.profraw').write_bytes(b'local coverage')
+            (root/'Tests.xcresult').mkdir();(root/'Tests.xcresult'/'Info.plist').write_text('private test results')
+            subprocess.run(['git','add','.'],cwd=root,check=True)
+            module.export(root,destination,[])
+            self.assertEqual((destination/'README.md').read_text(),'Public project')
+            for directory in ['.github','.vscode','.claude','.cargo','.codex','.idea']:
+                self.assertFalse((destination/directory).exists(),directory)
+            self.assertFalse((destination/'default.profraw').exists())
+            self.assertFalse((destination/'Tests.xcresult').exists())
+
     def test_unknown_token_stops_export_before_creating_destination(self):
         with tempfile.TemporaryDirectory() as name:
             root=Path(name)/'private';root.mkdir();destination=Path(name)/'public'

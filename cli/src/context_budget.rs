@@ -38,7 +38,21 @@ impl ProviderContextLimits {
     }
 }
 
-static PROVIDER_PROBE_CACHE: OnceLock<Mutex<HashMap<String, ProviderProbeCacheEntry>>> =
+// Process-local identity: HashMap compares these fields exactly and uses its
+// own keyed hasher. No serialized tuple or second cryptographic digest.
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct ProviderProbeCacheKey {
+    endpoint: String,
+    model: String,
+    provider: String,
+    credential_digest: [u8; 32],
+}
+impl std::fmt::Debug for ProviderProbeCacheKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProviderProbeCacheKey").finish_non_exhaustive()
+    }
+}
+static PROVIDER_PROBE_CACHE: OnceLock<Mutex<HashMap<ProviderProbeCacheKey, ProviderProbeCacheEntry>>> =
     OnceLock::new();
 const DEFAULT_CONTEXT_WINDOW_TOKENS: usize = 128_000;
 
@@ -521,13 +535,14 @@ fn provider_model_metadata_url(
     Some(url)
 }
 
-fn provider_probe_cache_key(endpoint: &str, model: &str, provider: &str, api_key: &str) -> String {
+fn provider_probe_cache_key(endpoint: &str, model: &str, provider: &str, api_key: &str) -> ProviderProbeCacheKey {
     use sha2::{Digest, Sha256};
-    let identity = serde_json::to_vec(&(
-        endpoint.trim(), model.trim(), provider.trim().to_ascii_lowercase(),
-        format!("{:x}", Sha256::digest(api_key.as_bytes())),
-    )).expect("string tuple serialization cannot fail");
-    format!("{:x}", Sha256::digest(identity))
+    ProviderProbeCacheKey {
+        endpoint: endpoint.trim().into(), model: model.trim().into(),
+        provider: provider.trim().to_ascii_lowercase(),
+        // Do not retain an extra plaintext credential in the metadata cache.
+        credential_digest: Sha256::digest(api_key.as_bytes()).into(),
+    }
 }
 
 #[cfg(test)]
@@ -544,11 +559,11 @@ mod provider_probe_identity_tests {
             key("https://example.invalid/Path?key=a/", "Model", "openai", "other"),
         ] { assert_ne!(base, candidate); }
         assert_ne!(key("https://e.invalid/a|b", "c", "openai", "s"), key("https://e.invalid/a", "b|c", "openai", "s"));
-        assert!(!base.contains("secret"));
+        assert!(!format!("{base:?}").contains("secret"));
     }
 }
 
-fn cached_provider_probe(key: &str) -> Option<Option<ProviderContextLimits>> {
+fn cached_provider_probe(key: &ProviderProbeCacheKey) -> Option<Option<ProviderContextLimits>> {
     let cache = PROVIDER_PROBE_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     let mut cache = cache.lock().unwrap_or_else(|err| err.into_inner());
     let entry = cache.get(key).copied()?;

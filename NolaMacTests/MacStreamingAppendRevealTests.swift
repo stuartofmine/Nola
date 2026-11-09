@@ -33,6 +33,27 @@ final class MacStreamingAppendRevealTests: XCTestCase {
         XCTAssertTrue(completed.contains("NOLA-STREAM-END"), completed)
     }
 
+    func testCompletedSuffixStaysVisiblyCompleteAfterRevealSettles() async throws {
+        let state = AppendRevealFixture(kind: .phrase, text: "REEDITED=32", suppressed: false)
+        let hosting = NSHostingView(rootView: AppendRevealRoot(state: state))
+        hosting.frame = NSRect(x: 0, y: 0, width: 500, height: 100)
+        let window = NSWindow(contentRect: hosting.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = hosting; window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil); window.contentView = nil; window.close() }
+        try await settle(hosting, milliseconds: 600)
+        let before = try bitmap(hosting)
+        state.text += "3"
+        state.contentIsFinal = true
+        try await settle(hosting, milliseconds: Int((AppleStreamingRevealTiming.duration + 0.2) * 1000))
+        let completed = try bitmap(hosting)
+        try await settle(hosting, milliseconds: 450)
+        let later = try bitmap(hosting)
+        XCTAssertGreaterThan(brightPixels(completed), brightPixels(before) + 5,
+                             "The final glyph must actually be visible, not only accessible")
+        XCTAssertEqual(changedPixels(completed, later), 0,
+                       "A settled terminal response must not keep changing or lose its final glyph")
+    }
+
     private func accessibleText(_ root: NSView) -> String {
         var queue: [AnyObject] = [root]
         var visited = Set<ObjectIdentifier>()
@@ -141,7 +162,9 @@ final class MacStreamingAppendRevealTests: XCTestCase {
         window.contentView = hosting
         window.makeKeyAndOrderFront(nil)
         defer { window.orderOut(nil); window.contentView = nil; window.close() }
-        try await settle(hosting, milliseconds: 430)
+        // The reference prefix must finish its initial 0.52 s ink reveal.
+        // A 0.43 s reference still contains a fading final math glyph.
+        try await settle(hosting, milliseconds: Int((AppleStreamingRevealTiming.duration + 0.2) * 1000))
         let before = try bitmap(hosting)
         let size = hosting.fittingSize
         state.text += suffix

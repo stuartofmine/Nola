@@ -1904,8 +1904,7 @@ impl AgentRuntime {
                     goal: self.session.goal_projection.clone(),
                 });
             }
-            self.session.execution.requirements.observations.insert(evidence.evidence_id.clone(),
-                (&evidence, turn_id.as_str(), self.session.journal.revision).into());
+            self.record_requirement_evidence(turn_id, &evidence);
             events.push(RuntimeEvent::ExecutionEvidenceObserved {
                 turn_id: turn_id.clone(),
                 evidence,

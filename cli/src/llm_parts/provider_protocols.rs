@@ -1006,10 +1006,12 @@ pub(super) fn anthropic_request_body(
     if !anthropic_tools.is_empty() {
         body["tools"] = Value::Array(anthropic_tools);
         body["tool_choice"] = json!({
-            "type": if tool_choice == "required" { "any" } else { "auto" }
+            "type": match tool_choice { "required" => "any", "none" => "none", _ => "auto" }
         });
-        if let Some(parallel) = cfg.parallel_tool_calls {
-            body["tool_choice"]["disable_parallel_tool_use"] = Value::Bool(!parallel);
+        if tool_choice != "none" {
+            if let Some(parallel) = cfg.parallel_tool_calls {
+                body["tool_choice"]["disable_parallel_tool_use"] = Value::Bool(!parallel);
+            }
         }
     }
     if let Some(selection) = &cfg.reasoning_selection {

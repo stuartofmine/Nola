@@ -136,6 +136,8 @@ struct IOSConversationInspector: View {
     @State private var sendingGoalControl = false
     @State private var showGoalStart = false
     @State private var goalObjective = ""
+    @FocusState private var goalObjectiveFocused: Bool
+    @State private var goalToCancel: AppleGoalControl?
     @State private var showSchedule = false
     @State private var goalWake = Date().addingTimeInterval(3600)
 
@@ -151,6 +153,12 @@ struct IOSConversationInspector: View {
                             Text(item.content).textSelection(.enabled)
                                 .font(.body).padding(.vertical, 8)
                         } label: { Label(item.name, systemImage: "doc") }
+                    }
+                } else if conversationID == nil {
+                    ContentUnavailableView {
+                        Label(String(localized: "inspector.progress", table: "ConversationInspector"), systemImage: "bubble.left.and.bubble.right")
+                    } description: {
+                        Text(String(localized: "inspector.conversation_needed", table: "ConversationInspector"))
                     }
                 } else if (loading && facts == nil && plan == nil) || loadedOwner != conversationID {
                     ProgressView()
@@ -209,7 +217,7 @@ struct IOSConversationInspector: View {
         .task(id: "\(conversationID ?? ""):\(retry)") {
             if loadedOwner != conversationID {
                 facts = nil; plan = nil; supportsGoalControl = false; pendingGoalControl = nil; goalControlNotice = nil
-                sendingGoalControl = false; showGoalStart = false; showSchedule = false; goalObjective = ""
+                sendingGoalControl = false; showGoalStart = false; showSchedule = false; goalObjective = ""; goalToCancel = nil
             }
             loadedOwner = conversationID; loading = true; failed = false
             guard pane != .resources, let owner = conversationID else { loading = false; return }
@@ -259,7 +267,11 @@ struct IOSConversationInspector: View {
                     Menu {
                         Button(goalText("goal.schedule", "Schedule continuation")) { showSchedule = true }
                         if projection.can_cancel {
-                            Button(goalText("goal.cancel", "Cancel Goal"), role: .destructive) { sendObservedGoalControl(.cancel) }
+                            Button(goalText("goal.cancel", "Cancel Goal"), role: .destructive) {
+                                if let goal = projection.active, let token = projection.control_token {
+                                    goalToCancel = AppleGoalControl(action: .cancel, expectedGoalId: goal.id, expectedControlToken: token)
+                                }
+                            }
                         }
                     } label: { Image(systemName: "ellipsis.circle").accessibilityLabel(goalText("goal.actions", "Goal actions")) }
                 }
@@ -270,15 +282,28 @@ struct IOSConversationInspector: View {
             }
             if sendingGoalControl { ProgressView().accessibilityLabel(goalText("goal.sending", "Sending Goal action")) }
         }
+        .confirmationDialog(goalText("goal.cancel_title", "End this goal?"), isPresented: Binding(
+            get: { goalToCancel != nil }, set: { if !$0 { goalToCancel = nil } })) {
+            Button(goalText("goal.cancel", "Cancel Goal"), role: .destructive) {
+                guard let observed = goalToCancel else { return }
+                goalToCancel = nil; sendGoalControl(observed)
+            }
+            Button(L10n.close, role: .cancel) { goalToCancel = nil }
+        } message: { Text(goalText("goal.cancel_explanation", "Automatic work on this goal will stop. Your conversation and completed results remain.")) }
         .sheet(isPresented: $showGoalStart) {
             NavigationStack {
                 Form {
+                    Text(goalText("goal.guidance", "Describe a result. Nola keeps working and pauses when it needs your input or permission."))
+                        .foregroundStyle(.secondary)
                     TextField(goalText("goal.objective", "What should this Goal achieve?"), text: $goalObjective, axis: .vertical)
-                        .lineLimit(3...8)
-                    Text(goalText("goal.model_note", "Uses the model explicitly configured for this Host conversation. Configure it on the Host before starting."))
+                        .lineLimit(3...8).focused($goalObjectiveFocused)
+                    Text(goalText("goal.example", "Example: review the CLI, fix interaction issues, and run tests."))
+                        .font(.callout).foregroundStyle(.secondary)
+                    Text(goalText("goal.model_note", "Uses this conversation’s selected model and current tool permissions."))
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 .navigationTitle(goalText("goal.start", "Start a Goal"))
+                .onAppear { goalObjectiveFocused = true }
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button(L10n.close) { showGoalStart = false } }
                     ToolbarItem(placement: .confirmationAction) {

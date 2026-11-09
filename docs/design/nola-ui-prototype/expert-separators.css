@@ -48,3 +48,6 @@
 .message-actions button{min-height:32px;padding:4px 8px;display:inline-flex;align-items:center;gap:5px;font-size:12px;border-radius:6px}.message-actions button:hover{background:var(--soft)}.message-actions svg{width:14px;height:14px}.message-actions button:disabled{cursor:not-allowed}.user .message-actions{justify-content:flex-end}.action-note{font-size:11px;line-height:18px}.branch-origin{font-size:12px;line-height:20px;color:var(--muted);margin-bottom:22px}.branch-origin button{text-decoration:underline;min-height:36px}.expert-content>.message-actions{padding-left:2px}
 @media(max-width:700px){.expert-content{max-width:calc(100% - 48px)}.user-stack{max-width:90%}.message-actions button{min-height:44px}.message-actions{min-height:44px}}
 @media(max-width:359px){.expert-content{max-width:calc(100% - 42px)}}
+
+.message-actions button[data-action^="message-copy:"]{border:0;background:transparent;box-shadow:none}
+.message-actions button[data-action^="message-copy:"]:hover{background:transparent;color:var(--fg)}

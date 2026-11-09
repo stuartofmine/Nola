@@ -65,3 +65,12 @@
 .studio-inspector button:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
 .studio-inspector .rv-file.selected,.studio-inspector .rv-artifact.selected{box-shadow:inset 2px 0 var(--fg)}
 }
+@media(min-width:701px){
+    .inspector-inline-section{border-bottom:1px solid var(--line)}
+    .inspector-section-toggle{width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:40px;padding:8px;text-align:left;border-radius:7px;font-size:13px;font-weight:600}
+    .inspector-section-toggle>svg{width:14px;height:14px;flex-shrink:0}.inspector-section-body{padding:8px 8px 16px}
+    .inspector-knowledge details{padding:7px 0}.inspector-knowledge summary{min-height:32px;cursor:pointer;padding:6px 0;font-weight:500}
+    .inspector-knowledge label{display:grid;gap:8px;font-size:12px}.inspector-knowledge textarea{width:100%;min-height:96px;resize:vertical;background:var(--bg);border:1px solid var(--line);color:var(--fg);padding:10px 12px;border-radius:8px;font:inherit;line-height:1.6}
+    @media(hover:hover){.inspector-section-toggle:hover{background:var(--hover)}}
+    .inspector-section-toggle:active{background:var(--soft)}
+}

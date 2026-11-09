@@ -1198,14 +1198,14 @@ final class WebAgentProviderTests: XCTestCase {
 
 
 extension WebAgentProviderTests {
-    func testHostPermissionWireVersionFourAndHardCutRejectsOldIdentityAndSSE() throws {
-        // Literal 4 is the Rust HOST_PERMISSION_PROTOCOL_VERSION contract, not a
+    func testHostPermissionWireVersionOneRejectsUnsupportedIdentityAndSSE() throws {
+        // Literal 1 is the Rust HOST_PERMISSION_PROTOCOL_VERSION contract, not a
         // fixture derived from the Swift value under test.
         XCTAssertEqual(WebAgentProvider.hostPermissionProtocolVersion, 1)
         let identity = Data(#"{"host_identity":{"id":"rust-host","permission_protocol_version":1}}"#.utf8)
         let settings = try JSONDecoder().decode(WebAgentProvider.HostAgentSettings.self, from: identity)
         XCTAssertEqual(settings.host_identity?.permission_protocol_version, 1)
-        for old in [1, 2, 3] {
+        for old in [0, 2, 3, 4] {
             let data = Data("{\"host_identity\":{\"id\":\"rust-host\",\"permission_protocol_version\":\(old)}}".utf8)
             XCTAssertThrowsError(try JSONDecoder().decode(WebAgentProvider.HostAgentSettings.self, from: data))
         }
@@ -1216,10 +1216,10 @@ extension WebAgentProviderTests {
             let data = try JSONSerialization.data(withJSONObject: wire)
             return try WebAgentProvider.parseSSEPayload(String(decoding: data, as: UTF8.self), token: "test")
         }
-        guard case .permissionRequest(let request, _)? = try event(version: 4) else { return XCTFail("Expected Rust v4 permission request") }
+        guard case .permissionRequest(let request, _)? = try event(version: 1) else { return XCTFail("Expected Rust v1 permission request") }
         XCTAssertEqual(request.protocolVersion, 1)
         XCTAssertEqual(request.id, "request-3")
-        for version: Any? in [nil, 1, 2, 3, "4"] {
+        for version: Any? in [nil, 0, 2, 3, 4, "1"] {
             guard case .error? = try event(version: version) else { return XCTFail("Unsupported permission wire must fail closed: \(String(describing: version))") }
         }
     }

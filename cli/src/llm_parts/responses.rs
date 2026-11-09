@@ -863,6 +863,30 @@ mod responses_contract_tests {
     }
 
     #[test]
+    fn siwc_first_greeting_accepts_the_real_core_projected_host_catalog() {
+        let tools=crate::agent_host_driver::initial_model_tool_schemas(crate::tools::tool_schemas_for_host());
+        assert!(!tools.is_empty());
+        assert!(tools.iter().any(|tool| tool.get("x-nola-read-only").is_some()),"exercise the actual native catalog annotation");
+        let original=tools.clone();
+        let mut cfg=config("https://api.openai.com/v1".into());
+        cfg.provider=Some("siwc_responses".into());cfg.thinking_enabled=false;cfg.reasoning_selection=None;
+        for text in ["你好", "Hello", "Search current model capabilities"] {
+            let messages=vec![json!({"role":"system","content":"Fixture policy"}),json!({"role":"user","content":text})];
+            let body=siwc_responses_body(&cfg,&messages,&tools,"auto").unwrap();
+            validate_siwc_body(&body,&cfg.model).unwrap();
+            assert_eq!(body["input"][1]["content"],text,"prompt content does not select or authorize a tool");
+            let nested=body["tools"][0]["tools"].as_array().unwrap();
+            assert_eq!(nested.len(),tools.len());
+            for (wire,core) in nested.iter().zip(&tools) {
+                assert_eq!(wire["name"],core["function"]["name"]);
+                assert_eq!(wire["parameters"],core["function"]["parameters"]);
+                assert!(wire.get("x-nola-read-only").is_none());
+            }
+        }
+        assert_eq!(tools,original,"canonical tool metadata remains available to Core");
+    }
+
+    #[test]
     fn siwc_body_uses_stateless_history_without_api_output_limit() {
         let mut cfg = config("https://api.openai.com/v1".into());
         let messages = vec![json!({"role":"system","content":"Policy"}),

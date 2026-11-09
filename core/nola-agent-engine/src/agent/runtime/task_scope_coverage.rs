@@ -2,7 +2,7 @@
 //! Checks declared object coverage, never completeness of natural-language intent.
 use super::requirements::ObservedEvidenceReference;
 use nola_domain::execution_evidence::{ExecutionCheckKind, ExecutionState};
-use nola_domain::run_requirements::RequirementResourceScope;
+use nola_domain::run_requirements::{RequirementResourceClaim, RequirementResourceScope};
 use std::collections::BTreeMap;
 
 pub(super) fn validate_satisfied_coverage(
@@ -33,7 +33,7 @@ pub(super) fn validate_satisfied_coverage(
                     if let Some(predicate) = &claim.predicate {
                         let mut versions = Vec::new();
                         for check in receipt.checks.iter().filter(|check| {
-                            check.kind == ExecutionCheckKind::Postcondition
+                            accepted_check_kind(check, claim)
                                 && check.passed
                                 && check.resource_uri == claim.resource_uri
                                 && &check.predicate == predicate
@@ -99,13 +99,16 @@ pub(super) fn validate_satisfied_coverage(
                     // resource predicate. No model text can manufacture this check.
                     if claim.predicate.as_ref().is_some_and(|predicate| {
                         !receipt.checks.iter().any(|check| {
-                            check.kind == ExecutionCheckKind::Postcondition
+                            accepted_check_kind(check, claim)
                                 && check.passed
                                 && check.resource_uri == claim.resource_uri
                                 && &check.version == version
                                 && &check.predicate == predicate
                         })
                     }) {
+                        return false;
+                    }
+                    if !review_regression_covered(claim, cited, observations, action, observation, version) {
                         return false;
                     }
                     // Only a demonstrated transition of this version invalidates
@@ -136,6 +139,52 @@ pub(super) fn validate_satisfied_coverage(
     Ok(())
 }
 
+/// Typed process-exit evidence is useful for one pinned regression, never a
+/// claim that arbitrary process success establishes business acceptance.
+fn accepted_check_kind(check: &nola_domain::execution_evidence::PostconditionCheck, claim: &RequirementResourceClaim) -> bool {
+    check.kind == ExecutionCheckKind::Postcondition
+        || (claim.review.is_some() && check.kind == ExecutionCheckKind::ProcessExit
+            && check.predicate.strip_prefix("regression_process_exit:sha256:")
+                .is_some_and(|hash| hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit())))
+}
+
+fn review_regression_covered(
+    claim: &RequirementResourceClaim,
+    cited: &[String],
+    observations: &BTreeMap<String, ObservedEvidenceReference>,
+    repair: &ObservedEvidenceReference,
+    validation: &ObservedEvidenceReference,
+    version: &str,
+) -> bool {
+    let Some(review) = &claim.review else { return true; };
+    let Some(id) = &review.counterexample_evidence else { return false; };
+    if !cited.contains(id) { return false; }
+    let Some(failure) = observations.get(id) else { return false; };
+    if !matches!(failure.outcome, nola_domain::host_effect::HostToolOutcome::Succeeded | nola_domain::host_effect::HostToolOutcome::Failed)
+        || failure.source.host_id != validation.source.host_id || failure.turn_id != validation.turn_id
+        || failure.recorded_core_revision >= repair.recorded_core_revision
+        || repair.recorded_core_revision >= validation.recorded_core_revision {
+        return false;
+    }
+    let Some(failed_receipt) = &failure.receipt else { return false; };
+    if failed_receipt.state != ExecutionState::Completed { return false; }
+    let fixed = failed_receipt.checks.iter().any(|failed| {
+        accepted_check_kind(failed, claim) && !failed.passed
+            && failed.resource_uri == claim.resource_uri && Some(&failed.predicate) == claim.predicate.as_ref()
+            && failed.version != version
+            && validation.receipt.as_ref().is_some_and(|receipt| receipt.checks.iter().any(|passed|
+                passed.passed && passed.kind == failed.kind && passed.resource_uri == failed.resource_uri
+                    && passed.predicate == failed.predicate && passed.version == version))
+    });
+    fixed && !observations.values().any(|later| {
+        later.source.host_id == validation.source.host_id && later.turn_id == validation.turn_id
+            && later.recorded_core_revision > validation.recorded_core_revision
+            && later.receipt.as_ref().is_some_and(|receipt| receipt.checks.iter().any(|check|
+                !check.passed && check.resource_uri == claim.resource_uri
+                    && Some(&check.predicate) == claim.predicate.as_ref()))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,6 +201,7 @@ mod tests {
                     operation: "commit".into(),
                     version: Some("v1".into()),
                     predicate: Some("committed_path".into()),
+                    review: None,
                     source_refs: vec!["user".into()],
                 })
                 .collect(),
@@ -197,6 +247,91 @@ mod tests {
             revision,
         ))
     }
+    fn regression_fixture() -> (RequirementResourceScope, BTreeMap<String, ObservedEvidenceReference>, Vec<String>) {
+        use nola_domain::run_requirements::RequirementReviewFinding;
+        let predicate = format!("regression_process_exit:sha256:{}", "a".repeat(64));
+        let scope = RequirementResourceScope::Declared { required: vec![RequirementResourceClaim {
+            resource_uri: "file:///one".into(), operation:"commit".into(), version:None,
+            predicate:Some(predicate.clone()), review:Some(RequirementReviewFinding {
+                source_evidence:vec!["review".into()], counterexample_evidence:Some("failure".into()) }), source_refs:vec!["user".into()],
+        }], exclusions:vec![], interpreted_user_frontier:vec!["user".into()] };
+        let review = observation("review", "file:///one", 1);
+        let mut failure = observation("failure", "file:///one", 2);
+        failure.outcome = nola_domain::host_effect::HostToolOutcome::Failed;
+        failure.receipt.as_mut().unwrap().effects.clear();
+        failure.receipt.as_mut().unwrap().checks[0] = PostconditionCheck { kind:ExecutionCheckKind::ProcessExit,
+            resource_uri:"file:///one".into(), version:"broken".into(), predicate:predicate.clone(), passed:false };
+        let mut repair = observation("repair", "file:///one", 3);
+        repair.receipt.as_mut().unwrap().checks.clear();
+        repair.receipt.as_mut().unwrap().effects[0].before_version = Some("broken".into());
+        let mut pass = observation("pass", "file:///one", 4);
+        pass.receipt.as_mut().unwrap().effects.clear();
+        pass.receipt.as_mut().unwrap().checks[0].kind = ExecutionCheckKind::ProcessExit;
+        pass.receipt.as_mut().unwrap().checks[0].predicate = predicate;
+        let observations = [review, failure, repair, pass].into_iter().map(|item| (item.evidence_id.clone(),item)).collect();
+        (scope, observations, vec!["failure".into(),"repair".into(),"pass".into()])
+    }
+
+    #[test]
+    fn review_closure_requires_original_failure_ordered_repair_and_same_current_check() {
+        let (scope, original, refs) = regression_fixture();
+        assert!(validate_satisfied_coverage(&scope, &refs, &original).is_ok());
+        for variant in 0..14 {
+            let mut observations = original.clone();
+            match variant {
+                0 => { observations.get_mut("failure").unwrap().receipt = None; }, // child says tests passed
+                1 => { observations.get_mut("failure").unwrap().receipt.as_mut().unwrap().checks[0].passed = true; },
+                2 => { observations.get_mut("pass").unwrap().receipt.as_mut().unwrap().checks[0].predicate = "process_exit_zero_with_stable_resource".into(); },
+                3 => { observations.get_mut("pass").unwrap().receipt.as_mut().unwrap().checks[0].predicate.push('b'); }, // changed test
+                4 => { observations.get_mut("failure").unwrap().receipt.as_mut().unwrap().checks[0].resource_uri = "file:///different".into(); },
+                5 => { observations.get_mut("failure").unwrap().receipt.as_mut().unwrap().checks[0].version = "v1".into(); }, // no repaired version
+                6 => { observations.get_mut("failure").unwrap().recorded_core_revision = 5; },
+                7 => { observations.get_mut("repair").unwrap().recorded_core_revision = 5; },
+                8 => { observations.get_mut("failure").unwrap().source.host_id = "another-host".into(); },
+                9 => { observations.get_mut("failure").unwrap().turn_id = "another-turn".into(); },
+                10 => { observations.get_mut("failure").unwrap().receipt.as_mut().unwrap().state = ExecutionState::Unknown; },
+                11 => { observations.get_mut("pass").unwrap().outcome = nola_domain::host_effect::HostToolOutcome::Failed; },
+                12 => { observations.get_mut("failure").unwrap().outcome = nola_domain::host_effect::HostToolOutcome::Deferred; },
+                13 => { observations.get_mut("failure").unwrap().outcome = nola_domain::host_effect::HostToolOutcome::Cancelled; },
+                _ => unreachable!(),
+            }
+            assert!(validate_satisfied_coverage(&scope, &refs, &observations).is_err(), "variant {variant}");
+        }
+        assert!(validate_satisfied_coverage(&scope, &refs[1..], &original).is_err(), "must cite original counterexample");
+        let mut pending = scope.clone();
+        if let RequirementResourceScope::Declared { required, .. } = &mut pending {
+            required[0].review.as_mut().unwrap().counterexample_evidence = None;
+        }
+        assert!(validate_satisfied_coverage(&pending, &refs, &original).is_err());
+        let cold_scope: RequirementResourceScope = serde_json::from_str(&serde_json::to_string(&scope).unwrap()).unwrap();
+        let cold_observations = serde_json::from_str(&serde_json::to_string(&original).unwrap()).unwrap();
+        assert!(validate_satisfied_coverage(&cold_scope, &refs, &cold_observations).is_ok());
+    }
+
+    #[test]
+    fn later_edit_or_failure_reopens_review_and_unrelated_evidence_cannot_close_it() {
+        let (scope, original, refs) = regression_fixture();
+        for later_failure in [false, true] {
+            let mut observations = original.clone();
+            let mut later = if later_failure { original["failure"].clone() } else { observation("later", "file:///one", 5) };
+            later.evidence_id = "later".into();
+            later.recorded_core_revision = 5;
+            if !later_failure {
+                later.receipt.as_mut().unwrap().effects[0].before_version = Some("v1".into());
+                later.receipt.as_mut().unwrap().effects[0].after_version = Some("v2".into());
+                later.receipt.as_mut().unwrap().checks.clear();
+            }
+            observations.insert("later".into(), later);
+            observations.insert("scale-test".into(), observation("scale-test", "file:///unrelated", 6));
+            assert!(validate_satisfied_coverage(&scope, &refs, &observations).is_err());
+        }
+        let mut observations = original;
+        let mut unrelated = observation("unrelated", "file:///different", 5);
+        unrelated.receipt.as_mut().unwrap().effects[0].after_version = Some("new".into());
+        observations.insert("unrelated".into(), unrelated);
+        assert!(validate_satisfied_coverage(&scope, &refs, &observations).is_ok());
+    }
+
     #[test]
     fn subset_and_process_exit_do_not_cover_declared_objects() {
         let mut observations = BTreeMap::from([("e1".into(), observation("e1", "file:///one", 1))]);

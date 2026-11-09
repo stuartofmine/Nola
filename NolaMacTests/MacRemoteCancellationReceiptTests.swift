@@ -142,11 +142,13 @@ final class MacRemoteCancellationReceiptTests: XCTestCase {
         try configuration.save(url: baseURL.absoluteString, token: "fixture-token", hostID: "fixture-host")
         let service = MacRemoteHostService(configurationStore: configuration)
         let ticket = MacRunSubmissionTicket(identity: .init(conversationID: "conversation", submissionID: "original", generationID: 1))
+        try port.ensureFixtureConversation(id: "conversation", title: "Fixture")
         let stream = await service.run(conversationID: "conversation", submissionID: "original",
             userMessageID: "user", assistantMessageID: "original:assistant", prompt: "fixture",
             modelID: "fixture", modelProviderID: nil, modelIntent: nil, memoryEnabled: memoryEnabled, executionBackend: "codex",
             externalSessionID: nil, submission: .init(target: try service.captureSubmissionTarget(), ticket: ticket,
                 beforeDispatch: {
+                    try port.ensureFixtureConversation(id: "conversation", title: "Fixture")
                     _ = try port.prepareRemoteSubmission(.init(conversationID: "conversation", conversationTitle: "Fixture",
                         submissionID: "original", sourceHostID: "fixture-host", clientID: try configuration.clientID(), userMessageID: "user",
                         userPartID: "user:text", userText: "fixture", userContentJSON: nil,
@@ -206,7 +208,7 @@ final class MacRemoteCancellationReceiptTests: XCTestCase {
         try await exerciseSubmissionBoundary(failMirror: true)
     }
 
-    func testCancelledReplacementPreparationPreservesExistingPermissionReceipt() async throws {
+    func testUnfinishedRunRejectsReplacementAndPreservesExistingPermissionReceipt() async throws {
         try await exerciseSubmissionBoundary(failMirror: false, preserveReceipt: true)
     }
 
@@ -228,24 +230,31 @@ final class MacRemoteCancellationReceiptTests: XCTestCase {
             mirrorCommits += 1
             throw MacRemoteHostError.invalidResponse
         }
+        try port.ensureFixtureConversation(id: "conversation", title: "Receipt")
         let stream = await service.run(conversationID: "conversation", submissionID: submissionID,
             userMessageID: "user", assistantMessageID: "assistant", prompt: "fixture", contextComponents: [],
             modelID: "fixture", modelProviderID: nil, modelIntent: nil, memoryEnabled: false, executionBackend: "codex",
             externalSessionID: nil, submission: control)
-        try await waitForObservation(baseURL)
-        if !failMirror { XCTAssertTrue(ticket.cancelPreparation()) }
-        _ = try await URLSession.shared.data(from: baseURL.appendingPathComponent("release"))
+        // A running original has no terminal frontier and must reject a new
+        // submission before contacting settings. The other cases exercise
+        // cancellation and mirror failure after preparation actually suspends.
+        if !preserveReceipt {
+            try await waitForObservation(baseURL)
+            if !failMirror { XCTAssertTrue(ticket.cancelPreparation()) }
+            _ = try await URLSession.shared.data(from: baseURL.appendingPathComponent("release"))
+        }
         do {
             for try await _ in stream {}
             XCTFail("Submission should fail before transport")
         } catch {
-            XCTAssertEqual(ticket.phase, failMirror ? .rejectedBeforeDispatch : .abandoned)
+            XCTAssertEqual(ticket.phase, (failMirror || preserveReceipt) ? .rejectedBeforeDispatch : .abandoned)
         }
         XCTAssertEqual(mirrorCommits, failMirror ? 1 : 0)
         let counts = try await requestCounts(baseURL)
         XCTAssertEqual(counts["streams"], preserveReceipt ? 1 : 0)
         XCTAssertEqual(counts["cancels"], 0)
         if preserveReceipt {
+            XCTAssertEqual(counts["settings"], 1, "No settings request after an unfinished Run frontier")
             let request = MacRemotePermissionRequest(id: "request", allowConversation: true, protocolVersion: MacRemotePermissionRequest.supportedProtocolVersion,
                 nonce: "nonce", hostID: "fixture-host", clientID: try configuration.clientID(),
                 sessionID: "conversation", toolName: "web_search", arguments: "{}",
@@ -267,6 +276,7 @@ final class MacRemoteCancellationReceiptTests: XCTestCase {
         let configuration = MacRemoteHostConfigurationStore(applicationPort: port)
         try configuration.save(url: firstURL.absoluteString, token: "fixture-token", hostID: "fixture-host")
         let service = MacRemoteHostService(configurationStore: configuration)
+        try port.ensureFixtureConversation(id: "conversation", title: "Frozen")
         let target = try service.captureSubmissionTarget()
         try configuration.save(url: secondURL.absoluteString, token: "fixture-token", hostID: "fixture-host")
         let ticket = MacRunSubmissionTicket(identity: .init(conversationID: "conversation", submissionID: "original", generationID: 1))
@@ -274,6 +284,7 @@ final class MacRemoteCancellationReceiptTests: XCTestCase {
             userMessageID: "user", assistantMessageID: "assistant", prompt: "fixture", contextComponents: [],
             modelID: "fixture", modelProviderID: nil, modelIntent: nil, memoryEnabled: false, executionBackend: "codex",
             externalSessionID: nil, submission: .init(target: target, ticket: ticket, beforeDispatch: {
+                try port.ensureFixtureConversation(id: "conversation", title: "Fixture")
                 _ = try port.prepareRemoteSubmission(.init(conversationID: "conversation", conversationTitle: "Frozen",
                     submissionID: "original", sourceHostID: "fixture-host", clientID: target.clientID,
                     userMessageID: "user", userPartID: "user:text", userText: "fixture", userContentJSON: nil,
@@ -410,6 +421,7 @@ final class MacRemoteCancellationReceiptTests: XCTestCase {
     private func establishReceipt(_ service: MacRemoteHostService, port: MacApplicationPort, submissionID: String = "original",
                                   expectTerminal: Bool = false,
                                   allowRejectedTerminal: Bool = false) async throws {
+        try port.ensureFixtureConversation(id: "conversation", title: "Receipt")
         let stream = await service.run(conversationID: "conversation", submissionID: submissionID,
             userMessageID: "\(submissionID):user", assistantMessageID: "\(submissionID):assistant",
             prompt: "fixture", contextComponents: [], modelID: "fixture", modelProviderID: nil,
@@ -418,6 +430,7 @@ final class MacRemoteCancellationReceiptTests: XCTestCase {
                 ticket: .init(identity: .init(conversationID: "conversation", submissionID: submissionID, generationID: 1)),
                 beforeDispatch: {
                     if try port.remoteSubmissionIntent(conversationID: "conversation") == nil {
+                        try port.ensureFixtureConversation(id: "conversation", title: "Fixture")
                         _ = try port.prepareRemoteSubmission(.init(conversationID: "conversation",
                             conversationTitle: "Receipt", submissionID: submissionID, sourceHostID: "fixture-host", clientID: try service.captureSubmissionTarget().clientID,
                             userMessageID: "\(submissionID):user", userPartID: "\(submissionID):user:text",
@@ -483,6 +496,8 @@ nonisolated final class CancellationJournalHTTPServer: @unchecked Sendable {
     private var requests: [[String: Any]] = []
     private var decodedStreamRequests: [[String: Any]] = []
     private var modelSettings: [String: Any]?
+    private var selectionRevisions: [String: Int64] = [:]
+    private var selections: [String: String] = [:]
     private var fixtures: [String: MacAssistantJournalTestFixture] = [:]
     private var preparedPlans: [String: [String: Any]] = [:]
     private var runPlans: [String: [String: Any]] = [:]
@@ -499,7 +514,9 @@ nonisolated final class CancellationJournalHTTPServer: @unchecked Sendable {
     func replaceModelSettings(_ value: [String: Any]) { queue.sync { modelSettings = value } }
     func terminate() {
         queue.sync { running = false; listener.cancel(); pending.removeAll(); rejectionSource = nil }
-        try? FileManager.default.removeItem(at: rejectionDirectory)
+        if FileManager.default.fileExists(atPath: rejectionDirectory.path) {
+            try? FileManager.default.removeItem(at: rejectionDirectory)
+        }
     }
     func start() throws -> URL {
         let ready = DispatchSemaphore(value: 0)
@@ -570,7 +587,7 @@ nonisolated final class CancellationJournalHTTPServer: @unchecked Sendable {
                         try? json(connection, value: modelSettings ?? ["host_identity": ["id": "fixture-host"],
                             "network_policy": "allow", "enable_local_dev_tools": false] as [String: Any])
                     }
-                    if mode == "settings_gate" || (mode == "settings_gate_after_first" && settings > 1) { gate(response) }
+                    if mode == "settings_gate" || (mode == "settings_gate_after_first" && streams > 0) { gate(response) }
                     else { response() }
                 default: send(connection, status: 404, body: Data())
                 }
@@ -579,7 +596,53 @@ nonisolated final class CancellationJournalHTTPServer: @unchecked Sendable {
             guard headers["x-nola-mobile-auth"] != nil else { send(connection, status: 401, body: Data()); return }
             let envelope = try JSONSerialization.jsonObject(with: body) as! [String: Any]
             let input = try decrypt(envelope)
-            if path.hasSuffix("/tool-plan/prepare") {
+            if path.hasSuffix("/submission-frontier") {
+                guard input["expected_host_id"] as? String == "fixture-host",
+                      let client = input["client_id"] as? String, !client.isEmpty,
+                      let conversation = input["conversation_id"] as? String else { throw MacRemoteHostError.invalidResponse }
+                // Script a stable source frontier for these transport races.
+                // Parent-change/CAS policy has separate paired-source tests;
+                // every admission and terminal below still comes from Core.
+                let parent = input["assistant_message_id"] as? String
+                try encrypted(connection, result: ["protocol_version": 1, "source_host_id": "fixture-host",
+                    "client_id": client, "conversation_id": conversation,
+                    "configuration_revision": selectionRevisions[conversation] as Any? ?? (parent == nil ? NSNull() : 1 as Any),
+                    "parent_message_id": parent as Any? ?? NSNull()])
+            } else if path.hasSuffix("/execution-selection") {
+                guard input["expected_host_id"] as? String == "fixture-host",
+                      let conversation = input["conversation_id"] as? String,
+                      let action = input["action"] as? [String: Any], let type = action["type"] as? String else {
+                    throw MacRemoteHostError.invalidResponse
+                }
+                var result: [String: Any]
+                if type == "read" {
+                    result = selectionRevisions[conversation].map { ["status": "read", "configuration_revision": $0,
+                        "model_selection_id": selections[conversation] as Any? ?? NSNull()] } ?? ["status": "not_found"]
+                } else {
+                    guard ["create", "select"].contains(type), let selection = action["selection"] as? [String: Any] else {
+                        throw MacRemoteHostError.invalidResponse
+                    }
+                    let current = selectionRevisions[conversation]
+                    guard type == "create" ? current == nil : (action["expected_revision"] as? NSNumber)?.int64Value == current else {
+                        send(connection, status: 409, body: Data()); return
+                    }
+                    if selection["kind"] as? String == "model" {
+                        guard let profile = selection["profile_id"] as? String,
+                              let revision = selection["profile_revision"] as? NSNumber,
+                              (modelSettings?["model_profiles"] as? [[String: Any]])?.contains(where: {
+                                  $0["profile_id"] as? String == profile && ($0["revision"] as? NSNumber) == revision
+                              }) == true else { throw MacRemoteHostError.invalidResponse }
+                        selections[conversation] = "configured:" + profile
+                    } else {
+                        guard selection["kind"] as? String == "inherit" else { throw MacRemoteHostError.invalidResponse }
+                        selections[conversation] = nil
+                    }
+                    let next = (current ?? 0) + 1; selectionRevisions[conversation] = next
+                    result = ["status": type == "create" ? "created" : "committed", "configuration_revision": next,
+                        "model_selection_id": selections[conversation] as Any? ?? NSNull()]
+                }
+                try encrypted(connection, result: ["source_host_id": "fixture-host", "conversation_id": conversation, "result": result], wrapResult: false)
+            } else if path.hasSuffix("/tool-plan/prepare") {
                 guard input["expected_host_id"] as? String == "fixture-host", let client = input["client_id"] as? String,
                       let session = input["session_id"] as? String else { throw MacRemoteHostError.invalidResponse }
                 let plan = toolPlan(clientID: client, sessionID: session)
@@ -771,8 +834,8 @@ nonisolated final class CancellationJournalHTTPServer: @unchecked Sendable {
         return try JSONSerialization.jsonObject(with: AES.GCM.open(box, using: key,
             authenticating: Data("nola-mobile-bridge-v1".utf8))) as! [String: Any]
     }
-    private func encrypted(_ connection: NWConnection, result: Any) throws {
-        let value: [String: Any] = ["source_host_id": "fixture-host", "result": result]
+    private func encrypted(_ connection: NWConnection, result: Any, wrapResult: Bool = true) throws {
+        let value: Any = wrapResult ? ["source_host_id": "fixture-host", "result": result] : result
         let sealed = try AES.GCM.seal(JSONSerialization.data(withJSONObject: value), using: key,
             authenticating: Data("nola-mobile-bridge-v1".utf8))
         try json(connection, value: ["type": "encrypted", "v": 1, "alg": "AES-256-GCM",

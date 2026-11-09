@@ -118,6 +118,7 @@ fn recover_with_observation<R: StoreMaintenanceRepository + ?Sized>(
     let mut inspected_expected = false;
     let changed = store
         .with_run_recovery_plan(conversation, reason, at, at_ms, |record| {
+            let mut verified_configuration = None;
             if let Some(expected) = expected_run_id {
                 if record.run.as_ref().map(|run| run.run_id.as_str()) != Some(expected) {
                     return Err(
@@ -125,29 +126,12 @@ fn recover_with_observation<R: StoreMaintenanceRepository + ?Sized>(
                     );
                 }
                 inspected_expected = true;
-                let run = record.run.as_ref().expect("exact Run checked");
-                let json = run
-                    .invocation_config_json
-                    .as_ref()
-                    .ok_or("Host invocation unavailable: missing frozen configuration")?;
-                let digest = format!("{:x}", Sha256::digest(json.as_bytes()));
-                if run.invocation_config_digest.as_deref() != Some(digest.as_str()) {
-                    return Err(
-                        "Host invocation unavailable: configuration integrity failure".into(),
-                    );
-                }
-                let config: AgentCoreConfig = serde_json::from_str(json)
-                    .map_err(|_| "Host invocation unavailable: invalid frozen configuration")?;
-                config
-                    .turn_identity
-                    .host_invocation
-                    .as_ref()
+                let config = verified_record_configuration(record)?;
+                config.turn_identity.host_invocation.as_ref()
                     .ok_or("Host invocation unavailable: missing frozen binding")?
-                    .require_exact(
-                        host_invocation
-                            .ok_or("Host invocation unavailable: missing recovery binding")?,
-                    )
+                    .require_exact(host_invocation.ok_or("Host invocation unavailable: missing recovery binding")?)
                     .map_err(str::to_string)?;
+                verified_configuration = Some(config);
                 if record.session_lease.as_ref() != observed_session_lease {
                     return Err(
                         "orphan recovery session lease ownership changed; observe again".into(),
@@ -191,6 +175,13 @@ fn recover_with_observation<R: StoreMaintenanceRepository + ?Sized>(
             } else {
                 record
             };
+            // Only session-lease observations above differ from the original
+            // record. Reuse its verified immutable configuration and materialize
+            // the checkpoint once for all planners in this transaction.
+            let checkpoint = RecoveryCheckpoint {
+                record, configuration: verified_configuration,
+                value: std::cell::OnceCell::new(),
+            };
             if let Some(observed) = observed {
                 // OS liveness is observed by Host. Application fences that
                 // observation against the current identities in this write
@@ -227,7 +218,7 @@ fn recover_with_observation<R: StoreMaintenanceRepository + ?Sized>(
                     preserve_trace_turn_id: None,
                 }
             } else {
-                plan_record(record)?
+                plan_record(record, &checkpoint)?
             };
             plan.release_session_lease = observed_session_lease.cloned();
             if !record.has_session_lease {
@@ -249,7 +240,7 @@ fn recover_with_observation<R: StoreMaintenanceRepository + ?Sized>(
                     }
                 }
                 plan.effect_delivery_attempt_mutations =
-                    plan_effect_delivery_recovery(record, at_ms, observed.is_some(), expired_only)?;
+                    plan_effect_delivery_recovery(record, at_ms, observed.is_some(), expired_only, &checkpoint)?;
             }
             Ok(plan)
         })
@@ -294,6 +285,7 @@ fn plan_effect_delivery_recovery(
     at_ms: i64,
     observed_owner_death: bool,
     expired_only: bool,
+    checkpoint: &RecoveryCheckpoint<'_>,
 ) -> Result<Vec<EffectDeliveryAttemptMutation>, String> {
     if record.effect_delivery_attempts.is_empty() {
         return Ok(Vec::new());
@@ -302,7 +294,7 @@ fn plan_effect_delivery_recovery(
         .run
         .as_ref()
         .ok_or("effect delivery recovery has no canonical Run")?;
-    let checkpoint = recovered_record_checkpoint(record)?;
+    let checkpoint = checkpoint.get()?;
     let journal = &checkpoint.state.host.pending_effects;
     let mut active_effects = std::collections::BTreeSet::new();
     let mut mutations = Vec::new();
@@ -510,7 +502,7 @@ fn plan_effect_delivery_recovery(
     Ok(mutations)
 }
 
-fn plan_record(record: &RunRecoveryRecord) -> Result<RunRecoveryPlan, String> {
+fn plan_record(record: &RunRecoveryRecord, checkpoint: &RecoveryCheckpoint<'_>) -> Result<RunRecoveryPlan, String> {
     let external_run = record.run.as_ref().is_some_and(|run| {
         run.invocation_config_json.is_none()
             && run.invocation_config_digest.is_none()
@@ -529,7 +521,7 @@ fn plan_record(record: &RunRecoveryRecord) -> Result<RunRecoveryPlan, String> {
     // Do not parse, normalize or repair another live owner's state. Remote
     // Runs remain owned by their remote execution and have no local outbox.
     if record.run.is_some() && !record.has_session_lease && !external_run {
-        let (id, status) = verified_current_turn(record).map_err(|reason| {
+        let (id, status) = verified_current_turn(record, checkpoint).map_err(|reason| {
             format!(
                 "Run recovery rejected for {}: {reason}",
                 record.run.as_ref().unwrap().run_id
@@ -557,19 +549,22 @@ fn plan_record(record: &RunRecoveryRecord) -> Result<RunRecoveryPlan, String> {
     }
 }
 
-fn recovered_record_checkpoint(
-    record: &RunRecoveryRecord,
-) -> Result<CoreCheckpoint<AgentThreadState>, String> {
-    let run = record.run.as_ref().ok_or("missing canonical Run")?;
-    let recovery = record.checkpoint.as_ref().ok_or("missing checkpoint")?;
-    let stored = &recovery.checkpoint;
-    if recovery
-        .replay_base
-        .as_ref()
-        .is_some_and(|base| base.run_id != run.run_id)
-    {
-        return Err("recovery checkpoint belongs to another Run".into());
+// Local to one recovery-plan record, never retained across a transaction or
+// a changed Store snapshot. All planners inspect the same verified Core state.
+struct RecoveryCheckpoint<'a> {
+    record: &'a RunRecoveryRecord,
+    configuration: Option<AgentCoreConfig>,
+    value: std::cell::OnceCell<Result<CoreCheckpoint<AgentThreadState>, String>>,
+}
+impl RecoveryCheckpoint<'_> {
+    fn get(&self) -> Result<&CoreCheckpoint<AgentThreadState>, String> {
+        self.value.get_or_init(|| recovered_record_checkpoint(self.record, self.configuration.as_ref()))
+            .as_ref().map_err(Clone::clone)
     }
+}
+
+fn verified_record_configuration(record: &RunRecoveryRecord) -> Result<AgentCoreConfig, String> {
+    let run = record.run.as_ref().ok_or("missing canonical Run")?;
     let config_json = run
         .invocation_config_json
         .as_ref()
@@ -581,8 +576,28 @@ fn recovered_record_checkpoint(
     if &format!("{:x}", Sha256::digest(config_json.as_bytes())) != digest {
         return Err("invocation configuration integrity mismatch".into());
     }
-    let mut config: AgentCoreConfig =
-        serde_json::from_str(config_json).map_err(|_| "invalid invocation configuration")?;
+    serde_json::from_str(config_json).map_err(|_| "invalid invocation configuration".into())
+}
+
+
+fn recovered_record_checkpoint(
+    record: &RunRecoveryRecord,
+    configuration: Option<&AgentCoreConfig>,
+) -> Result<CoreCheckpoint<AgentThreadState>, String> {
+    let run = record.run.as_ref().ok_or("missing canonical Run")?;
+    let recovery = record.checkpoint.as_ref().ok_or("missing checkpoint")?;
+    let stored = &recovery.checkpoint;
+    if recovery
+        .replay_base
+        .as_ref()
+        .is_some_and(|base| base.run_id != run.run_id)
+    {
+        return Err("recovery checkpoint belongs to another Run".into());
+    }
+    let mut config = match configuration {
+        Some(config) => config.clone(),
+        None => verified_record_configuration(record)?,
+    };
     let checkpoint: CoreCheckpoint<AgentThreadState> =
         serde_json::from_str(&stored.checkpoint_json).map_err(|_| "invalid checkpoint")?;
     checkpoint.validate_state_identity()?;
@@ -608,9 +623,9 @@ fn recovered_record_checkpoint(
     Ok(checkpoint)
 }
 
-fn verified_current_turn(record: &RunRecoveryRecord) -> Result<(String, AgentTurnStatus), String> {
+fn verified_current_turn(record: &RunRecoveryRecord, checkpoint: &RecoveryCheckpoint<'_>) -> Result<(String, AgentTurnStatus), String> {
     let run = record.run.as_ref().ok_or("missing canonical Run")?;
-    let checkpoint = recovered_record_checkpoint(record)?;
+    let checkpoint = checkpoint.get()?;
     let turn = checkpoint
         .state
         .execution

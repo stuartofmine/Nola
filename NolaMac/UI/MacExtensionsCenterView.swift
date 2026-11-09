@@ -1271,6 +1271,7 @@ private struct MacExtensionDetail: View {
     @State private var hasBuiltInOverride = false
     @StateObject private var exitState = MacExtensionEditorExitState()
     @State private var showsSavedConfirmation = false
+    @State private var feedbackID = UUID()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var hasUnsavedChanges: Bool {
@@ -1637,8 +1638,11 @@ private struct MacExtensionDetail: View {
                 hasBuiltInOverride = true
             }
             showsSavedConfirmation = true
+            feedbackID = UUID()
+            let feedback = feedbackID
             Task { @MainActor in
-                try? await Task.sleep(for: .seconds(1.8))
+                do { try await Task.sleep(for: .seconds(1.8)) } catch { return }
+                guard feedbackID == feedback else { return }
                 showsSavedConfirmation = false
             }
         } catch {

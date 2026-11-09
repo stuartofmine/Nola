@@ -2985,6 +2985,22 @@ fn workspace_checkpoint_id(store: &HashMap<String, WorkspaceCheckpoint>) -> Stri
     candidate
 }
 
+fn checkpoint_private_index_output(root: &Path, index: &Path, arguments: &[&str]) -> Result<Vec<u8>, ToolOutcome> {
+    let mut command = git_operation_command(root);
+    command.env("GIT_INDEX_FILE", index).args(arguments).stdin(Stdio::null())
+        .stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(unix)]
+    command.process_group(0);
+    let child = command.spawn().map_err(|e|error(e.to_string()))?;
+    let cancellation = current_execution_control().unwrap_or_default();
+    let output = wait_for_child_output(child, &cancellation, Duration::from_secs(60), "Git recovery snapshot")?;
+    if !output.status.success() {
+        return Err(error_with_display(format!("Workspace checkpoint failed: {}", command_output_text(&output)),
+            "Workspace checkpoint failed".into()));
+    }
+    Ok(output.stdout)
+}
+
 fn tracked_snapshot_revision(root: &Path) -> Result<(String, String), ToolOutcome> {
     let head = run_git(root, &["rev-parse", "--verify", "HEAD"])?;
     if !head.status.success() {
@@ -2996,17 +3012,32 @@ fn tracked_snapshot_revision(root: &Path) -> Result<(String, String), ToolOutcom
             "Workspace checkpoint failed".to_string(),
         ));
     }
-    let stash = run_git(root, &["stash", "create", "nola workspace checkpoint"])?;
-    if !stash.status.success() {
-        return Err(error_with_display(
-            format!(
-                "Workspace checkpoint failed:\n{}",
-                command_output_text(&stash)
-            ),
-            "Workspace checkpoint failed".to_string(),
-        ));
+    // Snapshot with a private index. Intent-to-add in the live index must not
+    // prevent recovery, and a checkpoint must never refresh/stage user state.
+    let snapshot = tempfile::tempdir().map_err(|e|error(e.to_string()))?;
+    let private_index = snapshot.path().join("index");
+    let index = git_commit_text(root, &["rev-parse", "--path-format=absolute", "--git-path", "index"])
+        .map_err(error)?;
+    fs::copy(index, &private_index).map_err(|e|error(e.to_string()))?;
+    let added = |visibility| -> Result<std::collections::BTreeSet<String>, ToolOutcome> {
+        git_commit_paths(root, &["diff", "--cached", "--no-ext-diff", "--no-textconv", visibility,
+            "--name-only", "-z", "--diff-filter=A", "--"]).map_err(error)
+    };
+    let visible = added("--ita-visible-in-index")?;
+    let staged = added("--ita-invisible-in-index")?;
+    let intents = visible.difference(&staged).map(String::as_str).collect::<Vec<_>>();
+    if !intents.is_empty() {
+        // Do not execute repository conversion/filter programs while preparing
+        // a recovery snapshot. The live index remains byte-for-byte untouched.
+        require_nonexecuting_worktree_preparation(root).map_err(error)?;
+        for paths in intents.chunks(100) {
+            let mut arguments = vec!["add", "-A", "--"];
+            arguments.extend_from_slice(paths);
+            checkpoint_private_index_output(root, &private_index, &arguments)?;
+        }
     }
-    let stash_text = String::from_utf8_lossy(&stash.stdout).trim().to_string();
+    let stash = checkpoint_private_index_output(root, &private_index, &["-c", "user.name=Nola Checkpoint", "-c", "user.email=nola-checkpoint@localhost", "stash", "create", "nola workspace checkpoint"])?;
+    let stash_text = String::from_utf8_lossy(&stash).trim().to_string();
     if stash_text.is_empty() {
         Ok((
             String::from_utf8_lossy(&head.stdout).trim().to_string(),

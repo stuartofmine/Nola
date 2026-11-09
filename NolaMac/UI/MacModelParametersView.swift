@@ -308,6 +308,7 @@ struct MacModelParametersView: View {
     @State private var savedParameters: ModelParameters
     @State private var savedSeedText: String
     @State private var saved = false
+    @State private var feedbackID = UUID()
     @State private var showsDiscardConfirmation = false
     @State private var reloadAfterDiscard = false
     @State private var allowsDiscardClose = false
@@ -750,8 +751,11 @@ struct MacModelParametersView: View {
         savedSeedText = seedText
         NotificationCenter.default.post(name: .nolaMacConfigurationDidChange, object: nil)
         saved = true
+        feedbackID = UUID()
+        let feedback = feedbackID
         Task {
-            try? await Task.sleep(for: .seconds(1.4))
+            do { try await Task.sleep(for: .seconds(1.4)) } catch { return }
+            guard feedbackID == feedback else { return }
             saved = false
         }
     }

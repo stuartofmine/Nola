@@ -3,6 +3,46 @@ import XCTest
 @testable import Nola
 
 final class IOSApplicationCommandEffectTests: XCTestCase {
+    func testCompactionPlanningIsObservationalAndCommitKeepsMutationOrdering() {
+        for type in ["step_compaction_summary", "evaluate_compaction_maintenance"] {
+            XCTAssertTrue(IOSApplicationRuntime.isReadOnlyCommand(type: type, arguments: [:]))
+        }
+        for kind in ["count_checkpoints", "prepare_compaction", "prepare_maintenance", "load_checkpoint"] {
+            XCTAssertTrue(IOSApplicationRuntime.isReadOnlyCommand(type: "context", arguments: ["command": ["type": kind]]))
+        }
+        for kind in ["commit_maintenance", "replace_summary", "commit_checkpoint", "unknown"] {
+            XCTAssertFalse(IOSApplicationRuntime.isReadOnlyCommand(type: "context", arguments: ["command": ["type": kind]]))
+        }
+    }
+
+    func testRejectedSummaryPlanNeverLeavesAnUncertainWriteFence() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("summary-budget-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let database = root.appendingPathComponent("fixture.sqlite")
+        let runtime = try IOSApplicationRuntime(databaseURL: database)
+        do {
+            _ = try runtime.executeAgentCommand(.object([
+                "type": .string("step_compaction_summary"), "step": .object([
+                    "type": .string("start"), "messages": .array([.object(["role": .string("user"), "content": .string("Fixture source")])]),
+                    "context_window_tokens": .signedInteger(8_000), "output_tokens": .signedInteger(4_096),
+                    "target_tokens": .signedInteger(512), "instructions": .string("Preserve source facts.")
+                ])]))
+            XCTFail("The summary request cannot fit this conservative input budget")
+        } catch IOSApplicationRuntimeError.rejected(let detail) {
+            XCTAssertTrue(detail.contains("context window leaves no room"))
+        } catch { XCTFail("A pure planning failure cannot be a pending mutation: \(error)") }
+        let journal = ApplePendingCommandJournal(databaseURL: database, namespace: .application,
+            validateOwners: IOSPendingCommandOwner.validateJournalOwners)
+        do {
+            let transaction = try journal.beginTransaction()
+            defer { transaction.close() }
+            XCTAssertTrue(try transaction.load().isEmpty)
+        }
+        try runtime.createConversation(id: "after-budget-refusal", title: "Still usable", settingsJSON: nil,
+            createdAtMs: 1, updatedAtMs: 1)
+        XCTAssertNotNil(try runtime.loadConversation(id: "after-budget-refusal"))
+    }
+
     func testCurrentRunAndRemoteRecoveryObservationsNeverEnterMutationJournal() {
         for type in ["load_committed_host_requests", "load_runtime_effect_work_schedule", "load_host_execution_state",
                      "query_claimable_memory_jobs", "build_memory_worker_plan", "read_remote_submission_intent",

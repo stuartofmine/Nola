@@ -62,6 +62,21 @@ pub fn compaction_history_target(
     preferred_target.max(history_tokens.div_ceil(4)).min(hard_history_limit)
 }
 
+/// Soft-threshold maintenance must reclaim enough history to justify another
+/// model round. Hard-budget recovery and explicit manual requests are exempt.
+/// The summary budget is an upper bound; include the checkpoint framing cost.
+pub fn defer_low_gain_compaction(
+    reason: CompactionReason,
+    archive_tokens: usize,
+    summary_budget: usize,
+    full_request_tokens: usize,
+    full_prompt_limit: usize,
+) -> bool {
+    reason == CompactionReason::ThresholdReached
+        && full_request_tokens < full_prompt_limit
+        && archive_tokens.saturating_sub(summary_budget.saturating_add(4)) < 512
+}
+
 pub fn empty_compaction_archive_action(reason: CompactionReason) -> EmptyCompactionArchiveAction {
     match reason {
         CompactionReason::Manual => EmptyCompactionArchiveAction::CompleteWithoutSummary,
@@ -105,6 +120,20 @@ mod tests {
             admit_compaction_request(facts),
             Err(CompactionRequestRejection::AlreadyActive)
         );
+    }
+
+    #[test]
+    fn low_gain_threshold_work_defers_without_disabling_hard_recovery() {
+        for (archive, summary) in [(459, 200), (440, 180), (153, 70)] {
+            assert!(defer_low_gain_compaction(CompactionReason::ThresholdReached, archive, summary, 30000, 54068));
+            assert!(!defer_low_gain_compaction(CompactionReason::ThresholdReached, archive, summary, 54068, 54068));
+            assert!(!defer_low_gain_compaction(CompactionReason::ContextLimitRecovery, archive, summary, 30000, 54068));
+            assert!(!defer_low_gain_compaction(CompactionReason::Manual, archive, summary, 30000, 54068));
+        }
+        assert!(!defer_low_gain_compaction(CompactionReason::ThresholdReached, 1028, 512, 30000, 54068));
+        assert!(defer_low_gain_compaction(CompactionReason::ThresholdReached, 1027, 512, 30000, 54068));
+        // A constrained short summary can make a smaller archive worthwhile.
+        assert!(!defer_low_gain_compaction(CompactionReason::ThresholdReached, 800, 100, 30000, 54068));
     }
 
     #[test]

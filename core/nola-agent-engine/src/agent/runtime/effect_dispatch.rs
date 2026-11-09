@@ -646,6 +646,7 @@ impl AgentRuntime {
                 true,
             ),
             AgentEffect::CompactContext {
+                handoff,
                 session_id: _,
                 items_to_summarize,
                 target_tokens,
@@ -661,10 +662,14 @@ impl AgentRuntime {
                     context_window_tokens: self.session.execution.active_turn.as_ref()
                         .map(|turn| turn.context.configuration.context_window.context_window_tokens)
                         .unwrap_or(self.session.configuration.context_window.context_window_tokens) as u64,
-                    strategy: if items_to_summarize.iter().all(|item| matches!(item, AgentItem::Compaction { .. })) {
+                    strategy: if *handoff { "context_handoff" } else if items_to_summarize.iter().all(|item| matches!(item, AgentItem::Compaction { .. })) {
                         "summary_layer_consolidation"
                     } else { "incremental_summary_with_retained_tail" }.to_string(),
-                    instructions: crate::agent::compaction_instructions(*target_tokens),
+                    instructions: nola_kernel::compaction_maintenance::compaction_goal_instructions(
+                        self.session.conversation.context_window.used_tokens,
+                        &if *handoff {
+                            nola_kernel::compaction_maintenance::context_handoff_instructions(*target_tokens)
+                        } else { crate::agent::compaction_instructions(*target_tokens) }),
                     messages: items_to_summarize
                         .iter()
                         .map(serde_json::to_value)

@@ -268,7 +268,17 @@ fn git_commit_verified_with_cancellation(
             "Selected paths must have current changes; refresh those paths before retrying".into(),
         );
     }
+    // Identity must be resolved before filters or the real index can change.
+    let identity_options = git_commit_identity_options(args)?;
+    for selector in ["GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"] {
+        let mut arguments = identity_options.iter().map(String::as_str).collect::<Vec<_>>();
+        arguments.extend(["var", selector]);
+        git_command_output(root, &arguments).map_err(|error| format!(
+            "Git identity preflight failed before any index mutation: {error}. Supply author.name and author.email for this invocation or configure the repository identity; no global configuration was changed."))?;
+    }
     let index_before = git_index_entries(root)?;
+    let index_path = PathBuf::from(git_commit_text(root, &["rev-parse", "--path-format=absolute", "--git-path", "index"])?);
+    let index_preimage = fs::read(&index_path).map_err(|e| e.to_string())?;
     // The operation is scoped to selected paths, not a repository-wide task.
     // Unselected source, documents and staged work need no exclusion reason.
     for path in &selected {
@@ -322,12 +332,23 @@ fn git_commit_verified_with_cancellation(
         })
         .map(String::as_str)
         .collect();
-    if !new_paths.is_empty() {
+    let index_registered = if !new_paths.is_empty() {
+        let registration = preparation.path().join("registration-index");
+        fs::write(&registration, &index_preimage).map_err(|e|e.to_string())?;
         let mut args = vec!["add", "--intent-to-add", "--"];
-        args.extend(new_paths);
-        git_command_output(root, &args)?;
+        args.extend(new_paths.iter().copied());
+        git_private_index_output(root, &registration, &args)?;
+        let registered = fs::read(registration).map_err(|e|e.to_string())?;
+        replace_git_index_if_unchanged(root, &before, &index_path, &index_preimage, &registered)?;
+        registered
+    } else { index_preimage.clone() };
+    if let Err(failure) = git_commit_process(root, message, &selected, &identity_options, cancellation) {
+        if !new_paths.is_empty() && git_commit_text(root, &["rev-parse", "HEAD"])? == before {
+            replace_git_index_if_unchanged(root, &before, &index_path, &index_registered, &index_preimage)
+                .map_err(|error| format!("{failure}; index recovery not performed: {error}"))?;
+        }
+        return Err(failure);
     }
-    git_commit_process(root, message, &selected, cancellation)?;
     let commit = git_commit_text(root, &["rev-parse", "HEAD"])?;
     let parent = git_commit_text(root, &["rev-parse", "HEAD^"])?;
     let tree = git_commit_text(root, &["rev-parse", "HEAD^{tree}"])?;
@@ -373,13 +394,45 @@ fn git_commit_verified_with_cancellation(
     )
 }
 
+fn git_commit_identity_options(args: &Map<String, Value>) -> Result<Vec<String>, String> {
+    let Some(author) = args.get("author") else { return Ok(Vec::new()); };
+    let author = author.as_object().ok_or("author must contain name and email")?;
+    let value = |key| author.get(key).and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty() && !value.contains(['\n', '\r', '\0', '<', '>']))
+        .map(str::to_owned).ok_or_else(||format!("author.{key} must be a nonempty single-line Git identity"));
+    Ok(vec!["-c".into(), format!("user.name={}", value("name")?),
+        "-c".into(), format!("user.email={}", value("email")?)])
+}
+
+/// Publish a prepared index with Git's exclusive lock and an exact HEAD/index
+/// comparison. Used both for registration and recovery; never replaces a writer.
+fn replace_git_index_if_unchanged(root: &Path, head: &str, index: &Path, expected: &[u8], preimage: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    let lock = index.with_file_name(format!("{}.lock", index.file_name().ok_or("Missing index name")?.to_string_lossy()));
+    let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&lock).map_err(|e|e.to_string())?;
+    let result = (|| {
+        if git_commit_text(root, &["rev-parse", "HEAD"])? != head || fs::read(index).map_err(|e|e.to_string())? != expected {
+            return Err("HEAD or index changed concurrently; retained for inspection".into());
+        }
+        file.set_permissions(fs::metadata(index).map_err(|e|e.to_string())?.permissions()).map_err(|e|e.to_string())?;
+        file.write_all(preimage).map_err(|e|e.to_string())?;
+        file.sync_all().map_err(|e|e.to_string())?;
+        drop(file);
+        fs::rename(&lock, index).map_err(|e|e.to_string())
+    })();
+    if result.is_err() { let _ = fs::remove_file(&lock); }
+    result
+}
+
 fn git_commit_process(
     root: &Path,
     message: &str,
     selected: &std::collections::BTreeSet<String>,
+    identity_options: &[String],
     cancellation: &RuntimeExecutionControl,
 ) -> Result<(), String> {
-    let mut arguments = vec!["commit", "--only", "-m", message, "--"];
+    let mut arguments = identity_options.iter().map(String::as_str).collect::<Vec<_>>();
+    arguments.extend(["commit", "--only", "-m", message, "--"]);
     arguments.extend(selected.iter().map(String::as_str));
     git_mutation_process(root, &arguments, cancellation, "Git commit")
 }
@@ -465,6 +518,75 @@ mod git_commit_tests {
 
     fn input() -> Value {
         json!({"paths":["README.md", "native_host_output.rs"], "message":"fixture change"})
+    }
+
+    fn index_bytes(root: &Path) -> Vec<u8> {
+        fs::read(git_commit_text(root, &["rev-parse", "--path-format=absolute", "--git-path", "index"]).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn identity_failure_precedes_all_index_changes_and_explicit_identity_is_local() {
+        let root = fixture();
+        for key in ["user.name", "user.email"] {
+            git_command_output(root.path(), &["config", key, ""]).unwrap();
+        }
+        let before = index_bytes(root.path());
+        let mut started = false;
+        let failure = git_commit_verified(input().as_object().unwrap(), root.path(), &mut started).unwrap_err();
+        assert!(failure.contains("identity preflight"), "{failure}");
+        assert!(!started);
+        assert_eq!(index_bytes(root.path()), before);
+        let mut request = input();
+        request["author"] = json!({"name":"Nola Agent", "email":"nola@localhost"});
+        let receipt = git_commit_verified(request.as_object().unwrap(), root.path(), &mut started).unwrap();
+        assert_eq!(git_commit_text(root.path(), &["show", "-s", "--format=%an <%ae>", receipt["commit"].as_str().unwrap()]).unwrap(), "Nola Agent <nola@localhost>");
+        assert_eq!(git_commit_text(root.path(), &["config", "user.email"]).unwrap(), "");
+    }
+
+    #[test]
+    fn intent_to_add_checkpoint_preserves_live_index_and_captures_recoverable_content() {
+        let root = fixture();
+        git_command_output(root.path(), &["add", "--intent-to-add", "--", "native_host_output.rs"]).unwrap();
+        let before = index_bytes(root.path());
+        let (revision, _) = tracked_snapshot_revision(root.path()).unwrap();
+        assert_eq!(index_bytes(root.path()), before);
+        assert_eq!(git_commit_text(root.path(), &["show", &format!("{revision}:native_host_output.rs")]).unwrap(), "fn main() {}");
+        assert_eq!(git_commit_text(root.path(), &["show", &format!("{revision}:README.md")]).unwrap(), "after");
+        // A recovery operation can now pass the same checkpoint precondition.
+        git_command_output(root.path(), &["reset", "--", "native_host_output.rs"]).unwrap();
+        assert!(root.path().join("native_host_output.rs").exists());
+        tracked_snapshot_revision(root.path()).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejecting_commit_hook_restores_only_our_index_registration() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = fixture();
+        let hook = root.path().join(".git/hooks/pre-commit");
+        fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+        let before = index_bytes(root.path());
+        let head = git_commit_text(root.path(), &["rev-parse", "HEAD"]).unwrap();
+        let mut started = false;
+        assert!(git_commit_verified(input().as_object().unwrap(), root.path(), &mut started).is_err());
+        assert!(started);
+        assert_eq!(index_bytes(root.path()), before);
+        assert_eq!(git_commit_text(root.path(), &["rev-parse", "HEAD"]).unwrap(), head);
+        assert_eq!(fs::read_to_string(root.path().join("native_host_output.rs")).unwrap(), "fn main() {}\n");
+    }
+
+    #[test]
+    fn index_recovery_never_replaces_a_concurrent_writer() {
+        let root = fixture();
+        let index = PathBuf::from(git_commit_text(root.path(), &["rev-parse", "--path-format=absolute", "--git-path", "index"]).unwrap());
+        let head = git_commit_text(root.path(), &["rev-parse", "HEAD"]).unwrap();
+        let before = index_bytes(root.path());
+        git_command_output(root.path(), &["add", "README.md"]).unwrap();
+        let current = index_bytes(root.path());
+        assert!(replace_git_index_if_unchanged(root.path(), &head, &index, &before, &before).is_err());
+        assert_eq!(index_bytes(root.path()), current);
+        assert!(!index.with_extension("lock").exists());
     }
 
     #[test]

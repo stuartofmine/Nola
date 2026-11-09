@@ -10,6 +10,8 @@ final class IOSContainerCloudConfigurationTests: XCTestCase {
             _ = try ModelSelectionManager.publishCloudModel(model, existing: nil, selected: true,
                 using: store, credentials: vault.owner)
             let observed = try XCTUnwrap(store.modelProfile(id: model.id))
+            let published = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(observed.sourceJSON.utf8)) as? [String: Any])
+            XCTAssertEqual(published["capabilities"] as? [String], ["chat"])
             var parameters = ModelParameters.webAlignedCloudDefaults
             parameters.temperature = 0.37
             parameters.maxOutputTokens = 2_048
@@ -119,9 +121,9 @@ final class IOSContainerCloudConfigurationTests: XCTestCase {
         let store = try IOSApplicationRuntime(databaseURL: root.appendingPathComponent("owner.db"))
         let vault = ContainerCredentialVault()
         let defaultModel = ModelInfo(id: "default-profile", name: "Old default", source: "Fixture", isLocal: false,
-            baseURL: "https://default.invalid/v1", apiKey: "", upstreamModelId: "old-default", wireProtocol: .chatCompletions)
+            baseURL: "https://default.invalid/v1", apiKey: "", upstreamModelId: "old-default", wireProtocol: .chatCompletions, executionCapabilities: .init(samplingParameters: true))
         let chosen = ModelInfo(id: "conversation-profile", name: "Qwen", source: "Fixture", isLocal: false,
-            baseURL: "https://conversation.invalid/v1", apiKey: "", upstreamModelId: "qwen-current", wireProtocol: .chatCompletions)
+            baseURL: "https://conversation.invalid/v1", apiKey: "", upstreamModelId: "qwen-current", wireProtocol: .chatCompletions, executionCapabilities: .init(samplingParameters: true))
         _ = try ModelSelectionManager.publishCloudModel(defaultModel, existing: nil, selected: true, using: store, credentials: vault.owner)
         _ = try ModelSelectionManager.publishCloudModel(chosen, existing: nil, selected: false, using: store, credentials: vault.owner)
         _ = try store.putProductSettingChecked(key: "chat.default_model",

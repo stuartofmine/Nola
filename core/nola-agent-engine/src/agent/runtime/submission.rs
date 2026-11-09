@@ -1394,6 +1394,7 @@ impl AgentRuntime {
                     let review_ready = {
                         let turn = self.require_turn(&turn_id, AgentTurnStatus::AwaitingModel)?;
                         !turn.engineering.validation_required && !turn.engineering.artifact_completion_pending()
+                            && !self.session.execution.requirements.review_completion_pending()
                     };
                     let candidate = (review_is_offered && review_ready && !output_limited && tool_calls.len() == 1)
                         .then(|| tool_calls[0].arguments.get("candidate_answer")
@@ -1452,7 +1453,7 @@ impl AgentRuntime {
                             call_id: call.call_id.clone(),
                             name: call.name.clone(),
                             output: if valid { json!({"review_requested": true}) } else {
-                                json!({"error":"invalid_review_request","message":"Review requires no pending validation or artifact completion. Request it as the only tool call with a nonempty candidate_answer of at most 100000 bytes; no other tool in this batch was executed."})
+                                json!({"error":"invalid_review_request","message":"Review requires no pending validation, adopted review finding or artifact completion. Request it as the only tool call with a nonempty candidate_answer of at most 100000 bytes; no other tool in this batch was executed."})
                             },
                             is_error: !valid,
                             full_output_ref: None,
@@ -1652,7 +1653,8 @@ impl AgentRuntime {
                             .require_turn(&turn_id, AgentTurnStatus::AwaitingModel)?
                             .final_answer_no_progress_count,
                         validation_required: engineering.validation_required
-                            || engineering.artifact_completion_pending(),
+                            || engineering.artifact_completion_pending()
+                            || self.session.execution.requirements.review_completion_pending(),
                         recovery_required: engineering.has_protocol_recovery(),
                         skill_completion_pending,
                     });
@@ -2554,6 +2556,8 @@ impl AgentRuntime {
                     .pending_compaction
                     .as_ref()
                     .ok_or_else(|| "context compaction has no Core-owned pending plan".to_string())?;
+                let previous_working_tokens = self.session.conversation.model_context.iter()
+                    .fold(0usize, |sum, item| sum.saturating_add(item.estimated_tokens()));
                 let retained_items = {
                     let configuration = self.session.execution.active_turn.as_ref()
                         .map(|turn| &turn.context.configuration.context_window)
@@ -2642,7 +2646,7 @@ impl AgentRuntime {
                 self.session
                     .conversation
                     .context_window
-                    .finish_compaction(&self.session.conversation.model_context, &usage);
+                    .finish_compaction(&self.session.conversation.model_context, &usage, previous_working_tokens);
                 events.push(RuntimeEvent::CompactionCompleted {
                     summary,
                     replaced_item_count,

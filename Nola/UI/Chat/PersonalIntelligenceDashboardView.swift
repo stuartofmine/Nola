@@ -108,8 +108,10 @@ struct PersonalIntelligenceDashboardView: View {
         }
         .task {
             reload()
-            if reduceMotion {
-                hasAppeared = true
+            if embedded || reduceMotion {
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) { hasAppeared = true }
             } else {
                 withAnimation(DesignTokens.revealAnimation) { hasAppeared = true }
             }
@@ -599,13 +601,9 @@ struct PersonalIntelligenceDashboardView: View {
             return
         }
         loadError = nil
-        if reduceMotion {
-            snapshot = updated
-        } else {
-            withAnimation(.smooth(duration: 0.3)) {
-                snapshot = updated
-            }
-        }
+        // Facts can change wrapping and section heights. Interpolating the
+        // entire snapshot makes glyphs travel between unrelated line layouts.
+        snapshot = updated
     }
 }
 

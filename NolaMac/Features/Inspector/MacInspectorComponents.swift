@@ -50,19 +50,21 @@ struct MacInspectorDocumentEditor: View {
         let placeholder: String
         let minHeight: CGFloat
         @FocusState private var isFocused: Bool
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
         var body: some View {
             ZStack(alignment: .topLeading) {
                 if text.isEmpty {
                     Text(placeholder)
                         .font(.system(size: 11.5))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.secondary)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 9)
                         .allowsHitTesting(false)
                 }
 
                 TextEditor(text: $text)
+                    .accessibilityLabel(Text(placeholder))
                     .font(.system(size: 12))
                     .lineSpacing(2)
                     .scrollContentBackground(.hidden)
@@ -82,7 +84,7 @@ struct MacInspectorDocumentEditor: View {
                         lineWidth: 1
                     )
             }
-            .animation(.easeOut(duration: 0.14), value: isFocused)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: isFocused)
         }
     }
 
@@ -240,7 +242,9 @@ struct MacInspectorRow: View {
 
                 Text(title)
                     .font(.system(size: 12.5, weight: .medium))
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .help(title)
 
                 Spacer(minLength: 8)
 
