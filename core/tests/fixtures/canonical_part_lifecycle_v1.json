@@ -136,6 +136,7 @@
               "exposure": "visible",
               "id": "host.cancel",
               "input_normalization": {
+                "code_mode_limits": null,
                 "effect": {
                   "fixed": "execute",
                   "schema_version": 1,
@@ -177,6 +178,7 @@
               "exposure": "visible",
               "id": "model.stream",
               "input_normalization": {
+                "code_mode_limits": null,
                 "effect": {
                   "fixed": "execute",
                   "schema_version": 1,
@@ -218,6 +220,7 @@
               "exposure": "visible",
               "id": "permission.ask",
               "input_normalization": {
+                "code_mode_limits": null,
                 "effect": {
                   "fixed": "execute",
                   "schema_version": 1,
@@ -259,6 +262,7 @@
               "exposure": "visible",
               "id": "web_search",
               "input_normalization": {
+                "code_mode_limits": null,
                 "effect": {
                   "fixed": "execute",
                   "schema_version": 1,
@@ -313,6 +317,7 @@
                 "exposure": "visible",
                 "id": "web_search",
                 "input_normalization": {
+                  "code_mode_limits": null,
                   "effect": {
                     "fixed": "execute",
                     "schema_version": 1,
@@ -404,7 +409,7 @@
           "host_catalog_revision": 1,
           "host_id": "canonical-fixture-host",
           "model_schema_digest": "0213762f15ec1562573b495f25e22fe0ef583df4fa40d297e14e6901e129ddfb",
-          "projection_digest": "706392735301dcb29de13ff0fc7aebcbf124f8709166bd13b1543454ef32af04",
+          "projection_digest": "6a28e7044efef6dafaea006df2b731d6c835c0abffb1e28993eb010725b6123e",
           "schema_version": 1
         },
         "context_component_count": 0,
@@ -453,8 +458,8 @@
           "context_window_tokens": 128000,
           "prompt_token_limit": 119808,
           "usage_is_estimated": true,
-          "usage_percent": 2.565625,
-          "used_tokens": 3284
+          "usage_percent": 2.61171875,
+          "used_tokens": 3343
         },
         "context_window_tokens": 128000,
         "measurement": {
@@ -465,8 +470,8 @@
         "prompt_cache_measurement": null,
         "type": "context_updated",
         "usage_is_estimated": true,
-        "usage_percent": 2.565625,
-        "used_tokens": 3284
+        "usage_percent": 2.61171875,
+        "used_tokens": 3343
       },
       "revision": 1,
       "session_id": "session-part-lifecycle-v1",
@@ -475,6 +480,20 @@
     {
       "cursor": {
         "sequence": 9
+      },
+      "event": {
+        "assistant_message_id": "submission-fixture-complete:assistant",
+        "effect_id": "submission-fixture-complete:host_effect:7",
+        "turn_id": "submission-fixture-complete",
+        "type": "assistant_effect_bound"
+      },
+      "revision": 1,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 10
       },
       "event": {
         "part": {
@@ -508,7 +527,7 @@
     },
     {
       "cursor": {
-        "sequence": 10
+        "sequence": 11
       },
       "event": {
         "part": {
@@ -536,7 +555,7 @@
     },
     {
       "cursor": {
-        "sequence": 11
+        "sequence": 12
       },
       "event": {
         "part": {
@@ -568,7 +587,7 @@
     },
     {
       "cursor": {
-        "sequence": 12
+        "sequence": 13
       },
       "event": {
         "part": {
@@ -594,7 +613,7 @@
     },
     {
       "cursor": {
-        "sequence": 13
+        "sequence": 14
       },
       "event": {
         "part": {
@@ -628,7 +647,7 @@
     },
     {
       "cursor": {
-        "sequence": 14
+        "sequence": 15
       },
       "event": {
         "part": {
@@ -655,7 +674,7 @@
     },
     {
       "cursor": {
-        "sequence": 15
+        "sequence": 16
       },
       "event": {
         "part": {
@@ -683,7 +702,7 @@
     },
     {
       "cursor": {
-        "sequence": 16
+        "sequence": 17
       },
       "event": {
         "part": {
@@ -709,13 +728,16 @@
     },
     {
       "cursor": {
-        "sequence": 17
+        "sequence": 18
       },
       "event": {
         "part": {
           "artifacts": [],
           "call_id": "call-fixture-search",
           "capability_id": "web_search",
+          "execution_source": {
+            "kind": "model"
+          },
           "finished_at_ms": null,
           "full_output_ref": null,
           "id": "tool:submission-fixture-complete:tool_call:9",
@@ -744,6 +766,9 @@
             "artifacts": [],
             "call_id": "call-fixture-search",
             "capability_id": "web_search",
+            "execution_source": {
+              "kind": "model"
+            },
             "finished_at_ms": null,
             "full_output_ref": null,
             "id": "tool:submission-fixture-complete:tool_call:9",
@@ -773,13 +798,16 @@
     },
     {
       "cursor": {
-        "sequence": 18
+        "sequence": 19
       },
       "event": {
         "part": {
           "artifacts": [],
           "call_id": "call-fixture-search",
           "capability_id": "web_search",
+          "execution_source": {
+            "kind": "model"
+          },
           "finished_at_ms": null,
           "full_output_ref": null,
           "id": "tool:submission-fixture-complete:tool_call:9",
@@ -825,7 +853,7 @@
     },
     {
       "cursor": {
-        "sequence": 19
+        "sequence": 20
       },
       "event": {
         "context_usage": {
@@ -857,7 +885,7 @@
     },
     {
       "cursor": {
-        "sequence": 20
+        "sequence": 21
       },
       "event": {
         "part": {
@@ -883,7 +911,21 @@
     },
     {
       "cursor": {
-        "sequence": 21
+        "sequence": 22
+      },
+      "event": {
+        "assistant_message_id": "submission-fixture-complete:assistant",
+        "effect_id": "submission-fixture-complete:host_effect:11",
+        "turn_id": "submission-fixture-complete",
+        "type": "assistant_effect_bound"
+      },
+      "revision": 4,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 23
       },
       "event": {
         "receipt": {
@@ -905,13 +947,16 @@
     },
     {
       "cursor": {
-        "sequence": 22
+        "sequence": 24
       },
       "event": {
         "part": {
           "artifacts": [],
           "call_id": "call-fixture-search",
           "capability_id": "web_search",
+          "execution_source": {
+            "kind": "model"
+          },
           "finished_at_ms": null,
           "full_output_ref": null,
           "id": "tool:submission-fixture-complete:tool_call:9",
@@ -957,13 +1002,16 @@
     },
     {
       "cursor": {
-        "sequence": 23
+        "sequence": 25
       },
       "event": {
         "part": {
           "artifacts": [],
           "call_id": "call-fixture-search",
           "capability_id": "web_search",
+          "execution_source": {
+            "kind": "model"
+          },
           "finished_at_ms": null,
           "full_output_ref": null,
           "id": "tool:submission-fixture-complete:tool_call:9",
@@ -983,7 +1031,7 @@
             "request_id": "session-part-lifecycle-v1:permission:10"
           },
           "raw_input": "{\"query\":\"Nola Agent Core contract\"}",
-          "started_at_ms": 1700000000020,
+          "started_at_ms": 1700000000022,
           "state": "running",
           "summary": null,
           "title": "web_search",
@@ -999,7 +1047,7 @@
           "part_id": "tool:submission-fixture-complete:tool_call:9",
           "state": "running",
           "summary": null,
-          "timestamp_ms": 1700000000020,
+          "timestamp_ms": 1700000000022,
           "title": "web_search",
           "type": "tool_state"
         }
@@ -1010,7 +1058,21 @@
     },
     {
       "cursor": {
-        "sequence": 24
+        "sequence": 26
+      },
+      "event": {
+        "assistant_message_id": "submission-fixture-complete:assistant",
+        "effect_id": "submission-fixture-complete:host_effect:13",
+        "turn_id": "submission-fixture-complete",
+        "type": "assistant_effect_bound"
+      },
+      "revision": 5,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 27
       },
       "event": {
         "detail": "Nola Agent Core contract",
@@ -1028,7 +1090,7 @@
     },
     {
       "cursor": {
-        "sequence": 25
+        "sequence": 28
       },
       "event": {
         "evidence": {
@@ -1056,14 +1118,17 @@
     },
     {
       "cursor": {
-        "sequence": 26
+        "sequence": 29
       },
       "event": {
         "part": {
           "artifacts": [],
           "call_id": "call-fixture-search",
           "capability_id": "web_search",
-          "finished_at_ms": 1700000000024,
+          "execution_source": {
+            "kind": "model"
+          },
+          "finished_at_ms": 1700000000027,
           "full_output_ref": null,
           "id": "tool:submission-fixture-complete:tool_call:9",
           "input": {
@@ -1082,7 +1147,7 @@
             "request_id": "session-part-lifecycle-v1:permission:10"
           },
           "raw_input": "{\"query\":\"Nola Agent Core contract\"}",
-          "started_at_ms": 1700000000020,
+          "started_at_ms": 1700000000022,
           "state": "completed",
           "structured_output": {
             "results": [
@@ -1116,7 +1181,7 @@
             ]
           },
           "summary": null,
-          "timestamp_ms": 1700000000024,
+          "timestamp_ms": 1700000000027,
           "title": "web_search",
           "type": "tool_state"
         }
@@ -1127,7 +1192,7 @@
     },
     {
       "cursor": {
-        "sequence": 27
+        "sequence": 30
       },
       "event": {
         "part": {
@@ -1163,7 +1228,7 @@
     },
     {
       "cursor": {
-        "sequence": 28
+        "sequence": 31
       },
       "event": {
         "part": {
@@ -1207,7 +1272,7 @@
     },
     {
       "cursor": {
-        "sequence": 29
+        "sequence": 32
       },
       "event": {
         "state": {
@@ -1278,7 +1343,7 @@
     },
     {
       "cursor": {
-        "sequence": 30
+        "sequence": 33
       },
       "event": {
         "detail": null,
@@ -1294,7 +1359,7 @@
     },
     {
       "cursor": {
-        "sequence": 31
+        "sequence": 34
       },
       "event": {
         "context_usage": {
@@ -1305,8 +1370,8 @@
           "context_window_tokens": 128000,
           "prompt_token_limit": 119808,
           "usage_is_estimated": true,
-          "usage_percent": 2.715625,
-          "used_tokens": 3476
+          "usage_percent": 2.76171875,
+          "used_tokens": 3535
         },
         "context_window_tokens": 128000,
         "measurement": {
@@ -1317,8 +1382,8 @@
         "prompt_cache_measurement": null,
         "type": "context_updated",
         "usage_is_estimated": true,
-        "usage_percent": 2.715625,
-        "used_tokens": 3476
+        "usage_percent": 2.76171875,
+        "used_tokens": 3535
       },
       "revision": 7,
       "session_id": "session-part-lifecycle-v1",
@@ -1326,7 +1391,21 @@
     },
     {
       "cursor": {
-        "sequence": 32
+        "sequence": 35
+      },
+      "event": {
+        "assistant_message_id": "submission-fixture-complete:assistant",
+        "effect_id": "submission-fixture-complete:host_effect:20",
+        "turn_id": "submission-fixture-complete",
+        "type": "assistant_effect_bound"
+      },
+      "revision": 7,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-complete"
+    },
+    {
+      "cursor": {
+        "sequence": 36
       },
       "event": {
         "part": {
@@ -1358,7 +1437,7 @@
     },
     {
       "cursor": {
-        "sequence": 33
+        "sequence": 37
       },
       "event": {
         "part": {
@@ -1384,7 +1463,7 @@
     },
     {
       "cursor": {
-        "sequence": 34
+        "sequence": 38
       },
       "event": {
         "part": {
@@ -1410,7 +1489,7 @@
     },
     {
       "cursor": {
-        "sequence": 35
+        "sequence": 39
       },
       "event": {
         "part": {
@@ -1435,7 +1514,7 @@
     },
     {
       "cursor": {
-        "sequence": 36
+        "sequence": 40
       },
       "event": {
         "decision": {
@@ -1446,7 +1525,7 @@
               "turn_id": "submission-fixture-complete"
             }
           ],
-          "evidence_frontier": "34",
+          "evidence_frontier": "38",
           "requirement_revision": "1",
           "result_id": "submission-fixture-complete:run_result:22",
           "scope_id": "submission-fixture-complete:requirement_scope:2",
@@ -1473,7 +1552,7 @@
     },
     {
       "cursor": {
-        "sequence": 37
+        "sequence": 41
       },
       "event": {
         "outcome": "answered",
@@ -1487,7 +1566,7 @@
     },
     {
       "cursor": {
-        "sequence": 38
+        "sequence": 42
       },
       "event": {
         "context_usage": {
@@ -1519,7 +1598,7 @@
     },
     {
       "cursor": {
-        "sequence": 39
+        "sequence": 43
       },
       "event": {
         "admission": {
@@ -1542,7 +1621,7 @@
     },
     {
       "cursor": {
-        "sequence": 40
+        "sequence": 44
       },
       "event": {
         "assistant_message_id": "submission-fixture-cancel:assistant",
@@ -1556,7 +1635,7 @@
     },
     {
       "cursor": {
-        "sequence": 41
+        "sequence": 45
       },
       "event": {
         "applications": [
@@ -1583,7 +1662,7 @@
     },
     {
       "cursor": {
-        "sequence": 42
+        "sequence": 46
       },
       "event": {
         "scope": {
@@ -1630,7 +1709,7 @@
     },
     {
       "cursor": {
-        "sequence": 43
+        "sequence": 47
       },
       "event": {
         "capability_projection": {
@@ -1641,6 +1720,7 @@
               "exposure": "visible",
               "id": "host.cancel",
               "input_normalization": {
+                "code_mode_limits": null,
                 "effect": {
                   "fixed": "execute",
                   "schema_version": 1,
@@ -1682,6 +1762,7 @@
               "exposure": "visible",
               "id": "model.stream",
               "input_normalization": {
+                "code_mode_limits": null,
                 "effect": {
                   "fixed": "execute",
                   "schema_version": 1,
@@ -1723,6 +1804,7 @@
               "exposure": "visible",
               "id": "permission.ask",
               "input_normalization": {
+                "code_mode_limits": null,
                 "effect": {
                   "fixed": "execute",
                   "schema_version": 1,
@@ -1764,6 +1846,7 @@
               "exposure": "visible",
               "id": "web_search",
               "input_normalization": {
+                "code_mode_limits": null,
                 "effect": {
                   "fixed": "execute",
                   "schema_version": 1,
@@ -1818,6 +1901,7 @@
                 "exposure": "visible",
                 "id": "web_search",
                 "input_normalization": {
+                  "code_mode_limits": null,
                   "effect": {
                     "fixed": "execute",
                     "schema_version": 1,
@@ -1909,7 +1993,7 @@
           "host_catalog_revision": 1,
           "host_id": "canonical-fixture-host",
           "model_schema_digest": "0213762f15ec1562573b495f25e22fe0ef583df4fa40d297e14e6901e129ddfb",
-          "projection_digest": "706392735301dcb29de13ff0fc7aebcbf124f8709166bd13b1543454ef32af04",
+          "projection_digest": "6a28e7044efef6dafaea006df2b731d6c835c0abffb1e28993eb010725b6123e",
           "schema_version": 1
         },
         "context_component_count": 0,
@@ -1931,7 +2015,7 @@
     },
     {
       "cursor": {
-        "sequence": 44
+        "sequence": 48
       },
       "event": {
         "detail": null,
@@ -1947,7 +2031,7 @@
     },
     {
       "cursor": {
-        "sequence": 45
+        "sequence": 49
       },
       "event": {
         "context_usage": {
@@ -1958,8 +2042,8 @@
           "context_window_tokens": 128000,
           "prompt_token_limit": 119808,
           "usage_is_estimated": true,
-          "usage_percent": 2.7609375,
-          "used_tokens": 3534
+          "usage_percent": 2.80703125,
+          "used_tokens": 3593
         },
         "context_window_tokens": 128000,
         "measurement": {
@@ -1970,8 +2054,8 @@
         "prompt_cache_measurement": null,
         "type": "context_updated",
         "usage_is_estimated": true,
-        "usage_percent": 2.7609375,
-        "used_tokens": 3534
+        "usage_percent": 2.80703125,
+        "used_tokens": 3593
       },
       "revision": 11,
       "session_id": "session-part-lifecycle-v1",
@@ -1979,7 +2063,21 @@
     },
     {
       "cursor": {
-        "sequence": 46
+        "sequence": 50
+      },
+      "event": {
+        "assistant_message_id": "submission-fixture-cancel:assistant",
+        "effect_id": "submission-fixture-cancel:host_effect:29",
+        "turn_id": "submission-fixture-cancel",
+        "type": "assistant_effect_bound"
+      },
+      "revision": 11,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-cancel"
+    },
+    {
+      "cursor": {
+        "sequence": 51
       },
       "event": {
         "part": {
@@ -2011,7 +2109,7 @@
     },
     {
       "cursor": {
-        "sequence": 47
+        "sequence": 52
       },
       "event": {
         "part": {
@@ -2037,7 +2135,7 @@
     },
     {
       "cursor": {
-        "sequence": 48
+        "sequence": 53
       },
       "event": {
         "fact": {
@@ -2057,7 +2155,21 @@
     },
     {
       "cursor": {
-        "sequence": 49
+        "sequence": 54
+      },
+      "event": {
+        "assistant_message_id": "submission-fixture-cancel:assistant",
+        "effect_id": "submission-fixture-cancel:host_effect:32",
+        "turn_id": "submission-fixture-cancel",
+        "type": "assistant_effect_bound"
+      },
+      "revision": 13,
+      "session_id": "session-part-lifecycle-v1",
+      "turn_id": "submission-fixture-cancel"
+    },
+    {
+      "cursor": {
+        "sequence": 55
       },
       "event": {
         "part": {
@@ -2082,7 +2194,7 @@
     },
     {
       "cursor": {
-        "sequence": 50
+        "sequence": 56
       },
       "event": {
         "reason": "canonical fixture cancellation",
@@ -2096,7 +2208,7 @@
     },
     {
       "cursor": {
-        "sequence": 51
+        "sequence": 57
       },
       "event": {
         "decision": {
@@ -2107,7 +2219,7 @@
               "turn_id": "submission-fixture-cancel"
             }
           ],
-          "evidence_frontier": "48",
+          "evidence_frontier": "54",
           "requirement_revision": "1",
           "result_id": "submission-fixture-cancel:run_result:34",
           "scope_id": "submission-fixture-cancel:requirement_scope:24",

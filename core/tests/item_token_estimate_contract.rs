@@ -77,7 +77,11 @@ fn real_agent_item_variants_match_original_character_accounting() {
     for item in items {
         // The independent character-count oracle materializes JSON only in this test.
         let chars = match &item {
-            AgentItem::UiAction { action, .. } => "ui_action".chars().count() + action.envelope.to_string().chars().count(),
+            AgentItem::UiAction { action, .. } => {
+                let mut projected = action.envelope.clone();
+                projected["surface_revision"] = json!(action.surface.revision);
+                "ui_action".chars().count() + projected.to_string().chars().count()
+            },
             AgentItem::Message { content, .. } => content.chars().count(),
             AgentItem::Attachment {
                 uri,
