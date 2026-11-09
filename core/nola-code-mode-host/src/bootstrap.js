@@ -7,9 +7,14 @@
     const catalog = parse(globalThis.__nola_catalog);
     delete globalThis.__nola_catalog;
     const freeze = (value) => {
-        if (value !== null && typeof value === 'object') {
-            for (const child of Object.values(value)) freeze(child);
-            Object.freeze(value);
+        // Catalog schemas can be deeply nested. Traverse on the bounded JS
+        // heap instead of consuming a native stack frame for each schema node.
+        const remaining = [value];
+        while (remaining.length) {
+            const current = remaining.pop();
+            if (current === null || typeof current !== 'object') continue;
+            for (const child of Object.values(current)) remaining.push(child);
+            Object.freeze(current);
         }
         return value;
     };

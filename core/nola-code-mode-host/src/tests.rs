@@ -152,3 +152,48 @@ async fn cpu_loop_is_interrupted_and_sets_supervisor_cancel_flag() {
         Arc::new(Bridge::default()), cancelled.clone()).await.is_err());
     assert!(cancelled.load(Ordering::Acquire));
 }
+
+#[test]
+fn worker_bootstraps_a_dense_nested_catalog_before_dispatching_callbacks() {
+    let mut schema = serde_json::json!({"type":"string"});
+    for _ in 0..48 {
+        schema = serde_json::json!({"type":"object","properties":{"child":schema}});
+    }
+    let catalog = (0..64).map(|index| nola_domain::code_mode::CodeToolDescription {
+        name: format!("fixture_{index}"), description: "Nested schema fixture".into(),
+        input_schema: schema.clone(),
+    }).collect();
+    let mut worker = worker::CellWorker::start(owner(), CodeCellLimits::default(), r#"
+        let schema = ALL_TOOLS[0].input_schema;
+        for (let i = 0; i < 48; i++) {
+            if (!Object.isFrozen(schema)) throw new Error('schema_not_frozen');
+            schema = schema.properties.child;
+        }
+        if (!Object.isFrozen(schema)) throw new Error('leaf_not_frozen');
+        text(await tools.fixture_0({child: 'actual callback'}));
+    "#.into(), catalog).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut calls = 0;
+    let mut outputs = Vec::new();
+    loop {
+        assert!(Instant::now() < deadline, "catalog worker did not settle");
+        match worker.next_event(Duration::from_millis(100)).unwrap() {
+            Some(worker::CellEvent::ToolRequested(call)) => {
+                calls += 1;
+                assert_eq!(call.tool_name, "fixture_0");
+                worker.resolve(nola_domain::code_mode::CodeToolResult {
+                    cell: call.cell, sequence: call.sequence, output: call.arguments, is_error:false,
+                }).unwrap();
+            }
+            Some(worker::CellEvent::Output(output)) => outputs.push(output),
+            Some(worker::CellEvent::Finished(result)) => { result.unwrap(); break; }
+            None => {}
+        }
+    }
+    assert_eq!(calls, 1);
+    assert_eq!(outputs, [r#"{"child":"actual callback"}"#]);
+    while !worker.join_if_finished().unwrap() {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}

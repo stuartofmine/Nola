@@ -110,7 +110,7 @@ pub async fn evaluate(
         ctx.globals().set("__nola_invoke", invoke).map_err(|e| e.to_string())?;
         ctx.globals().set("__nola_output", output).map_err(|e| e.to_string())?;
         ctx.globals().set("__nola_catalog", catalog).map_err(|e| e.to_string())?;
-        let run: Function = ctx.eval(include_str!("bootstrap.js")).map_err(|e| e.to_string())?;
+        let run: Function = ctx.eval(include_str!("bootstrap.js")).map_err(|e| script_error(&ctx, e))?;
         let script = format!("(async () => {{\n{source}\n}})");
         let program: Function = ctx.eval(script).map_err(|e| script_error(&ctx, e))?;
         let promise: Promise = run.call((program,)).map_err(|e| script_error(&ctx, e))?;
