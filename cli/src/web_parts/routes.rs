@@ -3595,9 +3595,7 @@ mod compaction_execution_contract_tests {
 
     #[test]
     fn maintenance_preserves_enabled_and_disabled_tool_catalog_configuration() {
-        let mut config = Config::from_args(vec!["nola".into(), "--endpoint".into(),
-            "http://127.0.0.1:9/v1".into(), "--api-key".into(), "fixture".into(),
-            "--model".into(), "fixture".into()]).unwrap();
+        let mut config = Config::for_test().unwrap();
         for (enabled, allowlist) in [(true, Some(vec!["read_file".into(), "bash".into()])),
             (true, None), (false, Some(Vec::new()))] {
             config.tools_enabled = enabled;

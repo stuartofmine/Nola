@@ -7,7 +7,20 @@ use crate::application_port::CliApplicationPort;
 mod queue_source_support;
 
 #[cfg(test)]
-pub(crate) fn with_terminal_fixture(test: impl FnOnce(&std::path::Path, &str)) {
+pub(crate) fn with_terminal_fixture(test: impl FnOnce(&std::path::Path, &str) + Send) {
+    // This fixture composes Host, Application and recovery frames in-process.
+    // Declare its debug stack budget locally, including on Windows' test threads.
+    std::thread::scope(|scope| {
+        std::thread::Builder::new().name("terminal-recovery-fixture".into())
+            .stack_size(16 * 1024 * 1024)
+            .spawn_scoped(scope, move || with_terminal_fixture_inner(test))
+            .expect("spawn terminal recovery fixture").join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+    });
+}
+
+#[cfg(test)]
+fn with_terminal_fixture_inner(test: impl FnOnce(&std::path::Path, &str)) {
     let _guard=crate::store::test_env_lock();
     let root=tempfile::tempdir().unwrap();
     struct Restore(Vec<(&'static str,Option<std::ffi::OsString>)>);

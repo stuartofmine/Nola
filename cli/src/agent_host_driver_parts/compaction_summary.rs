@@ -120,8 +120,24 @@ fn persist_compaction_bytes(root: &std::path::Path, bytes: &[u8]) -> std::io::Re
         let mut file = options.open(&staging)?;
         file.write_all(bytes)?;
         file.sync_all()?;
-        std::fs::rename(&staging, root.join("compaction-request.json"))?;
-        std::fs::File::open(root)?.sync_all()
+        drop(file);
+        let destination = root.join("compaction-request.json");
+        #[cfg(windows)] {
+            use std::os::windows::ffi::OsStrExt;
+            use windows_sys::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH};
+            let source = staging.as_os_str().encode_wide().chain(Some(0)).collect::<Vec<_>>();
+            let destination = destination.as_os_str().encode_wide().chain(Some(0)).collect::<Vec<_>>();
+            // Windows does not support opening a directory with File::open for
+            // fsync. Commit its rename through the native write-through operation.
+            if unsafe { MoveFileExW(source.as_ptr(), destination.as_ptr(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) } == 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        }
+        #[cfg(not(windows))] {
+            std::fs::rename(&staging, destination)?;
+            std::fs::File::open(root)?.sync_all()
+        }
     })();
     if result.is_err() { let _ = std::fs::remove_file(&staging); }
     result
@@ -195,4 +211,18 @@ fn compaction_maintenance_decision(choice: &crate::llm::StreamedChoice, target: 
         has_tool_calls: !choice.tool_calls.is_empty(), completed: matches!(choice.finish_reason.as_str(), "stop" | "end_turn" | "completed"),
         cancelled: false, continuation_count: continuations, rewrite_count: rewrites, can_continue, can_rewrite,
     })
+}
+
+#[cfg(test)]
+mod atomic_snapshot_tests {
+    use super::*;
+    #[test]
+    fn compaction_snapshot_replacement_commits_and_leaves_no_staging_files() {
+        let directory = tempfile::tempdir().unwrap();
+        for body in [b"first".as_slice(), b"replacement".as_slice()] {
+            persist_compaction_bytes(directory.path(), body).unwrap();
+            assert_eq!(std::fs::read(directory.path().join("compaction-request.json")).unwrap(), body);
+            assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+        }
+    }
 }
