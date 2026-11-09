@@ -2995,7 +2995,7 @@ for raw in sys.stdin:
             "server_id": server_id,
             "display_name": "Transaction MCP",
             "type": "stdio",
-            "command": std::env::var("NOLA_CLI_PYTHON").unwrap_or_else(|_| "python3".to_string()),
+            "command": std::env::var("NOLA_CLI_PYTHON").unwrap_or_else(|_| if cfg!(windows) { "python" } else { "python3" }.to_string()),
             "args": [script.to_string_lossy(), counter.to_string_lossy()],
             "cwd": root.to_string_lossy(),
             "timeout_ms": 5000,
@@ -5045,7 +5045,13 @@ mod sop_custom_permission_host_tests {
         assert!(interrupted_responses
             .iter()
             .all(|response| !response.payload.is_terminal()));
-        assert!(!driver.quiescent_effects.contains_key(&stopped_identity), "a new interrupted dispatch cannot reuse the old wait's completion proof");
+        // The new synchronous wait really returned. Its physical fact is not
+        // a permission choice or completed SOP step, and must retain this fence.
+        let returned = driver.quiescent_effects.get(&stopped_identity).unwrap();
+        assert_eq!(returned.request_id, p1.request_id);
+        assert_eq!(returned.delivery_attempt_id, p1.delivery.as_ref().map(|lease| lease.attempt_id.clone()));
+        assert_eq!(returned.delivery, p1.delivery);
+        assert!(returned.local_stop.is_none(), "wait return cannot invent a tool execution receipt");
         let waiting = store.sop_run("sop-run".into()).unwrap().unwrap();
         assert_eq!(waiting.record.status, SopRunStatus::WaitingPermission);
         assert!(waiting.record.steps["work"]

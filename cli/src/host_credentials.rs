@@ -75,7 +75,7 @@ pub fn snapshot(
 
 /// Credentials come only from the exact endpoint's vault record. An absent,
 /// cleared, or differently bound record never borrows a process-global key.
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub fn for_profile(
     _: &crate::store::NolaStore,
     _: &nola_application::ModelProfile,
@@ -84,7 +84,7 @@ pub fn for_profile(
     Err("Endpoint credential storage is unavailable on this Host".into())
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub fn for_profile(
     store: &crate::store::NolaStore,
     profile: &nola_application::ModelProfile,

@@ -678,9 +678,9 @@ fn run_command(config: &Config) -> Result<(), String> {
             Ok(())
         }
         CommandMode::ModelChatgpt { operation, account_id, revision, label } => {
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             { crate::model_siwc_cli::execute(operation, account_id.as_deref(), *revision, label.as_deref(), !config.json_output && io::stdin().is_terminal()) }
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             { let _ = (operation, account_id, revision, label); Err("Nola ChatGPT credential storage is unavailable on this platform".into()) }
         }
         CommandMode::ModelManage => {

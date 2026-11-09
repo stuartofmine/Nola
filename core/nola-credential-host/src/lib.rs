@@ -6,6 +6,9 @@ use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
+#[cfg(windows)]
+pub mod windows_permissions;
+
 pub struct HostCredentialVault {
     connection: Connection,
 }
@@ -93,7 +96,7 @@ impl HostCredentialVault {
         Ok(next)
     }
 
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     pub fn open(_: &Path) -> Result<Self, String> {
         Err(
             "Private endpoint credentials require a host with protected Unix file permissions"
@@ -101,7 +104,7 @@ impl HostCredentialVault {
         )
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub fn open(canonical_database: &Path) -> Result<Self, String> {
         let canonical = std::fs::canonicalize(canonical_database)
             .map_err(|_| "Cannot locate credential host")?;
@@ -129,6 +132,8 @@ impl HostCredentialVault {
         }
         #[cfg(not(unix))]
         std::fs::create_dir_all(&directory).map_err(|_| "Cannot create credential directory")?;
+        #[cfg(windows)]
+        windows_permissions::protect_private_path(&directory)?;
         let path = directory.join(format!(
             "{:x}.sqlite",
             Sha256::digest(canonical.as_os_str().as_encoded_bytes())
@@ -154,6 +159,8 @@ impl HostCredentialVault {
         let _file = options
             .open(&path)
             .map_err(|_| "Cannot open credential file")?;
+        #[cfg(windows)]
+        windows_permissions::protect_private_path(&path)?;
         let connection = Connection::open(&path).map_err(|_| "Cannot open credential vault")?;
         connection
             .busy_timeout(std::time::Duration::from_secs(5))
@@ -312,7 +319,7 @@ impl HostCredentialVault {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(all(test, any(unix, windows)))]
 mod tests {
     use super::*;
 
@@ -428,6 +435,8 @@ mod tests {
                 .as_deref(),
             Some("private-key-b")
         );
+        #[cfg(unix)]
+        {
         use std::os::unix::fs::PermissionsExt;
         let directory = root.path().join(".nola-host-secrets");
         assert_eq!(
@@ -439,6 +448,7 @@ mod tests {
                 file.unwrap().metadata().unwrap().permissions().mode() & 0o777,
                 0o600
             );
+        }
         }
     }
 
@@ -461,6 +471,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn vault_refuses_symlinked_private_directory() {
         let root = tempfile::tempdir().unwrap();

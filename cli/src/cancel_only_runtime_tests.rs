@@ -173,7 +173,7 @@ fn normal_cold_resume_finishes_committed_cancellation_only_after_owner_death() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("cold-cancellation.db");
         let pid = if live { std::process::id() } else {
-            let mut child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
+            let mut child = crate::process_observation::test_exited_child();
             let pid = child.id();
             child.wait().unwrap();
             pid
@@ -382,7 +382,7 @@ fn real_exited_model_owner_can_be_cancelled_but_live_owner_stays_pending() {
         let pid = if live {
             std::process::id()
         } else {
-            let mut child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
+            let mut child = crate::process_observation::test_exited_child();
             let pid = child.id();
             assert!(child.wait().unwrap().success());
             pid
@@ -419,7 +419,7 @@ fn real_exited_model_owner_can_be_cancelled_but_live_owner_stays_pending() {
 fn live_historical_owner_blocks_cancellation_even_when_latest_owner_exited() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("historical-owner.db");
-    let mut child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
+    let mut child = crate::process_observation::test_exited_child();
     let pid = child.id(); child.wait().unwrap();
     let identity = fixture(&path, Some(pid), true);
     let mut application = CliApplicationPort::persistent(&path).unwrap();
@@ -553,7 +553,7 @@ fn stale_claim_facts_cannot_lease_cancellation_or_data_plane_work() {
 fn started_external_target_requires_independent_shutdown_evidence() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("external.db");
-    let mut child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
+    let mut child = crate::process_observation::test_exited_child();
     let dead_pid = child.id();
     child.wait().unwrap();
     let identity = fixture(&path, Some(dead_pid), true);
@@ -604,7 +604,7 @@ fn started_external_target_requires_independent_shutdown_evidence() {
 fn cancelled_dead_session_owner_does_not_block_the_next_run_lease() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("session-owner.db");
-    let mut child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
+    let mut child = crate::process_observation::test_exited_child();
     let dead_pid = child.id();
     assert!(child.wait().unwrap().success());
     let identity = fixture(&path, Some(dead_pid), true);
@@ -703,7 +703,7 @@ fn cancellation_claim_receipt_failure_rolls_back_owner_release_and_attempts() {
     let mut application = CliApplicationPort::persistent(&path)
         .unwrap()
         .with_service_receipts();
-    let mut child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
+    let mut child = crate::process_observation::test_exited_child();
     let pid = child.id();
     child.wait().unwrap();
     let lease = nola_application::SessionRunLease {
@@ -846,7 +846,7 @@ fn cancellation_claim_direct_apis_require_an_outer_write_unit_of_work() {
 fn cancellation_reads_only_current_target_after_more_than_256_historical_effects() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("long-history.db");
-    let mut child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
+    let mut child = crate::process_observation::test_exited_child();
     let dead_pid = child.id();
     assert!(child.wait().unwrap().success());
     let identity = fixture(&path, Some(dead_pid), true);
@@ -1152,7 +1152,7 @@ fn local_process_tool_fixture(path: &std::path::Path, owner: Option<u32>, starte
 fn process_bound_local_tool_recovers_after_exit_but_live_owner_stays_pending() {
     for live in [false,true] {
         let directory=tempfile::tempdir().unwrap(); let path=directory.path().join("local-tool.db");
-        let pid=if live {std::process::id()} else { let mut child=std::process::Command::new("/usr/bin/true").spawn().unwrap();let id=child.id();child.wait().unwrap();id };
+        let pid=if live {std::process::id()} else { let mut child=crate::process_observation::test_exited_child();let id=child.id();child.wait().unwrap();id };
         let identity=local_process_tool_fixture(&path,Some(pid),true);
         let result=cancel(CliApplicationPort::persistent(&path).unwrap().with_service_receipts(),identity.clone(),"cancel-local",&mut |_|{});
         if live {assert!(result.unwrap_err().contains("alive"));}

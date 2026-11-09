@@ -118,6 +118,8 @@ fn persist_compaction_bytes(root: &std::path::Path, bytes: &[u8]) -> std::io::Re
     }
     let result = (|| {
         let mut file = options.open(&staging)?;
+        #[cfg(windows)]
+        nola_credential_host::windows_permissions::protect_private_path(&staging).map_err(std::io::Error::other)?;
         file.write_all(bytes)?;
         file.sync_all()?;
         drop(file);

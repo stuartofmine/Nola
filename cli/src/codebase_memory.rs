@@ -80,7 +80,7 @@ pub(crate) fn attach_result_provenance(capability_id: &str, workspace: &Path, ou
                 .and_then(|path| path.strip_prefix(&workspace).ok())
                 .unwrap_or(Path::new(&raw.path))
                 .to_string_lossy()
-                .into_owned();
+                .replace(std::path::MAIN_SEPARATOR, "/");
             nola_core::code_intelligence::CodeFactProvenance {
                 repository_root: repository_root.clone(),
                 path: relative,

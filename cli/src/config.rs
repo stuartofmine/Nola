@@ -2336,33 +2336,25 @@ mod tests {
 
     #[test]
     fn desktop_host_receipt_limits_execution_authorization() {
-        let receipt = serde_json::json!({
-            "policy_digest": "policy-1",
-            "manifest_digest": "manifest-1",
-            "manifest_valid_until_ms": 20_000,
-            "expected_identity": {
-                "host_id": "local",
-                "client_id": "mac",
-                "session_id": "conversation-1"
-            },
-            "enabled_tools": [
-                {"tool_id": "read_file", "enabled": true, "route": "agent_host"},
-                {"tool_id": "write_file", "enabled": false, "route": "agent_host"},
-                {"tool_id": "remote_only", "enabled": true, "route": "remote"},
-                {"tool_id": "READ_FILE", "enabled": true, "route": "agent_host"}
-            ]
-        });
-        let encoded =
-            base64::engine::general_purpose::STANDARD.encode(serde_json::to_vec(&receipt).unwrap());
-
-        let tools = super::decode_desktop_host_tool_allowlist(
-            &encoded,
-            "policy-1",
-            "manifest-1",
-            "conversation-1",
-            10_000,
-        )
-        .unwrap();
+        let input: nola_core::tool_policy::ToolPolicyInput = serde_json::from_value(serde_json::json!({
+            "schema_version":1,"platform":"macos","now_ms":1000,
+            "expected_identity":{"host_id":"local","client_id":"mac","session_id":"conversation-1"},
+            "runtime":{"manifest_id":"test","manifest_version":1,"issued_at_ms":1,"expires_at_ms":60000,
+                "host_id":"local","client_id":"mac","session_id":"conversation-1","routes":["agent_host"],
+                "capabilities":["files_read"],"authorizations":{"files_read":"granted"},
+                "tools":[{"tool_id":"read_file","handler_id":"read_file","route":"agent_host","available":true,
+                    "schema":{"type":"function","function":{"name":"read_file","parameters":{"type":"object"}}}},
+                    {"tool_id":"write_file","handler_id":"write_file","route":"agent_host","available":false,
+                    "schema":{"type":"function","function":{"name":"write_file","parameters":{"type":"object"}}}}]},
+            "user_policy":{"max_risk":"high"}
+        })).unwrap();
+        let resolved = nola_core::tool_policy::resolve_tool_policy(&input);
+        let mut receipt = serde_json::to_value(&resolved).unwrap();
+        receipt["expected_identity"] = serde_json::to_value(&input.expected_identity).unwrap();
+        receipt["policy_input"] = serde_json::to_value(input).unwrap();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(serde_json::to_vec(&receipt).unwrap());
+        let tools = super::decode_desktop_host_tool_allowlist(&encoded, &resolved.policy_digest,
+            &resolved.manifest_digest, "conversation-1", 10_000).unwrap();
 
         assert_eq!(tools, vec!["read_file"]);
     }

@@ -20,7 +20,7 @@ fn platform_process_is_alive(pid: u32) -> bool {
     std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn platform_process_is_alive(_pid: u32) -> bool {
     // No reliable observation is available here; do not retire another owner
     // based on localized command output or a failed diagnostic subprocess.
@@ -113,12 +113,69 @@ fn process_start_identity(pid: u32) -> Result<Option<String>, ()> {
     Ok(Some(start.to_string()))
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+
+#[cfg(windows)]
+fn platform_process_is_alive(pid: u32) -> bool {
+    !matches!(process_start_identity(pid), Ok(None))
+}
+
+#[cfg(windows)]
+fn boot_identity() -> Result<String, ()> {
+    use windows_sys::{core::GUID, Wdk::System::SystemInformation::NtQuerySystemInformation};
+    #[repr(C)]
+    struct BootEnvironment { identifier: GUID, firmware_type: u32, flags: u64 }
+    let mut environment: BootEnvironment = unsafe { std::mem::zeroed() };
+    let mut returned = 0;
+    // SYSTEM_BOOT_ENVIRONMENT_INFORMATION (class 90) reports the actual boot
+    // GUID. Unsupported/failed observations remain Unknown, never false death.
+    let status = unsafe { NtQuerySystemInformation(90, (&mut environment as *mut BootEnvironment).cast(),
+        std::mem::size_of::<BootEnvironment>() as u32, &mut returned) };
+    if status < 0 || returned < 16 { return Err(()); }
+    let id = environment.identifier;
+    if id.data1 == 0 && id.data2 == 0 && id.data3 == 0 && id.data4 == [0; 8] { return Err(()); }
+    Ok(uuid::Uuid::from_fields(id.data1, id.data2, id.data3, &id.data4).to_string())
+}
+
+#[cfg(windows)]
+fn process_start_identity(pid: u32) -> Result<Option<String>, ()> {
+    use windows_sys::Win32::{Foundation::{CloseHandle, FILETIME, ERROR_INVALID_PARAMETER, WAIT_OBJECT_0, WAIT_TIMEOUT},
+        System::Threading::{OpenProcess, GetProcessTimes, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE}};
+    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE, 0, pid) };
+    if process.is_null() {
+        return if std::io::Error::last_os_error().raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32) { Ok(None) } else { Err(()) };
+    }
+    let result = (|| {
+        match unsafe { WaitForSingleObject(process, 0) } {
+            WAIT_OBJECT_0 => return Ok(None),
+            WAIT_TIMEOUT => {},
+            _ => return Err(()),
+        }
+        let mut created: FILETIME = unsafe { std::mem::zeroed() };
+        let (mut exited, mut kernel, mut user) = (created, created, created);
+        if unsafe { GetProcessTimes(process, &mut created, &mut exited, &mut kernel, &mut user) } == 0 { return Err(()); }
+        let start = (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime);
+        if start == 0 { return Err(()); }
+        Ok(Some(start.to_string()))
+    })();
+    unsafe { CloseHandle(process); }
+    result
+}
+
+#[cfg(test)]
+pub(crate) fn test_exited_child() -> std::process::Child {
+    #[cfg(windows)]
+    let child = std::process::Command::new("cmd.exe").args(["/D", "/C", "exit 0"]).spawn();
+    #[cfg(not(windows))]
+    let child = std::process::Command::new("/usr/bin/true").spawn();
+    child.expect("spawn short-lived process fixture")
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 fn boot_identity() -> Result<String, ()> { Err(()) }
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 fn process_start_identity(_pid: u32) -> Result<Option<String>, ()> { Err(()) }
 
-#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+#[cfg(all(test, any(target_os = "macos", target_os = "linux", windows)))]
 mod worker_identity_tests {
     use super::*;
     #[test]
@@ -130,7 +187,10 @@ mod worker_identity_tests {
     }
     #[test]
     fn child_exit_is_os_observed_not_inferred_from_a_new_nonce() {
+        #[cfg(not(windows))]
         let mut child = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+        #[cfg(windows)]
+        let mut child = std::process::Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", "Start-Sleep -Seconds 30"]).spawn().unwrap();
         let observed = observe_process(child.id());
         let nola_host_protocol::HostProcessObservation::Running {pid,boot_id,start_id} = observed else {
             let _ = child.kill(); let _ = child.wait(); panic!("Child identity unavailable");

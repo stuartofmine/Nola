@@ -571,7 +571,7 @@ fn consume_stream(reader: impl Read, event: &mut impl FnMut(&Value)->Result<(),S
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(all(test, any(unix, windows)))]
 #[path = "model_siwc_tests.rs"]
 mod tests;
 
@@ -595,7 +595,7 @@ fn account_lock_rejects_a_competing_host_and_releases_on_drop() {
 
 }
 
-#[cfg(all(test, not(unix)))]
+#[cfg(all(test, not(any(unix, windows))))]
 mod unsupported_vault_tests {
     use super::*;
     #[test]

@@ -438,7 +438,8 @@ mod permission_recovery_entrypoint_tests {
     include!("core_agent_runtime_stop_process_tests.rs");
 
     #[test]
-    fn external_retained_stop_accepts_current_fence_but_not_process_death() {
+    fn external_retained_stop_accepts_current_fence_but_not_process_death() { run_full_host_recovery_fixture(external_retained_stop_accepts_current_fence_but_not_process_death_inner); }
+    fn external_retained_stop_accepts_current_fence_but_not_process_death_inner() {
         use nola_core::agent::host::{HostResponse, HostResponseEnvelope};
         let _environment = crate::store::test_env_lock();
         let (fixture, mut config) = binding_config();

@@ -229,7 +229,7 @@ fn ensure_remote_profile(
 
 /// Explicit initialization only. Existing current-vault credentials are never replaced.
 fn initialize_credential(store: &NolaStore, endpoint_id: &str, route: &str, api_key: &str) -> Result<(), String> {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
         let mut vault = crate::host_credentials::HostCredentialVault::open(store.path())?;
         if vault.record(endpoint_id)?.is_none() {
@@ -237,7 +237,7 @@ fn initialize_credential(store: &NolaStore, endpoint_id: &str, route: &str, api_
                 (!api_key.is_empty()).then_some(api_key), || Ok(()))?;
         }
     }
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     if !api_key.is_empty() { return Err("This Host cannot persist the model credential securely".into()); }
     Ok(())
 }

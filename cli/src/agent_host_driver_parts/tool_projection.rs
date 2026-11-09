@@ -3345,10 +3345,15 @@ mod model_text_presentation_gate_tests {
         }
         let stop = catalog.capabilities.get("bash_background_stop").unwrap();
         assert_eq!(stop.permission_domain.as_deref(), Some("bash"));
+        #[cfg(unix)]
+        {
         let input = catalog.capabilities.get("terminal_input").unwrap();
         assert_eq!(input.permission_domain.as_deref(), Some("bash"));
         assert_eq!(input.input_normalization.permission_contract.risk,
             nola_domain::permission_resource_plan::PermissionOperationRisk::Unknown);
+        }
+        #[cfg(windows)]
+        assert!(!catalog.capabilities.contains_key("terminal_input"));
         let semantic_query = catalog.capabilities.get("language_service_query").unwrap();
         assert_eq!(semantic_query.permission_domain.as_deref(), Some("bash"));
         assert_eq!(semantic_query.input_normalization.permission_contract.risk,

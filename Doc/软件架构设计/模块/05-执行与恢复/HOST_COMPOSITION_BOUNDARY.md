@@ -746,3 +746,30 @@ zero side effects on rejection, advertised/frozen/runtime limits agreeing,
 complete long tool streams, duplicate/cold-replayed calls and Unicode boundary
 cases. Benchmark task names and artifact paths must not enter this policy.
 Do not claim this contract implemented until those paths are changed and tested.
+
+## Windows Host adapters (2026-11-09)
+
+The Windows Host observes the OS boot GUID and process creation FILETIME, with
+an anchored process handle for liveness. Access denial and unavailable OS facts
+remain Unknown; a new worker nonce never proves another process has exited.
+Application/Core retain the existing exact Run, lease and receipt checks.
+
+Private credential files use a protected DACL for the current process user SID.
+Other ordinary owners and reparse points are rejected; inherited public access
+is removed before secrets are written. The credential vault remains separate
+from canonical product state, exports and sync. The same current-principal
+protection applies to client input journals.
+
+The input journal records frozen request identity and payload, not authorization
+or canonical admission. Unix publishes its file with fsync/rename/directory
+fsync. Windows uses bounded REG_BINARY values under
+`HKCU\Software\Nola\ClientInputIntents`, keyed by the database/session/source
+owner digest, and explicitly flushes publication and retirement with
+[RegFlushKey](https://learn.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-regflushkey).
+This operation is expensive and belongs at the durable admission boundary,
+not an idle poll. It avoids assuming that a directory handle supports
+[FlushFileBuffers](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers).
+Both adapters validate the same version-1 envelope and reconcile the original
+Application receipt after an unknown outcome. There is one backend per platform;
+no file/registry dual read, conversion or automatic deletion is performed.
+Windows tests use a separate random registry namespace and temporary databases.

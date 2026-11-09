@@ -9,6 +9,9 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
+#[cfg(windows)]
+mod windows;
+
 const MAX_BYTES: usize = 2 * 1024 * 1024;
 const SOURCE_OWNER: &str = "local-host-boundary-input-v1";
 static RETIREMENT_PENDING: OnceLock<Mutex<HashMap<PathBuf,Intent>>> = OnceLock::new();
@@ -29,7 +32,9 @@ struct Intent {
 
 pub(crate) enum InputOperation<'a> { NewSubmit(&'a str), ResumePending(&'a str), Inspect }
 
-struct Journal { database: PathBuf, directory: PathBuf, path: PathBuf, session: String, _lock: File }
+struct Journal { database: PathBuf, directory: PathBuf, path: PathBuf, session: String, _lock: File,
+    #[cfg(windows)] registry: windows::RegistryJournal,
+}
 impl Journal {
     fn open(database: &Path, session: &str) -> Result<Self,String> {
         if session.trim().is_empty() || session.len()>512 || session.chars().any(char::is_control) { return Err("invalid input session".into()); }
@@ -40,26 +45,26 @@ impl Journal {
         let directory=parent.join("client-input-intents");
         let mut builder=fs::DirBuilder::new();
         #[cfg(unix)] {use std::os::unix::fs::DirBuilderExt; builder.mode(0o700);}
-        match builder.create(&directory) { Ok(())=>{sync_directory(&parent)?;},Err(e) if e.kind()==std::io::ErrorKind::AlreadyExists=>{},Err(e)=>return Err(e.to_string()) }
+        match builder.create(&directory) { Ok(())=>{#[cfg(not(windows))] sync_directory(&parent)?;},Err(e) if e.kind()==std::io::ErrorKind::AlreadyExists=>{},Err(e)=>return Err(e.to_string()) }
         private_directory(&directory)?;
         // Also finish a previous instance's failed directory publication.
         // Syncing only the intent's directory would not persist that directory
         // entry in its own parent after a crash.
+        #[cfg(not(windows))]
         sync_directory(&parent)?;
         let key=format!("{:x}",Sha256::digest(serde_json::to_vec(&(SOURCE_OWNER,&database,session)).map_err(|e|e.to_string())?));
         let lock=private_file(&directory.join(format!("{key}.lock")),false)?;
         if !lock.metadata().map_err(|e|e.to_string())?.is_file() {return Err("input lock must be a regular file".into());}
         lock.lock().map_err(|e|e.to_string())?;
-        Ok(Self {database,directory:directory.clone(),path:directory.join(format!("{key}.json")),session:session.into(),_lock:lock})
+        #[cfg(windows)]
+        let registry = windows::RegistryJournal::open(&key)?;
+        Ok(Self {database,directory:directory.clone(),path:directory.join(format!("{key}.json")),session:session.into(),_lock:lock,
+            #[cfg(windows)] registry,
+        })
     }
-    fn read(&self) -> Result<Option<Intent>,String> {
-        let mut options=OpenOptions::new(); options.read(true).write(true);
-        #[cfg(unix)] {use std::os::unix::fs::OpenOptionsExt; options.custom_flags(libc::O_NOFOLLOW);}
-        let mut file=match options.open(&self.path) {Ok(file)=>file,Err(e) if e.kind()==std::io::ErrorKind::NotFound=>return Ok(retirement_pending().lock().map_err(|_|"input retirement lock poisoned")?.get(&self.path).cloned()),Err(e)=>return Err(e.to_string())};
-        validate_private_file(&file)?;
-        let mut bytes=Vec::new(); Read::by_ref(&mut file).take(MAX_BYTES as u64+1).read_to_end(&mut bytes).map_err(|e|e.to_string())?;
+    fn decode(&self, bytes: &[u8]) -> Result<Intent, String> {
         if bytes.len()>MAX_BYTES { return Err("input intent too large".into()); }
-        let intent:Intent=serde_json::from_slice(&bytes).map_err(|_|"invalid input intent; recovery required")?;
+        let intent:Intent=serde_json::from_slice(bytes).map_err(|_|"invalid input intent; recovery required")?;
         if intent.version!=1 || intent.database!=self.database.to_string_lossy() || intent.source_owner!=SOURCE_OWNER || intent.session!=self.session
             || intent.request_id.is_empty() || intent.submission_id.is_empty() || intent.created_at_ms<0 {
             return Err("input intent owner mismatch".into());
@@ -70,16 +75,40 @@ impl Journal {
                 if id==intent.submission_id && time==intent.created_at_ms=>{},
             _=>return Err("input intent payload identity mismatch".into()),
         }
+        Ok(intent)
+    }
+    fn read(&self) -> Result<Option<Intent>,String> {
+        #[cfg(windows)] {
+            match fs::symlink_metadata(&self.path) {
+                Ok(_) => return Err("Input journal has conflicting file state; reconcile the original request before resubmission".into()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+                Err(error) => return Err(error.to_string()),
+            }
+            return match self.registry.read(MAX_BYTES)? {
+                Some(bytes) => self.decode(&bytes).map(Some),
+                None => Ok(retirement_pending().lock().map_err(|_|"input retirement lock poisoned")?.get(&self.path).cloned()),
+            };
+        }
+        #[cfg(not(windows))] {
+        let mut options=OpenOptions::new(); options.read(true).write(true);
+        #[cfg(unix)] {use std::os::unix::fs::OpenOptionsExt; options.custom_flags(libc::O_NOFOLLOW);}
+        let mut file=match options.open(&self.path) {Ok(file)=>file,Err(e) if e.kind()==std::io::ErrorKind::NotFound=>return Ok(retirement_pending().lock().map_err(|_|"input retirement lock poisoned")?.get(&self.path).cloned()),Err(e)=>return Err(e.to_string())};
+        validate_private_file(&file)?;
+        let mut bytes=Vec::new(); Read::by_ref(&mut file).take(MAX_BYTES as u64+1).read_to_end(&mut bytes).map_err(|e|e.to_string())?;
+        let intent = self.decode(&bytes)?;
         // A previous writer may have published the rename but failed its
         // directory sync. Visibility alone must not authorize sending the
         // frozen request: establish durable recovery before any delivery.
         file.sync_all().map_err(|e|e.to_string())?;
         sync_directory(&self.directory)?;
         Ok(Some(intent))
+        }
     }
     fn create(&self,intent:&Intent)->Result<(),String> {
         let bytes=serde_json::to_vec(intent).map_err(|e|e.to_string())?;
         if bytes.len()>MAX_BYTES {return Err("input intent too large".into());}
+        #[cfg(windows)] { return self.registry.write(&bytes); }
+        #[cfg(not(windows))] {
         // Same-directory temporary write + durable publication. The persistent
         // lock covers inspection, creation, delivery and retirement.
         let temp=self.directory.join(format!("{}.tmp",uuid::Uuid::new_v4()));
@@ -87,11 +116,26 @@ impl Journal {
         file.sync_all().map_err(|e|e.to_string())?;
         fs::rename(&temp,&self.path).map_err(|e|e.to_string())?;
         sync_directory(&self.directory)
+        }
     }
     fn clear(&self)->Result<(),String> {
+        #[cfg(windows)] { return self.registry.clear(); }
+        #[cfg(not(windows))] {
         match fs::remove_file(&self.path) {Ok(())=>{},Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{},Err(e)=>return Err(e.to_string())}
         sync_directory(&self.directory)
+        }
     }
+    #[cfg(test)]
+    fn corrupt_fixture(&self, bytes: &[u8]) -> Result<(), String> {
+        #[cfg(windows)] { self.registry.write(bytes) }
+        #[cfg(not(windows))] { fs::write(&self.path, bytes).map_err(|error|error.to_string()) }
+    }
+    #[cfg(test)]
+    fn unlink_fixture_without_sync(&self) -> Result<(), String> {
+        #[cfg(windows)] { self.registry.unlink() }
+        #[cfg(not(windows))] { fs::remove_file(&self.path).map_err(|error|error.to_string()) }
+    }
+
 }
 
 fn retire_confirmed(journal:&Journal,intent:&Intent,cleanup:impl FnOnce()->Result<(),String>) {
@@ -136,26 +180,11 @@ fn validate_private_file(file:&File)->Result<(),String> {
 }
 #[cfg(windows)]
 fn private_windows_path(path:&Path)->Result<(),String> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Security::{SetFileSecurityW,DACL_SECURITY_INFORMATION,PROTECTED_DACL_SECURITY_INFORMATION};
-    use windows_sys::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
-    // Protected DACL: only the file owner receives full access; do not inherit
-    // a potentially public custom database-directory ACL onto input text.
-    let descriptor:Vec<u16>="D:P(A;;FA;;;OW)\0".encode_utf16().collect();
-    let mut security=std::ptr::null_mut();
-    let path:Vec<u16>=path.as_os_str().encode_wide().chain(Some(0)).collect();
-    unsafe {
-        if ConvertStringSecurityDescriptorToSecurityDescriptorW(descriptor.as_ptr(),1,&mut security,std::ptr::null_mut())==0 {return Err(std::io::Error::last_os_error().to_string());}
-        let result=SetFileSecurityW(path.as_ptr(),DACL_SECURITY_INFORMATION|PROTECTED_DACL_SECURITY_INFORMATION,security);
-        let error=if result==0 {Some(std::io::Error::last_os_error().to_string())} else {None};
-        windows_sys::Win32::Foundation::LocalFree(security);
-        if let Some(error)=error {return Err(error);}
-    }
-    Ok(())
+    nola_credential_host::windows_permissions::protect_private_path(path)
 }
+#[cfg(not(windows))]
 fn sync_directory(path:&Path)->Result<(),String> {
     let mut options=OpenOptions::new(); options.read(true);
-    #[cfg(windows)] {use std::os::windows::fs::OpenOptionsExt; options.custom_flags(0x02000000);}
     options.open(path).and_then(|file|file.sync_all()).map_err(|e|e.to_string())
 }
 
@@ -299,8 +328,7 @@ mod tests {
         assert!(execute_with_delivery(&database,"session",InputOperation::NewSubmit("follow-up"),|_,_|Ok(false)).is_err());
         let journal=Journal::open(&database,"session").unwrap();
         assert!(journal.read().unwrap().is_some());
-        let mut file=OpenOptions::new().write(true).truncate(true).open(&journal.path).unwrap();
-        file.write_all(b"{bad").unwrap();file.sync_all().unwrap();drop(file);drop(journal);
+        journal.corrupt_fixture(b"{bad").unwrap();drop(journal);
         assert!(execute_with_delivery(&database,"session",InputOperation::NewSubmit("replacement"),|_,_|panic!("corruption cannot send")).is_err());
     }
     #[test]
@@ -308,7 +336,7 @@ mod tests {
         let directory=tempfile::tempdir().unwrap();let database=directory.path().join("db.sqlite");
         assert!(execute_with_delivery(&database,"session",InputOperation::NewSubmit("text"),|_,_|Ok(false)).is_err());
         let journal=Journal::open(&database,"session").unwrap();let intent=journal.read().unwrap().unwrap();
-        retire_confirmed(&journal,&intent,||{fs::remove_file(&journal.path).unwrap();Err("directory sync failure".into())});
+        retire_confirmed(&journal,&intent,||{journal.unlink_fixture_without_sync().unwrap();Err("journal flush failure".into())});
         assert_eq!(journal.read().unwrap().unwrap().request_id,intent.request_id);drop(journal);
         assert!(execute_with_delivery(&database,"session",InputOperation::NewSubmit("text"),|_,_|panic!("poison blocks new intent")).is_err());
         execute_with_delivery(&database,"session",InputOperation::ResumePending(&intent.request_id),|_,saved|{assert_eq!(saved.request_id,intent.request_id);Ok(true)}).unwrap();

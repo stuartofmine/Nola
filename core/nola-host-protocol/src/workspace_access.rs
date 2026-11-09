@@ -54,10 +54,14 @@ impl WorkspaceAccessGrant {
         let root = uri
             .to_file_path()
             .map_err(|_| "Workspace resource URI is not a local absolute path".to_string())?;
-        if !approved_root.is_absolute() || root != approved_root {
+        let expected = url::Url::from_directory_path(approved_root)
+            .map_err(|_| "Approved workspace is not an absolute directory".to_string())?
+            .to_file_path().map_err(|_| "Approved workspace has no local file representation".to_string())?;
+        if !approved_root.is_absolute() || root != expected {
             return Err("Workspace result does not match the approved directory".into());
         }
-        Ok(root)
+        // Preserve the trusted native spelling (including Windows verbatim paths).
+        Ok(approved_root.to_path_buf())
     }
 }
 
