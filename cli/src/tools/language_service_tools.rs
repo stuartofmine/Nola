@@ -253,18 +253,19 @@ mod tests {
 
     #[test]
     fn discovery_does_not_publish_launch_arguments_or_environment() {
+        let root = tempfile::tempdir().unwrap();
         let mut context = ToolContext {
             memory_binding: nola_domain::memory_owner::MemoryExecutionBinding::local_profile(),
             language_services: Vec::new(),
             skills: crate::skill_runtime::SkillRuntimeContext::from_configured_dirs(None),
-            allowed_dirs: vec![PathBuf::from("/workspace")],
+            allowed_dirs: vec![root.path().to_path_buf()],
             policy: ToolExecutionPolicy::new(Vec::new(), false, "ask".into(), Vec::new()),
             permission_scope: Default::default(), cancellation: Default::default(), plan_state: Default::default(),
-            output_store: ToolOutputStore::for_test(), browser: BrowserRuntime::new(PathBuf::from("/unused-browser")),
+            output_store: ToolOutputStore::for_test(), browser: BrowserRuntime::new(root.path().join("unused-browser")),
         };
         context.language_services.push(LanguageServiceConfiguration {
-            id:"rust".into(),executable:PathBuf::from("/tools/server"),arguments:vec!["private-arg".into()],
-            project_root:PathBuf::from("/workspace"),language_ids:vec!["rust".into()],
+            id:"rust".into(),executable:root.path().join("server"),arguments:vec!["private-arg".into()],
+            project_root:root.path().to_path_buf(),language_ids:vec!["rust".into()],
             environment: std::collections::BTreeMap::from([("TOKEN".into(),"private-token".into())]),timeout_ms:1000,
         });
         let result = list(&context);

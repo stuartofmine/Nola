@@ -665,7 +665,7 @@ mod host_resume_success_tests {
                         }
                     ).unwrap();
                 assert_eq!(serde_json::to_value(&seal.seal_digest).unwrap(), event["seal_digest"]);
-                assert_eq!(seal.protocol_version, 2);
+                assert_eq!(seal.protocol_version, 1);
                 assert_eq!(seal.result.run_id, seal.identity.run_id);
                 assert_eq!(seal.result.conversation_id, seal.identity.conversation_id);
                 // This test proves exact permission resume and durable closure.

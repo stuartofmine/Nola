@@ -384,6 +384,7 @@ mod web_goal_worker_tests {
         struct Env(Vec<(&'static str, Option<std::ffi::OsString>)>);
         impl Drop for Env {
             fn drop(&mut self) {
+                let _ = crate::core_agent_runtime::invalidate_core_agent_session("web-goal-existing");
                 for (key, value) in &self.0 {
                     match value {
                         Some(value) => std::env::set_var(key, value),
@@ -534,8 +535,9 @@ mod web_goal_worker_tests {
             "Goal Start must freeze the same execution-tier discovery surface as its first dispatch");
         // Start atomically admits the first canonical Run with its frozen
         // execution binding, before any provider dispatch.
-        assert!(crate::application_port::CliApplicationPort::persistent_default()
-            .unwrap().active_run(session).unwrap().is_some());
+        assert_eq!(crate::application_port::CliApplicationPort::persistent_default()
+            .unwrap().active_run(session).unwrap().is_some(), !budget_blocked,
+            "an over-budget admission is sealed before dispatch");
         let before_first_run = web_goal_invocation(session).unwrap();
         assert_eq!(before_first_run.model_settings.endpoint, request.model_settings.endpoint);
         assert_eq!(before_first_run.model_settings.model, request.model_settings.model);
@@ -721,7 +723,7 @@ mod web_goal_worker_tests {
         let mut quiet = crate::native_runtime_output::NativeRuntimeOutput::with_event_sink(|_| {});
         let background = crate::goal_runtime::run_scheduled_host_goal(&mut restored,
             "Summarize a result", "", &mut quiet, RuntimeExecutionControl::default());
-        assert!(background.unwrap_err().contains("Goal requires explicit resume before claim"));
+        assert!(matches!(background.unwrap(), crate::goal_runtime::GoalCycleOutcome::Paused));
         let after_background = crate::session::load_session_goal_projection(session).unwrap().unwrap();
         assert_eq!(after_background, before_background, "background restore cannot manufacture a user Resume");
         let paused = projection.active.unwrap();
@@ -730,39 +732,22 @@ mod web_goal_worker_tests {
             paused.contracts.last().unwrap().status,
             nola_core::agent::GoalContractStatus::Interrupted
         );
-        let mut next_contract = paused.contracts.last().unwrap().clone();
-        next_contract.round += 1;
-        next_contract.id = format!("{}:round:{}", paused.id, next_contract.round);
-        next_contract.execution_run_id = None;
-        next_contract.status = nola_core::agent::GoalContractStatus::Planned;
+        let current = crate::session::load_session_goal_projection(session).unwrap().unwrap();
         crate::core_agent_runtime::submit_agent_core_goal_command(
-            &request,
-            GoalRuntimeCommandEnvelope {
+            &request, GoalRuntimeCommandEnvelope {
                 operation_id: "resume-confirmed-pause".into(),
-                command: GoalRuntimeCommand::Resume {
-                    now_epoch_ms: crate::goal_runtime::goal_now_epoch_ms(),
+                command: GoalRuntimeCommand::GuardedControl {
+                    expected_goal_id: current.active.as_ref().unwrap().id.clone(),
+                    expected_control_token: current.control_token().unwrap(),
+                    control: Box::new(GoalRuntimeCommand::Resume {
+                        now_epoch_ms: crate::goal_runtime::goal_now_epoch_ms(),
+                    }),
                 },
             },
-        )
-        .unwrap();
-        crate::core_agent_runtime::submit_agent_core_goal_command(
-            &request,
-            GoalRuntimeCommandEnvelope {
-                operation_id: "next-round-after-confirmed-stop".into(),
-                command: GoalRuntimeCommand::PlanContract {
-                    contract: next_contract,
-                    now_epoch_ms: crate::goal_runtime::goal_now_epoch_ms(),
-                },
-            },
-        )
-        .unwrap();
-        assert!(
-            crate::application_port::CliApplicationPort::persistent_default()
-                .unwrap()
-                .active_run(session)
-                .unwrap()
-                .is_none()
-        );
+        ).unwrap();
+        assert!(crate::application_port::CliApplicationPort::persistent_default()
+            .unwrap().active_run(session).unwrap().is_some(),
+            "Resume atomically plans and admits its next Run; the Host must not plan another contract");
         if resume_execution {
             let second_control = RuntimeExecutionControl::default();
             let second_registration = try_register_web_agent_run(session, second_control.clone()).unwrap();

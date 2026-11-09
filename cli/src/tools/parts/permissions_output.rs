@@ -4834,7 +4834,7 @@ fn clamped_local_output_exposes_the_saved_path_structurally() {
     });
 
     let full_output_ref = full_output_ref_from_outcome(&outcome).expect("saved output path");
-    assert!(outcome.text.contains(&full_output_ref));
+    assert_eq!(serde_json::from_str::<Value>(&outcome.text).unwrap()["full_output_ref"], full_output_ref);
     let activation = outcome.activation.expect("output continuation activation");
     assert_eq!(activation.source, "full_output_ref");
     assert!(activation

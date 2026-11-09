@@ -3866,7 +3866,7 @@ fn tool_output_search_merges_context_without_repeating_paths_or_lines() {
     assert!(!result.error);
     let body = result.text.split_once("\n\n").unwrap().1;
     assert_eq!(body.lines().count(), 80);
-    assert_eq!(result.text.matches(path.to_str().unwrap()).count(), 1);
+    assert_eq!(result.text.matches(path.canonicalize().unwrap().to_str().unwrap()).count(), 1);
     assert!(body.contains("match-79"));
     assert!(result.text.len() < 4_000);
     fs::remove_file(path).unwrap();

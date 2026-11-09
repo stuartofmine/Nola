@@ -3375,8 +3375,14 @@ fn terminate_external_child(child: &mut Child) -> std::io::Result<ExitStatus> {
             if unsafe { libc::kill(-process_group, libc::SIGKILL) } != 0 {
                 let error = std::io::Error::last_os_error();
                 if error.raw_os_error() != Some(libc::ESRCH) {
-                    // Reap an already-exited leader without claiming its whole group stopped.
-                    let _ = child.try_wait();
+                    // Darwin may reject signalling an exited, unreaped leader.
+                    // EPERM itself proves nothing: only a reaped owned Child
+                    // followed by a fresh ESRCH for the entire group confirms stop.
+                    // Never send another signal after releasing that identity.
+                    if child.try_wait()?.is_some() {
+                        observe_owned_group_exit(child.id(), Duration::from_secs(1))?;
+                        return child.wait();
+                    }
                     return Err(std::io::Error::new(error.kind(), format!("SIGKILL owned process group {process_group}: {error}")));
                 }
             }
@@ -3656,6 +3662,13 @@ mod tests {
         kind: ExecutionBackendKind,
         body: &str,
     ) -> (ExternalExecutionSettings, ExecutionBackendDescriptor) {
+        protocol_fixture_with_shutdown(kind, body, true)
+    }
+
+    #[cfg(unix)]
+    fn protocol_fixture_with_shutdown(
+        kind: ExecutionBackendKind, body: &str, exits_on_eof: bool,
+    ) -> (ExternalExecutionSettings, ExecutionBackendDescriptor) {
         use std::os::unix::fs::PermissionsExt;
         let directory = std::env::temp_dir().join(format!(
             "nola-delegated-protocol-{}-{}",
@@ -3667,7 +3680,12 @@ mod tests {
         ));
         fs::create_dir_all(&directory).unwrap();
         let executable = directory.join("executor");
-        fs::write(&executable, format!("#!/bin/sh\nif [ \"$2\" = daemon ]; then exit 0; fi\necho $$ > process.pid\nsleep 30 &\necho $! > descendant.pid\n{body}\n")).unwrap();
+        // Persistent protocol fixtures close on EOF and reap their own child,
+        // like a well-behaved server; waiting on a 30s test sleeper after EOF
+        // would test an uncooperative shutdown rather than this protocol.
+        let body = body.trim_end();
+        let body = if exits_on_eof { body.strip_suffix("\nwait").unwrap_or(body) } else { body };
+        fs::write(&executable, format!("#!/bin/sh\nif [ \"$2\" = daemon ]; then exit 0; fi\necho $$ > process.pid\nsleep 30 &\nowned_child=$!\necho $owned_child > descendant.pid\ntrap 'kill \"$owned_child\" 2>/dev/null; wait \"$owned_child\" 2>/dev/null' EXIT\n{body}\n")).unwrap();
         fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
         let mut descriptor = ExecutionBackendDescriptor::built_in_nola();
         descriptor.id = match kind {
@@ -3764,8 +3782,8 @@ wait
     #[cfg(unix)]
     #[test]
     fn blocked_external_stdin_write_is_cancellable_and_reaps_its_processes() {
-        let (config, descriptor) = protocol_fixture(ExecutionBackendKind::ClaudeCode,
-            "ps -o pgid= -p $$ > process.pgid\ntouch ready\nwait");
+        let (config, descriptor) = protocol_fixture_with_shutdown(ExecutionBackendKind::ClaudeCode,
+            "ps -o pgid= -p $$ > process.pgid\ntouch ready\nwait", false);
         let control = RuntimeExecutionControl::default();
         let worker_control = control.clone();
         let root = config.project_root.clone();
@@ -4926,7 +4944,7 @@ wait
         std::fs::write(
             &executable,
             format!(
-                "#!/bin/sh\necho $$ > '{}'\nsleep 30 &\necho '{{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"budget-session\"}}'\nwait\n",
+                "#!/bin/sh\necho $$ > '{}'\nsleep 30 &\nIFS= read -r initialize\necho '{{\"type\":\"control_response\",\"response\":{{\"subtype\":\"success\",\"request_id\":\"nola-initialize\",\"response\":{{}}}}}}'\nIFS= read -r prompt\necho '{{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"budget-session\"}}'\nwait\n",
                 pid_path.display()
             ),
         )

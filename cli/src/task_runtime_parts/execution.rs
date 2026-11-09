@@ -4086,7 +4086,8 @@ fn run_agent_task(
             tools::wake_background_task_notification();
             return 0;
         }
-        Err(_) => {
+        Err(error) => {
+            crate::runtime_task_port::task_recovery_diagnostic(task_id, "child_binding_reconciliation", error);
             release_agent_task_handle(task_id, &lease);
             return 2;
         }

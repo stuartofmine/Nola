@@ -388,6 +388,15 @@ fn exercise_permission_parent_handoff(mode: usize) {
             rusqlite::params![task_id, expired.metadata_json, now - 1000]).unwrap();
         let mut config = crate::host_invocation_request::HostInvocationRequest::for_test().unwrap();
         config.session.session_id = Some(child_id.clone());
+        config.tool_settings.project_root = fixture._root.path().to_path_buf();
+        config.tool_settings.allowed_dirs = vec![fixture._root.path().to_path_buf()];
+        let registry = crate::agent_registry::AgentRegistry::from_profiles(&Default::default());
+        let snapshot = crate::delegated_invocation::DelegatedInvocation::capture(
+            &config, &parent_id, registry.get("explore").unwrap(), &application_store).unwrap();
+        let mut metadata: serde_json::Value = serde_json::from_str(&expired.metadata_json).unwrap();
+        metadata["delegated_invocation"] = serde_json::to_value(snapshot).unwrap();
+        db.execute("UPDATE durable_tasks SET metadata_json=?2 WHERE id=?1",
+            rusqlite::params![task_id, metadata.to_string()]).unwrap();
         assert_eq!(run_agent_task(&task_id, "exhausted budget", "must not execute", &parent_id,
             7, original.worker_id.clone(), lease, 60_000, config,
             RuntimeExecutionControl::default(), None), 0);

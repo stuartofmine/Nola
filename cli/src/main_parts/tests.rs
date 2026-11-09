@@ -916,9 +916,9 @@ mod tests {
             None,
             None,
         );
-        assert!(initial.contains("execution_mode=foreground"));
-        assert!(initial.contains("bash_background_wait"));
-        assert!(initial.contains("intentionally long-running"));
+        assert!(initial.contains("current Host’s advertised tools and supported execution modes"));
+        assert!(initial.contains("report blocked or needs_user"));
+        assert!(!initial.contains("execution_mode=foreground"), "shared Goal guidance must not assume a Bash-capable client");
         assert!(initial.contains("Current request: run the workflow"));
         assert!(!initial.contains("nola_goal_control"));
 
@@ -981,16 +981,21 @@ mod tests {
             },
         )
         .unwrap();
+        let projection = session::load_session_goal_projection(session_id).unwrap().unwrap();
         submit_goal_command(
-            &config,
-            "goal-resume-test:pause".to_string(),
-            GoalRuntimeCommand::Pause {
-                status: GoalStatus::Paused,
-                wake_at_epoch_ms: None,
-                now_epoch_ms: goal_now_epoch_ms(),
+            &config, "goal-resume-test:pause".to_string(),
+            GoalRuntimeCommand::GuardedControl {
+                expected_goal_id: projection.active.as_ref().unwrap().id.clone(),
+                expected_control_token: projection.control_token().unwrap(),
+                control: Box::new(GoalRuntimeCommand::Pause { status: GoalStatus::Paused,
+                    wake_at_epoch_ms: None, now_epoch_ms: goal_now_epoch_ms() }),
             },
-        )
-        .unwrap();
+        ).unwrap();
+        let mut application = crate::application_port::CliApplicationPort::persistent_default().unwrap();
+        let active = application.active_run(session_id).unwrap().unwrap();
+        let mut output = crate::native_runtime_output::NativeRuntimeOutput::with_event_sink(|_| {});
+        crate::core_agent_runtime::resume_frozen_core_agent_run(session_id, &active.run_id,
+            &mut output, crate::runtime_control::RuntimeExecutionControl::default()).unwrap();
         let mut goal_target = None;
         let mut goal_constraints = None;
         let mut previous_workspace = None;
@@ -1186,7 +1191,9 @@ mod tests {
         fs::create_dir_all(&db_root).unwrap();
         std::env::set_var("NOLA_DB_PATH", db_root.join("nola.db"));
 
-        let project_root = Path::new("/tmp").join("nola-cli-session-test-continue");
+        let project_root = db_root.join("workspace-continue");
+        fs::create_dir_all(&project_root).unwrap();
+        let project_root = project_root.canonicalize().unwrap();
         let first_session = "continue-first".to_string();
         let second_session = "continue-second".to_string();
 
@@ -2099,7 +2106,9 @@ mod tests {
         fs::create_dir_all(&db_root).unwrap();
         std::env::set_var("NOLA_DB_PATH", db_root.join("nola.db"));
 
-        let project_root = Path::new("/tmp").join("nola-cli-session-test-resolve");
+        let project_root = db_root.join("workspace-resolve");
+        fs::create_dir_all(&project_root).unwrap();
+        let project_root = project_root.canonicalize().unwrap();
 
         let mut alpha_old = session::SessionStore::open(
             Some("alpha-old"),

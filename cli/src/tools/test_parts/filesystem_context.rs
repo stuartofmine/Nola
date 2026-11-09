@@ -3652,7 +3652,7 @@ fn discovery_roots_resolve_dot_and_slash_to_the_allowed_workspace() {
         assert!(outcome.text.contains(&root.display().to_string()));
     }
 
-    assert_eq!(resolve_allowed("/", &ctx.allowed_dirs, true).unwrap(), PathBuf::from("/"));
+    assert_eq!(resolve_allowed("/", &ctx.allowed_dirs, true).unwrap(), Path::new("/").canonicalize().unwrap());
     let _ = fs::remove_dir_all(root);
 }
 

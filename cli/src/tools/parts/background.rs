@@ -3364,7 +3364,7 @@ fn run_bash_execution(
             )
             .arg(&task_id)
             .arg(shell_evidence_script(&execution_command))
-            .arg(&status_path);
+            .arg(crate::platform_paths::shell_path(&status_path));
         child_command.stdin(Stdio::null());
     } else {
         child_command

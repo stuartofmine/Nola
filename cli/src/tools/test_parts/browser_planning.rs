@@ -183,11 +183,9 @@ fn chrome_native_result_saves_screenshot_and_omits_data_url() {
     assert_eq!(outcome.artifacts.len(), 1, "{outcome:#?}");
     assert_eq!(outcome.artifacts[0].mime_type.as_deref(), Some("image/png"));
     assert_eq!(outcome.artifacts[0].operation.as_deref(), Some("observe"));
-    let screenshot_path = outcome.artifacts[0]
-        .uri
-        .strip_prefix("file://")
-        .expect("local screenshot artifact URI");
-    assert!(Path::new(screenshot_path).is_file());
+    let screenshot_path = url::Url::parse(&outcome.artifacts[0].uri).unwrap()
+        .to_file_path().expect("local screenshot artifact URI");
+    assert!(screenshot_path.is_file());
     let _ = fs::remove_dir_all(root);
 }
 

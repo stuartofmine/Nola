@@ -206,8 +206,9 @@ mod paired_goal_control_tests {
         let (status, stale) = settled_paired_goal_control("host", input("host", "paired-goal",
             json!({"action":"resume","expectedGoalId":goal_id,"expectedControlToken":initial_token})), &config);
         assert_eq!(status, StatusCode(409), "{stale}");
-        assert_eq!(stale["goalProjection"]["active"]["status"], "paused");
-        assert!(stale["goalProjection"]["applied_operations"][stale["operationId"].as_str().unwrap()]["rejection"].is_string());
+        assert!(stale["error"].is_string(), "stale control must return an explicit rejection");
+        assert_eq!(crate::session::load_session_goal_projection("paired-goal").unwrap().unwrap()
+            .active.unwrap().status, nola_core::agent::goal::GoalStatus::Paused);
         let (status, resumed) = settled_paired_goal_control("host", input("host", "paired-goal",
             json!({"action":"resume","expectedGoalId":goal_id,
                 "expectedControlToken":paused["goalProjection"]["control_token"]})), &config);

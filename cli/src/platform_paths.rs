@@ -230,3 +230,17 @@ pub(crate) fn shell_path(path: &std::path::Path) -> String {
     #[cfg(not(windows))]
     { native.into_owned() }
 }
+
+#[cfg(test)]
+mod shell_path_tests {
+    #[test]
+    fn native_shell_writes_to_an_exact_canonical_path_with_spaces_and_unicode() {
+        let root = tempfile::tempdir().unwrap();
+        let marker = root.path().canonicalize().unwrap().join("结果 marker.txt");
+        let status = std::process::Command::new(super::bash_program())
+            .args(["--noprofile", "--norc", "-c", "printf actual > \"$1\"", "fixture"])
+            .arg(super::shell_path(&marker)).status().unwrap();
+        assert!(status.success());
+        assert_eq!(std::fs::read_to_string(marker).unwrap(), "actual");
+    }
+}
