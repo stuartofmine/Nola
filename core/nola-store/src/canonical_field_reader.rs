@@ -280,19 +280,22 @@ impl<'c> CanonicalFieldReader<'c> {
                 return crate::canonical_stream_read::tail(self.connection, head, tail_characters);
             }
         }
-        if matches!(self.backing, CanonicalFieldBacking::Inline { .. }) {
-            // Keep the physical inline fast path behind the logical reader.
-            // Repeated substr(BLOB) range reads can repeatedly copy a large
-            // SQLite value; one bounded character-tail query avoids that.
-            let tail =
-                i64::try_from(tail_characters).map_err(|_| invalid("text tail limit overflow"))?;
-            return Ok(self.connection.query_row(
-                "SELECT CASE WHEN ?2>0 AND length(content_text)>?2
-                 THEN '…'||substr(content_text,-?2) ELSE content_text END
-                 FROM message_parts WHERE id=?1 AND message_id=?3",
-                crate::params![self.part_id, tail, self.message_id],
-                |row| row.get(0),
-            )?);
+        if let CanonicalFieldBacking::Inline { total_utf8_bytes } = self.backing {
+            // A Unicode suffix needs at most four bytes per requested scalar.
+            // Avoid SQL length/substr, which materializes the complete large TEXT.
+            let bytes_needed = if tail_characters == 0 { total_utf8_bytes }
+                else { total_utf8_bytes.min(tail_characters.saturating_mul(4) as u64) };
+            let offset = total_utf8_bytes - bytes_needed;
+            let bytes = published_part_body::inline_bytes(self.connection, &self.part_id,
+                self.field, offset, bytes_needed as usize)?;
+            let skip = bytes.iter().take_while(|byte| **byte & 0xc0 == 0x80).count();
+            if skip > 3 { return Err(invalid("invalid original UTF-8 suffix")); }
+            let text = std::str::from_utf8(&bytes[skip..]).map_err(|_| invalid("invalid original UTF-8 text"))?;
+            let start = if tail_characters == 0 { 0 }
+                else { text.char_indices().rev().nth(tail_characters - 1).map(|(index, _)| index).unwrap_or(0) };
+            let suffix = &text[start..];
+            return Ok(if offset > 0 || skip > 0 || start > 0 { format!("…{suffix}") }
+                else { suffix.to_owned() });
         }
         let total = self
             .total_utf8_bytes()

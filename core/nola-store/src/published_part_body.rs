@@ -205,14 +205,7 @@ pub(super) fn field_range(
         }
         _ => {}
     }
-    let name = field_name(field);
-    // SQLite incremental reads work for TEXT too. substr(CAST(... AS BLOB))
-    // copies the entire value for every small range (quadratic archive scans).
-    let row_id: i64 = connection.query_row(
-        "SELECT rowid FROM message_parts WHERE id=?1", [part_id], |row| row.get(0))?;
-    let blob = connection.blob_open(rusqlite::DatabaseName::Main, "message_parts", name, row_id, true)?;
-    let mut bytes = vec![0; limit.min((total - offset) as usize)];
-    blob.read_at_exact(&mut bytes, offset as usize)?;
+    let mut bytes = inline_bytes(connection, part_id, field, offset, limit.min((total - offset) as usize))?;
     match std::str::from_utf8(&bytes) {
         Ok(_) => {}
         Err(error) if error.error_len().is_none() && error.valid_up_to() > 0 => {
@@ -233,6 +226,19 @@ pub(super) fn field_range(
             end_of_content: next == total,
         },
     ))
+}
+
+/// Caller pins the canonical owner/backing snapshot before reading a physical slot.
+pub(super) fn inline_bytes(connection: &Connection, part_id: &str, field: nola_domain::PartBodyField,
+    offset: u64, limit: usize) -> StoreResult<Vec<u8>> {
+    // Incremental reads work for TEXT too. SQL substr/CAST can copy the entire
+    // value for every small range, turning archive scanning quadratic.
+    let row_id: i64 = connection.query_row(
+        "SELECT rowid FROM message_parts WHERE id=?1", [part_id], |row| row.get(0))?;
+    let blob = connection.blob_open(rusqlite::DatabaseName::Main, "message_parts", field_name(field), row_id, true)?;
+    let mut bytes = vec![0; limit];
+    blob.read_at_exact(&mut bytes, offset as usize)?;
+    Ok(bytes)
 }
 
 fn invalid(message: &str) -> StoreError {

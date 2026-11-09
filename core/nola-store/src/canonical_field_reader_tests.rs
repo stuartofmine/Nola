@@ -439,3 +439,20 @@ fn field_view_pins_revision_and_does_not_complete_parent_write_transaction() {
     assert!(reader_store.has_write_unit_of_work());
     reader_store.rollback_write_unit_of_work().unwrap();
 }
+
+#[test]
+fn inline_unicode_tails_preserve_character_limits_at_every_byte_alignment() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = setup(&directory.path().join("db"));
+    for original in ["", "a", "🙂中aéz", "中🙂文🦀", "long-prefix-🙂中é"] {
+        store.connection.execute("UPDATE message_parts SET content_text=?1 WHERE id='p'", [original]).unwrap();
+        let reader = CanonicalFieldReader::open(&store.connection, "c", "m", "p", PartBodyField::ContentText).unwrap();
+        assert_eq!(reader.read_text(0).unwrap(), original);
+        for limit in 1..=original.chars().count() + 1 {
+            let count = original.chars().count();
+            let suffix: String = original.chars().skip(count.saturating_sub(limit)).collect();
+            let expected = if count > limit { format!("…{suffix}") } else { suffix };
+            assert_eq!(reader.read_text(limit).unwrap(), expected, "original={original:?}, limit={limit}");
+        }
+    }
+}

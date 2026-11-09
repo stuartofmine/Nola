@@ -167,6 +167,7 @@ mod codex_app_server_protocol_tests {
         assert!(opencode_provider_diagnostic("ordinary output: Free usage limit reached").is_none());
     }
 
+    #[cfg(unix)]
     #[test]
     fn process_group_absence_requires_os_proof_not_signal_or_permission_failure() {
         assert!(!process_group_exit_observed(Ok(())).unwrap());

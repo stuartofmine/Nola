@@ -475,40 +475,55 @@ fn beginning_a_turn_does_not_republish_ten_million_characters() {
         }),
         ..Default::default()
     };
+    let input = nola_application::BeginAssistantTurn {
+        expected_configuration_revision: Some(configuration_revision),
+        expected_parent_message_id: parent_message_id,
+        conversation_id: "begin-long".into(),
+        conversation_title: "Long history".into(),
+        user_message_id: "next-user".into(),
+        user_part_id: "next-user:text".into(),
+        user_text: "Continue".into(),
+        user_content_json: None,
+        assistant_message_id: "next-assistant".into(),
+        context_checkpoint_id: None,
+        core_config: config,
+        submission: AgentSubmission::UserInput {
+            items: vec![AgentItem::user_message(
+                ItemId::from_string("next-user".into()),
+                "Continue",
+            )],
+            turn_context_items: Vec::new(),
+            turn_context_platform: Default::default(),
+            turn_context_components: Vec::new(),
+            submission_id: Some("next-submission".into()),
+            submitted_at_epoch_ms: Some(1000),
+            delivery: AgentInputDelivery::CurrentTurn,
+        },
+        created_at_ms: 1000,
+    };
+    // This guards growth caused by history, not one-time mapping/initialization
+    // of Core code and schemas. Warm the same admission path on an empty owner;
+    // cold-start history growth is covered separately by the four-history test.
+    let mut warm = input.clone();
+    warm.expected_configuration_revision = None;
+    warm.expected_parent_message_id = None;
+    warm.conversation_id = "warm-empty".into();
+    warm.user_message_id = "warm-user".into();
+    warm.user_part_id = "warm-user:text".into();
+    warm.assistant_message_id = "warm-assistant".into();
+    warm.core_config.session_id = Some(SessionId::from_string("warm-empty".into()));
+    warm.submission = AgentSubmission::UserInput {
+        items: vec![AgentItem::user_message(ItemId::from_string("warm-user".into()), "Continue")],
+        turn_context_items: Vec::new(), turn_context_platform: Default::default(),
+        turn_context_components: Vec::new(), submission_id: Some("warm-submission".into()),
+        submitted_at_epoch_ms: Some(1000), delivery: AgentInputDelivery::CurrentTurn,
+    };
+    let _: Value = client.execute(ApplicationCommand::BeginAssistantTurn { input: warm }).unwrap();
     let baseline = resident_bytes(service.0.id());
     let sampler = MemorySampler::start(service.0.id());
     std::thread::sleep(Duration::from_millis(30));
     let started = Instant::now();
-    let result: Value = client
-        .execute(ApplicationCommand::BeginAssistantTurn {
-            input: nola_application::BeginAssistantTurn {
-                expected_configuration_revision: Some(configuration_revision),
-                expected_parent_message_id: parent_message_id,
-                conversation_id: "begin-long".into(),
-                conversation_title: "Long history".into(),
-                user_message_id: "next-user".into(),
-                user_part_id: "next-user:text".into(),
-                user_text: "Continue".into(),
-                user_content_json: None,
-                assistant_message_id: "next-assistant".into(),
-                context_checkpoint_id: None,
-                core_config: config,
-                submission: AgentSubmission::UserInput {
-                    items: vec![AgentItem::user_message(
-                        ItemId::from_string("next-user".into()),
-                        "Continue",
-                    )],
-                    turn_context_items: Vec::new(),
-                    turn_context_platform: Default::default(),
-                    turn_context_components: Vec::new(),
-                    submission_id: Some("next-submission".into()),
-                    submitted_at_epoch_ms: Some(1000),
-                    delivery: AgentInputDelivery::CurrentTurn,
-                },
-                created_at_ms: 1000,
-            },
-        })
-        .unwrap();
+    let result: Value = client.execute(ApplicationCommand::BeginAssistantTurn { input }).unwrap();
     let elapsed = started.elapsed();
     let (peak, samples) = sampler.finish();
     assert!(result["begin"]["run_id"].as_str().is_some());
@@ -539,7 +554,7 @@ fn beginning_a_turn_does_not_republish_ten_million_characters() {
     );
     assert!(samples > 0);
     assert!(
-        peak.saturating_sub(baseline) < 32 * 1024 * 1024,
+        peak.saturating_sub(baseline) < 8 * 1024 * 1024,
         "begin turn hydrated old history"
     );
     assert!(
