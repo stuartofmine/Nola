@@ -5,7 +5,7 @@ use crate::repositories::AgentRuntimeCommandRepositories;
 use nola_agent_engine::agent::{
     protocol::*, recovery::CoreCheckpoint, AgentThreadState, GoalProjection, GoalStatus,
 };
-use nola_runtime_driver::goal::{GoalCompleteSignal, GoalRoundResult, GoalRuntimePort};
+use crate::goal_coordinator::{GoalCompleteSignal, GoalRoundResult, GoalRuntimePort};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
@@ -514,7 +514,7 @@ fn advance_in_transaction<R: AgentRuntimeCommandRepositories>(
     user_prompt: String,
     host_available: bool,
 ) -> Result<Value, String> {
-    let now = nola_runtime_driver::monotonic_epoch_millis();
+    let now = crate::goal_coordinator::monotonic_epoch_millis();
     if store
         .is_runtime_task_child_session(&owner)
         .map_err(|error| error.to_string())?
@@ -711,7 +711,7 @@ fn advance_in_transaction<R: AgentRuntimeCommandRepositories>(
         run: RefCell::new(None),
     };
     // A scheduled wake cannot implicitly resume paused/needs-user/incomplete work.
-    nola_runtime_driver::goal::run_goal_cycle(
+    crate::goal_coordinator::run_goal_cycle(
         &mut port,
         &user_prompt,
         &goal.objective,

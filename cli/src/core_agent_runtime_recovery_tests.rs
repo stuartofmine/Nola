@@ -159,7 +159,7 @@ mod permission_recovery_entrypoint_tests {
         config.tool_settings.tools_enabled = false;
         config.tool_settings.skill_dirs = Some(Vec::new());
         crate::core_agent_runtime::submit_agent_core_goal_command(&config,
-            nola_runtime_driver::goal::create_goal_command("owned-start","owned goal","",crate::goal_runtime::goal_now_epoch_ms())).unwrap();
+            nola_application::goal_coordinator::create_goal_command("owned-start","owned goal","",crate::goal_runtime::goal_now_epoch_ms())).unwrap();
         let mut application=crate::application_port::CliApplicationPort::persistent_default().unwrap();
         let original=application.active_run(&fixture.session).unwrap().unwrap().run_id;
         let active=application.active_run(&fixture.session).unwrap().unwrap();

@@ -7,9 +7,9 @@ use crate::host_invocation_request::HostInvocationRequest;
 use crate::runtime_output::{GoalCompleteSignal, RuntimeOutputPort};
 use crate::runtime_control::RuntimeExecutionControl;
 use nola_core::agent::{GoalRuntimeCommand, GoalRuntimeCommandEnvelope, AgentInputOrigin};
-pub(crate) use nola_runtime_driver::goal::GoalCyclePause;
+pub(crate) use nola_application::goal_coordinator::GoalCyclePause;
 #[cfg(test)]
-pub(crate) use nola_runtime_driver::goal::{terminal_reason_pauses_goal, compose_goal_prompt,
+pub(crate) use nola_application::goal_coordinator::{terminal_reason_pauses_goal, compose_goal_prompt,
     goal_retry_delay_for_attempt, goal_requirement_records};
 
 pub(crate) trait GoalRoundDriver {
@@ -23,7 +23,7 @@ pub(crate) fn restore_goal_execution_request(conversation_id: &str, goal_id: &st
 }
 
 pub(crate) fn host_goal_control(request: &HostInvocationRequest) -> Result<Option<(String, String)>, String> {
-    nola_runtime_driver::goal::host_goal_control(&request.input.host_context_components)
+    nola_application::goal_coordinator::host_goal_control(&request.input.host_context_components)
 }
 
 pub(crate) fn goal_now_epoch_ms() -> i64 {
@@ -47,7 +47,7 @@ pub(crate) struct PromptRunResult {
     pub(crate) context_usage: Option<nola_core::agent::context_window::ContextUsageSnapshot>,
 }
 
-pub(crate) type GoalCycleOutcome = nola_runtime_driver::goal::GoalCycleOutcome<PromptHandoff>;
+pub(crate) type GoalCycleOutcome = nola_application::goal_coordinator::GoalCycleOutcome<PromptHandoff>;
 #[derive(Debug, Default)]
 pub(crate) struct PromptHandoff {
     pub(crate) queued_user_inputs: Vec<String>,
@@ -81,7 +81,7 @@ fn run_goal_cycle_with_dispatch(request: &mut HostInvocationRequest, user_prompt
     let owner = request.session.session_id.clone().unwrap();
     if session::load_session_goal_projection(&owner)?.and_then(|p|p.active).is_none() {
         core_agent_runtime::submit_agent_core_goal_command(request,
-            nola_runtime_driver::goal::create_goal_command(&format!("goal-start:{}",uuid::Uuid::new_v4()), objective, constraints, goal_now_epoch_ms()))?;
+            nola_application::goal_coordinator::create_goal_command(&format!("goal-start:{}",uuid::Uuid::new_v4()), objective, constraints, goal_now_epoch_ms()))?;
     }
     let mut application = crate::application_port::CliApplicationPort::persistent_default()?;
     let mut user_prompt = user_prompt.to_string();

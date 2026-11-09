@@ -521,7 +521,7 @@ mod web_goal_worker_tests {
                 &request,
             )
             .unwrap();
-        let start_envelope = nola_runtime_driver::goal::create_goal_command(
+        let start_envelope = nola_application::goal_coordinator::create_goal_command(
             "web-test", "Summarize a result", "", crate::goal_runtime::goal_now_epoch_ms());
         crate::core_agent_runtime::submit_agent_core_goal_command(&request, start_envelope.clone()).unwrap();
         let frozen: Option<nola_application::goal_execution::GoalExecutionBinding> =

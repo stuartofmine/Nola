@@ -101,7 +101,7 @@ pub trait JournalPublicationObserver: std::fmt::Debug + Send {
     ) -> Result<(), String>;
 }
 
-pub use nola_runtime_driver::goal::GoalCompleteSignal;
+pub use nola_application::goal_coordinator::GoalCompleteSignal;
 
 pub(crate) fn goal_claim_from_journal(
     journal: &crate::source_journal::SourceRunJournal,

@@ -176,7 +176,7 @@ mod tests {
     fn goal_binding_exists_before_first_run_and_cold_restore_never_selects_new_defaults_inner() {
         let _lock=crate::store::test_env_lock();
         let (fixture,request)=fixture();
-        let envelope=nola_runtime_driver::goal::create_goal_command("binding-start","Finish the work","",crate::goal_runtime::goal_now_epoch_ms());
+        let envelope=nola_application::goal_coordinator::create_goal_command("binding-start","Finish the work","",crate::goal_runtime::goal_now_epoch_ms());
         start(&request,envelope.clone()).unwrap();
         let mut app=crate::application_port::CliApplicationPort::persistent_default().unwrap();
         assert!(app.active_run(&fixture.conversation).unwrap().is_some());
@@ -200,7 +200,7 @@ mod tests {
     fn revoked_goal_credential_blocks_execution_but_not_idle_pause_inner() {
         let _lock=crate::store::test_env_lock();
         let (fixture,request)=fixture();
-        start(&request,nola_runtime_driver::goal::create_goal_command("revoke-start","Finish the work","",crate::goal_runtime::goal_now_epoch_ms())).unwrap();
+        start(&request,nola_application::goal_coordinator::create_goal_command("revoke-start","Finish the work","",crate::goal_runtime::goal_now_epoch_ms())).unwrap();
         let binding:GoalExecutionBinding=crate::application_port::CliApplicationPort::persistent_default().unwrap()
             .execute::<Option<GoalExecutionBinding>>(ApplicationCommand::LoadGoalExecutionBinding {
                 conversation_id:fixture.conversation.clone(),goal_id:"goal-revoke-start".into()}).unwrap().unwrap();
@@ -227,7 +227,7 @@ mod tests {
         use nola_application::goal_control_intent::{GoalControlAction, PrepareGoalControlIntent};
         let _lock = crate::store::test_env_lock();
         let (fixture, request) = fixture();
-        start(&request, nola_runtime_driver::goal::create_goal_command("retry-goal", "Finish", "",
+        start(&request, nola_application::goal_coordinator::create_goal_command("retry-goal", "Finish", "",
             crate::goal_runtime::goal_now_epoch_ms())).unwrap();
         let projection = crate::session::load_session_goal_projection(&fixture.conversation).unwrap().unwrap();
         let pause = PrepareGoalControlIntent { conversation_id: fixture.conversation.clone(),

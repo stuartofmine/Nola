@@ -1,12 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Cross-platform Goal execution coordinator. Application commits every state
-//! transition; this driver owns neither a shadow Goal store nor model execution.
+//! Application-owned cross-platform Goal use-case coordinator. Core decides
+//! Goal state; canonical ports commit transitions and Hosts execute model work.
 use std::time::{Duration, Instant};
 use serde_json::Value;
 use nola_agent_engine::agent::{GoalAuditReport, GoalAuditVerdict, GoalContractStatus,
     GoalExecutionReport, GoalRecordStatus, GoalRuntimeCommand,
     GoalRuntimeCommandEnvelope, GoalStatus, GoalSubtaskContract, GoalProjection};
 use nola_agent_engine::agent::AgentTurnStatus;
+
+// Goal command time belongs to Application. Driver lease timing remains in its
+// transport adapter; Store ownership fences still govern cross-process epochs.
+pub(crate) fn monotonic_epoch_millis() -> i64 {
+    use std::sync::atomic::{AtomicI64, Ordering};
+    static LAST: AtomicI64 = AtomicI64::new(0);
+    let observed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default().as_millis().min(i64::MAX as u128) as i64;
+    observed.max(LAST.fetch_max(observed, Ordering::Relaxed))
+}
 
 /// An untrusted declaration extracted from the exact sealed Run journal.
 /// Only AcceptCompletion in Application decides whether these claims suffice.

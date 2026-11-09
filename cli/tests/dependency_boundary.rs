@@ -67,7 +67,7 @@ fn boundary_violations(metadata: &serde_json::Value) -> Vec<String> {
         ("nola_store", &["nola_domain", "nola_kernel", "nola_store_port", "nola_measurement"][..], None),
         ("nola_application", &["nola_domain", "nola_kernel", "nola_store_port",
             "nola_protocol", "nola_host_protocol", "nola_agent_engine", "nola_measurement"][..], None),
-        ("nola_runtime_driver", &["nola_domain", "nola_host_protocol", "nola_agent_engine"][..], None),
+        ("nola_runtime_driver", &["nola_domain", "nola_host_protocol"][..], None),
     ] {
         let Some(package) = packages.iter().find(|package| package["name"] == name) else {
             errors.push(format!("protected package missing: {name}"));
@@ -109,6 +109,7 @@ fn guard_rejects_renamed_optional_target_and_build_backdoors_but_allows_fixtures
         ("nola_measurement", "nola_store", serde_json::Value::Null),
         ("nola_domain", "nola_measurement", serde_json::Value::Null),
         ("nola_runtime_driver", "nola_application", serde_json::Value::Null),
+        ("nola_runtime_driver", "nola_agent_engine", serde_json::Value::Null),
         ("nola_agent_engine", "nola_core", serde_json::Value::Null),
         ("nola_agent_engine", "nola_store", serde_json::Value::Null),
         ("nola_runtime_driver", "nola_core", serde_json::Value::Null),

@@ -2,7 +2,7 @@
 
 # Rust 生产依赖与边界门禁
 
-核对：2026-11-08，依据当前 `cargo metadata --offline --no-deps --format-version 1`。下表是 normal/build 声明依赖，包含 optional/target 条件边，不包含 dev-dependency；不是运行调用图、实际链接闭包或安全证明。
+核对：2026-11-09，依据当前 `cargo metadata --offline --no-deps --format-version 1`。下表是 normal/build 声明依赖，包含 optional/target 条件边，不包含 dev-dependency；不是运行调用图、实际链接闭包或安全证明。
 
 ## 生产声明图
 
@@ -10,7 +10,7 @@
 | --- | --- |
 | `nola-code-memory` | 无 |
 | `nola_agent_engine` | `nola_domain`、`nola_host_protocol`、`nola_kernel` |
-| `nola_application` | `nola_agent_engine`、`nola_domain`、`nola_host_protocol`、`nola_kernel`、`nola_measurement`、`nola_protocol`、`nola_runtime_driver`、`nola_store_port` |
+| `nola_application` | `nola_agent_engine`、`nola_domain`、`nola_host_protocol`、`nola_kernel`、`nola_measurement`、`nola_protocol`、`nola_store_port` |
 | `nola_application_bootstrap` | `nola_application`、`nola_store` |
 | `nola_cli` | `nola-code-memory`、`nola_application`、`nola_application_bootstrap`、`nola_code_mode_host`、`nola_core`、`nola_credential_host`、`nola_domain`、`nola_host_protocol`、`nola_mcp_host`、`nola_measurement`、`nola_plugin_host`、`nola_protocol`、`nola_runtime_driver`、`nola_runtime_supervisor`、`nola_service`、`nola_service_client`、`nola_store_port`、`nola_update_host` |
 | `nola_code_mode_host` | `nola_domain` |
@@ -25,7 +25,7 @@
 | `nola_model_runtime_host` | 无 |
 | `nola_plugin_host` | `nola_domain` |
 | `nola_protocol` | `nola_domain` |
-| `nola_runtime_driver` | `nola_agent_engine`、`nola_domain`、`nola_host_protocol` |
+| `nola_runtime_driver` | `nola_domain`、`nola_host_protocol` |
 | `nola_runtime_supervisor` | `nola_domain`、`nola_protocol`、`nola_service_client` |
 | `nola_service` | `nola_application`、`nola_application_bootstrap`、`nola_domain`、`nola_protocol` |
 | `nola_service_client` | `nola_protocol` |
@@ -56,14 +56,14 @@ CoreCheckpoint、恢复状态和 reducer 的实现属于 `nola_agent_engine`，`
 
 - `nola_core` 是 rlib facade，不是当前原生最终 staticlib/cdylib 产物。最终原生产物由 `nola_mobile_bindings` 产生，并显式保留 Core 的纯辅助 ABI 符号。
 - `nola_mcp_host` 已是共享 crate，CLI 与 mobile_bindings 都声明依赖它；它当前仍依赖 `nola_core`，不能写成独立于 Core 的纯 Domain adapter。
-- `nola_application` 当前声明依赖 `nola_runtime_driver`。这条真实 manifest 边必须呈现；仅凭声明不能推断每个用例都在调用 Driver，也不能拿旧图证明两层已完全隔离。
-- Driver 的通用 Host 执行循环使用 `HostExecutionProtocol`/`CommittedRuntimeApplicationPort`；同一 crate 的 `goal.rs` 仍引用 agent engine 的 Goal 类型及函数。因此“整个 Driver 无生产 engine 依赖”不是当前事实。它仍不拥有 Store 业务提交或另一个 reducer。
+- Goal 用例协调归属 `nola_application::goal_coordinator`，Host 和 Application Goal step 调用同一实现。Application 不再生产依赖 Runtime Driver；依赖门禁拒绝这条反向边。
+- Driver 的通用 Host 执行循环使用 `HostExecutionProtocol`/`CommittedRuntimeApplicationPort`，仅生产依赖 Domain 与 Host Protocol；agent engine 只用于其 dev 测试夹具。Driver 不拥有 Goal 用例协调、Store 业务提交或另一个 reducer。
 - CLI/mobile 对 Core facade 的引用、Application 对具体 engine 类型的依赖仍需按用例审查。模块图无环并不证明全部端口化或副作用隔离已经完成。
 
 ## 执行驱动的纯传输端口
 
 `host_protocol::HostExecutionProtocol` 以关联类型绑定 Request、Response、BoundaryInput、
-Event、Trace、Control。Agent engine/Core facade 的 `AgentRuntimeProtocol` 提供具体类型族；这描述通用 Driver 传输循环，不覆盖 `goal.rs` 等适配模块对 engine 的现存引用。Driver 不取得 checkpoint 提交或 reducer 所有权。
+Event、Trace、Control。Agent engine/Core facade 的 `AgentRuntimeProtocol` 提供具体类型族；这描述通用 Driver 传输循环；Goal 用例协调由 Application 负责。Driver 不取得 checkpoint 提交或 reducer 所有权。
 `HostDriver` 执行已提交请求，`CommittedRuntimeApplicationPort` 负责事务接受不透明响应与
 边界输入。CLI SessionStore 实现具体 Task receipt/指导导入；Driver 只在提交成功后发布及 ACK。
 

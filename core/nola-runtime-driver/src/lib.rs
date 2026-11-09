@@ -4,7 +4,6 @@
 
 #![allow(dead_code)]
 
-pub mod goal;
 pub mod task_execution_authority;
 pub mod task_worker;
 pub mod mailbox;

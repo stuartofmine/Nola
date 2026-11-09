@@ -2513,7 +2513,6 @@ dependencies = [
  "nola_kernel",
  "nola_measurement",
  "nola_protocol",
- "nola_runtime_driver",
  "nola_store",
  "nola_store_port",
  "rusqlite",

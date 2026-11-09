@@ -1364,7 +1364,7 @@ fn goal_step_admits_once_recovers_exact_round_and_consumes_its_seal() {
     complete_begun(&mut store,&previous,1100);
     let frozen=execute_application_command(&mut store,ApplicationCommand::LoadHostExecutionState {conversation_id:CONVERSATION.into()}).unwrap()["configuration"].clone();
     let command = |control:serde_json::Value| serde_json::from_value::<ApplicationCommand>(serde_json::json!({
-        "type":"step_goal","conversation_id":CONVERSATION,"source_host_id":"isolated-host","start_configuration":if supply_configuration && !control.is_null() {frozen.clone()}else{serde_json::Value::Null},"control":if control.is_null(){serde_json::Value::Null}else{serde_json::to_value(nola_application::goal_control_intent::prepare(serde_json::from_value(control).unwrap(), nola_runtime_driver::monotonic_epoch_millis()).unwrap()).unwrap()}})).unwrap();
+        "type":"step_goal","conversation_id":CONVERSATION,"source_host_id":"isolated-host","start_configuration":if supply_configuration && !control.is_null() {frozen.clone()}else{serde_json::Value::Null},"control":if control.is_null(){serde_json::Value::Null}else{serde_json::to_value(nola_application::goal_control_intent::prepare(serde_json::from_value(control).unwrap(), chrono::Utc::now().timestamp_millis()).unwrap()).unwrap()}})).unwrap();
     let first = execute_application_command(&mut store,command(serde_json::json!({
         "conversation_id":CONVERSATION,"operation_id":"start-embedded","action":"start",
         "expected_goal_id":null,"expected_control_token":null,"objective":"Review the retained fixture",
@@ -1425,7 +1425,7 @@ fn assert_goal_pause_interrupt(queued_boundary: bool) {
     let previous=begin_assistant_turn(&mut store,memory_begin_command("goal-stop-owner",1000,false,(None,None))).unwrap();
     complete_begun(&mut store,&previous,1100);
     let step=|control:serde_json::Value|serde_json::from_value::<ApplicationCommand>(serde_json::json!({
-        "type":"step_goal","conversation_id":CONVERSATION,"source_host_id":"isolated-host","control":if control.is_null(){serde_json::Value::Null}else{serde_json::to_value(nola_application::goal_control_intent::prepare(serde_json::from_value(control).unwrap(), nola_runtime_driver::monotonic_epoch_millis()).unwrap()).unwrap()}})).unwrap();
+        "type":"step_goal","conversation_id":CONVERSATION,"source_host_id":"isolated-host","control":if control.is_null(){serde_json::Value::Null}else{serde_json::to_value(nola_application::goal_control_intent::prepare(serde_json::from_value(control).unwrap(), chrono::Utc::now().timestamp_millis()).unwrap()).unwrap()}})).unwrap();
     let first=execute_application_command(&mut store,step(serde_json::json!({
         "conversation_id":CONVERSATION,"operation_id":"goal-stop-start","action":"start","expected_goal_id":null,
         "expected_control_token":null,"objective":"Inspect the fixture","constraints":[],"wake_at_epoch_ms":null}))).unwrap();
@@ -1440,7 +1440,7 @@ fn assert_goal_pause_interrupt(queued_boundary: bool) {
         let accepted=execute_application_command(&mut store,ApplicationCommand::ReduceAndCommitActiveSubmission {
             input:ReduceAndCommitActiveSubmission {conversation_id:CONVERSATION.into(),run_id:run.clone(),
                 invocation_config_digest:active.invocation_config_digest.unwrap(),transition_id:"queued-goal-stop".into(),
-                submission:AgentSubmission::GoalRuntime {envelope},committed_at_ms:nola_runtime_driver::monotonic_epoch_millis()}
+                submission:AgentSubmission::GoalRuntime {envelope},committed_at_ms:chrono::Utc::now().timestamp_millis()}
         }).unwrap();
         assert_eq!(accepted["control"]["turn_status"],"cancelling",
             "queued Goal pause must interrupt before another model dispatch, not only change Goal status");

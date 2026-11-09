@@ -32,7 +32,7 @@
 | 02 状态机 | `nola_agent_engine::AgentReducerPort` 拥有候选 reduction/恢复；Kernel 提供纯决策；Core 为 facade | 不再描述为 `core/src/agent` 尚待抽取的第二份状态机 |
 | 03 Application | 泛型 `ApplicationRuntime<S>` 使用 Store Port；bootstrap 装配 NolaStore | Service/embedded 是不同部署；查询、mutating 命令、回执与业务终态不同 |
 | 04 存储 | `schema_store.rs` 组合多个 DDL，核对 application_id/user_version/schema_epoch；canonical text/journal 在 SQLite 有各自记录 | 删除固定 `~/.nola/nola.db`、唯一 schema.sql、所有长文都在 blobs 的错误断言 |
-| 05 执行恢复 | 通用 Driver 使用 committed 端口；同 crate 含 Goal 与任务执行适配 | Driver→engine、Application→Driver 是真实生产声明边；不再声称已经禁止/完全去掉 |
+| 05 执行恢复 | 通用 Driver 使用 committed 端口；Goal 用例协调归属 Application，Driver 保留任务执行适配 | 2026-11-09 已移除 Application→Driver 和 Driver→engine 的生产边，边界门禁覆盖；仍需逐用例验证副作用归属 |
 | 06 工具证据 | Application 原始来源提交；Store 已有归档正文 validator/installer 与冷读/分支路径 | 旧“validator 未实现、Apple 必须暂停”的交接状态失效；replica 来源导入不因普通 journal 复制而自动成立 |
 | 07 权限 | Core 政策、持久等待/决定、实际资源与 OS 授权各有边界 | handler 注册、目录启用、一次连接批准、单次工具批准不能互相代替 |
 | 08 模型 | 连接/账户/catalog/profile 分离；profile/会话解析、Host binding、PreparedModelRequest 各有时点 | 不用逻辑 EffectiveInvocation 名称证明全部调用已统一；原生档位见现行模型合同 |
@@ -53,7 +53,7 @@
 | 记忆 owner 接线与验收范围 | [MemoryRecallQuery](../../../core/nola-application/src/memory.rs)、[Domain owner](../../../core/nola-domain/src/memory_owner.rs)、[Store](../../../core/nola-store/src/memory_store.rs) | 已新增必填 record.owner/binding、SQL 排名与 LIMIT 前 owner 过滤、owner 去重及不可变身份；Host 使用显式上下文，移动 profile 搜索走 Recall。原生 workspace/turn 选择 UI 和真实并发 provider 验收仍需独立验证，见记忆合同 |
 | 历史 provider 恢复清理 | [bootstrap](../../../core/nola-application-bootstrap/src/lib.rs)、[Mac Service supervisor](../../../NolaMac/Services/MacApplicationServiceClient.swift) | 已删除旧 schema provider 解码/转换、恢复标记、Service 参数与 Mac 普通启动扫描归档。显式归档只保留原文件，新库不导入旧配置；默认不匹配拒绝且保留原库 |
 | 错误模型不完全收敛 | [ProtocolFailure](../../../core/nola-protocol/src/lib.rs)、Application/Store Port | wire 只有 code/message/recoverable/details?，部分内部端口仍 String；目标错误语义不能冒充已经类型化，更不能按 recoverable 布尔值盲目重试副作用 |
-| 纯分层与实际声明存在耦合 | [Driver Goal](../../../core/nola-runtime-driver/src/goal.rs)、[Application manifest](../../../core/nola-application/Cargo.toml)、[MCP manifest](../../../core/nola-mcp-host/Cargo.toml) | 如需进一步收敛，必须按实际用例调整类型所有权、调用者与门禁；文档不能隐去真实边或靠改包名宣称完成 |
+| 纯分层与实际声明存在耦合 | [Application Goal 协调](../../../core/nola-application/src/goal_coordinator.rs)、[Application manifest](../../../core/nola-application/Cargo.toml)、[MCP manifest](../../../core/nola-mcp-host/Cargo.toml) | 如需进一步收敛，必须按实际用例调整类型所有权、调用者与门禁；文档不能隐去真实边或靠改包名宣称完成 |
 | 统一对话目标未等于底层对象删除 | [Room submission](../../../core/nola-application/src/agent_room/submission.rs)、[Room 用例](../../../core/nola-application/src/agent_room.rs) | 当前仍有 Room 身份、显式成员与主控选择路径；它们不是因文档目标存在就已删除的旧入口，也不授权增加新兼容分支 |
 | 自动化全平台能力不能统一推定 | [execution spec](../../../core/nola-domain/src/automation_execution.rs)、[occurrence query](../../../core/nola-application/src/automation_occurrence.rs)、各 Host scheduler | Agent/UserTask、发生时间计算、领取执行与 OS 唤醒是不同层；不能从 occurrence 查询通过推导所有平台持续调度或所有 source/script 流程一致 |
 

@@ -5,6 +5,7 @@
 //! Core checkpoints and Host acknowledgements independently.
 
 use nola_agent_engine::AgentReducerPort;
+pub mod goal_coordinator;
 mod activity;
 pub use activity::{ActivityQuery,ActivityCursor};
 mod today_facts;

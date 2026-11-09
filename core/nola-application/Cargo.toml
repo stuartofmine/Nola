@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-nola_runtime_driver = { path = "../nola-runtime-driver" }
 nola_measurement = { path = "../nola-measurement" }
 nola_store_port = { path = "../nola-store-port" }
 nola_domain = { path = "../nola-domain" }

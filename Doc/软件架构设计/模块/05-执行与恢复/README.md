@@ -61,7 +61,7 @@ Web 服务装配与 native 执行层的依赖须分别审计；当前目标的 W
 | [task_execution_authority.rs](../../../../core/nola-runtime-driver/src/task_execution_authority.rs) | worker 持有精确已提交任务租约的进程内权柄 |
 | [native_host_entry.rs](../../../../cli/src/native_host_entry.rs) | 独立 agent Host 的 stdin 执行入口 |
 
-通用 Driver 循环与同 crate 的 Goal/任务适配要分开描述；当前 Goal 模块仍依赖 engine。进程内 lease handle 只是对已提交授权的引用，重启不能据此恢复执行权。 逐模块差距与证据边界见[源码核对](../../总体设计/ARCHITECTURE_SOURCE_AUDIT_20261108.md)。
+Goal 用例协调已归属 Application 的 `goal_coordinator`，Core 决定 Goal 状态，Application 提交用例事务；Driver 保留通用传输循环和任务适配，只通过 dev-dependency 在测试中接触 engine。进程内 lease handle 只是对已提交授权的引用，重启不能据此恢复执行权。 逐模块差距与证据边界见[源码核对](../../总体设计/ARCHITECTURE_SOURCE_AUDIT_20261108.md)。
 
 ## 相关设计
 
