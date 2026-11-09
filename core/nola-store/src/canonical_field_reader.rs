@@ -289,7 +289,7 @@ impl<'c> CanonicalFieldReader<'c> {
             let bytes = published_part_body::inline_bytes(self.connection, &self.part_id,
                 self.field, offset, bytes_needed as usize)?;
             let skip = bytes.iter().take_while(|byte| **byte & 0xc0 == 0x80).count();
-            if skip > 3 { return Err(invalid("invalid original UTF-8 suffix")); }
+            if skip > 3 || (offset == 0 && skip > 0) { return Err(invalid("invalid original UTF-8 suffix")); }
             let text = std::str::from_utf8(&bytes[skip..]).map_err(|_| invalid("invalid original UTF-8 text"))?;
             let start = if tail_characters == 0 { 0 }
                 else { text.char_indices().rev().nth(tail_characters - 1).map(|(index, _)| index).unwrap_or(0) };

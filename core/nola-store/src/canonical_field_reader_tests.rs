@@ -444,7 +444,7 @@ fn field_view_pins_revision_and_does_not_complete_parent_write_transaction() {
 fn inline_unicode_tails_preserve_character_limits_at_every_byte_alignment() {
     let directory = tempfile::tempdir().unwrap();
     let store = setup(&directory.path().join("db"));
-    for original in ["", "a", "🙂中aéz", "中🙂文🦀", "long-prefix-🙂中é"] {
+    for original in ["", "a", "🙂中aéz", "中🙂文🦀", "long-prefix-🙂中é", "a\0中🙂z"] {
         store.connection.execute("UPDATE message_parts SET content_text=?1 WHERE id='p'", [original]).unwrap();
         let reader = CanonicalFieldReader::open(&store.connection, "c", "m", "p", PartBodyField::ContentText).unwrap();
         assert_eq!(reader.read_text(0).unwrap(), original);
@@ -455,4 +455,14 @@ fn inline_unicode_tails_preserve_character_limits_at_every_byte_alignment() {
             assert_eq!(reader.read_text(limit).unwrap(), expected, "original={original:?}, limit={limit}");
         }
     }
+}
+
+#[test]
+fn inline_tail_rejects_corrupt_leading_utf8_instead_of_hiding_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = setup(&directory.path().join("db"));
+    store.connection.execute("UPDATE message_parts SET content_text=CAST(X'80' AS TEXT) WHERE id='p'", []).unwrap();
+    let reader = CanonicalFieldReader::open(&store.connection, "c", "m", "p", PartBodyField::ContentText).unwrap();
+    assert!(reader.read_text(0).is_err());
+    assert!(reader.read_text(1).is_err());
 }
