@@ -131,6 +131,9 @@ pub fn validate_completion(output: &Value, outcome: super::HostToolOutcome) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn file_resource(name: &str) -> String {
+        url::Url::from_file_path(std::env::temp_dir().join(name)).unwrap().to_string()
+    }
 
     #[test]
     fn absent_receipt_is_explicit_and_distinct_from_unknown_after_wire_projection() {
@@ -178,7 +181,7 @@ mod tests {
         assert!(core_tool_output(missing_local_stop).is_err());
         let mut failed_check = result;
         failed_check["execution"] = json!({"state":"completed", "local_stop":null, "effects":[], "checks":[{
-            "kind":"postcondition", "resource_uri":"file:///workspace/a", "version":"revision-1", "predicate":"test_passed", "passed":false
+            "kind":"postcondition", "resource_uri":file_resource("nola-tool-result-a"), "version":"revision-1", "predicate":"test_passed", "passed":false
         }]});
         assert!(validate_completion(&failed_check, crate::HostToolOutcome::Succeeded).is_err());
         assert!(validate_completion(&failed_check, crate::HostToolOutcome::Failed).is_ok());
@@ -228,7 +231,7 @@ mod tests {
             }],
         };
         assert!(receipt.validate().is_err());
-        receipt.checks[0].resource_uri = "file:///workspace/a.rs".into();
+        receipt.checks[0].resource_uri = file_resource("nola-tool-result-a.rs");
         assert!(receipt.validate().is_ok());
         receipt.checks[0].version.clear();
         assert!(receipt.validate().is_err());
