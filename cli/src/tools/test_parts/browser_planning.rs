@@ -234,7 +234,9 @@ fn browser_url_validation_allows_local_dev_targets() {
     assert!(validate_browser_http_url("http://169.254.169.254/latest/meta-data").is_err());
     assert!(validate_browser_http_url("file:///tmp/index.html").is_err());
     assert!(validate_browser_page_url(&url::Url::from_file_path(std::env::temp_dir().join("index.html")).unwrap().to_string()).is_ok());
-    assert!(validate_browser_page_url("file://localhost/tmp/index.html").is_ok());
+    let mut local_file = url::Url::from_file_path(std::env::temp_dir().join("index.html")).unwrap();
+    local_file.set_host(Some("localhost")).unwrap();
+    assert!(validate_browser_page_url(local_file.as_str()).is_ok());
     assert!(validate_browser_page_url("file://remote-host/tmp/index.html").is_err());
     assert!(validate_browser_http_url("https://example.com").is_ok());
     assert!(validate_browser_http_url("http://192.168.1.10:8080").is_ok());

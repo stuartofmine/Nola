@@ -1428,7 +1428,7 @@ mod tests {
         let cases: Vec<Value> = serde_json::from_str(include_str!("../../tests/fixtures/permissions/source_search_commands.json")).unwrap();
         assert_eq!(cases.len(), 26);
         for case in cases {
-            let command = case["command"].as_str().unwrap().replace("{workspace}", &crate::platform_paths::shell_path(directory.path()));
+            let command = case["command"].as_str().unwrap().replace("{workspace}", &format!("'{}'", crate::platform_paths::shell_path(directory.path()).replace('\'', "'\\''")));
             let expected = if case["ordinary_read"] == true { PermissionOperationRisk::OrdinaryRead }
                 else { PermissionOperationRisk::Unknown };
             assert_eq!(facts(&context, "bash", json!({"command":command,"operation_kind":"inspect"})).bindings[0].observation,

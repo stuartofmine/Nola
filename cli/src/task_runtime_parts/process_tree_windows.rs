@@ -148,6 +148,36 @@ mod tests {
     }
 
     #[test]
+    fn supervised_bash_preserves_file_outputs_and_exit_evidence() {
+        let root = tempfile::tempdir().unwrap();
+        let stdout = root.path().join("output.txt");
+        let stderr = root.path().join("error.txt");
+        let evidence = root.path().join("exit.txt");
+        let output = std::fs::OpenOptions::new().create(true).append(true).open(&stdout).unwrap();
+        let error = std::fs::OpenOptions::new().create(true).append(true).open(&stderr).unwrap();
+        let mut command = Command::new(crate::platform_paths::bash_program());
+        command.args(["-o", "pipefail", "-lc", &crate::tools::shell_evidence_script("printf actual-file-output")])
+            .env("NOLA_SHELL_EVIDENCE_PATH", crate::platform_paths::shell_path(&evidence))
+            .current_dir(root.path()).stdin(std::process::Stdio::null())
+            .stdout(output).stderr(error);
+        let mut heartbeat = super::super::ShellLeaseHeartbeat::start_with_renewal(30_000,
+            || Ok(nola_runtime_driver::monotonic_epoch_millis() + 30_000)).unwrap();
+        let mut child = heartbeat.spawn(&mut command).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() { break status; }
+            assert!(std::time::Instant::now() < deadline, "file-output Bash did not finish");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        let output = std::fs::read_to_string(stdout).unwrap();
+        let error = std::fs::read_to_string(stderr).unwrap();
+        assert!(status.success(), "{status:?}: stdout={output:?}, stderr={error:?}, evidence={:?}", std::fs::read_to_string(&evidence));
+        assert_eq!(output, "actual-file-output");
+        assert!(crate::tools::read_shell_exit_evidence(&evidence, 0).is_some());
+        heartbeat.stop();
+    }
+
+    #[test]
     fn closing_the_owned_job_stops_an_unreaped_live_child() {
         let root = tempfile::tempdir().unwrap();
         let marker = root.path().join("started.txt");

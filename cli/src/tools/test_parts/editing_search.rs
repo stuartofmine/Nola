@@ -1194,7 +1194,7 @@ fn git_diff_reports_staged_unstaged_and_untracked() {
     // the standard full-output reference point at an already truncated diff.
     fs::write(&tracked, format!("{}\nUNSTAGED_TAIL\n", "变更内容\n".repeat(10_000))).unwrap();
     fs::write(&untracked, format!("{}\nUNTRACKED_TAIL\n", "new content\n".repeat(100_000))).unwrap();
-    let unusual_name = root.join(" 空格与中文\nfile.txt");
+    let unusual_name = root.join(if cfg!(windows) { " 空格与中文 file.txt" } else { " 空格与中文\nfile.txt" });
     fs::write(&unusual_name, "UNUSUAL_NAME_CONTENT\n").unwrap();
     fs::write(root.join("artifact.bin"), b"\0\xff\x80BINARY_NOT_PROSE").unwrap();
     #[cfg(unix)]

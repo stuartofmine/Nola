@@ -2281,8 +2281,8 @@ mod permission_recovery_entrypoint_tests {
         if nested {
             fixture.stop.store(true, Ordering::SeqCst);
             server.join().unwrap();
-            assert_eq!(resolver_calls.load(Ordering::SeqCst), 2, "each actual nested call requires its own authorization; committed tool results: {:?}",
-                events.lock().unwrap().iter().filter_map(|event| event.pointer("/trace/payload/output")).take(8).collect::<Vec<_>>());
+            assert_eq!(resolver_calls.load(Ordering::SeqCst), 2, "each actual nested call requires its own authorization; outcome={outcome:?}, provider_requests={}, fixture events: {}",
+                posts.load(Ordering::SeqCst), serde_json::to_string(&*events.lock().unwrap()).unwrap().chars().take(24000).collect::<String>());
             if network {
                 assert_eq!(uploads.load(Ordering::SeqCst), 1, "denied second shell must not send another network request");
             } else {
