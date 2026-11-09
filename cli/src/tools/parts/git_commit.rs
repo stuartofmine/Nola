@@ -392,6 +392,7 @@ fn git_mutation_process(
 ) -> Result<(), String> {
     let stdout = tempfile::tempfile().map_err(|e| e.to_string())?;
     let stderr = tempfile::tempfile().map_err(|e| e.to_string())?;
+    let mut diagnostic = stderr.try_clone().map_err(|e| e.to_string())?;
     let mut command = git_operation_command(root);
     command
         .current_dir(root)
@@ -410,9 +411,16 @@ fn git_mutation_process(
         }
         match child.try_wait().map_err(|e| e.to_string())? {
             Some(status) if status.success() => return Ok(()),
-            Some(status) => return Err(format!(
-                "{operation} exited with {status}; inspect Git metadata and working directories; no automatic rollback was performed."
-            )),
+            Some(status) => {
+                use std::io::{Read as _, Seek as _};
+                let mut bytes = Vec::new();
+                let detail = diagnostic.rewind().and_then(|()| diagnostic.take(8192).read_to_end(&mut bytes))
+                    .map(|_| String::from_utf8_lossy(&bytes).trim().to_owned())
+                    .unwrap_or_else(|error| format!("Git diagnostic unavailable: {error}"));
+                return Err(format!(
+                    "{operation} exited with {status}: {detail}; inspect Git metadata and working directories; no automatic rollback was performed."
+                ));
+            },
             None => std::thread::sleep(Duration::from_millis(25)),
         }
     }
@@ -457,6 +465,18 @@ mod git_commit_tests {
 
     fn input() -> Value {
         json!({"paths":["README.md", "native_host_output.rs"], "message":"fixture change"})
+    }
+
+    #[test]
+    fn failed_git_mutation_retains_the_actual_bounded_diagnostic() {
+        let root = fixture();
+        let failure = git_mutation_process(root.path(),
+            &["worktree", "add", "--detach", "invalid-target", "missing-fixture-reference"],
+            &RuntimeExecutionControl::default(), "Git fixture worktree").unwrap_err();
+        assert!(failure.contains("invalid reference: missing-fixture-reference"), "{failure}");
+        assert!(failure.contains("no automatic rollback"));
+        assert!(failure.chars().count() <= 9000);
+        assert!(!root.path().join("invalid-target").exists());
     }
 
     #[test]
