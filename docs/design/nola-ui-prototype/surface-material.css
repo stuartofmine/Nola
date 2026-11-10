@@ -1,31 +1,31 @@
-/* Shared surface language: opaque, softly lit, with continuous corners.
+/* Shared surface language: opaque semantic fill with continuous corners.
    Navigation selection stays a background change; it does not gain a frame. */
 :root {
     --material-fill: var(--bg);
-    --material-gradient: linear-gradient(145deg, color-mix(in srgb, var(--material-fill) 95.5%, white), color-mix(in srgb, var(--material-fill) 98.2%, black));
-    --material-highlight: rgb(255 255 255 / .65);
-    --material-shadow: 0 6px 18px rgb(20 28 24 / .055), 0 1px 2px rgb(20 28 24 / .035);
+    --material-gradient: var(--material-fill);
+    --material-highlight: transparent;
+    --material-shadow: none;
 }
 :root[data-theme=dark] {
     --material-fill: #111;
-    --material-highlight: rgb(255 255 255 / .09);
-    --material-shadow: 0 6px 18px rgb(0 0 0 / .24), 0 1px 2px rgb(0 0 0 / .15);
+    --material-highlight: transparent;
+    --material-shadow: none;
 }
 .inline-card, .error-card, .approval, .im-group, .model-setup-prompt,
 .composer, #sheet, #dialog {
     border: 1px solid var(--line);
     background: var(--material-gradient);
-    box-shadow: inset 0 1px 0 var(--material-highlight), var(--material-shadow);
+    box-shadow: none;
 }
 .inline-card, .error-card, .approval, .im-group, .model-setup-prompt { border-radius: 16px; }
 .field input, .field textarea, .field select,
 dialog input, dialog select, dialog textarea, .model-setup-form input, .model-setup-form select,
 .im-composer textarea {
     background: var(--material-gradient);
-    box-shadow: inset 0 1px 0 var(--material-highlight), 0 1px 3px rgb(0 0 0 / .055);
+    box-shadow: none;
 }
 .primary, .im-primary, .im-quiet {
-    box-shadow: inset 0 1px 0 rgb(255 255 255 / .12), 0 1px 3px rgb(0 0 0 / .1);
+    box-shadow: none;
 }
 @supports (corner-shape: squircle) {
     .inline-card, .error-card, .approval, .im-group, .model-setup-prompt,
@@ -39,3 +39,25 @@ dialog input, dialog select, dialog textarea, .model-setup-form input, .model-se
     .inline-card, .error-card, .approval, .im-group, .model-setup-prompt, .composer, #sheet, #dialog,
     input, textarea, select, .primary, .im-primary, .im-quiet { background: Canvas; box-shadow: none; }
 }
+
+/* Ordinary content stays flat; only floating dialogs need elevation. */
+#dialog, #sheet { box-shadow: 0 12px 40px rgb(0 0 0 / .2); }
+.prototype-setting-heading { margin: 24px 20px 10px; font-size: 16px; line-height: 1.5; }
+.prototype-settings-update { padding: 0 20px 24px; }
+.prototype-settings-update > .prototype-setting-heading { margin-inline: 0; }
+.prototype-general > .inline-card { margin-block: 24px; }
+.prototype-general .inline-card h2 { font-size: 16px; }
+.im-send:active { transform: none; }
+@media (forced-colors: active) { #dialog, #sheet { box-shadow: none; } }
+
+.prototype-toggle-row { display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;min-height:64px; }
+.prototype-toggle-row small { display:block;font-size:12px;color:var(--im-muted,var(--muted));margin-top:4px; }
+.prototype-switch { position:relative;min-width:48px;min-height:44px;padding:0;border:0;background:transparent; }
+.prototype-switch::before { content:"";position:absolute;left:4px;top:10px;width:40px;height:24px;border-radius:20px;background:var(--im-active,var(--soft));border:1px solid var(--im-line,var(--line)); }
+.prototype-switch::after { content:"";position:absolute;left:7px;top:13px;width:18px;height:18px;border-radius:50%;background:var(--im-muted,var(--muted)); }
+.prototype-switch[aria-checked=true]::before { background:var(--im-accent,var(--fg)); }
+.prototype-switch[aria-checked=true]::after { transform:translateX(16px);background:var(--im-accent-text,var(--bg)); }
+.prototype-general > .inline-card { padding:20px; }
+.prototype-general .update-preview, .prototype-settings-update .update-preview { padding:8px 0;gap:12px; }
+.prototype-general .update-preview .demo-banner, .prototype-settings-update .update-preview .demo-banner { margin:0;padding:0;border:0; }
+.prototype-general .update-preview h2, .prototype-settings-update .update-preview h2 { margin:0; }

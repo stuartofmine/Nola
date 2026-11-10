@@ -8,7 +8,7 @@
 计划与运行历史,跨端计划管理与 history,仅固定周期新增与开关,周期/时间/内容编辑→运行一次→结果历史→整理内容；确认删除,状态测试通过；无真实任务
 Skills/MCP,跨端 capabilities; Mac system access/extensions/diagnostics,缺失,类型列表→配置/范围→启停/访问确认/模拟检查,模块7项状态检查；不执行权限操作
 活动/通知/结果,Web Results/Dashboard; Mac searchable agent/automation activity & attention; Android records notifications,缺失,搜索/筛选→需关注→授权拒绝/重提/允许；补输入继续；失败重试；结果/来源,模块状态检查通过
-设置,Web 常规/通知/提供方/Agent/连接/数据/诊断；memory/retrieval defaults,外观与说明,分类导航→外观/输入/通知开关/检索记忆默认/Agent能力/隐私/模拟诊断,整合渲染检查；非完整后端等价
+设置,通用/模型/助手/连接/数据/诊断；移动端按能力收敛,外观与说明,通用直接分组外观/通知/更新；iOS 5项、Android 4项；内容从资料、计划从活动进入,真实浏览器多宽度浅深色回放；不修改客户端配置
 工具授权与恢复,runtime per-action approval/user-input wait/recovery,保存允许/拒绝但未写入演示资料,保存确认写入本地资料且幂等；访问策略阻止；活动补输入和重试,状态测试通过
 多专家,跨端 parallel execution/recovery,已有并列模拟回复/单专家重试,保留专家身份、停止、单失败专家恢复,既有状态检查通过；非真实并发模型
 Mac Git review,MacWorkspaceReviewView.swift:31,缺失,桌面入口→文件 diff→提交说明/确认→独立推送确认,模块状态检查通过；零 Git 操作
@@ -25,7 +25,7 @@ Mac Git review,MacWorkspaceReviewView.swift:31,缺失,桌面入口→文件 diff
 持久化与边界,原型真实实现,旧README漏记专家颜色,主题/减少动态/专家色浏览器存储；其他演示状态本页内存,没有后端账号同步；所有外部操作为模拟
 文档同步,用户2026-10-28要求,迭代日志混有过时方案,现行规范、交互脚本与客户端差异记录同步；旧外部Site未发布,本轮浏览器操作与截图；旧验证脚本仍属历史
 移动四项主导航,用户接受b3a50e0手机IA,原型两项底栏,今日/对话/信息/设置；信息资源二级与统一设置；聊天保留独立返回/专家/上下文,390/320实际预览与导航点击；桌面结构不改
-更新机制,AppleSoftwareUpdateSection与客户端逐页验收,无更新页,设置→更新；失败/可用/最新/不兼容；安装步骤预览,本地模拟，零下载/安装/网络
+更新机制,AppleSoftwareUpdateSection与客户端逐页验收,无更新页,通用内更新；失败/可用/最新/不兼容；安装步骤预览,本地模拟，零下载/安装/网络
 保存未确认,Capabilities.svelte回执校验,只演示保存成功,MCP草稿保留→重新读取核对→明确保存,不完整回执不自动重发；本页内存
 检查器原地展开,MacChatInspector与当前交互规范,选择器切页,八区段独立展开；知识/Wiki/历史召回原地；折叠保留演示草稿,不等同真实Core持久化
 实际推理档位,模型声明与用户选择要求,旧三档说明,声明五档的虚构模型与继承；会话和模型范围区分,不推断其他模型能力，不调用模型

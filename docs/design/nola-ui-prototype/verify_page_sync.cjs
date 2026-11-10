@@ -4,7 +4,7 @@ const {chromium}=require('../../../web/playwright_runtime/node_modules/playwrigh
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const base=process.env.PROTOTYPE_URL||'http://127.0.0.1:8067';
-const out=process.env.PROTOTYPE_OUT||'/tmp/nola-prototype-sync-20261109';
+const out=process.env.PROTOTYPE_OUT||'/tmp/nola-prototype-sync-20261110';
 (async()=>{
  fs.mkdirSync(out,{recursive:true});
  const browser=await chromium.launch({executablePath:process.env.CHROME_PATH||'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true});
@@ -24,15 +24,42 @@ const out=process.env.PROTOTYPE_OUT||'/tmp/nola-prototype-sync-20261109';
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,`${name} page overflow`);
    const file=`${os}-${width}-${scheme}-${name}.png`;await page.screenshot({path:`${out}/${file}`});report.screens.push(file);
   }
-  async function settings(){if(width<=700)await click('im:nav:settings');else await page.getByRole('button',{name:'设置',exact:true}).last().click();}
+  async function settings(){if(width<=700)await click('im:nav:settings');else {await page.getByRole('button',{name:'设置',exact:true}).last().click();const back=page.locator('[data-action="settings-back"]:visible');if(await back.count())await back.click();}}
   await settings();
   if(os==='android'){await page.locator('.im-preview-tools>summary').click();await click('im:platform');}
   await shot('settings');
+  if(width<=700){
+   assert.equal(await page.locator('.im-screen > .im-group > .im-setting-row').count(),os==='android'?4:5);
+   for(const removed of ['im:nav:im-appearance','im:nav:im-updates','im:nav:memory','im:nav:plans','im:nav:data'])assert.equal(await page.locator(`[data-action="${removed}"]:visible`).count(),0);
+  }else assert.equal(await page.locator('[data-action^="ex-settings:"]:visible').count(),6);
   if(width>700){
-   const row=page.locator('[data-action="ex-settings:updates"]');const before=await row.evaluate(e=>getComputedStyle(e).backgroundColor);
+   const row=page.locator('[data-action="ex-settings:general"]');const before=await row.evaluate(e=>getComputedStyle(e).backgroundColor);
    await row.hover();await page.waitForTimeout(150);const after=await row.evaluate(e=>getComputedStyle(e).backgroundColor);assert.notEqual(after,before,'desktop hover must visibly change in both themes');
    await row.click();
-  }else await click('im:nav:im-updates');
+  }else await click('im:nav:im-general');
+  await page.getByRole('heading',{name:'通用',exact:true}).waitFor();
+  if(width<=700 && os==='ios'){
+   const toggle=page.getByRole('switch',{name:'启用通知（演示）',exact:true});
+   const before=await toggle.getAttribute('aria-checked');await toggle.click();
+   assert.notEqual(await page.getByRole('switch',{name:'启用通知（演示）',exact:true}).getAttribute('aria-checked'),before);
+   assert.equal(await page.locator('dialog:modal').count(),0,'General preferences edit inline');
+   assert.equal(await page.evaluate(()=>document.activeElement?.dataset.action),'im:notification-toggle');
+  }
+  await shot('general');
+  if(width>700){
+   const startup=page.getByRole('switch',{name:'登录时启动 Nola（演示）',exact:true});
+   await startup.scrollIntoViewIfNeeded();
+   const before=await startup.getAttribute('aria-checked'),offset=await page.locator('.studio-center').evaluate(e=>e.scrollTop);
+   await startup.focus();await page.keyboard.press('Space');
+   assert.notEqual(await page.getByRole('switch',{name:'登录时启动 Nola（演示）',exact:true}).getAttribute('aria-checked'),before);
+   assert.equal(await page.evaluate(()=>document.activeElement?.dataset.action),'ex-pref:startup:general');
+   assert.ok(Math.abs(await page.locator('.studio-center').evaluate(e=>e.scrollTop)-offset)<2,'Settings toggle preserves reading position');
+   await shot('general-lower');
+   const padding=await page.locator('.prototype-general>.inline-card').first().evaluate(e=>parseFloat(getComputedStyle(e).paddingLeft));
+   assert.ok(padding>=16,'Settings content must retain card insets');
+  }else if(os==='android'){
+   await page.getByRole('heading',{name:'关于',exact:true}).scrollIntoViewIfNeeded();await shot('general-lower');
+  }
   assert.equal(await page.getByRole('heading',{name:'软件更新',exact:true}).count(),1);
   await shot('updates-idle');
   await page.locator('.prototype-state-controls>summary').click();await click('update:outcome:failed');
@@ -46,7 +73,7 @@ const out=process.env.PROTOTYPE_OUT||'/tmp/nola-prototype-sync-20261109';
   await click('update:steps');await page.getByRole('dialog').waitFor();await shot('install-preview');await click('update:close');
   if(width<=700){
    await click('im:back:settings');
-   for(const child of ['data','memory','plans']){await click('im:nav:'+child);await shot('settings-'+child);await click('im:back:settings');}
+   await click('im:nav:activity');await click('im:nav:plans');await shot('activity-plans');await click('im:back:activity');
    await click('im:nav:information');await shot('information');
    for(const child of ['knowledge','memory','data']){await click('im:nav:'+child);await shot('information-'+child);await click('im:back:information');}
    await settings();await click('im:nav:models');
