@@ -1,5 +1,24 @@
+@font-face {
+    font-family: 'Nola Inter';
+    src: url('./assets/fonts/InterVariable.woff2') format('woff2');
+    font-weight: 100 900;
+    font-style: normal;
+    font-display: swap;
+}
+@font-face {
+    font-family: 'Nola Code';
+    src: url('./assets/fonts/JetBrainsMono-Regular.woff2') format('woff2');
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
 :root {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-interface: 'Nola Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI', 'Noto Sans CJK SC', 'Noto Sans SC', sans-serif;
+    --font-code: 'Nola Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --a2ui-font-family: var(--font-interface);
+    --a2ui-font-family-monospace: var(--font-code);
+    font-family: var(--font-interface);
+    font-optical-sizing: auto;
     color-scheme: light dark;
     --content: #202020;
     color: var(--content); background: var(--canvas); font-size: 100%; line-height: 1.5;
@@ -36,6 +55,7 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; font-size: var(--text-body); }
+code, pre, kbd, samp { font-family: var(--font-code); font-variant-ligatures: none; }
 .skip-content { position: fixed; inset-block-start: 8px; inset-inline-start: 8px; z-index: 100; padding: 12px 16px; background: var(--surface); border: 2px solid var(--accent); border-radius: var(--radius-control); transform: translateY(-200%); }
 .skip-content:focus { transform: none; }
 button, input, select, textarea { font: inherit; font-size: .875rem; }

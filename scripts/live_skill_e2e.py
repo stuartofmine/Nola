@@ -29,6 +29,7 @@ import zlib
 import zipfile
 
 from e2e.cargo_paths import cargo_target_directory
+from e2e.current_model import selected_model
 from e2e.model_execution_fixture import fixture, runtime_capabilities
 from real_e2e_events import committed_journal_parts
 from test_real_cli_resilience import configured_environment, clear_owned_credentials
@@ -922,6 +923,12 @@ def live_llm_options() -> dict:
             raise InfrastructureFailure("explicit live model fixture/configuration is missing") from error
         SOURCE_CONFIGURATION = (config_path, hashlib.sha256(raw).digest())
         llm = config.get("llm", {})
+        if "connections" in llm or "default_model" in llm:
+            try:
+                llm = selected_model(config, dict(os.environ))
+            except ValueError as error:
+                raise InfrastructureFailure(str(error)) from error
+            config = {"llm": llm}
         endpoint = endpoint or str(llm.get("endpoint") or "").strip()
         model = model or str(llm.get("model") or "").strip()
         api_key = api_key or str(llm.get("api_key") or "").strip()

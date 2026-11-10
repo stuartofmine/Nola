@@ -29,6 +29,7 @@ struct StdioMcpConfig {
     server_id: String,
     display_name: String,
     command: String,
+    command_argv0: String,
     args: Vec<String>,
     environment: BTreeMap<String, String>,
     cwd: Option<PathBuf>,
@@ -158,10 +159,15 @@ pub fn freeze_configuration(value:&Value, server:&str) -> Result<(String,String)
                 candidates
             }).find(|path|path.is_file())
             .ok_or_else(||McpHostError::new("mcp_program_missing","MCP program is not available on the frozen PATH"))?
-    }.canonicalize().map_err(|error|McpHostError::new("mcp_program_missing",error.to_string()))?;
+    };
+    // Python virtual environments and other launchers use argv[0] to find
+    // their environment. Execute the approved resolved image, while preserving
+    // the configured absolute invocation path rather than losing that context.
+    config.command_argv0 = command.to_str().ok_or_else(||McpHostError::new("mcp_program_missing","MCP program path is not UTF-8"))?.into();
+    let command = command.canonicalize().map_err(|error|McpHostError::new("mcp_program_missing",error.to_string()))?;
     config.command = command.to_str().ok_or_else(||McpHostError::new("mcp_program_missing","MCP program path is not UTF-8"))?.into();
     let digest = format!("{:x}",Sha256::digest(serde_json::to_vec(&json!({
-        "command":config.command,"args":config.args,"cwd":config.cwd,"env":config.environment,"timeout_ms":config.timeout_ms
+        "command":config.command,"argv0":config.command_argv0,"args":config.args,"cwd":config.cwd,"env":config.environment,"timeout_ms":config.timeout_ms
     })).map_err(|error|McpHostError::new("mcp_identity_invalid",error.to_string()))?));
     let target = config.command.clone();
     let mut snapshots = launch_snapshots().lock().map_err(|_|McpHostError::new("mcp_registry_unavailable","MCP launch snapshots unavailable"))?;
@@ -565,6 +571,7 @@ fn parse_config(value: &Value, server_id: &str) -> Result<StdioMcpConfig, McpHos
     Ok(StdioMcpConfig {
         server_id: server_id.into(),
         display_name: value.get("display_name").or_else(||value.get("name")).and_then(Value::as_str).unwrap_or(server_id).into(),
+        command_argv0: command.clone(),
         command,
         args,
         environment,
@@ -577,6 +584,11 @@ fn parse_config(value: &Value, server_id: &str) -> Result<StdioMcpConfig, McpHos
 impl StdioMcpClient {
     fn connect(config: &StdioMcpConfig) -> Result<Self, McpHostError> {
         let mut command = Command::new(&config.command);
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.arg0(&config.command_argv0);
+        }
         command
             .args(&config.args)
             .env_clear()

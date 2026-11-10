@@ -144,7 +144,7 @@
     .markdown :global(li > div > p:first-child) { margin-top: 0; } .markdown :global(li > div > p:last-child) { margin-bottom: 0; }
     li.task { list-style: none; display: flex; align-items: baseline; gap: .55em; } .task input { width: auto; margin: 0; }
     blockquote { margin: 12px 0; padding-inline-start: 12px; border-inline-start: 2px solid var(--outline); color: var(--muted); }
-    .markdown :global(code) { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; background: var(--panel); border-radius: 4px; padding: .12em .3em; }
+    .markdown :global(code) { font-family: var(--font-code); font-size: .9em; background: var(--panel); border-radius: 4px; padding: .12em .3em; }
     .code-block { margin: 1em 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
     .code-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 6px 12px; background: var(--panel); font-size: .85em; color: var(--muted); }
     .code-header button { padding: 3px 8px; min-height: max(32px, var(--control-hit-size)); min-width: 44px; }

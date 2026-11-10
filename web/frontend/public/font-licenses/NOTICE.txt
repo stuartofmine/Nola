@@ -1,0 +1,17 @@
+Nola Web uses locally served font files. No font CDN or runtime font download is required.
+
+InterVariable.woff2
+Inter 4.001 (upstream font version: git-9221beed3)
+Source: https://github.com/rsms/inter/blob/master/docs/font-files/InterVariable.woff2
+Project: https://rsms.me/inter/
+License: SIL Open Font License 1.1, reproduced in Inter-OFL.txt.
+Coverage: Latin and other supported scripts; Chinese uses the device's available CJK font.
+
+JetBrainsMono-Regular.woff2
+JetBrains Mono 2.305
+Source: https://github.com/JetBrains/JetBrainsMono/blob/master/fonts/webfonts/JetBrainsMono-Regular.woff2
+Project: https://www.jetbrains.com/lp/mono/
+License: SIL Open Font License 1.1, reproduced in JetBrainsMono-OFL.txt.
+Usage: code, keyboard shortcuts and literal identifiers; programming ligatures disabled.
+
+Files are unmodified upstream fonts. CSS aliases do not rename their internal family names.

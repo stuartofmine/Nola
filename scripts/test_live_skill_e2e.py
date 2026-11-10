@@ -15,6 +15,29 @@ import live_skill_e2e
 
 
 class LiveSkillE2ETests(unittest.TestCase):
+    def test_current_default_route_resolves_environment_credential_and_protocol(self):
+        declaration = {"toolCalls": True, "imageInput": False, "reasoning": False, "samplingParameters": False}
+        config = {"llm": {"default_model": {"connection": "chosen", "model": "selected"}, "connections": [
+            {"id": "other", "models": [], "endpoint": "https://unused.invalid"},
+            {"id": "chosen", "endpoint": "https://provider.invalid/v1", "protocol": "responses",
+             "api_key_env": "FIXTURE_KEY", "models": [{"id": "selected", "executionCapabilities": declaration}]}]}}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(json.dumps(config))
+            original = path.read_bytes()
+            with mock.patch.dict(os.environ, {"NOLA_CONFIG_PATH": str(path), "FIXTURE_KEY": "fixture-secret"}, clear=True):
+                value = live_skill_e2e.live_llm_options()["llm"]
+                self.assertEqual(value["model"], "selected")
+                self.assertEqual(value["api_key"], "fixture-secret")
+                self.assertEqual(value["provider"], "openai-responses")
+                self.assertTrue(value["capabilities"]["native_tool_calls"])
+                self.assertEqual(path.read_bytes(), original)
+                config["llm"]["default_model"]["model"] = "missing"
+                path.write_text(json.dumps(config))
+                with self.assertRaises(live_skill_e2e.InfrastructureFailure):
+                    live_skill_e2e.live_llm_options()
+        live_skill_e2e.SOURCE_CONFIGURATION = None
+
     def test_success_retains_trace_for_evidence_audit(self) -> None:
         stdout = '{"type":"assistant_journal_committed_v1","through":{}}\n'
         process = mock.Mock(returncode=0)
