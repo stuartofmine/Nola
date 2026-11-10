@@ -29,6 +29,7 @@ internal fun acceptHostPermissionEvent(
         id = event.id, toolName = event.toolName, args = event.args.mapValues { it.value },
         match = event.match, reason = event.reason, permissionInstructions = event.permissionInstructions,
         message = event.message, nonce = event.nonce, hostId = event.hostId,
+        safeReviewText = event.safeReviewText,
         clientId = event.clientId, sessionId = event.sessionId,
         expiresAt = event.expiresAt, protocolVersion = event.protocolVersion,
     )

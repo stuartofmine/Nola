@@ -2468,7 +2468,7 @@ internal fun ConversationExpertReplyBubble(reply: ChatViewModel.ConversationExpe
 private fun HostPermissionCard(request: com.nola.domain.model.HostAgentPermissionRequest,
     onDecision: (String, Boolean, Boolean) -> Unit, onInstruction: (String, String) -> Unit) {
     PermissionDialog(toolName = request.toolName,
-        message = listOf(request.message, if (request.permissionInstructions.isEmpty()) "" else
+        message = listOf(request.safeReviewText.orEmpty(), request.message, if (request.permissionInstructions.isEmpty()) "" else
             stringResource(R.string.permission_guidance_recorded) + "\n" + request.permissionInstructions.joinToString("\n") { it.instruction }
         ).filter { it.isNotBlank() }.joinToString("\n\n"),
         executionLocation = if (request.deviceBridge) stringResource(R.string.permission_location_device)
@@ -2476,6 +2476,7 @@ private fun HostPermissionCard(request: com.nola.domain.model.HostAgentPermissio
         dataBoundary = stringResource(if (request.deviceBridge) R.string.permission_data_device else R.string.permission_data_host),
         validity = stringResource(if (request.deviceBridge) R.string.permission_valid_once else R.string.permission_valid_choice),
         allowLabel = permissionAllowLabel(request.toolName),
+        allowEnabled = request.deviceBridge || !request.safeReviewText.isNullOrBlank(),
         conversationAllowLabel = if (!request.deviceBridge && request.allowConversation) stringResource(R.string.permission_action_allow_conversation) else null,
         onAllowConversation = if (!request.deviceBridge && request.allowConversation) ({ onDecision(request.id, true, true) }) else null,
         onAllow = { onDecision(request.id, true, false) }, onDeny = { onDecision(request.id, false, false) },

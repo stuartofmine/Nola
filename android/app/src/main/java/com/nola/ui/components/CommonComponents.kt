@@ -887,7 +887,8 @@ fun PermissionDialog(
     onProvideInstruction: ((String) -> Unit)? = null,
     permissionIdentity: String = toolName,
     permissionInstructions: List<com.nola.core.AgentPermissionInstruction> = emptyList(),
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    allowEnabled: Boolean = true,
 ) {
     var instruction by remember(permissionIdentity) { mutableStateOf("") }
     var editingInstruction by remember(permissionIdentity) { mutableStateOf(false) }
@@ -903,6 +904,10 @@ fun PermissionDialog(
             text = {
                 Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
                     androidx.compose.foundation.text.selection.SelectionContainer { Text(message) }
+                    Spacer(Modifier.height(12.dp))
+                    PermissionDetailRow(stringResource(R.string.permission_detail_location), executionLocation)
+                    PermissionDetailRow(stringResource(R.string.permission_detail_data), dataBoundary)
+                    PermissionDetailRow(stringResource(R.string.permission_detail_validity), validity)
                 }
             },
             confirmButton = {
@@ -936,21 +941,26 @@ fun PermissionDialog(
             Text(
                 text = message,
                 style = MaterialTheme.typography.bodyMedium,
-                maxLines = 4,
+                maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
             )
-            TextButton(onClick = { showingDetails = true }) {
-                Text(stringResource(R.string.canonical_details))
+            Text(
+                stringResource(R.string.permission_detail_location) + ": " + executionLocation,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { showingDetails = true }) { Text(stringResource(R.string.canonical_details)) }
+                if (onProvideInstruction != null) {
+                    TextButton(onClick = { editingInstruction = !editingInstruction }, enabled = !historyFull) {
+                        Text(stringResource(R.string.permission_add_instruction))
+                    }
+                }
             }
-            Spacer(modifier = Modifier.height(12.dp))
-            PermissionDetailRow(stringResource(R.string.permission_detail_location), executionLocation)
-            PermissionDetailRow(stringResource(R.string.permission_detail_data), dataBoundary)
-            PermissionDetailRow(stringResource(R.string.permission_detail_validity), validity)
+            if (!allowEnabled) Text(stringResource(R.string.permission_review_unavailable), style = MaterialTheme.typography.bodySmall)
             if (onProvideInstruction != null) {
                 if (historyFull) Text(stringResource(R.string.permission_instruction_history_full))
-                TextButton(onClick = { editingInstruction = !editingInstruction }, enabled = !historyFull) {
-                    Text(stringResource(R.string.permission_add_instruction))
-                }
                 if (editingInstruction) {
                     androidx.compose.material3.OutlinedTextField(
                         value = instruction,
@@ -971,23 +981,25 @@ fun PermissionDialog(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Button(onClick = {
-                    haptics.primaryAction()
-                    onAllow()
-                }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("permission.allow-once.$permissionIdentity")) {
-                    Text(allowLabel)
-                }
-                OutlinedButton(onClick = {
-                    haptics.warning()
-                    onDeny()
-                }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-                    Text(stringResource(R.string.common_deny))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = {
+                        haptics.primaryAction()
+                        onAllow()
+                    }, enabled = allowEnabled, modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("permission.allow-once.$permissionIdentity")) {
+                        Text(allowLabel)
+                    }
+                    OutlinedButton(onClick = {
+                        haptics.warning()
+                        onDeny()
+                    }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+                        Text(stringResource(R.string.common_deny))
+                    }
                 }
                 if (conversationAllowLabel != null && onAllowConversation != null) {
                     OutlinedButton(onClick = {
                         haptics.success()
                         onAllowConversation()
-                    }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                    }, enabled = allowEnabled, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                         Text(conversationAllowLabel)
                     }
                 }

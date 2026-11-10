@@ -33,8 +33,9 @@ class RealAndroidRemoteTaskUiTest {
             try {
                 compose.onNodeWithContentDescription(context.getString(R.string.tab_settings)).performClick()
                 compose.onNodeWithText(context.getString(R.string.models_title)).performClick()
+                compose.onNode(hasText(context.getString(R.string.models_web_host)) and hasClickAction()).performClick()
                 if (!config.optBoolean("alreadyPaired")) {
-                compose.onNodeWithTag("models.connection.host").performScrollTo().performClick()
+                compose.onAllNodes(hasText(context.getString(R.string.models_web_host)) and hasClickAction()).onLast().performScrollTo().performClick()
                 compose.onNodeWithText(context.getString(R.string.models_host_url)).performScrollTo().performTextReplacement(config.getString("url"))
                 compose.onNodeWithText(context.getString(R.string.models_access_token)).performScrollTo().performTextReplacement(config.getString("token"))
                 compose.onNodeWithText(context.getString(R.string.models_save_and_verify)).performClick()
@@ -42,8 +43,7 @@ class RealAndroidRemoteTaskUiTest {
                     compose.onAllNodesWithText(context.getString(R.string.models_access_token)).fetchSemanticsNodes().isEmpty()
                 }
                 }
-                compose.waitUntil(30_000) { compose.onAllNodesWithText(context.getString(R.string.models_use)).fetchSemanticsNodes().isNotEmpty() }
-                compose.onAllNodesWithText(context.getString(R.string.models_use)).onLast().performScrollTo().performClick()
+                activateSavedHost()
                 compose.onNodeWithContentDescription(context.getString(R.string.tab_chat)).performClick()
                 compose.onNodeWithTag("chat.conversations.new").performClick()
                 compose.onNodeWithTag("chat.composer.input").performTextInput(
@@ -155,9 +155,8 @@ class RealAndroidRemoteTaskUiTest {
         ActivityScenario.launch(MainActivity::class.java).use {
             compose.onNodeWithContentDescription(context.getString(R.string.tab_settings)).performClick()
             compose.onNodeWithText(context.getString(R.string.models_title)).performClick()
-            compose.waitUntil(30_000) { compose.onAllNodesWithText(context.getString(R.string.models_use)).fetchSemanticsNodes().isNotEmpty() }
-            compose.onAllNodesWithText(context.getString(R.string.models_use)).onLast().performScrollTo().performClick()
-            compose.waitUntil(30_000) { compose.onAllNodesWithText(context.getString(R.string.models_model_activated_format, "Nola Web Host")).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNode(hasText(context.getString(R.string.models_web_host)) and hasClickAction()).performClick()
+            activateSavedHost()
         }
     }
 
@@ -200,6 +199,15 @@ class RealAndroidRemoteTaskUiTest {
             compose.onNodeWithTag("chat.task.card.$task").assertIsDisplayed()
             screenshot("existing-child-return-parent.png")
         }
+    }
+
+    private fun activateSavedHost() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val row = hasTestTag("models.row.web-host")
+        compose.waitUntil(30_000) { compose.onAllNodes(row).fetchSemanticsNodes().isNotEmpty() }
+        val use = hasText(context.getString(R.string.models_use)) and hasAnyAncestor(row)
+        if (compose.onAllNodes(use).fetchSemanticsNodes().isNotEmpty()) compose.onNode(use).performScrollTo().performClick()
+        compose.waitUntil(30_000) { compose.onAllNodes(hasText(context.getString(R.string.models_selected)) and hasAnyAncestor(row)).fetchSemanticsNodes().isNotEmpty() }
     }
 
     private fun screenshot(name: String) {

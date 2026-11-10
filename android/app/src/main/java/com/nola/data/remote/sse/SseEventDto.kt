@@ -31,6 +31,7 @@ data class SseEventDto(
     val reason: String? = null,
     @SerialName("permission_instructions") val permissionInstructions: List<com.nola.core.AgentPermissionInstruction> = emptyList(),
     val message: String? = null,
+    @SerialName("safe_review_text") val safeReviewText: String? = null,
     val nonce: String? = null,
     @SerialName("host_id") val hostId: String? = null,
     @SerialName("client_id") val clientId: String? = null,
@@ -78,6 +79,9 @@ data class SseEventDto(
                 reason = reason ?: "",
                 permissionInstructions = permissionInstructions,
                 message = message ?: "",
+                safeReviewText = safeReviewText?.also {
+                    require(it.toByteArray(Charsets.UTF_8).size <= 32 * 1024) { "Host permission review exceeds limit" }
+                },
                 nonce = nonce,
                 hostId = hostId,
                 clientId = clientId,

@@ -57,7 +57,8 @@ sealed class SseEvent {
         val clientId: String? = null,
         val sessionId: String? = null,
         val expiresAt: Long? = null,
-        val protocolVersion: Int? = null
+        val protocolVersion: Int? = null,
+        val safeReviewText: String? = null
     ) : SseEvent()
     data class DeviceToolRequest(
         val id: String,

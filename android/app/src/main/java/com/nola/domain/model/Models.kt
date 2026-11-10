@@ -493,6 +493,7 @@ data class HostAgentPermissionRequest(
     val protocolVersion: Int? = null,
     val deviceBridge: Boolean = false,
     val permissionInstructions: List<com.nola.core.AgentPermissionInstruction> = emptyList(),
+    val safeReviewText: String? = null,
 )
 
 /** Current Core timestamp contract. Numeric historical payloads are rejected. */

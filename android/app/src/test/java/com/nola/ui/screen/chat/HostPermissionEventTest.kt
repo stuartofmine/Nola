@@ -27,6 +27,26 @@ class HostPermissionEventTest {
         assertEquals("original", request.args["path"])
     }
 
+    @Test fun authenticatedSafeReviewSurvivesDtoAndUiProjectionWithoutRawArgsFallback() {
+        val original = """{"type":"permission_request","allow_conversation":true,"id":"p3","tool_name":"bash","args":{"command":"must-not-display-raw-args"},"message":"Choose once or conversation","safe_review_text":"bash\nCommand: python3 remote_job.py\nWorking directory: Project directory","protocol_version":1,"nonce":"nonce3","host_id":"host","client_id":"client","session_id":"session","expires_at":200}"""
+        val parsed = decodeSsePayload(original, null) as SseEvent.PermissionRequest
+        val request = acceptHostPermissionEvent(ChatUiState(conversationId = "session"), parsed, "session", "host", "client", 100)!!.permissionRequest!!
+        assertEquals("bash\nCommand: python3 remote_job.py\nWorking directory: Project directory", request.safeReviewText)
+        assertFalse(request.safeReviewText!!.contains("must-not-display-raw-args"))
+        assertNull(acceptHostPermissionEvent(ChatUiState(conversationId = "session"), event(), "session", "host", "client", 100)!!.permissionRequest!!.safeReviewText)
+    }
+
+    @Test fun oversizedReviewCannotBecomeAnActionablePermission() {
+        val payload = buildJsonObject {
+            put("type", "permission_request")
+            put("id", "oversized")
+            put("tool_name", "bash")
+            put("safe_review_text", "审".repeat(11_000))
+        }
+        val error = assertThrows(IllegalStateException::class.java) { decodeSsePayload(payload.toString(), null) }
+        assertTrue(error.cause is IllegalArgumentException)
+    }
+
     @Test fun wrongIdentityExpiredOrOldProtocolCannotClearSuccessorUi() {
         val successor = acceptHostPermissionEvent(ChatUiState(conversationId = "session"), event(), "session", "host", "client", 100)!!
         val invalid = listOf(event().copy(id = "p1", permissionInstructions = emptyList()), event().copy(hostId = "other"), event().copy(clientId = "other"), event().copy(sessionId = "other"), event().copy(expiresAt = 99), event().copy(protocolVersion = 0), event().copy(protocolVersion = 2), event().copy(protocolVersion = 3), event().copy(protocolVersion = 5), event().copy(nonce = ""))
