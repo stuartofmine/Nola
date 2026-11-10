@@ -65,6 +65,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -104,6 +105,8 @@ fun SettingsScreen(
     onOpenChat: () -> Unit = {}
 ) {
     var activeScreen by rememberSaveable { mutableStateOf<String?>(null) }
+    val detailState = rememberSaveable { mutableStateOf<String?>(null) }
+    val pageState = rememberSaveableStateHolder()
 
     BackHandler(enabled = activeScreen != null) {
         activeScreen = null
@@ -115,13 +118,14 @@ fun SettingsScreen(
             onBack = { activeScreen = null },
             onCreateInChat = onOpenChat
         )
-        else -> SettingsMain(
+        else -> pageState.SaveableStateProvider("settings-main") { SettingsMain(
+            detailState = detailState,
             onNotifications = { activeScreen = "notifications" },
             onScheduledActions = { activeScreen = "scheduled" },
             onOpenDataSources = onOpenDataSources,
             onOpenModels = onOpenModels,
             onOpenIntelligence = onOpenIntelligence
-        )
+        ) }
     }
 }
 
@@ -133,7 +137,8 @@ fun SettingsMain(
     onOpenDataSources: () -> Unit = {},
     onOpenModels: () -> Unit = {},
     onOpenIntelligence: () -> Unit = {},
-    viewModel: SettingsViewModel = hiltViewModel()
+    viewModel: SettingsViewModel = hiltViewModel(),
+    detailState: androidx.compose.runtime.MutableState<String?> = rememberSaveable { mutableStateOf<String?>(null) }
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val appearance by viewModel.appearance.collectAsStateWithLifecycle(initialValue = AppearancePreference.System)
@@ -141,7 +146,7 @@ fun SettingsMain(
     val scope = rememberCoroutineScope()
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showExportDialog by remember { mutableStateOf(false) }
-    var detailSection by rememberSaveable { mutableStateOf<String?>(null) }
+    var detailSection by detailState
     BackHandler(enabled = detailSection != null) { detailSection = null }
     var isClearingData by remember { mutableStateOf(false) }
     var isExportingData by remember { mutableStateOf(false) }
@@ -252,22 +257,19 @@ fun SettingsMain(
             if (detailSection != null) NolaIconButton(label = stringResource(R.string.common_back), onClick = { detailSection = null }) {
                 Icon(painterResource(R.drawable.nola_back), stringResource(R.string.common_back))
             }
-            Text(stringResource(if (detailSection == "appearance") R.string.appearance_title else if (detailSection == "privacy") R.string.settings_privacy else if (detailSection == "notifications") R.string.notifications_title else R.string.settings_title),
+            Text(stringResource(if (detailSection == "general") R.string.settings_general else if (detailSection == "appearance") R.string.appearance_title else if (detailSection == "privacy") R.string.settings_privacy else if (detailSection == "notifications") R.string.notifications_title else R.string.settings_title),
                 Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
         }
         if (detailSection == null) {
+            Column(Modifier.fillMaxWidth().nolaSurface(radius = 14.dp)) {
+                IMSettingsRow(R.drawable.nola_settings, R.string.settings_general) { detailSection = "general" }
+            }
             Column(Modifier.fillMaxWidth().nolaSurface(radius = 14.dp)) {
                 IMSettingsRow(R.drawable.nola_models, R.string.models_title, onOpenModels)
                 IMSettingsRow(R.drawable.nola_execution, R.string.settings_capabilities, onOpenIntelligence)
             }
             Column(Modifier.fillMaxWidth().nolaSurface(radius = 14.dp)) {
-                IMSettingsRow(R.drawable.nola_sun, R.string.appearance_title) { detailSection = "appearance" }
-                IMSettingsRow(R.drawable.nola_bell, R.string.notifications_title) { detailSection = "notifications" }
                 IMSettingsRow(R.drawable.nola_review, R.string.settings_privacy) { detailSection = "privacy" }
-            }
-            Column(Modifier.fillMaxWidth().nolaSurface(radius = 14.dp)) {
-                IMSettingsRow(R.drawable.nola_folder, R.string.settings_data_sources, onOpenDataSources)
-                IMSettingsRow(R.drawable.nola_calendar, R.string.scheduled_title, onScheduledActions)
             }
             return@NolaPage
         }
@@ -298,10 +300,7 @@ fun SettingsMain(
             )
         }
 
-        if (detailSection == "notifications") {
-            SettingsNotificationsCard(onNotifications, { openNotificationSettings(context) }, notificationsAllowed)
-        }
-        if (detailSection == "appearance") {
+        if (detailSection == "general" || detailSection == "appearance") {
         NolaCard(plain = true) {
             NolaSectionTitle(title = stringResource(R.string.appearance_title))
             Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainer, NolaContinuousShape(10.dp)).padding(3.dp).selectableGroup(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -320,6 +319,31 @@ fun SettingsMain(
             }
         }
 
+        }
+
+        if (detailSection == "general") {
+            SettingsNotificationsCard(onNotifications, { openNotificationSettings(context) }, notificationsAllowed)
+        NolaCard(plain = true) {
+            NolaSectionTitle(title = stringResource(R.string.settings_about))
+            val versionName = remember(context) {
+                runCatching {
+                    context.packageManager.getPackageInfo(context.packageName, 0).versionName
+                }.getOrNull().orEmpty().ifBlank { "—" }
+            }
+            SettingsInfoRow(stringResource(R.string.settings_version), versionName)
+            SoftwareUpdateControls()
+            SettingsCopyRow(
+                label = stringResource(R.string.settings_client_uuid),
+                value = state.clientUuid.ifBlank { stringResource(R.string.settings_generating) },
+                enabled = state.clientUuid.isNotBlank()
+            ) {
+                if (state.clientUuid.isNotBlank()) {
+                    val clipboard = context.getSystemService(ClipboardManager::class.java)
+                    clipboard.setPrimaryClip(ClipData.newPlainText(context.getString(R.string.settings_client_uuid), state.clientUuid))
+                    Toast.makeText(context, context.getString(R.string.settings_client_uuid_copied), Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
         }
 
         if (detailSection == "privacy") {
@@ -372,27 +396,6 @@ fun SettingsMain(
             }
         }
 
-        NolaCard(plain = true) {
-            NolaSectionTitle(title = stringResource(R.string.settings_about))
-            val versionName = remember(context) {
-                runCatching {
-                    context.packageManager.getPackageInfo(context.packageName, 0).versionName
-                }.getOrNull().orEmpty().ifBlank { "—" }
-            }
-            SettingsInfoRow(stringResource(R.string.settings_version), versionName)
-            SoftwareUpdateControls()
-            SettingsCopyRow(
-                label = stringResource(R.string.settings_client_uuid),
-                value = state.clientUuid.ifBlank { stringResource(R.string.settings_generating) },
-                enabled = state.clientUuid.isNotBlank()
-            ) {
-                if (state.clientUuid.isNotBlank()) {
-                    val clipboard = context.getSystemService(ClipboardManager::class.java)
-                    clipboard.setPrimaryClip(ClipData.newPlainText(context.getString(R.string.settings_client_uuid), state.clientUuid))
-                    Toast.makeText(context, context.getString(R.string.settings_client_uuid_copied), Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
 
         NolaCard(plain = true) {
             NolaSectionTitle(title = stringResource(R.string.settings_reset))

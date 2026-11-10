@@ -499,7 +499,7 @@
     <string name="notifications_title">Notification Center</string>
     <string name="notifications_detail_title">Notification</string>
     <string name="notifications_no_notifications">No notifications</string>
-    <string name="notifications_empty_message">New local and backend notifications will appear here.</string>
+    <string name="notifications_empty_message">New notifications will appear here.</string>
     <string name="notifications_mark_all_read">Mark all read</string>
     <string name="notifications_unread">Unread</string>
     <string name="notifications_timeline">Timeline</string>
@@ -1332,4 +1332,5 @@
     <string name="goal_needs_user">Waiting for your input or approval</string>
     <string name="inspector_conversation_needed">Start or open a conversation to view progress and set a goal.</string>
     <string name="onboarding_guide_action_later">Skip for now</string>
+    <string name="settings_general">General</string>
 </resources>

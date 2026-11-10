@@ -38,7 +38,7 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
 
         for theme in ["Light", "Dark"] {
             tap("main.tab.settings")
-            tap("settings.category.appearance")
+            tap("settings.category.general")
             tap("settings.appearance")
             let choice = app.buttons[theme]
             XCTAssertTrue(choice.waitForExistence(timeout: 3))
@@ -51,10 +51,15 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
             capture("experts-\(theme)")
             tap("experts.management.done")
 
-            for identifier in ["settings.models", "settings.category.agent", "settings.category.notifications",
-                               "settings.category.updates", "settings.category.privacy", "settings.category.memory", "settings.category.plans"] {
+            for identifier in ["settings.models", "settings.category.general", "settings.category.agent", "settings.category.privacy"] {
                 tap(identifier)
                 capture("\(identifier)-\(theme)")
+                if identifier == "settings.category.general" {
+                    let update = app.buttons["Check for updates"]
+                    for _ in 0..<6 where !update.isHittable { app.swipeUp() }
+                    XCTAssertTrue(update.isHittable, "Software updates remain reachable in General")
+                    capture("general-lower-\(theme)")
+                }
                 backToSettings()
             }
             for destination in ["knowledge", "memory", "sources"] {
@@ -69,7 +74,29 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
             for tab in ["chat", "activity", "information", "settings"] {
                 tap("main.tab.\(tab)")
                 capture("primary-\(tab)-\(theme)")
+
             }
         }
     }
+
+    func testPlansRemainReachableFromActivityWithoutASettingsShortcut() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launchEnvironment["NOLA_UI_TEST_RUN_ID"] = "plans-navigation-\(UUID().uuidString)"
+        app.launch()
+        defer { app.terminate() }
+        let activity = app.buttons["main.tab.activity"]
+        XCTAssertTrue(activity.waitForExistence(timeout: 10))
+        activity.tap()
+        let plans = app.navigationBars.buttons["Plans"]
+        XCTAssertTrue(plans.waitForExistence(timeout: 5))
+        plans.tap()
+        XCTAssertTrue(app.staticTexts["No automations yet"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Create in chat"].exists)
+        let back = app.navigationBars.buttons.element(boundBy: 0)
+        XCTAssertTrue(back.waitForExistence(timeout: 3))
+        back.tap()
+        XCTAssertTrue(plans.waitForExistence(timeout: 3))
+    }
+
 }

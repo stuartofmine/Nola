@@ -3116,3 +3116,6 @@
 
 "chat.context.cannot_fit.recovery" = "このモデルのコンテキストウィンドウが不足しています。モデルメニューで、より大きなコンテキストウィンドウのモデルを選んで再試行してください。元の会話は保持されています。";
 "onboarding.guide.action.later" = "今はスキップ";
+
+"settings.navigation.general" = "一般";
+"settings.navigation.general.detail" = "外観、通知、ソフトウェアアップデート";

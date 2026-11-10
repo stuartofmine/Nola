@@ -3279,3 +3279,6 @@
 
 "chat.context.cannot_fit.recovery" = "当前模型的上下文窗口不足。请在模型菜单中选择上下文窗口更大的模型后重试。原会话内容已保留。";
 "onboarding.guide.action.later" = "暂时跳过";
+
+"settings.navigation.general" = "通用";
+"settings.navigation.general.detail" = "外观、通知与软件更新";

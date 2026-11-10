@@ -409,7 +409,7 @@
     <string name="notifications_title">Центр уведомлений</string>
     <string name="notifications_detail_title">Уведомление</string>
     <string name="notifications_no_notifications">Нет уведомлений</string>
-    <string name="notifications_empty_message">Новые локальные и backend-уведомления появятся здесь.</string>
+    <string name="notifications_empty_message">Новые уведомления появятся здесь.</string>
     <string name="notifications_mark_all_read">Отметить все как прочитанные</string>
     <string name="notifications_unread">Не прочитано</string>
     <string name="notifications_timeline">Хронология</string>
@@ -1322,4 +1322,5 @@
     <string name="goal_needs_user">Ожидание ввода или разрешения</string>
     <string name="inspector_conversation_needed">Начните или откройте диалог, чтобы увидеть ход работы и задать цель.</string>
     <string name="onboarding_guide_action_later">Пока пропустить</string>
+    <string name="settings_general">Общие</string>
 </resources>

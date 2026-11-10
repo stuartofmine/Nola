@@ -3161,3 +3161,6 @@
 
 "chat.context.cannot_fit.recovery" = "La fenêtre de contexte de ce modèle est trop petite. Choisissez un modèle avec une fenêtre plus grande, puis réessayez. La conversation est conservée.";
 "onboarding.guide.action.later" = "Ignorer pour le moment";
+
+"settings.navigation.general" = "Général";
+"settings.navigation.general.detail" = "Apparence, notifications et mises à jour";

@@ -409,7 +409,7 @@
     <string name="notifications_title">Benachrichtigungscenter</string>
     <string name="notifications_detail_title">Benachrichtigung</string>
     <string name="notifications_no_notifications">Keine Benachrichtigungen</string>
-    <string name="notifications_empty_message">Neue lokale und Backend-Benachrichtigungen erscheinen hier.</string>
+    <string name="notifications_empty_message">Neue Mitteilungen erscheinen hier.</string>
     <string name="notifications_mark_all_read">Alle als gelesen markieren</string>
     <string name="notifications_unread">Ungelesen</string>
     <string name="notifications_timeline">Zeitleiste</string>
@@ -1322,4 +1322,5 @@
     <string name="goal_needs_user">Wartet auf Eingabe oder Freigabe</string>
     <string name="inspector_conversation_needed">Starte oder öffne eine Unterhaltung, um den Fortschritt zu sehen und ein Ziel festzulegen.</string>
     <string name="onboarding_guide_action_later">Vorerst überspringen</string>
+    <string name="settings_general">Allgemein</string>
 </resources>

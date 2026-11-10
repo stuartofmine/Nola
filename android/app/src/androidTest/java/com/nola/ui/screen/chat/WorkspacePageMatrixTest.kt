@@ -42,6 +42,7 @@ class WorkspacePageMatrixTest {
         }
     }
     private fun back(activity: ActivityScenario<MainActivity>) {
+        compose.waitForIdle()
         activity.onActivity { it.onBackPressedDispatcher.onBackPressed() }
         compose.waitForIdle()
     }
@@ -70,7 +71,7 @@ class WorkspacePageMatrixTest {
             compose.waitUntil(15_000) { compose.onAllNodes(primaryNavigation).fetchSemanticsNodes().isNotEmpty() }
             for ((theme, label) in listOf("light" to R.string.appearance_light, "dark" to R.string.appearance_dark)) {
                 tab(R.string.tab_settings)
-                compose.onNodeWithText(context.getString(R.string.appearance_title)).performClick()
+                compose.onNodeWithText(context.getString(R.string.settings_general)).performClick()
                 compose.onNodeWithText(context.getString(label)).performClick()
                 compose.waitUntil(10_000) {
                     compose.onAllNodes(hasText(context.getString(label)) and isSelected()).fetchSemanticsNodes().isNotEmpty()
@@ -79,13 +80,21 @@ class WorkspacePageMatrixTest {
                 compose.waitForIdle()
                 capture("settings-appearance-$theme")
                 back(activity)
-                for (section in listOf(R.string.notifications_title, R.string.settings_privacy, R.string.models_title,
-                    R.string.settings_capabilities, R.string.settings_data_sources, R.string.scheduled_title)) {
+                for (section in listOf(R.string.settings_general, R.string.settings_privacy, R.string.models_title,
+                    R.string.settings_capabilities)) {
                     tab(R.string.tab_settings)
                     compose.onNodeWithText(context.getString(section)).performScrollTo().performClick()
                     capture("settings-$section-$theme")
+                    if (section == R.string.settings_general) {
+                        compose.onNodeWithTag("settings_notification_center").performScrollTo().performClick()
+                        back(activity)
+                        capture("general-return-$theme")
+                        compose.onNodeWithTag("settings_notification_center").assertIsDisplayed()
+                        compose.onNodeWithText(context.getString(R.string.software_update_check)).performScrollTo().assertIsDisplayed()
+                        capture("general-about-$theme")
+                    }
                     back(activity)
-                    compose.onNodeWithText(context.getString(R.string.appearance_title)).assertIsDisplayed()
+                    compose.onNodeWithText(context.getString(R.string.settings_general)).assertIsDisplayed()
                 }
                 tab(R.string.tab_information)
                 capture("information-$theme")
@@ -106,4 +115,25 @@ class WorkspacePageMatrixTest {
             }
         }
     }
+
+    @Test fun generalScrollSurvivesNotificationCenterRoundTrip() {
+        requireIsolatedProductTestUser(context)
+        ActivityScenario.launch(MainActivity::class.java).use { activity ->
+            compose.waitUntil(15_000) { compose.onAllNodes(primaryNavigation).fetchSemanticsNodes().isNotEmpty() }
+            tab(R.string.tab_settings)
+            compose.onNodeWithText(context.getString(R.string.settings_general)).performClick()
+            compose.onNodeWithText(context.getString(R.string.software_update_check)).performScrollTo()
+            val center = compose.onNodeWithTag("settings_notification_center")
+            center.performScrollTo()
+            fun offset(): Float = compose.onNode(hasScrollAction()).fetchSemanticsNode()
+                .config[androidx.compose.ui.semantics.SemanticsProperties.VerticalScrollAxisRange].value()
+            val before = offset()
+            org.junit.Assert.assertTrue("The fixture must exercise a scrolled General page", before > 0f)
+            center.performClick()
+            back(activity)
+            center.assertIsDisplayed()
+            org.junit.Assert.assertEquals("Returning from notifications preserves the reading position", before, offset(), 1f)
+        }
+    }
+
 }

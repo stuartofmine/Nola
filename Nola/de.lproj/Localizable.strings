@@ -3131,3 +3131,6 @@
 
 "chat.context.cannot_fit.recovery" = "Das Kontextfenster dieses Modells ist zu klein. Wähle ein Modell mit größerem Kontextfenster und versuche es erneut. Die Unterhaltung bleibt erhalten.";
 "onboarding.guide.action.later" = "Vorerst überspringen";
+
+"settings.navigation.general" = "Allgemein";
+"settings.navigation.general.detail" = "Darstellung, Mitteilungen und Updates";

@@ -488,7 +488,7 @@
     <string name="notifications_title">通知中心</string>
     <string name="notifications_detail_title">通知</string>
     <string name="notifications_no_notifications">暂无通知</string>
-    <string name="notifications_empty_message">新的本地和后端通知会显示在这里。</string>
+    <string name="notifications_empty_message">新通知将在这里显示。</string>
     <string name="notifications_mark_all_read">全部标为已读</string>
     <string name="notifications_unread">未读</string>
     <string name="notifications_timeline">时间线</string>
@@ -1321,4 +1321,5 @@
     <string name="goal_needs_user">等待你补充信息或授权</string>
     <string name="inspector_conversation_needed">请先开始或打开一个对话，再查看进度或设置目标。</string>
     <string name="onboarding_guide_action_later">暂时跳过</string>
+    <string name="settings_general">通用</string>
 </resources>

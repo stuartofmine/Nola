@@ -53,7 +53,7 @@ final class MacSecondaryHeaderNavigationTests: XCTestCase {
                 window.contentView = host
                 window.orderFrontRegardless()
                 defer { window.close() }
-                for section in ["general", "providers", "agent", "connections", "notifications", "data", "diagnostics"] {
+                for section in ["general", "providers", "agent", "connections", "data", "diagnostics"] {
                     try await pressIdentifier("settings.category." + section, in: host)
                     try await pressIdentifier("settings.back", in: host)
                 }

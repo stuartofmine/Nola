@@ -31,12 +31,13 @@
 <svelte:document onvisibilitychange={refresh} />
 <section class="card" aria-busy={busy}>
     <h2>{t($locale, 'settings.category.notifications')}</h2>
-    <p class="muted">{t($locale, 'settings.notifications.scope')}</p>
+    <p class="muted">{t($locale, 'settings.notifications.summary')}</p>
     <p role="status">{t($locale, `settings.notifications.${status.permission}`)}</p>
     {#if status.permission === 'denied'}<p class="muted">{t($locale, 'settings.notifications.deniedHint')}</p>{/if}
     {#if error}<p role="alert">{t($locale, error)}</p>{/if}
     <label><input type="checkbox" checked={enabled} onchange={change} disabled={busy || (!status.enabled && (!status.supported || status.permission === 'denied'))} />{t($locale, 'settings.notifications.enable')}</label>
     <div class="actions"><button disabled={busy} onclick={refresh}>{t($locale, 'models.reload')}</button><button disabled={busy || status.permission !== 'granted'} onclick={test}>{t($locale, 'settings.notifications.test')}</button></div>
+    <details><summary>{t($locale, 'settings.notifications.details')}</summary><p class="muted">{t($locale, 'settings.notifications.scope')}</p></details>
 </section>
 <style>
     section{display:grid;gap:14px}h2,p{margin:0}label{display:flex;gap:8px;align-items:center}input{width:auto;flex-shrink:0}.actions{display:flex;flex-wrap:wrap;gap:8px}

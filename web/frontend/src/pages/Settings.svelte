@@ -10,7 +10,8 @@
     import { workspacePageLocation } from '../lib/workspacePageLocation';
     const pageLocation = workspacePageLocation();
     $effect(() => { if (pageLocation.active()) untrack(resize); });
-    import { onMount, untrack } from 'svelte';
+    import { onMount, untrack, tick } from 'svelte';
+    import { settingsCategories as categories, resolveSettingsCategory, type SettingsCategory as Category } from '../lib/settingsCategories';
     import { api as unscopedApi } from '../lib/api';
     import { locale, t } from '../lib/i18n';
     import { latestRequest } from '../lib/latestRequest';
@@ -30,11 +31,9 @@
     let loading = $state(false), busy = $state(false);
     let error = $state('');
     let disposed = false;
-    const categories = ['general', 'notifications', 'providers', 'agent', 'connections', 'data', 'diagnostics'] as const;
-    type Category = typeof categories[number];
     let selected = $state<Category>('general');
     let narrow = $state(window.innerWidth <= 760);
-    let overview = $state(!categories.includes(pageLocation.read().searchParams.get('section') as Category));
+    let overview = $state(!resolveSettingsCategory(pageLocation.read().searchParams.get('section')));
     let visited = $state<Set<Category>>(new Set(['general']));
     function select(category: Category) {
         selected = category; overview = false;
@@ -93,7 +92,11 @@
     onMount(() => {
         narrow = window.innerWidth <= 760;
         const section = pageLocation.read().searchParams.get('section');
-        if (categories.includes(section as Category)) select(section as Category);
+        const destination = resolveSettingsCategory(section);
+        if (destination) select(destination);
+        if (section === 'notifications') void tick().then(() => {
+            if (!disposed && pageLocation.active()) pageElements.element('settings-notifications')?.scrollIntoView({block: 'start'});
+        });
         void load(); return () => { disposed = true; reads.cancel(); };
     });
     async function logout() {
@@ -139,6 +142,7 @@
     <label>{t($locale, 'shell.appearance')}<select bind:value={$appearance}>
         <option value="system">{t($locale, 'shell.appearanceSystem')}</option><option value="light">{t($locale, 'shell.appearanceLight')}</option><option value="dark">{t($locale, 'shell.appearanceDark')}</option>
     </select></label></section>
+    <div id="settings-notifications"><NotificationSettings /></div>
     <SoftwareUpdateSettings />
     <DesktopSettings />
 
@@ -146,9 +150,6 @@
     <div role={narrow ? "region" : "tabpanel"} id="settings-panel-agent" aria-labelledby={narrow ? "settings-mobile-title" : "settings-tab-agent"} hidden={selected !== 'agent'}>
         {#if narrow}<nav class="settings-child-links" aria-label={t($locale, 'settings.workspace')}><a class="button" href="/capabilities">{t($locale, 'shell.nav.capabilities')}</a><a class="button" href="/scheduled-actions">{t($locale, 'shell.nav.automation')}</a></nav>{/if}
         {#if visited.has('agent')}<MemoryDefaultSettings /><RetrievalDefaultSettings /><div id="agent-access"><AgentAccessSettings /></div>{/if}
-    </div>
-    <div role={narrow ? "region" : "tabpanel"} id="settings-panel-notifications" aria-labelledby={narrow ? "settings-mobile-title" : "settings-tab-notifications"} hidden={selected !== 'notifications'}>
-        {#if visited.has('notifications')}<NotificationSettings />{/if}
     </div>
     <div role={narrow ? "region" : "tabpanel"} id="settings-panel-providers" aria-labelledby={narrow ? "settings-mobile-title" : "settings-tab-providers"} hidden={selected !== 'providers'}>
         {#if visited.has('providers')}<ProviderSettings />{/if}

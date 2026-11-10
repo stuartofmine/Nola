@@ -409,7 +409,7 @@
     <string name="notifications_title">通知センター</string>
     <string name="notifications_detail_title">通知</string>
     <string name="notifications_no_notifications">通知はありません</string>
-    <string name="notifications_empty_message">新しいローカル通知とバックエンド通知がここに表示されます。</string>
+    <string name="notifications_empty_message">新しい通知がここに表示されます。</string>
     <string name="notifications_mark_all_read">すべて既読</string>
     <string name="notifications_unread">未読</string>
     <string name="notifications_timeline">タイムライン</string>
@@ -1324,4 +1324,5 @@
     <string name="goal_needs_user">入力または権限の確認待ち</string>
     <string name="inspector_conversation_needed">会話を開始するか開くと、進捗の確認や目標の設定ができます。</string>
     <string name="onboarding_guide_action_later">今はスキップ</string>
+    <string name="settings_general">一般</string>
 </resources>

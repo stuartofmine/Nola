@@ -3289,3 +3289,6 @@
 
 "chat.context.cannot_fit.recovery" = "This model’s context window is too small. Choose a model with a larger context window, then retry. Your conversation is preserved.";
 "onboarding.guide.action.later" = "Skip for now";
+
+"settings.navigation.general" = "General";
+"settings.navigation.general.detail" = "Appearance, notifications and updates";

@@ -711,6 +711,7 @@ private enum MacSettingsCategory: String, CaseIterable, Identifiable {
     case diagnostics
 
     var id: String { rawValue }
+    var navigationCategory: Self { self == .notifications ? .general : self }
 
     var title: String {
         switch self {
@@ -768,7 +769,7 @@ private enum MacSettingsGroup: String, CaseIterable, Identifiable {
 
     var categories: [MacSettingsCategory] {
         switch self {
-        case .application: return [.general, .notifications]
+        case .application: return [.general]
         case .intelligence: return [.providers, .agent]
         case .workspace: return [.connections, .data]
         case .system: return [.diagnostics]
@@ -907,10 +908,11 @@ struct MacSettingsView: View {
             idealHeight: 620
         )
         .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: settingsError)
+        .onAppear { selectedCategory = selectedCategory.navigationCategory }
         .onChange(of: initialCategory, initial: true) { _, category in
             guard embedsInWorkspace else { return }
             if let category, let destination = MacSettingsCategory(rawValue: category) {
-                selectedCategory = destination
+                selectedCategory = destination.navigationCategory
                 showsOverview = false
             } else { showsOverview = true }
         }
@@ -922,7 +924,7 @@ struct MacSettingsView: View {
             if selectedCategory == .connections, !skipsAutomaticHostVerification {
                 await verifySavedHostConnection()
             }
-            if selectedCategory == .notifications {
+            if selectedCategory == .notifications || selectedCategory == .general {
                 await synchronizeNotificationAuthorization()
             }
         }
@@ -1531,6 +1533,7 @@ struct MacSettingsView: View {
         switch category {
         case .general:
             Section { AppleAppearancePicker() }
+            notificationSettingsSections
             Section { AppleSoftwareUpdateSection() }
             Section(macSettingsText("mac.settings.section.startup", "Startup")) {
                 Toggle(macSettingsText("mac.settings.launch_at_login", "Launch Nola at login"), isOn: $launchAtLogin)
@@ -1830,7 +1833,7 @@ struct MacSettingsView: View {
 
     @ViewBuilder
     private var notificationSettingsSections: some View {
-        Section(macSettingsText("mac.settings.section.authorization", "Authorization")) {
+        Section(macSettingsText("mac.settings.category.notifications", "Notifications")) {
             Text(macSettingsText("mac.settings.notifications.detail", "Nola can notify you when a long-running local or connected-host agent finishes while the app is in the background."))
                 .font(.callout)
                 .foregroundStyle(.secondary)

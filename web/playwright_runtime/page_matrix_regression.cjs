@@ -8,7 +8,7 @@ const out=process.env.UI_EVIDENCE_DIR||'/tmp/nola-page-matrix';
 const routes=['today','conversations','chat','activity','results','dashboard','data-sources','scheduled-actions','models','model-test','capabilities','workspace-review','settings','login'];
 const catalog=fs.readFileSync(require('node:path').join(__dirname,'../frontend/src/lib/pageRoutes.ts'),'utf8');
 assert.deepEqual([...catalog.matchAll(/'\/([^']+)':/g)].map(m=>m[1]).sort(),[...routes].sort(),'Every routed page must be included in the matrix');
-const categories=['general','notifications','providers','agent','connections','data','diagnostics'];
+const categories=['general','providers','agent','connections','data','diagnostics'];
 let invalidCapabilities=false, invalidSave=false, writes=0;
 const name='跨语言长期研究与工作区资料 ProductResearchWorkspace_2026';
 async function fixture(route){
@@ -130,6 +130,11 @@ async function fixture(route){
     await page.locator('[role=tab][id$="capability-mcp"]').click();await capture('capabilities-mcp');
    }
    if(route==='settings') {
+    await page.goto(`${base}/settings?section=notifications`,{waitUntil:'networkidle'});
+    const outer=new URL(page.url()), destination=new URL(outer.searchParams.get('content')||outer.href,base);
+    assert.equal(destination.searchParams.get('section'),'general','Existing notification links open General');
+    assert.ok(await page.locator('[id$=settings-panel-general] [id$=settings-notifications]:visible').count());
+    assert.equal(await page.locator('[role=tab][id$=settings-tab-notifications]').count(),0,'Notifications have one home in General');
     // Native settings must mount after SPA navigation, expose a failed read,
     // and reconcile a lost write response without replaying the mutation.
     await page.goto(`${base}/settings?section=general`,{waitUntil:'networkidle'});

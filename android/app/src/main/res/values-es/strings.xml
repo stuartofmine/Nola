@@ -409,7 +409,7 @@
     <string name="notifications_title">Centro de notificaciones</string>
     <string name="notifications_detail_title">Notificación</string>
     <string name="notifications_no_notifications">No hay notificaciones</string>
-    <string name="notifications_empty_message">Las nuevas notificaciones locales y del backend aparecerán aquí.</string>
+    <string name="notifications_empty_message">Las nuevas notificaciones aparecerán aquí.</string>
     <string name="notifications_mark_all_read">Marcar todo como leído</string>
     <string name="notifications_unread">No leído</string>
     <string name="notifications_timeline">Cronología</string>
@@ -1322,4 +1322,5 @@
     <string name="goal_needs_user">Esperando información o permiso</string>
     <string name="inspector_conversation_needed">Inicia o abre una conversación para ver el progreso y establecer un objetivo.</string>
     <string name="onboarding_guide_action_later">Omitir por ahora</string>
+    <string name="settings_general">General</string>
 </resources>

@@ -54,20 +54,19 @@ struct SettingsView: View {
     }
 
     private enum Category: String, CaseIterable {
-        case providers, agents, agent, appearance, notifications, privacy, memory, plans, updates
+        case general, providers, agents, agent, privacy
         var titleKey: String {
             switch self {
-            case .updates: "softwareUpdate.title"
             case .agents: "experts.manage"
             case .agent: "personal.capabilities.title"
             default: "settings.navigation." + rawValue
             }
         }
-        var detailKey: String { self == .updates ? "softwareUpdate.check" : titleKey + ".detail" }
+        var detailKey: String { titleKey + ".detail" }
     }
 
     private var categoryGroups: [[Category]] {
-        [[.providers, .agents, .agent], [.appearance, .notifications, .updates, .privacy], [.memory, .plans]]
+        [[.general], [.providers, .agents, .agent], [.privacy]]
     }
 
     private var content: some View {
@@ -107,8 +106,7 @@ struct SettingsView: View {
                 Text(LocalizedStringKey(category.titleKey)).font(.body.weight(.medium)).foregroundStyle(.primary)
                 if category != .agents {
                     Group {
-                        if category == .notifications { Text(notificationStatusText) }
-                        else if category == .agent { Text("personal.capabilities.subtitle") }
+                        if category == .agent { Text("personal.capabilities.subtitle") }
                         else { Text(LocalizedStringKey(category.detailKey)) }
                     }.font(.caption).foregroundStyle(.secondary)
                 }
@@ -120,49 +118,45 @@ struct SettingsView: View {
 
     private func categoryIcon(_ category: Category) -> String {
         switch category {
+        case .general: "nola-settings"
         case .providers: "nola-models"
         case .agents: "nola-person"
         case .agent: "nola-execution"
-        case .appearance: "nola-sun"
-        case .notifications: "nola-bell"
         case .privacy: "nola-review"
-        case .memory: "nola-person"
-        case .plans: "nola-calendar"
-        case .updates: "nola-settings"
         }
     }
 
     @ViewBuilder private func destination(_ category: Category) -> some View {
         switch category {
-        case .updates:
-            settingsPage(title: NSLocalizedString(category.titleKey, comment: "Software update"), showsHeading: false) { AppleSoftwareUpdateSection() }
-                .navigationTitle(LocalizedStringKey(category.titleKey)).navigationBarTitleDisplayMode(.inline)
-        case .appearance:
-            settingsPage(title: NSLocalizedString(category.titleKey, comment: "Appearance settings"), showsHeading: false) {
-                HStack {
-                    Text("settings.appearance.theme").font(.body.weight(.medium))
-                    Spacer(minLength: 12)
-                    AppleAppearancePicker().labelsHidden().pickerStyle(.menu)
-                }.frame(minHeight: 52)
-                let motionKey = reduceMotion ? "settings.appearance.motionReduced" : "settings.appearance.motionStandard"
-                Text(LocalizedStringKey(motionKey))
-                    .font(.footnote).foregroundStyle(.secondary)
+        case .general:
+            settingsPage(title: NSLocalizedString(category.titleKey, comment: "General settings"), showsHeading: false) {
+                Text("settings.navigation.appearance").font(.headline)
+                NolaSettingsCard { appearanceControls }
+                Text("settings.navigation.notifications").font(.headline)
+                notificationControls
+                AppleSoftwareUpdateSection()
             }.navigationTitle(LocalizedStringKey(category.titleKey)).navigationBarTitleDisplayMode(.inline)
-        case .notifications:
-            settingsPage(title: NSLocalizedString(category.titleKey, comment: "Notification settings"), showsHeading: false) { notificationControls }
-                .navigationTitle(LocalizedStringKey(category.titleKey)).navigationBarTitleDisplayMode(.inline)
         case .providers:
             ModelsView(ownsNavigationStack: false).environmentObject(container)
         case .agents:
             IOSAgentRoomsView().environmentObject(container)
         case .agent:
             PersonalCapabilitiesLibraryView().environmentObject(container)
-        case .memory:
-            PersonalIntelligenceDashboardView(embedded: true).environmentObject(container)
         case .privacy:
             privacyPage
-        case .plans:
-            ScheduledActionsView(embedded: true).environmentObject(container)
+        }
+    }
+
+    private var appearanceControls: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("settings.appearance.theme").font(.body.weight(.medium))
+                Spacer(minLength: 12)
+                AppleAppearancePicker().labelsHidden().pickerStyle(.menu)
+            }.frame(minHeight: 52)
+            let motionKey = reduceMotion ? "settings.appearance.motionReduced" : "settings.appearance.motionStandard"
+            Text(LocalizedStringKey(motionKey))
+                .font(.footnote).foregroundStyle(.secondary)
         }
     }
 

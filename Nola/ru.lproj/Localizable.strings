@@ -3131,3 +3131,6 @@
 
 "chat.context.cannot_fit.recovery" = "Контекстное окно этой модели слишком мало. Выберите модель с большим контекстным окном и повторите попытку. Разговор сохранён.";
 "onboarding.guide.action.later" = "Пока пропустить";
+
+"settings.navigation.general" = "Общие";
+"settings.navigation.general.detail" = "Оформление, уведомления и обновления";
