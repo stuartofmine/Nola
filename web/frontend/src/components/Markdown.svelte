@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { untrack, setContext, tick } from 'svelte';
+    import { untrack, setContext, tick, onDestroy } from 'svelte';
     import { STREAMING_TEXT_SELECTION, captureTextSelection } from '../lib/streamingText';
     import StreamingText from './StreamingText.svelte';
     import { parseMarkdown } from '../lib/markdown';
@@ -59,9 +59,25 @@
     });
     function prefix(node: object) { return visiblePrefix - (indexed?.offsets.get(node) ?? 0); }
     let copyNotice = $state('');
+    let copyGeneration = 0;
+    let copyTimer: ReturnType<typeof setTimeout> | undefined;
+    $effect.pre(() => {
+        source;
+        copyGeneration++; clearTimeout(copyTimer); copyNotice = '';
+    });
+    onDestroy(() => { copyGeneration++; clearTimeout(copyTimer); });
     async function copy(text: string) {
-        try { await navigator.clipboard.writeText(text); copyNotice = 'shell.markdown.copied'; }
-        catch { copyNotice = 'shell.markdown.copy_failed'; }
+        const generation = ++copyGeneration, captured = source;
+        clearTimeout(copyTimer); copyNotice = '';
+        const current = () => generation === copyGeneration && captured === source;
+        try {
+            await navigator.clipboard.writeText(text);
+            if (current()) {
+                copyNotice = 'shell.markdown.copied';
+                copyTimer = setTimeout(() => { if (current()) copyNotice = ''; }, 1800);
+            }
+        }
+        catch { if (current()) copyNotice = 'shell.markdown.copy_failed'; }
     }
 </script>
 

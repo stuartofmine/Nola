@@ -13,20 +13,27 @@
     let alive = true;
     let generation = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let pollOwner: object | null = null;
+    let checking = $state(false);
     const active = $derived(snapshot?.state === 'starting' || snapshot?.state === 'pending');
+    const configured = $derived(!!name.trim() && !!executable.trim() && !!home.trim());
     async function poll() {
-        if (!alive || !handle) return;
-        const captured = handle, serial = generation;
+        if (!alive || !handle || busy || pollOwner) return;
+        clearTimeout(timer);
+        const captured = handle, serial = generation, owner = {};
+        pollOwner = owner; checking = true;
         try {
-            const result = await api<Snapshot>('/api/model-connections/source-login/status', {method: 'POST', body: JSON.stringify(captured)});
+            const result = await api<Snapshot>('/api/model-connections/source-login/status', {method: 'POST', body: JSON.stringify(captured), signal: AbortSignal.timeout(15_000)});
             if (!alive || serial !== generation || handle !== captured) return;
             snapshot = sourceLoginSnapshot(result, captured);
             failed = false;
             if (result.state === 'starting' || result.state === 'pending') timer = setTimeout(poll, 1000);
         } catch { if (alive && serial === generation && handle === captured) failed = true; }
+        finally { if (pollOwner === owner) { pollOwner = null; checking = false; } }
     }
     async function start(refresh: boolean) {
-        if (busy || active || !consent) return;
+        if (busy || active || !consent || !configured) return;
+        clearTimeout(timer); pollOwner = null; checking = false;
         busy = true; failed = false;
         const previous = snapshot?.account ?? accounts.find(item => item.account.id === accountID);
         handle = {request_id: crypto.randomUUID(), account_id: previous?.account.id ?? crypto.randomUUID(), expected_revision: previous?.revision ?? null};
@@ -35,12 +42,12 @@
         snapshot = {request_id: captured.request_id, state: 'starting', authorization_url: null,
             inference_supported: false, account: previous ?? null};
         try {
-            const result = await api<Snapshot>('/api/model-connections/source-login/start', {method: 'POST', body: JSON.stringify({...captured,
-                display_name: name, executable, codex_home: home, refresh_tokens: refresh, acknowledge_source_changes: true})});
+            const result = await api<Snapshot>('/api/model-connections/source-login/start', {method: 'POST', signal: AbortSignal.timeout(15_000), body: JSON.stringify({...captured,
+                display_name: name.trim(), executable: executable.trim(), codex_home: home.trim(), refresh_tokens: refresh, acknowledge_source_changes: true})});
             if (!alive || serial !== generation || handle !== captured) {
                 // Cancellation can race creation. Settle this exact operation again,
                 // never cancel a newer operation or adopt its late response.
-                void api('/api/model-connections/source-login/cancel', {method: 'POST', body: JSON.stringify(captured)}).catch(() => {});
+                void api('/api/model-connections/source-login/cancel', {method: 'POST', body: JSON.stringify(captured), signal: AbortSignal.timeout(15_000)}).catch(() => {});
                 return;
             }
             snapshot = sourceLoginSnapshot(result, captured);
@@ -57,22 +64,29 @@
         }
         finally { if (alive && serial === generation) busy = false; }
     }
-    onMount(() => { void api<{accounts: typeof accounts}>('/api/model-connections').then(value => {
+    onMount(() => { void api<{accounts: typeof accounts}>('/api/model-connections', {signal: AbortSignal.timeout(15_000)}).then(value => {
         if (alive) accounts = value.accounts.filter(item => item.account.source === 'codex');
     }).catch(() => { if (alive) failed = true; }); });
     async function cancel() {
-        if (!handle) return;
+        if (!handle || busy) return;
         const captured = handle, serial = ++generation;
-        clearTimeout(timer);
+        clearTimeout(timer); pollOwner = null; checking = false;
         busy = true;
         try {
-            const result = await api<Snapshot>('/api/model-connections/source-login/cancel', {method: 'POST', body: JSON.stringify(captured)});
+            const result = await api<Snapshot>('/api/model-connections/source-login/cancel', {method: 'POST', body: JSON.stringify(captured), signal: AbortSignal.timeout(15_000)});
             if (!alive || serial !== generation || handle !== captured) return;
             snapshot = sourceLoginSnapshot(result, captured); failed = false;
         } catch { if (alive && serial === generation) failed = true; }
         finally { if (alive && serial === generation) busy = false; }
     }
-    onDestroy(() => { alive = false; clearTimeout(timer); if (active) void cancel(); });
+    onDestroy(() => {
+        alive = false; clearTimeout(timer);
+        // Also cancel an uncertain start while its HTTP response is outstanding.
+        // A late successful start repeats this exact cancellation above.
+        if (active && handle) void api('/api/model-connections/source-login/cancel', {
+            method: 'POST', body: JSON.stringify(handle), signal: AbortSignal.timeout(15_000),
+        }).catch(() => {});
+    });
 </script>
 
 <details><summary>{t($locale, 'sourceAccounts.codexTitle')}</summary>
@@ -85,10 +99,11 @@
     <label>{t($locale, 'sourceAccounts.executable')}<input bind:value={executable} disabled={active || busy} /></label>
     <label>{t($locale, 'sourceAccounts.home')}<input bind:value={home} disabled={active || busy} /></label>
     <label class="consent"><input type="checkbox" bind:checked={consent} disabled={active || busy} />{t($locale, 'sourceAccounts.codexConsent')}</label>
-    <button disabled={busy || active || !consent || !name || !executable || !home} onclick={() => start(false)}>{t($locale, 'sourceAccounts.startCodex')}</button>
-    {#if snapshot?.account || accountID}<button disabled={busy || active || !consent} onclick={() => start(true)}>{t($locale, 'sourceAccounts.refreshCodex')}</button>{/if}
+    <button disabled={busy || active || !consent || !configured} onclick={() => start(false)}>{t($locale, 'sourceAccounts.startCodex')}</button>
+    {#if snapshot?.account || accountID}<button disabled={busy || active || !consent || !configured} onclick={() => start(true)}>{t($locale, 'sourceAccounts.refreshCodex')}</button>{/if}
     {#if active}<button disabled={busy} onclick={cancel}>{t($locale, 'sourceAccounts.cancelCodex')}</button>{/if}
-    {#if failed && active}<button disabled={busy} onclick={() => void poll()}>{t($locale, 'sourceAccounts.checkCodex')}</button>{/if}
+    {#if failed && active}<button disabled={busy || checking} onclick={() => void poll()}>{t($locale, 'sourceAccounts.checkCodex')}</button>{/if}
+    {#if busy || checking}<p role="status">{t($locale, 'rooms.loading')}</p>{/if}
     {#if snapshot}<p role="status">{t($locale, sourceAccountStateKey(snapshot.state))} · {t($locale, 'sourceAccounts.disabled')}</p>{/if}
     {#if snapshot?.authorization_url}<a href={snapshot.authorization_url} target="_blank" rel="noopener noreferrer">{t($locale, 'sourceAccounts.continueCodex')}</a>{/if}
     {#if failed}<p role="alert">{t($locale, 'sourceAccounts.codexError')}</p>{/if}
