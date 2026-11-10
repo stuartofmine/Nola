@@ -1046,8 +1046,8 @@
     <string name="chat_skill_run_result">结果：%1$s</string>
     <string name="chat_skill_run_error">错误：%1$s</string>
     <string name="models_web_host_setup_title">连接前</string>
-    <string name="models_web_host_setup_start">在宿主电脑上启动 Nola Web Host，并保持运行。</string>
-    <string name="models_web_host_setup_copy">复制宿主机显示的局域网地址和启动访问令牌。请使用可信私有网络或 HTTPS。</string>
+    <string name="models_web_host_setup_start">在 Mac 的 Nola 中打开“设置 > 宿主机连接”，开启“共享此 Mac”。</string>
+    <string name="models_web_host_setup_copy">在 Mac 端点击“复制连接信息”，然后在这里粘贴。也可以手动填写地址和令牌。</string>
     <string name="models_web_host_checking">正在检查宿主机</string>
     <string name="models_web_host_checking_detail">保存前正在验证令牌、权限协议和宿主机身份。</string>
     <string name="models_save_and_verify">保存并验证</string>
@@ -1322,4 +1322,6 @@
     <string name="inspector_conversation_needed">请先开始或打开一个对话，再查看进度或设置目标。</string>
     <string name="onboarding_guide_action_later">暂时跳过</string>
     <string name="settings_general">通用</string>
+    <string name="models_web_host_paste_setup">粘贴连接信息</string>
+    <string name="models_web_host_invalid_setup">请在宿主机的 Nola 中复制连接信息，再粘贴到这里。</string>
 </resources>

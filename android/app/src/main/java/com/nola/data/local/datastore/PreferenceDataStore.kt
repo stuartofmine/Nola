@@ -17,6 +17,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -32,6 +34,7 @@ class PreferenceDataStore @Inject constructor(
     private val secureTokenStore: SecureTokenStore
 ) {
     companion object {
+        private val hostConfigurationMutex = Mutex()
         private val KEY_APPEARANCE = stringPreferencesKey("appearance")
         private val KEY_HAS_COMPLETED_ONBOARDING = booleanPreferencesKey("has_completed_onboarding")
         private val KEY_ONBOARDING_RUNTIME_CHOICE = stringPreferencesKey("onboarding_runtime_choice")
@@ -178,31 +181,52 @@ class PreferenceDataStore @Inject constructor(
         }
     }
 
-    suspend fun saveWebHostConfig(baseUrl: String, token: String, certificateSha256: String = "") {
-        val normalized = normalizeWebHostBaseUrl(baseUrl)
-        val normalizedToken = token.trim()
-        val normalizedCertificate = normalizeCertificateSha256(certificateSha256)
-            ?: throw IllegalArgumentException("Invalid SHA-256 certificate fingerprint")
-        require(normalizedToken.isNotEmpty()) { "Web Host token is required" }
-        require(isAllowedWebHostTransport(normalized)) {
-            "Public Web Host addresses require HTTPS"
-        }
-        require(normalizedCertificate.isEmpty() || normalized.startsWith("https://", ignoreCase = true)) {
-            "Certificate pinning requires HTTPS"
-        }
-        check(secureTokenStore.saveWebHostToken(normalizedToken)) { "Unable to store Web Host token in Android Keystore" }
-        context.preferenceDataStore.edit {
-            if (it[KEY_WEB_HOST_BASE_URL] != normalized) {
-                it.remove(KEY_WEB_HOST_ID)
-                it.remove(KEY_WEB_HOST_CERTIFICATE_SHA256)
-                it[KEY_HYBRID_DEVICE_TOOLS_ENABLED] = false
-                it.remove(KEY_HYBRID_DEVICE_CAPABILITIES)
+    suspend fun saveWebHostConfig(baseUrl: String, token: String, certificateSha256: String = "", verifiedHostId: String? = null) {
+        hostConfigurationMutex.withLock {
+            val normalized = normalizeWebHostBaseUrl(baseUrl)
+            val normalizedToken = token.trim()
+            val normalizedCertificate = normalizeCertificateSha256(certificateSha256)
+                ?: throw IllegalArgumentException("Invalid SHA-256 certificate fingerprint")
+            require(normalizedToken.isNotEmpty()) { "Web Host token is required" }
+            require(isAllowedWebHostTransport(normalized)) {
+                "Public Web Host addresses require HTTPS"
             }
-            it[KEY_WEB_HOST_BASE_URL] = normalized
-            if (normalizedCertificate.isEmpty()) {
-                it.remove(KEY_WEB_HOST_CERTIFICATE_SHA256)
-            } else {
-                it[KEY_WEB_HOST_CERTIFICATE_SHA256] = normalizedCertificate
+            require(normalizedCertificate.isEmpty() || normalized.startsWith("https://", ignoreCase = true)) {
+                "Certificate pinning requires HTTPS"
+            }
+            require(verifiedHostId == null || (verifiedHostId.length in 16..128 && verifiedHostId.all { it.isLetterOrDigit() || it == '-' || it == '_' })) {
+                "Invalid verified Web Host identity"
+            }
+            var previousToken: String? = null
+            var tokenWritten = false
+            try { context.preferenceDataStore.edit {
+                if (verifiedHostId != null && it[KEY_WEB_HOST_BASE_URL] == normalized) {
+                    val existing = it[KEY_WEB_HOST_ID].orEmpty()
+                    check(existing.isEmpty() || existing == verifiedHostId) { "Web Host identity changed before saving" }
+                }
+                previousToken = secureTokenStore.readWebHostToken()
+                check(secureTokenStore.saveWebHostToken(normalizedToken)) { "Unable to store Web Host token in Android Keystore" }
+                tokenWritten = true
+                if (it[KEY_WEB_HOST_BASE_URL] != normalized) {
+                    it.remove(KEY_WEB_HOST_ID)
+                    it.remove(KEY_WEB_HOST_CERTIFICATE_SHA256)
+                    it[KEY_HYBRID_DEVICE_TOOLS_ENABLED] = false
+                    it.remove(KEY_HYBRID_DEVICE_CAPABILITIES)
+                }
+                it[KEY_WEB_HOST_BASE_URL] = normalized
+                if (verifiedHostId != null) it[KEY_WEB_HOST_ID] = verifiedHostId
+                if (normalizedCertificate.isEmpty()) {
+                    it.remove(KEY_WEB_HOST_CERTIFICATE_SHA256)
+                } else {
+                    it[KEY_WEB_HOST_CERTIFICATE_SHA256] = normalizedCertificate
+                }
+            } } catch (error: Exception) {
+                if (tokenWritten) {
+                    val previous = previousToken
+                    if (previous == null) secureTokenStore.deleteWebHostToken()
+                    else check(secureTokenStore.saveWebHostToken(previous)) { "Unable to restore the previous Web Host credential" }
+                }
+                throw error
             }
         }
     }
@@ -233,11 +257,13 @@ class PreferenceDataStore @Inject constructor(
     }
 
     suspend fun clearWebHostConfig() {
+        hostConfigurationMutex.withLock {
         secureTokenStore.deleteWebHostToken()
         context.preferenceDataStore.edit {
             it.remove(KEY_WEB_HOST_BASE_URL)
             it.remove(KEY_WEB_HOST_ID)
             it.remove(KEY_WEB_HOST_CERTIFICATE_SHA256)
+        }
         }
     }
 

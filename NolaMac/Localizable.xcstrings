@@ -1,6 +1,22 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "mac.host.error.secure_storage" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The token could not be saved in Keychain. Unlock your login keychain and try again."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "令牌无法保存到钥匙串。请解锁登录钥匙串后重试。"
+          }
+        }
+      }
+    },
     "" : {},
     "—" : {
       "localizations" : {

@@ -4,7 +4,41 @@
 // - Boundary: Conversation workers remain isolated; this service owns only the persistent control plane.
 
 import Foundation
+import Darwin
 import Observation
+import SystemConfiguration
+
+nonisolated enum MacHostAdvertisedAddress {
+    static func origin(_ bound: URL, addresses: [String], localHostName: String?) -> URL? {
+        var parts = URLComponents(url: bound, resolvingAgainstBaseURL: false)
+        let host = addresses.first { address in
+            guard !address.hasPrefix("127."), let url = URL(string: "http://\(address)") else { return false }
+            return MobileHostTransportPolicy.allows(url)
+        } ?? localHostName.map { $0.hasSuffix(".local") ? $0 : $0 + ".local" }
+        guard let host else { return nil }
+        parts?.host = host
+        return parts?.url
+    }
+
+    static func localAddresses() -> [String] {
+        var interfaces: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&interfaces) == 0 else { return [] }
+        defer { freeifaddrs(interfaces) }
+        var addresses: [(String, String)] = []
+        var current = interfaces
+        while let item = current {
+            defer { current = item.pointee.ifa_next }
+            let flags = Int32(item.pointee.ifa_flags)
+            guard flags & IFF_UP != 0, flags & IFF_LOOPBACK == 0,
+                  let address = item.pointee.ifa_addr, address.pointee.sa_family == UInt8(AF_INET) else { continue }
+            var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            if getnameinfo(address, socklen_t(address.pointee.sa_len), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 {
+                addresses.append((String(cString: item.pointee.ifa_name), String(cString: host)))
+            }
+        }
+        return addresses.sorted { $0.0.hasPrefix("en") && !$1.0.hasPrefix("en") }.map(\.1)
+    }
+}
 
 nonisolated struct MacManagedNolaServerInfo: Equatable, Sendable {
     let origin: URL
@@ -31,34 +65,7 @@ nonisolated struct MacManagedNolaServerInfo: Equatable, Sendable {
     }
 }
 
-nonisolated struct MacNolaServerConnectionSetup: Sendable {
-    let origin: URL
-    let hostID: String
-    let accessToken: String
-
-    static func decode(_ text: String) -> MacNolaServerConnectionSetup? {
-        guard let data = text.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let type = object["type"] as? String,
-              ["nola.server.connection", "server.started"].contains(type),
-              (object["protocol_version"] as? NSNumber)?.intValue == 1,
-              let rawOrigin = object["origin"] as? String,
-              let origin = URL(string: rawOrigin),
-              ["http", "https"].contains(origin.scheme?.lowercased() ?? ""),
-              origin.host != nil,
-              let hostID = object["host_id"] as? String,
-              !hostID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              let accessToken = object["access_token"] as? String,
-              !accessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return nil
-        }
-        return MacNolaServerConnectionSetup(
-            origin: origin,
-            hostID: hostID.trimmingCharacters(in: .whitespacesAndNewlines),
-            accessToken: accessToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        )
-    }
-}
+typealias MacNolaServerConnectionSetup = AppleHostConnectionSetup
 
 nonisolated enum MacManagedNolaServerState: Equatable, Sendable {
     case stopped
@@ -229,9 +236,9 @@ final class MacManagedNolaServer {
             }
             let advertisedOrigin: URL
             if handshake.origin.host == "0.0.0.0" || handshake.origin.host == "::" {
-                var components = URLComponents(url: handshake.origin, resolvingAgainstBaseURL: false)
-                components?.host = ProcessInfo.processInfo.hostName
-                guard let resolved = components?.url else {
+                guard let resolved = MacHostAdvertisedAddress.origin(handshake.origin,
+                    addresses: MacHostAdvertisedAddress.localAddresses(),
+                    localHostName: SCDynamicStoreCopyLocalHostName(nil) as String?) else {
                     throw MacManagedNolaServerError.invalidHandshake
                 }
                 advertisedOrigin = resolved

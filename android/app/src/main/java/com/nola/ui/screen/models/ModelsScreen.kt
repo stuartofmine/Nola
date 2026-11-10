@@ -76,6 +76,7 @@ import com.nola.domain.model.RemoteModelEndpointURL
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -196,9 +197,10 @@ fun ModelsScreen(
             currentUrl = state.webHostUrl,
             currentToken = state.webHostToken,
             currentCertificateSha256 = state.webHostCertificateSha256,
-            onSave = { url, token, certificateSha256, completion ->
-                viewModel.saveWebHostConfig(url, token, certificateSha256, completion)
+            onSave = { url, token, certificateSha256, importedIdentity, completion ->
+                viewModel.saveWebHostConfig(url, token, certificateSha256, importedIdentity, completion)
             },
+            onCancelConnection = viewModel::cancelWebHostConnection,
             onDismiss = { showWebHostSheet = false }
         )
     }
@@ -1181,15 +1183,20 @@ fun WebHostConfigSheet(
     currentUrl: String,
     currentToken: String,
     currentCertificateSha256: String,
-    onSave: (String, String, String, (Boolean, String) -> Unit) -> Unit,
-    onDismiss: () -> Unit
+    onSave: (String, String, String, String?, (Boolean, String) -> Unit) -> Unit,
+    onDismiss: () -> Unit,
+    onCancelConnection: () -> Unit = {}
 ) {
     var url by remember { mutableStateOf(currentUrl) }
     var token by remember { mutableStateOf(currentToken) }
     var certificateSha256 by remember { mutableStateOf(currentCertificateSha256) }
     var showDiscardDialog by remember { mutableStateOf(false) }
     var isConnecting by remember { mutableStateOf(false) }
+    var connectionGeneration by remember { mutableIntStateOf(0) }
     var inlineError by remember { mutableStateOf<String?>(null) }
+    var importedSetup by remember { mutableStateOf<WebHostConnectionSetup?>(null) }
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val context = androidx.compose.ui.platform.LocalContext.current
     val dirty = url != currentUrl || token != currentToken || certificateSha256 != currentCertificateSha256
     val sheetState = com.nola.ui.components.rememberGuardedEditorSheetState(isConnecting, dirty) { showDiscardDialog = true }
     val hasExistingConnection = currentUrl.isNotBlank() && currentToken.isNotBlank()
@@ -1236,17 +1243,6 @@ fun WebHostConfigSheet(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Text(
-                        "nola web --host 0.0.0.0 --port 5001",
-                        style = MaterialTheme.typography.bodySmall.copy(
-                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(NolaRadius.md))
-                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))
-                            .padding(horizontal = NolaSpacing.md, vertical = NolaSpacing.sm)
-                    )
                     if (!hasExistingConnection) {
                         Text(
                             stringResource(R.string.models_web_host_setup_copy),
@@ -1255,6 +1251,18 @@ fun WebHostConfigSheet(
                         )
                     }
                 }
+
+                TextButton(enabled = !isConnecting, onClick = {
+                    val setup = clipboard.getText()?.text?.let { WebHostConnectionSetup.decode(it) }
+                    if (setup == null) inlineError = context.getString(R.string.models_web_host_invalid_setup)
+                    else {
+                        importedSetup = setup
+                        url = setup.origin
+                        token = setup.token
+                        certificateSha256 = ""
+                        inlineError = null
+                    }
+                }) { Text(stringResource(R.string.models_web_host_paste_setup)) }
 
                 if (isConnecting) {
                     Row(
@@ -1360,17 +1368,26 @@ fun WebHostConfigSheet(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 TextButton(
-                    onClick = requestDismiss,
-                    enabled = !isConnecting,
+                    onClick = {
+                        if (isConnecting) {
+                            connectionGeneration++
+                            onCancelConnection()
+                            isConnecting = false
+                        } else requestDismiss()
+                    },
                     modifier = Modifier.weight(1f)
                 ) { Text(stringResource(R.string.common_cancel)) }
                 Button(
                     onClick = {
                         inlineError = null
                         isConnecting = true
-                        onSave(url.trim(), token.trim(), certificateSha256.trim()) { succeeded, message ->
-                            isConnecting = false
-                            if (succeeded) onDismiss() else inlineError = message
+                        val generation = ++connectionGeneration
+                        val expectedIdentity = importedSetup?.takeIf { sameWebHostOrigin(it.origin, url) }?.hostId
+                        onSave(url.trim(), token.trim(), certificateSha256.trim(), expectedIdentity) { succeeded, message ->
+                            if (generation == connectionGeneration) {
+                                isConnecting = false
+                                if (succeeded) onDismiss() else inlineError = message
+                            }
                         }
                     },
                     enabled = !isConnecting && url.isNotBlank() && token.isNotBlank(),

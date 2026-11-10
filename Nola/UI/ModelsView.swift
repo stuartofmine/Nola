@@ -620,6 +620,7 @@ struct WebHostConfigurationView: View {
     @State private var hostURL: String
     @State private var accessToken: String
     @State private var isConnecting = false
+    @State private var importedSetup: AppleHostConnectionSetup?
     private enum ConnectionField: Hashable {
         case url
         case token
@@ -688,6 +689,21 @@ struct WebHostConfigurationView: View {
             }
 
             Section {
+                Button {
+                    guard let text = UIPasteboard.general.string, let setup = AppleHostConnectionSetup.decode(text) else {
+                        errorMessage = NSLocalizedString("model.web_host.invalid_setup", value: "Copy Connection Setup from Nola on the host, then paste it here.", comment: "Invalid host setup")
+                        return
+                    }
+                    importedSetup = setup
+                    hostURL = setup.origin.absoluteString
+                    accessToken = setup.accessToken
+                    errorMessage = nil
+                } label: {
+                    Label(NSLocalizedString("model.web_host.paste_setup", value: "Paste Connection Setup", comment: "Paste host setup action"), systemImage: "doc.on.clipboard")
+                }
+                .disabled(isConnecting)
+                .accessibilityIdentifier("model.web_host.paste_setup")
+
                 TextField(
                     NSLocalizedString("model.web_host.url", value: "Host URL", comment: "Web Host URL field"),
                     text: $hostURL
@@ -698,6 +714,7 @@ struct WebHostConfigurationView: View {
                 .keyboardType(.URL)
                 .focused($connectionField, equals: .url)
                 .accessibilityIdentifier("model.web_host.url_field")
+                .disabled(isConnecting)
 
                 SecureField(
                     NSLocalizedString("model.web_host.token", value: "Access token", comment: "Web Host access token field"),
@@ -713,6 +730,7 @@ struct WebHostConfigurationView: View {
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .accessibilityIdentifier("model.web_host.token_field")
+                .disabled(isConnecting)
 
             } header: {
                 Text(NSLocalizedString("model.web_host.connection", value: "Connection", comment: "Web Host connection section"))
@@ -825,6 +843,9 @@ struct WebHostConfigurationView: View {
                       let identity = settings.host_identity?.id.trimmingCharacters(in: .whitespacesAndNewlines),
                       !identity.isEmpty else {
                     throw WebHostPairingFailure.unsupportedPermissionProtocol
+                }
+                if let setup = importedSetup, AppleHostConnectionSetup.sameOrigin(setup.origin, url), setup.hostID != identity {
+                    throw WebHostPairingFailure.identityChanged
                 }
                 if let existingIdentity = ModelSelectionManager.pairedWebHostIdentity(for: url),
                    existingIdentity != identity {

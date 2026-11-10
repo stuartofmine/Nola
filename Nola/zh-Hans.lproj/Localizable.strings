@@ -2586,8 +2586,8 @@
 
 "chat.task.guidance.send" = "发送引导";
 "model.web_host.setup" = "连接前";
-"model.web_host.setup.start" = "在 Mac 上打开 Nola 的“设置 > 宿主机连接”，并允许设备连接。";
-"model.web_host.setup.copy" = "复制 Mac 端 Nola 显示的地址和配对令牌。请使用可信私有网络或 HTTPS。";
+"model.web_host.setup.start" = "在 Mac 的 Nola 中打开“设置 > 宿主机连接”，开启“共享此 Mac”。";
+"model.web_host.setup.copy" = "在 Mac 端点击“复制连接信息”，然后在下方粘贴。两台设备需位于可信私有网络，或使用 HTTPS。";
 "model.web_host.checking" = "正在检查宿主机";
 "model.web_host.checking.detail" = "保存前正在验证令牌、权限协议和宿主机身份。";
 "model.web_host.error.protocol" = "此宿主机使用了不受支持的权限协议。请更新宿主机上的 Nola 后重试。";
@@ -3282,3 +3282,7 @@
 
 "settings.navigation.general" = "通用";
 "settings.navigation.general.detail" = "外观、通知与软件更新";
+
+"model.web_host.invalid_setup" = "请在宿主机的 Nola 中复制连接信息，再粘贴到这里。";
+
+"model.web_host.paste_setup" = "粘贴连接信息";

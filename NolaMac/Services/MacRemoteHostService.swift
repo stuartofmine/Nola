@@ -793,6 +793,18 @@ nonisolated func macRemoteHostUserFacingError(_ error: Error) -> String {
     return error.localizedDescription
 }
 
+nonisolated enum MacHostConfigurationPersistence {
+    static func commit(token: String, previousToken: String, writeToken: (String) throws -> Void,
+                       writeConfiguration: () throws -> Void) throws {
+        try writeToken(token)
+        do { try writeConfiguration() }
+        catch {
+            try writeToken(previousToken)
+            throw error
+        }
+    }
+}
+
 nonisolated final class MacRemoteHostConfigurationStore: @unchecked Sendable {
     static let shared = MacRemoteHostConfigurationStore()
 
@@ -800,6 +812,7 @@ nonisolated final class MacRemoteHostConfigurationStore: @unchecked Sendable {
     private let keychainAccount = "access-token"
     fileprivate let applicationPort: MacApplicationPort
     private let testCredentialLock = NSLock()
+    private let configurationLock = NSRecursiveLock()
     private var testToken: String?
 
     init(applicationPort: MacApplicationPort = MacApplicationPort.shared) {
@@ -807,6 +820,8 @@ nonisolated final class MacRemoteHostConfigurationStore: @unchecked Sendable {
     }
 
     var isConfigured: Bool {
+        configurationLock.lock()
+        defer { configurationLock.unlock() }
         guard let rawURL = storedConfiguration()?.url,
               let url = URL(string: rawURL),
               let scheme = url.scheme?.lowercased() else { return false }
@@ -814,6 +829,8 @@ nonisolated final class MacRemoteHostConfigurationStore: @unchecked Sendable {
     }
 
     func load() -> MacRemoteHostConfiguration? {
+        configurationLock.lock()
+        defer { configurationLock.unlock() }
         guard let stored = storedConfiguration(),
               let url = URL(string: stored.url),
               let scheme = url.scheme?.lowercased(),
@@ -829,7 +846,9 @@ nonisolated final class MacRemoteHostConfigurationStore: @unchecked Sendable {
     }
 
     func displayValues() -> (url: String, token: String, hostID: String) {
-        (
+        configurationLock.lock()
+        defer { configurationLock.unlock() }
+        return (
             storedConfiguration()?.url ?? "",
             loadToken() ?? "",
             storedConfiguration()?.hostID ?? ""
@@ -837,27 +856,34 @@ nonisolated final class MacRemoteHostConfigurationStore: @unchecked Sendable {
     }
 
     func save(url: String, token: String, hostID: String? = nil) throws {
+        configurationLock.lock()
+        defer { configurationLock.unlock() }
         let normalized = url.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedHostID = hostID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if let previous = storedConfiguration()?.url, let url = URL(string: previous) {
+        let previousConfiguration = storedConfiguration()
+        try MacHostConfigurationPersistence.commit(token: token.trimmingCharacters(in: .whitespacesAndNewlines),
+            previousToken: loadToken() ?? "", writeToken: saveToken) {
+            if normalized.isEmpty {
+                _ = try applicationPort.deleteProductSetting(key: MacProductSettingKeys.connectedHostConfiguration)
+            } else {
+                let existingClientID = storedConfiguration()?.clientID
+                try put(Configuration(
+                    schemaVersion: 1,
+                    url: normalized,
+                    hostID: normalizedHostID.isEmpty ? nil : normalizedHostID,
+                    clientID: existingClientID
+                ), in: applicationPort)
+            }
+        }
+        if let previous = previousConfiguration?.url, let url = URL(string: previous) {
             NolaTailcatTransport.unregister(baseURL: url)
         }
-        if normalized.isEmpty {
-            _ = try applicationPort.deleteProductSetting(key: MacProductSettingKeys.connectedHostConfiguration)
-        } else {
-            let existingClientID = storedConfiguration()?.clientID
-            try put(Configuration(
-                schemaVersion: 1,
-                url: normalized,
-                hostID: normalizedHostID.isEmpty ? nil : normalizedHostID,
-                clientID: existingClientID
-            ), in: applicationPort)
-        }
-        saveToken(token.trimmingCharacters(in: .whitespacesAndNewlines))
         NotificationCenter.default.post(name: .nolaMacConfigurationDidChange, object: nil)
     }
 
     func clientID() throws -> String {
+        configurationLock.lock()
+        defer { configurationLock.unlock() }
         if let existing = storedConfiguration()?.clientID, !existing.isEmpty { return existing }
         let generated = UUID().uuidString.lowercased()
         let existing = storedConfiguration()
@@ -899,11 +925,14 @@ nonisolated final class MacRemoteHostConfigurationStore: @unchecked Sendable {
 
     private enum ConfigurationError: LocalizedError {
         case invalidEncodedState
+        case secureStorageFailed
 
         var errorDescription: String? {
             switch self {
             case .invalidEncodedState:
                 return "The connected-host configuration could not be encoded."
+            case .secureStorageFailed:
+                return String(localized: "mac.host.error.secure_storage")
             }
         }
     }
@@ -927,7 +956,7 @@ nonisolated final class MacRemoteHostConfigurationStore: @unchecked Sendable {
         return String(data: data, encoding: .utf8)
     }
 
-    private func saveToken(_ token: String) {
+    private func saveToken(_ token: String) throws {
         if MacProcessRuntimePolicy.usesEphemeralCredentials {
             testCredentialLock.lock()
             testToken = token.isEmpty ? nil : token
@@ -939,12 +968,19 @@ nonisolated final class MacRemoteHostConfigurationStore: @unchecked Sendable {
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: keychainAccount,
         ]
-        SecItemDelete(base as CFDictionary)
-        guard !token.isEmpty else { return }
+        if token.isEmpty {
+            let status = SecItemDelete(base as CFDictionary)
+            guard status == errSecSuccess || status == errSecItemNotFound else { throw ConfigurationError.secureStorageFailed }
+            return
+        }
+        let value: [String: Any] = [kSecValueData as String: Data(token.utf8)]
+        let updated = SecItemUpdate(base as CFDictionary, value as CFDictionary)
+        if updated == errSecSuccess { return }
+        guard updated == errSecItemNotFound else { throw ConfigurationError.secureStorageFailed }
         var item = base
         item[kSecValueData as String] = Data(token.utf8)
         item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        SecItemAdd(item as CFDictionary, nil)
+        guard SecItemAdd(item as CFDictionary, nil) == errSecSuccess else { throw ConfigurationError.secureStorageFailed }
     }
 }
 

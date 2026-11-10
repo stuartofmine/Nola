@@ -1059,8 +1059,8 @@
     <string name="chat_skill_run_result">Result: %1$s</string>
     <string name="chat_skill_run_error">Error: %1$s</string>
     <string name="models_web_host_setup_title">Before connecting</string>
-    <string name="models_web_host_setup_start">On the host computer, start Nola Web Host and keep it running.</string>
-    <string name="models_web_host_setup_copy">Copy the LAN address and startup access token shown by the host. Use a trusted private network or HTTPS.</string>
+    <string name="models_web_host_setup_start">On the Mac, open Nola Settings > Host connection and enable Share This Mac.</string>
+    <string name="models_web_host_setup_copy">Choose Copy Connection Setup on the Mac, then paste it here. You can also enter the address and token manually.</string>
     <string name="models_web_host_checking">Checking host</string>
     <string name="models_web_host_checking_detail">Verifying the token, permission protocol, and host identity before saving.</string>
     <string name="models_save_and_verify">Save &amp; verify</string>
@@ -1333,4 +1333,6 @@
     <string name="inspector_conversation_needed">Start or open a conversation to view progress and set a goal.</string>
     <string name="onboarding_guide_action_later">Skip for now</string>
     <string name="settings_general">General</string>
+    <string name="models_web_host_paste_setup">Paste Connection Setup</string>
+    <string name="models_web_host_invalid_setup">Copy Connection Setup from Nola on the host, then paste it here.</string>
 </resources>

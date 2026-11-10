@@ -3,6 +3,20 @@ import XCTest
 @testable import Nola
 
 final class IOSSharedProtocolTests: XCTestCase {
+    func testHostSetupUsesStrictVersionAndSafeOrigin() throws {
+        let valid = #"{"type":"nola.server.connection","protocol_version":1,"origin":"http://192.168.1.8:5001","host_id":"host-fixture","access_token":"fixture-token"}"#
+        XCTAssertEqual(AppleHostConnectionSetup.decode(valid)?.hostID, "host-fixture")
+        for invalid in [valid.replacingOccurrences(of: #""protocol_version":1"#, with: #""protocol_version":true"#),
+                        valid.replacingOccurrences(of: #""protocol_version":1"#, with: #""protocol_version":2"#),
+                        valid.replacingOccurrences(of: "192.168.1.8:5001", with: "user:pass@192.168.1.8:5001"),
+                        valid.replacingOccurrences(of: "192.168.1.8:5001", with: "8.8.8.8:5001"),
+                        valid.replacingOccurrences(of: "192.168.1.8:5001", with: "192.168.1.8:5001?token=secret")] {
+            XCTAssertNil(AppleHostConnectionSetup.decode(invalid))
+        }
+        XCTAssertTrue(AppleHostConnectionSetup.sameOrigin(URL(string: "https://Studio.local")!, URL(string: "https://studio.local:443/api/mobile")!))
+        XCTAssertFalse(AppleHostConnectionSetup.sameOrigin(URL(string: "http://one.local")!, URL(string: "http://two.local")!))
+    }
+
     func testCancellationCarriesExactAdmissionOwnerWithoutClaimingTerminal() throws {
         let identity = AppleRemoteSubmissionIdentity(source_host_id: "host", client_id: "client",
             conversation_id: "conversation", submission_id: "run", user_message_id: "user", assistant_message_id: "assistant")

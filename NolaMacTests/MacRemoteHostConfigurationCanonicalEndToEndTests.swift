@@ -5,6 +5,29 @@ import XCTest
 @testable import Nola
 
 final class MacRemoteHostConfigurationCanonicalEndToEndTests: XCTestCase {
+    func testFailedCredentialWriteNeverCommitsConfiguration() {
+        var configurationWritten = false
+        XCTAssertThrowsError(try MacHostConfigurationPersistence.commit(token: "new", previousToken: "old", writeToken: { _ in
+            throw NSError(domain: "fixture-keychain", code: 1)
+        }, writeConfiguration: { configurationWritten = true }))
+        XCTAssertFalse(configurationWritten)
+    }
+
+    func testFailedConfigurationWriteRestoresPreviousCredential() {
+        var tokens: [String] = []
+        XCTAssertThrowsError(try MacHostConfigurationPersistence.commit(token: "new", previousToken: "old", writeToken: { tokens.append($0) }, writeConfiguration: {
+            throw NSError(domain: "fixture-database", code: 1)
+        }))
+        XCTAssertEqual(tokens, ["new", "old"])
+    }
+
+    func testSharedAddressUsesPrivateLanOrBonjourInsteadOfMachineHostname() throws {
+        let bound = try XCTUnwrap(URL(string: "http://0.0.0.0:5001"))
+        XCTAssertEqual(MacHostAdvertisedAddress.origin(bound, addresses: ["127.0.0.1", "192.168.1.8"], localHostName: "studio")?.absoluteString, "http://192.168.1.8:5001")
+        XCTAssertEqual(MacHostAdvertisedAddress.origin(bound, addresses: [], localHostName: "studio")?.host, "studio.local")
+        XCTAssertNil(MacHostAdvertisedAddress.origin(bound, addresses: [], localHostName: nil))
+    }
+
     func testHostIdentitySurvivesRealServiceColdReopenAndIgnoresObsoletePreferences() throws {
         let defaults = UserDefaults.standard
         let obsoleteKeys = [

@@ -1,6 +1,7 @@
 import XCTest
 import SwiftUI
 import UIKit
+import Vision
 @testable import Nola
 
 @MainActor
@@ -29,6 +30,15 @@ final class WebHostConnectionUIVisualTests: XCTestCase {
         }
         let data = try XCTUnwrap(image.pngData())
         XCTAssertGreaterThan(data.count, 20_000)
+        let recognition = VNRecognizeTextRequest()
+        recognition.recognitionLanguages = ["zh-Hans", "en-US"]
+        recognition.recognitionLevel = .accurate
+        try VNImageRequestHandler(cgImage: XCTUnwrap(image.cgImage)).perform([recognition])
+        let visibleText = recognition.results?.compactMap { $0.topCandidates(1).first?.string }
+            .joined().filter { !$0.isWhitespace } ?? ""
+        let pasteLabel = NSLocalizedString("model.web_host.paste_setup", value: "Paste Connection Setup", comment: "")
+            .filter { !$0.isWhitespace }
+        XCTAssertTrue(visibleText.contains(pasteLabel), "The pairing action must be visible, not an empty control row")
         try data.write(to: URL(fileURLWithPath: "/tmp/nola-ios-web-host-connection.png"), options: .atomic)
     }
 

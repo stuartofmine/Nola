@@ -183,7 +183,7 @@ class ModelsViewModel @Inject constructor(
                 val webHostToken = prefs.webHostToken.first()
                 val webHostCertificateSha256 = prefs.webHostCertificateSha256.first()
                 val hasWebHostConfig = webHostUrl.isNotBlank() && webHostToken.isNotBlank()
-                val hostSettings = if (hasWebHostConfig) {
+                val hostSettings = if (hasWebHostConfig) try {
                     withTimeoutOrNull(3_000) {
                         webHostApi.getAgentSettings(
                             hostBaseUrl = webHostUrl,
@@ -191,7 +191,8 @@ class ModelsViewModel @Inject constructor(
                             pinnedCertificateSha256 = webHostCertificateSha256
                         )
                     }
-                } else null
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { null } else null
 
                 installedLocalRecords = deviceModelStore.installedModels()
                 val configuredModels = modelRepo.listConfiguredModels()
@@ -566,10 +567,15 @@ class ModelsViewModel @Inject constructor(
         }
     }
 
+    private var webHostConnectionJob: Job? = null
+
+    fun cancelWebHostConnection() { webHostConnectionJob?.cancel(); webHostConnectionJob = null }
+
     fun saveWebHostConfig(
         url: String,
         token: String,
         certificateSha256: String,
+        importedHostIdentity: String? = null,
         onComplete: (Boolean, String) -> Unit = { _, _ -> }
     ) {
         if (url.isBlank() || token.isBlank()) {
@@ -598,23 +604,22 @@ class ModelsViewModel @Inject constructor(
             return
         }
 
-        viewModelScope.launch {
+        webHostConnectionJob?.cancel()
+        webHostConnectionJob = viewModelScope.launch {
             try {
                 val normalizedUrl = com.nola.data.remote.api.normalizeWebHostBaseUrl(url)
-                val previousIdentity = prefs.webHostIdentity.first()
-                val settings = webHostApi.getAgentSettings(
+                val savedOrigin = prefs.webHostBaseUrl.first()
+                val previousIdentity = if (sameWebHostOrigin(savedOrigin, normalizedUrl)) prefs.webHostIdentity.first() else ""
+                val settings = kotlinx.coroutines.withTimeout(15_000) { webHostApi.getAgentSettings(
                         hostBaseUrl = normalizedUrl,
                         token = token.trim(),
                         pinnedCertificateSha256 = normalizedPin
-                    )
-                val identity = verifyWebHostConnection(previousIdentity) { settings }
-                prefs.saveWebHostConfig(url, token, normalizedPin)
+                    ) }
+                val identity = verifyWebHostConnection(previousIdentity, importedHostIdentity) { settings }
+                prefs.saveWebHostConfig(url, token, normalizedPin, verifiedHostId = identity)
                 val savedUrl = prefs.webHostBaseUrl.first()
                 val savedToken = prefs.webHostToken.first()
                 val savedPin = prefs.webHostCertificateSha256.first()
-                if (!prefs.trustWebHostIdentity(savedUrl, identity)) {
-                    error(context.getString(R.string.models_error_host_pairing_failed))
-                }
                 val successMessage = context.getString(R.string.models_web_host_verified)
                 _uiState.update {
                     it.copy(
@@ -628,6 +633,12 @@ class ModelsViewModel @Inject constructor(
                     )
                 }
                 onComplete(true, successMessage)
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                val message = context.getString(R.string.models_error_host_timeout)
+                publishStatus(message, false)
+                onComplete(false, message)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
                 val message = webHostConnectionMessage(context, e)
                 publishStatus(message, false)

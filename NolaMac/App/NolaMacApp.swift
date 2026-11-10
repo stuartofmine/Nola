@@ -804,6 +804,7 @@ struct MacSettingsView: View {
     @State private var hostURL = ""
     @State private var hostToken = ""
     @State private var hostExpectedID = ""
+    @State private var importedHostOrigin: URL?
     @State private var hostConnectionState = MacRemoteHostConnectionState.initial
     @State private var managedServer = MacManagedNolaServer.shared
     @AppStorage(MacManagedNolaServer.enabledKey) private var managedServerEnabled = false
@@ -1454,6 +1455,15 @@ struct MacSettingsView: View {
         }
     }
 
+    private func expectedHostIdentity(for url: URL) -> String? {
+        if let saved = MacRemoteHostConfigurationStore.shared.load(), let savedIdentity = saved.expectedHostID,
+           AppleHostConnectionSetup.sameOrigin(saved.baseURL, url) { return savedIdentity }
+        if let importedHostOrigin, AppleHostConnectionSetup.sameOrigin(importedHostOrigin, url) {
+            return hostExpectedID
+        }
+        return nil
+    }
+
     private func saveAndVerifyHostConnection() async {
         let normalizedURL = hostURL.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedToken = hostToken.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1473,7 +1483,7 @@ struct MacSettingsView: View {
                 configuration: MacRemoteHostConfiguration(
                     baseURL: url,
                     token: normalizedToken,
-                    expectedHostID: hostExpectedID
+                    expectedHostID: expectedHostIdentity(for: url)
                 )
             )
             guard revision == hostVerificationRevision else { return }
@@ -1505,6 +1515,7 @@ struct MacSettingsView: View {
         hostURL = ""
         hostToken = ""
         hostExpectedID = ""
+        importedHostOrigin = nil
         withAnimation(.easeOut(duration: 0.18)) {
             hostConnectionState = .notConfigured
         }
@@ -1524,8 +1535,8 @@ struct MacSettingsView: View {
         hostURL = setup.origin.absoluteString
         hostToken = setup.accessToken
         hostExpectedID = setup.hostID
-        hostConnectionState = .unverified
-        Task { await saveAndVerifyHostConnection() }
+        importedHostOrigin = setup.origin
+        markHostConfigurationEdited()
     }
 
     @ViewBuilder

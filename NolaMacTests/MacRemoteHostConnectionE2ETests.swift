@@ -7,6 +7,48 @@ import XCTest
 @testable import Nola
 
 final class MacRemoteHostConnectionE2ETests: XCTestCase {
+    func testActualNolaServerPairsAndRejectsWrongTokenAndIdentity() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("nola-real-host-pairing-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let app = MacAppEnvironment(applicationSupportRoot: root.appendingPathComponent("support"), cachesRoot: root.appendingPathComponent("cache"))
+        let outputURL = root.appendingPathComponent("server-private.ndjson")
+        FileManager.default.createFile(atPath: outputURL.path, contents: nil, attributes: [.posixPermissions: 0o600])
+        let output = try FileHandle(forWritingTo: outputURL)
+        defer { try? output.close() }
+        let server = Process()
+        server.executableURL = try XCTUnwrap(MacAgentHostExecutableLocator.resolve())
+        server.arguments = ["server", "--host", "127.0.0.1", "--port", "0", "--json", "--project", root.path]
+        server.currentDirectoryURL = root
+        var environment = app.launchAgentEnvironment(projectURL: root)
+        environment["NOLA_HOME"] = root.appendingPathComponent("home").path
+        environment["NOLA_EXTERNAL_EXECUTION_HOME"] = root.appendingPathComponent("external").path
+        environment["NOLA_PERMISSION_PROFILE"] = "cautious"
+        server.environment = environment
+        server.standardOutput = output
+        server.standardError = FileHandle.nullDevice
+        try server.run()
+        defer { if server.isRunning { server.terminate() }; server.waitUntilExit() }
+        var setup: AppleHostConnectionSetup?
+        let deadline = ContinuousClock.now + .seconds(25)
+        while setup == nil && ContinuousClock.now < deadline {
+            let lines = (try? String(contentsOf: outputURL, encoding: .utf8))?.split(separator: "\n") ?? []
+            setup = lines.compactMap { AppleHostConnectionSetup.decode(String($0)) }.first
+            if setup == nil {
+                XCTAssertTrue(server.isRunning, "Isolated Nola Server exited before publishing its connection setup")
+                try await Task.sleep(for: .milliseconds(50))
+            }
+        }
+        let paired = try XCTUnwrap(setup, "No versioned connection setup from real Nola Server")
+        let report = try await MacRemoteHostService.shared.testConnection(configuration: .init(baseURL: paired.origin,
+            token: paired.accessToken, expectedHostID: paired.hostID))
+        XCTAssertEqual(report.hostID, paired.hostID)
+        for candidate in [MacRemoteHostConfiguration(baseURL: paired.origin, token: "wrong-fixture-token", expectedHostID: paired.hostID),
+                          MacRemoteHostConfiguration(baseURL: paired.origin, token: paired.accessToken, expectedHostID: "wrong-host-identity")] {
+            do { _ = try await MacRemoteHostService.shared.testConnection(configuration: candidate); XCTFail("Invalid pairing was accepted") }
+            catch { /* Both authentication and the pinned identity must be enforced. */ }
+        }
+    }
+
     func testRemoteModelCatalogUsesAuthenticatedSettingsAndHostOwnedIdentities() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("nola-model-catalog-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
