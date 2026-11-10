@@ -326,6 +326,8 @@ final class AppleMarkdownPresentationScheduler: ObservableObject {
 nonisolated enum AppleStreamingRevealTiming {
     static let duration = 0.52
     static let completionDuration = 0.16
+    static let maximumAnimatedCharacters = 384
+    static let glyphsPerDraw = 3
     static let initialOpacity = 0.08
     static let rise: CGFloat = 3
     static let blurRadius: CGFloat = 0.65
@@ -362,8 +364,9 @@ struct AppleInlineAppendRevealState {
         self.text = text
         hasStreamed = streaming
         let start = min(text.count, max(0, visiblePrefixCount))
-        segments = streaming && start < text.count
-            ? [Segment(id: UUID(), range: start..<text.count, startedAt: now)] : []
+        let boundedStart = max(start, text.count - AppleStreamingRevealTiming.maximumAnimatedCharacters)
+        segments = streaming && boundedStart < text.count
+            ? [Segment(id: UUID(), range: boundedStart..<text.count, startedAt: now)] : []
     }
 
     func updating(text newText: String, streaming: Bool, reduceMotion: Bool, at now: Date) -> Self {
@@ -393,7 +396,12 @@ struct AppleInlineAppendRevealState {
         if result.hasStreamed, newText.count > text.count {
             result.segments.append(.init(id: UUID(), range: text.count..<newText.count, startedAt: now))
             // Only a short animation window is retained, even under burst input.
-            result.segments = Array(result.segments.suffix(128))
+            let floor = max(0, newText.count - AppleStreamingRevealTiming.maximumAnimatedCharacters)
+            result.segments = result.segments.suffix(128).compactMap { segment in
+                guard segment.range.upperBound > floor else { return nil }
+                return Segment(id: segment.id, range: max(floor, segment.range.lowerBound)..<segment.range.upperBound,
+                               startedAt: segment.startedAt)
+            }
         }
         return result
     }
@@ -434,9 +442,11 @@ private struct ApplePhraseTextRenderer: TextRenderer {
             if !active { context.draw(line); continue }
             for run in line {
                 if !reduceMotion, let mark = run[ApplePhraseRevealAttribute.self], let start = startedAt[mark.id] {
-                    for glyph in run {
+                    for index in stride(from: run.startIndex, to: run.endIndex, by: AppleStreamingRevealTiming.glyphsPerDraw) {
+                        let end = min(run.endIndex, index + AppleStreamingRevealTiming.glyphsPerDraw)
+                        let glyphs = run[index..<end]
                         let offset = offsets[mark.id, default: 0]
-                        offsets[mark.id] = offset + 1
+                        offsets[mark.id] = offset + glyphs.count
                         let position = Double(offset) / Double(max(1, (totals[mark.id] ?? run.count) - 1))
                         let remaining = AppleStreamingRevealTiming.remaining(elapsed: now.timeIntervalSince(start), position: position,
                             completionElapsed: completedAt.map { now.timeIntervalSince($0) },
@@ -445,7 +455,7 @@ private struct ApplePhraseTextRenderer: TextRenderer {
                         ink.opacity *= 1 - (1 - AppleStreamingRevealTiming.initialOpacity) * remaining
                         ink.translateBy(x: 0, y: AppleStreamingRevealTiming.rise * remaining)
                         if remaining > 0.08 { ink.addFilter(.blur(radius: AppleStreamingRevealTiming.blurRadius * remaining)) }
-                        ink.draw(glyph)
+                        ink.draw(glyphs)
                     }
                 } else { context.draw(run) }
             }

@@ -275,8 +275,8 @@ final class ChatStreamingRevealTokenizerTests: XCTestCase {
     }
 
     func testTimelineFollowWindowIsBoundedAndHonorsReducedMotion() {
-        XCTAssertEqual(ChatTimelineFollowPolicy.trailingPasses(reduceMotion: false), 4)
-        XCTAssertEqual(ChatTimelineFollowPolicy.intervalNanoseconds(reduceMotion: false), 48_000_000)
+        XCTAssertGreaterThanOrEqual(ChatTimelineFollowPolicy.trailingPasses(reduceMotion: false), 10)
+        XCTAssertLessThanOrEqual(ChatTimelineFollowPolicy.intervalNanoseconds(reduceMotion: false), 16_666_667)
         XCTAssertEqual(ChatTimelineFollowPolicy.trailingPasses(reduceMotion: true), 2)
         XCTAssertEqual(ChatTimelineFollowPolicy.intervalNanoseconds(reduceMotion: true), 16_000_000)
         XCTAssertLessThanOrEqual(DesignTokens.motionBase, 0.25)

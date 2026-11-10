@@ -9,17 +9,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawOutline
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.translate
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -60,28 +54,13 @@ class NolaContinuousShape(
     }
 }
 
-/** Shared opaque card/control material; only its background casts a shadow. */
+/** Flat content stays on the reading plane; only explicit floating surfaces lift. */
 @Composable
-fun Modifier.nolaSurface(radius: Dp = 16.dp, raised: Boolean = true,
+fun Modifier.nolaSurface(radius: Dp = 16.dp, raised: Boolean = false,
                          fill: Color = MaterialTheme.colorScheme.surface,
                          border: Color = MaterialTheme.colorScheme.outlineVariant): Modifier {
     val shape = remember(radius) { NolaContinuousShape(radius) }
-    val dark = MaterialTheme.colorScheme.background.luminance() < .5f
-    val top = androidx.compose.ui.graphics.lerp(fill, Color.White, if (dark) .045f else .34f)
-    val bottom = androidx.compose.ui.graphics.lerp(fill, Color.Black, if (dark) .025f else .018f)
-    return shadow(if (raised) 3.dp else 1.dp, shape, clip = false,
-        ambientColor = Color.Black.copy(alpha = .10f), spotColor = Color.Black.copy(alpha = .10f))
-        .background(Brush.verticalGradient(listOf(top, bottom)), shape)
-        .border(.75.dp, border, shape)
-        .clip(shape)
-        .drawWithCache {
-            val inset = 1.25.dp.toPx()
-            val outline = shape.createOutline(Size((size.width - 2 * inset).coerceAtLeast(0f),
-                (size.height - 2 * inset).coerceAtLeast(0f)), layoutDirection, this)
-            val highlight = Brush.verticalGradient(listOf(Color.White.copy(alpha = if (dark) .09f else .65f), Color.Transparent))
-            onDrawWithContent {
-                drawContent()
-                translate(inset, inset) { drawOutline(outline, highlight, style = Stroke(.75.dp.toPx())) }
-            }
-        }
+    val elevation = if (raised) shadow(3.dp, shape, clip = false,
+        ambientColor = Color.Black.copy(alpha = .06f), spotColor = Color.Black.copy(alpha = .06f)) else this
+    return elevation.background(fill, shape).border(.75.dp, border, shape).clip(shape)
 }

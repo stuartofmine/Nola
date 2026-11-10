@@ -18,7 +18,7 @@
         const current = () => mounted && !controller.signal.aborted && epoch === sequence && id === selected && host === hostId;
         review = null; loading = true; failed = false;
         try {
-            if (!id) throw new Error('review.owner');
+            if (!id) { loading = false; return; }
             const ownerHost = host || parseInitializationSession(await api('/api/web/session', {signal: controller.signal})).hostId;
             const result = parseWorkspaceReview(await api(`/api/chat/conversations/${encodeURIComponent(id)}/workspace-review`, {signal: controller.signal}), ownerHost, id);
             if (current()) review = result;
@@ -29,8 +29,9 @@
     $effect(() => { selected; hostId; if (mounted) void load(); });
 </script>
 <section class="workspace-review" aria-label={t($locale, 'chatInspector.review')}>
-    <header><h2>{t($locale, 'chatInspector.review')}</h2><button type="button" onclick={load} disabled={loading}>{t($locale, 'chatPage.refresh')}</button></header>
+    <header><h2>{t($locale, 'chatInspector.review')}</h2><button type="button" onclick={load} disabled={loading || !selected}>{t($locale, 'chatPage.refresh')}</button></header>
     {#if onopen}<button type="button" onclick={onopen}>{t($locale, 'chatResource.openTab')}</button>{/if}
+    {#if !selected}<p>{t($locale, 'chatPage.choose')}</p><a class="button" href="/conversations">{t($locale, 'shell.conversations')}</a>{/if}
     {#if loading}<p role="status">{t($locale, 'chatPage.loading')}</p>{/if}
     {#if failed}<p role="alert">{t($locale, 'chatInspector.reviewUnavailable')}</p>{/if}
     {#if review}

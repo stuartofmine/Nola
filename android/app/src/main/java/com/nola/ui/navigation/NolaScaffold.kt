@@ -422,10 +422,15 @@ private fun NolaNavigationHost(
             restoreState = true
         }
     }
+    val reduceMotion = rememberReduceMotionEnabled()
     NavHost(
         navController = navController,
         startDestination = NolaTab.Chat.route,
-        modifier = modifier
+        modifier = modifier,
+        enterTransition = { fadeIn(tween(if (reduceMotion) 0 else NolaMotion.controlState)) },
+        exitTransition = { fadeOut(tween(if (reduceMotion) 0 else NolaMotion.fast)) },
+        popEnterTransition = { fadeIn(tween(if (reduceMotion) 0 else NolaMotion.controlState)) },
+        popExitTransition = { fadeOut(tween(if (reduceMotion) 0 else NolaMotion.fast)) },
     ) {
             composable(NolaTab.Chat.route) {
                 ChatScreen(

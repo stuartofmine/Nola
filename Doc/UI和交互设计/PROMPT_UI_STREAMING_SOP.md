@@ -240,8 +240,9 @@ Apple 两端共同使用 `AppleStreamingInlineText`，只对新增渲染字符�
 完成后最后一批最多再用 160ms 收清。这里的 520ms 是绘制波形窗口，不能
 与控件状态切换的 120ms 动效混用，也不能用纯淡入替代水面上浮。
 
-Apple 按 glyph 绘制；Android 与 Web 按三个完整 grapheme 分组，使用相同
-波形。Android 将 3dp 位移、0.65dp blur 按屏幕密度换算，Web 对普通 inline
+Apple 在单个排版 run 内按最多三个 glyph 合并绘制；Android 与 Web 按三个完整
+grapheme 分组，使用相同波形。Apple 的活跃绘制窗口最多覆盖最后 384 个字符，
+大块新增内容的前缀立即清晰，完整 accepted 正文始终保留。Android 将 3dp 位移、0.65dp blur 按屏幕密度换算，Web 对普通 inline
 span 做相对定位，不使用改变单词断行的 inline-block。跨 delta 扩展组合字符
 时先让该字符完整可读，不拆开 emoji、ZWJ、肤色或组合音标。
 

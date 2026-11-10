@@ -96,6 +96,21 @@ final class MacStreamingAppendRevealTests: XCTestCase {
             completionElapsed: 0.16, precedingElapsed: 0.25), 0)
     }
 
+    func testLargeBurstKeepsFullTextButBoundsAnimatedInk() {
+        let now = Date()
+        let source = String(repeating: "中文👨‍👩‍👧‍👦 é ", count: 2_000)
+        var state = AppleInlineAppendRevealState(text: "", streaming: true, at: now)
+        state = state.updating(text: source, streaming: true, reduceMotion: false, at: now)
+        XCTAssertEqual(state.text, source)
+        XCTAssertLessThanOrEqual(state.segments.reduce(0) { $0 + $1.range.count }, 384)
+        XCTAssertEqual(state.segments.last?.range.upperBound, source.count)
+        let first = state.segments.last?.id
+        state = state.updating(text: source + "追加", streaming: true, reduceMotion: false, at: now.addingTimeInterval(0.02))
+        XCTAssertEqual(state.segments.first?.id, first)
+        XCTAssertLessThanOrEqual(state.segments.reduce(0) { $0 + $1.range.count }, 384)
+        XCTAssertEqual(state.text, source + "追加")
+    }
+
     func testHistoryReplacementAndReducedMotionNeverReplayExistingText() {
         let now = Date(timeIntervalSince1970: 100)
         let history = AppleInlineAppendRevealState(text: "Past", streaming: false, at: now)

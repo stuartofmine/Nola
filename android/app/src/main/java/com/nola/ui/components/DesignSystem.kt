@@ -160,8 +160,8 @@ object NolaMotion {
     const val streamReveal = 120
     const val messageEntrance = 190
     const val maximumVisualBacklog = 320
-    const val followInterval = 48
-    const val followPasses = 4
+    const val followInterval = 16
+    const val followPasses = 12
     const val reducedMotionFollowInterval = 16
     const val reducedMotionFollowPasses = 2
     val emphasizedEasing = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)

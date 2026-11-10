@@ -1,10 +1,11 @@
-import { app, dialog, BrowserWindow, ipcMain, Menu, nativeImage, screen, session, shell, Tray } from "electron";
+import { app, dialog, BrowserWindow, ipcMain, Menu, nativeImage, nativeTheme, screen, session, shell, Tray } from "electron";
 import { createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, WriteStream } from "node:fs";
 import path from "node:path";
 import { HostController, HostState, resolveExecutable } from "./host";
 import { DesktopStrings, stringsFor } from "./i18n";
 import { isSoftwareUpdateDownload } from "./softwareUpdate";
 import { restoreWindowGeometry, SavedWindowState } from "./windowGeometry";
+import { startupPageHtml } from "./startupPage";
 
 let mainWindow: BrowserWindow | undefined;
 let tray: Tray | undefined;
@@ -143,16 +144,7 @@ function log(line: string): void {
 }
 
 function pageHtml(mode: "starting" | "failed", detail = ""): string {
-    const failed = mode === "failed";
-    const title = failed ? strings.failedTitle : strings.startingTitle;
-    const body = failed ? strings.failedBody : strings.startingBody;
-    const safeDetail = detail.replace(/[&<>"']/g, (character) => ({
-        "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
-    })[character] ?? character);
-    return `<!doctype html><html data-theme="auto"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:"><title>${title}</title><style>
-        :root{color-scheme:light dark;font-family:"Segoe UI Variable","Segoe UI",sans-serif;background:#f5f6f8;color:#17191f}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(circle at 50% 35%,rgba(35,112,71,.08),transparent 36%),#f5f6f8}.card{width:min(480px,calc(100vw - 40px));padding:38px;border:1px solid rgba(18,23,38,.08);border-radius:24px;background:rgba(255,255,255,.88);box-shadow:0 24px 70px rgba(27,34,56,.10);text-align:center}.mark{width:52px;height:52px;margin:0 auto 22px;display:grid;place-items:center;border-radius:16px;background:#237047;color:white;font-size:24px;font-weight:750;box-shadow:0 12px 30px rgba(35,112,71,.18)}h1{margin:0;font-size:24px;letter-spacing:-.025em}p{margin:10px auto 0;max-width:38ch;color:#666d7e;font-size:14px;line-height:1.65}.pulse{width:38px;height:5px;margin:26px auto 0;overflow:hidden;border-radius:999px;background:#e6e9ef}.pulse::after{display:block;width:45%;height:100%;border-radius:inherit;background:#237047;content:"";animation:move 1.35s ease-in-out infinite alternate}@keyframes move{to{transform:translateX(122%)}}.detail{margin-top:18px;padding:10px 12px;border-radius:10px;background:#f1f3f6;font:11px/1.5 Consolas,monospace;overflow-wrap:anywhere}.actions{display:flex;justify-content:center;gap:9px;margin-top:22px}button{min-height:44px;padding:10px 16px;border:1px solid #d8dce5;border-radius:10px;background:white;color:#272b35;font:inherit;font-size:14px;font-weight:600;cursor:pointer}button.primary{border-color:#237047;background:#237047;color:white}@media(prefers-color-scheme:dark){body{background:radial-gradient(circle at 50% 35%,rgba(123,201,155,.08),transparent 36%),#101114;color:#f2f3f5}.card{border-color:rgba(255,255,255,.08);background:rgba(25,27,31,.92);box-shadow:0 24px 70px rgba(0,0,0,.3)}p{color:#a2a7b3}.pulse,.detail{background:#282b31}button{border-color:#3b3f48;background:#22252a;color:#f2f3f5}}
-        button:hover{filter:brightness(.94)}button:active{filter:brightness(.88)}button:focus-visible{outline:2px solid currentColor;outline-offset:3px}.actions{flex-wrap:wrap}@media(prefers-color-scheme:dark){button:hover{background:#343a37}button.primary{background:#7bc99b;border-color:#7bc99b;color:#101713}button.primary:hover{background:#94d5af}.pulse::after,.mark{background:#7bc99b;color:#101713}}@media(prefers-reduced-motion:reduce){.pulse::after{animation:none;width:100%}}@media(forced-colors:active){button:focus-visible{outline-color:Highlight}.card,button{border:1px solid ButtonText}}
-    </style></head><body><main class="card"><div class="mark">N</div><h1>${title}</h1><p>${body}</p>${failed && safeDetail ? `<div class="detail">${safeDetail}</div>` : ""}${failed ? `<div class="actions"><button id="nola-open-logs">${strings.openLogs}</button><button class="primary" id="nola-retry-host">${strings.retry}</button></div>` : `<div class="pulse" role="status" aria-label="${strings.startingTitle}"></div>`}</main></body></html>`;
+    return startupPageHtml(strings, mode, detail);
 }
 
 async function showInternalPage(mode: "starting" | "failed", detail = ""): Promise<void> {
@@ -177,7 +169,7 @@ function createWindow(): BrowserWindow {
         minWidth: Math.min(720, savedState.width),
         minHeight: Math.min(520, savedState.height),
         show: false,
-        backgroundColor: "#F5F6F8",
+        backgroundColor: nativeTheme.shouldUseDarkColors ? "#000000" : "#ffffff",
         autoHideMenuBar: true,
         icon: path.join(resourcesRoot(), "web", "app", "static", "nola-icon.png"),
         webPreferences: {
@@ -189,6 +181,9 @@ function createWindow(): BrowserWindow {
             partition: "persist:nola-desktop",
         },
     });
+    const syncCanvas = () => { if (!window.isDestroyed()) window.setBackgroundColor(nativeTheme.shouldUseDarkColors ? "#000000" : "#ffffff"); };
+    nativeTheme.on("updated", syncCanvas);
+    window.once("closed", () => nativeTheme.removeListener("updated", syncCanvas));
     if (savedState.maximized) window.maximize();
     window.once("ready-to-show", () => {
         if (!launchInBackground) window.show();

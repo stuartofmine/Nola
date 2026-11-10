@@ -77,8 +77,8 @@ struct DesignTokens {
     static let motionSlow = 0.22
     static let streamRevealDuration = 0.12
     static let maximumVisualBacklog = 0.32
-    static let followIntervalNanoseconds: UInt64 = 48_000_000
-    static let followPasses = 4
+    static let followIntervalNanoseconds: UInt64 = 16_000_000
+    static let followPasses = 12
     static let reducedMotionFollowIntervalNanoseconds: UInt64 = 16_000_000
     static let reducedMotionFollowPasses = 2
 

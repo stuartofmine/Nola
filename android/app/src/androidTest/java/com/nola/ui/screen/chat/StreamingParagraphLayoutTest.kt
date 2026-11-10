@@ -60,7 +60,9 @@ class StreamingParagraphLayoutTest {
         val suffix = " New text 👨‍👩‍👧‍👦 é 🇨🇳 👍🏽 floats into clarity."
         compose.runOnIdle { source.value += suffix }
         compose.waitUntil(2_000) { paragraph.text.toString() == prefix + suffix && waterSpans(paragraph).isNotEmpty() }
-        compose.runOnIdle {
+        // Inspect on the next native frame, without waiting for Compose idle:
+        // idling may legitimately let the short water animation finish first.
+        compose.runOnUiThread {
             assertEquals(prefix + suffix, paragraph.text.toString())
             val spanned = paragraph.text as android.text.Spanned
             val boundaries = android.icu.text.BreakIterator.getCharacterInstance(java.util.Locale.ROOT)

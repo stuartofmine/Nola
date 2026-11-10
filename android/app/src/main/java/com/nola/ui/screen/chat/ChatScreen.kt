@@ -27,6 +27,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.togetherWith
@@ -72,7 +73,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -127,6 +127,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.shadow
@@ -1356,13 +1357,16 @@ internal fun ChatTranscript(
     }
     var followsLatest by rememberSaveable { mutableStateOf(true) }
     var reviewingPermission by remember(listState) { mutableStateOf(false) }
-    val isUserDragging by listState.interactionSource.collectIsDraggedAsState()
+    var userScrollSession by remember(listState) { mutableStateOf(false) }
     val reduceMotion = rememberReduceMotionEnabled()
     val currentReduceMotion by rememberUpdatedState(reduceMotion)
     val permissionNavigation = state.pendingPermissionNavigation(timelineMessages.size)
     val currentPermissionNavigation by rememberUpdatedState(permissionNavigation)
     val permissionScope = rememberCoroutineScope()
 
+    val followRequests = remember(listState, state.conversationId) {
+        kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
+    }
     suspend fun scrollToLatestContent(animated: Boolean) {
         val lastIndex = listState.layoutInfo.totalItemsCount - 1
         if (lastIndex < 0) return
@@ -1373,24 +1377,49 @@ internal fun ChatTranscript(
         }
     }
 
-    LaunchedEffect(listState) {
-        var previousIndex = listState.firstVisibleItemIndex
-        var previousOffset = listState.firstVisibleItemScrollOffset
-        snapshotFlow {
-            Triple(
-                listState.firstVisibleItemIndex,
-                listState.firstVisibleItemScrollOffset,
-                listState.canScrollForward to isUserDragging
-            )
-        }.collect { (index, offset, scrollState) ->
-            val (canScrollForward, userDragging) = scrollState
-            if (userDragging) reviewingPermission = false
-            val movedTowardHistory = index < previousIndex ||
-                (index == previousIndex && offset < previousOffset)
-            followsLatest = followAfterViewportChange(followsLatest, userDragging,
-                movedTowardHistory, !canScrollForward, reviewingPermission)
-            previousIndex = index
-            previousOffset = offset
+    // Drag events cannot be conflated with a layout snapshot. Stop following
+    // as soon as the pointer takes ownership, before its first scroll delta.
+    LaunchedEffect(listState.interactionSource) {
+        listState.interactionSource.interactions.collect { interaction ->
+            if (interaction is androidx.compose.foundation.interaction.DragInteraction.Start) {
+                userScrollSession = true
+                followsLatest = false
+                reviewingPermission = false
+            }
+        }
+    }
+
+    val readerScroll = remember(listState, state.conversationId) {
+        object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
+            private var towardLatest = false
+            override fun onPreScroll(available: androidx.compose.ui.geometry.Offset,
+                                     source: androidx.compose.ui.input.nestedscroll.NestedScrollSource): androidx.compose.ui.geometry.Offset {
+                if (source == androidx.compose.ui.input.nestedscroll.NestedScrollSource.UserInput && available.y != 0f) {
+                    userScrollSession = true
+                    reviewingPermission = false
+                    towardLatest = available.y < 0f
+                    if (!towardLatest) followsLatest = false
+                }
+                return androidx.compose.ui.geometry.Offset.Zero
+            }
+            override fun onPostScroll(consumed: androidx.compose.ui.geometry.Offset,
+                                      available: androidx.compose.ui.geometry.Offset,
+                                      source: androidx.compose.ui.input.nestedscroll.NestedScrollSource): androidx.compose.ui.geometry.Offset {
+                if (userScrollSession && consumed.y != 0f) {
+                    followsLatest = followAfterViewportChange(followsLatest, true,
+                        consumed.y > 0f, !listState.canScrollForward, reviewingPermission)
+                }
+                return androidx.compose.ui.geometry.Offset.Zero
+            }
+            override suspend fun onPostFling(consumed: androidx.compose.ui.unit.Velocity,
+                                             available: androidx.compose.ui.unit.Velocity): androidx.compose.ui.unit.Velocity {
+                // The final native viewport is authoritative, even when the
+                // final pointer delta and stop are coalesced into one frame.
+                if (userScrollSession && towardLatest && !listState.canScrollForward && !reviewingPermission) followsLatest = true
+                userScrollSession = false
+                if (followsLatest) followRequests.trySend(Unit)
+                return androidx.compose.ui.unit.Velocity.Zero
+            }
         }
     }
 
@@ -1407,13 +1436,35 @@ internal fun ChatTranscript(
         onCompactionSourceConsumed(state.compactionSourceRequest)
     }
 
-    LaunchedEffect(listState, timelineMessages.size) {
-        snapshotFlow { listState.layoutInfo.viewportSize.height }.collect {
-            // A layout can publish its height while measuring; scroll on the next frame.
-            androidx.compose.runtime.withFrameNanos { }
-            if (followsLatest && state.compactionSourceStatus != CompactionSourceStatus.Loading) {
-                scrollToLatestContent(animated = false)
+    LaunchedEffect(listState, timelineMessages.size, followRequests, state.compactionSourceStatus) {
+        snapshotFlow {
+            val layout = listState.layoutInfo
+            Triple(layout.viewportSize.height, layout.totalItemsCount,
+                layout.visibleItemsInfo.map { it.index to it.size })
+        }.collect {
+            if (followsLatest && !userScrollSession && state.compactionSourceStatus != CompactionSourceStatus.Loading) {
+                followRequests.trySend(Unit)
             }
+        }
+    }
+
+    // One frame consumer survives a burst of deltas. Cancelling a delay-based
+    // effect on every 24 characters starved follow until the stream paused.
+    LaunchedEffect(followRequests) {
+        for (request in followRequests) {
+            fun windowMillis() = if (currentReduceMotion) NolaMotion.reducedMotionFollowPasses * NolaMotion.reducedMotionFollowInterval
+                else NolaMotion.followPasses * NolaMotion.followInterval
+            var deadline = android.os.SystemClock.uptimeMillis() + windowMillis()
+            do {
+                androidx.compose.runtime.withFrameNanos { }
+                if (!followsLatest || userScrollSession) break
+                if (followRequests.tryReceive().isSuccess) deadline = android.os.SystemClock.uptimeMillis() + windowMillis()
+                if (listState.canScrollForward && !listState.isScrollInProgress) {
+                    // Input may cancel an individual scroll, not the persistent
+                    // request consumer that must resume after the gesture.
+                    kotlinx.coroutines.coroutineScope { launch { scrollToLatestContent(animated = false) } }
+                }
+            } while (android.os.SystemClock.uptimeMillis() < deadline)
         }
     }
 
@@ -1422,7 +1473,9 @@ internal fun ChatTranscript(
     // window after visible content changes. An always-running timer kept waking
     // every 90 ms even for an idle conversation.
     LaunchedEffect(
-        listState,
+        followRequests,
+        followsLatest,
+        userScrollSession,
         timelineMessages.size,
         timelineMessages.lastOrNull()?.id,
         (timelineMessages.lastOrNull()?.text?.length ?: 0) / 24,
@@ -1437,31 +1490,13 @@ internal fun ChatTranscript(
         state.permissionRequest?.id,
         state.agentPermissionRequest?.requestId,
     ) {
-        val followPasses = if (currentReduceMotion) {
-            NolaMotion.reducedMotionFollowPasses
-        } else {
-            NolaMotion.followPasses
-        }
-        val followInterval = if (currentReduceMotion) {
-            NolaMotion.reducedMotionFollowInterval
-        } else {
-            NolaMotion.followInterval
-        }
-        repeat(followPasses) {
-            kotlinx.coroutines.delay(followInterval.toLong())
-            if (!followsLatest || isUserDragging) return@LaunchedEffect
-            if (
-                listState.canScrollForward &&
-                !listState.isScrollInProgress
-            ) {
-                scrollToLatestContent(animated = false)
-            }
-        }
+        followRequests.trySend(Unit)
     }
 
     Column(modifier = modifier.fillMaxSize()) {
+        Box(Modifier.weight(1f).fillMaxWidth()) {
         LazyColumn(
-            modifier = Modifier.weight(1f).fillMaxWidth().testTag("chat-transcript-list").semantics {
+            modifier = Modifier.fillMaxSize().nestedScroll(readerScroll).testTag("chat-transcript-list").semantics {
                 this[ChatTranscriptMessageIds] = timelineMessages.map { it.id }
             },
             state = listState,
@@ -1665,6 +1700,28 @@ internal fun ChatTranscript(
                     )
                 }
             }
+        }
+        androidx.compose.animation.AnimatedVisibility(
+            visible = !followsLatest && timelineMessages.isNotEmpty(),
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
+            enter = androidx.compose.animation.fadeIn(tween(if (reduceMotion) 0 else NolaMotion.fast)),
+            exit = androidx.compose.animation.fadeOut(tween(if (reduceMotion) 0 else NolaMotion.fast)),
+        ) {
+            IconButton(onClick = {
+                reviewingPermission = false
+                followsLatest = true
+                userScrollSession = false
+                permissionScope.launch {
+                    try { scrollToLatestContent(animated = !currentReduceMotion) }
+                    finally { followRequests.trySend(Unit) }
+                }
+            }, modifier = Modifier.size(48.dp).clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surface)
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                .testTag("chat.transcript.followLatest")) {
+                Icon(Icons.Filled.ArrowDownward, contentDescription = stringResource(R.string.room_latest))
+            }
+        }
         }
         permissionNavigation?.let { pending ->
             PendingPermissionNavigation(

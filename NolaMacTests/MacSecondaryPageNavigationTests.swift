@@ -46,7 +46,6 @@ final class MacSecondaryHeaderNavigationTests: XCTestCase {
                     .defaultAppStorage(preferences)
                     .environment(\.colorScheme, dark ? .dark : .light)
                     .environment(\.accessibilityEnabled, true)
-                    .transaction { $0.animation = nil; $0.disablesAnimations = true }
                     .frame(width: width, height: 760))
                 let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 760),
                     styleMask: [.borderless], backing: .buffered, defer: false)

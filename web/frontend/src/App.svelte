@@ -34,7 +34,23 @@
     function show(target: URL) {
         path = target.pathname; routeVersion++;
         page = loadPage(path);
-        void tick().then(() => { content?.focus(); window.scrollTo(0, 0); });
+        window.scrollTo(0, 0);
+    }
+    function pageReady(node: HTMLElement) {
+        const generation = routeVersion;
+        let cancelled = false, frame = 0;
+        if (generation > 0) void tick().then(() => {
+            if (cancelled) return;
+            frame = requestAnimationFrame(() => {
+                if (cancelled || generation !== routeVersion || !node.isConnected
+                    || document.querySelector('dialog:modal')) return;
+                const focused = document.activeElement;
+                if (focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement
+                    || focused instanceof HTMLSelectElement || (focused instanceof HTMLElement && focused.isContentEditable)) return;
+                (document.getElementById('page-main') ?? content)?.focus({preventScroll: true});
+            });
+        });
+        return {destroy() { cancelled = true; if (frame) cancelAnimationFrame(frame); }};
     }
     onMount(() => {
         const recovery = new AbortController();
@@ -97,7 +113,7 @@
     {#key routeVersion}{#await page}
         <div class="content" role="status">{t($locale, 'shell.pageLoading')}</div>
     {:then module}
-        {#if module}<module.default />{:else}<div class="content" role="alert">{t($locale, 'shell.pageLoadFailed')}</div>{/if}
+        {#if module}<module.default /><span hidden aria-hidden="true" use:pageReady></span>{:else}<div class="content" role="alert">{t($locale, 'shell.pageLoadFailed')}</div>{/if}
     {:catch}
         <div class="content" role="alert"><p>{t($locale, 'shell.pageLoadFailed')}</p><button onclick={() => window.location.reload()}>{t($locale, 'shell.retry')}</button></div>
     {/await}{/key}
@@ -155,7 +171,7 @@
 
     @media (max-width: 359px) { .mobile-primary-navigation { padding-inline: 8px; } }
     .mobile-primary-navigation span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .workspace-content:focus { outline: none; }
+    .workspace-content:focus, #page-main:focus { outline: none; }
     .management-navigation { min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: env(safe-area-inset-top, 0px) 16px 0; border-bottom: 1px solid var(--border); }
     .management-navigation button, .management-navigation a { min-height: 44px; display: flex; align-items: center; color: var(--muted); }
     .management-navigation button { min-width: 44px; border: 0; background: transparent; font-size: 28px; }

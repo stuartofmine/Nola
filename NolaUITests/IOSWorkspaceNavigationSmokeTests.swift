@@ -21,6 +21,9 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
             button.tap()
         }
         func capture(_ name: String) {
+            // Accessibility nodes can exist before the native push settles.
+            // Keep real animations enabled and capture their completed state.
+            Thread.sleep(forTimeInterval: 0.6)
             let attachment = XCTAttachment(data: app.screenshot().pngRepresentation, uniformTypeIdentifier: "public.png")
             attachment.name = name
             attachment.lifetime = .keepAlways

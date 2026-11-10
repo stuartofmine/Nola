@@ -45,8 +45,8 @@ private nonisolated struct ChatTimelineMessageIdentity: Hashable, Sendable {
 
 enum ChatTimelineFollowPolicy {
     static func trailingPasses(reduceMotion: Bool) -> Int {
-        // The restrained Markdown reveal lasts 180 ms. Four 48 ms passes
-        // cover its layout changes without creating a long visual backlog.
+        // Follow committed geometry at display cadence, including a short
+        // trailing layout window. Ink animation never delays accepted text.
         // Reduced Motion only needs the two post-layout frames.
         reduceMotion ? DesignTokens.reducedMotionFollowPasses : DesignTokens.followPasses
     }

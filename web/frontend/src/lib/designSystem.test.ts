@@ -38,10 +38,6 @@ test('shared controls preserve zoom, readable disabled states and optional motio
     assert.doesNotMatch(source('../pages/Settings.svelte'), /var\(--accent-text|var\(--text\)/);
     assert.doesNotMatch(source('../components/OpenCodeSourceLogin.svelte'), /var\(--border-color/);
 });
-test('press scaling is opt-in and disabled when reduced motion is requested', () => {
-    assert.match(theme, /@media \(prefers-reduced-motion: no-preference\)\s*\{\s*button:not\(:disabled\):not\(\.danger\):active, \.button:active \{ transform: scale\(\.98\); \}/);
-    assert.match(theme, /@media \(prefers-reduced-motion: reduce\)\s*\{\s*button:not\(:disabled\):active, \.button:active \{ transform: none; \}/);
-});
 test('chat and previews keep local reading widths without changing resource ownership', () => {
     const chat = source('../pages/Chat.svelte');
     assert.match(chat, /article\.user \{[^}]*max-width: 85%/);

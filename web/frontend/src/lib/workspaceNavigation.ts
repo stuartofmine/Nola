@@ -30,7 +30,7 @@ export function initialWorkspaceLocation(href: string, width: number): URL {
         const content = location.searchParams.get('content');
         const management = content ? managementContentPath(content, location.origin) : null;
         if (management) return new URL(management.path, location.origin);
-        if (!location.search) location.pathname = '/today';
+        if (!location.search) location.pathname = '/conversations';
     } else if (width > 700 && managementContentPath(location.href, location.origin)) {
         const content = location.pathname + location.search + location.hash;
         location.pathname = '/chat'; location.search = ''; location.hash = '';

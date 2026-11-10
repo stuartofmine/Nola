@@ -37,7 +37,7 @@ async function fixture(route){
  const report={kind:'isolated-components-no-model',views:[],issues:[],errors:[]};
  try{
  for(const scheme of ['light','dark'])for(const width of [320,390,1440]){
-  const context=await browser.newContext({viewport:{width,height:900},colorScheme:scheme,locale:'zh-CN',reducedMotion:'reduce'});
+  const context=await browser.newContext({viewport:{width,height:900},colorScheme:scheme,locale:'zh-CN',reducedMotion:process.env.UI_AUDIT_MOTION==='1'?'no-preference':'reduce'});
   await context.route('**/*',r=>new URL(r.request().url()).origin!==base?r.abort():new URL(r.request().url()).pathname.startsWith('/api/')?fixture(r):r.continue());
   await context.routeWebSocket('**/*',s=>s.close());
   await context.addInitScript(() => {
@@ -62,7 +62,36 @@ async function fixture(route){
   }
   for(const route of routes){
    await page.goto(`${base}/${route}`,{waitUntil:'networkidle'});
+   if(process.env.UI_AUDIT_MOTION==='1' && route==='today') {
+    await page.evaluate(()=>{const button=document.createElement('button');button.id='audit-press-probe';button.type='button';button.textContent='操作反馈';button.style.cssText='position:fixed;right:12px;bottom:100px;z-index:100';document.body.append(button);});
+    const control=page.locator('#audit-press-probe'),before=await control.boundingBox();
+    await control.hover();await page.mouse.down();await page.waitForTimeout(60);
+    const pressed=await control.boundingBox();
+    assert.ok(Math.abs(before.width-pressed.width)<.01 && Math.abs(before.height-pressed.height)<.01,'Press feedback must preserve glyph and control geometry');
+    await page.mouse.up();await control.evaluate(node=>node.remove());
+   }
+   if(process.env.UI_AUDIT_MOTION==='1' && route==='today' && width<=700) {
+    let release, intercepted;
+    const gate=new Promise(resolve=>release=resolve), requested=new Promise(resolve=>intercepted=resolve);
+    const hold=async route=>{intercepted();await gate;await route.continue();};
+    await page.route('**/ui/assets/Activity-*.js',hold);
+    try {
+     await page.locator('.mobile-primary-navigation a[href="/activity"]').click();
+     await Promise.race([requested,new Promise((_,reject)=>setTimeout(()=>reject(new Error('Expected isolated Activity module request')),5000))]);
+     assert.equal(await page.evaluate(()=>document.activeElement?.matches('#page-main,.workspace-content')),false,'Loading must not steal focus before the selected page exists');
+     release();
+     await page.waitForFunction(()=>document.activeElement?.id==='page-main');
+    } finally {release();await page.unroute('**/ui/assets/Activity-*.js',hold);}
+    await page.goto(`${base}/today`,{waitUntil:'networkidle'});
+   }
    await capture(route);
+   if(process.env.UI_AUDIT_MOTION==='1' && route==='workspace-review') {
+    assert.equal(await page.locator('.workspace-review [role=alert]').count(),0,'No conversation is an actionable empty state, not a read failure');
+    assert.ok(await page.locator('.workspace-review a[href="/conversations"]').count());
+   }
+   if(process.env.UI_AUDIT_MOTION==='1' && route==='chat' && width<=700) {
+    assert.equal(new URL(page.url()).pathname,'/conversations','Direct and in-app chat entry must agree on phones');
+   }
    if(route==='data-sources') {
     for(const tab of width<=700?['knowledge','sources','memory','plans','activity']:['sources','memory','plans','usage']) {
      await page.goto(`${base}/data-sources?tab=${tab}`,{waitUntil:'networkidle'});
