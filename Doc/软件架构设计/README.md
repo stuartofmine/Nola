@@ -32,6 +32,12 @@
 3. [模块目录及公共协议](模块契约.md)：进入各模块子目录阅读输入输出、对象封装、生命周期、错误与验收。
 4. [会话聚合契约](模块/04-存储与索引/CONVERSATION_AGGREGATE_CONTRACT_20261015.md)：配置、数据、草稿跟随会话；窗口不拥有业务事实。
 
+## 近期接线同步（2026-11-10）
+
+[本轮验收](../当前任务/REMOTE_HOST_AND_PROTOTYPE_ACCEPTANCE_20261110.md)补充客户端 → Host 长任务、Android 安全审阅文本与未知/失败状态的边界。客户端恢复原 Run，不重新提交物理命令；停止观察与持久取消分开。配对、模型配置、Skill/MCP 启用均不直接产生具体工具授权。
+
+[全业务原型](../../docs/design/nola-ui-prototype/docs/BUSINESS-SCENARIOS.md)只拥有演示状态，不创建真实 Application、Store 或 Host。覆盖全部设计场景不表示全部原生实现/验收。部署索引同步移除独立 Backend 角色，保留源 Host 权威及可选传输边界；没有修改协议、ABI、数据库格式或 epoch。
+
 ## 架构约束
 
 - Application 协调唯一业务写入；Core 决策，Store 原子提交，Host 执行已准入副作用，客户端只提交命令和消费投影。

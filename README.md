@@ -74,6 +74,12 @@ npm --prefix web/frontend test
 
 Apple test runners use isolated Test outputs. macOS Debug builds must retain their configured signing identity. Android instrumentation tests require a running emulator or explicitly selected device. Contract tests do not constitute real-model or cross-platform installation acceptance; consult the [validation record](Doc/当前任务/V1_REISSUE_ACCEPTANCE_20261109.md) for results and known gaps.
 
+## Design and validation
+
+[Interactive prototype](docs/design/nola-ui-prototype/README.md) · [68 business scenarios and 220 design states](docs/design/nola-ui-prototype/docs/BUSINESS-SCENARIOS.md) · [Remote Host and prototype validation](Doc/当前任务/REMOTE_HOST_AND_PROTOTYPE_ACCEPTANCE_20261110.md)
+
+Prototype replays, native UI checks, and real-model execution have separate scopes. A platform shown in the prototype does not assert that every native workflow has been implemented or tested.
+
 ## Versions and compatibility
 
 The reissued **1.0.0 is the first supported baseline**. All Nola-owned protocol, ABI and database format/epoch versions start at **1**. Earlier development formats are unsupported. Application version/build numbers are separate from contract versions; external standards retain their own version identifiers.
@@ -88,6 +94,6 @@ See [release instructions](release/README.md). Do not commit credentials, signin
 
 ## Contributing
 
-[Contributing](CONTRIBUTING.md) · [Code of conduct](CODE_OF_CONDUCT.md) · [Security](SECURITY.md)
+[Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
 
 Licensed under [Apache-2.0](LICENSE).

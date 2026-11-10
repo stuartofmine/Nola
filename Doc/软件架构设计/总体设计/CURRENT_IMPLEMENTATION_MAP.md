@@ -1,6 +1,6 @@
 # 当前实现与模块映射
 
-核对：2026-11-08，本地工作树。覆盖总体 manifest 图、15 个模块的实现/端口入口和明确陈旧的状态描述，不声称逐行验证全仓库或重新运行所有验收。原设计目标、当前调用接线和历史证据分别维护；实际差距见[源码核对](ARCHITECTURE_SOURCE_AUDIT_20261108.md)。
+核对：2026-11-08 本地工作树；2026-11-10 更正现行部署及远端链路索引。覆盖总体 manifest 图、15 个模块的实现/端口入口和明确陈旧的状态描述，不声称逐行验证全仓库或重新运行所有验收。原设计目标、当前调用接线和历史证据分别维护；实际差距见[源码核对](ARCHITECTURE_SOURCE_AUDIT_20261108.md)。
 
 | 模块 | 当前源码入口 | 实际边界与限制 |
 | --- | --- | --- |
@@ -17,12 +17,12 @@
 | 11-Skill插件与MCP | [skill.rs](../../../core/nola-application/src/skill.rs) / [mcp.rs](../../../core/nola-application/src/mcp.rs) / [lib.rs](../../../core/nola-mcp-host/src/lib.rs) | 共享 nola_mcp_host 已存在，且仍依赖 Core facade；移动本机支持范围与桌面 stdio 分开。保存/启用配置不等于连接授权，连接授权不等于每次工具调用授权。 |
 | 12-记忆数据源与自动化 | [memory.rs](../../../core/nola-application/src/memory.rs) / [data_source.rs](../../../core/nola-application/src/data_source.rs) / [automation_execution.rs](../../../core/nola-application/src/automation_execution.rs) | AutomationDefinition 已有 typed execution_spec（agent/user_task）；MemoryRecord.owner、RecallQuery.binding 与 Store owner 过滤/去重已接线，移动端 profile 搜索复用 Recall。原生 workspace/turn 选择界面与真实并发模型验收不由这些接口自动推定。 |
 | 13-客户端投影 | [lib.rs](../../../core/nola-mobile-bindings/src/lib.rs) / [projection.rs](../../../core/nola-mobile-bindings/src/projection.rs) / [RemoteSubmissionIdentity.swift](../../../Shared/Protocol/RemoteSubmissionIdentity.swift) | 原生静态/动态库由 mobile_bindings 产出，再保留 Core 辅助符号。Swift/Kotlin 的观察、草稿、IME 与焦点不是第二个业务 Runtime；手机导航不改变已准入 Run。 |
-| 14-远程Host与同步 | [routes.rs](../../../cli/src/web_parts/routes.rs) / [index.ts](../../../backend/worker/src/index.ts) / [README.md](../../../transport/tailcat/README.md) | Rust 执行 Host、Worker/D1、远端镜像与可选 Tailcat 是不同角色。可选隧道替换承载，不取代配对/登录/CSRF/HMAC、源 Run 权威或恢复游标。 |
+| 14-远程Host与同步 | [routes.rs](../../../cli/src/web_parts/routes.rs) / [README.md](../../../transport/tailcat/README.md) | Rust 执行 Host、客户端认证镜像与可选 Tailcat 是不同角色；当前产品没有独立 Backend。可选隧道替换承载，不取代配对/登录/CSRF/HMAC、源 Run 权威或恢复游标。 |
 | 15-观测与验收 | [lib.rs](../../../core/nola-measurement/src/lib.rs) / [dependency_boundary.rs](../../../cli/tests/dependency_boundary.rs) / [test_mac_layers.sh](../../../scripts/test_mac_layers.sh) | 文档中的历史通过数、一次沙箱拒绝或“尚未运行”都仅属于原快照；当前测试范围以实际命令/报告为准。依赖图、静态检查和组件测试不能推出业务恢复或真机通过。 |
 
 ## 部署、制品与版本
 
-桌面 Service、Mac agent Host、移动 embedded Application、Rust Web 和 Worker/D1 的物理部署见[分层](CORE_HOST_LAYERING.md)。同协议/同 schema 不等于同一数据库文件；Store 路径由平台和显式配置决定，不能自动扫描或合并用户库。
+桌面 Service、Mac agent Host、移动 embedded Application、Rust Web 的物理部署见[分层](CORE_HOST_LAYERING.md)。同协议/同 schema 不等于同一数据库文件；Store 路径由平台和显式配置决定，不能自动扫描或合并用户库。
 
 `nola_core` 当前只产出 rlib；原生最终产物由 `nola_mobile_bindings` 打包，并显式保留 Core 辅助符号。Core reducer、Application 提交、Store 事务、Driver/Host 物理执行和客户端投影是不同角色。
 
@@ -37,8 +37,10 @@
 ## 如何核对
 
 - [依赖图](DEPENDENCIES.md)来自 Cargo metadata 的 normal/build 声明边，包含 optional/target，不是动态调用图。
-- [接口索引](../模块/01-领域与协议/INTERFACE_CATALOG.md)区分固定元组、动态/前置路由、Worker dispatch 与 command tag，不把路径存在当作授权或验收。
+- [接口索引](../模块/01-领域与协议/INTERFACE_CATALOG.md)区分固定元组、动态/前置路由与 command tag，不把路径存在当作授权或验收。
 - [模块契约](../模块契约.md)区分当前 wire 字段和目标错误语义；内部 String 错误及其余未完成项如实列为差距；owner 接线与删除旧 provider 恢复的进展见源码核对。
 - 历史暂停/通过记录只约束当时范围，不成为当前自动禁止构建或全量通过结论。当前任务见[任务入口](../../当前任务/README.md)。
 
 本轮没有打开用户数据库、执行恢复/转换或修改运行代码。静态源码与文档一致不等于真实模型、整窗交互、真机后台与跨设备恢复已经验收。
+
+2026-11-10 补充：[宿主机真实长任务与原型总账](../../当前任务/REMOTE_HOST_AND_PROTOTYPE_ACCEPTANCE_20261110.md)。权限详情属于披露，源 Run/控制权仍属 Host；原型清单不是运行时目录或准入依据。

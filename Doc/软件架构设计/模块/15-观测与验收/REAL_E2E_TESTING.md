@@ -203,14 +203,13 @@ entered execution, and verifies that Core resumes to one persisted assistant
 answer. The structured-render scenario requires at least three assistant body
 mutations so a final-only Markdown render cannot pass as streaming.
 
-The full matrix also includes the production FastAPI backend as a separate
-platform lane. Its acceptance scenario starts a real Uvicorn process on an
-ephemeral TCP port, registers and authenticates through public HTTP endpoints,
-creates a conversation, writes and reads a uniquely marked message, shuts the
-server down, and independently queries the isolated SQLite database. It does not
-use `TestClient`, dependency overrides, monkeypatched authentication, or an
-in-memory database. HTTP transcripts redact bearer tokens before becoming
-evidence.
+The current product has no independent Backend acceptance lane. Remote execution
+acceptance starts an owned Rust Host with an isolated Store and the selected real
+model route. Browser/mobile submission, exact approval, committed Run/result,
+physical side effects, disconnect/reconnect, cancellation, and cold restoration
+must be checked separately. Loopback or adb reverse does not prove real LAN,
+Bonjour, firewall, or physical-device background behavior. Standalone prototype
+replay is design evidence and never counts as a real-model platform lane.
 
 Real-model assertions verify protocol outcomes, persisted state, tool events,
 privacy boundaries, and unique markers. They must not depend on incidental model

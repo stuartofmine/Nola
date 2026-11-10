@@ -17,6 +17,14 @@
 
 当前发行基线和后续兼容规则见 [版本兼容策略](软件架构设计/总体设计/VERSION_COMPATIBILITY.md)。
 
+## 本轮同步（2026-11-10）
+
+- [宿主机长任务与原型验收](当前任务/REMOTE_HOST_AND_PROTOTYPE_ACCEPTANCE_20261110.md)：区分真实模型链路、原型回放、代码修复与未覆盖平台。
+- [全业务场景](../docs/design/nola-ui-prototype/docs/BUSINESS-SCENARIOS.md)：68 场景、220 状态、六个平台设计视角；[原型运行入口](../docs/design/nola-ui-prototype/README.md)。
+- [Host 交互与配对](UI和交互设计/HOST_CONNECTION_WORKFLOW.md)：配对身份、凭据保存、权限详情、断开/取消与恢复。
+
+现行部署是本地客户端、Application/Store 与用户拥有的执行 Host；当前产品不依赖独立 Backend。原型中的合成状态、静态源码接线和真实执行证据分别维护，不互相替代。
+
 ## 按问题查阅
 
 | 主题 | 规范入口 | 负责回答的问题 |

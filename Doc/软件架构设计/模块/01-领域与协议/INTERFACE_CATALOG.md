@@ -1,6 +1,6 @@
 # 当前接口源码索引
 
-核对：2026-11-08，从当前源码声明重新提取。本索引是导航，不是执行授权、API 稳定性或运行验收证明。固定路由元组、Worker 直接 dispatch 与顶层 command tag 是三种不同统计口径；原生 ABI 和子命令还需阅读相应类型。
+核对：2026-11-08 源码声明快照；2026-11-10 更正现行部署的索引范围。本索引是导航，不是执行授权、API 稳定性或运行验收证明。固定路由元组与顶层 command tag 是不同统计口径；原生 ABI 和子命令还需阅读相应类型。
 
 ## Rust Host 固定路由
 
@@ -256,67 +256,9 @@
 
 连接/账户/来源管理、模型导入、移动传输、会话/任务 suffix 等由同文件前置分支及 handler 处理，不能按固定元组数量推导覆盖率。重点检查 [Host 路由](../../../../cli/src/web_parts/routes.rs)、[会话/流处理](../../../../cli/src/web_parts/streaming_state.rs)与[运行时语义](CURRENT_RUNTIME_INTERFACES.md)。
 
-## Worker 路由
+## 索引范围更正（2026-11-10）
 
-来源：`backend/worker/src/index.ts` 的 `request.method` 直接 dispatch。保留源码条件，避免把 prefix/includes/regex 写成不存在的严格路径模板。OPTIONS、认证和下游代理还有各自边界。
-
-| 方法 | 实际匹配条件 | handler |
-| --- | --- | --- |
-| GET | `path === "/healthz"` | [health](../../../../backend/worker/src/index.ts#L682) |
-| GET | `path === "/v1/channels"` | [listMessagingChannels](../../../../backend/worker/src/index.ts#L683) |
-| PUT | `path === "/v1/channels"` | [saveMessagingChannel](../../../../backend/worker/src/index.ts#L684) |
-| POST | `path === "/v1/channels/inbox/claim"` | [claimMessagingChannelMessage](../../../../backend/worker/src/index.ts#L685) |
-| POST | `/^\/v1\/channels\/inbox\/\d+\/complete$/.test(path)` | [completeMessagingChannelMessage](../../../../backend/worker/src/index.ts#L686) |
-| POST | `/^\/v1\/channels\/inbox\/\d+\/renew$/.test(path)` | [renewMessagingChannelMessage](../../../../backend/worker/src/index.ts#L687) |
-| POST | `/^\/v1\/channels\/inbox\/\d+\/progress$/.test(path)` | [progressMessagingChannelMessage](../../../../backend/worker/src/index.ts#L688) |
-| POST | `/^\/v1\/channels\/inbox\/\d+\/fail$/.test(path)` | [failMessagingChannelMessage](../../../../backend/worker/src/index.ts#L689) |
-| GET | `path.startsWith("/v1/channels/webhook/whatsapp/")` | [verifyWhatsAppWebhook](../../../../backend/worker/src/index.ts#L690) |
-| GET | `path.startsWith("/v1/channels/webhook/wechat_official/")` | [verifyWeChatOfficialWebhook](../../../../backend/worker/src/index.ts#L691) |
-| GET | `path.startsWith("/v1/channels/webhook/we_com/")` | [verifyWeComWebhook](../../../../backend/worker/src/index.ts#L692) |
-| POST | `path.startsWith("/v1/channels/webhook/")` | [receiveMessagingWebhook](../../../../backend/worker/src/index.ts#L693) |
-| GET | `path === "/admin/outbox/dlq/count"` | [adminDlqCount](../../../../backend/worker/src/index.ts#L694) |
-| POST | `path === "/admin/outbox/dlq/replay"` | [adminDlqReplay](../../../../backend/worker/src/index.ts#L695) |
-| GET | `path === "/search/serper"` | [serperSearch](../../../../backend/worker/src/index.ts#L697) |
-| POST | `path === "/v1/auth/register"` | [authRegister](../../../../backend/worker/src/index.ts#L699) |
-| POST | `path === "/v1/auth/login"` | [authLogin](../../../../backend/worker/src/index.ts#L700) |
-| GET | `path === "/v1/auth/me"` | [authMe](../../../../backend/worker/src/index.ts#L701) |
-| POST | `path === "/api/mobile/login"` | [mobileLogin](../../../../backend/worker/src/index.ts#L702) |
-| GET | `path === "/api/mobile/me"` | [mobileMe](../../../../backend/worker/src/index.ts#L703) |
-| GET | `path === "/api/mobile/agent/settings"` | [mobileAgentSettings](../../../../backend/worker/src/index.ts#L704) |
-| POST | `path === "/api/mobile/attachments/parse"` | [mobileAttachmentParse](../../../../backend/worker/src/index.ts#L705) |
-| GET | `path === "/v1/agent/settings"` | [agentSettingsGet](../../../../backend/worker/src/index.ts#L707) |
-| POST | `path === "/v1/agent/settings"` | [agentSettingsPost](../../../../backend/worker/src/index.ts#L708) |
-| GET | `path === "/v1/agent/permission_rules"` | [permissionRulesGet](../../../../backend/worker/src/index.ts#L709) |
-| POST | `path === "/v1/agent/permission_rules"` | [permissionRulesPost](../../../../backend/worker/src/index.ts#L710) |
-| DELETE | `path.startsWith("/v1/agent/permission_rules/")` | [permissionRulesDelete](../../../../backend/worker/src/index.ts#L711) |
-| GET | `path === "/v1/agent/tools"` | [agentToolsList](../../../../backend/worker/src/index.ts#L712) |
-| GET | `path === "/v1/models"` | [listModels](../../../../backend/worker/src/index.ts#L714) |
-| POST | `path === "/v1/chat/completions"` | [chatCompletions](../../../../backend/worker/src/index.ts#L715) |
-| GET | `path === "/v1/chat/conversations"` | [listChatConversations](../../../../backend/worker/src/index.ts#L717) |
-| POST | `path === "/v1/chat/conversations"` | [createChatConversation](../../../../backend/worker/src/index.ts#L718) |
-| GET | `path.includes("/v1/chat/conversations/") && path.endsWith("/messages")` | [listChatMessages](../../../../backend/worker/src/index.ts#L719) |
-| POST | `path.includes("/v1/chat/conversations/") && path.endsWith("/messages")` | [addChatMessage](../../../../backend/worker/src/index.ts#L720) |
-| PATCH | `path.startsWith("/v1/chat/conversations/")` | [updateChatConversation](../../../../backend/worker/src/index.ts#L721) |
-| DELETE | `path.startsWith("/v1/chat/conversations/")` | [deleteChatConversation](../../../../backend/worker/src/index.ts#L722) |
-| POST | `path === "/v1/sync/replicas"` | [pushCanonicalReplicas](../../../../backend/worker/src/index.ts#L726) |
-| GET | `path === "/v1/sync/replicas"` | [pullCanonicalReplicas](../../../../backend/worker/src/index.ts#L727) |
-| POST | `path === "/v1/devices/register"` | [registerDevice](../../../../backend/worker/src/index.ts#L729) |
-| POST | `path === "/v1/sources/sync"` | [syncSources](../../../../backend/worker/src/index.ts#L730) |
-| GET | `path === "/v1/sources"` | [listSources](../../../../backend/worker/src/index.ts#L731) |
-| DELETE | `path.startsWith("/v1/sources/")` | [deleteSource](../../../../backend/worker/src/index.ts#L732) |
-| POST | `path.startsWith("/v1/sources/") && path.endsWith("/run_now")` | [runSourceNow](../../../../backend/worker/src/index.ts#L733) |
-| GET | `path === "/v1/results"` | [listResults](../../../../backend/worker/src/index.ts#L734) |
-| GET | `path === "/v1/notifications"` | [listNotifications](../../../../backend/worker/src/index.ts#L735) |
-| GET | `path === "/v1/notifications/unread_count"` | [notificationUnreadCount](../../../../backend/worker/src/index.ts#L736) |
-| POST | `path === "/v1/notifications/read_all"` | [markAllNotificationsRead](../../../../backend/worker/src/index.ts#L737) |
-| POST | `path.startsWith("/v1/notifications/") && path.endsWith("/read")` | [markNotificationRead](../../../../backend/worker/src/index.ts#L738) |
-| GET | `path.startsWith("/v1/results/")` | [getResult](../../../../backend/worker/src/index.ts#L739) |
-| POST | `path.startsWith("/v1/results/") && path.endsWith("/ack")` | [ackResult](../../../../backend/worker/src/index.ts#L740) |
-| POST | `path === "/v1/debug/push/silent"` | [debugPushSilent](../../../../backend/worker/src/index.ts#L741) |
-| POST | `path === "/v1/debug/push/alert"` | [debugPushAlert](../../../../backend/worker/src/index.ts#L742) |
-| POST | `path === "/v1/debug/apns/validate_device"` | [debugApnsValidateDevice](../../../../backend/worker/src/index.ts#L743) |
-| GET | `path === "/v1/debug/apns/status"` | [debugApnsStatus](../../../../backend/worker/src/index.ts#L744) |
-| GET | `path.startsWith("/v1/debug/push/client/")` | [debugPushClient](../../../../backend/worker/src/index.ts#L745) |
+当前部署不包含独立 Backend，旧服务 dispatch 不列为产品接口。上方 Host 字面量路由是源码索引，残留入口不等于已支持或稳定公开接口；平台能力仍按准入与实际部署判断。
 
 ## Application 顶层命令 tag
 
@@ -615,4 +557,4 @@
 
 
 
-当前提取：243 个固定 Rust 路由元组、55 条 Worker 直接 dispatch、271 个顶层 wire tag。数字只描述提取集合，不包含所有动态路由或运行路径。
+2026-11-08 快照的 Rust 部分：243 个固定路由元组、271 个顶层 wire tag。本轮移除旧服务索引，没有重新统计全部路由/tag；这些数字不包含所有动态路由或运行路径，也不是当前支持能力数量。

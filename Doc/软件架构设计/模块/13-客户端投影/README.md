@@ -89,3 +89,9 @@ Web 路由完成焦点以导航代数和 DOM 挂载为边界，旧异步页面�
 通知直达地址解析到通用；Web 仍通过 workspacePageLocation/Elements 定位所属
 页面，不能改写外层会话导航。Android 设置容器保存通用状态及可保存页面状态，
 通知中心退出后恢复原页。内容/计划管理从其实际工作区进入，不复制管理实现。
+
+## 场景原型与生产验收的隔离（2026-11-10）
+
+[全业务原型清单](../../../../docs/design/nola-ui-prototype/docs/BUSINESS-SCENARIOS.md)覆盖 68 场景、220 状态及当前 Web 14 路由。目录、平台选择、状态跳转与合成进度均属于评审工具，不是生产客户端新增导航或业务 Runtime。字段、原型草稿、确认取消及分支隔离只在原型本页内存有效。
+
+客户端真实权限/Host 接线见[配置与调用边界](CLIENT_INTERACTION_AND_CONFIGURATION.md)。原型回放不能关闭真机、真实账户或长任务验收；本轮通过范围及剩余验证见[总账](../../../当前任务/REMOTE_HOST_AND_PROTOTYPE_ACCEPTANCE_20261110.md)。

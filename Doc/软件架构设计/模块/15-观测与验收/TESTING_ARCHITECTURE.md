@@ -192,9 +192,11 @@ Current client persistence must exercise a fresh current-schema Store database a
   Markdown timeline, terminal bubble stability, screenshot, accessibility tree,
   app relaunch, and canonical restored transcript validated from XCTest and the
   xcresult bundle.
-- Backend HTTP persistence: real Uvicorn process, public email authentication,
-  conversation/message round trip, process shutdown, and independent SQLite
-  row audit.
+- Remote Host acceptance: owned Rust Host and isolated Store, selected real
+  model, browser/mobile submission, committed Run/result and independent physical
+  side-effect audit. No independent Backend is required by the current product.
+- Standalone prototype replay: synthetic design states and interactions only;
+  never counted as a real-model or native-client acceptance lane.
 
 Other scenarios remain migration work until they declare required observations
 and assertion evidence in the matrix.

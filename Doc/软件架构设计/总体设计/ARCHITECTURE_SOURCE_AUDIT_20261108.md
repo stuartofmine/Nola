@@ -6,10 +6,12 @@
 
 本次文档工作没有启动用户数据库、恢复向导、provider 配置转入或任何维护操作。源码存在某条路径只证明它仍存在，不等于它符合当前发布兼容约束。
 
+2026-11-10 更正：以下现行部署表不再把保留的旧服务源码当作当前产品组件；本次没有删除源码或重写原始运行证据。
+
 ## 核对方式
 
 - `cargo metadata --offline --no-deps --format-version 1` 读取工作区 normal/build 声明依赖，包含 optional/target 边。结果见[依赖图](DEPENDENCIES.md)。声明不等于实际调用或完整第三方链接闭包。
-- 从 Rust Host 的字面量 method/path 元组、Worker 的直接 dispatch 和 `ApplicationCommand::wire_command_name` 提取[接口索引](../模块/01-领域与协议/INTERFACE_CATALOG.md)。顶层 variant 集合与 tag 映射逐项比对；动态/前置路由另行说明。
+- 从 Rust Host 的字面量 method/path 元组 和 `ApplicationCommand::wire_command_name` 提取[接口索引](../模块/01-领域与协议/INTERFACE_CATALOG.md)。顶层 variant 集合与 tag 映射逐项比对；动态/前置路由另行说明。
 - 每个模块 README 指向实际存在的实现和端口；对过时状态及冲突章节直接修正。已实现类型、调用方接线、持久闭环、运行证据分别判断。
 
 ## 当前物理部署
@@ -20,7 +22,6 @@
 | macOS | `MacApplicationPort` / `MacApplicationServiceClient`，由 `nola-service` 协调提交 | `MacAgentHostRuntime` 管理 Host 进程，SwiftUI 消费投影 | 不是交互 TUI 驱动，也不是所有 Agent 逻辑都在 Swift 进程内 |
 | iOS / Android | `nola_mobile_bindings` 的 embedded Application，复用 bootstrap 和 Store 用例 | bindings 产出 staticlib/cdylib/rlib；平台绑定管理句柄、Host 与生命周期 | 不是每个 ViewModel 一份业务 Core；移动 OS 不保证后台常驻 |
 | 连接的执行 Host | 准入绑定的源 Host、Run 与 authority | paired mobile/Web 传输及当前 owner/cursor 恢复 | 本地 replica 不获得执行权或源 OS 授权 |
-| Worker / D1 | 自身认证、代理、渠道和 append-only replica 接口 | `backend/worker/src/index.ts` 及独立 D1 schema | 不运行本机 reducer，不是本地 Store 的写入替代品 |
 
 [Core/facade](../../../core/Cargo.toml) 只产出 rlib；[mobile bindings](../../../core/nola-mobile-bindings/Cargo.toml) 才是最终原生库。bindings 显式 force-link Core 辅助 ABI；打包脚本可将归档重命名为 `libnola_core.a`，文件名不能倒推 crate 所有权。
 
@@ -41,7 +42,7 @@
 | 11 Skill/MCP | Skill/MCP 用例与共享 `nola_mcp_host` 已存在，移动本机 HTTP 与桌面 stdio 分开 | 不再把全部 MCP 当作 CLI 私有实现；共享 crate 仍依赖 Core facade，单靠类型存在不能证明原生 child 全覆盖 |
 | 12 记忆/数据源/自动化 | 记忆用例、数据源快照与 typed automation spec/execution binding 分离 | 不是只靠不透明 metadata 执行；memory owner 已贯通当前 Recall/Store，平台与真实模型验收范围见下表 |
 | 13 客户端 | 只消费版本化投影、提交用户命令；草稿/IME/滚动是展示层 | FFI 制品、当前平台接线与交互见专项合同，不据 UI 或 FFI 返回制造终态 |
-| 14 Host/同步 | Rust Host、Worker、source publication、replica 和可选 Tailcat 是不同角色 | 不把可选 SDK 或一次连接测试写成全平台传输/后台恢复已验收 |
+| 14 Host/同步 | Rust Host、source publication、replica 和可选 Tailcat 是不同角色 | 不把可选 SDK 或一次连接测试写成全平台传输/后台恢复已验收 |
 | 15 观测 | Measurement 是有界非权威诊断；静态门禁、隔离存储、真实执行和真机证据不同 | 历史通过数、一次 EPERM、未运行记录不成为当前全局通过/暂停结论 |
 
 每行的精确源码链接与相关契约见[模块目录](../模块契约.md)，不是新增 15 套运行模型。

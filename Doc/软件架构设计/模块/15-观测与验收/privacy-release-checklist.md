@@ -15,7 +15,7 @@ This checklist separates code-enforced privacy behavior from App Store and Play 
 - Mobile location tools request approximate/coarse location only.
 - Hybrid device results leave the device only after an action-specific approval and only for the paired host session.
 - Access tokens are stored in Keychain or Android Keystore and are excluded from persisted model snapshots, logs, and exports.
-- The user-owned CLI Host persists its own access token only in `~/.nola/cli/web/mobile-access-token`, with private file permissions (`0600` on Unix); it is not stored in chat, model, or diagnostic records.
+- The user-owned CLI Host persists its own access token only in `~/.nola/web/mobile-access-token`, with private file permissions (`0600` on Unix); it is not stored in chat, model, or diagnostic records.
 - Remote Web login verifies that Host token once, never writes it to browser storage, and replaces it with an expiring HttpOnly/SameSite session whose server-side identifier and CSRF value are retained only as digests in memory.
 - Android system cloud backup and device-transfer backup are disabled. User data leaves the app only through the explicit export action.
 - Android explicit exports use a content whitelist and exclude credentials, Keystore material, secure preferences, client identifiers, and SQLite WAL/SHM files.
@@ -23,7 +23,7 @@ This checklist separates code-enforced privacy behavior from App Store and Play 
 
 ## Deployment-specific data inventory
 
-Before every production release, the service owner must answer these using the deployed backend configuration and retention policy:
+Before every production release, review the actual client, user-owned Host, selected provider, and any operator-controlled data paths. The current product has no independent Backend deployment; hypothetical services must not be reported as deployed:
 
 - Does a Nola-operated service receive or retain email addresses or account identifiers?
 - Are chat prompts, responses, attachments, memories, skills, documents, or tool outputs retained by a Nola-operated service?
@@ -40,7 +40,7 @@ Do not declare local data, data sent only to a user-owned host, or data sent to 
 - Reconcile the aggregated report with App Privacy answers and the deployment-specific inventory above.
 - Confirm every bundled third-party SDK ships its own valid privacy manifest where Apple requires one.
 - Confirm purpose strings describe local use and the explicit paired-host egress exception accurately.
-- Verify account deletion and privacy-policy URLs against the production backend.
+- Verify local account sign-out, credential removal, export/deletion scope, and the actual published privacy-policy URL. Do not imply a Nola-managed account-deletion service exists.
 
 ## Google Play Data safety
 

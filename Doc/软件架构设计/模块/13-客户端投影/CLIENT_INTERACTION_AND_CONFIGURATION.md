@@ -78,3 +78,13 @@ Windows 窗口几何由宿主对当前 display.workArea 校验，纯函数裁剪
 验证边界和证据见[本轮人机工程记录](../../../当前任务/CROSS_PLATFORM_ERGONOMICS_20261108.md)。本轮 CLI 编辑器改动不代表终端图片粘贴及全部权限指引已完成验收。
 
 第二轮键盘细节：Mac 文本视图在普通回车处理前过滤自动重复，IME 标记文本交还 AppKit；Android 文本视图仅在精确粘贴组合的首次 KeyDown 导入附件。Web 档位控件的焦点定位与选择分离，只有显式选择调用 `onselect`；菜单位移属于展示状态，根据可视区域重新计算，不写入会话配置。键盘交互及 RTL 窄屏组件验收见上述记录的第二轮章节。
+
+## 远端任务与权限呈现补充（2026-11-10）
+
+客户端的连接、观察及界面生命周期不拥有源 Host 的执行权。离开页面、关闭标签或强制停止手机客户端后，恢复应读取原会话与 Run 的 committed 状态，不把重订阅变成新提交。取消沿原执行控制链提交，等待 canonical 终态；SSE EOF、动画结束或按钮变更不能代替封口与物理副作用核对。Host 重启后的已保存上下文追问不重放旧 Run。
+
+Android 当前路径是 `SseEventDto.safeReviewText` → `SseEvent.PermissionRequest` → `acceptHostPermissionEvent` → `HostAgentPermissionRequest` → `HostPermissionCard`/`PermissionDialog`。认证 Host 的 `safe_review_text` 保留到 UI；UTF-8 超过 32 KiB 的审阅文本拒绝解码。源身份、会话、客户端、nonce、有效期与版本仍由原事件接受边界核对，UI 没有增加新的授权来源。
+
+普通远端权限缺少安全审阅文本时禁用本次/对话允许，仍可拒绝或提供指引；不拿原始 args 拼成安全审阅回退。完整审阅与位置/数据边界/有效范围在可滚动详情中，紧凑卡片保留决定按钮。设备桥接保留原本地路径；不能用这项普通远端 UI 限制推断所有 OS 授权已改变。
+
+[宿主机交互](../../../UI和交互设计/HOST_CONNECTION_WORKFLOW.md)记录配对及操作，[本轮总账](../../../当前任务/REMOTE_HOST_AND_PROTOTYPE_ACCEPTANCE_20261110.md)记录真实执行/未覆盖范围。原型 68 场景/220 状态的草稿和分支仅属于独立浏览器页面内存；它不承担当前产品持久化、模型调用或跨设备同步。

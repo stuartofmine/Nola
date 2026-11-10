@@ -74,6 +74,12 @@ npm --prefix web/frontend test
 
 Apple 测试脚本使用隔离的 Test 输出目录，macOS Debug 构建保留配置的签名身份。Android 设备测试需要已启动的模拟器或明确选定的设备。契约测试不等于真实模型或各平台安装验收；结果和已知限制见[验收记录](Doc/当前任务/V1_REISSUE_ACCEPTANCE_20261109.md)。
 
+## 设计与验收
+
+[可操作原型](docs/design/nola-ui-prototype/README.md) · [68 项业务／220 个设计状态](docs/design/nola-ui-prototype/docs/BUSINESS-SCENARIOS.md) · [宿主机与原型验收总账](Doc/当前任务/REMOTE_HOST_AND_PROTOTYPE_ACCEPTANCE_20261110.md)
+
+原型回放、原生界面和真实模型执行分别记录覆盖范围。原型中有某个平台不表示该平台全部业务已经实现或验收。
+
 ## 版本与兼容
 
 **本次重新发布的 1.0.0 是首个受支持基线**。Nola 自有协议、ABI、数据库格式与 epoch 均从 **1** 开始，不保留此前开发格式的兼容实现。应用版本/build 与契约版本分别管理；外部标准协议沿用其自身的版本标识。
@@ -88,6 +94,6 @@ Apple 测试脚本使用隔离的 Test 输出目录，macOS Debug 构建保留�
 
 ## 参与贡献
 
-[贡献指南](CONTRIBUTING.md) · [行为准则](CODE_OF_CONDUCT.md) · [安全策略](SECURITY.md)
+[贡献指南](CONTRIBUTING.md) · [安全策略](SECURITY.md)
 
 项目采用 [Apache-2.0](LICENSE) 许可证。

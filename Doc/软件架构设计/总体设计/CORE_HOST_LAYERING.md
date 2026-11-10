@@ -38,7 +38,7 @@ Agent engine 的 context/memory/tool-policy/prompt/hook 模块仅做确定性计
 
 - 桌面/CLI/Rust Web 通过本地 Application Service 协调持久写入；Mac 另由独立 `nola-agent-host` 进程承载物理 Host 执行。它不是交互式 TUI，也不能用进程退出决定 Run 终态。
 - iOS/Android 的 `nola_mobile_bindings` 以 embedded Application 复用相同用例，最终提供 staticlib/cdylib；同 canonical 数据库身份复用 runtime 并持有写者锁，不为每次 FFI 查询新开业务库。
-- Worker/D1 是另一部署及数据域，处理认证、代理、渠道与 replica；不是桌面 Store 的替代写者。连接远端 Host 时，执行权属于准入绑定的源 Host，本地镜像不变成本地执行输入。
+- 当前产品没有独立 Backend 部署。本地 Application/Store 与用户拥有的 Host 承担业务；连接远端 Host 时，执行权属于准入绑定的源 Host，本地镜像不变成本地执行输入。
 
 源码与差距见[当前实现映射](CURRENT_IMPLEMENTATION_MAP.md)、[依赖图](DEPENDENCIES.md)和[本轮源码核对](ARCHITECTURE_SOURCE_AUDIT_20261108.md)。
 
