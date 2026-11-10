@@ -4,7 +4,7 @@
 
 ## Project Structure & Module Organization
 
-Nola is a local-first personal AI assistant with several clients and shared services. `Nola/` contains the SwiftUI iOS app, with UI in `Nola/UI/`, services in `Nola/Services/`, LLM code in `Nola/LLM/`, assets in `Nola/Assets.xcassets/`, and localization in `*.lproj/`. `NolaMac/` contains the native SwiftUI/AppKit macOS app; its tests live in `NolaMacTests/`. iOS unit tests live in `NolaTests/`; UI tests live in `NolaUITests/`. `cli/` provides the independent Rust CLI and Rust Web Host. `web/` contains templates/static assets plus native host helpers, and `android/` is the Kotlin/Compose client. Shared TypeScript/Bazel modules are under `modules/`; the Rust FFI core is `core/`. Docs are in `Doc/`.
+Nola is a local-first personal AI assistant with several clients and shared services. `Nola/` contains the SwiftUI iOS app, with UI in `Nola/UI/`, services in `Nola/Services/`, LLM code in `Nola/LLM/`, assets in `Nola/Assets.xcassets/`, and localization in `*.lproj/`. `NolaMac/` contains the native SwiftUI/AppKit macOS app; its tests live in `NolaMacTests/`. iOS unit tests live in `NolaTests/`; UI tests live in `NolaUITests/`. `cli/` provides the independent Rust CLI and Rust Web Host. `web/` contains templates/static assets plus native host helpers, and `android/` is the Kotlin/Compose client. Shared TypeScript/Bazel modules are under `modules/`; the Rust FFI core is `core/`. Public docs are in `docs/`, organized by purpose and platform. `Doc/当前任务/` and `Doc/历史任务/` are local-only records; do not track or export them.
 
 ## Build, Test, and Development Commands
 

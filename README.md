@@ -2,7 +2,7 @@
 
 A local-first personal AI assistant for macOS, iOS, Android, Windows, the Web and the terminal.
 
-[中文](README.zh-CN.md) · [Source](https://github.com/stuartofmine/Nola) · [Downloads](https://github.com/stuartofmine/Nola/releases) · [Documentation](Doc/README.md)
+[中文](README.zh-CN.md) · [Source](https://github.com/stuartofmine/Nola) · [Downloads](https://github.com/stuartofmine/Nola/releases) · [Documentation](docs/README.md)
 
 ## What it does
 
@@ -72,11 +72,11 @@ npm --prefix web/frontend test
 (cd android && ./gradlew test)
 ```
 
-Apple test runners use isolated Test outputs. macOS Debug builds must retain their configured signing identity. Android instrumentation tests require a running emulator or explicitly selected device. Contract tests do not constitute real-model or cross-platform installation acceptance; consult the [validation record](Doc/当前任务/V1_REISSUE_ACCEPTANCE_20261109.md) for results and known gaps.
+Apple test runners use isolated Test outputs. macOS Debug builds must retain their configured signing identity. Android instrumentation tests require a running emulator or explicitly selected device. Contract tests do not constitute real-model or cross-platform installation acceptance; consult the validation record（本地工作记录，不随仓库分发） for results and known gaps.
 
 ## Design and validation
 
-[Interactive prototype](docs/design/nola-ui-prototype/README.md) · [68 business scenarios and 220 design states](docs/design/nola-ui-prototype/docs/BUSINESS-SCENARIOS.md) · [Remote Host and prototype validation](Doc/当前任务/REMOTE_HOST_AND_PROTOTYPE_ACCEPTANCE_20261110.md)
+[Interactive prototype](docs/design/prototype/README.md) · [68 business scenarios and 220 design states](docs/design/prototype/docs/BUSINESS-SCENARIOS.md) · [Remote Host and prototype validation](docs/quality/VALIDATION_SCOPE.md)
 
 Prototype replays, native UI checks, and real-model execution have separate scopes. A platform shown in the prototype does not assert that every native workflow has been implemented or tested.
 
@@ -84,7 +84,7 @@ Prototype replays, native UI checks, and real-model execution have separate scop
 
 The reissued **1.0.0 is the first supported baseline**. All Nola-owned protocol, ABI and database format/epoch versions start at **1**. Earlier development formats are unsupported. Application version/build numbers are separate from contract versions; external standards retain their own version identifiers.
 
-Subsequent releases must preserve published interfaces and stored data, with explicit negotiation for protocol changes and tested, recoverable migrations for data changes. Unsupported formats are rejected without automatically deleting or rebuilding user data. See the [compatibility policy](Doc/软件架构设计/总体设计/VERSION_COMPATIBILITY.md).
+Subsequent releases must preserve published interfaces and stored data, with explicit negotiation for protocol changes and tested, recoverable migrations for data changes. Unsupported formats are rejected without automatically deleting or rebuilding user data. See the [compatibility policy](docs/architecture/总体设计/VERSION_COMPATIBILITY.md).
 
 ## Updates and releases
 

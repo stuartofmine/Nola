@@ -25,8 +25,7 @@ cli/target
 !/LICENSE.*
 !/.github/pull_request_template.md
 !/.github/ISSUE_TEMPLATE/*.md
-!/Doc/**/*.md
-!/docs/design/nola-ui-prototype/docs/MOBILE-IM-V24.md
+!/docs/**/*.md
 !/backend/LOGGING.md
 !/backend/worker/README.md
 !/web/README.md
@@ -128,3 +127,6 @@ web/app/static/ui-tests/
 
 # Private automation configuration must not be published
 /.github/
+
+# Local task/history records; public documentation lives under docs/.
+/Doc/

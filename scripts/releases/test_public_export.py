@@ -38,6 +38,23 @@ class PublicExportTests(unittest.TestCase):
             self.assertFalse((destination/'default.profraw').exists())
             self.assertFalse((destination/'Tests.xcresult').exists())
 
+    def test_local_tasks_and_history_never_export_even_when_tracked(self):
+        with tempfile.TemporaryDirectory() as name:
+            root=Path(name)/'private';root.mkdir();destination=Path(name)/'public'
+            subprocess.run(['git','init','-q',str(root)],check=True)
+            for folder in ['Doc/当前任务','Doc/历史任务']:
+                (root/folder).mkdir(parents=True)
+                (root/folder/'record.md').write_text('Local working record')
+                (root/folder/'trace.json').write_text('{"private": true}')
+            (root/'docs/platforms/android').mkdir(parents=True)
+            (root/'docs/platforms/android/README.md').write_text('Public Android guide')
+            subprocess.run(['git','add','.'],cwd=root,check=True)
+            module.export(root,destination,[])
+            self.assertFalse((destination/'Doc').exists())
+            self.assertEqual((destination/'docs/platforms/android/README.md').read_text(),'Public Android guide')
+            self.assertTrue((root/'Doc/当前任务/record.md').is_file())
+            self.assertTrue((root/'Doc/历史任务/trace.json').is_file())
+
     def test_unknown_token_stops_export_before_creating_destination(self):
         with tempfile.TemporaryDirectory() as name:
             root=Path(name)/'private';root.mkdir();destination=Path(name)/'public'

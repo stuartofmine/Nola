@@ -29,7 +29,7 @@ engines. The target architecture is:
   `AgentCommand` values are not a Host or UI protocol.
 
 The detailed normative contract is documented in
-[`../Doc/软件架构设计/总体设计/CORE_HOST_ARCHITECTURE.md`](../Doc/软件架构设计/总体设计/CORE_HOST_ARCHITECTURE.md).
+[`../docs/architecture/总体设计/CORE_HOST_ARCHITECTURE.md`](../docs/architecture/总体设计/CORE_HOST_ARCHITECTURE.md).
 
 ### Shared harness and isolated evaluation
 
@@ -247,7 +247,7 @@ CLI 工作区目录用于默认路径和项目上下文，不是文件系统沙�
 
 普通 Shell 源码检索由 Host 检查实际 argv 与资源：支持字面量 `grep`、`head`/`tail`、`cat`/`wc`、目录列表、固定数字行范围的 `sed -n`，以及受支持命令之间的管道、`;`、`&&`、`||`。系统程序路径固定，执行环境隔离；递归检索有完整资源检查与数量上限，敏感目标（含符号链接）仍审批。`operation_kind=inspect` 不是授权，任意脚本、展开、重定向写入或未知参数仍保留确认；可用结构化检索工具表达这些读取需求。`grep` 无匹配的退出码 1 仍按真实命令结果报告，不等于权限被拒绝。
 
-规范与测试范围见[权限边界契约](../Doc/软件架构设计/模块/07-权限与平台/PERMISSION_BOUNDARY_CONTRACT.md#filesystem-scope-and-model-requested-sensitive-reads)。真实模型回归脚本为 `python3 scripts/test_real_cli_external_resources.py`（在仓库根目录执行）；它创建隔离配置、数据库和测试文件，不修改现有用户会话。
+规范与测试范围见[权限边界契约](../docs/architecture/模块/07-权限与平台/PERMISSION_BOUNDARY_CONTRACT.md#filesystem-scope-and-model-requested-sensitive-reads)。真实模型回归脚本为 `python3 scripts/test_real_cli_external_resources.py`（在仓库根目录执行）；它创建隔离配置、数据库和测试文件，不修改现有用户会话。
 
 
 
