@@ -141,6 +141,9 @@ struct MacDataCenterView: View {
         }
         .background(MacPageBackground())
         .task { await refreshAll() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await service.refresh(synchronizeAutomations: false) }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSUbiquitousKeyValueStore.didChangeExternallyNotification)) { _ in
             Task { await service.refresh() }
         }
@@ -313,6 +316,8 @@ struct MacDataCenterView: View {
             contract: contract,
             policy: policy,
             isTesting: service.isRefreshing,
+            isRequestingPermission: service.requestingAccess.contains(snapshot.kind),
+            permissionError: service.permissionRequestErrors[snapshot.kind],
             requestAccess: { Task { await service.requestAccess(for: snapshot.kind) } },
             testConnection: { Task { await service.validate(snapshot.kind) } },
             setPolicy: { service.setAccessPolicy($0, for: snapshot.kind) },
@@ -664,6 +669,8 @@ private struct MacDataSourceCard: View {
     let contract: MacDataSourceContract?
     let policy: MacDataSourceAccessPolicy
     let isTesting: Bool
+    let isRequestingPermission: Bool
+    let permissionError: String?
     let requestAccess: () -> Void
     let testConnection: () -> Void
     let setPolicy: (MacDataSourceAccessPolicy) -> Void
@@ -736,6 +743,19 @@ private struct MacDataSourceCard: View {
                 )
             }
 
+            if let permissionError {
+                VStack(alignment: .leading, spacing: 5) {
+                    Label(macDataCenterText("mac.data_center.permission.failed", "Access could not be requested. Try again or review Nola in System Settings."), systemImage: "exclamationmark.triangle")
+                    Text(permissionError).textSelection(.enabled)
+                }
+                .font(.callout)
+                .foregroundStyle(.orange)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16).padding(.bottom, 12)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("data-source-permission-error-\(snapshot.kind.rawValue)")
+            }
+
             if isExpanded {
                 VStack(spacing: 0) {
                     Divider().padding(.horizontal, 14)
@@ -787,19 +807,33 @@ private struct MacDataSourceCard: View {
 
     @ViewBuilder
     private var authorizationAction: some View {
-        HStack(spacing: 10) {
-            Spacer(minLength: 10)
-            if snapshot.authorization == .notDetermined {
-                Button(macDataCenterText("mac.data_center.permission.allow", "Allow"), action: requestAccess)
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-            } else if snapshot.authorization == .denied || snapshot.authorization == .restricted {
-                Button(macDataCenterText("mac.data_center.permission.settings", "System Settings")) {
-                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy") {
-                        NSWorkspace.shared.open(url)
+        VStack(alignment: .leading, spacing: 8) {
+            if snapshot.authorization == .denied || snapshot.authorization == .restricted {
+                Text(macDataCenterText("mac.data_center.permission.recovery", "Review Nola’s access in System Settings, then return here to refresh its status. Restrictions may be managed by your organization."))
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 10) {
+                Spacer(minLength: 10)
+                if snapshot.authorization == .notDetermined {
+                    Button(action: requestAccess) {
+                        if isRequestingPermission {
+                            ProgressView().controlSize(.small)
+                                .accessibilityLabel(macDataCenterText("mac.data_center.permission.requesting", "Requesting access…"))
+                        } else {
+                            Text(macDataCenterText("mac.data_center.permission.continue", "Continue"))
+                        }
                     }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .disabled(isRequestingPermission)
+                } else if snapshot.authorization == .denied || snapshot.authorization == .restricted {
+                    Button(macDataCenterText("mac.data_center.permission.settings", "System Settings")) {
+                        if let url = URL(string: snapshot.kind.permissionSettingsURL) {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                    .controlSize(.small)
                 }
-                .controlSize(.small)
             }
         }
         .padding(.horizontal, 16)
@@ -819,6 +853,18 @@ private struct MacDataSourceCard: View {
         case .notDetermined: return .accentColor
         case .denied, .restricted: return .orange
         case .unavailable: return .secondary
+        }
+    }
+}
+
+extension MacDataSourceSnapshot.Kind {
+    var permissionSettingsURL: String {
+        switch self {
+        case .contacts: return "x-apple.systempreferences:com.apple.preference.security?Privacy_Contacts"
+        case .calendar: return "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars"
+        case .reminders: return "x-apple.systempreferences:com.apple.preference.security?Privacy_Reminders"
+        case .notifications: return "x-apple.systempreferences:com.apple.Notifications-Settings.extension"
+        case .health: return "x-apple.systempreferences:com.apple.preference.security?Privacy"
         }
     }
 }

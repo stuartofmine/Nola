@@ -957,9 +957,9 @@
 "permissions.setup.error_permission_format" = "Impossible d’obtenir l’autorisation pour %@. Vous pouvez l’accorder plus tard dans Réglages.";
 "permissions.setup.feature.control.desc" = "Vous pouvez révoquer les autorisations à tout moment dans Réglages";
 "permissions.setup.feature.control.title" = "Contrôle";
-"permissions.setup.feature.no_upload.desc" = "Vos données ne quittent jamais votre appareil";
-"permissions.setup.feature.no_upload.title" = "Aucun envoi";
-"permissions.setup.feature.privacy.desc" = "Toutes les données restent sur votre appareil";
+"permissions.setup.feature.no_upload.desc" = "Avec un modèle distant, les données autorisées pour le contexte sont envoyées au service choisi. Les politiques des sources contrôlent cet accès.";
+"permissions.setup.feature.no_upload.title" = "Contrôler l’accès au contexte";
+"permissions.setup.feature.privacy.desc" = "Autorisation système et accès de la conversation se règlent séparément. Accordez seulement l’accès nécessaire.";
 "permissions.setup.feature.privacy.title" = "Confidentialité";
 "permissions.setup.finish_setup" = "Terminer la configuration";
 "permissions.start_using_nola" = "Commencer à utiliser Nola";
@@ -2017,19 +2017,19 @@
 
 // MARK: - First-run guide v2
 "onboarding.guide.step_format" = "Étape %1$d sur %2$d";
-"onboarding.guide.runtime.eyebrow" = "CHOISIR L’EXÉCUTION";
-"onboarding.guide.runtime.title" = "Décidez où Nola travaille";
-"onboarding.guide.runtime.body" = "Commencez en automatique ou préférez cet appareil ou un hôte connecté. Les capacités réelles sont affichées avant l’exécution.";
-"onboarding.guide.runtime.auto" = "Automatique";
-"onboarding.guide.runtime.auto_detail" = "Utiliser le meilleur modèle configuré et les outils disponibles";
-"onboarding.guide.runtime.device" = "Cet appareil";
-"onboarding.guide.runtime.device_detail" = "Privilégier les modèles téléchargés et les capacités locales";
-"onboarding.guide.runtime.host" = "Hôte connecté";
-"onboarding.guide.runtime.host_detail" = "Utiliser un Mac ou hôte CLI associé pour davantage d’outils";
-"onboarding.guide.runtime.note" = "Il s’agit d’une préférence, pas d’une autorisation. Modèle et hôte restent modifiables par conversation.";
-"onboarding.guide.sources.title" = "Planifier le contexte utile";
-"onboarding.guide.sources.body" = "Choisissez les sources possibles. Aucun accès avant qu’une vraie tâche ne l’exige.";
-"onboarding.guide.sources.permission_note" = "L’accès système est expliqué et demandé au moment de l’utilisation. Ignorer une source ne bloque jamais le chat.";
+"onboarding.guide.runtime.eyebrow" = "CONNECTER UN MODÈLE";
+"onboarding.guide.runtime.title" = "Configurez un modèle avant de discuter";
+"onboarding.guide.runtime.body" = "Après ce guide, ouvrez Réglages → Modèles pour ajouter une connexion ou télécharger un modèle local, puis sélectionnez-le.";
+"onboarding.guide.runtime.auto" = "Connexions de modèles";
+"onboarding.guide.runtime.auto_detail" = "Ajoutez une connexion dans Réglages → Modèles, puis activez et sélectionnez un modèle.";
+"onboarding.guide.runtime.device" = "Modèles locaux";
+"onboarding.guide.runtime.device_detail" = "Téléchargez un modèle compatible dans Modèles avant d’utiliser l’inférence locale.";
+"onboarding.guide.runtime.host" = "Connecter un hôte";
+"onboarding.guide.runtime.host_detail" = "Connectez un Host dans les réglages du modèle pour utiliser ses outils Mac ou CLI. Les autorisations se gèrent sur cet hôte.";
+"onboarding.guide.runtime.note" = "Ce guide ne connecte aucun service, ne télécharge aucun modèle et n’accorde aucun accès. Les conversations utilisent votre sélection réelle.";
+"onboarding.guide.sources.title" = "Connecter les sources au besoin";
+"onboarding.guide.sources.body" = "Ajoutez des sources au moment de les utiliser. Autorisation système et accès de la conversation sont distincts ; le chat reste disponible sans accès aux données.";
+"onboarding.guide.sources.permission_note" = "L’autorisation système permet la lecture. La politique de la source et les choix de la conversation déterminent l’ajout au contexte du modèle.";
 "onboarding.guide.source.documents" = "Documents";
 "onboarding.guide.source.documents_detail" = "Joindre les fichiers directement au message concerné";
 "onboarding.guide.source.calendar" = "Calendrier";
@@ -2042,7 +2042,7 @@
 "onboarding.guide.source.iphone_detail" = "Utiliser les résumés Santé synchronisés et le contexte de l’appareil";
 "onboarding.guide.ready.eyebrow" = "PRÊT POUR UNE VRAIE TÂCHE";
 "onboarding.guide.ready.title" = "Commencez par le résultat";
-"onboarding.guide.ready.body" = "Décrivez ce qui doit être terminé. Nola affiche sources, raisonnement et activité des outils.";
+"onboarding.guide.ready.body" = "Connectez et sélectionnez un modèle dans Réglages → Modèles, puis envoyez votre premier message. Sources et outils suivent leurs politiques d’accès.";
 "onboarding.guide.task.day" = "Planifier ma journée";
 "onboarding.guide.task.day_detail" = "Réunir agenda et tâches ouvertes en un plan pratique";
 "onboarding.guide.task.document" = "Travailler avec un document";
@@ -3160,3 +3160,4 @@
 "model.action.resume" = "Reprendre le téléchargement";
 
 "chat.context.cannot_fit.recovery" = "La fenêtre de contexte de ce modèle est trop petite. Choisissez un modèle avec une fenêtre plus grande, puis réessayez. La conversation est conservée.";
+"onboarding.guide.action.later" = "Ignorer pour le moment";

@@ -927,9 +927,9 @@
 "permissions.setup.error_permission_format" = "Не удалось получить разрешение для %@. Вы можете выдать его позже в Настройках.";
 "permissions.setup.feature.control.desc" = "Вы можете в любой момент отозвать разрешения в Настройках";
 "permissions.setup.feature.control.title" = "Контроль";
-"permissions.setup.feature.no_upload.desc" = "Ваши данные никогда не покидают устройство";
-"permissions.setup.feature.no_upload.title" = "Без выгрузки";
-"permissions.setup.feature.privacy.desc" = "Все данные остаются на устройстве";
+"permissions.setup.feature.no_upload.desc" = "При удалённой модели разрешённые для контекста данные отправляются выбранной службе. Это регулируется политиками доступа источников.";
+"permissions.setup.feature.no_upload.title" = "Управление доступом к контексту";
+"permissions.setup.feature.privacy.desc" = "Системное разрешение и доступ чата настраиваются отдельно. Предоставляйте только права, нужные текущей функции.";
 "permissions.setup.feature.privacy.title" = "Конфиденциальность";
 "permissions.setup.finish_setup" = "Завершить настройку";
 "permissions.start_using_nola" = "Начать пользоваться Nola";
@@ -1987,19 +1987,19 @@
 
 // MARK: - First-run guide v2
 "onboarding.guide.step_format" = "Шаг %1$d из %2$d";
-"onboarding.guide.runtime.eyebrow" = "ВЫБЕРИТЕ ВЫПОЛНЕНИЕ";
-"onboarding.guide.runtime.title" = "Решите, где Nola выполняет работу";
-"onboarding.guide.runtime.body" = "Начните с автоматического выбора либо предпочитайте это устройство или подключённый хост. Возможности видны до запуска.";
-"onboarding.guide.runtime.auto" = "Автоматически";
-"onboarding.guide.runtime.auto_detail" = "Использовать лучшую настроенную модель и доступные инструменты";
-"onboarding.guide.runtime.device" = "Это устройство";
-"onboarding.guide.runtime.device_detail" = "Предпочитать загруженные модели и локальные возможности";
-"onboarding.guide.runtime.host" = "Подключённый хост";
-"onboarding.guide.runtime.host_detail" = "Использовать связанный Mac или CLI Host для расширенных инструментов";
-"onboarding.guide.runtime.note" = "Это предпочтение, а не разрешение. Модель и хост можно менять для каждого диалога.";
-"onboarding.guide.sources.title" = "Спланируйте нужный контекст";
-"onboarding.guide.sources.body" = "Выберите возможные источники. Доступ появится только тогда, когда он нужен задаче.";
-"onboarding.guide.sources.permission_note" = "Системный доступ объясняется и запрашивается во время использования. Пропуск источника не блокирует чат.";
+"onboarding.guide.runtime.eyebrow" = "ПОДКЛЮЧЕНИЕ МОДЕЛИ";
+"onboarding.guide.runtime.title" = "Настройте модель перед чатом";
+"onboarding.guide.runtime.body" = "После руководства откройте «Настройки → Модели», добавьте подключение или скачайте локальную модель и выберите её для чата.";
+"onboarding.guide.runtime.auto" = "Подключения моделей";
+"onboarding.guide.runtime.auto_detail" = "Добавьте подключение в «Настройки → Модели», затем включите и выберите модель.";
+"onboarding.guide.runtime.device" = "Локальные модели";
+"onboarding.guide.runtime.device_detail" = "Для локального инференса сначала скачайте совместимую модель на странице моделей.";
+"onboarding.guide.runtime.host" = "Подключение хоста";
+"onboarding.guide.runtime.host_detail" = "Подключите Host в настройках модели для инструментов Mac или CLI. Доступ к инструментам управляется на этом Host.";
+"onboarding.guide.runtime.note" = "Руководство не подключает службы, не скачивает модели и не выдаёт разрешения. Чат использует фактически выбранные модель и Host.";
+"onboarding.guide.sources.title" = "Подключайте источники по мере необходимости";
+"onboarding.guide.sources.body" = "Добавляйте источники по мере использования. Системное разрешение и доступ чата настраиваются отдельно; отказ в доступе к данным не мешает чату.";
+"onboarding.guide.sources.permission_note" = "Системное разрешение позволяет читать данные. Включение в контекст модели по-прежнему определяется политикой источника и выбором в чате.";
 "onboarding.guide.source.documents" = "Документы";
 "onboarding.guide.source.documents_detail" = "Прикрепляйте файлы к сообщению, которому они нужны";
 "onboarding.guide.source.calendar" = "Календарь";
@@ -2012,7 +2012,7 @@
 "onboarding.guide.source.iphone_detail" = "Используйте синхронизированные сводки здоровья и контекст устройства";
 "onboarding.guide.ready.eyebrow" = "ГОТОВО К РЕАЛЬНОЙ ЗАДАЧЕ";
 "onboarding.guide.ready.title" = "Начните с результата";
-"onboarding.guide.ready.body" = "Опишите, что нужно завершить. Nola покажет источники, рассуждение и работу инструментов.";
+"onboarding.guide.ready.body" = "Подключите и выберите модель в «Настройки → Модели», затем отправьте сообщение. Источники и инструменты используют свои политики доступа.";
 "onboarding.guide.task.day" = "Спланировать день";
 "onboarding.guide.task.day_detail" = "Объединить расписание и открытые задачи в практичный план";
 "onboarding.guide.task.document" = "Обработать документ";
@@ -3130,3 +3130,4 @@
 "model.action.resume" = "Продолжить загрузку";
 
 "chat.context.cannot_fit.recovery" = "Контекстное окно этой модели слишком мало. Выберите модель с большим контекстным окном и повторите попытку. Разговор сохранён.";
+"onboarding.guide.action.later" = "Пока пропустить";

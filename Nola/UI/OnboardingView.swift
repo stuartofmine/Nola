@@ -6,17 +6,19 @@ import SwiftUI
 
 struct OnboardingView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @AppStorage("onboarding.guide.version") private var completedGuideVersion = 0
-    @AppStorage("onboarding.runtime.preference") private var runtimePreference = "automatic"
-    @AppStorage("onboarding.planned.sources") private var plannedSources = ""
 
-    @State private var step = 0
+    @State private var step: Int
     @State private var navigationDirection = 1
-    @State private var selectedSources: Set<String> = ["documents"]
 
     private let totalSteps = 4
+
+    init(initialStep: Int = 0) {
+        _step = State(initialValue: min(max(initialStep, 0), 3))
+    }
 
     var body: some View {
         ZStack {
@@ -40,21 +42,9 @@ struct OnboardingView: View {
             }
         }
         .preferredColorScheme(nil)
+        .tint(DesignTokens.actionColor)
         .animation(reduceMotion ? nil : DesignTokens.revealAnimation, value: step)
-        .onAppear {
-            let restored = Set(
-                plannedSources
-                    .split(separator: ",")
-                    .map(String.init)
-                    .filter { !$0.isEmpty }
-            )
-            if !restored.isEmpty {
-                selectedSources = restored
-            }
-        }
-        .onChange(of: selectedSources) { _, value in
-            plannedSources = value.sorted().joined(separator: ",")
-        }
+
     }
 
     private var stepTransition: AnyTransition {
@@ -82,13 +72,16 @@ struct OnboardingView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Nola")
                         .font(.headline.weight(.bold))
-                    Text(localized("onboarding.core.brand_subtitle"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    if !dynamicTypeSize.isAccessibilitySize {
+                        Text(localized("onboarding.core.brand_subtitle"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                Text(
+                Text("\(step + 1)/\(totalSteps)")
+                .accessibilityLabel(
                     String(
                         format: localized("onboarding.guide.step_format"),
                         step + 1,
@@ -164,26 +157,20 @@ struct OnboardingView: View {
                 body: localized("onboarding.guide.runtime.body")
             ) {
                 VStack(spacing: 10) {
-                    RuntimeChoiceRow(
-                        id: "automatic",
+                    FirstTaskRow(
                         icon: "wand.and.stars",
                         title: localized("onboarding.guide.runtime.auto"),
-                        detail: localized("onboarding.guide.runtime.auto_detail"),
-                        selection: $runtimePreference
+                        detail: localized("onboarding.guide.runtime.auto_detail")
                     )
-                    RuntimeChoiceRow(
-                        id: "device",
+                    FirstTaskRow(
                         icon: "iphone",
                         title: localized("onboarding.guide.runtime.device"),
-                        detail: localized("onboarding.guide.runtime.device_detail"),
-                        selection: $runtimePreference
+                        detail: localized("onboarding.guide.runtime.device_detail")
                     )
-                    RuntimeChoiceRow(
-                        id: "host",
+                    FirstTaskRow(
                         icon: "desktopcomputer",
                         title: localized("onboarding.guide.runtime.host"),
-                        detail: localized("onboarding.guide.runtime.host_detail"),
-                        selection: $runtimePreference
+                        detail: localized("onboarding.guide.runtime.host_detail")
                     )
                 }
 
@@ -199,29 +186,20 @@ struct OnboardingView: View {
                 body: localized("onboarding.guide.sources.body")
             ) {
                 VStack(spacing: 10) {
-                    SourcePlanRow(
-                        id: "documents",
+                    FirstTaskRow(
                         icon: "doc.text",
-                        color: .blue,
                         title: localized("onboarding.guide.source.documents"),
-                        detail: localized("onboarding.guide.source.documents_detail"),
-                        selectedSources: $selectedSources
+                        detail: localized("onboarding.guide.source.documents_detail")
                     )
-                    SourcePlanRow(
-                        id: "calendar",
+                    FirstTaskRow(
                         icon: "calendar",
-                        color: .orange,
                         title: localized("onboarding.guide.source.calendar"),
-                        detail: localized("onboarding.core.calendar_detail"),
-                        selectedSources: $selectedSources
+                        detail: localized("onboarding.core.calendar_detail")
                     )
-                    SourcePlanRow(
-                        id: "health",
+                    FirstTaskRow(
                         icon: "heart.fill",
-                        color: .red,
                         title: localized("onboarding.guide.source.health"),
-                        detail: localized("onboarding.core.health_detail"),
-                        selectedSources: $selectedSources
+                        detail: localized("onboarding.core.health_detail")
                     )
                 }
 
@@ -263,19 +241,28 @@ struct OnboardingView: View {
     }
 
     private var footer: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 10) {
-                backButton
-                    .opacity(step > 0 ? 1 : 0)
-                    .disabled(step == 0)
-                    .accessibilityHidden(step == 0)
-                primaryButton
-            }
-            VStack(spacing: 10) {
-                primaryButton
-                if step > 0 {
+        VStack(spacing: 8) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
                     backButton
+                        .opacity(step > 0 ? 1 : 0)
+                        .disabled(step == 0)
+                        .accessibilityHidden(step == 0)
+                    primaryButton
                 }
+                VStack(spacing: 10) {
+                    primaryButton
+                    if step > 0 {
+                        backButton
+                    }
+                }
+            }
+            if step < totalSteps - 1 {
+                Button(localized("onboarding.guide.action.later"), action: completeOnboarding)
+                    .buttonStyle(.plain)
+                    .font(.callout)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .accessibilityIdentifier("onboarding.skip")
             }
         }
         .padding(.horizontal, 22)
@@ -315,17 +302,12 @@ struct OnboardingView: View {
             }
             .padding(.horizontal, 18)
             .frame(minHeight: 50)
-            .foregroundStyle(.white)
-            .background(
-                LinearGradient(
-                    colors: [Color.accentColor, Color(red: 0.02, green: 0.55, blue: 0.62)],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                ),
-                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-            )
+
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.borderedProminent)
+        .foregroundStyle(DesignTokens.onActionColor)
+        .controlSize(.large)
+        .accessibilityIdentifier("onboarding.next")
         .frame(maxWidth: .infinity)
     }
 
@@ -342,7 +324,10 @@ struct OnboardingView: View {
             step += 1
             return
         }
-        plannedSources = selectedSources.sorted().joined(separator: ",")
+        completeOnboarding()
+    }
+
+    private func completeOnboarding() {
         completedGuideVersion = 2
         hasCompletedOnboarding = true
     }
@@ -447,116 +432,6 @@ private struct GuideFlowConnector: View {
             .fill(Color.secondary.opacity(0.18))
             .frame(width: 1, height: 14)
             .padding(.leading, 18)
-    }
-}
-
-private struct RuntimeChoiceRow: View {
-    let id: String
-    let icon: String
-    let title: String
-    let detail: String
-    @Binding var selection: String
-
-    var body: some View {
-        Button {
-            selection = id
-        } label: {
-            HStack(spacing: 13) {
-                Image(systemName: icon)
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(selection == id ? Color.accentColor : Color.secondary)
-                    .frame(width: 38, height: 38)
-                    .background(Color.accentColor.opacity(selection == id ? 0.12 : 0.05), in: RoundedRectangle(cornerRadius: 11))
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title).font(.subheadline.weight(.semibold))
-                    Text(detail)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineSpacing(2)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                Spacer()
-                Image(systemName: selection == id ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(selection == id ? Color.accentColor : Color.secondary.opacity(0.45))
-            }
-            .padding(14)
-            .contentShape(Rectangle())
-            .background {
-                RoundedRectangle(cornerRadius: 17, style: .continuous)
-                    .fill(
-                        selection == id
-                            ? DesignTokens.accentSubtleColor
-                            : Color(.secondarySystemBackground).opacity(0.78)
-                    )
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 17, style: .continuous)
-                    .stroke(Color.secondary.opacity(0.12))
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(title)
-        .accessibilityHint(detail)
-        .accessibilityAddTraits(selection == id ? .isSelected : [])
-    }
-}
-
-private struct SourcePlanRow: View {
-    let id: String
-    let icon: String
-    let color: Color
-    let title: String
-    let detail: String
-    @Binding var selectedSources: Set<String>
-
-    var body: some View {
-        Button {
-            if selectedSources.contains(id) {
-                selectedSources.remove(id)
-            } else {
-                selectedSources.insert(id)
-            }
-        } label: {
-            HStack(spacing: 13) {
-                Image(systemName: icon)
-                    .foregroundStyle(color)
-                    .frame(width: 36, height: 36)
-                    .background(color.opacity(0.11), in: RoundedRectangle(cornerRadius: 10))
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title).font(.subheadline.weight(.semibold))
-                    Text(detail)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineSpacing(2)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                Spacer()
-                Image(systemName: selectedSources.contains(id) ? "checkmark.square.fill" : "square")
-                    .foregroundStyle(selectedSources.contains(id) ? Color.accentColor : Color.secondary.opacity(0.45))
-            }
-            .padding(14)
-            .contentShape(Rectangle())
-            .background {
-                RoundedRectangle(cornerRadius: 17, style: .continuous)
-                    .fill(
-                        selectedSources.contains(id)
-                            ? DesignTokens.accentSubtleColor
-                            : Color(.secondarySystemBackground).opacity(0.78)
-                    )
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 17, style: .continuous)
-                    .stroke(
-                        Color.secondary.opacity(0.12)
-                    )
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(title)
-        .accessibilityHint(detail)
-        .accessibilityAddTraits(selectedSources.contains(id) ? .isSelected : [])
     }
 }
 

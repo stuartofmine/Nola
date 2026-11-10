@@ -93,6 +93,8 @@ final class MacPlatformDataService {
 
     var snapshots: [MacDataSourceSnapshot] = []
     var isRefreshing = false
+    private(set) var requestingAccess: Set<MacDataSourceSnapshot.Kind> = []
+    private(set) var permissionRequestErrors: [MacDataSourceSnapshot.Kind: String] = [:]
     var automationContextText = ""
     var automationContextUpdatedAt: Date?
     var automationContextError: String?
@@ -101,6 +103,7 @@ final class MacPlatformDataService {
     @ObservationIgnored private lazy var eventStore = EKEventStore()
     private let registry: MacDataSourceRegistry
     private let preferences: UserDefaults
+    @ObservationIgnored private let permissionRequest: ((MacDataSourceSnapshot.Kind) async throws -> Void)?
     private var notificationTokens: [NSObjectProtocol] = []
     @ObservationIgnored private var isMonitoringChanges = false
     private var debouncedRefreshTask: Task<Void, Never>?
@@ -109,10 +112,12 @@ final class MacPlatformDataService {
     init(
         registry: MacDataSourceRegistry? = nil,
         startsPeriodicRefresh: Bool = !MacProcessRuntimePolicy.isRunningTests,
-        preferences: UserDefaults = .standard
+        preferences: UserDefaults = .standard,
+        permissionRequest: ((MacDataSourceSnapshot.Kind) async throws -> Void)? = nil
     ) {
         self.registry = registry ?? .shared
         self.preferences = preferences
+        self.permissionRequest = permissionRequest
         snapshots = Self.placeholderSnapshots
         if startsPeriodicRefresh {
             periodicRefreshTask = Task { @MainActor [weak self] in
@@ -164,22 +169,29 @@ final class MacPlatformDataService {
     }
 
     func requestAccess(for kind: MacDataSourceSnapshot.Kind) async {
+        guard kind != .health, requestingAccess.insert(kind).inserted else { return }
+        defer { requestingAccess.remove(kind) }
+        permissionRequestErrors[kind] = nil
         ensureMonitoringChanges()
         do {
-            switch kind {
-            case .contacts:
-                _ = try await contactStore.requestAccess(for: .contacts)
-            case .calendar:
-                _ = try await eventStore.requestFullAccessToEvents()
-            case .reminders:
-                _ = try await eventStore.requestFullAccessToReminders()
-            case .notifications:
-                _ = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound])
-            case .health:
-                break
+            if let permissionRequest {
+                try await permissionRequest(kind)
+            } else {
+                switch kind {
+                case .contacts:
+                    _ = try await contactStore.requestAccess(for: .contacts)
+                case .calendar:
+                    _ = try await eventStore.requestFullAccessToEvents()
+                case .reminders:
+                    _ = try await eventStore.requestFullAccessToReminders()
+                case .notifications:
+                    _ = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound])
+                case .health:
+                    break
+                }
             }
         } catch {
-            // The refreshed authorization snapshot is the user-facing outcome.
+            permissionRequestErrors[kind] = error.localizedDescription
         }
         await refresh()
     }

@@ -53,10 +53,13 @@ class WorkspacePageMatrixTest {
                 compose.onAllNodesWithTag("navigation.bottom").fetchSemanticsNodes().isNotEmpty()
                     || compose.onAllNodesWithText(context.getString(R.string.onboarding_guide_action_next)).fetchSemanticsNodes().isNotEmpty()
             }
-            // Exercise the first-run pages, retaining the default local runtime
-            // and granting no system permissions or model credentials.
+            // The guide teaches real setup without pretend runtime/source selections
+            // or requests for system permissions and model credentials.
             if (compose.onAllNodesWithTag("navigation.bottom").fetchSemanticsNodes().isEmpty()) {
                 for (step in 0..3) {
+                    for (role in listOf(androidx.compose.ui.semantics.Role.RadioButton, androidx.compose.ui.semantics.Role.Checkbox)) {
+                        compose.onAllNodes(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.Role, role)).assertCountEquals(0)
+                    }
                     capture("onboarding-$step")
                     val label = if (step == 3) R.string.onboarding_guide_action_start else R.string.onboarding_guide_action_next
                     compose.onNodeWithText(context.getString(label)).performClick()

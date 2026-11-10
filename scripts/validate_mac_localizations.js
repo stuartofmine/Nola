@@ -9,7 +9,7 @@ const path = require("path");
 const root = path.resolve(__dirname, "..");
 const catalogPath = path.join(root, "NolaMac", "Localizable.xcstrings");
 const requiredLocales = ["en", "zh-Hans", "zh-Hant", "ja", "ko", "fr", "de", "es"];
-const criticalKeyPattern = /Data Center|Data source|Sources|Usage|Health|Web source|Default|conversation|attention|validation|Validated|Never used|Last used/i;
+const criticalKeyPattern = /Data Center|Data source|Sources|Usage|Health|Web source|Default|conversation|attention|validation|Validated|Never used|Last used|^onboarding\.|^mac\.data_center\.permission\./i;
 
 function placeholders(value) {
     return [...String(value).matchAll(/%(?:(\d+)\$)?[-+#0 ']*\d*(?:\.\d+)?(?:hh|h|ll|l|j|z|t|L)?[@a-zA-Z%]/g)]

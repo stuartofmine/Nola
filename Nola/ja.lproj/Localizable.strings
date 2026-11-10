@@ -927,9 +927,9 @@
 "permissions.setup.error_permission_format" = "%@ の権限を取得できませんでした。後で設定から許可できます。";
 "permissions.setup.feature.control.desc" = "設定からいつでも権限を取り消せます";
 "permissions.setup.feature.control.title" = "コントロール";
-"permissions.setup.feature.no_upload.desc" = "データは端末外に送信されません";
-"permissions.setup.feature.no_upload.title" = "アップロードなし";
-"permissions.setup.feature.privacy.desc" = "すべてのデータは端末内に保持されます";
+"permissions.setup.feature.no_upload.desc" = "リモートモデルでは、コンテキストへの追加を許可したデータを選択したサービスへ送信します。ソースのアクセス方針で管理できます。";
+"permissions.setup.feature.no_upload.title" = "コンテキストへのアクセスを管理";
+"permissions.setup.feature.privacy.desc" = "システム権限と会話へのアクセスは別設定です。現在の機能に必要な権限だけを許可します。";
 "permissions.setup.feature.privacy.title" = "プライバシー";
 "permissions.setup.finish_setup" = "設定を完了";
 "permissions.start_using_nola" = "Nola を使い始める";
@@ -1987,19 +1987,19 @@
 
 // MARK: - First-run guide v2
 "onboarding.guide.step_format" = "%2$d ステップ中 %1$d";
-"onboarding.guide.runtime.eyebrow" = "実行方法を選ぶ";
-"onboarding.guide.runtime.title" = "Nola が作業する場所を決める";
-"onboarding.guide.runtime.body" = "自動選択から始めるか、この端末または接続済みホストを優先できます。実行前に利用可能な機能を表示します。";
-"onboarding.guide.runtime.auto" = "自動選択";
-"onboarding.guide.runtime.auto_detail" = "設定済みの最適なモデルと利用可能なツールを使う";
-"onboarding.guide.runtime.device" = "この端末";
-"onboarding.guide.runtime.device_detail" = "ダウンロード済みモデルとローカル機能を優先";
-"onboarding.guide.runtime.host" = "接続済みホスト";
-"onboarding.guide.runtime.host_detail" = "ペアリングした Mac または CLI Host でツールを拡張";
-"onboarding.guide.runtime.note" = "これは設定の好みであり、権限の付与ではありません。会話ごとにモデルとホストを変更できます。";
-"onboarding.guide.sources.title" = "使いたいコンテキストを計画";
-"onboarding.guide.sources.body" = "役立ちそうな情報源を選びます。実際のタスクで必要になるまでアクセスしません。";
-"onboarding.guide.sources.permission_note" = "システムアクセスは利用時に説明して要求します。情報源をスキップしてもチャットは使えます。";
+"onboarding.guide.runtime.eyebrow" = "モデルを接続";
+"onboarding.guide.runtime.title" = "会話の前にモデルを設定";
+"onboarding.guide.runtime.body" = "ガイドの後、「設定 → モデル」で接続を追加するかローカルモデルをダウンロードし、会話用のモデルを選びます。";
+"onboarding.guide.runtime.auto" = "モデル接続";
+"onboarding.guide.runtime.auto_detail" = "「設定 → モデル」で接続を追加し、モデルを有効にして選択します。";
+"onboarding.guide.runtime.device" = "ローカルモデル";
+"onboarding.guide.runtime.device_detail" = "ローカル推論の前に、モデル画面で対応モデルをダウンロードします。";
+"onboarding.guide.runtime.host" = "ホストを接続";
+"onboarding.guide.runtime.host_detail" = "モデル設定で Host に接続すると Mac や CLI のツールを使えます。ツールの権限は Host 側で管理します。";
+"onboarding.guide.runtime.note" = "このガイドではサービスへの接続、モデルのダウンロード、権限付与は行いません。会話には実際に選んだモデルと Host を使います。";
+"onboarding.guide.sources.title" = "必要なときにソースを接続";
+"onboarding.guide.sources.body" = "必要な機能を使うときにソースを追加します。システム権限と会話へのアクセスは別設定です。データアクセスを拒否してもチャットできます。";
+"onboarding.guide.sources.permission_note" = "システム権限はデータの読み取りを許可します。モデルのコンテキストに含めるかは、ソースのアクセスポリシーと会話の選択で決まります。";
 "onboarding.guide.source.documents" = "文書";
 "onboarding.guide.source.documents_detail" = "必要なメッセージにファイルを直接添付";
 "onboarding.guide.source.calendar" = "カレンダー";
@@ -2012,7 +2012,7 @@
 "onboarding.guide.source.iphone_detail" = "同期されたヘルスケア概要と端末コンテキストを利用";
 "onboarding.guide.ready.eyebrow" = "実際のタスクを始める準備";
 "onboarding.guide.ready.title" = "機能ではなく成果から始める";
-"onboarding.guide.ready.body" = "完了してほしい結果を伝えてください。Nola は情報源、思考、ツール操作を表示します。";
+"onboarding.guide.ready.body" = "「設定 → モデル」で接続とモデルの選択を済ませ、最初のメッセージを送ります。ソースとツールは各アクセス方針に従います。";
 "onboarding.guide.task.day" = "今日を計画";
 "onboarding.guide.task.day_detail" = "予定と未完了タスクを実行可能な計画にまとめる";
 "onboarding.guide.task.document" = "文書を処理";
@@ -3115,3 +3115,4 @@
 "model.action.resume" = "ダウンロードを再開";
 
 "chat.context.cannot_fit.recovery" = "このモデルのコンテキストウィンドウが不足しています。モデルメニューで、より大きなコンテキストウィンドウのモデルを選んで再試行してください。元の会話は保持されています。";
+"onboarding.guide.action.later" = "今はスキップ";

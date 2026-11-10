@@ -1109,9 +1109,9 @@
 "permissions.setup.info.none_granted.desc" = "您可以随时在设置中授权权限，以获得更好的体验。";
 
 "permissions.setup.feature.privacy.title" = "隐私保护";
-"permissions.setup.feature.privacy.desc" = "所有数据都保存在您的设备上";
-"permissions.setup.feature.no_upload.title" = "不会上传";
-"permissions.setup.feature.no_upload.desc" = "您的数据永远不会离开设备";
+"permissions.setup.feature.privacy.desc" = "系统授权和对话访问策略分别设置。只授予当前功能需要的权限。";
+"permissions.setup.feature.no_upload.title" = "上下文访问可控";
+"permissions.setup.feature.no_upload.desc" = "使用远程模型时，获准加入上下文的资料会发送给所选服务；可通过来源访问策略控制。";
 "permissions.setup.feature.control.title" = "完全控制";
 "permissions.setup.feature.control.desc" = "您可以随时在设置中撤销授权";
 
@@ -2130,19 +2130,19 @@
 
 // MARK: - First-run guide v2
 "onboarding.guide.step_format" = "第 %1$d 步，共 %2$d 步";
-"onboarding.guide.runtime.eyebrow" = "选择运行方式";
-"onboarding.guide.runtime.title" = "决定 Nola 在哪里完成工作";
-"onboarding.guide.runtime.body" = "可以从自动选择开始，也可以偏好本机或已连接的宿主机。每次执行前都会明确显示实际可用能力。";
-"onboarding.guide.runtime.auto" = "自动选择";
-"onboarding.guide.runtime.auto_detail" = "使用当前配置中最合适的模型与可用工具";
-"onboarding.guide.runtime.device" = "这台设备";
-"onboarding.guide.runtime.device_detail" = "优先使用已下载模型和设备本地能力";
-"onboarding.guide.runtime.host" = "已连接宿主机";
-"onboarding.guide.runtime.host_detail" = "使用配对的 Mac 或 CLI Host 扩展工具能力";
-"onboarding.guide.runtime.note" = "这里只记录偏好，不会授予权限。每个对话都可以重新切换模型和宿主机。";
-"onboarding.guide.sources.title" = "规划你想使用的上下文";
-"onboarding.guide.sources.body" = "先选择未来可能有用的来源；只有真实任务需要时才会访问。";
-"onboarding.guide.sources.permission_note" = "系统权限会在真正使用时解释并申请。跳过任何来源都不会影响基础对话。";
+"onboarding.guide.runtime.eyebrow" = "接入模型";
+"onboarding.guide.runtime.title" = "先配置模型，再开始对话";
+"onboarding.guide.runtime.body" = "完成引导后，前往“设置 → 模型”添加模型连接或下载本地模型，再选择对话使用的模型。";
+"onboarding.guide.runtime.auto" = "模型连接";
+"onboarding.guide.runtime.auto_detail" = "在“设置 → 模型”添加连接，再启用并选择一个模型。";
+"onboarding.guide.runtime.device" = "本地模型";
+"onboarding.guide.runtime.device_detail" = "在模型页下载兼容模型。完成下载前无法使用本地推理。";
+"onboarding.guide.runtime.host" = "连接宿主机";
+"onboarding.guide.runtime.host_detail" = "需要 Mac 或 CLI 工具时，在模型配置中连接 Host；工具权限在 Host 端管理。";
+"onboarding.guide.runtime.note" = "引导不连接服务、不下载模型，也不授予权限。对话使用你实际选择的模型与宿主机。";
+"onboarding.guide.sources.title" = "按需连接资料来源";
+"onboarding.guide.sources.body" = "使用相关功能时再添加来源。系统授权与对话访问策略分别设置；拒绝数据权限后仍可使用聊天。";
+"onboarding.guide.sources.permission_note" = "系统授权允许 Nola 读取资料。是否加入模型上下文，仍由来源访问策略和当前对话选择决定。";
 "onboarding.guide.source.documents" = "文档";
 "onboarding.guide.source.documents_detail" = "把文件直接挂在需要它的那条消息下方";
 "onboarding.guide.source.calendar" = "日历";
@@ -2155,7 +2155,7 @@
 "onboarding.guide.source.iphone_detail" = "同步可用时使用健康摘要和设备上下文";
 "onboarding.guide.ready.eyebrow" = "准备完成真实任务";
 "onboarding.guide.ready.title" = "从结果开始，而不是寻找功能";
-"onboarding.guide.ready.body" = "直接描述要完成的结果。执行过程中，Nola 会展示来源、思考过程和工具活动。";
+"onboarding.guide.ready.body" = "先在“设置 → 模型”完成连接并选择模型，再发送第一条消息。来源与工具按各自的访问策略使用。";
 "onboarding.guide.task.day" = "规划今天";
 "onboarding.guide.task.day_detail" = "把日程与未完成事项整理成可执行计划";
 "onboarding.guide.task.document" = "处理一份文档";
@@ -3278,3 +3278,4 @@
 "model.action.resume" = "继续下载";
 
 "chat.context.cannot_fit.recovery" = "当前模型的上下文窗口不足。请在模型菜单中选择上下文窗口更大的模型后重试。原会话内容已保留。";
+"onboarding.guide.action.later" = "暂时跳过";

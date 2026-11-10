@@ -689,19 +689,19 @@
 
     <!-- First-run guide v2 -->
     <string name="onboarding_guide_step_format">%2$d ステップ中 %1$d</string>
-    <string name="onboarding_guide_runtime_eyebrow">実行方法を選ぶ</string>
-    <string name="onboarding_guide_runtime_title">Nola が作業する場所を決める</string>
-    <string name="onboarding_guide_runtime_body">自動選択から始めるか、この端末または接続済みホストを優先できます。実行前に利用可能な機能を表示します。</string>
-    <string name="onboarding_guide_runtime_auto">自動選択</string>
-    <string name="onboarding_guide_runtime_auto_detail">設定済みの最適なモデルと利用可能なツールを使う</string>
-    <string name="onboarding_guide_runtime_device">この端末</string>
-    <string name="onboarding_guide_runtime_device_detail">ダウンロード済みモデルとローカル機能を優先</string>
-    <string name="onboarding_guide_runtime_host">接続済みホスト</string>
-    <string name="onboarding_guide_runtime_host_detail">ペアリングした Mac または CLI Host でツールを拡張</string>
-    <string name="onboarding_guide_runtime_note">これは設定の好みであり、権限の付与ではありません。会話ごとにモデルとホストを変更できます。</string>
-    <string name="onboarding_guide_sources_title">使いたいコンテキストを計画</string>
-    <string name="onboarding_guide_sources_body">役立ちそうな情報源を選びます。実際のタスクで必要になるまでアクセスしません。</string>
-    <string name="onboarding_guide_sources_permission_note">システムアクセスは利用時に説明して要求します。情報源をスキップしてもチャットは使えます。</string>
+    <string name="onboarding_guide_runtime_eyebrow">モデルを接続</string>
+    <string name="onboarding_guide_runtime_title">会話の前にモデルを設定</string>
+    <string name="onboarding_guide_runtime_body">ガイドの後、「設定 → モデル」で接続を追加するかローカルモデルをダウンロードし、会話用のモデルを選びます。</string>
+    <string name="onboarding_guide_runtime_auto">モデル接続</string>
+    <string name="onboarding_guide_runtime_auto_detail">「設定 → モデル」で接続を追加し、モデルを有効にして選択します。</string>
+    <string name="onboarding_guide_runtime_device">ローカルモデル</string>
+    <string name="onboarding_guide_runtime_device_detail">ローカル推論の前に、モデル画面で対応モデルをダウンロードします。</string>
+    <string name="onboarding_guide_runtime_host">ホストを接続</string>
+    <string name="onboarding_guide_runtime_host_detail">モデル設定で Host に接続すると Mac や CLI のツールを使えます。ツールの権限は Host 側で管理します。</string>
+    <string name="onboarding_guide_runtime_note">このガイドではサービスへの接続、モデルのダウンロード、権限付与は行いません。会話には実際に選んだモデルと Host を使います。</string>
+    <string name="onboarding_guide_sources_title">必要なときにソースを接続</string>
+    <string name="onboarding_guide_sources_body">必要な機能を使うときにソースを追加します。システム権限と会話へのアクセスは別設定です。データアクセスを拒否してもチャットできます。</string>
+    <string name="onboarding_guide_sources_permission_note">システム権限はデータの読み取りを許可します。モデルのコンテキストに含めるかは、ソースのアクセスポリシーと会話の選択で決まります。</string>
     <string name="onboarding_guide_source_documents">文書</string>
     <string name="onboarding_guide_source_documents_detail">必要なメッセージにファイルを直接添付</string>
     <string name="onboarding_guide_source_calendar">カレンダー</string>
@@ -714,7 +714,7 @@
     <string name="onboarding_guide_source_iphone_detail">同期されたヘルスケア概要と端末コンテキストを利用</string>
     <string name="onboarding_guide_ready_eyebrow">実際のタスクを始める準備</string>
     <string name="onboarding_guide_ready_title">機能ではなく成果から始める</string>
-    <string name="onboarding_guide_ready_body">完了してほしい結果を伝えてください。Nola は情報源、思考、ツール操作を表示します。</string>
+    <string name="onboarding_guide_ready_body">「設定 → モデル」で接続とモデルの選択を済ませ、最初のメッセージを送ります。ソースとツールは各アクセス方針に従います。</string>
     <string name="onboarding_guide_task_day">今日を計画</string>
     <string name="onboarding_guide_task_day_detail">予定と未完了タスクを実行可能な計画にまとめる</string>
     <string name="onboarding_guide_task_document">文書を処理</string>
@@ -1323,4 +1323,5 @@
     <string name="goal_operation_failed">目標の操作を確認できません。再試行の前に状態を確認してください。</string>
     <string name="goal_needs_user">入力または権限の確認待ち</string>
     <string name="inspector_conversation_needed">会話を開始するか開くと、進捗の確認や目標の設定ができます。</string>
+    <string name="onboarding_guide_action_later">今はスキップ</string>
 </resources>

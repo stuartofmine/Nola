@@ -741,19 +741,19 @@
 
     <!-- First-run guide v2 -->
     <string name="onboarding_guide_step_format">第 %1$d 步，共 %2$d 步</string>
-    <string name="onboarding_guide_runtime_eyebrow">选择运行方式</string>
-    <string name="onboarding_guide_runtime_title">决定 Nola 在哪里完成工作</string>
-    <string name="onboarding_guide_runtime_body">可以从自动选择开始，也可以偏好本机或已连接的宿主机。每次执行前都会明确显示实际可用能力。</string>
-    <string name="onboarding_guide_runtime_auto">自动选择</string>
-    <string name="onboarding_guide_runtime_auto_detail">使用当前配置中最合适的模型与可用工具</string>
-    <string name="onboarding_guide_runtime_device">这台设备</string>
-    <string name="onboarding_guide_runtime_device_detail">优先使用已下载模型和设备本地能力</string>
-    <string name="onboarding_guide_runtime_host">已连接宿主机</string>
-    <string name="onboarding_guide_runtime_host_detail">使用配对的 Mac 或 CLI Host 扩展工具能力</string>
-    <string name="onboarding_guide_runtime_note">这里只记录偏好，不会授予权限。每个对话都可以重新切换模型和宿主机。</string>
-    <string name="onboarding_guide_sources_title">规划你想使用的上下文</string>
-    <string name="onboarding_guide_sources_body">先选择未来可能有用的来源；只有真实任务需要时才会访问。</string>
-    <string name="onboarding_guide_sources_permission_note">系统权限会在真正使用时解释并申请。跳过任何来源都不会影响基础对话。</string>
+    <string name="onboarding_guide_runtime_eyebrow">接入模型</string>
+    <string name="onboarding_guide_runtime_title">先配置模型，再开始对话</string>
+    <string name="onboarding_guide_runtime_body">完成引导后，前往“设置 → 模型”添加模型连接或下载本地模型，再选择对话使用的模型。</string>
+    <string name="onboarding_guide_runtime_auto">模型连接</string>
+    <string name="onboarding_guide_runtime_auto_detail">在“设置 → 模型”添加连接，再启用并选择一个模型。</string>
+    <string name="onboarding_guide_runtime_device">本地模型</string>
+    <string name="onboarding_guide_runtime_device_detail">在模型页下载兼容模型。完成下载前无法使用本地推理。</string>
+    <string name="onboarding_guide_runtime_host">连接宿主机</string>
+    <string name="onboarding_guide_runtime_host_detail">需要 Mac 或 CLI 工具时，在模型配置中连接 Host；工具权限在 Host 端管理。</string>
+    <string name="onboarding_guide_runtime_note">引导不连接服务、不下载模型，也不授予权限。对话使用你实际选择的模型与宿主机。</string>
+    <string name="onboarding_guide_sources_title">按需连接资料来源</string>
+    <string name="onboarding_guide_sources_body">使用相关功能时再添加来源。系统授权与对话访问策略分别设置；拒绝数据权限后仍可使用聊天。</string>
+    <string name="onboarding_guide_sources_permission_note">系统授权允许 Nola 读取资料。是否加入模型上下文，仍由来源访问策略和当前对话选择决定。</string>
     <string name="onboarding_guide_source_documents">文档</string>
     <string name="onboarding_guide_source_documents_detail">把文件直接挂在需要它的那条消息下方</string>
     <string name="onboarding_guide_source_calendar">日历</string>
@@ -766,7 +766,7 @@
     <string name="onboarding_guide_source_iphone_detail">同步可用时使用健康摘要和设备上下文</string>
     <string name="onboarding_guide_ready_eyebrow">准备完成真实任务</string>
     <string name="onboarding_guide_ready_title">从结果开始，而不是寻找功能</string>
-    <string name="onboarding_guide_ready_body">直接描述要完成的结果。执行过程中，Nola 会展示来源、思考过程和工具活动。</string>
+    <string name="onboarding_guide_ready_body">先在“设置 → 模型”完成连接并选择模型，再发送第一条消息。来源与工具按各自的访问策略使用。</string>
     <string name="onboarding_guide_task_day">规划今天</string>
     <string name="onboarding_guide_task_day_detail">把日程与未完成事项整理成可执行计划</string>
     <string name="onboarding_guide_task_document">处理一份文档</string>
@@ -1320,4 +1320,5 @@
     <string name="goal_operation_failed">无法确认目标操作，请先刷新状态再重试。</string>
     <string name="goal_needs_user">等待你补充信息或授权</string>
     <string name="inspector_conversation_needed">请先开始或打开一个对话，再查看进度或设置目标。</string>
+    <string name="onboarding_guide_action_later">暂时跳过</string>
 </resources>

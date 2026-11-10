@@ -44,19 +44,20 @@ private enum MacOnboardingPolicy {
     }
 }
 
-private struct MacOnboardingView: View {
+struct MacOnboardingView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    @AppStorage("nola.mac.runtime.preference") private var runtimePreference = "automatic"
-    @AppStorage("nola.mac.planned.sources") private var plannedSources = ""
 
     @State private var step = 0
     @State private var navigationDirection = 1
-    @State private var selectedSources: Set<String> = ["workspace"]
 
     let onComplete: () -> Void
 
     private let totalSteps = 4
+
+    init(onComplete: @escaping () -> Void) {
+        self.onComplete = onComplete
+    }
 
     var body: some View {
         ZStack {
@@ -94,20 +95,7 @@ private struct MacOnboardingView: View {
             }
         }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: step)
-        .onAppear {
-            let restored = Set(
-                plannedSources
-                    .split(separator: ",")
-                    .map(String.init)
-                    .filter { !$0.isEmpty }
-            )
-            if !restored.isEmpty {
-                selectedSources = restored
-            }
-        }
-        .onChange(of: selectedSources) { _, value in
-            plannedSources = value.sorted().joined(separator: ",")
-        }
+
     }
 
     private var stepTransition: AnyTransition {
@@ -232,26 +220,20 @@ private struct MacOnboardingView: View {
                 body: String(localized: "onboarding.guide.runtime.body")
             ) {
                 VStack(spacing: 10) {
-                    MacChoiceRow(
-                        id: "automatic",
+                    MacTaskRow(
                         icon: "wand.and.stars",
                         title: String(localized: "onboarding.guide.runtime.auto"),
-                        detail: String(localized: "onboarding.guide.runtime.auto_detail"),
-                        selection: $runtimePreference
+                        detail: String(localized: "onboarding.guide.runtime.auto_detail")
                     )
-                    MacChoiceRow(
-                        id: "device",
+                    MacTaskRow(
                         icon: "desktopcomputer",
                         title: String(localized: "onboarding.guide.runtime.device"),
-                        detail: String(localized: "onboarding.guide.runtime.device_detail"),
-                        selection: $runtimePreference
+                        detail: String(localized: "onboarding.guide.runtime.device_detail")
                     )
-                    MacChoiceRow(
-                        id: "host",
+                    MacTaskRow(
                         icon: "network",
                         title: String(localized: "onboarding.guide.runtime.host"),
-                        detail: String(localized: "onboarding.guide.runtime.host_detail"),
-                        selection: $runtimePreference
+                        detail: String(localized: "onboarding.guide.runtime.host_detail")
                     )
                 }
 
@@ -267,29 +249,20 @@ private struct MacOnboardingView: View {
                 body: String(localized: "onboarding.guide.sources.body")
             ) {
                 VStack(spacing: 10) {
-                    MacSourceRow(
-                        id: "workspace",
+                    MacTaskRow(
                         icon: "folder",
-                        color: .blue,
                         title: String(localized: "onboarding.guide.source.workspace"),
-                        detail: String(localized: "onboarding.guide.source.workspace_detail"),
-                        selectedSources: $selectedSources
+                        detail: String(localized: "onboarding.guide.source.workspace_detail")
                     )
-                    MacSourceRow(
-                        id: "web",
+                    MacTaskRow(
                         icon: "globe",
-                        color: .teal,
                         title: String(localized: "onboarding.guide.source.web"),
-                        detail: String(localized: "onboarding.guide.source.web_detail"),
-                        selectedSources: $selectedSources
+                        detail: String(localized: "onboarding.guide.source.web_detail")
                     )
-                    MacSourceRow(
-                        id: "iphone",
+                    MacTaskRow(
                         icon: "iphone",
-                        color: .red,
                         title: String(localized: "onboarding.guide.source.iphone"),
-                        detail: String(localized: "onboarding.guide.source.iphone_detail"),
-                        selectedSources: $selectedSources
+                        detail: String(localized: "onboarding.guide.source.iphone_detail")
                     )
                 }
 
@@ -379,6 +352,7 @@ private struct MacOnboardingView: View {
             .tint(Color.accentColor)
             .frame(maxWidth: 360)
             .keyboardShortcut(.defaultAction)
+            .accessibilityIdentifier("onboarding.next")
 
             Color.clear
                 .frame(width: 44, height: 44)
@@ -392,7 +366,6 @@ private struct MacOnboardingView: View {
     }
 
     private func completeOnboarding() {
-        plannedSources = selectedSources.sorted().joined(separator: ",")
         onComplete()
     }
 }
@@ -468,130 +441,6 @@ private struct MacFlowConnector: View {
     }
 }
 
-private struct MacChoiceRow: View {
-    let id: String
-    let icon: String
-    let title: String
-    let detail: String
-    @Binding var selection: String
-    @State private var isHovering = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        Button {
-            selection = id
-        } label: {
-            HStack(spacing: 13) {
-                Image(systemName: icon)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(selection == id ? Color.accentColor : Color.secondary)
-                    .frame(width: 38, height: 38)
-                    .background(Color.accentColor.opacity(selection == id ? 0.12 : 0.05), in: RoundedRectangle(cornerRadius: 10))
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title).font(.subheadline.weight(.semibold))
-                    Text(detail).font(.callout).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Image(systemName: selection == id ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(selection == id ? Color.accentColor : Color.secondary.opacity(0.45))
-                    .accessibilityHidden(true)
-            }
-            .padding(14)
-            .contentShape(Rectangle())
-            .background(
-                selection == id
-                    ? MacDesignColor.selected
-                    : Color(nsColor: .controlBackgroundColor).opacity(isHovering ? 0.94 : 0.78),
-                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(Color.secondary.opacity(0.12))
-            }
-        }
-        .buttonStyle(MacOnboardingChoiceButtonStyle())
-        .onHover { hovering in
-            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
-                isHovering = hovering
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(title)
-        .accessibilityValue(
-            selection == id
-                ? String(localized: "onboarding.guide.selection.selected")
-                : String(localized: "onboarding.guide.selection.not_selected")
-        )
-        .accessibilityAddTraits(selection == id ? .isSelected : [])
-    }
-}
-
-private struct MacSourceRow: View {
-    let id: String
-    let icon: String
-    let color: Color
-    let title: String
-    let detail: String
-    @Binding var selectedSources: Set<String>
-    @State private var isHovering = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        Button {
-            if selectedSources.contains(id) {
-                selectedSources.remove(id)
-            } else {
-                selectedSources.insert(id)
-            }
-        } label: {
-            HStack(spacing: 13) {
-                Image(systemName: icon)
-                    .foregroundStyle(color)
-                    .frame(width: 38, height: 38)
-                    .background(color.opacity(0.11), in: RoundedRectangle(cornerRadius: 10))
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title).font(.subheadline.weight(.semibold))
-                    Text(detail).font(.callout).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Image(systemName: selectedSources.contains(id) ? "checkmark.square.fill" : "square")
-                    .foregroundStyle(selectedSources.contains(id) ? Color.accentColor : Color.secondary.opacity(0.45))
-                    .accessibilityHidden(true)
-            }
-            .padding(14)
-            .contentShape(Rectangle())
-            .background(
-                selectedSources.contains(id)
-                    ? MacDesignColor.selected
-                    : Color(nsColor: .controlBackgroundColor).opacity(isHovering ? 0.94 : 0.78),
-                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(
-                        selectedSources.contains(id) ? Color.accentColor.opacity(0.5) : Color.secondary.opacity(0.12)
-                    )
-            }
-        }
-        .buttonStyle(MacOnboardingChoiceButtonStyle())
-        .onHover { hovering in
-            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
-                isHovering = hovering
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(title)
-        .accessibilityValue(
-            selectedSources.contains(id)
-                ? String(localized: "onboarding.guide.selection.selected")
-                : String(localized: "onboarding.guide.selection.not_selected")
-        )
-        .accessibilityAddTraits(selectedSources.contains(id) ? .isSelected : [])
-    }
-}
-
 private struct MacTaskRow: View {
     let icon: String
     let title: String
@@ -644,16 +493,5 @@ private extension View {
     func macGuideCard() -> some View {
         padding(17)
             .macPanel(cornerRadius: 20)
-    }
-}
-
-private struct MacOnboardingChoiceButtonStyle: ButtonStyle {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.992 : 1)
-            .opacity(configuration.isPressed ? 0.88 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }

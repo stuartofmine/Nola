@@ -689,19 +689,19 @@
 
     <!-- First-run guide v2 -->
     <string name="onboarding_guide_step_format">Étape %1$d sur %2$d</string>
-    <string name="onboarding_guide_runtime_eyebrow">CHOISIR L’EXÉCUTION</string>
-    <string name="onboarding_guide_runtime_title">Décidez où Nola travaille</string>
-    <string name="onboarding_guide_runtime_body">Commencez en automatique ou préférez cet appareil ou un hôte connecté. Les capacités réelles sont affichées avant l’exécution.</string>
-    <string name="onboarding_guide_runtime_auto">Automatique</string>
-    <string name="onboarding_guide_runtime_auto_detail">Utiliser le meilleur modèle configuré et les outils disponibles</string>
-    <string name="onboarding_guide_runtime_device">Cet appareil</string>
-    <string name="onboarding_guide_runtime_device_detail">Privilégier les modèles téléchargés et les capacités locales</string>
-    <string name="onboarding_guide_runtime_host">Hôte connecté</string>
-    <string name="onboarding_guide_runtime_host_detail">Utiliser un Mac ou hôte CLI associé pour davantage d’outils</string>
-    <string name="onboarding_guide_runtime_note">Il s’agit d’une préférence, pas d’une autorisation. Modèle et hôte restent modifiables par conversation.</string>
-    <string name="onboarding_guide_sources_title">Planifier le contexte utile</string>
-    <string name="onboarding_guide_sources_body">Choisissez les sources possibles. Aucun accès avant qu’une vraie tâche ne l’exige.</string>
-    <string name="onboarding_guide_sources_permission_note">L’accès système est expliqué et demandé au moment de l’utilisation. Ignorer une source ne bloque jamais le chat.</string>
+    <string name="onboarding_guide_runtime_eyebrow">CONNECTER UN MODÈLE</string>
+    <string name="onboarding_guide_runtime_title">Configurez un modèle avant de discuter</string>
+    <string name="onboarding_guide_runtime_body">Après ce guide, ouvrez Réglages → Modèles pour ajouter une connexion ou télécharger un modèle local, puis sélectionnez-le.</string>
+    <string name="onboarding_guide_runtime_auto">Connexions de modèles</string>
+    <string name="onboarding_guide_runtime_auto_detail">Ajoutez une connexion dans Réglages → Modèles, puis activez et sélectionnez un modèle.</string>
+    <string name="onboarding_guide_runtime_device">Modèles locaux</string>
+    <string name="onboarding_guide_runtime_device_detail">Téléchargez un modèle compatible dans Modèles avant d’utiliser l’inférence locale.</string>
+    <string name="onboarding_guide_runtime_host">Connecter un hôte</string>
+    <string name="onboarding_guide_runtime_host_detail">Connectez un Host dans les réglages du modèle pour utiliser ses outils Mac ou CLI. Les autorisations se gèrent sur cet hôte.</string>
+    <string name="onboarding_guide_runtime_note">Ce guide ne connecte aucun service, ne télécharge aucun modèle et n’accorde aucun accès. Les conversations utilisent votre sélection réelle.</string>
+    <string name="onboarding_guide_sources_title">Connecter les sources au besoin</string>
+    <string name="onboarding_guide_sources_body">Ajoutez des sources au moment de les utiliser. Autorisation système et accès de la conversation sont distincts ; le chat reste disponible sans accès aux données.</string>
+    <string name="onboarding_guide_sources_permission_note">L’autorisation système permet la lecture. La politique de la source et les choix de la conversation déterminent l’ajout au contexte du modèle.</string>
     <string name="onboarding_guide_source_documents">Documents</string>
     <string name="onboarding_guide_source_documents_detail">Joindre les fichiers directement au message concerné</string>
     <string name="onboarding_guide_source_calendar">Calendrier</string>
@@ -714,7 +714,7 @@
     <string name="onboarding_guide_source_iphone_detail">Utiliser les résumés Santé synchronisés et le contexte de l’appareil</string>
     <string name="onboarding_guide_ready_eyebrow">PRÊT POUR UNE VRAIE TÂCHE</string>
     <string name="onboarding_guide_ready_title">Commencez par le résultat</string>
-    <string name="onboarding_guide_ready_body">Décrivez ce qui doit être terminé. Nola affiche sources, raisonnement et activité des outils.</string>
+    <string name="onboarding_guide_ready_body">Connectez et sélectionnez un modèle dans Réglages → Modèles, puis envoyez votre premier message. Sources et outils suivent leurs politiques d’accès.</string>
     <string name="onboarding_guide_task_day">Planifier ma journée</string>
     <string name="onboarding_guide_task_day_detail">Réunir agenda et tâches ouvertes en un plan pratique</string>
     <string name="onboarding_guide_task_document">Travailler avec un document</string>
@@ -1321,4 +1321,5 @@
     <string name="goal_operation_failed">Action non confirmée. Vérifiez son état avant de réessayer.</string>
     <string name="goal_needs_user">En attente d’une précision ou autorisation</string>
     <string name="inspector_conversation_needed">Démarrez ou ouvrez une conversation pour voir la progression et définir un objectif.</string>
+    <string name="onboarding_guide_action_later">Ignorer pour le moment</string>
 </resources>

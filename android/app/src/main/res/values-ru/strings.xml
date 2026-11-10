@@ -689,19 +689,19 @@
 
     <!-- First-run guide v2 -->
     <string name="onboarding_guide_step_format">Шаг %1$d из %2$d</string>
-    <string name="onboarding_guide_runtime_eyebrow">ВЫБЕРИТЕ ВЫПОЛНЕНИЕ</string>
-    <string name="onboarding_guide_runtime_title">Решите, где Nola выполняет работу</string>
-    <string name="onboarding_guide_runtime_body">Начните с автоматического выбора либо предпочитайте это устройство или подключённый хост. Возможности видны до запуска.</string>
-    <string name="onboarding_guide_runtime_auto">Автоматически</string>
-    <string name="onboarding_guide_runtime_auto_detail">Использовать лучшую настроенную модель и доступные инструменты</string>
-    <string name="onboarding_guide_runtime_device">Это устройство</string>
-    <string name="onboarding_guide_runtime_device_detail">Предпочитать загруженные модели и локальные возможности</string>
-    <string name="onboarding_guide_runtime_host">Подключённый хост</string>
-    <string name="onboarding_guide_runtime_host_detail">Использовать связанный Mac или CLI Host для расширенных инструментов</string>
-    <string name="onboarding_guide_runtime_note">Это предпочтение, а не разрешение. Модель и хост можно менять для каждого диалога.</string>
-    <string name="onboarding_guide_sources_title">Спланируйте нужный контекст</string>
-    <string name="onboarding_guide_sources_body">Выберите возможные источники. Доступ появится только тогда, когда он нужен задаче.</string>
-    <string name="onboarding_guide_sources_permission_note">Системный доступ объясняется и запрашивается во время использования. Пропуск источника не блокирует чат.</string>
+    <string name="onboarding_guide_runtime_eyebrow">ПОДКЛЮЧЕНИЕ МОДЕЛИ</string>
+    <string name="onboarding_guide_runtime_title">Настройте модель перед чатом</string>
+    <string name="onboarding_guide_runtime_body">После руководства откройте «Настройки → Модели», добавьте подключение или скачайте локальную модель и выберите её для чата.</string>
+    <string name="onboarding_guide_runtime_auto">Подключения моделей</string>
+    <string name="onboarding_guide_runtime_auto_detail">Добавьте подключение в «Настройки → Модели», затем включите и выберите модель.</string>
+    <string name="onboarding_guide_runtime_device">Локальные модели</string>
+    <string name="onboarding_guide_runtime_device_detail">Для локального инференса сначала скачайте совместимую модель на странице моделей.</string>
+    <string name="onboarding_guide_runtime_host">Подключение хоста</string>
+    <string name="onboarding_guide_runtime_host_detail">Подключите Host в настройках модели для инструментов Mac или CLI. Доступ к инструментам управляется на этом Host.</string>
+    <string name="onboarding_guide_runtime_note">Руководство не подключает службы, не скачивает модели и не выдаёт разрешения. Чат использует фактически выбранные модель и Host.</string>
+    <string name="onboarding_guide_sources_title">Подключайте источники по мере необходимости</string>
+    <string name="onboarding_guide_sources_body">Добавляйте источники по мере использования. Системное разрешение и доступ чата настраиваются отдельно; отказ в доступе к данным не мешает чату.</string>
+    <string name="onboarding_guide_sources_permission_note">Системное разрешение позволяет читать данные. Включение в контекст модели по-прежнему определяется политикой источника и выбором в чате.</string>
     <string name="onboarding_guide_source_documents">Документы</string>
     <string name="onboarding_guide_source_documents_detail">Прикрепляйте файлы к сообщению, которому они нужны</string>
     <string name="onboarding_guide_source_calendar">Календарь</string>
@@ -714,7 +714,7 @@
     <string name="onboarding_guide_source_iphone_detail">Используйте синхронизированные сводки здоровья и контекст устройства</string>
     <string name="onboarding_guide_ready_eyebrow">ГОТОВО К РЕАЛЬНОЙ ЗАДАЧЕ</string>
     <string name="onboarding_guide_ready_title">Начните с результата</string>
-    <string name="onboarding_guide_ready_body">Опишите, что нужно завершить. Nola покажет источники, рассуждение и работу инструментов.</string>
+    <string name="onboarding_guide_ready_body">Подключите и выберите модель в «Настройки → Модели», затем отправьте сообщение. Источники и инструменты используют свои политики доступа.</string>
     <string name="onboarding_guide_task_day">Спланировать день</string>
     <string name="onboarding_guide_task_day_detail">Объединить расписание и открытые задачи в практичный план</string>
     <string name="onboarding_guide_task_document">Обработать документ</string>
@@ -1321,4 +1321,5 @@
     <string name="goal_operation_failed">Действие не подтверждено. Проверьте состояние перед повтором.</string>
     <string name="goal_needs_user">Ожидание ввода или разрешения</string>
     <string name="inspector_conversation_needed">Начните или откройте диалог, чтобы увидеть ход работы и задать цель.</string>
+    <string name="onboarding_guide_action_later">Пока пропустить</string>
 </resources>

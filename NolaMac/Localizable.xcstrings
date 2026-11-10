@@ -5780,6 +5780,42 @@
             "state" : "translated",
             "value" : "对话"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "對話"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "会話"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대화"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conversation"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unterhaltung"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conversación"
+          }
         }
       }
     },
@@ -17807,6 +17843,42 @@
             "state" : "translated",
             "value" : "修改仅作用于当前会话和模型。未覆盖的参数沿用模型默认配置。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "變更僅套用至此對話和模型。未設定的值會沿用模型預設值。"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "変更はこの会話とモデルだけに適用されます。未設定の値はモデルの既定値を引き継ぎます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "변경은 이 대화와 모델에만 적용됩니다. 미설정 값은 모델 기본값을 따릅니다."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Les modifications concernent uniquement cette conversation et ce modèle. Les valeurs non définies héritent des réglages du modèle."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Änderungen gelten nur für diese Unterhaltung und dieses Modell. Nicht gesetzte Werte übernehmen die Modellvorgaben."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Los cambios solo afectan a esta conversación y modelo. Los valores sin definir heredan los predeterminados del modelo."
+          }
         }
       }
     },
@@ -18280,7 +18352,58 @@
         }
       }
     },
-    "chat.conversation.default_title" : {},
+    "chat.conversation.default_title" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新對話"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新しい会話"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "새 대화"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nouvelle conversation"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Neue Unterhaltung"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nueva conversación"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新对话"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New conversation"
+          }
+        }
+      }
+    },
     "chat.experts.description" : {
       "localizations" : {
         "de" : {
@@ -24677,6 +24800,18 @@
             "state" : "translated",
             "value" : "资源"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "資源"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "리소스"
+          }
         }
       }
     },
@@ -27776,6 +27911,42 @@
             "state" : "translated",
             "value" : "会话模型设置"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "對話模型設定"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "会話のモデル設定"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대화 모델 설정"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Réglages du modèle de conversation"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modelleinstellungen der Unterhaltung"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ajustes del modelo de conversación"
+          }
         }
       }
     },
@@ -30672,7 +30843,52 @@
         }
       }
     },
-    "Default model" : {},
+    "Default model" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "預設模型"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "既定のモデル"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "기본 모델"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modèle par défaut"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Standardmodell"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modelo predeterminado"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "默认模型"
+          }
+        }
+      }
+    },
     "Default Model" : {
       "localizations" : {
         "de" : {
@@ -30832,6 +31048,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "默认思考强度"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "預設推理強度"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "기본 추론 수준"
           }
         }
       }
@@ -90029,6 +90257,12 @@
             "state" : "translated",
             "value" : "已加载的会话历史中暂无产物"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已載入的對話記錄中沒有產物"
+          }
         }
       }
     },
@@ -90548,6 +90782,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "此会话暂无专家"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此對話中沒有專家"
           }
         }
       }
@@ -95940,55 +96180,55 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Später einrichten"
+            "value" : "Vorerst überspringen"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Set Up Later"
+            "value" : "Skip for now"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Configurar más tarde"
+            "value" : "Omitir por ahora"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Configurer plus tard"
+            "value" : "Ignorer pour le moment"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "あとで設定"
+            "value" : "今はスキップ"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "나중에 설정"
+            "value" : "지금은 건너뛰기"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Настроить позже"
+            "value" : "Пока пропустить"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "稍后设置"
+            "value" : "暂时跳过"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "稍後設定"
+            "value" : "暫時略過"
           }
         }
       }
@@ -96172,55 +96412,55 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Beschreibe, was erledigt werden soll. Nola zeigt Quellen, Denken und Werkzeugaktivität."
+            "value" : "Unter Einstellungen → Modelle eine Verbindung und ein Modell auswählen, dann die erste Nachricht senden. Für Quellen und Werkzeuge gelten ihre Zugriffsrichtlinien."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Describe what you want finished. Nola will show sources, thinking, and tool activity while it works."
+            "value" : "Finish connecting and selecting a model in Settings → Models, then send your first message. Sources and tools follow their access policies."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Describe lo que quieres terminar. Nola mostrará fuentes, razonamiento y actividad de herramientas."
+            "value" : "Conecta y selecciona un modelo en Ajustes → Modelos y envía tu primer mensaje. Las fuentes y herramientas siguen sus políticas de acceso."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Décrivez ce qui doit être terminé. Nola affiche sources, raisonnement et activité des outils."
+            "value" : "Connectez et sélectionnez un modèle dans Réglages → Modèles, puis envoyez votre premier message. Sources et outils suivent leurs politiques d’accès."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "完了してほしい結果を伝えてください。Nola は情報源、思考、ツール操作を表示します。"
+            "value" : "「設定 → モデル」で接続とモデルの選択を済ませ、最初のメッセージを送ります。ソースとツールは各アクセス方針に従います。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "완료하고 싶은 작업을 설명하세요. Nola가 작업 중에 출처, 사고 과정, 도구 활동을 표시합니다."
+            "value" : "설정 → 모델에서 연결과 모델 선택을 마친 후 첫 메시지를 보내세요. 소스와 도구는 각 접근 정책을 따릅니다."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Опишите, что нужно завершить. Nola покажет источники, рассуждение и работу инструментов."
+            "value" : "Подключите и выберите модель в «Настройки → Модели», затем отправьте сообщение. Источники и инструменты используют свои политики доступа."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "直接描述要完成的结果。执行过程中，Nola 会展示来源、思考过程和工具活动。"
+            "value" : "先在“设置 → 模型”完成连接并选择模型，再发送第一条消息。来源与工具按各自的访问策略使用。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "直接描述要完成的結果。執行過程中，Nola 會展示來源、思考過程和工具活動。"
+            "value" : "先在「設定 → 模型」完成連線並選擇模型，再傳送第一則訊息。來源與工具依各自的存取原則使用。"
           }
         }
       }
@@ -96404,55 +96644,55 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Automatisch"
+            "value" : "Modellverbindungen"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Automatic"
+            "value" : "Model connections"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Automático"
+            "value" : "Conexiones de modelos"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Automatique"
+            "value" : "Connexions de modèles"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "自動選択"
+            "value" : "モデル接続"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "자동"
+            "value" : "모델 연결"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Автоматически"
+            "value" : "Подключения моделей"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "自动选择"
+            "value" : "模型连接"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "自動選擇"
+            "value" : "模型連線"
           }
         }
       }
@@ -96462,55 +96702,55 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Das beste konfigurierte Modell und verfügbare Werkzeuge nutzen"
+            "value" : "Unter Einstellungen → Modelle eine Verbindung hinzufügen, dann ein Modell aktivieren und auswählen."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Use the best configured model and available tools"
+            "value" : "Add a connection in Settings → Models, then enable and select a model."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Usar el mejor modelo configurado y las herramientas disponibles"
+            "value" : "Añade una conexión en Ajustes → Modelos y activa y selecciona un modelo."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Utiliser le meilleur modèle configuré et les outils disponibles"
+            "value" : "Ajoutez une connexion dans Réglages → Modèles, puis activez et sélectionnez un modèle."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "設定済みの最適なモデルと利用可能なツールを使う"
+            "value" : "「設定 → モデル」で接続を追加し、モデルを有効にして選択します。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "최적 구성 모델과 사용 가능한 도구를 사용합니다"
+            "value" : "설정 → 모델에서 연결을 추가한 후 모델을 활성화하고 선택하세요."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Использовать лучшую настроенную модель и доступные инструменты"
+            "value" : "Добавьте подключение в «Настройки → Модели», затем включите и выберите модель."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用当前配置中最合适的模型与可用工具"
+            "value" : "在“设置 → 模型”添加连接，再启用并选择一个模型。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用當前配置中最合適的模型與可用工具"
+            "value" : "在「設定 → 模型」加入連線，再啟用並選擇一個模型。"
           }
         }
       }
@@ -96520,55 +96760,55 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Starte automatisch oder bevorzuge dieses Gerät bzw. einen verbundenen Host. Verfügbare Fähigkeiten werden vor jeder Aufgabe angezeigt."
+            "value" : "Öffne danach Einstellungen → Modelle, füge eine Verbindung hinzu oder lade ein lokales Modell und wähle es für den Chat."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Start with automatic selection, or express a preference for this device or a connected host. Availability is always shown before a task runs."
+            "value" : "After this guide, open Settings → Models to add a connection or download a local model, then select the model for your conversation."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Empieza en automático o indica preferencia por este dispositivo o un host conectado. Las capacidades reales se muestran antes de ejecutar."
+            "value" : "Después, abre Ajustes → Modelos para añadir una conexión o descargar un modelo local y elegirlo para la conversación."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Commencez en automatique ou préférez cet appareil ou un hôte connecté. Les capacités réelles sont affichées avant l’exécution."
+            "value" : "Après ce guide, ouvrez Réglages → Modèles pour ajouter une connexion ou télécharger un modèle local, puis sélectionnez-le."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "自動選択から始めるか、この端末または接続済みホストを優先できます。実行前に利用可能な機能を表示します。"
+            "value" : "ガイドの後、「設定 → モデル」で接続を追加するかローカルモデルをダウンロードし、会話用のモデルを選びます。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "자동 선택으로 시작하거나 이 기기 또는 연결된 호스트에 대한 기본 설정을 지정하세요. 작업 실행 전에 항상 사용 가능 여부가 표시됩니다."
+            "value" : "안내를 마친 후 설정 → 모델에서 연결을 추가하거나 로컬 모델을 다운로드하고 대화에 사용할 모델을 선택하세요."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Начните с автоматического выбора либо предпочитайте это устройство или подключённый хост. Возможности видны до запуска."
+            "value" : "После руководства откройте «Настройки → Модели», добавьте подключение или скачайте локальную модель и выберите её для чата."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "可以从自动选择开始，也可以偏好本机或已连接的宿主机。每次执行前都会明确显示实际可用能力。"
+            "value" : "完成引导后，前往“设置 → 模型”添加模型连接或下载本地模型，再选择对话使用的模型。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "可以從自動選擇開始，也可以偏好本機或已連接的宿主機。每次執行前都會明確顯示實際可用能力。"
+            "value" : "完成引導後，前往「設定 → 模型」加入模型連線或下載本機模型，再選擇對話使用的模型。"
           }
         }
       }
@@ -96578,55 +96818,55 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Dieses Gerät"
+            "value" : "Lokale Modelle"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "This device"
+            "value" : "Local models"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Este dispositivo"
+            "value" : "Modelos locales"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Cet appareil"
+            "value" : "Modèles locaux"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "この端末"
+            "value" : "ローカルモデル"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "이 기기"
+            "value" : "로컬 모델"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Это устройство"
+            "value" : "Локальные модели"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "这台设备"
+            "value" : "本地模型"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "這台設備"
+            "value" : "本機模型"
           }
         }
       }
@@ -96636,55 +96876,55 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Heruntergeladene Modelle und lokale Fähigkeiten bevorzugen"
+            "value" : "Vor lokaler Inferenz ein kompatibles Modell auf der Modellseite herunterladen."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Prefer a downloaded model and on-device capabilities"
+            "value" : "Download a compatible model on the Models page before using local inference."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Priorizar modelos descargados y capacidades locales"
+            "value" : "Descarga un modelo compatible en la página Modelos antes de usar inferencia local."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Privilégier les modèles téléchargés et les capacités locales"
+            "value" : "Téléchargez un modèle compatible dans Modèles avant d’utiliser l’inférence locale."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ダウンロード済みモデルとローカル機能を優先"
+            "value" : "ローカル推論の前に、モデル画面で対応モデルをダウンロードします。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "다운로드한 모델 및 기기 내 기능 선호"
+            "value" : "로컬 추론을 사용하기 전에 모델 페이지에서 호환 모델을 다운로드하세요."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Предпочитать загруженные модели и локальные возможности"
+            "value" : "Для локального инференса сначала скачайте совместимую модель на странице моделей."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "优先使用已下载模型和设备本地能力"
+            "value" : "在模型页下载兼容模型。完成下载前无法使用本地推理。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "優先使用已下載模型和設備本地能力"
+            "value" : "在模型頁下載相容模型。完成下載前無法使用本機推論。"
           }
         }
       }
@@ -96694,55 +96934,55 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "AUSFÜHRUNG WÄHLEN"
+            "value" : "MODELL VERBINDEN"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "CHOOSE THE RUNTIME"
+            "value" : "CONNECT A MODEL"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ELIGE LA EJECUCIÓN"
+            "value" : "CONECTAR UN MODELO"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "CHOISIR L’EXÉCUTION"
+            "value" : "CONNECTER UN MODÈLE"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "実行方法を選ぶ"
+            "value" : "モデルを接続"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "런타임 선택"
+            "value" : "모델 연결"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ВЫБЕРИТЕ ВЫПОЛНЕНИЕ"
+            "value" : "ПОДКЛЮЧЕНИЕ МОДЕЛИ"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "选择运行方式"
+            "value" : "接入模型"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "選擇運行方式"
+            "value" : "接入模型"
           }
         }
       }
@@ -96752,55 +96992,55 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Verbundener Host"
+            "value" : "Host verbinden"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Connected host"
+            "value" : "Connect a host"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Host conectado"
+            "value" : "Conectar un host"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Hôte connecté"
+            "value" : "Connecter un hôte"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "接続済みホスト"
+            "value" : "ホストを接続"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "연결된 호스트"
+            "value" : "호스트 연결"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Подключённый хост"
+            "value" : "Подключение хоста"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已连接宿主机"
+            "value" : "连接宿主机"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已連接宿主機"
+            "value" : "連線至主機"
           }
         }
       }
@@ -96810,55 +97050,55 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Einen gekoppelten Mac oder CLI-Host für mehr Werkzeuge nutzen"
+            "value" : "Für Mac- oder CLI-Werkzeuge in den Modelleinstellungen einen Host verbinden. Werkzeugrechte werden dort verwaltet."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Use a paired Mac or CLI host for broader tools"
+            "value" : "Connect a Host in model settings to use its Mac or CLI tools. Tool access is managed on that Host."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Usar un Mac o host CLI vinculado para ampliar herramientas"
+            "value" : "Conecta un Host en la configuración del modelo para usar sus herramientas Mac o CLI. Los permisos se gestionan en ese Host."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Utiliser un Mac ou hôte CLI associé pour davantage d’outils"
+            "value" : "Connectez un Host dans les réglages du modèle pour utiliser ses outils Mac ou CLI. Les autorisations se gèrent sur cet hôte."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "ペアリングした Mac または CLI Host でツールを拡張"
+            "value" : "モデル設定で Host に接続すると Mac や CLI のツールを使えます。ツールの権限は Host 側で管理します。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "페어링된 Mac 또는 CLI 호스트를 사용하여 더 다양한 도구 활용"
+            "value" : "Mac 또는 CLI 도구가 필요하면 모델 설정에서 Host를 연결하세요. 도구 접근 권한은 해당 Host에서 관리합니다."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Использовать связанный Mac или CLI Host для расширенных инструментов"
+            "value" : "Подключите Host в настройках модели для инструментов Mac или CLI. Доступ к инструментам управляется на этом Host."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用配对的 Mac 或 CLI Host 扩展工具能力"
+            "value" : "需要 Mac 或 CLI 工具时，在模型配置中连接 Host；工具权限在 Host 端管理。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用配對的 Mac 或 CLI Host 擴展工具能力"
+            "value" : "需要 Mac 或 CLI 工具時，在模型設定中連線至 Host；工具權限在 Host 端管理。"
           }
         }
       }
@@ -96868,55 +97108,55 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Dies ist nur eine Präferenz, keine Freigabe. Modell und Host lassen sich je Unterhaltung ändern."
+            "value" : "Diese Anleitung verbindet keine Dienste, lädt keine Modelle und erteilt keine Rechte. Chats verwenden deine tatsächliche Modell- und Host-Auswahl."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "This is a preference, not a permission grant. You can change the model and host for each conversation."
+            "value" : "This guide does not connect services, download models or grant access. Conversations use the model and Host you actually select."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Es una preferencia, no un permiso. Puedes cambiar modelo y host en cada conversación."
+            "value" : "Esta guía no conecta servicios, descarga modelos ni concede permisos. La conversación usa el modelo y Host que selecciones."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Il s’agit d’une préférence, pas d’une autorisation. Modèle et hôte restent modifiables par conversation."
+            "value" : "Ce guide ne connecte aucun service, ne télécharge aucun modèle et n’accorde aucun accès. Les conversations utilisent votre sélection réelle."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "これは設定の好みであり、権限の付与ではありません。会話ごとにモデルとホストを変更できます。"
+            "value" : "このガイドではサービスへの接続、モデルのダウンロード、権限付与は行いません。会話には実際に選んだモデルと Host を使います。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "기본 설정일 뿐 권한 부여가 아닙니다. 각 대화에 대해 모델과 호스트를 변경할 수 있습니다."
+            "value" : "이 안내는 서비스 연결, 모델 다운로드 또는 권한 부여를 수행하지 않습니다. 대화는 실제로 선택한 모델과 Host를 사용합니다."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Это предпочтение, а не разрешение. Модель и хост можно менять для каждого диалога."
+            "value" : "Руководство не подключает службы, не скачивает модели и не выдаёт разрешения. Чат использует фактически выбранные модель и Host."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "这里只记录偏好，不会授予权限。每个对话都可以重新切换模型和宿主机。"
+            "value" : "引导不连接服务、不下载模型，也不授予权限。对话使用你实际选择的模型与宿主机。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "這裡只記錄偏好，不會授予權限。每個對話都可以重新切換模型和宿主機。"
+            "value" : "引導不會連線至服務、下載模型或授予權限。對話使用你實際選擇的模型與主機。"
           }
         }
       }
@@ -96926,55 +97166,55 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Entscheide, wo Nola arbeitet"
+            "value" : "Vor dem Chat ein Modell einrichten"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Decide where Nola does the work"
+            "value" : "Set up a model before chatting"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Decide dónde trabaja Nola"
+            "value" : "Configura un modelo antes de conversar"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Décidez où Nola travaille"
+            "value" : "Configurez un modèle avant de discuter"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Nola が作業する場所を決める"
+            "value" : "会話の前にモデルを設定"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Nola가 작업을 수행할 위치 결정"
+            "value" : "대화 전에 모델을 설정하세요"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Решите, где Nola выполняет работу"
+            "value" : "Настройте модель перед чатом"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "决定 Nola 在哪里完成工作"
+            "value" : "先配置模型，再开始对话"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "決定 Nola 在哪裡完成工作"
+            "value" : "先設定模型，再開始對話"
           }
         }
       }
@@ -97743,55 +97983,55 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Wähle mögliche Quellen. Zugriff erfolgt erst, wenn eine echte Aufgabe sie braucht."
+            "value" : "Quellen erst bei Bedarf hinzufügen. Systemrechte und Chat-Zugriff sind getrennt; ohne Datenfreigabe bleibt der Chat nutzbar."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Choose what may become useful. Nothing is accessed until a real task needs it."
+            "value" : "Add sources when you use the related feature. System permission and conversation access are separate; declining data access still lets you chat."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Elige posibles fuentes. No se accede a nada hasta que una tarea real lo necesite."
+            "value" : "Añade fuentes al usar la función. El permiso del sistema y el acceso del chat son independientes; puedes conversar aunque rechaces el acceso a datos."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Choisissez les sources possibles. Aucun accès avant qu’une vraie tâche ne l’exige."
+            "value" : "Ajoutez des sources au moment de les utiliser. Autorisation système et accès de la conversation sont distincts ; le chat reste disponible sans accès aux données."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "役立ちそうな情報源を選びます。実際のタスクで必要になるまでアクセスしません。"
+            "value" : "必要な機能を使うときにソースを追加します。システム権限と会話へのアクセスは別設定です。データアクセスを拒否してもチャットできます。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "필요할 때 Nola가 사용할 데이터 소스를 선택하세요."
+            "value" : "해당 기능을 사용할 때 소스를 추가하세요. 시스템 권한과 대화 접근은 별도 설정이며, 데이터 접근을 거부해도 채팅할 수 있습니다."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Выберите возможные источники. Доступ появится только тогда, когда он нужен задаче."
+            "value" : "Добавляйте источники по мере использования. Системное разрешение и доступ чата настраиваются отдельно; отказ в доступе к данным не мешает чату."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "先选择未来可能有用的来源；只有真实任务需要时才会访问。"
+            "value" : "使用相关功能时再添加来源。系统授权与对话访问策略分别设置；拒绝数据权限后仍可使用聊天。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "選擇你希望 Nola 在需要時使用的資料來源。"
+            "value" : "使用相關功能時再加入來源。系統授權與對話存取原則分別設定；拒絕資料權限後仍可使用聊天。"
           }
         }
       }
@@ -97801,55 +98041,55 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Systemzugriff wird bei der Nutzung erklärt und angefragt. Übersprungene Quellen blockieren den Chat nicht."
+            "value" : "Systemrechte erlauben Nola das Lesen. Ob Daten in den Modellkontext gelangen, bestimmen weiterhin Quellenrichtlinie und Chat-Auswahl."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "System access is requested at the moment of use, with a clear explanation. Skipping a source never blocks chat."
+            "value" : "System permission lets Nola read data. Source access policy and conversation choices still control whether it enters model context."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "El acceso del sistema se explica y solicita al usarlo. Omitir una fuente nunca bloquea el chat."
+            "value" : "El permiso del sistema permite leer datos. La política de la fuente y las opciones de la conversación deciden si entran en el contexto del modelo."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "L’accès système est expliqué et demandé au moment de l’utilisation. Ignorer une source ne bloque jamais le chat."
+            "value" : "L’autorisation système permet la lecture. La politique de la source et les choix de la conversation déterminent l’ajout au contexte du modèle."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "システムアクセスは利用時に説明して要求します。情報源をスキップしてもチャットは使えます。"
+            "value" : "システム権限はデータの読み取りを許可します。モデルのコンテキストに含めるかは、ソースのアクセスポリシーと会話の選択で決まります。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "권한은 소스를 실제로 사용할 때만 요청합니다."
+            "value" : "시스템 권한은 Nola의 데이터 읽기를 허용합니다. 모델 컨텍스트 포함 여부는 소스 접근 정책과 대화 선택에 따라 결정됩니다."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Системный доступ объясняется и запрашивается во время использования. Пропуск источника не блокирует чат."
+            "value" : "Системное разрешение позволяет читать данные. Включение в контекст модели по-прежнему определяется политикой источника и выбором в чате."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "系统权限会在真正使用时解释并申请。跳过任何来源都不会影响基础对话。"
+            "value" : "系统授权允许 Nola 读取资料。是否加入模型上下文，仍由来源访问策略和当前对话选择决定。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "只有在實際使用資料來源時才會要求權限。"
+            "value" : "系統授權允許 Nola 讀取資料。是否加入模型上下文，仍由來源存取原則和目前對話選擇決定。"
           }
         }
       }
@@ -97859,55 +98099,55 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Gewünschten Kontext planen"
+            "value" : "Quellen bei Bedarf verbinden"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Plan the context you want to use"
+            "value" : "Connect sources when needed"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Planifica el contexto que usarás"
+            "value" : "Conecta fuentes cuando las necesites"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Planifier le contexte utile"
+            "value" : "Connecter les sources au besoin"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使いたいコンテキストを計画"
+            "value" : "必要なときにソースを接続"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "데이터 소스 선택"
+            "value" : "필요할 때 데이터 소스 연결"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Спланируйте нужный контекст"
+            "value" : "Подключайте источники по мере необходимости"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "规划你想使用的上下文"
+            "value" : "按需连接资料来源"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "選擇資料來源"
+            "value" : "按需連線至資料來源"
           }
         }
       }
@@ -107751,7 +107991,52 @@
         }
       }
     },
-    "Resources" : {},
+    "Resources" : {
+      "localizations" : {
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "資源"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "リソース"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "리소스"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ressources"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ressourcen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recursos"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "资源"
+          }
+        }
+      }
+    },
     "Respond to Peer Review" : {
       "localizations" : {
         "de" : {
@@ -109606,6 +109891,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "继续之前，请先处理此会话中的待回应请求。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "繼續前，請先檢查此對話中待處理的請求。"
           }
         }
       }
@@ -129262,6 +129553,42 @@
             "state" : "translated",
             "value" : "未设置的选项继承应用默认值。已有会话保留其已冻结配置。"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未設定的選項會沿用應用程式預設值。現有對話會保留已記錄的設定。"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未設定の選択はアプリの既定値を引き継ぎます。既存の会話は保存済みの設定を保持します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "미설정 선택은 앱 기본값을 따릅니다. 기존 대화는 저장된 설정을 유지합니다."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Les choix non définis héritent des réglages de l’application. Les conversations existantes conservent leur configuration enregistrée."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nicht gesetzte Optionen übernehmen die App-Vorgaben. Bestehende Unterhaltungen behalten ihre erfasste Konfiguration."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Las opciones sin definir heredan los valores de la aplicación. Las conversaciones existentes conservan su configuración guardada."
+          }
         }
       }
     },
@@ -130155,6 +130482,42 @@
             "state" : "translated",
             "value" : "继承默认模型"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用預設模型"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "既定のモデルを使う"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "기본 모델 사용"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Utiliser le modèle par défaut"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Standardmodell verwenden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Usar modelo predeterminado"
+          }
         }
       }
     },
@@ -130170,6 +130533,42 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "继承默认模板"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用預設範本"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "既定のテンプレートを使う"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "기본 템플릿 사용"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Utiliser le modèle de texte par défaut"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Standardvorlage verwenden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Usar plantilla predeterminada"
           }
         }
       }
@@ -130532,6 +130931,42 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "使用模型默认配置"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用模型預設值"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "モデルの既定値を使う"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모델 기본값 사용"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Utiliser les réglages du modèle"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modellvorgaben verwenden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Usar valores del modelo"
           }
         }
       }
@@ -133208,6 +133643,18 @@
             "state" : "translated",
             "value" : "资料"
           }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "資料來源"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "소스"
+          }
         }
       }
     },
@@ -133903,7 +134350,239 @@
     "清除" : {},
     "移除未执行的表单操作" : {},
     "重新校验" : {},
-    "重新读取表单" : {}
+    "重新读取表单" : {},
+    "mac.data_center.permission.failed" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法申请访问。请重试，或在系统设置中检查 Nola 的权限。"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Access could not be requested. Try again or review Nola in System Settings."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zugriff konnte nicht angefordert werden. Erneut versuchen oder Nola in den Systemeinstellungen prüfen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo solicitar acceso. Reintenta o revisa Nola en Ajustes del Sistema."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible de demander l’accès. Réessayez ou vérifiez Nola dans Réglages Système."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アクセスを要求できませんでした。再試行するか、システム設定で Nola を確認してください。"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось запросить доступ. Повторите попытку или проверьте Nola в системных настройках."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法申請存取。請重試，或在系統設定中檢查 Nola 的權限。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "접근을 요청할 수 없습니다. 다시 시도하거나 시스템 설정에서 Nola 권한을 확인하세요."
+          }
+        }
+      }
+    },
+    "mac.data_center.permission.requesting" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在申请访问…"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Requesting access…"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zugriff wird angefordert…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Solicitando acceso…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Demande d’accès…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アクセスを要求中…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запрос доступа…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在申請存取⋯"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "접근 요청 중…"
+          }
+        }
+      }
+    },
+    "mac.data_center.permission.continue" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "继续"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continue"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fortfahren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continuar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continuer"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "続ける"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Продолжить"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "繼續"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "계속"
+          }
+        }
+      }
+    },
+    "mac.data_center.permission.recovery" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在系统设置中检查 Nola 的访问权限，返回后会刷新状态。受限制的权限可能需要组织管理员调整。"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Review Nola’s access in System Settings, then return here to refresh its status. Restrictions may be managed by your organization."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nolas Zugriff in den Systemeinstellungen prüfen und zurückkehren. Einschränkungen werden möglicherweise von deiner Organisation verwaltet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Revisa el acceso de Nola en Ajustes del Sistema y vuelve para actualizar el estado. Tu organización puede gestionar las restricciones."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vérifiez l’accès de Nola dans Réglages Système, puis revenez pour actualiser l’état. Les restrictions peuvent être gérées par votre organisation."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "システム設定で Nola のアクセスを確認し、戻ると状態が更新されます。制限は組織が管理している場合があります。"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверьте доступ Nola в системных настройках и вернитесь для обновления статуса. Ограничениями может управлять ваша организация."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在系統設定中檢查 Nola 的存取權限，返回後會更新狀態。受限制的權限可能需要組織管理員調整。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "시스템 설정에서 Nola의 접근 권한을 확인한 후 돌아오면 상태가 갱신됩니다. 제한은 조직에서 관리할 수 있습니다."
+          }
+        }
+      }
+    }
   },
   "version" : "1.0"
 }

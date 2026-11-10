@@ -2,7 +2,6 @@ package com.nola.ui.screen.onboarding
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -10,10 +9,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,13 +37,9 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.CheckBox
-import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Public
-import androidx.compose.material.icons.filled.RadioButtonUnchecked
-import androidx.compose.material.icons.filled.RadioButtonChecked
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.Button
@@ -77,7 +69,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.nola.ui.components.NolaMotion
-import androidx.compose.ui.semantics.Role
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.nola.R
 
@@ -87,13 +78,6 @@ private const val GuideStepCount = 4
 fun OnboardingScreen(viewModel: OnboardingViewModel = hiltViewModel()) {
     val uiState by viewModel.uiState.collectAsState()
     var step by rememberSaveable { mutableIntStateOf(0) }
-    var runtimeChoice by rememberSaveable { mutableStateOf("automatic") }
-    var selectedSourcesValue by rememberSaveable { mutableStateOf("documents") }
-    val selectedSources = selectedSourcesValue
-        .split(',')
-        .filter(String::isNotBlank)
-        .toSet()
-
     BackHandler(enabled = step > 0 && !uiState.isCompleting) { step-- }
 
     Box(
@@ -112,6 +96,10 @@ fun OnboardingScreen(viewModel: OnboardingViewModel = hiltViewModel()) {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             GuideHeader(step)
+            androidx.compose.material3.TextButton(
+                onClick = { viewModel.completeOnboarding() },
+                enabled = !uiState.isCompleting,
+            ) { Text(stringResource(R.string.onboarding_guide_action_later)) }
 
             AnimatedContent(
                 targetState = step,
@@ -130,15 +118,8 @@ fun OnboardingScreen(viewModel: OnboardingViewModel = hiltViewModel()) {
             ) { current ->
                 when (current) {
                     0 -> ValuePage()
-                    1 -> RuntimePage(runtimeChoice) { runtimeChoice = it }
-                    2 -> SourcesPage(selectedSources) { id ->
-                        val updated = if (id in selectedSources) {
-                            selectedSources - id
-                        } else {
-                            selectedSources + id
-                        }
-                        selectedSourcesValue = updated.sorted().joinToString(",")
-                    }
+                    1 -> RuntimePage()
+                    2 -> SourcesPage()
                     else -> ReadyPage()
                 }
             }
@@ -196,7 +177,7 @@ fun OnboardingScreen(viewModel: OnboardingViewModel = hiltViewModel()) {
                         if (step < GuideStepCount - 1) {
                             step++
                         } else {
-                            viewModel.completeOnboarding(runtimeChoice, selectedSources)
+                            viewModel.completeOnboarding()
                         }
                     },
                     modifier = Modifier
@@ -359,64 +340,47 @@ private fun ValuePage() {
 }
 
 @Composable
-private fun RuntimePage(selection: String, onSelect: (String) -> Unit) {
+private fun RuntimePage() {
     GuidePage(
         eyebrow = stringResource(R.string.onboarding_guide_runtime_eyebrow),
         title = stringResource(R.string.onboarding_guide_runtime_title),
         body = stringResource(R.string.onboarding_guide_runtime_body)
     ) {
-        ChoiceRow(
-            id = "automatic",
-            selected = selection,
+        TaskRow(
             icon = Icons.Filled.Refresh,
             title = stringResource(R.string.onboarding_guide_runtime_auto),
-            detail = stringResource(R.string.onboarding_guide_runtime_auto_detail),
-            selectionRole = Role.RadioButton,
-            onSelect = onSelect
+            detail = stringResource(R.string.onboarding_guide_runtime_auto_detail)
         )
-        ChoiceRow(
-            id = "host",
-            selected = selection,
+        TaskRow(
             icon = Icons.Filled.Public,
             title = stringResource(R.string.onboarding_guide_runtime_host),
-            detail = stringResource(R.string.onboarding_guide_runtime_host_detail),
-            selectionRole = Role.RadioButton,
-            onSelect = onSelect
+            detail = stringResource(R.string.onboarding_guide_runtime_host_detail)
         )
         GuideNote(Icons.Filled.Check, stringResource(R.string.onboarding_guide_runtime_note))
     }
 }
 
 @Composable
-private fun SourcesPage(selected: Set<String>, onToggle: (String) -> Unit) {
+private fun SourcesPage() {
     GuidePage(
         eyebrow = stringResource(R.string.onboarding_core_sources_eyebrow),
         title = stringResource(R.string.onboarding_guide_sources_title),
         body = stringResource(R.string.onboarding_guide_sources_body)
     ) {
-        SourceRow(
-            id = "documents",
-            selected = selected,
+        TaskRow(
             icon = Icons.Filled.Description,
             title = stringResource(R.string.onboarding_guide_source_documents),
-            detail = stringResource(R.string.onboarding_guide_source_documents_detail),
-            onToggle = onToggle
+            detail = stringResource(R.string.onboarding_guide_source_documents_detail)
         )
-        SourceRow(
-            id = "calendar",
-            selected = selected,
+        TaskRow(
             icon = Icons.Filled.CalendarMonth,
             title = stringResource(R.string.onboarding_guide_source_calendar),
-            detail = stringResource(R.string.onboarding_guide_source_calendar_detail),
-            onToggle = onToggle
+            detail = stringResource(R.string.onboarding_guide_source_calendar_detail)
         )
-        SourceRow(
-            id = "health",
-            selected = selected,
+        TaskRow(
             icon = Icons.Filled.Favorite,
             title = stringResource(R.string.onboarding_guide_source_health),
-            detail = stringResource(R.string.onboarding_core_health_detail),
-            onToggle = onToggle
+            detail = stringResource(R.string.onboarding_core_health_detail)
         )
         GuideNote(
             Icons.Filled.Check,
@@ -514,113 +478,6 @@ private fun FlowConnector() {
             .padding(start = 19.dp)
             .size(width = 1.dp, height = 14.dp)
             .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
-    )
-}
-
-@Composable
-private fun ChoiceRow(
-    id: String,
-    selected: String,
-    icon: ImageVector,
-    title: String,
-    detail: String,
-    selectionRole: Role,
-    onSelect: (String) -> Unit
-) {
-    val active = id == selected
-    val borderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)
-    val containerColor by animateColorAsState(
-        targetValue = if (active) {
-            MaterialTheme.colorScheme.primaryContainer
-        } else {
-            MaterialTheme.colorScheme.surface
-        },
-        animationSpec = tween(
-            durationMillis = NolaMotion.base,
-            easing = NolaMotion.emphasizedEasing,
-        ),
-        label = "guide-choice-container"
-    )
-    val selectionModifier = if (selectionRole == Role.Checkbox) {
-        Modifier.toggleable(
-            value = active,
-            role = Role.Checkbox,
-            onValueChange = { onSelect(id) }
-        )
-    } else {
-        Modifier.selectable(
-            selected = active,
-            role = selectionRole,
-            onClick = { onSelect(id) }
-        )
-    }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(
-                1.dp,
-                borderColor,
-                RoundedCornerShape(18.dp)
-            )
-            .background(
-                containerColor,
-                RoundedCornerShape(18.dp)
-            )
-            .then(selectionModifier)
-            .padding(horizontal = 14.dp, vertical = 13.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Surface(
-            shape = RoundedCornerShape(11.dp),
-            color = if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
-            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
-        ) {
-            Icon(
-                icon,
-                null,
-                tint = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(9.dp).size(20.dp)
-            )
-        }
-        Column(Modifier.weight(1f).padding(horizontal = 13.dp)) {
-            Text(title, fontWeight = FontWeight.SemiBold)
-            Text(
-                detail,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 2.dp)
-            )
-        }
-        Icon(
-            when {
-                active && selectionRole == Role.Checkbox -> Icons.Filled.CheckBox
-                active -> Icons.Filled.RadioButtonChecked
-                selectionRole == Role.Checkbox -> Icons.Filled.CheckBoxOutlineBlank
-                else -> Icons.Filled.RadioButtonUnchecked
-            },
-            null,
-            tint = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
-        )
-    }
-}
-
-@Composable
-private fun SourceRow(
-    id: String,
-    selected: Set<String>,
-    icon: ImageVector,
-    title: String,
-    detail: String,
-    onToggle: (String) -> Unit
-) {
-    ChoiceRow(
-        id = id,
-        selected = if (id in selected) id else "",
-        icon = icon,
-        title = title,
-        detail = detail,
-        selectionRole = Role.Checkbox,
-        onSelect = { onToggle(id) }
     )
 }
 

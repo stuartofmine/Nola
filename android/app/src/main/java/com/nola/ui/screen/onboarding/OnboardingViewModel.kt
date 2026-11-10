@@ -54,12 +54,12 @@ class OnboardingViewModel @Inject constructor(
         }
     }
 
-    fun completeOnboarding(runtimeChoice: String, selectedSources: Set<String>) {
+    fun completeOnboarding() {
         if (_uiState.value.isCompleting) return
+        _uiState.update { it.copy(isCompleting = true, completionFailed = false) }
         viewModelScope.launch {
-            _uiState.update { it.copy(isCompleting = true, completionFailed = false) }
             runCatching {
-                prefs.completeOnboarding(runtimeChoice, selectedSources)
+                prefs.setOnboardingCompleted()
             }.onSuccess {
                 _uiState.update { it.copy(isCompleted = true, isCompleting = false) }
             }.onFailure {

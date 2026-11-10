@@ -1121,9 +1121,9 @@
 "permissions.setup.info.none_granted.desc" = "You can grant permissions anytime in Settings for a better experience.";
 
 "permissions.setup.feature.privacy.title" = "Privacy";
-"permissions.setup.feature.privacy.desc" = "All data stays on your device";
-"permissions.setup.feature.no_upload.title" = "No upload";
-"permissions.setup.feature.no_upload.desc" = "Your data never leaves your device";
+"permissions.setup.feature.privacy.desc" = "System permission and conversation access are configured separately. Grant only what the current feature needs.";
+"permissions.setup.feature.no_upload.title" = "Control context access";
+"permissions.setup.feature.no_upload.desc" = "When using a remote model, data approved for context is sent to the selected service. Control this with source access policies.";
 "permissions.setup.feature.control.title" = "Control";
 "permissions.setup.feature.control.desc" = "You can revoke permissions anytime in Settings";
 
@@ -2142,19 +2142,19 @@
 
 // MARK: - First-run guide v2
 "onboarding.guide.step_format" = "%1$d of %2$d";
-"onboarding.guide.runtime.eyebrow" = "CHOOSE THE RUNTIME";
-"onboarding.guide.runtime.title" = "Decide where Nola does the work";
-"onboarding.guide.runtime.body" = "Start with automatic selection, or express a preference for this device or a connected host. Availability is always shown before a task runs.";
-"onboarding.guide.runtime.auto" = "Automatic";
-"onboarding.guide.runtime.auto_detail" = "Use the best configured model and available tools";
-"onboarding.guide.runtime.device" = "This device";
-"onboarding.guide.runtime.device_detail" = "Prefer a downloaded model and on-device capabilities";
-"onboarding.guide.runtime.host" = "Connected host";
-"onboarding.guide.runtime.host_detail" = "Use a paired Mac or CLI host for broader tools";
-"onboarding.guide.runtime.note" = "This is a preference, not a permission grant. You can change the model and host for each conversation.";
-"onboarding.guide.sources.title" = "Plan the context you want to use";
-"onboarding.guide.sources.body" = "Choose what may become useful. Nothing is accessed until a real task needs it.";
-"onboarding.guide.sources.permission_note" = "System access is requested at the moment of use, with a clear explanation. Skipping a source never blocks chat.";
+"onboarding.guide.runtime.eyebrow" = "CONNECT A MODEL";
+"onboarding.guide.runtime.title" = "Set up a model before chatting";
+"onboarding.guide.runtime.body" = "After this guide, open Settings → Models to add a connection or download a local model, then select the model for your conversation.";
+"onboarding.guide.runtime.auto" = "Model connections";
+"onboarding.guide.runtime.auto_detail" = "Add a connection in Settings → Models, then enable and select a model.";
+"onboarding.guide.runtime.device" = "Local models";
+"onboarding.guide.runtime.device_detail" = "Download a compatible model on the Models page before using local inference.";
+"onboarding.guide.runtime.host" = "Connect a host";
+"onboarding.guide.runtime.host_detail" = "Connect a Host in model settings to use its Mac or CLI tools. Tool access is managed on that Host.";
+"onboarding.guide.runtime.note" = "This guide does not connect services, download models or grant access. Conversations use the model and Host you actually select.";
+"onboarding.guide.sources.title" = "Connect sources when needed";
+"onboarding.guide.sources.body" = "Add sources when you use the related feature. System permission and conversation access are separate; declining data access still lets you chat.";
+"onboarding.guide.sources.permission_note" = "System permission lets Nola read data. Source access policy and conversation choices still control whether it enters model context.";
 "onboarding.guide.source.documents" = "Documents";
 "onboarding.guide.source.documents_detail" = "Attach files directly to the message that needs them";
 "onboarding.guide.source.calendar" = "Calendar";
@@ -2167,7 +2167,7 @@
 "onboarding.guide.source.iphone_detail" = "Use synced Health summaries and device context when available";
 "onboarding.guide.ready.eyebrow" = "READY FOR A REAL TASK";
 "onboarding.guide.ready.title" = "Begin with an outcome, not a feature";
-"onboarding.guide.ready.body" = "Describe what you want finished. Nola will show sources, thinking, and tool activity while it works.";
+"onboarding.guide.ready.body" = "Finish connecting and selecting a model in Settings → Models, then send your first message. Sources and tools follow their access policies.";
 "onboarding.guide.task.day" = "Plan my day";
 "onboarding.guide.task.day_detail" = "Combine the schedule and open tasks into a practical plan";
 "onboarding.guide.task.document" = "Work with a document";
@@ -3288,3 +3288,4 @@
 "model.action.resume" = "Resume download";
 
 "chat.context.cannot_fit.recovery" = "This model’s context window is too small. Choose a model with a larger context window, then retry. Your conversation is preserved.";
+"onboarding.guide.action.later" = "Skip for now";

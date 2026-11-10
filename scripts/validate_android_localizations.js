@@ -33,7 +33,7 @@ function loadStrings(directory) {
   const values = new Map();
   const pattern = /<string\s+name="([^"]+)"[^>]*>([\s\S]*?)<\/string>/g;
   for (const match of xml.matchAll(pattern)) {
-    if (match[1].startsWith("data_sources_")) {
+    if (match[1].startsWith("data_sources_") || match[1].startsWith("onboarding_")) {
       values.set(match[1], decodeXml(match[2]));
     }
   }
@@ -72,5 +72,5 @@ if (failures.length > 0) {
 }
 
 console.log(
-  `Android data-center localization validation passed: ${source.size} keys, ${localeDirectories.length} locales`,
+  `Android data-source/onboarding localization validation passed: ${source.size} keys, ${localeDirectories.length} locales`,
 );

@@ -90,7 +90,11 @@ fn mark_completed() -> Result<(), String> {
 }
 
 fn copy() -> GuideCopy {
-    match current_language() {
+    copy_for_language(current_language())
+}
+
+fn copy_for_language(language: Language) -> GuideCopy {
+    match language {
         Language::ZhHans => GuideCopy {
             title: "首次使用引导",
             subtitle: "四步了解 Nola，不会在这里集中索取系统权限。",
@@ -104,7 +108,7 @@ fn copy() -> GuideCopy {
             ready_body: "直接描述目标，例如“阅读这个项目并列出三个最高风险问题”。",
             current_model: "当前模型",
             workspace: "工作区",
-            not_configured: "未配置，运行 nola init",
+            not_configured: "未配置；运行 nola model manage 查看配置入口和 Host 启动命令",
             continue_hint: "按 Enter 进入 Nola",
             replay_hint: "随时输入 /guide 重新查看本引导。",
         },
@@ -121,7 +125,7 @@ fn copy() -> GuideCopy {
             ready_body: "Beschreibe ein Ziel, etwa: „Prüfe dieses Projekt und nenne die drei größten Risiken.“",
             current_model: "Aktuelles Modell",
             workspace: "Arbeitsbereich",
-            not_configured: "Nicht konfiguriert; nola init ausführen",
+            not_configured: "Nicht konfiguriert; nola model manage zeigt Einrichtung und Host-Start",
             continue_hint: "Enter drücken, um Nola zu öffnen",
             replay_hint: "Mit /guide kannst du diese Einführung erneut öffnen.",
         },
@@ -138,7 +142,7 @@ fn copy() -> GuideCopy {
             ready_body: "Describe un objetivo, por ejemplo: «Revisa este proyecto y enumera los tres riesgos principales».",
             current_model: "Modelo actual",
             workspace: "Espacio de trabajo",
-            not_configured: "Sin configurar; ejecuta nola init",
+            not_configured: "Sin configurar; nola model manage muestra cómo configurar e iniciar el Host",
             continue_hint: "Pulsa Enter para abrir Nola",
             replay_hint: "Escribe /guide para volver a ver esta guía.",
         },
@@ -155,7 +159,7 @@ fn copy() -> GuideCopy {
             ready_body: "Décrivez un objectif, par exemple : « Analyse ce projet et liste les trois principaux risques ».",
             current_model: "Modèle actuel",
             workspace: "Espace de travail",
-            not_configured: "Non configuré ; exécutez nola init",
+            not_configured: "Non configuré ; nola model manage affiche la configuration et le démarrage du Host",
             continue_hint: "Appuyez sur Entrée pour ouvrir Nola",
             replay_hint: "Saisissez /guide pour revoir cette introduction.",
         },
@@ -172,7 +176,7 @@ fn copy() -> GuideCopy {
             ready_body: "例：「このプロジェクトを確認し、最大のリスクを 3 つ挙げて」のように目的を伝えてください。",
             current_model: "現在のモデル",
             workspace: "ワークスペース",
-            not_configured: "未設定。nola init を実行",
+            not_configured: "未設定。nola model manage で設定先と Host の起動方法を確認",
             continue_hint: "Enter で Nola を開く",
             replay_hint: "/guide でいつでもこのガイドを再表示できます。",
         },
@@ -189,7 +193,7 @@ fn copy() -> GuideCopy {
             ready_body: "Опишите цель, например: «Проверь этот проект и назови три главных риска».",
             current_model: "Текущая модель",
             workspace: "Рабочая папка",
-            not_configured: "Не настроено; запустите nola init",
+            not_configured: "Не настроено; nola model manage покажет настройки и команду запуска Host",
             continue_hint: "Нажмите Enter, чтобы открыть Nola",
             replay_hint: "Введите /guide, чтобы снова открыть это руководство.",
         },
@@ -206,7 +210,7 @@ fn copy() -> GuideCopy {
             ready_body: "State a goal, such as “Review this project and list the three highest-risk issues.”",
             current_model: "Current model",
             workspace: "Workspace",
-            not_configured: "Not configured; run nola init",
+            not_configured: "Not configured; nola model manage shows setup and the Host start command",
             continue_hint: "Press Enter to enter Nola",
             replay_hint: "Type /guide at any time to replay this guide.",
         },
@@ -216,6 +220,15 @@ fn copy() -> GuideCopy {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn setup_hint_points_to_model_management_instead_of_document_generation() {
+        for language in [Language::ZhHans, Language::En, Language::De, Language::Es, Language::Fr, Language::Ja, Language::Ru] {
+            let hint = copy_for_language(language).not_configured;
+            assert!(hint.contains("nola model manage"));
+            assert!(!hint.contains("nola init"));
+        }
+    }
 
     #[test]
     fn completion_marker_is_versioned() {
