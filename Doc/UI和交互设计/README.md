@@ -17,6 +17,12 @@
 
 [原型目录](../../docs/design/nola-ui-prototype/README.md)、[演示交互](../../docs/design/nola-ui-prototype/docs/UI-INTERACTION.md)、[视觉参数](../../docs/design/nola-ui-prototype/docs/DESIGN-SPEC.md)与[能力矩阵](../../docs/design/nola-ui-prototype/FEATURE-COVERAGE.csv)保留各自同步日期。未同步的脚本和历史截图应明确标为演示/待核对，不再称为生产交互的唯一基线。
 
+## 全业务原型（2026-11-10）
+
+新增[场景入口](../../docs/design/nola-ui-prototype/scenarios.html)与[全业务清单](../../docs/design/nola-ui-prototype/docs/BUSINESS-SCENARIOS.md)：68 个业务场景、220 个状态，按 macOS、iOS/iPadOS、Android、Web、Windows 和 CLI 视角审阅。当前 Web 14 路由全部映射，异常、拒绝、保存未确认、长任务恢复与未知格式不再只靠说明文字带过。原有完整交互原型保留，设置的原型预览提供入口。
+
+这是浏览器中的设计状态演示，适用平台不表示实现或验收完成；原型不执行模型、Host、OAuth、系统授权或数据操作。逐状态回放与原生、真实模型验收分开记录。
+
 ## 跨平台契约
 
 - [视觉系统与组件规范](DESIGN_SYSTEM.md)：当前基线索引与平台映射；详细视觉值以原型视觉规范为准。

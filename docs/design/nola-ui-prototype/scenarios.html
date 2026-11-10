@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="Nola 全业务场景原型：按业务、平台和状态审阅正常流程、异常与恢复。仅本地合成演示。">
+    <title>Nola · 全业务场景</title>
+    <link rel="stylesheet" href="business-scenarios.css">
+    <script defer src="business-scenarios.js"></script>
+</head>
+<body>
+    <a class="skip" href="#preview-title">跳到场景预览</a>
+    <header class="review-bar">
+        <a class="wordmark" href="index.html" aria-label="返回完整交互原型">Nola<span>业务场景</span></a>
+        <div class="review-options">
+            <label>平台<select id="platform"><option value="mac">macOS</option><option value="ios">iOS / iPadOS</option><option value="android">Android</option><option value="web">Web</option><option value="windows">Windows</option><option value="cli">CLI</option></select></label>
+            <label>外观<select id="theme"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>
+            <button id="catalog-toggle" aria-expanded="true" aria-controls="catalog">场景目录</button>
+        </div>
+    </header>
+    <div class="review-layout">
+        <aside id="catalog" aria-label="业务场景目录">
+            <div class="catalog-head"><h1>每条流程，都有来路</h1><p id="coverage-count">正在读取场景清单…</p><label class="search-label">搜索业务或状态<input id="search" type="search" placeholder="如：宿主机、压缩、保存未确认"></label><label class="availability"><input id="applicable" type="checkbox">只看此平台适用设计</label></div>
+            <nav id="scene-list" aria-label="场景选择"></nav>
+            <a class="coverage-link" href="docs/BUSINESS-SCENARIOS.md">查看业务覆盖、源码依据与边界 ↗</a>
+        </aside>
+        <main id="review-main">
+            <section class="scene-heading"><div><p id="group-name" class="eyebrow"></p><h2 id="preview-title" tabindex="-1"></h2><p id="scene-entry"></p></div><div class="review-tags"><span>交互设计演示</span><span id="scene-number"></span></div></section>
+            <p class="prototype-notice">所有内容均为样例。这里不连接模型、Host、账户或系统权限，不读取文件；请勿输入真实凭据。</p>
+            <div class="review-workspace">
+                <section class="preview-area" aria-label="平台界面预览"><div id="device"></div></section>
+                <aside class="review-notes" aria-label="设计与状态说明">
+                    <h3>状态与分支</h3><p>先直接操作界面；也可选择任一状态检查边界。切换状态不会执行真实操作。</p>
+                    <nav id="state-list" aria-label="状态选择"></nav>
+                    <details open><summary>交互合同</summary><p id="contract"></p></details>
+                    <details><summary>生产源码依据</summary><ul id="sources"></ul><p>路径表示业务依据，不表示原型状态均已落地。</p></details>
+                    <details><summary>预览与验证边界</summary><p id="boundary"></p><label class="check"><input id="large-text" type="checkbox">大字预览（125%）</label><label class="check"><input id="reduce-motion" type="checkbox">减少动态效果预览</label><p>默认尊重系统减少动态效果。原生手势、键盘、系统权限和真实执行须在客户端单独验收。</p></details>
+                    <button id="reset-scene" class="reset">重置此场景样例</button>
+                </aside>
+            </div>
+            <footer class="review-footer"><a href="index.html">进入完整交互原型 ↗</a><span id="visit-count"></span><span>样例状态仅存本页内存，刷新重置。</span></footer>
+        </main>
+    </div>
+    <dialog id="confirm" aria-labelledby="confirm-title"><h2 id="confirm-title">确认演示操作</h2><p>只改变当前场景样例，不修改真实数据。取消后保留当前草稿与位置。</p><div class="actions"><button id="confirm-cancel">取消</button><button id="confirm-apply" class="primary">确认并继续演示</button></div></dialog>
+    <p id="live" class="sr-only" role="status" aria-live="polite"></p>
+    <noscript><p>此原型需要 JavaScript。业务清单见 BUSINESS-SCENARIOS.json。</p></noscript>
+</body>
+</html>
