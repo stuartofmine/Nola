@@ -44,9 +44,9 @@ struct MacInspectorBrowserView: View {
                         )
                     VStack(alignment: .leading, spacing: 3) {
                         Text(String(localized: "Playwright", table: "Chat"))
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.system(size: MacDesignTokens.Typography.inspectorBody, weight: .semibold))
                         Text(String(localized: "One persistent browser session is shared by this conversation.", table: "Chat"))
-                            .font(.system(size: 10.5))
+                            .font(.system(size: MacDesignTokens.Typography.inspectorCaption))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -54,7 +54,7 @@ struct MacInspectorBrowserView: View {
                     if let browser = model.selectedConversationBrowserSnapshot,
                        browser.pages.count > 1 {
                         Text(browser.pages.count.formatted())
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.system(size: MacDesignTokens.Typography.inspectorDetail, weight: .semibold))
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 7)
                             .frame(height: 22)
@@ -65,7 +65,7 @@ struct MacInspectorBrowserView: View {
                             ? String(localized: "Connected", table: "Chat")
                             : String(localized: "Available", table: "Chat")
                     )
-                        .font(.system(size: 9.5, weight: .semibold))
+                        .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .semibold))
                         .foregroundStyle(
                             model.selectedConversationHasManagedBrowser
                                 ? Color.green
@@ -89,7 +89,7 @@ struct MacInspectorBrowserView: View {
                             showsExpandedBrowser = true
                         } label: {
                             Image(systemName: "arrow.up.left.and.arrow.down.right")
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(.system(size: MacDesignTokens.Typography.inspectorDetail, weight: .semibold))
                                 .frame(width: 28, height: 28)
                                 .background(MacDesignColor.panel, in: RoundedRectangle(cornerRadius: 7))
                         }
@@ -111,7 +111,7 @@ struct MacInspectorBrowserView: View {
                             browser.updatedAt.formatted(date: .omitted, time: .shortened)
                         )
                     )
-                    .font(.system(size: 9.5))
+                    .font(.system(size: MacDesignTokens.Typography.inspectorCaption))
                     .foregroundStyle(.tertiary)
                 }
             }
@@ -127,7 +127,7 @@ struct MacInspectorBrowserView: View {
                     status: browserStatusTitle
                 )
                 Text(browserStatusDetail)
-                    .font(.system(size: 10.5))
+                    .font(.system(size: MacDesignTokens.Typography.inspectorCaption))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 ViewThatFits(in: .horizontal) {
@@ -173,9 +173,9 @@ struct MacInspectorBrowserView: View {
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: "globe")
-                                .font(.system(size: 9.5, weight: .semibold))
+                                .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .semibold))
                             Text(page.displayTitle)
-                                .font(.system(size: 10.5, weight: page.isActive ? .semibold : .medium))
+                                .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: page.isActive ? .semibold : .medium))
                                 .lineLimit(1)
                                 .truncationMode(.tail)
                         }
@@ -227,7 +227,7 @@ struct MacInspectorBrowserView: View {
     ) -> some View {
         HStack(spacing: 9) {
             Image(systemName: symbol)
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: MacDesignTokens.Typography.inspectorDetail, weight: .semibold))
                 .frame(width: 26, height: 26)
                 .foregroundStyle(available ? Color.accentColor : Color.secondary)
                 .background(
@@ -237,10 +237,10 @@ struct MacInspectorBrowserView: View {
             Text(title)
             Spacer()
             Text(status ?? (available ? String(localized: "Enabled") : String(localized: "Disabled")))
-                .font(.system(size: 9.5, weight: .medium))
+                .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .medium))
                 .foregroundStyle(available ? Color.green : Color.secondary)
         }
-        .font(.system(size: 11.5))
+        .font(.system(size: MacDesignTokens.Typography.inspectorBody))
         .frame(minHeight: 34)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text(LocalizedStringKey(title)))
@@ -313,7 +313,7 @@ private struct MacExpandedManagedBrowserView: View {
                     dismiss()
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: MacDesignTokens.Typography.inspectorDetail, weight: .semibold))
                         .frame(width: 28, height: 28)
                 }
                 .buttonStyle(.plain)
@@ -337,7 +337,7 @@ private struct MacExpandedManagedBrowserView: View {
                                     Text(page.displayTitle)
                                         .lineLimit(1)
                                 }
-                                .font(.system(size: 11, weight: page.isActive ? .semibold : .medium))
+                                .font(.system(size: MacDesignTokens.Typography.inspectorDetail, weight: page.isActive ? .semibold : .medium))
                                 .foregroundStyle(page.isActive ? MacDesignColor.brand : Color.secondary)
                                 .padding(.horizontal, 11)
                                 .frame(maxWidth: 240)

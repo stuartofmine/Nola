@@ -16,10 +16,10 @@ struct MacInspectorOverviewHeader: View {
                     Circle().fill(statusColor(status))
                         .frame(width: 6, height: 6)
                     Text(status.title)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: MacDesignTokens.Typography.inspectorDetail, weight: .medium))
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text(hostDisplayName).font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text(hostDisplayName).font(.system(size: MacDesignTokens.Typography.inspectorDetail)).foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
                 Text(model.activeModelName)
@@ -31,7 +31,7 @@ struct MacInspectorOverviewHeader: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     Label(String(localized: "Workspace"), systemImage: "folder")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: MacDesignTokens.Typography.inspectorBody, weight: .semibold))
                     Spacer()
                     Menu {
                         Button(String(localized: "Choose Folder…")) { model.chooseWorkspace() }
@@ -43,7 +43,7 @@ struct MacInspectorOverviewHeader: View {
                 Text(model.workspaceDisplayName).font(.system(size: 13, weight: .medium))
                 if !model.usesSessionSandbox {
                   Text(model.effectiveWorkspaceURL.path)
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(.system(size: MacDesignTokens.Typography.inspectorDetail, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .lineLimit(3).truncationMode(.middle)
                     .textSelection(.enabled)

@@ -280,7 +280,7 @@ struct MacInspectorDiffPreview: View {
         let preview = lines.prefix(Self.lineLimit).joined(separator: "\n")
         VStack(alignment: .leading, spacing: 6) {
             ScrollView(.horizontal) {
-                Text(preview).font(.system(size: 11, design: .monospaced))
+                Text(preview).font(.system(size: MacDesignTokens.Typography.inspectorDetail, design: .monospaced))
                     .lineSpacing(2).fixedSize(horizontal: true, vertical: true)
                     .textSelection(.enabled).padding(8)
             }

@@ -35,7 +35,7 @@ struct MacInspectorDataSourcesView: View {
         MacInspectorSection(title: String(localized: "Data Sources", table: "Chat"), showsDivider: false) {
             HStack(alignment: .firstTextBaseline) {
                 Text(String(localized: "Available in This Conversation", table: "Chat"))
-                    .font(.system(size: 10.5, weight: .medium))
+                    .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .medium))
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button {
@@ -43,7 +43,7 @@ struct MacInspectorDataSourcesView: View {
                 } label: {
                     Label(String(localized: "Manage", table: "Chat"), systemImage: "arrow.up.right")
                         .labelStyle(.titleAndIcon)
-                        .font(.system(size: 10.5, weight: .medium))
+                        .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .medium))
                 }
                 .buttonStyle(MacPressFeedbackButtonStyle())
                 .foregroundStyle(.tint)
@@ -101,7 +101,7 @@ struct MacInspectorDataSourcesView: View {
             )
 
             Text(String(localized: "Changes here apply only to this conversation. Global access and validation live in Data Center.", table: "Chat"))
-                .font(.system(size: 10.5))
+                .font(.system(size: MacDesignTokens.Typography.inspectorCaption))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -155,7 +155,7 @@ struct MacInspectorDataSourcesView: View {
 
         return HStack(spacing: 9) {
             Image(systemName: symbol)
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: MacDesignTokens.Typography.inspectorDetail, weight: .semibold))
                 .foregroundStyle(isAvailable ? Color.accentColor : Color.secondary)
                 .frame(width: 26, height: 26)
                 .background(
@@ -164,10 +164,10 @@ struct MacInspectorDataSourcesView: View {
                 )
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 11.5, weight: .medium))
+                    .font(.system(size: MacDesignTokens.Typography.inspectorBody, weight: .medium))
                     .lineLimit(1)
                 Text(sourcePolicyTitle(policy))
-                    .font(.system(size: 11))
+                    .font(.system(size: MacDesignTokens.Typography.inspectorDetail))
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 4)
@@ -180,7 +180,7 @@ struct MacInspectorDataSourcesView: View {
                     )
                 } label: {
                     Image(systemName: "arrow.uturn.backward.circle")
-                        .font(.system(size: 11))
+                        .font(.system(size: MacDesignTokens.Typography.inspectorDetail))
                 }
                 .buttonStyle(MacPressFeedbackButtonStyle())
                 .foregroundStyle(.secondary)

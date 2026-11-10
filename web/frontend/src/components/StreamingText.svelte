@@ -1,25 +1,64 @@
 <script lang="ts">
-    import { untrack, getContext } from 'svelte';
-    import { TextReveal, TEXT_REVEAL_MS, STREAMING_TEXT_SELECTION } from '../lib/streamingText';
+    import { untrack, getContext, onDestroy } from 'svelte';
+    import { TextReveal, STREAMING_TEXT_SELECTION, type RevealPiece } from '../lib/streamingText';
     let { text, streaming = false, visiblePrefix = text.length }: {
         text: string; streaming?: boolean; visiblePrefix?: number;
     } = $props();
     const preserveSelection = getContext<(() => void) | undefined>(STREAMING_TEXT_SELECTION);
     const reveal = new TextReveal();
-    let view = $state.raw(untrack(() => reveal.update(text, visiblePrefix, streaming, performance.now())));
+    let reducedMotion = $state(typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches);
+    let view = $state.raw(untrack(() => reveal.update(text, visiblePrefix, streaming, performance.now(), reducedMotion)));
+    const observeMotion = $derived(streaming || view.pieces.length > 0);
+    const nodes = new Map<number, { node: HTMLElement; piece: RevealPiece }>();
+    let frame = 0;
+
+    function paint(node: HTMLElement, piece: RevealPiece, now: number) {
+        const remaining = reveal.remaining(piece, now);
+        node.style.opacity = String(1 - .92 * remaining);
+        node.style.top = `${3 * remaining}px`;
+        node.style.filter = remaining > .08 ? `blur(${.65 * remaining}px)` : 'none';
+    }
+    function register(node: HTMLElement, piece: RevealPiece) {
+        nodes.set(piece.id, { node, piece });
+        paint(node, piece, performance.now());
+        return { destroy: () => nodes.delete(piece.id) };
+    }
+    function animate(now: number) {
+        frame = 0;
+        const next = reveal.advance(now);
+        if (next.pieces.length !== view.pieces.length) {
+            preserveSelection?.();
+            view = next;
+        }
+        for (const { node, piece } of nodes.values()) paint(node, piece, now);
+        if (next.pieces.length) frame = requestAnimationFrame(animate);
+    }
     $effect.pre(() => {
-        preserveSelection?.();
-        view = reveal.update(text, visiblePrefix, streaming, performance.now());
+        const nextText = text, prefix = visiblePrefix, active = streaming, reduced = reducedMotion;
+        untrack(() => {
+            preserveSelection?.();
+            view = reveal.update(nextText, prefix, active, performance.now(), reduced);
+            if (frame) cancelAnimationFrame(frame);
+            frame = view.pieces.length ? requestAnimationFrame(animate) : 0;
+        });
     });
+    $effect(() => {
+        if (!observeMotion) return;
+        const preference = matchMedia('(prefers-reduced-motion: reduce)');
+        const changed = () => { reducedMotion = preference.matches; };
+        preference.addEventListener('change', changed);
+        changed();
+        return () => preference.removeEventListener('change', changed);
+    });
+    onDestroy(() => { if (frame) cancelAnimationFrame(frame); });
 </script>
 
-{#if streaming}{view.settled}{#each view.pieces as piece (piece.id)}<span class="fresh" style:animation-duration={`${TEXT_REVEAL_MS}ms`} onanimationend={() => { preserveSelection?.(); view = reveal.finish(piece.id); }}>{piece.text}</span>{/each}{:else}{text}{/if}
+{view.settled}{#each view.pieces as piece (piece.id)}<span class="fresh" use:register={piece}>{piece.text}</span>{/each}
 
 <style>
-    .fresh { animation: surface-text cubic-bezier(.2, .7, .2, 1) both; }
-    @keyframes surface-text {
-        from { opacity: .08; filter: blur(2px); }
-        to { opacity: 1; filter: blur(0); }
+    /* Relative positioning preserves normal wrapping, shaping and selection. */
+    .fresh { position: relative; }
+    @media (prefers-reduced-motion: reduce) {
+        .fresh { opacity: 1 !important; filter: none !important; top: 0 !important; }
     }
-    @media (prefers-reduced-motion: reduce) { .fresh { animation: none; } }
 </style>

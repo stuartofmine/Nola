@@ -369,7 +369,7 @@ struct MacInspectorProgressContent: View, Equatable {
 
     private func heading(_ key: String) -> some View {
         Text(NSLocalizedString(key, tableName: "ConversationInspector", comment: "Progress section"))
-            .font(.system(size: 11, weight: .medium))
+            .font(.system(size: MacDesignTokens.Typography.inspectorDetail, weight: .medium))
             .foregroundStyle(.secondary)
             .accessibilityAddTraits(.isHeader)
     }

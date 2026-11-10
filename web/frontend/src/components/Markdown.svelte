@@ -17,8 +17,10 @@
     }
     setContext(STREAMING_TEXT_SELECTION, preserveSelection);
     let wasStreaming = untrack(() => streaming);
+    let hasStreamed = $state(untrack(() => streaming));
     $effect.pre(() => {
         source;
+        if (streaming) hasStreamed = true;
         if (streaming || wasStreaming) preserveSelection();
         wasStreaming = streaming;
     });
@@ -83,8 +85,8 @@
 
 {#snippet inlines(nodes: InlineNode[])}
     {#each nodes as node}
-        {#if node.kind === 'text'}{#if streaming}<StreamingText text={node.text} {streaming} visiblePrefix={prefix(node)} />{:else}{node.text}{/if}
-        {:else if node.kind === 'code'}<code>{#if streaming}<StreamingText text={node.text} {streaming} visiblePrefix={prefix(node)} />{:else}{node.text}{/if}</code>
+        {#if node.kind === 'text'}{#if streaming || hasStreamed}<StreamingText text={node.text} {streaming} visiblePrefix={prefix(node)} />{:else}{node.text}{/if}
+        {:else if node.kind === 'code'}<code>{#if streaming || hasStreamed}<StreamingText text={node.text} {streaming} visiblePrefix={prefix(node)} />{:else}{node.text}{/if}</code>
         {:else if node.kind === 'strong'}<strong>{@render inlines(node.children)}</strong>
         {:else if node.kind === 'em'}<em>{@render inlines(node.children)}</em>
         {:else if node.kind === 'del'}<del>{@render inlines(node.children)}</del>
@@ -108,7 +110,7 @@
         {:else if node.kind === 'code'}
             <div class="code-block"><div class="code-header"><span>{node.language || t($locale, 'shell.markdown.code')}</span><button type="button" onclick={() => copy(node.text)}>{t($locale, 'shell.markdown.copy')}</button></div>
                 <!-- svelte-ignore a11y_no_noninteractive_tabindex (Keyboard users need to focus this overflow region to scroll code.) -->
-                <pre tabindex="0" role="region" aria-label={t($locale, 'shell.markdown.code')}><code>{#if streaming}<StreamingText text={node.text} {streaming} visiblePrefix={prefix(node)} />{:else}{node.text}{/if}</code></pre>
+                <pre tabindex="0" role="region" aria-label={t($locale, 'shell.markdown.code')}><code>{#if streaming || hasStreamed}<StreamingText text={node.text} {streaming} visiblePrefix={prefix(node)} />{:else}{node.text}{/if}</code></pre>
             </div>
         {:else if node.kind === 'list'}
             <svelte:element this={node.ordered ? 'ol' : 'ul'} start={node.ordered ? node.start : undefined}>

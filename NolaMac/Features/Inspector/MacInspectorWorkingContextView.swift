@@ -30,7 +30,7 @@ struct MacInspectorWorkingContextView: View {
             let conversationAttachments = model.selectedConversationAttachments
             if model.attachments.isEmpty && conversationAttachments.isEmpty {
                 Label(String(localized: "No attached files"), systemImage: "doc")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: MacDesignTokens.Typography.inspectorBody, weight: .medium))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 6)
                     .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)

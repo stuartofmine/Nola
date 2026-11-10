@@ -218,7 +218,7 @@ Host event
 2. `transportCompleted` 后不会再有上游增量；终态正文仍经同一个增量 renderer
    收尾，只解析可变尾部，不替换气泡、message ID 或已封口 block。
 3. `presentationCompleted` 表示最后一批 glyph 的绘制已清晰；Apple 单批最长
-   360ms，从各批实际收到时开始，不能累计成几秒的排空延迟。
+   520ms，从各批实际收到时开始，不能累计成几秒的排空延迟。
 4. 取消、失败和 incomplete 保留已接收内容，状态依据 Core 的真实终态；
    不用动画计时伪造任务完成，也不清空可阅读的公开推理摘要。
 5. 验收分别记录首 delta、上游 completed、最后正文布局及最后动效清晰时间；
@@ -232,13 +232,25 @@ Apple 两端共同使用 `AppleStreamingInlineText`，只对新增渲染字符�
 | 参数 | 当前值 | 目的 |
 | --- | --- | --- |
 | 快照合帧 | 16ms | 同一帧采用最新内容，避免队列积压 |
-| 单批 glyph 波形 | 360ms | 形成连续、可感知的浮现 |
+| 单批 glyph 波形 | 520ms | 形成连续、可感知的浮现 |
 | 位移 | 3pt 向上归位 | 仅绘制，不改变布局 |
 | blur | 0.65pt 向 0 收敛 | 新字由柔和到清晰 |
-| opacity | 0 向 1 收敛 | 波头沿本批新增字移动 |
+| opacity | 0.08 向 1 收敛 | 波头沿本批新增字移动 |
+
+完成后最后一批最多再用 160ms 收清。这里的 520ms 是绘制波形窗口，不能
+与控件状态切换的 120ms 动效混用，也不能用纯淡入替代水面上浮。
+
+Apple 按 glyph 绘制；Android 与 Web 按三个完整 grapheme 分组，使用相同
+波形。Android 将 3dp 位移、0.65dp blur 按屏幕密度换算，Web 对普通 inline
+span 做相对定位，不使用改变单词断行的 inline-block。跨 delta 扩展组合字符
+时先让该字符完整可读，不拆开 emoji、ZWJ、肤色或组合音标。
 
 后续批次到达可以叠加，旧 range 的起始时间不变。修订、结构替换和历史打开
-立即可读，不重播旧文。tool start/finish、reasoning 折叠和 completed 不重播
+立即可读，不重播旧文。相同时间戳的批次按正文顺序连接波前，不能依赖
+字典迭代顺序。活跃片段有上限（Apple/Android 128、Web 32）；突发大块内容
+超出上限的前缀立即清晰，不能形成动画等待队列。
+
+tool start/finish、reasoning 折叠和 completed 不重播
 正文。Reduce Motion 立即清晰显示，移除位移与 blur。代码、表格、公开推理
 摘要复用同一渲染规则；平台只保留测量、滚动与键盘差异。
 

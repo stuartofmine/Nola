@@ -115,6 +115,7 @@ fun MarkdownRenderer(
     modifier: Modifier = Modifier,
     enableMermaid: Boolean = true,
     revealAppendedText: Boolean = false,
+    streamInProgress: Boolean = revealAppendedText,
 ) {
     val segments = remember(text, enableMermaid) {
         if (enableMermaid) splitMermaidSegments(text) else listOf(MarkdownSegment.Markdown(text))
@@ -123,6 +124,7 @@ fun MarkdownRenderer(
         MarkdownTextSegments(
             text = text,
             revealAppendedText = revealAppendedText,
+            streamInProgress = streamInProgress,
             modifier = modifier,
         )
         return
@@ -136,6 +138,7 @@ fun MarkdownRenderer(
                         MarkdownTextSegments(
                             text = segment.text,
                             revealAppendedText = revealAppendedText,
+                            streamInProgress = streamInProgress,
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
@@ -156,6 +159,7 @@ private fun MarkdownTextSegments(
     text: String,
     modifier: Modifier,
     revealAppendedText: Boolean,
+    streamInProgress: Boolean,
 ) {
     val segments = remember(text) { streamingMarkdownProjection(text, complete = true).committedBlocks }
     val hasScrollableContent = segments.any {
@@ -164,7 +168,7 @@ private fun MarkdownTextSegments(
             (source.startsWith('|') && hasEstablishedMarkdownTable(source.lines()))
     }
     if (!hasScrollableContent) {
-        RichMarkdownRenderer(text, modifier.clearAndSetSemantics { this.text = AnnotatedString(text) }, revealAppendedText)
+        RichMarkdownRenderer(text, modifier.clearAndSetSemantics { this.text = AnnotatedString(text) }, revealAppendedText, streamInProgress)
         return
     }
     Column(modifier.fillMaxWidth()) {
@@ -183,6 +187,7 @@ private fun MarkdownTextSegments(
                     else -> RichMarkdownRenderer(
                         text = segment.markdown,
                         revealAppendedText = revealAppendedText,
+                        streamInProgress = streamInProgress,
                         modifier = Modifier.fillMaxWidth().clearAndSetSemantics {
                             this.text = AnnotatedString(segment.markdown)
                         },
@@ -418,6 +423,7 @@ private fun RichMarkdownRenderer(
     text: String,
     modifier: Modifier = Modifier,
     revealAppendedText: Boolean = false,
+    streamInProgress: Boolean = revealAppendedText,
 ) {
     val context = LocalContext.current
     val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
@@ -543,6 +549,7 @@ private fun RichMarkdownRenderer(
                 markdown = normalizedText,
                 renderKey = renderKey,
                 revealAppendedText = revealAppendedText,
+                streamInProgress = streamInProgress,
             )
         }
     )
@@ -555,25 +562,35 @@ private class MeasuredMarkdownTextView(
     private var currentRenderKey: Any? = null
     private var reportedContentHeight = 0
     private var acceptedText = ""
-    private data class Ink(val start: Int, val end: Int, val time: Long, val position: Float)
+    private data class Ink(val start: Int, val end: Int, val time: Long,
+                           val position: Float, val precedingTime: Long?)
     private val ink = mutableListOf<Ink>()
+    private var streamWasInProgress = false
+    private var completedAt: Long? = null
+    private fun remaining(segment: Ink, now: Long) = WaterSurfaceReveal.remaining(
+        now - segment.time, segment.position, completedAt?.let { now - it },
+        segment.precedingTime?.let { now - it })
     private val inkFrame = object : Runnable {
         override fun run() {
             val now = android.os.SystemClock.uptimeMillis()
-            ink.removeAll { now - it.time >= 520 }
+            ink.removeAll { remaining(it, now) <= 0f }
             val spans = text as? android.text.Spannable
-            spans?.getSpans(0, spans.length, WaterInk::class.java)?.filter { now - it.ink.time >= 520 }?.forEach { spans.removeSpan(it) }
+            spans?.getSpans(0, spans.length, WaterInk::class.java)
+                ?.filter { remaining(it.ink, now) <= 0f }?.forEach { spans.removeSpan(it) }
             invalidate()
             if (ink.isNotEmpty() && isAttachedToWindow) postOnAnimation(this)
         }
     }
-    private class WaterInk(val ink: Ink) : android.text.style.CharacterStyle() {
+    private inner class WaterInk(val ink: Ink) : android.text.style.CharacterStyle() {
         override fun updateDrawState(paint: android.text.TextPaint) {
-            val elapsed = ((android.os.SystemClock.uptimeMillis() - ink.time) / 520f).coerceIn(0f, 1f)
-            val local = ((elapsed * 1.34f - ink.position) / .34f).coerceIn(0f, 1f)
-            val remaining = (1f - local) * (1f - local) * (1f - local)
+            val remaining = remaining(ink, android.os.SystemClock.uptimeMillis())
+            val density = resources.displayMetrics.density
             paint.alpha = (paint.alpha * (1f - .92f * remaining)).toInt()
-            paint.maskFilter = if (remaining > .02f) android.graphics.BlurMaskFilter(1.4f * remaining, android.graphics.BlurMaskFilter.Blur.NORMAL) else null
+            // Positive baselineShift starts below the final baseline. CharacterStyle
+            // changes drawing only, so existing text never reflows with the wave.
+            paint.baselineShift += (3f * density * remaining).toInt()
+            if (remaining > .08f) paint.maskFilter = android.graphics.BlurMaskFilter(
+                .65f * density * remaining, android.graphics.BlurMaskFilter.Blur.NORMAL)
         }
     }
     override fun onDetachedFromWindow() {
@@ -586,13 +603,21 @@ private class MeasuredMarkdownTextView(
         markdown: String,
         renderKey: Any,
         revealAppendedText: Boolean,
+        streamInProgress: Boolean,
     ) {
+        val now = android.os.SystemClock.uptimeMillis()
+        if (streamInProgress) completedAt = null
+        else if (streamWasInProgress) completedAt = now
+        streamWasInProgress = streamInProgress
         if (!revealAppendedText) {
             ink.clear(); removeCallbacks(inkFrame)
             val spans = text as? android.text.Spannable
             spans?.getSpans(0, spans.length, WaterInk::class.java)?.forEach { spans.removeSpan(it) }
         }
-        if (currentRenderKey == renderKey) { invalidate(); return }
+        if (currentRenderKey == renderKey) {
+            if (ink.isNotEmpty()) { removeCallbacks(inkFrame); postOnAnimation(inkFrame) }
+            invalidate(); return
+        }
         currentRenderKey = renderKey
         markwon.setMarkdown(this, markdown)
         // Markwon installs link movement even for ordinary prose. Without a
@@ -605,15 +630,35 @@ private class MeasuredMarkdownTextView(
         }
         val next = text.toString()
         if (revealAppendedText && next.startsWith(acceptedText)) {
-            val now = android.os.SystemClock.uptimeMillis()
-            ink.removeAll { now - it.time >= 520 }
+            ink.removeAll { remaining(it, now) <= 0f }
             val start = acceptedText.length
-            var index = start
-            while (index < next.length) {
-                var end = minOf(next.length, index + 3)
-                if (end < next.length && Character.isHighSurrogate(next[end - 1])) end++
-                ink.add(Ink(index, end, now, (index - start).toFloat() / maxOf(1, next.length - start)))
+            val precedingTime = ink.lastOrNull()?.time
+            val boundaries = android.icu.text.BreakIterator.getCharacterInstance(java.util.Locale.ROOT)
+            boundaries.setText(next)
+            // A combining mark / ZWJ continuation can extend the previous delta's
+            // last grapheme. Settle that cluster instead of splitting its shaping.
+            var index = if (boundaries.isBoundary(start)) start else {
+                ink.clear()
+                boundaries.following(start)
+            }
+            val ranges = mutableListOf<Pair<Int, Int>>()
+            while (index in 0 until next.length) {
+                var end = index
+                repeat(3) {
+                    val following = boundaries.following(end)
+                    if (following != android.icu.text.BreakIterator.DONE) end = following
+                }
+                if (end <= index) break
+                ranges.add(index to end)
                 index = end
+            }
+            val additions = ranges.takeLast(WaterSurfaceReveal.maximumSegments)
+            if (additions.size < ranges.size) ink.clear()
+            additions.forEachIndexed { position, (from, to) ->
+                ink.add(Ink(from, to, now, position.toFloat() / maxOf(1, additions.size - 1), precedingTime))
+            }
+            if (ink.size > WaterSurfaceReveal.maximumSegments) {
+                ink.subList(0, ink.size - WaterSurfaceReveal.maximumSegments).clear()
             }
         } else ink.clear()
         acceptedText = next
@@ -723,6 +768,8 @@ fun SmoothStreamingMarkdownRenderer(
 ) {
     val reduceMotion = rememberReduceMotionEnabled()
 
+    var hasStreamed by remember { mutableStateOf(isStreaming || revealOnFirstComposition) }
+    LaunchedEffect(isStreaming) { if (isStreaming) hasStreamed = true }
     val presentationInProgress = isStreaming
     val projectionCache = remember { StreamingMarkdownProjectionCache() }
     val projection = remember(text, presentationInProgress) {
@@ -748,7 +795,8 @@ fun SmoothStreamingMarkdownRenderer(
                     // Final Markdown normalization may turn the mutable tail into a
                     // committed block. Never replay its entrance animation after the
                     // user has already watched that text arrive.
-                    reduceMotion = reduceMotion || (!presentationInProgress && !revealOnFirstComposition),
+                    reduceMotion = reduceMotion || !hasStreamed,
+                    streamInProgress = presentationInProgress,
                     enableMermaid = block.committed && !presentationInProgress,
                 )
             }
@@ -760,11 +808,12 @@ fun SmoothStreamingMarkdownRenderer(
 private fun StreamingMarkdownBlockRenderer(
     markdown: String,
     reduceMotion: Boolean,
+    streamInProgress: Boolean,
     enableMermaid: Boolean,
 ) {
     // Native ink adapter only: accepted text and layout are never paced by animation.
     MarkdownRenderer(text = markdown, modifier = Modifier.fillMaxWidth(), enableMermaid = enableMermaid,
-        revealAppendedText = !reduceMotion)
+        revealAppendedText = !reduceMotion, streamInProgress = streamInProgress)
 
 }
 

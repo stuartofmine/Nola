@@ -39,7 +39,7 @@ struct MacInspectorActivityView: View {
                 status: authorizationStatus
             )
             Text(String(localized: "Tool availability and permission are checked for each operation. Execution location does not grant access.", table: "Chat"))
-                .font(.system(size: 11))
+                .font(.system(size: MacDesignTokens.Typography.inspectorDetail))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Divider()
@@ -50,7 +50,7 @@ struct MacInspectorActivityView: View {
                     Label(String(localized: "System Access"), systemImage: "checkmark.shield")
                     Spacer()
                     Image(systemName: "arrow.up.right")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .semibold))
                         .foregroundStyle(.tertiary)
                 }
                 .contentShape(Rectangle())
@@ -64,7 +64,7 @@ struct MacInspectorActivityView: View {
                     Label(String(localized: "Skills and MCP"), systemImage: "shippingbox")
                     Spacer()
                     Image(systemName: "arrow.up.right")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .semibold))
                         .foregroundStyle(.tertiary)
                 }
                 .contentShape(Rectangle())
@@ -78,7 +78,7 @@ struct MacInspectorActivityView: View {
                     Label(String(localized: "Diagnostics"), systemImage: "stethoscope")
                     Spacer()
                     Image(systemName: "arrow.up.right")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .semibold))
                         .foregroundStyle(.tertiary)
                 }
                 .contentShape(Rectangle())
@@ -112,7 +112,7 @@ struct MacInspectorActivityView: View {
     ) -> some View {
         HStack(spacing: 9) {
             Image(systemName: symbol)
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: MacDesignTokens.Typography.inspectorDetail, weight: .semibold))
                 .frame(width: 26, height: 26)
                 .foregroundStyle(Color.secondary)
                 .background(
@@ -122,10 +122,10 @@ struct MacInspectorActivityView: View {
             Text(title)
             Spacer()
             Text(status)
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: MacDesignTokens.Typography.inspectorDetail, weight: .medium))
                 .foregroundStyle(Color.secondary)
         }
-        .font(.system(size: 11.5))
+        .font(.system(size: MacDesignTokens.Typography.inspectorBody))
         .frame(minHeight: 34)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)

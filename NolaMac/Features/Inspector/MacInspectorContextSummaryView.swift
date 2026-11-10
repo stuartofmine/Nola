@@ -13,13 +13,13 @@ struct MacInspectorContextSummaryView: View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 8) {
                 Image(systemName: "gauge.with.dots.needle.50percent")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: MacDesignTokens.Typography.inspectorBody, weight: .semibold))
                     .foregroundStyle(.secondary)
                 Text(String(localized: "Context"))
-                    .font(.system(size: 12.5, weight: .semibold))
+                    .font(.system(size: MacDesignTokens.Typography.inspectorBody, weight: .semibold))
                 Spacer()
                 Text(model.contextUsageText)
-                    .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                    .font(.system(size: MacDesignTokens.Typography.inspectorBody, weight: .semibold, design: .monospaced))
                     .monospacedDigit()
                     .foregroundStyle(.primary)
                     .contentTransition(.numericText())
@@ -65,7 +65,7 @@ struct MacInspectorContextSummaryView: View {
                     Spacer(minLength: 8)
                 }
             }
-            .font(.system(size: 10.5, weight: .medium))
+            .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .medium))
             .foregroundStyle(.secondary)
 
             HStack {
@@ -74,7 +74,7 @@ struct MacInspectorContextSummaryView: View {
                 Text(model.promptCacheUsage?.rateText ?? String(localized: "Cache rate unknown", table: "Chat"))
                     .monospacedDigit()
             }
-            .font(.system(size: 10.5, weight: .medium))
+            .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .medium))
             .foregroundStyle(.secondary)
             if let usage = model.promptCacheUsage {
                 HStack {
@@ -83,7 +83,7 @@ struct MacInspectorContextSummaryView: View {
                     }
                     Spacer()
                 }
-                .font(.system(size: 10.5))
+                .font(.system(size: MacDesignTokens.Typography.inspectorCaption))
                 .foregroundStyle(.tertiary)
                 if usage.unreported_requests > 0 {
                     Text(String(localized: "Based on reported requests; some requests did not report cache usage.", table: "Chat"))
@@ -102,7 +102,7 @@ struct MacInspectorContextSummaryView: View {
                     Text(cacheStatus)
                         .foregroundStyle(.secondary)
                 }
-                .font(.system(size: 10.5, weight: .medium))
+                .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .medium))
 
                 if let measurement = model.promptCacheMeasurement {
                     Text("\(String(localized: "Request", table: "Permissions")): \(measurement.requestID)")
@@ -131,7 +131,7 @@ struct MacInspectorContextSummaryView: View {
                         }
                         Spacer()
                     }
-                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .medium, design: .monospaced))
                     .foregroundStyle(.tertiary)
                 }
 
@@ -160,7 +160,7 @@ struct MacInspectorContextSummaryView: View {
                             .foregroundStyle(.tertiary)
                         }
                     }
-                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .medium, design: .monospaced))
                 }
             }
         }

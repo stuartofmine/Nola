@@ -65,7 +65,7 @@ struct MacInspectorKnowledgeView: View {
                         await model.refreshContextArchiveCount()
                     }
                 }
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: MacDesignTokens.Typography.inspectorDetail, weight: .medium))
                 .foregroundStyle(Color.secondary.opacity(0.84))
             }
             .padding(5)
@@ -83,7 +83,7 @@ struct MacInspectorKnowledgeView: View {
             )) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(String(localized: "Keep stable facts, decisions, constraints, and open questions for this conversation.", table: "Chat"))
-                        .font(.system(size: 12))
+                        .font(.system(size: MacDesignTokens.Typography.inspectorBody))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     MacInspectorDocumentEditor(
@@ -107,7 +107,7 @@ struct MacInspectorKnowledgeView: View {
             )) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(String(localized: "Maintain a living Markdown reference that belongs only to this conversation.", table: "Chat"))
-                        .font(.system(size: 12))
+                        .font(.system(size: MacDesignTokens.Typography.inspectorBody))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     MacInspectorDocumentEditor(
@@ -131,7 +131,7 @@ struct MacInspectorKnowledgeView: View {
             )) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(String(localized: "Search original messages. Compaction summaries are not included.", table: "Chat"))
-                        .font(.system(size: 12))
+                        .font(.system(size: MacDesignTokens.Typography.inspectorBody))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
 
@@ -222,7 +222,7 @@ struct MacInspectorKnowledgeView: View {
                 )
             }
         }
-        .font(.system(size: 11, weight: .medium))
+        .font(.system(size: MacDesignTokens.Typography.inspectorDetail, weight: .medium))
         .foregroundStyle(.secondary)
         .frame(minHeight: 16, alignment: .leading)
         .animation(reduceMotion ? nil : .smooth(duration: 0.18), value: model.selectedKnowledgeIsSaving)

@@ -326,6 +326,9 @@ final class AppleMarkdownPresentationScheduler: ObservableObject {
 nonisolated enum AppleStreamingRevealTiming {
     static let duration = 0.52
     static let completionDuration = 0.16
+    static let initialOpacity = 0.08
+    static let rise: CGFloat = 3
+    static let blurRadius: CGFloat = 0.65
     static func remaining(elapsed: TimeInterval, position: Double, completionElapsed: TimeInterval? = nil,
                           precedingElapsed: TimeInterval? = nil) -> Double {
         let elapsed = if let completionElapsed {
@@ -402,13 +405,15 @@ struct ApplePhraseRevealAttribute: TextAttribute { let id: UUID }
 private struct ApplePhraseTextRenderer: TextRenderer {
     let now: Date
     let startedAt: [UUID: Date]
+    let segmentOrder: [UUID]
     let completedAt: Date?
     let reduceMotion: Bool
 
     func draw(layout: Text.Layout, in context: inout GraphicsContext) {
         var preceding: [UUID: Date] = [:]
         var previous: Date?
-        for (id, start) in startedAt.sorted(by: { $0.value < $1.value }) {
+        for id in segmentOrder {
+            guard let start = startedAt[id] else { continue }
             preceding[id] = previous
             previous = start
         }
@@ -437,9 +442,9 @@ private struct ApplePhraseTextRenderer: TextRenderer {
                             completionElapsed: completedAt.map { now.timeIntervalSince($0) },
                             precedingElapsed: preceding[mark.id].map { now.timeIntervalSince($0) })
                         var ink = context
-                        ink.opacity *= 1 - remaining
-                        ink.translateBy(x: 0, y: 3.0 * remaining)
-                        if remaining > 0.08 { ink.addFilter(.blur(radius: 0.65 * remaining)) }
+                        ink.opacity *= 1 - (1 - AppleStreamingRevealTiming.initialOpacity) * remaining
+                        ink.translateBy(x: 0, y: AppleStreamingRevealTiming.rise * remaining)
+                        if remaining > 0.08 { ink.addFilter(.blur(radius: AppleStreamingRevealTiming.blurRadius * remaining)) }
                         ink.draw(glyph)
                     }
                 } else { context.draw(run) }
@@ -474,7 +479,8 @@ struct AppleStreamingInlineText: View {
         let text = render(projection.segments)
         return TimelineView(.animation(minimumInterval: 1.0 / 60, paused: starts.isEmpty || reduceMotion)) { timeline in
             if #available(iOS 18.0, macOS 15.0, *) {
-                text.textRenderer(ApplePhraseTextRenderer(now: timeline.date, startedAt: starts, completedAt: projection.completedAt, reduceMotion: reduceMotion))
+                text.textRenderer(ApplePhraseTextRenderer(now: timeline.date, startedAt: starts,
+                    segmentOrder: projection.segments.map(\.id), completedAt: projection.completedAt, reduceMotion: reduceMotion))
             } else {
                 text
             }

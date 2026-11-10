@@ -53,3 +53,16 @@
 各端消费同一Core业务状态与A2UI v0.9.1投影；草稿、IME、焦点和滚动属于客户端。Apple共享submission frontier DTO；同一源记录的camelCase嵌套诊断不能被外层snake_case策略改写。
 
 具体字段、返回值、错误和源码索引见[当前 Core 与 Host 接口](../01-领域与协议/CURRENT_RUNTIME_INTERFACES.md)。本次仅核对文档，不新增运行验收结论。
+
+
+### 流式绘制边界（2026-11-10）
+
+水面浮现是客户端绘制状态，不进入 Core、Run 或 transport 的完成条件。
+Apple `AppleStreamingInlineText`、Android `MeasuredMarkdownTextView` 与 Web
+`StreamingText` 立即保留全部 accepted 正文，仅新增 range 在 520ms 内由柔焦、
+低透明度与下方 3 单位位移收敛至最终样式。上游完成后绘制尾部最多 160ms
+收清；不得通过卸载组件或重建正文跳过收尾。减少动态效果、历史和修订立即显示。
+
+活跃绘制片段有界，超限前缀立即沉入已清晰正文；动画不得阻塞保存、复制、
+可访问性或后续 delta。相邻批次按内容顺序衔接，emoji/组合字符以 grapheme
+为边界。原生代码块等结构化渲染仍沿用各平台既有测量与滚动路径。

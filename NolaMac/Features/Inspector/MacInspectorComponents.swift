@@ -56,7 +56,7 @@ struct MacInspectorDocumentEditor: View {
             ZStack(alignment: .topLeading) {
                 if text.isEmpty {
                     Text(placeholder)
-                        .font(.system(size: 11.5))
+                        .font(.system(size: MacDesignTokens.Typography.inspectorBody))
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 9)
@@ -65,7 +65,7 @@ struct MacInspectorDocumentEditor: View {
 
                 TextEditor(text: $text)
                     .accessibilityLabel(Text(placeholder))
-                    .font(.system(size: 12))
+                    .font(.system(size: MacDesignTokens.Typography.inspectorBody))
                     .lineSpacing(2)
                     .scrollContentBackground(.hidden)
                     .focused($isFocused)
@@ -119,14 +119,14 @@ struct MacConversationRecallRow: View {
                 VStack(alignment: .leading, spacing: 7) {
                     HStack(spacing: 7) {
                         Image(systemName: symbol)
-                            .font(.system(size: 10.5, weight: .semibold))
+                            .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .semibold))
                             .foregroundStyle(result.source == .compactionSummary ? Color.orange : Color.accentColor)
                             .frame(width: 16)
                         Text(sourceTitle)
-                            .font(.system(size: 10.5, weight: .semibold))
+                            .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .semibold))
                         Spacer(minLength: 6)
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 8.5, weight: .semibold))
+                            .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .semibold))
                             .foregroundStyle(.tertiary)
                             .rotationEffect(.degrees(isExpanded ? 180 : 0))
                     }
@@ -142,7 +142,7 @@ struct MacConversationRecallRow: View {
                                 .macDisclosureTransition(reduceMotion: reduceMotion)
                         }
                     }
-                    .font(.system(size: 10.5))
+                    .font(.system(size: MacDesignTokens.Typography.inspectorCaption))
                     .foregroundStyle(.secondary)
                     .lineSpacing(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -181,7 +181,7 @@ struct MacInspectorToggleRow: View {
         var body: some View {
             HStack(alignment: .top, spacing: 9) {
                 Image(systemName: symbol)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: MacDesignTokens.Typography.inspectorDetail, weight: .semibold))
                     .frame(width: 26, height: 26)
                     .foregroundStyle(isOn ? MacDesignColor.brand : Color.secondary)
                     .background(
@@ -191,12 +191,12 @@ struct MacInspectorToggleRow: View {
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)
-                        .font(.system(size: 12.5, weight: .medium))
+                        .font(.system(size: MacDesignTokens.Typography.inspectorBody, weight: .medium))
                         .lineLimit(2)
 
                     if let detail {
                         Text(detail)
-                            .font(.system(size: 10.5))
+                            .font(.system(size: MacDesignTokens.Typography.inspectorCaption))
                             .foregroundStyle(.secondary)
                             .lineSpacing(1)
                             .fixedSize(horizontal: false, vertical: true)
@@ -232,7 +232,7 @@ struct MacInspectorRow: View {
         var body: some View {
             HStack(alignment: .center, spacing: 9) {
                 Image(systemName: symbol)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: MacDesignTokens.Typography.inspectorDetail, weight: .semibold))
                     .frame(width: 26, height: 26)
                     .foregroundStyle(.secondary)
                     .background(
@@ -241,7 +241,7 @@ struct MacInspectorRow: View {
                     )
 
                 Text(title)
-                    .font(.system(size: 12.5, weight: .medium))
+                    .font(.system(size: MacDesignTokens.Typography.inspectorBody, weight: .medium))
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
                     .help(title)
@@ -249,7 +249,7 @@ struct MacInspectorRow: View {
                 Spacer(minLength: 8)
 
                 Text(value)
-                    .font(.system(size: 11.5))
+                    .font(.system(size: MacDesignTokens.Typography.inspectorBody))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)

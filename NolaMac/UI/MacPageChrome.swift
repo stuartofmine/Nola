@@ -100,6 +100,11 @@ struct MacEditorWindowCloseGuard: NSViewRepresentable {
 }
 
 enum MacDesignTokens {
+    enum Typography {
+        static let inspectorBody: CGFloat = 13
+        static let inspectorDetail: CGFloat = 12
+        static let inspectorCaption: CGFloat = 11
+    }
     enum Spacing {
         static let xxs: CGFloat = 4
         static let xs: CGFloat = 6
@@ -175,19 +180,13 @@ enum MacDesignTokens {
 
 extension View {
     /// A shared, restrained transition for content that is revealed in place.
-    /// The parent layout animates its height while the content settles from
-    /// the top edge, avoiding the flash produced by opacity-only insertion.
+    /// The parent animates height; fade the contents without scaling text glyphs.
     @ViewBuilder
     func macDisclosureTransition(reduceMotion: Bool) -> some View {
         if reduceMotion {
             transition(.identity)
         } else {
-            transition(
-                .asymmetric(
-                    insertion: .opacity.combined(with: .scale(scale: 0.985, anchor: .top)),
-                    removal: .opacity.combined(with: .scale(scale: 0.992, anchor: .top))
-                )
-            )
+            transition(.opacity)
         }
     }
 }
