@@ -167,7 +167,7 @@ Core 443 项单元测试通过；完整真实链路再次重验。
 ### 本轮最终验收
 
 显式 32k 窗口真实 Mac XCTest 通过（1 passed / 0 failed），证据在
-`/tmp/nola-mac-real-memory.PWmgVO/result.xcresult`。前两次分叉分别
+`<evidence-dir>/nola-mac-real-memory.PWmgVO/result.xcresult`。前两次分叉分别
 14.969 秒、4.667 秒直接成功；第三次 65.143 秒未通过摘要验收，
 随后一次独立请求 3.329 秒成功，未进入多段重复摘要。测试验证原始
 随机事实仍存在、模型调用了原文召回、持久化结果包含事实和规范来源，
@@ -188,7 +188,7 @@ Core 443 项单元测试通过；完整真实链路再次重验。
 每次请求继续检查完整序列化输入，必要时无损分段，原始记录不变。
 
 29 项压缩回归通过，新增 16k 窗口、多字节检查点及原文无损分段覆盖。
-默认 16k 真实 Mac 重跑证据位于 `/tmp/nola-mac-real-memory.ufFgK9`。
+默认 16k 真实 Mac 重跑证据位于 `<evidence-dir>/nola-mac-real-memory.ufFgK9`。
 第一轮冷恢复完成：初始 7 段，发生一次 87.480 秒截断，拒绝后分段恢复，
 其余摘要通过；另一成功段仍耗时 77.208 秒。下一轮又进入 6 段恢复，
 为避免继续消耗，主动取消了本次测试，因此没有完整 XCTest 通过结论。
@@ -211,12 +211,12 @@ OpenRouter 路由的 DeepSeek 模型发送原厂专用字段。
 避免拆分/合并循环。这仍是估算，不是服务商 tokenizer 的精确计数。
 
 32 项压缩回归和 9 项思考参数回归通过，包含实际 HTTP 请求体的关闭字段
-校验。代理实验 `/tmp/nola-mac-real-memory.8ZLh7E` 观察到初始 7 段在
+校验。代理实验 `<evidence-dir>/nola-mac-real-memory.8ZLh7E` 观察到初始 7 段在
 首段成功后将剩余内容合并为 2 段，但 Mac 测试代理隐藏 gateway 身份，
 该运行未验证关闭思考，已取消。测试增加显式 direct-provider 模式，
 直连时没有代理 wire 证据；probe 新增 reasoning/thinking 控制字段记录。
 
-直连默认 16k 验收 `/tmp/nola-mac-real-memory.GjQnIB/result.xcresult`
+直连默认 16k 验收 `<evidence-dir>/nola-mac-real-memory.GjQnIB/result.xcresult`
 失败（0 passed / 1 failed）。19 次维护请求中 16 次摘要通过，成功摘要
 耗时中位统计值 6.832 秒、最大 35.199 秒；另有两次 invalid_model_request
 和一次未通过摘要验证。动态 `openrouter/free` 路由使实测不能作为固定模型
@@ -259,7 +259,7 @@ opaque reasoning）按原顺序追加，不改写已经发送的前缀。
 
 ### 真实 Mac / Qwen Responses 验收（2026-10-11 10:32）
 
-证据：`/tmp/nola-mac-real-memory.b5TunA/result.xcresult`，同目录保留
+证据：`<evidence-dir>/nola-mac-real-memory.b5TunA/result.xcresult`，同目录保留
 `runtime/provider.ndjson` 和隔离的 `runtime/ApplicationSupport/Nola/State/nola-v4.db`。
 XCTest：1 executed / 1 passed / 0 skipped / 0 failed，测试运行约 381 秒。
 使用 `qwen3.8-flash-next-iq3_s`、`http://192.168.31.18:8081/v1`，代理证据
@@ -296,7 +296,7 @@ Responses 验收探针新增正文/思考 delta、完整/截断原因及输入�
 后的 compaction 34 项通过，探针 5 项通过。未隔离的第一次 compaction
 测试有一项被用户全局 config.json 的尾随逗号影响，未修改用户配置。
 
-真实验收证据：`/tmp/nola-mac-real-memory.ZNRNHw/result.xcresult`。
+真实验收证据：`<evidence-dir>/nola-mac-real-memory.ZNRNHw/result.xcresult`。
 相同 Qwen / Responses，输出额度保持 16,384，测试窗口改为 40,000。
 1 executed / 1 passed / 0 skipped / 0 failed，约 136 秒，六轮成功、
 三次压缩与原文随机事实召回通过。窗口与上次不同，不能将总耗时直接作为
@@ -330,7 +330,7 @@ status 做只读探测；service、model、dialect 全部匹配才设置 none。
 验收代理同时转发 GET，避免代理屏蔽真实元数据发现路径。
 
 回归：35 项 compaction、5 项 probe 通过。
-真实 Mac：`/tmp/nola-mac-real-memory.ZXNipn/result.xcresult`，同样 Qwen、
+真实 Mac：`<evidence-dir>/nola-mac-real-memory.ZXNipn/result.xcresult`，同样 Qwen、
 Responses、40k 测试窗口、16,384 输出额度；1 executed / 1 passed / 0 skipped，
 约 79.9 秒，六轮成功、三次压缩提交、原文随机事实召回通过。
 五次冷摘要请求分别约 5.44、6.19、5.52、5.41、4.23 秒；按压缩事务
@@ -352,7 +352,7 @@ Responses、40k 测试窗口、16,384 输出额度；1 executed / 1 passed / 0 s
 未改变归档范围的严格唯一匹配，不剥离 native Responses reasoning、ID 或
 工具结果来凑匹配。来源不在快照或匹配不唯一时仍须冷压缩。
 
-第一轮真实 Mac 证据：`/tmp/nola-mac-real-memory.FFsd8P/result.xcresult`。
+第一轮真实 Mac 证据：`<evidence-dir>/nola-mac-real-memory.FFsd8P/result.xcresult`。
 Qwen / Responses / 40k 窗口 / 16,384 输出额度，六轮完成、原文召回通过，
 三次压缩均为热分叉，读取缓存分别为 21,077/21,741、19,778/20,475、
 20,342/21,042（约 96.6%–96.9%）。这轮没有重现 archive_not_in_snapshot，
@@ -367,7 +367,7 @@ Qwen / Responses / 40k 窗口 / 16,384 输出额度，六轮完成、原文召�
 代理不伪造 SSE，必须观察真实 max_output_tokens、非空正文片段、Host 的
 summary_continuation，以及完整 Mac 压缩和原文召回测试成功才接受结果。
 
-最终真实验收：`/tmp/nola-mac-real-memory.CRZsHK/result.xcresult`，完整验收脚本
+最终真实验收：`<evidence-dir>/nola-mac-real-memory.CRZsHK/result.xcresult`，完整验收脚本
 退出 0，1 executed / 1 passed / 0 skipped / 0 failed。六轮全部完成，三次摘要
 提交，原文随机事实通过真实 conversation_recall 取回。三次压缩均起始于
 cached_request_fork（3/3），首次在真实服务端因测试额度 128 返回
@@ -383,3 +383,5 @@ continuation_count=1，partial_summary_bytes=506，恢复使用原配置 16,384
 模式第一次曾因测试模型缺少 reasoning 能力声明而在请求前被拒绝，已补齐
 隔离测试声明；生产能力校验没有放宽。普通 Mac 配置、正式 Debug 签名产物
 和用户会话数据库未改动。
+
+`<evidence-dir>` 表示本地验收产物根目录；后面的路径相对该目录，产物不随公开仓库分发。

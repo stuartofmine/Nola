@@ -1,0 +1,108 @@
+// Deterministic production renderer baseline, not a model/Core/FFI measurement.
+const { chromium } = require('playwright-core');
+const fs = require('node:fs');
+const path = require('node:path');
+const http = require('node:http');
+(async () => {
+    const root = path.resolve(__dirname, '../app/static/ui-tests');
+    const out = fs.mkdtempSync(require('./test_environment.cjs').temporaryPrefix('nola-a2ui-validation-chrome-'));
+    const server = http.createServer((request, response) => {
+        const file = path.resolve(root, '.' + new URL(request.url, 'http://localhost').pathname.replace(/^\/review-tests/, ''));
+        if (!file.startsWith(root + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) { response.writeHead(404).end(); return; }
+        response.setHeader('Content-Type', file.endsWith('.js') ? 'application/javascript' : file.endsWith('.css') ? 'text/css' : 'text/html');
+        fs.createReadStream(file).pipe(response);
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const assert = require('node:assert/strict');
+    const browser = await chromium.launch({...require('./test_environment.cjs').browserOptions(), headless: true});
+    const results = [];
+    try {
+        for (const width of [1280, 390]) {
+            const page = await browser.newPage({viewport: {width, height: 900}});
+            const errors = [];
+            page.on('pageerror', error => errors.push(error.message));
+            await page.goto(`http://127.0.0.1:${server.address().port}/review-tests/tests/a2ui-validation.html`);
+            const field = page.getByRole('textbox',{name:'Report content'});
+            const submit = page.getByRole('button',{name:'Create report',exact:true});
+            const count = async()=>Number(await page.locator('#preview-calls').textContent());
+            assert.equal(await submit.isDisabled(),true,'initial required check disables submit');
+            await field.fill('有效草稿');
+            assert.equal(await submit.isDisabled(),true,'pending draft cannot use old checks');
+            await page.waitForFunction(()=>!Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()==='Create report').disabled);
+            await field.fill('');
+            await page.waitForFunction(()=>Number(document.querySelector('#preview-calls').textContent)>=2);
+            assert.equal(await submit.isDisabled(),true,'invalid Core preview remains blocked');
+            await page.locator('#hold').click();
+            await field.fill('有效草稿');
+            await page.waitForFunction(()=>Number(document.querySelector('#preview-calls').textContent)>=3);
+            await field.fill('');
+            await page.waitForFunction(()=>Number(document.querySelector('#preview-calls').textContent)>=4);
+            await page.locator('#fail').click();
+            await field.fill('有效草稿');
+            await page.getByRole('button',{name:'重新校验'}).waitFor();
+            await page.locator('#release').click();
+            assert.equal(await submit.isDisabled(),true,'old valid response cannot enable identical newer draft whose preview failed');
+            await page.locator('#normal').click();
+            await field.fill('');
+            await page.waitForFunction(()=>Number(document.querySelector('#preview-calls').textContent)>=6);
+            const beforeIme=await count();
+            await field.dispatchEvent('compositionstart');
+            await field.fill('有效草稿');
+            await page.waitForTimeout(250);
+            assert.equal(await count(),beforeIme,'IME intermediate edits never preview');
+            assert.equal(await submit.isDisabled(),true);
+            await field.dispatchEvent('compositionend');
+            await page.waitForFunction(()=>!Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()==='Create report').disabled);
+            await page.locator('#fail').click();
+            await field.fill('');
+            await page.getByRole('button',{name:'重新校验'}).waitFor();
+            assert.equal(await submit.isDisabled(),true,'preview failure does not enable submission');
+            await page.locator('#normal').click();
+            await page.getByRole('button',{name:'重新校验'}).click();
+            await field.fill('有效草稿');
+            await page.waitForFunction(()=>!Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()==='Create report').disabled);
+            await submit.click();
+            await page.waitForFunction(()=>document.querySelector('#submissions').textContent==='1');
+            assert.equal(await page.locator('#submissions').textContent(),'1');
+            await page.locator('#hold').click();
+            const beforeStale=await count();
+            await field.fill('有效草稿');
+            await page.waitForFunction(n=>Number(document.querySelector('#preview-calls').textContent)>n,beforeStale);
+            await page.locator('#advance').click();
+            await page.locator('#release').click();
+            assert.equal(await submit.isDisabled(),true,'old revision preview cannot enable new committed snapshot');
+            await page.getByRole('button',{name:'重新校验'}).click();
+            await page.waitForFunction(()=>!Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()==='Create report').disabled);
+            assert.equal(await field.inputValue(),'有效草稿','explicit revision confirmation preserves draft');
+            await page.locator('#remove-binding').click();
+            const beforeRemoved = await count();
+            await page.getByRole('button',{name:'重新校验'}).click();
+            await page.getByRole('alert').filter({hasText:'部分编辑项不再存在'}).waitFor();
+            assert.equal(await count(),beforeRemoved,'removed fields never silently disappear from preview');
+            assert.equal(await submit.isDisabled(),true);
+            await page.getByRole('button',{name:'放弃编辑，使用当前值'}).click();
+            await page.reload();
+            await field.fill('有效草稿');
+            await page.waitForFunction(()=>!Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()==='Create report').disabled);
+            await page.locator('#unknown').click();
+            await submit.click();
+            await page.getByRole('button',{name:'查询提交结果'}).waitFor();
+            const beforeUnknown=await count();
+            await page.waitForTimeout(250);
+            assert.equal(await count(),beforeUnknown,'unknown submission must reconcile, not preview again');
+            assert.equal(await field.isDisabled(),true);
+            const result={width,emptyToValid:true,invalidBlocked:true,staleDiscarded:true,imeDeferred:true,failureRetry:true,staleRevisionDiscarded:true,unknownDoesNotPreview:true,submissionCount:1,errors};
+            results.push(result);
+            await page.screenshot({path:`${out}/${width}.png`,fullPage:true});
+            await page.close();
+        }
+        const passed=results.length===2 && results.every(r=>!r.errors.length);
+        fs.writeFileSync(`${out}/result.json`, JSON.stringify({passed, results}, null, 2));
+        console.log(JSON.stringify({passed, evidence: out,results}));
+        if(!passed)process.exitCode=1;
+    } catch (error) {
+        fs.writeFileSync(`${out}/result.json`, JSON.stringify({passed: false, results, error: error.stack ?? String(error)}, null, 2));
+        console.error(JSON.stringify({passed: false, evidence: out, error: error.stack ?? String(error)}));
+        process.exitCode = 1;
+    } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
+})().catch(error => {console.error(error); process.exitCode = 1;});

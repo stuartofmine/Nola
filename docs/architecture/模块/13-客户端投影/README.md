@@ -29,7 +29,7 @@
 | --- | --- |
 | [lib.rs](../../../../core/nola-mobile-bindings/src/lib.rs) | 最终原生产物、Application C ABI、embedded 句柄 |
 | [projection.rs](../../../../core/nola-mobile-bindings/src/projection.rs) | 移动投影与读取桥接 |
-| [RemoteSubmissionIdentity.swift](../../../../Shared/Protocol/RemoteSubmissionIdentity.swift) | Apple 源准入身份共享 DTO |
+| [RemoteSubmissionIdentity.swift](../../../../shared/apple/Protocol/RemoteSubmissionIdentity.swift) | Apple 源准入身份共享 DTO |
 
 原生静态/动态库由 mobile_bindings 产出，再保留 Core 辅助符号。Swift/Kotlin 的观察、草稿、IME 与焦点不是第二个业务 Runtime；手机导航不改变已准入 Run。 逐模块差距与证据边界见[源码核对](../../总体设计/ARCHITECTURE_SOURCE_AUDIT_20261108.md)。
 

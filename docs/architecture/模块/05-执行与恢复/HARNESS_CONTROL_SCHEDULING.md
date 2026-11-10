@@ -311,7 +311,7 @@ terminal-only replay，再进入 `run_agent_task`。缺预算或损坏预算下�
 
 状态：提交出口正在整改，以下是约束实现的验收契约，不是验证通过记录。
 
-源码证据：`cli/src/task_runtime_parts/execution.rs::queue_background_shell_task`
+源码证据：`apps/cli/src/task_runtime_parts/execution.rs::queue_background_shell_task`
 先持久化任务及 scheduling，再调用 `spawn_shell_task_process`。后者还会打开 Store、
 claim attempt、登记租约、启动 worker 及交付请求。整条调用的 `Err` 不能证明任务没有
 落库，也不能证明外部命令没有执行。`tools/parts/background.rs` 原先在显式后台
@@ -474,7 +474,7 @@ recovery_id、触发 turn/step、结构化 batch 指纹、来源 call/result 引
 ### 验收边界
 
 已执行模块回归：Core 库 486、Host 契约 142 通过，
-日志 `/tmp/nola-typed-recovery-state.log`。覆盖 enum 往返、必填字段、原因验证、
+日志 `<evidence-dir>/nola-typed-recovery-state.log`。覆盖 enum 往返、必填字段、原因验证、
 冷恢复后的重复/空/无效控制/非法问题拒绝、直接回答不强制提问，以及四类拒绝
 分支的 context input usage 精确增量。显式用户回答后的继续路径仍有回归。
 
@@ -580,3 +580,5 @@ harness-v4 的真实工具完成路径暴露了来源错误：恢复额度耗尽
 - 自然追问、多语言、未知工具恢复和真实模型四题测试；不得加入题目专属提示或答案。
 
 当前仅为整改契约，尚未替换生产状态或通过以上验收。
+
+`<evidence-dir>` 表示本地验收产物根目录；后面的路径相对该目录，产物不随公开仓库分发。

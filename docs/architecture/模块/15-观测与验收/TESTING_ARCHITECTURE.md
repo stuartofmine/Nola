@@ -211,7 +211,7 @@ also runs the CLI real PTY successor-input scenario, Web incremental UI geometry
 tests, and macOS terminal/visible-run tests. This shared gate prevents three
 independent green suites from validating different lifecycle layers.
 
-Web Playwright tests use `web/tests/playwright_browser.py`; individual tests
+Web Playwright tests use `apps/web/tests/playwright_browser.py`; individual tests
 must not hard-code a Playwright cache revision or duplicate browser launch
 arguments. macOS visual tests retain reviewable PNG attachments in xcresult.
 Passing reducer assertions without executable browser/native Harness evidence

@@ -16,7 +16,7 @@ from run_tool_reference_compaction_e2e import canonical_results, run_prompt
 from test_real_cli_commit_followup import assert_completed_turn
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location("web_unknown_fault", ROOT / "web/tests/test_real_llm_web_agent_e2e.py")
+spec = importlib.util.spec_from_file_location("web_unknown_fault", ROOT / "apps/web/tests/test_real_llm_web_agent_e2e.py")
 web_fault = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(web_fault)
 

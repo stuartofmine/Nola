@@ -12,7 +12,7 @@ cleanup() {
 trap cleanup EXIT
 
 swiftc \
-    "$ROOT/NolaMLXRuntime/MLXGenerationRequest.swift" \
-    "$ROOT/NolaMLXRuntimeTests/GenerationRequestTests.swift" \
+    "$ROOT/shared/mlx-runtime/MLXGenerationRequest.swift" \
+    "$ROOT/tests/apple/mlx/GenerationRequestTests.swift" \
     -o "$test_directory/generation-request-tests"
 "$test_directory/generation-request-tests"

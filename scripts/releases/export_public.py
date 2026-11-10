@@ -21,7 +21,7 @@ PRIVATE_PARTS={'.git','.github','.vscode','.claude','.cargo','.codex','.idea','.
 
 def excluded(name):
     path=Path(name)
-    return (path.is_absolute() or '..' in path.parts or path.parts[0] in {'cer','Doc'} or
+    return (path.is_absolute() or '..' in path.parts or path.parts[0] in {'cer','Doc','legacy','backend'} or
             bool(set(path.parts)&PRIVATE_PARTS) or any(part.endswith(('.xcresult','.dSYM')) for part in path.parts) or path.suffix.lower() in SECRET_EXTENSIONS or
             path.name in {'.DS_Store','.env','.dev.vars','.netrc','.npmrc','local.properties'} or
             (path.name.startswith('.env.') and not path.name.endswith('.example')) or path.name.endswith(('.log','.db-wal','.db-shm')))

@@ -79,7 +79,7 @@ BoundaryInputSource.take_pending 可返回整批。接受失败或源 ACK 失败
 
 ## 自动门禁
 
-复用 `cli/tests/dependency_boundary.rs`，不增加另一套 manifest 解析器：
+复用 `apps/cli/tests/dependency_boundary.rs`，不增加另一套 manifest 解析器：
 
 ```sh
 cargo test --locked -p nola_cli --test dependency_boundary

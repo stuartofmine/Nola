@@ -1,9 +1,9 @@
 {
   "wire_version": "v0.9.1",
   "upstream_commit": "d0345eeb52c4c84871c82c4f9c0e43f078ac3ffc",
-  "production_root": "web/frontend/src/vendor/a2ui-svelte",
+  "production_root": "apps/web/frontend/src/vendor/a2ui-svelte",
   "patch": "production-adaptation.patch",
-  "patch_sha256": "be714a45077eb1e55a75e624b2f56de76062deb1e9b6892a4d31928c74446b23",
+  "patch_sha256": "b4d68051dc028c70426f331c9d956e8654a8a069fe3c93041c0b62d98e44452b",
   "files": [
     {
       "path": "ADAPTATION.md",

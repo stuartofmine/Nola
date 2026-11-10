@@ -144,7 +144,7 @@ class LiveSkillE2ETests(unittest.TestCase):
             repo = Path(temporary)
             target = repo / "target"
             release = target / "release/nola"
-            source = repo / "cli/src/main.rs"
+            source = repo / "apps/cli/src/main.rs"
             release.parent.mkdir(parents=True)
             source.parent.mkdir(parents=True)
             release.write_text("stale", encoding="utf-8")

@@ -3,7 +3,7 @@
 # Real model must deliver a runnable script including its filesystem mode.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-export NOLA_MAC_REAL_WORKSPACE="$(mktemp -d /tmp/nola-mac-executable.XXXXXX)"
+export NOLA_MAC_REAL_WORKSPACE="$(mktemp -d "${TMPDIR:-/tmp}/nola-mac-executable.XXXXXX")"
 printf '[real-mac-executable] isolated workspace: %s\n' "$NOLA_MAC_REAL_WORKSPACE"
 runtime_status=0
 printf '# Owned acceptance placeholder; replace this existing file.\n' >"$NOLA_MAC_REAL_WORKSPACE/hello.sh"

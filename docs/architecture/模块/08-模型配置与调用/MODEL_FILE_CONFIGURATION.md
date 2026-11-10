@@ -6,7 +6,7 @@
 
 文件是显式编辑入口，Core ModelConnection、CatalogModel、ModelProfile 与 chat.default_model 是运行权威。不把 connections 数组当成故障回退列表，不在每次启动时覆盖模型中心编辑。显式执行 `nola model apply-config [absolute-config-path]` 才写入；省略路径时只读取 `~/.nola/config.json` 或 `.jsonc`；已有会话继续读取自己的冻结选择与覆盖参数。
 
-示例见 `cli/config.multi-endpoint.example.json`。每个连接声明 id/name/endpoint/protocol/models；协议为 chat_completions、responses 或 anthropic。模型 id 为服务端原始标识，不按模型名称推测能力。可显式声明 capabilities；未提供能力时使用 Core agent 基线（toolCalls=true，其余能力不推断）。显式false保留；工具能力不替代执行权限。密钥通过 api_key_env 指定环境变量，应用时写入 Host 私有 vault，公开配置回执与 Core 目录不含密钥。匿名端点省略 api_key_env。
+示例见 `apps/cli/config.multi-endpoint.example.json`。每个连接声明 id/name/endpoint/protocol/models；协议为 chat_completions、responses 或 anthropic。模型 id 为服务端原始标识，不按模型名称推测能力。可显式声明 capabilities；未提供能力时使用 Core agent 基线（toolCalls=true，其余能力不推断）。显式false保留；工具能力不替代执行权限。密钥通过 api_key_env 指定环境变量，应用时写入 Host 私有 vault，公开配置回执与 Core 目录不含密钥。匿名端点省略 api_key_env。
 
 首次导入需要提供声明的密钥环境变量。重新应用时，若环境变量不可用，可复用同来源、同 URL/协议/账户且状态为 Ready 的已有凭据引用，不重新写 vault。省略 api_key_env 不表示删除已有凭据；删除/撤销通过账户管理显式操作。更换 URL 或协议不能自动沿用旧凭据，必须显式提供。引用可复用不等于远端认证一定成功，运行时仍验证私有存储与实际服务响应。
 
@@ -25,7 +25,7 @@
 编辑 `~/.nola/config.json`，保留其他业务配置，将 llm 整体替换成多连接对象。设置声明的密钥环境变量后执行：
 
 ```sh
-nola model apply-config /Users/gaojc/.nola/config.json
+nola model apply-config
 nola model connections
 nola
 ```
@@ -44,7 +44,7 @@ nola
 {"llm":{"connections":[{"id":"primary","name":"Primary service","endpoint":"https://primary.example/v1","protocol":"chat_completions","models":[{"id":"fast-model","name":"Fast"}]}],"default_model":{"connection":"primary","model":"fast-model"}}}
 ```
 
-对照修正文件中的精确 ID，再执行 `nola model apply-config /absolute/config.json`。此错误在开始应用连接前拒绝；不会替用户猜测引用、重写配置或删除已有目录。完整格式以[仓库示例](../../../../cli/config.multi-endpoint.example.json)和[解析器](../../../../cli/src/model_file_config.rs)为准。
+对照修正文件中的精确 ID，再执行 `nola model apply-config /absolute/config.json`。此错误在开始应用连接前拒绝；不会替用户猜测引用、重写配置或删除已有目录。完整格式以[仓库示例](../../../../apps/cli/config.multi-endpoint.example.json)和[解析器](../../../../apps/cli/src/model_file_config.rs)为准。
 
 ## CLI 与 Web 数据库
 

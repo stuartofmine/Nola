@@ -28,7 +28,7 @@ fi
 jq -e '.llm.endpoint and .llm.api_key and .llm.model' "$source_config" >/dev/null
 
 if [[ "${NOLA_SKIP_CLI_BUILD:-0}" != "1" ]]; then
-    (cd "$repo_root/cli" && cargo build --release --bin nola --quiet)
+    (cd "$repo_root/apps/cli" && cargo build --release --bin nola --quiet)
 fi
 [[ -x "$nola_bin" ]] || { echo "Nola CLI binary is unavailable: $nola_bin" >&2; exit 2; }
 

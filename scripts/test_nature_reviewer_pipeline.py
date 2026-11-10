@@ -9,7 +9,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SKILL = ROOT / "NolaMac/Resources/NolaBuiltInSkills.bundle/nature-reviewer"
+SKILL = ROOT / "apps/macos/Resources/NolaBuiltInSkills.bundle/nature-reviewer"
 PREPARE = SKILL / "scripts/prepare_review.py"
 VALIDATE = SKILL / "scripts/validate_review.py"
 

@@ -1,0 +1,520 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 71;
+	objects = {
+
+/* Begin PBXAggregateTarget section */
+		C00000000000000000000011 /* NolaRuntime */ = {
+			isa = PBXAggregateTarget;
+			buildConfigurationList = C00000000000000000000021 /* Build configuration list for PBXAggregateTarget "NolaRuntime" */;
+			buildPhases = (
+				C0000000000000000000000E /* Build Runtime Products */,
+			);
+			dependencies = (
+			);
+			name = NolaRuntime;
+			productName = NolaRuntime;
+		};
+/* End PBXAggregateTarget section */
+
+/* Begin PBXBuildFile section */
+		C00000000000000000000001 /* NolaCore.c in Sources */ = {isa = PBXBuildFile; fileRef = C00000000000000000000004 /* NolaCore.c */; };
+		C00000000000000000000002 /* ../core/swift_shims/nola_core.h in Headers */ = {isa = PBXBuildFile; fileRef = C00000000000000000000005 /* ../core/swift_shims/nola_core.h */; settings = {ATTRIBUTES = (Public, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		C00000000000000000000003 /* NolaCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = NolaCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		C00000000000000000000004 /* NolaCore.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = NolaCore.c; sourceTree = "<group>"; };
+		C00000000000000000000005 /* ../core/swift_shims/nola_core.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ../../core/swift_shims/nola_core.h; sourceTree = SOURCE_ROOT; };
+		C00000000000000000000006 /* module.modulemap */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.module-map"; path = module.modulemap; sourceTree = "<group>"; };
+		C00000000000000000000042 /* Cargo.toml */ = {isa = PBXFileReference; lastKnownFileType = text; name = Cargo.toml; path = ../../Cargo.toml; sourceTree = SOURCE_ROOT; };
+		C00000000000000000000043 /* Cargo.lock */ = {isa = PBXFileReference; lastKnownFileType = text; name = Cargo.lock; path = ../../Cargo.lock; sourceTree = SOURCE_ROOT; };
+		C00000000000000000000044 /* build_mac_runtime.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; name = build_mac_runtime.sh; path = ../../scripts/build_mac_runtime.sh; sourceTree = SOURCE_ROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		C00000000000000000000040 /* Core Sources */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); name = "Core Sources"; path = ../../core; sourceTree = SOURCE_ROOT; };
+		C00000000000000000000041 /* Runtime Host Sources */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); name = "Runtime Host Sources"; path = ../../apps/cli/src; sourceTree = SOURCE_ROOT; };
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		C00000000000000000000007 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		C00000000000000000000008 = {
+			isa = PBXGroup;
+			children = (
+				C00000000000000000000040 /* Core Sources */,
+				C00000000000000000000041 /* Runtime Host Sources */,
+				C00000000000000000000045 /* Build Support */,
+				C00000000000000000000004 /* NolaCore.c */,
+				C00000000000000000000005 /* ../core/swift_shims/nola_core.h */,
+				C00000000000000000000006 /* module.modulemap */,
+				C00000000000000000000009 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		C00000000000000000000009 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				C00000000000000000000003 /* NolaCore.framework */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		C00000000000000000000045 /* Build Support */ = {
+			isa = PBXGroup;
+			children = (
+				C00000000000000000000042 /* Cargo.toml */,
+				C00000000000000000000043 /* Cargo.lock */,
+				C00000000000000000000044 /* build_mac_runtime.sh */,
+			);
+			name = "Build Support";
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXHeadersBuildPhase section */
+		C0000000000000000000000A /* Headers */ = {
+			isa = PBXHeadersBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C00000000000000000000002 /* ../core/swift_shims/nola_core.h in Headers */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXHeadersBuildPhase section */
+
+/* Begin PBXNativeTarget section */
+		C00000000000000000000010 /* NolaCore */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C00000000000000000000020 /* Build configuration list for PBXNativeTarget "NolaCore" */;
+			buildPhases = (
+				C0000000000000000000000D /* Build Rust Core */,
+				C0000000000000000000000B /* Sources */,
+				C00000000000000000000007 /* Frameworks */,
+				C0000000000000000000000A /* Headers */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = NolaCore;
+			productName = NolaCore;
+			productReference = C00000000000000000000003 /* NolaCore.framework */;
+			productType = "com.apple.product-type.framework";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		C0000000000000000000000C /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					C00000000000000000000010 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+					C00000000000000000000011 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+				};
+			};
+			buildConfigurationList = C00000000000000000000022 /* Build configuration list for PBXProject "NolaCore" */;
+			compatibilityVersion = "Xcode 16.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = C00000000000000000000008;
+			productRefGroup = C00000000000000000000009 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				C00000000000000000000010 /* NolaCore */,
+				C00000000000000000000011 /* NolaRuntime */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		C0000000000000000000000D /* Build Rust Core */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			dependencyFile = "$(DERIVED_FILE_DIR)/nola_core/nola_core_inputs.d";
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/../../Cargo.lock",
+				"$(SRCROOT)/../../release/update-source.json",
+				"$(SRCROOT)/../../third_party/a2ui/spec",
+				"$(SRCROOT)/../../Cargo.toml",
+				"$(SRCROOT)/../../core/Cargo.toml",
+				"$(SRCROOT)/../../core/nola-mobile-bindings/Cargo.toml",
+				"$(SRCROOT)/../../core/swift_shims/nola_core.h",
+				"$(SRCROOT)/../../rust-toolchain.toml",
+				"$(SRCROOT)/../../scripts/lib/rust_build_cache.sh",
+			);
+			name = "Build Rust Core";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/nola_core/cargo-profile",
+				"$(DERIVED_FILE_DIR)/nola_core/libnola_core.a",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "NOLA_DEPENDENCY_FILE=\"${DERIVED_FILE_DIR}/nola_core/nola_core_inputs.d\" \"${SRCROOT}/../../core/scripts/build_xcframework.sh\" --xcode-target\n";
+		};
+		C0000000000000000000000E /* Build Runtime Products */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			dependencyFile = "$(DERIVED_FILE_DIR)/nola_runtime_inputs.d";
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(HOME)/.cargo",
+				"$(HOME)/.rustup",
+				"$(SRCROOT)/../../Cargo.toml",
+				"$(SRCROOT)/../../Cargo.lock",
+				"$(SRCROOT)/../../release/update-source.json",
+				"$(SRCROOT)/../../third_party/a2ui/spec",
+				"$(SRCROOT)/../../apps/cli/Cargo.toml",
+				"$(SRCROOT)/../../apps/cli/build.rs",
+				"$(SRCROOT)/../../rust-toolchain.toml",
+				"$(SRCROOT)/../../apps/cli/src",
+				"$(SRCROOT)/../../apps/cli/vendor",
+				"$(SRCROOT)/../../core",
+				"$(SRCROOT)/../../core/nola-service/Cargo.toml",
+				"$(SRCROOT)/../../apps/macos/Resources/NolaBuiltInSkills.bundle",
+				"$(SRCROOT)/../../apps/macos/Resources/com.gaojc.Nola.background-scheduler.plist",
+				"$(SRCROOT)/../../scripts/build_mac_runtime.sh",
+				"$(SRCROOT)/../../scripts/lib/install_mac_executable.sh",
+				"$(SRCROOT)/../../scripts/lib/rust_build_cache.sh",
+			);
+			name = "Build Runtime Products";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(SRCROOT)/../../target",
+				"$(BUILT_PRODUCTS_DIR)/NolaRuntime/",
+				"$(BUILT_PRODUCTS_DIR)/NolaRuntime/nola-agent-host.nola-staging",
+				"$(BUILT_PRODUCTS_DIR)/NolaRuntime/nola-service.nola-staging",
+				"$(BUILT_PRODUCTS_DIR)/NolaRuntime/nola-agent-host",
+				"$(BUILT_PRODUCTS_DIR)/NolaRuntime/nola-service",
+				"$(BUILT_PRODUCTS_DIR)/NolaRuntime/com.gaojc.Nola.background-scheduler.plist",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "NOLA_REPOSITORY_ROOT=\"${SRCROOT}/../..\" NOLA_RUNTIME_OUTPUT_DIR=\"${BUILT_PRODUCTS_DIR}/NolaRuntime\" NOLA_DEPENDENCY_FILE=\"${DERIVED_FILE_DIR}/nola_runtime_inputs.d\" \"${SRCROOT}/../../scripts/build_mac_runtime.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		C0000000000000000000000B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C00000000000000000000001 /* NolaCore.c in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		C00000000000000000000030 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				OTHER_LIBTOOLFLAGS = "-no_warning_for_no_symbols";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+			};
+			name = Debug;
+		};
+		C00000000000000000000031 /* Test */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				OTHER_LIBTOOLFLAGS = "-no_warning_for_no_symbols";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+			};
+			name = Test;
+		};
+		C00000000000000000000032 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				OTHER_LIBTOOLFLAGS = "-no_warning_for_no_symbols";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		C00000000000000000000033 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUILD_LIBRARY_FOR_DISTRIBUTION = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEFINES_MODULE = YES;
+				ENABLE_MODULE_VERIFIER = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/../../core/swift_shims";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACH_O_TYPE = staticlib;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MODULEMAP_FILE = "$(SRCROOT)/module.modulemap";
+				MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS = "gnu17 gnu++14";
+				"NOLA_CARGO_PROFILE[sdk=iphoneos*]" = release;
+				"NOLA_CARGO_PROFILE[sdk=iphonesimulator*]" = release;
+				"NOLA_CARGO_PROFILE[sdk=macosx*]" = dev;
+				OTHER_LIBTOOLFLAGS = "$(DERIVED_FILE_DIR)/nola_core/libnola_core.a -no_warning_for_no_symbols";
+				PRODUCT_BUNDLE_IDENTIFIER = com.gaojc.NolaCore;
+				PRODUCT_MODULE_NAME = NolaCore;
+				PRODUCT_NAME = NolaCore;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+			};
+			name = Debug;
+		};
+		C00000000000000000000034 /* Test */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUILD_LIBRARY_FOR_DISTRIBUTION = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEFINES_MODULE = YES;
+				ENABLE_MODULE_VERIFIER = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/../../core/swift_shims";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACH_O_TYPE = staticlib;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MODULEMAP_FILE = "$(SRCROOT)/module.modulemap";
+				MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS = "gnu17 gnu++14";
+				"NOLA_CARGO_PROFILE[sdk=iphoneos*]" = release;
+				"NOLA_CARGO_PROFILE[sdk=iphonesimulator*]" = release;
+				"NOLA_CARGO_PROFILE[sdk=macosx*]" = dev;
+				OTHER_LIBTOOLFLAGS = "$(DERIVED_FILE_DIR)/nola_core/libnola_core.a -no_warning_for_no_symbols";
+				PRODUCT_BUNDLE_IDENTIFIER = com.gaojc.NolaCore;
+				PRODUCT_MODULE_NAME = NolaCore;
+				PRODUCT_NAME = NolaCore;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+			};
+			name = Test;
+		};
+		C00000000000000000000035 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUILD_LIBRARY_FOR_DISTRIBUTION = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEFINES_MODULE = YES;
+				ENABLE_MODULE_VERIFIER = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/../../core/swift_shims";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACH_O_TYPE = staticlib;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MODULEMAP_FILE = "$(SRCROOT)/module.modulemap";
+				MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS = "gnu17 gnu++14";
+				NOLA_CARGO_PROFILE = release;
+				OTHER_LIBTOOLFLAGS = "$(DERIVED_FILE_DIR)/nola_core/libnola_core.a -no_warning_for_no_symbols";
+				PRODUCT_BUNDLE_IDENTIFIER = com.gaojc.NolaCore;
+				PRODUCT_MODULE_NAME = NolaCore;
+				PRODUCT_NAME = NolaCore;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+			};
+			name = Release;
+		};
+		C00000000000000000000036 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				OTHER_LIBTOOLFLAGS = "-no_warning_for_no_symbols";
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+			};
+			name = Debug;
+		};
+		C00000000000000000000037 /* Test */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				OTHER_LIBTOOLFLAGS = "-no_warning_for_no_symbols";
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+			};
+			name = Test;
+		};
+		C00000000000000000000038 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				OTHER_LIBTOOLFLAGS = "-no_warning_for_no_symbols";
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		C00000000000000000000020 /* Build configuration list for PBXNativeTarget "NolaCore" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C00000000000000000000033 /* Debug */,
+				C00000000000000000000034 /* Test */,
+				C00000000000000000000035 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		C00000000000000000000021 /* Build configuration list for PBXAggregateTarget "NolaRuntime" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C00000000000000000000036 /* Debug */,
+				C00000000000000000000037 /* Test */,
+				C00000000000000000000038 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		C00000000000000000000022 /* Build configuration list for PBXProject "NolaCore" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C00000000000000000000030 /* Debug */,
+				C00000000000000000000031 /* Test */,
+				C00000000000000000000032 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = C0000000000000000000000C /* Project object */;
+}

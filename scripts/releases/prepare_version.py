@@ -16,12 +16,12 @@ def prepare(root, version, build, dry_run=False):
         raise ValueError('A release build must increase monotonically')
     source.update(version=version, build=build)
     edits = {source_path: json.dumps(source, indent=4) + '\n'}
-    for name in ('windows/package.json', 'windows/package-lock.json'):
+    for name in ('apps/windows/package.json', 'apps/windows/package-lock.json'):
         path = root / name; value = json.loads(path.read_text()); value['version'] = version
         if 'packages' in value:
             value['packages']['']['version'] = version
         edits[path] = json.dumps(value, indent=2) + '\n'
-    path = root / 'android/app/build.gradle.kts'; text = path.read_text()
+    path = root / 'apps/android/app/build.gradle.kts'; text = path.read_text()
     text, count = re.subn(r'versionCode = \d+', f'versionCode = {build}', text)
     text, names = re.subn(r'versionName = "[^"]+"', f'versionName = "{version}"', text)
     if count != 1 or names != 1:
@@ -42,11 +42,11 @@ def prepare(root, version, build, dry_run=False):
 def validate_identity(root):
     source = json.loads((root / 'release/update-source.json').read_text())
     version, build = source['version'], source['build']
-    for name in ('windows/package.json', 'windows/package-lock.json'):
+    for name in ('apps/windows/package.json', 'apps/windows/package-lock.json'):
         value = json.loads((root / name).read_text())
         if value['version'] != version or ('packages' in value and value['packages']['']['version'] != version):
             raise ValueError(f'Windows release identity differs: {name}')
-    text = (root / 'android/app/build.gradle.kts').read_text()
+    text = (root / 'apps/android/app/build.gradle.kts').read_text()
     if re.findall(r'versionCode = (\d+)', text) != [str(build)] or re.findall(r'versionName = "([^\"]+)"', text) != [version]:
         raise ValueError('Android release identity differs')
     text = (root / 'Nola.xcodeproj/project.pbxproj').read_text()

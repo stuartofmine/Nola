@@ -24,7 +24,7 @@ from these source contracts.
 Validation: `cargo test -p nola_cli --lib llm::streaming::` passed 92 tests,
 including both 48-second socket cases, partial-tool discard/retry, visible
 partial-answer non-retry and rejected-consumer delivery. Log:
-`/tmp/nola-streaming-final-tests.log`. This is transport regression evidence,
+`<evidence-dir>/nola-streaming-final-tests.log`. This is transport regression evidence,
 not a passing Terminal-Bench replay of the new deadline policy.
 
 The freight replay's approximately 45-second retry intervals are consistent
@@ -123,7 +123,7 @@ keeping product-shaped contracts would not establish the required boundary.
 
 ## Implemented input-delivery seam
 
-`cli/src/runtime_input.rs` is a UI-independent execution-input service with:
+`apps/cli/src/runtime_input.rs` is a UI-independent execution-input service with:
 
 - Explicit `RuntimeInput::UserFollowUp` / `ClientControl`; no language or slash
   matching, no keys, drafts, terminal I/O, Core or database dependency.
@@ -773,3 +773,5 @@ Both adapters validate the same version-1 envelope and reconcile the original
 Application receipt after an unknown outcome. There is one backend per platform;
 no file/registry dual read, conversion or automatic deletion is performed.
 Windows tests use a separate random registry namespace and temporary databases.
+
+`<evidence-dir>` 表示本地验收产物根目录；后面的路径相对该目录，产物不随公开仓库分发。

@@ -184,6 +184,6 @@ content对象或数组项type=tool_result；这是数据协议标签，不是自
 
 ## 展示段落投影（2026-11-08）
 
-Apple 的 `Shared/Presentation/AppleStreamingMarkdown.swift` 与 Android 的 `StreamingMarkdownProjection.kt` 按稳定段落和一个活跃尾段呈现。完成时尾段原地稳定，不重新分词并重播全部正文。代码围栏按字符、长度与闭合行匹配；内层较短围栏不能关闭外层代码块。
+Apple 的 `shared/apple/Presentation/AppleStreamingMarkdown.swift` 与 Android 的 `StreamingMarkdownProjection.kt` 按稳定段落和一个活跃尾段呈现。完成时尾段原地稳定，不重新分词并重播全部正文。代码围栏按字符、长度与闭合行匹配；内层较短围栏不能关闭外层代码块。
 
 这是客户端渲染分区，不是新的持久正文或另一个 Part 生命周期。已提交字段、hash/CAS、续接身份与读取权限仍遵循上文；修正/替换文本必须有原始规范事件依据。历史消息、工具事件及检查器开合不得重新播放已稳定的段落。

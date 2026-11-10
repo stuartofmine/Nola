@@ -1,0 +1,774 @@
+{% extends "base.html" %}
+{% import "_icons.html" as icons %}
+
+{% block title %}{{ tr('settings.title', '设置 — Nola', 'Settings — Nola') }}{% endblock %}
+
+{% block content %}
+<div class="subpage settings settings-workspace">
+    <div class="page-header">
+        <div>
+            <div class="page-eyebrow">{{ tr('settings.header.eyebrow', '本机配置', 'Local configuration') }}</div>
+            <h1 class="page-title">{{ icons.icon('settings') }}<span>{{ tr('settings.header.title', '设置', 'Settings') }}</span></h1>
+            <p class="page-subtitle">{{ tr('settings.header.subtitle', '管理当前 Web 会话、Agent 权限与账号安全。', 'Manage this Web session, Agent permissions, and account security.') }}</p>
+        </div>
+    </div>
+
+    <div class="settings-layout">
+        <aside class="settings-index" aria-label="{{ tr('settings.index.aria', '设置分区', 'Settings sections') }}">
+            <span class="settings-index-label">{{ tr('settings.index.title', '设置分区', 'Sections') }}</span>
+            <a href="#session">{{ icons.icon('user') }}<span>{{ tr('settings.index.session', '会话', 'Session') }}</span></a>
+            <a href="#workspace">{{ icons.icon('database') }}<span>{{ tr('settings.index.workspace', '工作区', 'Workspace') }}</span></a>
+            <a href="#agent">{{ icons.icon('settings') }}<span>{{ tr('settings.index.agent', 'Agent 权限', 'Agent permissions') }}</span></a>
+            <a href="#channels">{{ icons.icon('chat') }}<span>{{ tr('settings.index.channels', '消息渠道', 'Messaging') }}</span></a>
+            <a href="#security">{{ icons.icon('key') }}<span>{{ tr('settings.index.security', '账号安全', 'Account security') }}</span></a>
+        </aside>
+
+        <div class="settings-content">
+    <section class="settings-section" id="session">
+        <h2>{{ icons.icon('user') }}{{ tr('settings.section.current_session', '当前会话', 'Current session') }}</h2>
+        <div class="info-row">
+            <span class="info-label">{{ tr('settings.label.client_uuid', 'Client UUID', 'Client UUID') }}</span>
+            <span class="info-value info-value-inline">
+                <span class="mono" id="settingsClientUuid">{{ session_client_uuid or tr('settings.value.not_logged_in', '未登录', 'Not logged in') }}</span>
+                {% if session_client_uuid %}
+                <button type="button" class="btn btn-ghost btn-sm settings-copy-btn" id="copyClientUuidBtn">{{ icons.icon('doc') }}<span>{{ tr('settings.action.copy', '复制', 'Copy') }}</span></button>
+                {% endif %}
+            </span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">{{ tr('settings.label.local_account', '本机账户', 'Local account') }}</span>
+            <span class="info-value">{{ user_email or tr('settings.value.unrecognized_account', '未识别账户', 'Unrecognized account') }}</span>
+        </div>
+    </section>
+
+    <section class="settings-section" id="workspace">
+        <h2>{{ icons.icon('database') }}<span>{{ tr('settings.section.workspace', '工作区能力', 'Workspace capabilities') }}</span></h2>
+        <p class="settings-hint">{{ tr('settings.workspace.hint', '管理进入上下文的数据、可用模型、技能与自动化。', 'Manage the data, models, capabilities, and automations available to this workspace.') }}</p>
+        <div class="settings-link-grid">
+            <a class="settings-link-card" href="/data-sources">
+                <span class="settings-link-card-main"><span class="settings-link-card-icon" aria-hidden="true">{{ icons.icon('database') }}</span><span><strong>{{ tr('settings.workspace.data.title', '数据源', 'Data sources') }}</strong><small>{{ tr('settings.workspace.data.detail', '配置默认启用和按会话启用的数据', 'Choose default and per-session data') }}</small></span></span>
+                <span class="settings-link-card-arrow" aria-hidden="true">→</span>
+            </a>
+            <a class="settings-link-card" href="/models">
+                <span class="settings-link-card-main"><span class="settings-link-card-icon" aria-hidden="true">{{ icons.icon('settings') }}</span><span><strong>{{ tr('settings.workspace.models.title', '模型', 'Models') }}</strong><small>{{ tr('settings.workspace.models.detail', '管理 API 与本地模型配置', 'Manage API and local model configurations') }}</small></span></span>
+                <span class="settings-link-card-arrow" aria-hidden="true">→</span>
+            </a>
+            <a class="settings-link-card" href="/capabilities">
+                <span class="settings-link-card-main"><span class="settings-link-card-icon" aria-hidden="true">{{ icons.icon('key') }}</span><span><strong>{{ tr('settings.workspace.capabilities.title', '技能与 MCP', 'Skills and MCP') }}</strong><small>{{ tr('settings.workspace.capabilities.detail', '查看、启用并编辑 Agent 能力', 'Review, enable, and edit Agent capabilities') }}</small></span></span>
+                <span class="settings-link-card-arrow" aria-hidden="true">→</span>
+            </a>
+            <a class="settings-link-card" href="/scheduled-actions">
+                <span class="settings-link-card-main"><span class="settings-link-card-icon" aria-hidden="true">{{ icons.icon('doc') }}</span><span><strong>{{ tr('settings.workspace.automation.title', '自动化', 'Automations') }}</strong><small>{{ tr('settings.workspace.automation.detail', '管理定时任务与最近执行', 'Manage scheduled tasks and recent runs') }}</small></span></span>
+                <span class="settings-link-card-arrow" aria-hidden="true">→</span>
+            </a>
+        </div>
+    </section>
+
+    <section class="settings-section" id="agent">
+        <h2>{{ icons.icon('settings') }}<span>{{ tr('settings.section.agent', 'Agent 访问权限', 'Agent access') }}</span></h2>
+        <p class="settings-hint">{{ tr('settings.agent.hint1', '这些设置决定 Web Agent 可以访问哪些本机资源。默认使用推荐权限。', 'These settings control which local resources Web Agent can access. Recommended permission is the default.') }}</p>
+        <div class="form-group">
+            <label for="agentPermissionProfile">{{ tr('settings.agent.permission_profile', '权限模式', 'Permission mode') }}</label>
+            <select id="agentPermissionProfile" aria-describedby="agentPermissionProfileDescription">
+                <option value="safe">{{ tr('settings.agent.permission_profile.safe', '安全：每次确认', 'Safe: ask each time') }}</option>
+                <option value="recommended" selected>{{ tr('settings.agent.permission_profile.recommended', '推荐：自动执行可逆操作', 'Recommended: run reversible actions') }}</option>
+                <option value="allow_all">{{ tr('settings.agent.permission_profile.allow_all', '全部允许', 'Allow all') }}</option>
+            </select>
+            <p class="settings-hint" id="agentPermissionProfileDescription" aria-live="polite">{{ tr('settings.agent.permission_profile.recommended_detail', '自动执行普通可逆操作；破坏性操作仍需确认。', 'Runs ordinary reversible actions automatically; destructive actions still require confirmation.') }}</p>
+        </div>
+        <div class="form-group">
+            <label for="agentCustomSystemPrompt">{{ tr('settings.agent.custom_system_prompt', '自定义 System Prompt（可选）', 'Custom system prompt (optional)') }}</label>
+            <textarea id="agentCustomSystemPrompt" rows="5" placeholder="{{ tr('settings.agent.custom_system_prompt.placeholder', '例如：默认先给结论，再给步骤；优先输出可执行命令。', 'Example: Lead with the answer, then steps; prefer executable commands.') }}"></textarea>
+        </div>
+        <details class="settings-disclosure agent-dev-tools-disclosure" id="agentDevToolsDisclosure">
+            <summary>
+                <span>
+                    <strong>{{ tr('settings.agent.dev_tools', '宿主机开发者工具', 'Host developer tools') }}</strong>
+                    <small>{{ tr('settings.agent.dev_tools.summary', '限制 Agent 可操作的目录与命令前缀', 'Restrict the directories and command prefixes available to the Agent') }}</small>
+                </span>
+                <span class="agent-dev-tools-state" id="agentDevToolsSummaryState"></span>
+            </summary>
+            <div class="agent-dev-tools-body">
+                <div class="permission-toggle-row">
+                    <span class="info-label">{{ tr('settings.agent.dev_tools.access', '本机代码与命令访问', 'Local code and command access') }}</span>
+                    <span class="info-value">
+                        <label class="settings-toggle">
+                            <input type="checkbox" id="agentDevToolsToggle" />
+                            <span>{{ tr('settings.agent.enable_dev_tools', '启用宿主机开发者工具', 'Enable host developer tools') }}</span>
+                        </label>
+                    </span>
+                </div>
+                <div class="settings-form-grid" id="agentDevToolsFields">
+                    <div class="form-group">
+                        <label for="agentAllowedDirs">{{ tr('settings.agent.allowed_dirs', '允许操作的目录（每行一个绝对路径）', 'Allowed directories (one absolute path per line)') }}</label>
+                        <textarea id="agentAllowedDirs" rows="3" placeholder="{{ tr('settings.agent.allowed_dirs.placeholder', './projects/foo&#10;./workspace', './projects/foo&#10;./workspace') }}"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="agentBashPrefixes">{{ tr('settings.agent.bash_prefixes', 'bash 命令白名单前缀（每行一条；空则禁用 bash 工具）', 'Allowed bash command prefixes (one per line; empty disables bash tool)') }}</label>
+                        <textarea id="agentBashPrefixes" rows="3" placeholder="{{ tr('settings.agent.bash_prefixes.placeholder', 'ls&#10;cat&#10;git status&#10;python -V', 'ls&#10;cat&#10;git status&#10;python -V') }}"></textarea>
+                    </div>
+                </div>
+            </div>
+        </details>
+        <div class="settings-action-row">
+            <button type="button" class="btn btn-primary" id="agentSettingsSaveBtn" data-default-label="{{ tr('settings.agent.save', '保存 Agent 设置', 'Save Agent settings') }}" disabled>{{ tr('settings.agent.save', '保存 Agent 设置', 'Save Agent settings') }}</button>
+            <button type="button" class="btn btn-secondary" id="agentSettingsRetryBtn" hidden>{{ tr('settings.agent.retry', '重新读取', 'Retry loading') }}</button>
+            <span id="agentSettingsStatus" class="settings-hint" role="status" aria-live="polite"></span>
+        </div>
+    </section>
+
+    <section class="settings-section" id="channels">
+        <h2>{{ icons.icon('chat') }}<span>{{ tr('settings.channels.title', '消息渠道', 'Messaging channels') }}</span></h2>
+        <p class="settings-hint">{{ tr('settings.channels.hint', '让 Telegram、WhatsApp、微信公众号或企业微信中的消息由这台 Host 执行。凭据仅保存在本机私密存储中，不会返回到浏览器。', 'Let this Host process messages from Telegram, WhatsApp, WeChat Official Accounts, or WeCom. Credentials stay in private local storage and are never returned to the browser.') }}</p>
+        <div class="channel-provider-strip" aria-label="{{ tr('settings.channels.providers', '支持的消息渠道', 'Supported messaging channels') }}">
+            <span class="channel-provider-chip"><strong>Telegram</strong><small>Bot API</small></span>
+            <span class="channel-provider-chip"><strong>WhatsApp</strong><small>Cloud API</small></span>
+            <span class="channel-provider-chip"><strong>{{ tr('settings.channels.wechat_official', '微信公众号', 'WeChat Official Account') }}</strong><small>{{ tr('settings.channels.official_api', '官方 API', 'Official API') }}</small></span>
+            <span class="channel-provider-chip"><strong>{{ tr('settings.channels.wecom', '企业微信', 'WeCom') }}</strong><small>{{ tr('settings.channels.official_api', '官方 API', 'Official API') }}</small></span>
+        </div>
+        <div class="permission-toggle-row">
+            <span class="info-label">{{ tr('settings.channels.worker', '后台消息处理', 'Background message processing') }}</span>
+            <span class="info-value"><label class="settings-toggle"><input type="checkbox" id="channelWorkerEnabled"><span>{{ tr('settings.channels.worker.enable', '在这台 Host 上启用', 'Enable on this Host') }}</span></label></span>
+        </div>
+        <div class="settings-form-grid">
+            <div class="form-group">
+                <label for="channelBackendUrl">{{ tr('settings.channels.backend_url', 'Nola 服务地址', 'Nola service URL') }}</label>
+                <input id="channelBackendUrl" type="url" placeholder="https://api.example.com" autocomplete="url">
+            </div>
+            <div class="form-group">
+                <label for="channelAccessToken">{{ tr('settings.channels.access_token', '账户访问令牌', 'Account access token') }}</label>
+                <input id="channelAccessToken" type="password" placeholder="{{ tr('settings.channels.access_token.placeholder', '留空以保留已保存令牌', 'Leave blank to keep the saved token') }}" autocomplete="off">
+                <p class="form-help" id="channelTokenState"></p>
+            </div>
+            <div class="form-group">
+                <label for="channelExecutionBackend">{{ tr('settings.channels.execution_unit', '后台执行单元', 'Background execution unit') }}</label>
+                <select id="channelExecutionBackend"><option value="nola">Nola</option></select>
+            </div>
+            <div class="form-group">
+                <label for="channelTurnTimeout">{{ tr('settings.channels.timeout', '单次任务超时（秒）', 'Turn timeout (seconds)') }}</label>
+                <input id="channelTurnTimeout" type="number" min="30" max="14400" step="30" value="900">
+            </div>
+        </div>
+        <div class="channel-safety-note">{{ icons.icon('key') }}<span>{{ tr('settings.channels.safety', '消息渠道不会自动批准破坏性操作。需要交互授权时，任务会停止并提示你回到 Nola。', 'Messaging channels never auto-approve destructive actions. When interactive approval is required, the run stops and asks you to return to Nola.') }}</span></div>
+        <div class="settings-action-row channel-action-row">
+            <button type="button" class="btn btn-primary" id="channelSettingsSaveBtn" data-default-label="{{ tr('settings.channels.save', '保存消息渠道设置', 'Save messaging settings') }}" disabled>{{ tr('settings.channels.save', '保存消息渠道设置', 'Save messaging settings') }}</button>
+            <button type="button" class="btn btn-secondary" id="channelSettingsRetryBtn" hidden>{{ tr('settings.agent.retry', '重新读取', 'Retry loading') }}</button>
+            <span id="channelSettingsStatus" class="settings-hint" role="status" aria-live="polite"></span>
+        </div>
+        <div class="channel-connections-heading">
+            <div><strong>{{ tr('settings.channels.connections', '已连接渠道', 'Connected channels') }}</strong><span>{{ tr('settings.channels.connections_hint', '消息账号归属于当前 Nola 账户，由已启用的 Host 领取并执行。', 'Messaging accounts belong to this Nola account and are processed by an enabled Host.') }}</span></div>
+            <button type="button" class="btn btn-secondary" id="channelConnectionAddBtn">{{ tr('settings.channels.add', '添加渠道', 'Add channel') }}</button>
+        </div>
+        <div id="channelConnectionsGallery" class="channel-connections-gallery" aria-live="polite"></div>
+        <div id="channelConnectionEditor" class="channel-connection-editor" hidden>
+            <div class="channel-editor-heading"><div><strong id="channelEditorTitle">{{ tr('settings.channels.add_title', '连接消息渠道', 'Connect a messaging channel') }}</strong><span>{{ tr('settings.channels.secret_refs_hint', '凭据字段填写服务端安全配置中的变量名；密钥值不会进入浏览器或数据库。', 'Credential fields contain names from server-side secure configuration; secret values never enter the browser or database.') }}</span></div><button type="button" class="channel-editor-close" id="channelEditorCloseBtn" aria-label="{{ tr('settings.channels.close', '关闭', 'Close') }}">×</button></div>
+            <div class="settings-form-grid">
+                <div class="form-group"><label for="channelConnectionKind">{{ tr('settings.channels.kind', '渠道', 'Channel') }}</label><select id="channelConnectionKind"><option value="telegram">Telegram</option><option value="whatsapp">WhatsApp</option><option value="wechat_official">{{ tr('settings.channels.wechat_official', '微信公众号', 'WeChat Official Account') }}</option><option value="we_com">{{ tr('settings.channels.wecom', '企业微信', 'WeCom') }}</option></select></div>
+                <div class="form-group"><label for="channelConnectionId">{{ tr('settings.channels.connection_id', '连接标识', 'Connection ID') }}</label><input id="channelConnectionId" placeholder="telegram-primary" pattern="[A-Za-z0-9._-]+"></div>
+                <div class="form-group"><label for="channelConnectionName">{{ tr('settings.channels.display_name', '显示名称', 'Display name') }}</label><input id="channelConnectionName" placeholder="{{ tr('settings.channels.display_name.placeholder', '我的消息助手', 'My messaging assistant') }}"></div>
+                <div class="form-group"><label for="channelConnectionAccount">{{ tr('settings.channels.account_id', '账号标识', 'Account ID') }}</label><input id="channelConnectionAccount" placeholder="bot username / phone number ID / agent ID"></div>
+                <div class="form-group"><label for="channelCredentialRef">{{ tr('settings.channels.credential_ref', '发送凭据引用', 'Send credential reference') }}</label><input id="channelCredentialRef" placeholder="TELEGRAM_BOT_TOKEN"></div>
+                <div class="form-group"><label for="channelWebhookSecretRef">{{ tr('settings.channels.webhook_secret_ref', 'Webhook 密钥引用', 'Webhook secret reference') }}</label><input id="channelWebhookSecretRef" placeholder="TELEGRAM_WEBHOOK_SECRET"></div>
+                <div class="form-group channel-verify-field"><label for="channelVerifyTokenRef">{{ tr('settings.channels.verify_token_ref', '验证令牌引用', 'Verify token reference') }}</label><input id="channelVerifyTokenRef" placeholder="WHATSAPP_VERIFY_TOKEN"></div>
+                <div class="form-group channel-whatsapp-field" hidden><label for="channelPhoneNumberId">{{ tr('settings.channels.whatsapp_phone_number_id', 'WhatsApp 电话号码 ID', 'WhatsApp phone number ID') }}</label><input id="channelPhoneNumberId"></div>
+                <div class="form-group channel-whatsapp-field" hidden><label for="channelGraphVersion">{{ tr('settings.channels.graph_api_version', 'Graph API 版本', 'Graph API version') }}</label><input id="channelGraphVersion" value="v23.0"></div>
+                <div class="form-group channel-wechat-field" hidden><label for="channelWeChatAppId">AppID</label><input id="channelWeChatAppId"></div>
+                <div class="form-group channel-wecom-field" hidden><label for="channelCorpId">{{ tr('settings.channels.corp_id', '企业 ID', 'Corporation ID') }}</label><input id="channelCorpId"></div>
+                <div class="form-group channel-wecom-field" hidden><label for="channelAgentId">Agent ID</label><input id="channelAgentId"></div>
+            </div>
+            <label class="settings-toggle channel-editor-enabled"><input type="checkbox" id="channelConnectionEnabled" checked><span>{{ tr('settings.channels.enable_connection', '启用此连接', 'Enable this connection') }}</span></label>
+            <div class="channel-callback-card" id="channelCallbackCard" hidden><span>{{ tr('settings.channels.callback', '回调地址', 'Callback URL') }}</span><code id="channelCallbackUrl"></code><button type="button" class="btn btn-secondary" id="channelCallbackCopyBtn">{{ tr('settings.channels.copy', '复制', 'Copy') }}</button></div>
+            <div class="settings-action-row channel-action-row"><button type="button" class="btn btn-primary" id="channelConnectionSaveBtn">{{ tr('settings.channels.connect', '保存并连接', 'Save and connect') }}</button><span id="channelConnectionStatus" class="settings-hint" role="status" aria-live="polite"></span></div>
+        </div>
+    </section>
+
+    <section class="settings-section settings-security" id="security">
+        <h2>{{ icons.icon('key') }}<span>{{ tr('settings.section.account_ops', '账户操作', 'Account operations') }}</span></h2>
+        <p class="settings-hint">{{ tr('settings.security.hint', '修改密码会保留本地数据，但需要重新登录其他会话。', 'Changing your password keeps local data but requires other sessions to sign in again.') }}</p>
+        <details class="settings-disclosure">
+            <summary><span><strong>{{ tr('settings.password.title', '修改本机密码', 'Change local password') }}</strong><small>{{ tr('settings.password.summary', '验证当前密码后设置新密码', 'Verify your current password, then set a new one') }}</small></span><span aria-hidden="true">⌄</span></summary>
+        <form method="post" action="{{ url_for('main.reset_password') }}" id="passwordResetForm">
+            <div class="form-group">
+                <label for="current_password">{{ tr('settings.password.current', '当前密码', 'Current password') }}</label>
+                <input type="password" id="current_password" name="current_password" placeholder="{{ tr('settings.password.current.placeholder', '输入当前密码', 'Enter current password') }}" required minlength="8" autocomplete="current-password">
+            </div>
+            <div class="form-group">
+                <label for="new_password">{{ tr('settings.password.new', '新密码', 'New password') }}</label>
+                <input type="password" id="new_password" name="new_password" placeholder="{{ tr('settings.password.new.placeholder', '至少 8 位', 'At least 8 characters') }}" required minlength="8" autocomplete="new-password">
+            </div>
+            <div class="form-group">
+                <label for="new_password2">{{ tr('settings.password.confirm', '确认新密码', 'Confirm new password') }}</label>
+                <input type="password" id="new_password2" name="new_password2" placeholder="{{ tr('settings.password.confirm.placeholder', '再次输入新密码', 'Enter new password again') }}" required minlength="8" autocomplete="new-password">
+                <p class="form-help" id="passwordMatchHint" role="status" aria-live="polite"></p>
+            </div>
+            <button type="submit" class="btn btn-primary" id="passwordResetBtn">{{ tr('settings.password.reset', '重置密码', 'Reset password') }}</button>
+        </form>
+        </details>
+        <div class="danger-zone-row">
+            <div><strong>{{ tr('settings.logout.title', '结束当前会话', 'End current session') }}</strong><span>{{ tr('settings.logout.hint', '退出后需要使用本机访问令牌重新登录。', 'You will need the local access token to sign in again.') }}</span></div>
+        <form method="post" action="{{ url_for('main.logout') }}" class="settings-inline-form" id="logoutForm">
+            <button type="submit" class="btn btn-secondary">{{ tr('settings.logout_and_relogin', '退出并重新登录', 'Log out and sign in again') }}</button>
+        </form>
+        </div>
+    </section>
+        </div>
+    </div>
+</div>
+<style>
+.settings-index{position:sticky;top:20px;align-self:start}
+.settings-index a{min-height:40px}
+.settings-index a.is-active{background:color-mix(in srgb,var(--accent) 10%,transparent);color:var(--accent)}
+.settings-link-card{min-height:88px;gap:14px}
+.settings-link-card-main{display:flex;align-items:center;gap:12px;min-width:0}
+.settings-link-card-main>span:last-child{display:grid;gap:4px;min-width:0}
+.settings-link-card-icon{display:grid;place-items:center;flex:0 0 38px;width:38px;height:38px;border-radius:11px;background:color-mix(in srgb,var(--accent) 10%,var(--bg-secondary));color:var(--accent)}
+.settings-link-card-icon svg{width:18px;height:18px}
+.settings-link-card-arrow{flex:0 0 auto;color:var(--text-tertiary);font-size:1.05rem;transition:transform .18s ease,color .18s ease}
+.settings-link-card:hover .settings-link-card-arrow{color:var(--accent);transform:translateX(2px)}
+.info-value-inline{min-width:0}
+#settingsClientUuid{overflow-wrap:anywhere}
+.agent-dev-tools-disclosure{margin-top:18px}
+.agent-dev-tools-disclosure>summary{align-items:center}
+.agent-dev-tools-state{display:inline-flex;align-items:center;min-width:58px;justify-content:center;padding:5px 9px;border-radius:999px;background:var(--bg-secondary);color:var(--text-secondary);font-size:.74rem;font-weight:700}
+.agent-dev-tools-state.is-enabled{background:color-mix(in srgb,#16a34a 12%,var(--bg-primary));color:#15803d}
+.agent-dev-tools-body{padding-top:14px}
+.agent-dev-tools-body .permission-toggle-row{margin-bottom:14px}
+.agent-dev-tools-disclosure:not([open]) .agent-dev-tools-state{margin-right:4px}
+.settings-action-row{position:sticky;bottom:12px;z-index:3;min-height:58px;margin:22px -8px -8px;padding:9px 10px;border:1px solid var(--border);border-radius:14px;background:color-mix(in srgb,var(--bg-primary) 92%,transparent);box-shadow:0 10px 28px rgba(15,23,42,.08);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
+.channel-provider-strip{display:flex;flex-wrap:wrap;gap:9px;margin:16px 0 18px}.channel-provider-chip{display:flex;align-items:baseline;gap:7px;padding:8px 11px;border:1px solid var(--border);border-radius:12px;background:var(--bg-secondary)}.channel-provider-chip strong{font-size:.84rem}.channel-provider-chip small{color:var(--text-tertiary);font-size:.7rem}.channel-safety-note{display:flex;align-items:flex-start;gap:9px;margin-top:16px;padding:12px 14px;border-radius:12px;background:color-mix(in srgb,var(--accent) 7%,var(--bg-secondary));color:var(--text-secondary);font-size:.82rem;line-height:1.5}.channel-safety-note svg{flex:0 0 auto;width:16px;height:16px;margin-top:2px;color:var(--accent)}.channel-action-row{position:relative;bottom:auto}.channel-action-row[aria-busy="true"]{cursor:progress}
+.channel-connections-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:28px;padding-top:22px;border-top:1px solid var(--border)}.channel-connections-heading>div,.channel-editor-heading>div{display:grid;gap:4px}.channel-connections-heading span,.channel-editor-heading span{color:var(--text-tertiary);font-size:.78rem;line-height:1.45}.channel-connections-gallery{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:11px;margin-top:14px}.channel-connection-card{display:grid;gap:13px;min-height:132px;padding:15px;border:1px solid var(--border);border-radius:15px;background:var(--bg-secondary);text-align:left;color:inherit;cursor:pointer;transition:border-color .16s ease,transform .16s ease,box-shadow .16s ease}.channel-connection-card:hover{transform:translateY(-1px);border-color:color-mix(in srgb,var(--accent) 38%,var(--border));box-shadow:0 8px 22px rgba(15,23,42,.06)}.channel-card-top,.channel-card-bottom{display:flex;align-items:center;justify-content:space-between;gap:10px}.channel-card-provider{font-weight:750}.channel-card-name{font-size:.82rem;color:var(--text-secondary);overflow-wrap:anywhere}.channel-state{padding:4px 7px;border-radius:999px;background:var(--bg-primary);color:var(--text-tertiary);font-size:.68rem;font-weight:700}.channel-state.is-connected{background:color-mix(in srgb,#16a34a 12%,var(--bg-primary));color:#15803d}.channel-card-time{font-size:.7rem;color:var(--text-tertiary)}.channel-empty{grid-column:1/-1;padding:20px;border:1px dashed var(--border);border-radius:14px;color:var(--text-tertiary);text-align:center}.channel-connection-editor{margin-top:16px;padding:17px;border:1px solid color-mix(in srgb,var(--accent) 24%,var(--border));border-radius:16px;background:color-mix(in srgb,var(--accent) 3%,var(--bg-secondary))}.channel-editor-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:15px}.channel-editor-close{display:grid;place-items:center;width:28px;height:28px;border:0;border-radius:8px;background:transparent;color:var(--text-tertiary);font-size:1.25rem;cursor:pointer}.channel-editor-close:hover{background:var(--bg-primary);color:var(--text-primary)}.channel-editor-enabled{margin-top:13px}.channel-callback-card{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;margin-top:14px;padding:11px 12px;border-radius:12px;background:var(--bg-primary)}.channel-callback-card>span{font-size:.75rem;color:var(--text-tertiary)}.channel-callback-card code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.75rem}
+#agentSettingsStatus{min-height:1.25em}
+#agentSettingsSaveBtn[aria-busy="true"]{cursor:progress}
+@media(max-width:760px){
+    .settings-index{position:relative;top:auto;display:flex;overflow-x:auto;scrollbar-width:none;padding-bottom:4px;scroll-snap-type:x proximity}
+    .settings-index::-webkit-scrollbar{display:none}
+    .settings-index-label{display:none}
+    .settings-index a{flex:0 0 auto;scroll-snap-align:start}
+    .settings-link-grid{grid-template-columns:1fr}
+    .settings-action-row{bottom:8px}
+    .channel-connections-heading{align-items:flex-start}.channel-callback-card{grid-template-columns:1fr}.channel-callback-card code{white-space:normal;overflow-wrap:anywhere}
+}
+@media(max-width:640px){
+    .agent-dev-tools-disclosure>summary{align-items:flex-start}
+    .agent-dev-tools-state{margin-top:1px}
+    .settings-link-card{min-height:78px}
+    .settings-action-row{align-items:stretch}
+    .settings-action-row .btn{min-height:44px}
+    #agentSettingsStatus{width:100%}
+}
+@media(prefers-reduced-motion:reduce){.settings-link-card-arrow{transition:none}}
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const I18N = {
+    saving: {{ tr('settings.js.agent.saving', '保存中…', 'Saving…')|tojson }},
+    saved: {{ tr('settings.js.agent.saved', '已保存。', 'Saved.')|tojson }},
+    loading: {{ tr('settings.js.agent.loading', '正在读取本机设置…', 'Loading local settings…')|tojson }},
+    loadFailed: {{ tr('settings.js.agent.load_failed', '读取设置失败：%(message)s', 'Failed to load settings: %(message)s')|tojson }},
+    unsaved: {{ tr('settings.js.agent.unsaved', '有未保存的修改', 'Unsaved changes')|tojson }},
+    saveFailed: {{ tr('settings.js.agent.save_failed', '保存失败：%(message)s', 'Save failed: %(message)s')|tojson }},
+    copied: {{ tr('settings.js.copied', '已复制。', 'Copied.')|tojson }},
+    copyFailed: {{ tr('settings.js.copy_failed', '复制失败。', 'Copy failed.')|tojson }},
+    passwordMismatch: {{ tr('settings.js.password_mismatch', '两次输入的新密码不一致。', 'New passwords do not match.')|tojson }},
+    unsavedLeave: {{ tr('settings.js.unsaved_leave', '页面中仍有未保存的设置或密码修改。确定离开吗？', 'This page still has unsaved settings or password changes. Leave anyway?')|tojson }},
+    passwordUpdating: {{ tr('settings.js.password_updating', '正在更新…', 'Updating…')|tojson }},
+    logoutTitle: {{ tr('settings.js.logout.title', '结束当前会话？', 'End current session?')|tojson }},
+    logoutMessage: {{ tr('settings.js.logout.message', '退出后需要使用本机访问令牌重新登录。', 'You will need the local access token to sign in again.')|tojson }},
+    logoutAction: {{ tr('settings.js.logout.action', '退出', 'Log out')|tojson }},
+    devToolsEnabled: {{ tr('settings.agent.state.enabled', '已启用', 'Enabled')|tojson }},
+    devToolsDisabled: {{ tr('settings.agent.state.disabled', '未启用', 'Disabled')|tojson }},
+    permissionSafeDescription: {{ tr('settings.agent.permission_profile.safe_detail', '所有需要权限的工具调用都会请求确认。', 'Every tool call that needs permission asks for confirmation.')|tojson }},
+    permissionRecommendedDescription: {{ tr('settings.agent.permission_profile.recommended_detail', '自动执行普通可逆操作；破坏性操作仍需确认。', 'Runs ordinary reversible actions automatically; destructive actions still require confirmation.')|tojson }},
+    permissionAllowAllDescription: {{ tr('settings.agent.permission_profile.allow_all_detail', '在系统安全限制内，自动允许交互式本轮的工具调用；后台和定时任务不会继承此模式。', 'Within system safety limits, automatically allows tool calls for interactive turns; background and scheduled runs do not inherit this mode.')|tojson }},
+    channelTokenSaved: {{ tr('settings.channels.token.saved', '已安全保存令牌。输入新值可替换。', 'A token is securely saved. Enter a new value to replace it.')|tojson }},
+    channelTokenMissing: {{ tr('settings.channels.token.missing', '尚未保存令牌。', 'No token is saved yet.')|tojson }},
+    channelLoading: {{ tr('settings.channels.connections.loading', '正在读取渠道…', 'Loading channels…')|tojson }},
+    channelEmpty: {{ tr('settings.channels.connections.empty', '还没有消息渠道。添加 Telegram、WhatsApp 或企业微信开始使用。', 'No messaging channels yet. Add Telegram, WhatsApp, or WeCom to get started.')|tojson }},
+    channelAwaiting: {{ tr('settings.channels.state.awaiting', '待验证', 'Awaiting verification')|tojson }},
+    channelConnected: {{ tr('settings.channels.state.connected', '已连接', 'Connected')|tojson }},
+    channelDisabled: {{ tr('settings.channels.state.disabled', '已停用', 'Disabled')|tojson }},
+    channelDegraded: {{ tr('settings.channels.state.degraded', '需处理', 'Needs attention')|tojson }},
+    channelLoadFailed: {{ tr('settings.channels.connections.load_failed', '读取渠道失败：%(message)s', 'Failed to load channels: %(message)s')|tojson }},
+    channelSaveFailed: {{ tr('settings.channels.connections.save_failed', '保存渠道失败：%(message)s', 'Failed to save channel: %(message)s')|tojson }},
+    channelSaved: {{ tr('settings.channels.connections.saved', '渠道设置已保存。', 'Channel settings saved.')|tojson }},
+};
+
+let loadedAgentSettings = null;
+let isSavingAgentSettings = false;
+let isSubmittingPassword = false;
+let loadedChannelSettings = null;
+let isSavingChannelSettings = false;
+let loadedChannelConnections = [];
+
+function fmtTemplate(tpl, vars = {}) {
+    let out = String(tpl || '');
+    Object.keys(vars).forEach((k) => {
+        out = out.replace(new RegExp(`%\\(${k}\\)s`, 'g'), String(vars[k]));
+    });
+    return out;
+}
+
+async function loadAgentSettings() {
+    const status = document.getElementById('agentSettingsStatus');
+    const saveBtn = document.getElementById('agentSettingsSaveBtn');
+    const retryBtn = document.getElementById('agentSettingsRetryBtn');
+    const section = document.getElementById('agent');
+    status.textContent = I18N.loading;
+    status.classList.remove('is-error', 'is-dirty');
+    section?.setAttribute('aria-busy', 'true');
+    if (saveBtn) saveBtn.disabled = true;
+    if (retryBtn) retryBtn.hidden = true;
+    try {
+        const res = await fetch('/api/agent/settings', { credentials: 'same-origin' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || data.detail || `HTTP ${res.status}`);
+        document.getElementById('agentDevToolsToggle').checked = !!data.enable_local_dev_tools;
+        document.getElementById('agentAllowedDirs').value = (data.allowed_dirs || []).join('\n');
+        document.getElementById('agentBashPrefixes').value = (data.allowed_bash_prefixes || []).join('\n');
+        document.getElementById('agentPermissionProfile').value = normalizeAgentPermissionProfile(data.permission_profile);
+        syncPermissionProfileDescription();
+        document.getElementById('agentCustomSystemPrompt').value = data.custom_system_prompt || '';
+        renderChannelExecutionBackends(data.execution_backends || []);
+        syncDevToolsState();
+        loadedAgentSettings = currentAgentSettingsPayload();
+        status.textContent = '';
+        updateAgentDirtyState();
+    } catch (e) {
+        loadedAgentSettings = null;
+        status.textContent = fmtTemplate(I18N.loadFailed, { message: e.message || String(e) });
+        status.classList.add('is-error');
+        if (retryBtn) retryBtn.hidden = false;
+    } finally {
+        section?.removeAttribute('aria-busy');
+    }
+}
+
+function normalizeAgentPermissionProfile(value) {
+    switch (String(value || '').trim().toLowerCase()) {
+    case 'safe': return 'safe';
+    case 'allow_all':
+    case 'allowall':
+    case 'allow-all': return 'allow_all';
+    case 'recommended':
+    case 'moderate':
+    default: return 'recommended';
+    }
+}
+
+function permissionProfileDescriptionKey(value) {
+    switch (normalizeAgentPermissionProfile(value)) {
+    case 'safe': return 'permissionSafeDescription';
+    case 'allow_all': return 'permissionAllowAllDescription';
+    default: return 'permissionRecommendedDescription';
+    }
+}
+
+function syncPermissionProfileDescription() {
+    const select = document.getElementById('agentPermissionProfile');
+    const description = document.getElementById('agentPermissionProfileDescription');
+    if (!select || !description) return;
+    description.textContent = I18N[permissionProfileDescriptionKey(select.value)];
+}
+
+function renderChannelExecutionBackends(catalog) {
+    const select = document.getElementById('channelExecutionBackend');
+    if (!select) return;
+    const items = Array.isArray(catalog) && catalog.length ? catalog : [{ id: 'nola', display_name: 'Nola', availability: 'available' }];
+    select.replaceChildren(...items.map(item => {
+        const available = item.availability === 'available';
+        const suffix = available ? '' : ` · {{ tr('settings.channels.unavailable', '不可用', 'Unavailable') }}`;
+        const option = document.createElement('option');
+        option.value = String(item.id || '');
+        option.disabled = !available;
+        option.textContent = String(item.display_name || item.id || 'Nola') + suffix;
+        return option;
+    }));
+    if (loadedChannelSettings?.execution_backend) select.value = loadedChannelSettings.execution_backend;
+}
+
+function currentChannelSettingsPayload() {
+    return {
+        enabled: !!document.getElementById('channelWorkerEnabled')?.checked,
+        backend_url: document.getElementById('channelBackendUrl')?.value.trim() || '',
+        execution_backend: document.getElementById('channelExecutionBackend')?.value || 'nola',
+        turn_timeout_seconds: Number.parseInt(document.getElementById('channelTurnTimeout')?.value || '900', 10),
+    };
+}
+
+function updateChannelDirtyState() {
+    if (!loadedChannelSettings || isSavingChannelSettings) return;
+    const dirty = JSON.stringify(currentChannelSettingsPayload()) !== JSON.stringify({
+        enabled: !!loadedChannelSettings.enabled,
+        backend_url: loadedChannelSettings.backend_url || '',
+        execution_backend: loadedChannelSettings.execution_backend || 'nola',
+        turn_timeout_seconds: Number(loadedChannelSettings.turn_timeout_seconds || 900),
+    }) || !!document.getElementById('channelAccessToken')?.value;
+    const button = document.getElementById('channelSettingsSaveBtn');
+    const status = document.getElementById('channelSettingsStatus');
+    if (button) button.disabled = !dirty;
+    if (status) status.textContent = dirty ? I18N.unsaved : '';
+}
+
+async function loadChannelSettings() {
+    const section = document.getElementById('channels');
+    const status = document.getElementById('channelSettingsStatus');
+    const retry = document.getElementById('channelSettingsRetryBtn');
+    section?.setAttribute('aria-busy', 'true');
+    if (status) status.textContent = I18N.loading;
+    try {
+        const response = await fetch('/api/messaging-channel-worker', { credentials: 'same-origin' });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || data.detail || `HTTP ${response.status}`);
+        loadedChannelSettings = data;
+        document.getElementById('channelWorkerEnabled').checked = !!data.enabled;
+        document.getElementById('channelBackendUrl').value = data.backend_url || '';
+        document.getElementById('channelExecutionBackend').value = data.execution_backend || 'nola';
+        document.getElementById('channelTurnTimeout').value = String(data.turn_timeout_seconds || 900);
+        document.getElementById('channelAccessToken').value = '';
+        document.getElementById('channelTokenState').textContent = data.has_access_token ? I18N.channelTokenSaved : I18N.channelTokenMissing;
+        if (status) status.textContent = '';
+        if (retry) retry.hidden = true;
+        updateChannelDirtyState();
+    } catch (error) {
+        loadedChannelSettings = null;
+        if (status) status.textContent = fmtTemplate(I18N.loadFailed, { message: error.message || String(error) });
+        if (retry) retry.hidden = false;
+    } finally {
+        section?.removeAttribute('aria-busy');
+    }
+}
+
+async function saveChannelSettings() {
+    if (!loadedChannelSettings || isSavingChannelSettings) return;
+    const section = document.getElementById('channels');
+    const button = document.getElementById('channelSettingsSaveBtn');
+    const status = document.getElementById('channelSettingsStatus');
+    const payload = currentChannelSettingsPayload();
+    const token = document.getElementById('channelAccessToken').value.trim();
+    if (token) payload.access_token = token;
+    isSavingChannelSettings = true;
+    section?.setAttribute('aria-busy', 'true');
+    if (button) { button.disabled = true; button.textContent = I18N.saving; }
+    if (status) status.textContent = I18N.saving;
+    try {
+        const response = await fetch('/api/messaging-channel-worker', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || data.detail || `HTTP ${response.status}`);
+        loadedChannelSettings = data;
+        document.getElementById('channelAccessToken').value = '';
+        document.getElementById('channelTokenState').textContent = data.has_access_token ? I18N.channelTokenSaved : I18N.channelTokenMissing;
+        if (status) status.textContent = I18N.saved;
+        Nola.toast(I18N.saved, 'success');
+    } catch (error) {
+        if (status) status.textContent = fmtTemplate(I18N.saveFailed, { message: error.message || String(error) });
+        Nola.toast(status?.textContent || String(error), 'error');
+    } finally {
+        isSavingChannelSettings = false;
+        section?.removeAttribute('aria-busy');
+        if (button) button.textContent = button.dataset.defaultLabel || '';
+        updateChannelDirtyState();
+    }
+}
+
+function channelProviderName(kind) {
+    return kind === 'we_com' ? '{{ tr('settings.channels.wecom', '企业微信', 'WeCom') }}' : kind === 'wechat_official' ? '{{ tr('settings.channels.wechat_official', '微信公众号', 'WeChat Official Account') }}' : kind === 'whatsapp' ? 'WhatsApp' : 'Telegram';
+}
+
+function channelStateLabel(channel) {
+    if (!channel.enabled) return I18N.channelDisabled;
+    return ({ connected: I18N.channelConnected, degraded: I18N.channelDegraded, awaiting_verification: I18N.channelAwaiting })[channel.state] || I18N.channelAwaiting;
+}
+
+function renderChannelConnections(channels) {
+    const gallery = document.getElementById('channelConnectionsGallery');
+    loadedChannelConnections = Array.isArray(channels) ? channels : [];
+    if (!gallery) return;
+    if (!loadedChannelConnections.length) {
+        const empty = document.createElement('div'); empty.className = 'channel-empty'; empty.textContent = I18N.channelEmpty; gallery.replaceChildren(empty); return;
+    }
+    gallery.replaceChildren(...loadedChannelConnections.map(channel => {
+        const card = document.createElement('button'); card.type = 'button'; card.className = 'channel-connection-card';
+        const top = document.createElement('span'); top.className = 'channel-card-top';
+        const provider = document.createElement('span'); provider.className = 'channel-card-provider'; provider.textContent = channelProviderName(channel.kind);
+        const state = document.createElement('span'); state.className = `channel-state ${channel.state === 'connected' && channel.enabled ? 'is-connected' : ''}`; state.textContent = channelStateLabel(channel);
+        top.append(provider, state);
+        const name = document.createElement('span'); name.className = 'channel-card-name'; name.textContent = channel.display_name || channel.account_id || channel.connection_id;
+        const bottom = document.createElement('span'); bottom.className = 'channel-card-bottom';
+        const id = document.createElement('code'); id.textContent = channel.connection_id;
+        const time = document.createElement('span'); time.className = 'channel-card-time'; time.textContent = channel.last_received_at ? new Date(channel.last_received_at).toLocaleString() : '';
+        bottom.append(id, time); card.append(top, name, bottom); card.addEventListener('click', () => openChannelEditor(channel)); return card;
+    }));
+}
+
+async function loadChannelConnections() {
+    const gallery = document.getElementById('channelConnectionsGallery');
+    if (gallery) { const loading = document.createElement('div'); loading.className = 'channel-empty'; loading.textContent = I18N.channelLoading; gallery.replaceChildren(loading); }
+    try {
+        const response = await fetch('/api/messaging-channels', { credentials: 'same-origin' });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || data.detail || `HTTP ${response.status}`);
+        renderChannelConnections(data.channels || []);
+    } catch (error) {
+        if (gallery) { const failed = document.createElement('div'); failed.className = 'channel-empty'; failed.textContent = fmtTemplate(I18N.channelLoadFailed, { message: error.message || String(error) }); gallery.replaceChildren(failed); }
+    }
+}
+
+function syncChannelEditorFields() {
+    const kind = document.getElementById('channelConnectionKind').value;
+    document.querySelectorAll('.channel-whatsapp-field').forEach(node => node.hidden = kind !== 'whatsapp');
+    document.querySelectorAll('.channel-wecom-field').forEach(node => node.hidden = kind !== 'we_com');
+    document.querySelectorAll('.channel-wechat-field').forEach(node => node.hidden = kind !== 'wechat_official');
+    document.querySelectorAll('.channel-verify-field').forEach(node => node.hidden = kind === 'telegram');
+    const id = document.getElementById('channelConnectionId').value.trim();
+    const base = document.getElementById('channelBackendUrl').value.trim().replace(/\/$/, '');
+    const callback = id && base ? `${base}/v1/channels/webhook/${kind}/${encodeURIComponent(id)}` : '';
+    document.getElementById('channelCallbackUrl').textContent = callback;
+    document.getElementById('channelCallbackCard').hidden = !callback;
+}
+
+function openChannelEditor(channel = null) {
+    const editor = document.getElementById('channelConnectionEditor'); editor.hidden = false;
+    document.getElementById('channelConnectionKind').value = channel?.kind || 'telegram';
+    document.getElementById('channelConnectionId').value = channel?.connection_id || '';
+    document.getElementById('channelConnectionId').readOnly = !!channel;
+    document.getElementById('channelConnectionName').value = channel?.display_name || '';
+    document.getElementById('channelConnectionAccount').value = channel?.account_id || '';
+    document.getElementById('channelCredentialRef').value = channel?.credential_ref || '';
+    document.getElementById('channelWebhookSecretRef').value = channel?.webhook_secret_ref || '';
+    document.getElementById('channelVerifyTokenRef').value = channel?.verify_token_ref || '';
+    document.getElementById('channelPhoneNumberId').value = channel?.provider_config?.phone_number_id || '';
+    document.getElementById('channelGraphVersion').value = channel?.provider_config?.graph_version || 'v23.0';
+    document.getElementById('channelWeChatAppId').value = channel?.provider_config?.app_id || (channel?.kind === 'wechat_official' ? (channel.account_id || '') : '');
+    document.getElementById('channelCorpId').value = channel?.provider_config?.corp_id || '';
+    document.getElementById('channelAgentId').value = channel?.provider_config?.agent_id || (channel?.kind === 'we_com' ? (channel.account_id || '') : '');
+    document.getElementById('channelConnectionEnabled').checked = channel ? !!channel.enabled : true;
+    document.getElementById('channelConnectionStatus').textContent = '';
+    syncChannelEditorFields(); editor.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function saveChannelConnection() {
+    const kind = document.getElementById('channelConnectionKind').value;
+    const payload = {
+        connection_id: document.getElementById('channelConnectionId').value.trim(), kind,
+        display_name: document.getElementById('channelConnectionName').value.trim(), account_id: document.getElementById('channelConnectionAccount').value.trim(),
+        credential_ref: document.getElementById('channelCredentialRef').value.trim(), webhook_secret_ref: document.getElementById('channelWebhookSecretRef').value.trim(),
+        verify_token_ref: document.getElementById('channelVerifyTokenRef').value.trim(), enabled: document.getElementById('channelConnectionEnabled').checked,
+        provider_config: kind === 'whatsapp' ? { phone_number_id: document.getElementById('channelPhoneNumberId').value.trim(), graph_version: document.getElementById('channelGraphVersion').value.trim() || 'v23.0' } : kind === 'wechat_official' ? { app_id: document.getElementById('channelWeChatAppId').value.trim() } : kind === 'we_com' ? { corp_id: document.getElementById('channelCorpId').value.trim(), agent_id: document.getElementById('channelAgentId').value.trim() } : {},
+    };
+    const status = document.getElementById('channelConnectionStatus'); const button = document.getElementById('channelConnectionSaveBtn'); button.disabled = true; status.textContent = I18N.saving;
+    try {
+        const response = await fetch('/api/messaging-channels', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const data = await response.json(); if (!response.ok) throw new Error(data.error || data.detail || `HTTP ${response.status}`);
+        status.textContent = I18N.channelSaved; Nola.toast(I18N.channelSaved, 'success'); await loadChannelConnections();
+    } catch (error) { status.textContent = fmtTemplate(I18N.channelSaveFailed, { message: error.message || String(error) }); Nola.toast(status.textContent, 'error'); }
+    finally { button.disabled = false; }
+}
+
+function currentAgentSettingsPayload() {
+    return {
+        enable_local_dev_tools: document.getElementById('agentDevToolsToggle').checked,
+        allowed_dirs: document.getElementById('agentAllowedDirs').value.split('\n').map(v => v.trim()).filter(Boolean),
+        allowed_bash_prefixes: document.getElementById('agentBashPrefixes').value.split('\n').map(v => v.trim()).filter(Boolean),
+        permission_profile: normalizeAgentPermissionProfile(
+            document.getElementById('agentPermissionProfile').value
+        ),
+        custom_system_prompt: document.getElementById('agentCustomSystemPrompt').value || '',
+    };
+}
+
+function syncDevToolsState() {
+    const enabled = document.getElementById('agentDevToolsToggle').checked;
+    const fields = document.getElementById('agentDevToolsFields');
+    const summaryState = document.getElementById('agentDevToolsSummaryState');
+    const disclosure = document.getElementById('agentDevToolsDisclosure');
+    fields?.classList.toggle('is-disabled', !enabled);
+    fields?.setAttribute('aria-disabled', String(!enabled));
+    fields?.querySelectorAll('textarea').forEach((field) => {
+        field.disabled = !enabled;
+    });
+    if (summaryState) {
+        summaryState.textContent = enabled ? I18N.devToolsEnabled : I18N.devToolsDisabled;
+        summaryState.classList.toggle('is-enabled', enabled);
+    }
+    if (enabled && disclosure && !loadedAgentSettings) disclosure.open = true;
+}
+
+function hasUnsavedAgentSettings() {
+    const agentDirty = !!loadedAgentSettings
+        && JSON.stringify(currentAgentSettingsPayload()) !== JSON.stringify(loadedAgentSettings);
+    const channelDirty = !!loadedChannelSettings && (
+        JSON.stringify(currentChannelSettingsPayload()) !== JSON.stringify({
+            enabled: !!loadedChannelSettings.enabled,
+            backend_url: loadedChannelSettings.backend_url || '',
+            execution_backend: loadedChannelSettings.execution_backend || 'nola',
+            turn_timeout_seconds: Number(loadedChannelSettings.turn_timeout_seconds || 900),
+        }) || !!document.getElementById('channelAccessToken')?.value
+    );
+    return agentDirty || channelDirty;
+}
+
+function hasPasswordDraft() {
+    if (isSubmittingPassword) return false;
+    return ['current_password', 'new_password', 'new_password2']
+        .some(id => (document.getElementById(id)?.value || '').length > 0);
+}
+
+function updateAgentDirtyState() {
+    if (!loadedAgentSettings || isSavingAgentSettings) return;
+    const dirty = JSON.stringify(currentAgentSettingsPayload()) !== JSON.stringify(loadedAgentSettings);
+    const status = document.getElementById('agentSettingsStatus');
+    const saveBtn = document.getElementById('agentSettingsSaveBtn');
+    status.textContent = dirty ? I18N.unsaved : '';
+    status.classList.toggle('is-dirty', dirty);
+    status.classList.remove('is-error');
+    if (saveBtn) saveBtn.disabled = !dirty;
+}
+
+async function saveAgentSettings() {
+    const status = document.getElementById('agentSettingsStatus');
+    const saveBtn = document.getElementById('agentSettingsSaveBtn');
+    const section = document.getElementById('agent');
+    if (!loadedAgentSettings || isSavingAgentSettings) return;
+    isSavingAgentSettings = true;
+    status.textContent = I18N.saving;
+    status.classList.remove('is-error', 'is-dirty');
+    section?.setAttribute('aria-busy', 'true');
+    if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = I18N.saving;
+        saveBtn.setAttribute('aria-busy', 'true');
+    }
+    const payload = currentAgentSettingsPayload();
+    try {
+        const res = await fetch('/api/agent/settings', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || data.detail || `HTTP ${res.status}`);
+        loadedAgentSettings = payload;
+        status.textContent = I18N.saved;
+        Nola.toast(I18N.saved, 'success');
+    } catch (e) {
+        status.textContent = fmtTemplate(I18N.saveFailed, { message: e.message || String(e) });
+        status.classList.add('is-error');
+        Nola.toast(status.textContent, 'error');
+    } finally {
+        isSavingAgentSettings = false;
+        section?.removeAttribute('aria-busy');
+        if (saveBtn) {
+            saveBtn.textContent = saveBtn.dataset.defaultLabel || '';
+            saveBtn.removeAttribute('aria-busy');
+            saveBtn.disabled = JSON.stringify(currentAgentSettingsPayload()) === JSON.stringify(loadedAgentSettings);
+        }
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadAgentSettings();
+    loadChannelSettings();
+    loadChannelConnections();
+    document.getElementById('agentSettingsSaveBtn')?.addEventListener('click', saveAgentSettings);
+    document.getElementById('agentSettingsRetryBtn')?.addEventListener('click', loadAgentSettings);
+    document.getElementById('channelSettingsSaveBtn')?.addEventListener('click', saveChannelSettings);
+    document.getElementById('channelSettingsRetryBtn')?.addEventListener('click', loadChannelSettings);
+    document.getElementById('channelConnectionAddBtn')?.addEventListener('click', () => openChannelEditor());
+    document.getElementById('channelEditorCloseBtn')?.addEventListener('click', () => document.getElementById('channelConnectionEditor').hidden = true);
+    document.getElementById('channelConnectionSaveBtn')?.addEventListener('click', saveChannelConnection);
+    ['channelConnectionKind', 'channelConnectionId', 'channelBackendUrl'].forEach(id => document.getElementById(id)?.addEventListener('input', syncChannelEditorFields));
+    document.getElementById('channelCallbackCopyBtn')?.addEventListener('click', async () => { try { await navigator.clipboard.writeText(document.getElementById('channelCallbackUrl').textContent || ''); Nola.toast(I18N.copied, 'success'); } catch (_) { Nola.toast(I18N.copyFailed, 'error'); } });
+    ['channelWorkerEnabled', 'channelBackendUrl', 'channelAccessToken', 'channelExecutionBackend', 'channelTurnTimeout'].forEach(id => {
+        document.getElementById(id)?.addEventListener('input', updateChannelDirtyState);
+        document.getElementById(id)?.addEventListener('change', updateChannelDirtyState);
+    });
+    document.getElementById('agentDevToolsToggle')?.addEventListener('change', () => {
+        syncDevToolsState();
+        updateAgentDirtyState();
+    });
+    document.getElementById('agentPermissionProfile')?.addEventListener(
+        'change',
+        syncPermissionProfileDescription
+    );
+    ['agentAllowedDirs', 'agentBashPrefixes', 'agentPermissionProfile', 'agentCustomSystemPrompt'].forEach((id) => {
+        document.getElementById(id)?.addEventListener('input', updateAgentDirtyState);
+        document.getElementById(id)?.addEventListener('change', updateAgentDirtyState);
+    });
+    const sectionLinks = [...document.querySelectorAll('.settings-index a')];
+    const sections = sectionLinks.map(link => document.querySelector(link.getAttribute('href'))).filter(Boolean);
+    const sectionObserver = new IntersectionObserver((entries) => {
+        const visible = entries.filter(entry => entry.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+        if (!visible) return;
+        sectionLinks.forEach(link => {
+            const active = link.getAttribute('href') === `#${visible.target.id}`;
+            link.classList.toggle('is-active', active);
+            if (active) link.setAttribute('aria-current', 'location');
+            else link.removeAttribute('aria-current');
+        });
+    }, { rootMargin: '-18% 0px -68% 0px', threshold: [0, 0.2, 0.5] });
+    sections.forEach(section => sectionObserver.observe(section));
+    document.getElementById('copyClientUuidBtn')?.addEventListener('click', async () => {
+        const value = document.getElementById('settingsClientUuid')?.textContent?.trim() || '';
+        try {
+            await navigator.clipboard.writeText(value);
+            Nola.toast(I18N.copied, 'success');
+        } catch (_) {
+            Nola.toast(I18N.copyFailed, 'error');
+        }
+    });
+    const passwordForm = document.getElementById('passwordResetForm');
+    const newPassword = document.getElementById('new_password');
+    const newPassword2 = document.getElementById('new_password2');
+    const matchHint = document.getElementById('passwordMatchHint');
+    function updatePasswordMatch() {
+        if (!newPassword || !newPassword2 || !matchHint) return true;
+        const mismatch = newPassword2.value.length > 0 && newPassword.value !== newPassword2.value;
+        matchHint.textContent = mismatch ? I18N.passwordMismatch : '';
+        matchHint.classList.toggle('is-error', mismatch);
+        newPassword2.setCustomValidity(mismatch ? I18N.passwordMismatch : '');
+        return !mismatch;
+    }
+    newPassword?.addEventListener('input', updatePasswordMatch);
+    newPassword2?.addEventListener('input', updatePasswordMatch);
+    passwordForm?.addEventListener('submit', (event) => {
+        if (!updatePasswordMatch()) {
+            event.preventDefault();
+            newPassword2?.focus();
+            return;
+        }
+        isSubmittingPassword = true;
+        const button = document.getElementById('passwordResetBtn');
+        if (button) {
+            button.disabled = true;
+            button.textContent = I18N.passwordUpdating;
+            button.setAttribute('aria-busy', 'true');
+        }
+    });
+
+    let logoutConfirmed = false;
+    document.getElementById('logoutForm')?.addEventListener('submit', async (event) => {
+        if (logoutConfirmed) return;
+        event.preventDefault();
+        const form = event.currentTarget;
+        const confirmed = window.Nola?.confirm ? await Nola.confirm({
+            title: I18N.logoutTitle,
+            message: I18N.logoutMessage,
+            confirmText: I18N.logoutAction,
+            danger: true,
+        }) : window.confirm(I18N.logoutMessage);
+        if (!confirmed) return;
+        logoutConfirmed = true;
+        form.requestSubmit();
+    });
+});
+
+window.addEventListener('beforeunload', event => {
+    if (!hasUnsavedAgentSettings() && !hasPasswordDraft()) return;
+    event.preventDefault();
+    event.returnValue = I18N.unsavedLeave;
+});
+</script>
+{% endblock %}

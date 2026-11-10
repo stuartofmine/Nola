@@ -32,7 +32,7 @@ def main():
     destination.mkdir(parents=True, exist_ok=False)
     (destination / "samples.json").write_text(json.dumps(report, indent=2) + "\n")
     sources = {}
-    for folder in ("core", "cli"):
+    for folder in ("core", "apps/cli"):
         for directory, subdirectories, files in os.walk(root / folder):
             subdirectories[:] = [name for name in subdirectories if name not in ("target", ".git")]
             for name in files:

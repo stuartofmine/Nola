@@ -9,13 +9,13 @@
 
 | 客户端 | 已核对入口 | 所有权与缺口 |
 |---|---|---|
-| Mac | `NolaMac/Services/MacApplicationPort.swift`、`MacCanonicalConversationRepository.swift` | service-backed 命令/查询；窗口读取按 generation 和 eventSequence 核对迟到结果 |
-| iOS | `Nola/Services/IOSApplicationRuntime.swift`、`IOSCanonicalAgentApplication.swift` | FFI Application submit、pending request 重发/receipt；outcomePending 不等于明确失败 |
-| Android | `android/app/src/main/java/com/nola/data/local/AndroidApplicationRuntime.kt` | nativeApplicationSubmit + ApplicationSubmissionJournal；提交结果分 committed/rejected/conflict/pending |
-| CLI | `cli/src/application_port.rs` | Service 与 InProcess 两种传输；本轮统一写命令的 receipt 边界，保留只读快速路径 |
-| Web journal | `cli/src/web_parts/assistant_journal.rs` | 请求白名单映射 Application 查询，检查 source/Run 身份；不是任意业务 mutation 的代理 |
-| Android 投影 | `android/app/src/main/java/com/nola/domain/projection/CanonicalConversationProjector.kt` | canonical 到展示的纯映射，merge 按会话/消息身份；活动 overlay 仍需核对消费者 |
-| Apple 远端终态 | `Nola/Services/IOSAssistantJournalTransport.swift`、`NolaMac/Services/MacAssistantJournalTransport.swift` | 解码同一 terminal seal；status 字符串仍缺结构化业务 outcome，需与新 seal 协议同批更新 |
+| Mac | `apps/macos/Services/MacApplicationPort.swift`、`MacCanonicalConversationRepository.swift` | service-backed 命令/查询；窗口读取按 generation 和 eventSequence 核对迟到结果 |
+| iOS | `apps/ios/Services/IOSApplicationRuntime.swift`、`IOSCanonicalAgentApplication.swift` | FFI Application submit、pending request 重发/receipt；outcomePending 不等于明确失败 |
+| Android | `apps/android/app/src/main/java/com/nola/data/local/AndroidApplicationRuntime.kt` | nativeApplicationSubmit + ApplicationSubmissionJournal；提交结果分 committed/rejected/conflict/pending |
+| CLI | `apps/cli/src/application_port.rs` | Service 与 InProcess 两种传输；本轮统一写命令的 receipt 边界，保留只读快速路径 |
+| Web journal | `apps/cli/src/web_parts/assistant_journal.rs` | 请求白名单映射 Application 查询，检查 source/Run 身份；不是任意业务 mutation 的代理 |
+| Android 投影 | `apps/android/app/src/main/java/com/nola/domain/projection/CanonicalConversationProjector.kt` | canonical 到展示的纯映射，merge 按会话/消息身份；活动 overlay 仍需核对消费者 |
+| Apple 远端终态 | `apps/ios/Services/IOSAssistantJournalTransport.swift`、`apps/macos/Services/MacAssistantJournalTransport.swift` | 解码同一 terminal seal；status 字符串仍缺结构化业务 outcome，需与新 seal 协议同批更新 |
 
 同一数据库不得因为 Service/FFI/InProcess 传输选择不同而使用不同业务语义。
 `canonical_run_terminal` 必须在同一读快照中确认恰好一个已提交封存来源：本地

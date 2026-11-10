@@ -665,7 +665,7 @@ using the configured OpenRouter route and an isolated database. The production
 Mac window switched to a new draft during the request, returned to the active
 conversation, received incremental states, exposed the completed answer to AX,
 and kept its measured footer in the viewport. Evidence is retained at
-`/tmp/nola-mac-real-memory.2fFzqh/` (result bundle, screenshots, timeline and
+`<evidence-dir>/nola-mac-real-memory.2fFzqh/` (result bundle, screenshots, timeline and
 redacted provider trace). Final and new-draft screenshots were visually inspected.
 This does not establish a frame-rate benchmark or cover every provider's failure
 mode, and it does not replace/restart the user's signed Debug application.
@@ -698,7 +698,7 @@ Follow-up validation: all 4 `MacTranscriptCompletionScrollTests` passed,
 including hosted production views and painted-glyph checks at 640/1440 widths
 in light/dark appearance. The real-provider conversation-switch/stream/final
 viewport test passed again (1 passed, 0 skipped) with isolated state; evidence:
-`/tmp/nola-mac-real-memory.Klq23v/`. This does not measure frame time for the
+`<evidence-dir>/nola-mac-real-memory.Klq23v/`. This does not measure frame time for the
 user's original tool-heavy conversation, nor install a new signed Debug app.
 
 ## 提交、热状态与发布的精确顺序（2026-10-28源码核对）
@@ -721,3 +721,5 @@ user's original tool-heavy conversation, nor install a new signed Debug app.
 验收反例：内层失败外层仍可决定回滚；外层COMMIT失败后连接不可继续加入新命令；数据库无未提交公开事件；重开后以持久回执决定是否已执行。源码测试 `failed_outer_commit_does_not_leak_a_joinable_transaction`、`joined_publication_never_settles_its_callers_transaction` 是对应检查入口，本次没有重新运行。
 
 本批窄入口 `prepare_mobile_task_guidance(input: {request, now_ms})` 只接受已 started 的准确 `send_agent_message` effect；从实际 parent Run/Turn、call 和 Task authority 校验归属。`Run:call_id` 是稳定 message_id，重放复用原 submitted_at 与回执；accepted 表示已排队（Deferred），不声称已被 worker 消费。child pump 仍经现有 Run/lease 核验消费，停止后新输入明确拒绝。该接口不新增业务状态机、持久表或外部订阅。
+
+`<evidence-dir>` 表示本地验收产物根目录；后面的路径相对该目录，产物不随公开仓库分发。

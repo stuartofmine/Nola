@@ -2,6 +2,7 @@
 
 | 用途 | 文档 |
 | --- | --- |
+| 源码目录与构建边界 | [源码目录约定](SOURCE_LAYOUT.md) |
 | 基本环境与构建 | [仓库 README](../../README.md) |
 | 各平台入口 | [平台目录](../platforms/README.md) |
 | Rust 缓存与制品隔离 | [构建缓存](../architecture/工程规范/RUST_BUILD_CACHE.md) |

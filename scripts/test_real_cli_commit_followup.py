@@ -81,7 +81,7 @@ def main():
     source = Path(__file__).resolve().parents[1]
     run = Path(tempfile.mkdtemp(prefix="nola-commit-followup-"))
     workspace = run / "workspace"
-    subdir = workspace / "cli" / "scripts"
+    subdir = workspace / "apps/cli" / "scripts"
     subdir.mkdir(parents=True)
 
     def git(*arguments):

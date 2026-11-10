@@ -13,17 +13,17 @@ protocol_error 为 Failed，content_filter/refusal 为 Rejected，其余含缺�
 截断为 Incomplete。这里只分类采样诊断，不改变业务结果、不丢弃部分文本、不
 发起重试；Succeeded 也不是任务成功或工具已执行。旧构建的计量不能据新规则
 重新声称正确。模块回归 152 项通过；新构建真实故障样本
-`/tmp/nola-mac-real-memory.ztgswO` 已验证 1025 字节断流采样为 incomplete、
+`<evidence-dir>/nola-mac-real-memory.ztgswO` 已验证 1025 字节断流采样为 incomplete、
 后续完整流为 succeeded，最终 UI/seal 验收通过。压缩分叉的新真实样本见下节；
 尚不能据单个样本声称全部计量路径覆盖。
 HTTP headers succeeded 仍只表示收到响应头，不等于生成成功。原始故障样本
-`/tmp/nola-mac-real-memory.xRgVcv` 保存断流和重试两次请求，详见 VERIFICATION。
+`<evidence-dir>/nola-mac-real-memory.xRgVcv` 保存断流和重试两次请求，详见 VERIFICATION。
 
 ## 验收用 provider trace 统计边界
 
 ### 真实压缩计量样本（2026-10-12）
 
-隔离 Mac 样本 `/tmp/nola-mac-real-memory.SEJqYo` 实际触发 128-token 输出截断，
+隔离 Mac 样本 `<evidence-dir>/nola-mac-real-memory.SEJqYo` 实际触发 128-token 输出截断，
 458 字节部分摘要经一次续写提交，原文召回 XCTest 1/1 通过。sampling 对截断记
 incomplete，对完整续写记 succeeded。原 runner 因读旧 Trace 表 exit 1，改为读取
 canonical run_events 后离线证据校验通过；完整门禁重新运行的结果单列，不回写
@@ -100,7 +100,7 @@ HTTP 服务，不是公网 provider 性能基线。关闭读取期限后，取�
 
 ## 2026-10-12 真实 Mac 采集试跑
 
-流所有权整改后新增一次当前构建样本（`/tmp/nola-mac-real-memory.RmfEKJ`）：
+流所有权整改后新增一次当前构建样本（`<evidence-dir>/nola-mac-real-memory.RmfEKJ`）：
 runner 1/1 通过、零跳过，1 个 answered seal 与界面记录一致，正文流门通过。
 构建指纹 `20fd67ef02b1df0210a47480ca042215304a229d970775ea8aa0f1dc99ba2ce9`。
 5 条 measurement 事件中的 adapter_first_text 相对 provider_sampling begin 为
@@ -117,7 +117,7 @@ runner 1/1 通过、零跳过，1 个 answered seal 与界面记录一致，正�
 代替正文。Swift 实际检查活动流切换、草稿隔离、按钮状态、AX 多次变化、最终正文
 编号/标记与底部重排。截图产物已保存，但不据自动化断言声明全部视觉设计达标。
 
-| 原始产物目录（`/tmp/nola-mac-real-memory.` 前缀） | adapter 首正文 ms | sampling ms | 代理 headers ms |
+| 原始产物目录（`<evidence-dir>/nola-mac-real-memory.` 前缀） | adapter 首正文 ms | sampling ms | 代理 headers ms |
 |---|---:|---:|---:|
 | LHbvB4 | 2239.634 | 29818.867917 | 44.1675 |
 | HvCxlT | 2266.620125 | 30139.436333 | 30.293417 |
@@ -143,7 +143,7 @@ completed_at 导出到 transcript；只读 Python 比较器在同一 SQLite 快�
 
 - 采集环境、报告及回执导出 Python 回归：31 项通过；runner shell 语法检查通过。
 - 真实 Mac XCTest：1 通过、0 跳过、0 失败，复用隔离 Test 构建，没有替换用户 Debug App。
-- 产物：`/tmp/nola-mac-real-memory.BWVqNX/measurement/{build.json,events.jsonl}`；
+- 产物：`<evidence-dir>/nola-mac-real-memory.BWVqNX/measurement/{build.json,events.jsonl}`；
   XCTest 结果同目录 `result.xcresult`。这是临时原始证据，不是持久基线归档。
 - artifact-set digest：`785ef8c57f1ef5dbd2ff9e07a1e65e2aa27f60cf5bbcdd22d7b0f0aa80d44037`。
   范围仅 App `Contents/MacOS` 实际文件，不覆盖所有外部依赖。
@@ -158,7 +158,7 @@ completed_at 导出到 transcript；只读 Python 比较器在同一 SQLite 快�
   不能由成功回执反推全部请求。缓存指标必须读正式 usage 账本。
 - 首次试跑在发模型请求前发现 XCTest `TestHostPath` 为 `.app` 目录，采集 helper 原先只
   接受可执行路径。现已支持两种宿主路径并加入回归；失败产物保留于
-  `/tmp/nola-mac-real-memory.Cg60eA`，不得计入成功采样分母。
+  `<evidence-dir>/nola-mac-real-memory.Cg60eA`，不得计入成功采样分母。
 
 ### 最终回答与正文流必须分别验收
 
@@ -169,7 +169,7 @@ completed_at 导出到 transcript；只读 Python 比较器在同一 SQLite 快�
 观察到成功的 streaming response 且正文 delta 数量和字节均大于零；仅工具、仅思考、非流式、
 失败或注入中断不满足此门。即使通过，也不证明 UI 已绘制或端到端首帧预算达标。
 
-该门的真实反例验收：`/tmp/nola-mac-real-memory.31fuqn`，重新 build-for-testing 后
+该门的真实反例验收：`<evidence-dir>/nola-mac-real-memory.31fuqn`，重新 build-for-testing 后
 canonical-answer XCTest 1/1 通过，独立正文流验收拒绝，runner exit 1；模型再次只输出工具。
 因此这个 run 不能登记为正文流通过。Python 回归为测量相关 31 项加正文流门 3 项，全部通过。
 这里验证了旧假阳性会被拦截；真正正文流的正例和首输出性能数据仍待采集。
@@ -435,3 +435,5 @@ reporter remains the consumer. This hook alone does not provide a preregistered
 command sample denominator, canonical receipt export, full cache usage totals,
 or UI frame timestamps. Missing events are not zero latency. New helper tests
 and a measurement-enabled real run remain pending unified verification.
+
+`<evidence-dir>` 表示本地验收产物根目录；后面的路径相对该目录，产物不随公开仓库分发。

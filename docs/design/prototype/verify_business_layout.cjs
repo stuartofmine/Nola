@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // Standalone prototype layout, entry links, keyboard recovery and clipboard refusal.
-const {chromium}=require('../../../web/playwright_runtime/node_modules/playwright-core');
+const {chromium}=require('../../../apps/web/playwright_runtime/node_modules/playwright-core');
 const fs=require('node:fs'),assert=require('node:assert/strict');
 const base=(process.env.PROTOTYPE_URL||'http://127.0.0.1:8071').replace(/\/$/,'');
-const out=process.env.PROTOTYPE_OUT||'/tmp/nola-prototype-business-layout';fs.mkdirSync(out,{recursive:true});
+const out=process.env.PROTOTYPE_OUT||require('../../../apps/web/playwright_runtime/test_environment.cjs').artifactPath('nola-prototype-business-layout');fs.mkdirSync(out,{recursive:true});
 (async()=>{
-const browser=await chromium.launch({executablePath:'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true});
+const browser=await chromium.launch({...require('../../../apps/web/playwright_runtime/test_environment.cjs').browserOptions(),headless:true});
 const context=await browser.newContext({reducedMotion:'reduce'}), page=await context.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
 await context.route('**/*',r=>new URL(r.request().url()).origin===new URL(base).origin?r.continue():r.abort());
 let layouts=0;const scenes=['permission','host-pair','inspector','mcp-config','compose','general-fonts'];

@@ -17,7 +17,7 @@ attempt_id=null，但正式 Attempt 仍是 prepared，派发报 identity mismatc
 
 | 位置 | 整改前行为 | 必须消除的冲突 |
 |---|---|---|
-| `cli/src/tools/parts/background.rs::prompt_desktop_host_question` | PID + 进程内序号生成 request_id，经 native event 发出后等待最多 24 小时 | 传输身份不是持久 wait 身份；Host 存活不是恢复前提 |
+| `apps/cli/src/tools/parts/background.rs::prompt_desktop_host_question` | PID + 进程内序号生成 request_id，经 native event 发出后等待最多 24 小时 | 传输身份不是持久 wait 身份；Host 存活不是恢复前提 |
 | `core/src/agent/runtime/tool_driver.rs::pending_user_input_message` | unavailable 与 cancelled 都取同一 question/instruction 文本 | UI 不可用和用户放弃不是同一业务决定 |
 | 同文件工具汇合分支 | 仅在 all_terminal 时检查本次工具结果的 pending question | 需要验证问题先返回、其他工具后返回时的等待事实是否保留，不能依赖最后回执内容 |
 | 同文件 NeedsInput 分支 | 写 completion_outcome=NeedsInput，随后 complete_turn | 等待被转换为 TurnCompleted；没有从该结果取得稳定 resume identity |

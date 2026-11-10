@@ -3,7 +3,7 @@
 # Actual model-driven coding task; independently verify the delivered artifact.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-export NOLA_MAC_REAL_WORKSPACE="$(mktemp -d /tmp/nola-mac-coding.XXXXXX)"
+export NOLA_MAC_REAL_WORKSPACE="$(mktemp -d "${TMPDIR:-/tmp}/nola-mac-coding.XXXXXX")"
 printf '[real-mac-coding] isolated workspace: %s\n' "$NOLA_MAC_REAL_WORKSPACE"
 runtime_status=0
 printf '# Owned acceptance placeholder; replace this existing file.\n' >"$NOLA_MAC_REAL_WORKSPACE/summarize_csv.py"

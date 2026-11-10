@@ -24,9 +24,9 @@ The reference SDK exposed a stdio bug: resolving a venv Python symlink changed i
 ## Reproduction
 
 ```sh
-python3 -m venv /tmp/nola-mcp-sdk
-/tmp/nola-mcp-sdk/bin/pip install mcp==1.30.0
-NOLA_MCP_SDK_PYTHON=/tmp/nola-mcp-sdk/bin/python cargo test -p nola_mcp_host --test sdk_interop -- --ignored
+python3 -m venv <evidence-dir>/nola-mcp-sdk
+<evidence-dir>/nola-mcp-sdk/bin/pip install mcp==1.30.0
+NOLA_MCP_SDK_PYTHON=<evidence-dir>/nola-mcp-sdk/bin/python cargo test -p nola_mcp_host --test sdk_interop -- --ignored
 cargo test -p nola_mcp_host --features test-support --lib
 cargo test -p nola_application --test mcp_editor_receipt_e2e --test skill_editor_receipt_e2e --test skill_catalog_e2e
 PYTHONPATH=scripts python3 -m unittest discover -s scripts -p test_live_skill_e2e.py
@@ -37,3 +37,5 @@ python3 scripts/test_web_mcp_baseline_e2e.py
 Paid Skill acceptance uses `NOLA_RUN_LIVE_SKILL_E2E=1 python3 scripts/live_skill_e2e.py analyze-data review-documents`, current built CLI/Service/oracle binaries, and a route-bound execution declaration. Never put production credentials in commands or commit transcripts or runtime databases.
 
 Validation on 2026-11-10: 17 host tests, 2 reference SDK tests, 20 editor/catalog tests, 22 Skill harness tests and 3 current-route tests passed. Web/Service MCP mutation isolation passed. Two real configured-model Skill runs produced validated analysis and review artifacts and sealed successful runs. Font specimens at 390/1280 px in light/dark loaded both local fonts without horizontal overflow. Mac real-model Skill enable/edit/disable lifecycle also passed (1 test, 0 skipped, 0 failed) using the dedicated Test configuration. These results do not establish native iOS/Android UI acceptance or every third-party MCP server's compatibility.
+
+`<evidence-dir>` 表示本地验收产物根目录；后面的路径相对该目录，产物不随公开仓库分发。

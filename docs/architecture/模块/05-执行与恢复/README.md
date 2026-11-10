@@ -15,7 +15,7 @@
 
 ### Host 进程内装配接口
 
-这些接口细化 MOD-05/06，不新增业务所有者。当前源码位于 `cli/src`，已有
+这些接口细化 MOD-05/06，不新增业务所有者。当前源码位于 `apps/cli/src`，已有
 `nola-agent-host` 目标及不启用 `terminal-ui` 的构建声明；独立 launch/request/entry
 负责 native stdin 执行。构建与依赖闭包须按当前产物单独验证，旧“本批未构建”不代表现行源码没有这个可执行目标。
 `native_host_commands` 的 Server/session 控制入口仍使用共享 Config，Server 仍装配
@@ -59,7 +59,7 @@ Web 服务装配与 native 执行层的依赖须分别审计；当前目标的 W
 | --- | --- |
 | [lib.rs](../../../../core/nola-runtime-driver/src/lib.rs) | 已提交 Host request 的领取、接受和 ACK 循环 |
 | [task_execution_authority.rs](../../../../core/nola-runtime-driver/src/task_execution_authority.rs) | worker 持有精确已提交任务租约的进程内权柄 |
-| [native_host_entry.rs](../../../../cli/src/native_host_entry.rs) | 独立 agent Host 的 stdin 执行入口 |
+| [native_host_entry.rs](../../../../apps/cli/src/native_host_entry.rs) | 独立 agent Host 的 stdin 执行入口 |
 
 Goal 用例协调已归属 Application 的 `goal_coordinator`，Core 决定 Goal 状态，Application 提交用例事务；Driver 保留通用传输循环和任务适配，只通过 dev-dependency 在测试中接触 engine。进程内 lease handle 只是对已提交授权的引用，重启不能据此恢复执行权。 逐模块差距与证据边界见[源码核对](../../总体设计/ARCHITECTURE_SOURCE_AUDIT_20261108.md)。
 

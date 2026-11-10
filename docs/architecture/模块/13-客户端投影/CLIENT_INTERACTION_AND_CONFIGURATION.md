@@ -61,9 +61,9 @@ iOS 的 Stop 从提交用例沿会话 owner 调用 execution。原生 coordinato
 ## 可复核源码与验证边界
 
 - Core：[profile resolver](../../../../core/nola-application/src/model_profile_resolution.rs)、[reasoning resolver](../../../../core/nola-application/src/model_generation.rs)。
-- Apple：[Mac 检查器](../../../../NolaMac/Features/Inspector/MacChatInspectorView.swift)、[Mac 模型设置](../../../../NolaMac/Features/Chat/MacConversationModelSettingsView.swift)、[iOS 模型解析](../../../../Nola/Services/ModelSelectionManager.swift)、[iOS 导航](../../../../Nola/UI/Chat/ChatNavigationGestureBridge.swift)、[紧凑标签宿主](../../../../Nola/UI/IOSCompactTabContainer.swift)。
-- Android：[聊天](../../../../android/app/src/main/java/com/nola/ui/screen/chat/ChatScreen.kt)、[effort 菜单](../../../../android/app/src/main/java/com/nola/ui/screen/chat/ReasoningEffortMenu.kt)、[段落投影](../../../../android/app/src/main/java/com/nola/agent/trace/StreamingMarkdownProjection.kt)。
-- Web：[聊天/检查器](../../../../web/frontend/src/pages/Chat.svelte)、[抽屉](../../../../web/frontend/src/components/ChatResponsivePanel.svelte)、[手势判定](../../../../web/frontend/src/lib/panelSwipe.ts)、[会话参数](../../../../web/frontend/src/lib/chatSessionSettings.ts)。
+- Apple：[Mac 检查器](../../../../apps/macos/Features/Inspector/MacChatInspectorView.swift)、[Mac 模型设置](../../../../apps/macos/Features/Chat/MacConversationModelSettingsView.swift)、[iOS 模型解析](../../../../apps/ios/Services/ModelSelectionManager.swift)、[iOS 导航](../../../../apps/ios/UI/Chat/ChatNavigationGestureBridge.swift)、[紧凑标签宿主](../../../../apps/ios/UI/IOSCompactTabContainer.swift)。
+- Android：[聊天](../../../../apps/android/app/src/main/java/com/nola/ui/screen/chat/ChatScreen.kt)、[effort 菜单](../../../../apps/android/app/src/main/java/com/nola/ui/screen/chat/ReasoningEffortMenu.kt)、[段落投影](../../../../apps/android/app/src/main/java/com/nola/agent/trace/StreamingMarkdownProjection.kt)。
+- Web：[聊天/检查器](../../../../apps/web/frontend/src/pages/Chat.svelte)、[抽屉](../../../../apps/web/frontend/src/components/ChatResponsivePanel.svelte)、[手势判定](../../../../apps/web/frontend/src/lib/panelSwipe.ts)、[会话参数](../../../../apps/web/frontend/src/lib/chatSessionSettings.ts)。
 
 回归入口包括 `MacInspectorInteractionTests`、`MacReasoningConfigurationTests`、`ChatNavigationGestureTests`、`IOSCompactTabContainerTests`、`ReasoningEffortSelectionTests`、Android 的 `ReasoningEffortSelectionTest` 和 Web 的 `panelSwipe.test.ts`/`chatSessionSettings.test.ts`。隔离测试、模拟器和浏览器组件检查分别记录，不能推导整窗帧率、全量真机、真实 provider、远程 Host 或 CLI 的验收结论。
 

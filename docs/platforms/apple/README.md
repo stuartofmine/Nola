@@ -1,6 +1,6 @@
 # Apple 共用设计
 
-[Shared](../../../Shared/) 提供 Apple 两端共享呈现与协议实现，平台应用仍保留自己的导航、系统权限和生命周期。
+[Shared](../../../shared/apple) 提供 Apple 两端共享呈现与协议实现，平台应用仍保留自己的导航、系统权限和生命周期。
 
 - [Apple 会话检查器](CONVERSATION_INSPECTOR.md)。
 - [macOS](../macos/README.md)、[iOS / iPadOS](../ios/README.md)。

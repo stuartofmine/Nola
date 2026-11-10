@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 
-SCRIPT = Path(__file__).resolve().parents[1] / "NolaMac/Resources/NolaBuiltInSkills.bundle/conduct-deep-research/scripts/validate_research.py"
+SCRIPT = Path(__file__).resolve().parents[1] / "apps/macos/Resources/NolaBuiltInSkills.bundle/conduct-deep-research/scripts/validate_research.py"
 SPEC = importlib.util.spec_from_file_location("research_validator", SCRIPT)
 VALIDATOR = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(VALIDATOR)

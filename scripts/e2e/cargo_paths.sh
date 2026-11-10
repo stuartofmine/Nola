@@ -4,7 +4,7 @@
 
 nola_cargo_target_directory() {
     local repository_root=$1
-    local manifest_path=${2:-"$repository_root/cli/Cargo.toml"}
+    local manifest_path=${2:-"$repository_root/apps/cli/Cargo.toml"}
 
     cargo metadata \
         --manifest-path "$manifest_path" \
@@ -17,7 +17,7 @@ nola_cargo_binary() {
     local repository_root=$1
     local profile=${2:-release}
     local binary_name=${3:-nola}
-    local manifest_path=${4:-"$repository_root/cli/Cargo.toml"}
+    local manifest_path=${4:-"$repository_root/apps/cli/Cargo.toml"}
     local target_directory
 
     target_directory="$(nola_cargo_target_directory "$repository_root" "$manifest_path")"

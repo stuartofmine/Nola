@@ -2,12 +2,12 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { chromium } = require('../../../web/playwright_runtime/node_modules/playwright-core');
+const { chromium } = require('../../../apps/web/playwright_runtime/node_modules/playwright-core');
 
 (async () => {
-    const root = path.resolve('.artifacts/ui-direction-20261020');
+    const root = require('../../../apps/web/playwright_runtime/test_environment.cjs').artifactPath('ui-direction-20261020');
     const browser = await chromium.launch({
-        executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+        ...require('../../../apps/web/playwright_runtime/test_environment.cjs').browserOptions(),
         headless: true,
     });
     const findings = [];

@@ -25,7 +25,7 @@
 
 | 源码 | 具体职责 |
 | --- | --- |
-| [routes.rs](../../../../cli/src/web_parts/routes.rs) | Rust Host 的 Web/paired mobile 入口 |
+| [routes.rs](../../../../apps/cli/src/web_parts/routes.rs) | Rust Host 的 Web/paired mobile 入口 |
 | [README.md](../../../../transport/tailcat/README.md) | 可选隧道与私有管道、身份及生命周期合同 |
 
 当前部署是 Rust 执行 Host、客户端认证镜像与可选 Tailcat，不包含独立 Backend。可选隧道替换承载，不取代配对/登录/CSRF/HMAC、源 Run 权威或恢复游标。 逐模块差距与证据边界见[源码核对](../../总体设计/ARCHITECTURE_SOURCE_AUDIT_20261108.md)。

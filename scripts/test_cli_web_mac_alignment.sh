@@ -30,13 +30,13 @@ run "Host real HTTP submission, receipt, and model configuration" \
 
 run "Web production submission and journal observation contracts" \
     node --test \
-        "$ROOT/web/frontend/src/lib/sourceSubmission.test.ts" \
-        "$ROOT/web/frontend/src/lib/runObservation.test.ts" \
-        "$ROOT/web/frontend/src/lib/chatTurn.test.ts" \
-        "$ROOT/web/frontend/src/lib/chatFlow.test.ts"
+        "$ROOT/apps/web/frontend/src/lib/sourceSubmission.test.ts" \
+        "$ROOT/apps/web/frontend/src/lib/runObservation.test.ts" \
+        "$ROOT/apps/web/frontend/src/lib/chatTurn.test.ts" \
+        "$ROOT/apps/web/frontend/src/lib/chatFlow.test.ts"
 
 run "Web current Markdown renderer regressions" \
-    node --test "$ROOT/web/frontend/src/lib/markdown.test.ts"
+    node --test "$ROOT/apps/web/frontend/src/lib/markdown.test.ts"
 
 run "macOS real journal reads, terminal, and visible-run lifecycle" \
     xcodebuild test -quiet \

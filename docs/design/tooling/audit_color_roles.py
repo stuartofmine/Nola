@@ -33,7 +33,7 @@ def asset_colors(platform):
 
 
 def web_colors():
-    css = (ROOT / 'web/frontend/src/theme.css').read_text()
+    css = (ROOT / 'apps/web/frontend/src/theme.css').read_text()
     light = css.split('@media', 1)[0]
     dark = re.search(r'@media\s*\(prefers-color-scheme:\s*dark\)\s*\{\s*:root\s*\{([^}]+)', css).group(1)
     return {mode: {role: re.search(r'--' + role + r':\s*(#[0-9a-fA-F]{6})', block).group(1).lower()
@@ -41,7 +41,7 @@ def web_colors():
 
 
 def android_colors():
-    text = (ROOT / 'android/app/src/main/java/com/nola/ui/theme/Theme.kt').read_text()
+    text = (ROOT / 'apps/android/app/src/main/java/com/nola/ui/theme/Theme.kt').read_text()
     result = {}
     for mode, name in [('light', 'LightColors'), ('dark', 'DarkColors')]:
         block = re.search(r'val ' + name + r'\s*=\s*\w+\((.*?)\n\)', text, re.S).group(1)

@@ -214,7 +214,7 @@ record. Static presence of UI or model types is not sufficient evidence.
 
 ### iOS
 
-- `NolaUITests/CoreUserFlowTests.testDataCenterShowsValidatedSourceContractPolicyAndUsage`:
+- `tests/apple/ios-ui/CoreUserFlowTests.testDataCenterShowsValidatedSourceContractPolicyAndUsage`:
   the real app exposes source status, saved contract, policy editor, and local/cloud
   usage disclosure.
 - `scripts/test_real_mobile_providers.sh`: the validated-source fact reached the
@@ -236,7 +236,7 @@ record. Static presence of UI or model types is not sufficient evidence.
 ### Core, CLI, and Web
 
 - `cargo test --quiet data_source` in `core/`: six data-source contract tests passed.
-- `cargo test --quiet data_source` in `cli/`: nine persistence, policy, Web route,
+- `cargo test --quiet data_source` in `apps/cli/`: nine persistence, policy, Web route,
   and localization tests passed.
 - `scripts/test_real_cli_web.sh`: real CLI streaming, terminal scrollback, Esc
   cancellation, session permissions, tool recovery, Web search, large-file
@@ -253,7 +253,7 @@ record. Static presence of UI or model types is not sufficient evidence.
 node scripts/validate_mac_localizations.js
 node scripts/validate_android_localizations.js
 cd core && cargo test --quiet data_source
-cd cli && cargo test --quiet data_source
+cd apps/cli && cargo test --quiet data_source
 ./scripts/test_real_mac_agent_host.sh
 ./scripts/test_real_mobile_providers.sh
 NOLA_SKIP_CLI_BUILD=1 ./scripts/test_real_cli_web.sh

@@ -1,1 +1,0 @@
-../../Nola.xcodeproj/project.pbxproj

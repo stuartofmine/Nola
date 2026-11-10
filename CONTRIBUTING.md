@@ -13,7 +13,7 @@ Thanks for your interest in contributing.
 npm --prefix web/frontend ci
 npm --prefix web/frontend run build
 cargo build --locked -p nola_cli -p nola_service --bins
-./target/debug/nola web --host 127.0.0.1 --port 5001 --web-root "$PWD/web"
+./target/debug/nola web --host 127.0.0.1 --port 5001 --web-root "$PWD/apps/web"
 ```
 
 3. Run checks before opening a PR:

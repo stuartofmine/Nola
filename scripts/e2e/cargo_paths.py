@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 def cargo_target_directory(repository_root: Path, manifest_path: Path | None = None) -> Path:
-    manifest = manifest_path or repository_root / "cli" / "Cargo.toml"
+    manifest = manifest_path or repository_root / "apps/cli" / "Cargo.toml"
     completed = subprocess.run(
         [
             "cargo",

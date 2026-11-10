@@ -33,7 +33,7 @@ Application 使用 submit、精确 submission、分页 submissions、select_reci
 
 PrepareExecution 持久冻结 execution_id 和精确执行意图；ClaimExecution 在同写事务中校验原意图、上下文、配置及模型版本。已有精确 Run 只观察；未创建 Run 时，仅能按可信本地来源与仍有效的原 Native 意图重试同一 execution_id 的准入，不创建新尝试。两个同意图调用仍受既有 Begin 幂等及 Run/effect lease 约束，dispatch_permitted 不授予任何额外工具权限。本机 Host envelope 可在原 source-local receipt 尚未准入、私有 tool-plan 及原 request 全部精确匹配时恢复同一请求。Host 复用现有 session_run_leases 的独立 source-admission key，在读 receipt 到真实 Begin/worker 结束期间围栏；旧 owner 只有经可信 boot/start/PID 观测证实已死才释放，活 owner 或 Unknown 只观察。该 key 不授予 Run/effect 权限，普通陈旧会话锁清理也不得误清它。远端本机镜像中没有 Run 不能证明源 Host 未执行。ObserveExecution 只接收原 run_id，从 Store 读取终态证明并核对所有权；SSE结束、UI回调、模型分派成功都不是执行成功证据。answered/action_completed、incomplete、blocked、failed、cancelled 分别投影。
 
-Host 主控调用在 `cli/src/room_routing.rs`，复用辅助调用账本和用量。各端房间仍归本机Store，不将本机房间ID假装成远端Host房间；移动辅助调用只传候选数据并回传结构化选择，本机Core再校验。独立执行器按 contextID 持有，不通过切换主窗口 selectedConversationID 来发消息。
+Host 主控调用在 `apps/cli/src/room_routing.rs`，复用辅助调用账本和用量。各端房间仍归本机Store，不将本机房间ID假装成远端Host房间；移动辅助调用只传候选数据并回传结构化选择，本机Core再校验。独立执行器按 contextID 持有，不通过切换主窗口 selectedConversationID 来发消息。
 
 成员退出/禁用与结果到达竞态通过 revision 及 active 校验拒绝；同一提交重放返回已有状态。无候选明确反馈，需要用户添加或启用成员。草稿是 room 所有，不随候选收件人切换丢失；实际运行上下文依然成员独立。
 

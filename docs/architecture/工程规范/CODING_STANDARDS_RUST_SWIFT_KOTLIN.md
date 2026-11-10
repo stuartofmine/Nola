@@ -4,7 +4,7 @@
 
 状态：Normative
 
-适用范围：`core/`、`cli/`、`Nola/`、`NolaMac/`、`android/` 及对应测试
+适用范围：`core/`、`apps/cli/`、`apps/ios/`、`apps/macos/`、`apps/android/` 及对应测试
 
 最后核对：2026-09-12
 
@@ -20,7 +20,7 @@
 | Swift | [Swift API Design Guidelines](https://www.swift.org/documentation/api-design-guidelines/) | API 调用点、命名、参数标签、文档和 mutating/nonmutating 对称性 |
 | Swift | [`swift-format`](https://github.com/swiftlang/swift-format/blob/main/README.md) | 可重复的机械格式检查；它本身不定义唯一的官方 Swift 风格 |
 | Kotlin | [Kotlin Coding Conventions](https://kotlinlang.org/docs/coding-conventions.html) | Kotlin 语言惯例、文件组织、命名和不可变性 |
-| Android | [Android Kotlin style guide](https://developer.android.com/kotlin/style-guide) | `android/` 的格式冲突裁决：四空格、100 列、import 和换行规则 |
+| Android | [Android Kotlin style guide](https://developer.android.com/kotlin/style-guide) | `apps/android/` 的格式冲突裁决：四空格、100 列、import 和换行规则 |
 | Android | [Android architecture recommendations](https://developer.android.com/topic/architecture/recommendations) | Compose、ViewModel、repository、UDF 和生命周期边界 |
 
 上述页面均于 2026-09-12 访问。优先级如下：
@@ -155,8 +155,8 @@ xcrun --find swift-format
 xcrun swift-format lint --strict --parallel --configuration .swift-format <changed-file.swift> ...
 ```
 
-在此之前按当前文件四空格风格审查改动，禁止用默认配置批量格式化 `Nola/` 或
-`NolaMac/`。格式检查不能替代编译与行为测试：
+在此之前按当前文件四空格风格审查改动，禁止用默认配置批量格式化 `apps/ios/` 或
+`apps/macos/`。格式检查不能替代编译与行为测试：
 
 ```bash
 ./scripts/run_client_tests.sh                  # iOS；脚本负责 simulator 选择与清理
@@ -201,7 +201,7 @@ UI 改动还需在目标平台检查首帧、streaming、完成态、滚动、Re
 当前 Gradle 工程有 Android Lint，没有配置 ktlint/detekt。因此现阶段可执行门禁是：
 
 ```bash
-cd android
+cd apps/android
 ./gradlew :app:lintDebug :app:testDebugUnitTest
 ./gradlew :app:connectedDebugAndroidTest  # 仅涉及 JNI、Compose 或设备边界时
 ```

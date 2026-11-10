@@ -32,7 +32,7 @@ ContextPlan、SummaryBlock、OriginalReference 分离；摘要不是原文或权
 | --- | --- |
 | [context.rs](../../../../core/nola-application/src/context.rs) | Context checkpoint、组件来源与原子维护提交 |
 | [compaction_driver.rs](../../../../core/nola-agent-engine/src/agent/runtime/compaction_driver.rs) | 压缩推进及模型请求边界 |
-| [request_snapshot.rs](../../../../cli/src/llm_parts/request_snapshot.rs) | 已编译物理请求的热分叉候选快照 |
+| [request_snapshot.rs](../../../../apps/cli/src/llm_parts/request_snapshot.rs) | 已编译物理请求的热分叉候选快照 |
 
 canonical 原文、逻辑工作集、压缩摘要、物理请求快照和计量不能合并为同一历史。热路径资格来自实际请求见证；缓存命中由实际 usage 证明，未知不能显示为零。 逐模块差距与证据边界见[源码核对](../../总体设计/ARCHITECTURE_SOURCE_AUDIT_20261108.md)。
 

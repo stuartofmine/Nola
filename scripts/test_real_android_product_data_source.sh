@@ -10,8 +10,8 @@ CONFIG_PATH="${NOLA_CONFIG_PATH:-$HOME/.nola/config.json}"
 JDK_HOME="${NOLA_ANDROID_JAVA_HOME:-/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home}"
 ADB="${ANDROID_ADB:-$HOME/Library/Android/sdk/platform-tools/adb}"
 EMULATOR="${ANDROID_EMULATOR:-$HOME/Library/Android/sdk/emulator/emulator}"
-LOCAL_CONFIG="$(mktemp /tmp/nola-android-product-e2e.XXXXXX)"
-RUNTIME_ROOT="$(mktemp -d /tmp/nola-android-product-runtime.XXXXXX)"
+LOCAL_CONFIG="$(mktemp "${TMPDIR:-/tmp}/nola-android-product-e2e.XXXXXX")"
+RUNTIME_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/nola-android-product-runtime.XXXXXX")"
 PROVIDER_TRACE="$RUNTIME_ROOT/provider.ndjson"
 PROVIDER_READY="$RUNTIME_ROOT/provider.endpoint"
 PROVIDER_PROBE_PID=""
@@ -106,12 +106,12 @@ export NOLA_ANDROID_ABIS="$REAL_ANDROID_ABI"
 
 printf '[real-android-product] building debug app and instrumentation test\n'
 (
-    cd "$ROOT/android"
+    cd "$ROOT/apps/android"
     JAVA_HOME="$JDK_HOME" ./gradlew --quiet :app:assembleDebug :app:assembleDebugAndroidTest
 )
 
-APP_APK="$ROOT/android/app/build/outputs/apk/debug/app-debug.apk"
-TEST_APK="$ROOT/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
+APP_APK="$ROOT/apps/android/app/build/outputs/apk/debug/app-debug.apk"
+TEST_APK="$ROOT/apps/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
 [[ -f "$APP_APK" && -f "$TEST_APK" ]] || { printf 'Android test APKs were not produced.\n' >&2; exit 2; }
 
 printf '[real-android-product] installing isolated debug artifacts on %s\n' "$DEVICE_ID"
@@ -124,7 +124,7 @@ printf '[real-android-product] installing isolated debug artifacts on %s\n' "$DE
 "$ADB" -s "$DEVICE_ID" shell "run-as $APP_ID sh -c 'cat > files/nola-real-llm-e2e.json'" <"$LOCAL_CONFIG"
 
 printf '[real-android-product] running Repository -> Core -> Provider -> real LLM\n'
-OUTPUT="$(mktemp /tmp/nola-android-product-output.XXXXXX)"
+OUTPUT="$(mktemp "${TMPDIR:-/tmp}/nola-android-product-output.XXXXXX")"
 set +e
 "$ADB" -s "$DEVICE_ID" shell am instrument -w -r \
     -e class com.nola.data.repository.AndroidProductDataSourceRealEndToEndTest \

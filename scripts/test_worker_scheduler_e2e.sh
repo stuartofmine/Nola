@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-WORKER="$ROOT/backend/worker"
-STATE="$(mktemp -d /tmp/nola-worker-scheduler.XXXXXX)"
+WORKER="$ROOT/legacy/backend/worker"
+STATE="$(mktemp -d "${TMPDIR:-/tmp}/nola-worker-scheduler.XXXXXX")"
 LOG="$STATE/wrangler.log"
 PORT="${NOLA_WORKER_E2E_PORT:-18791}"
 PID=""

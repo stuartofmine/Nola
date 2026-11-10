@@ -55,6 +55,25 @@ class PublicExportTests(unittest.TestCase):
             self.assertTrue((root/'Doc/当前任务/record.md').is_file())
             self.assertTrue((root/'Doc/历史任务/trace.json').is_file())
 
+    def test_legacy_implementations_never_export_even_if_tracked(self):
+        with tempfile.TemporaryDirectory() as name:
+            root=Path(name)/'private';root.mkdir();destination=Path(name)/'public'
+            subprocess.run(['git','init','-q',str(root)],check=True)
+            (root/'.gitignore').write_text('/legacy/\n/backend/\n')
+            for folder in ['legacy/backend','backend']:
+                (root/folder).mkdir(parents=True)
+                (root/folder/'server.py').write_text('# local historical source\n')
+            (root/'apps/cli').mkdir(parents=True)
+            (root/'apps/cli/main.rs').write_text('// current public source\n')
+            subprocess.run(['git','add','-f','.'],cwd=root,check=True)
+            (root/'legacy/backend/untracked.py').write_text('# local only\n')
+            module.export(root,destination,[])
+            self.assertFalse((destination/'legacy').exists())
+            self.assertFalse((destination/'backend').exists())
+            self.assertTrue((destination/'apps/cli/main.rs').is_file())
+            self.assertTrue((root/'legacy/backend/server.py').is_file())
+            self.assertTrue((root/'legacy/backend/untracked.py').is_file())
+
     def test_unknown_token_stops_export_before_creating_destination(self):
         with tempfile.TemporaryDirectory() as name:
             root=Path(name)/'private';root.mkdir();destination=Path(name)/'public'

@@ -64,7 +64,7 @@ def main() -> int:
         build_started = time.monotonic()
         subprocess.run(
             ["cargo", "build", "--release", "--bin", "nola", "--bin", "nola-agent-host"],
-            cwd=ROOT / "cli",
+            cwd=ROOT / "apps/cli",
             check=True,
         )
         print(f"      build completed in {time.monotonic() - build_started:.1f}s", flush=True)
@@ -110,7 +110,7 @@ def main() -> int:
             "--port",
             str(port),
             "--web-root",
-            str(ROOT / "web"),
+            str(ROOT / "apps/web"),
         ],
         cwd=runtime,
         env=environment,

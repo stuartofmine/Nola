@@ -44,7 +44,7 @@ def generated():
                      ' → '.join(state['title'] for state in scene['states']),
                      '; '.join(scene['sources']), scene['contract'], scene['boundary'],
                      f'scenarios.html?scene={scene["id"]}&platform={scene["platforms"][0]}'])
-    route_source = (ROOT / 'web/frontend/src/lib/pageRoutes.ts').read_text()
+    route_source = (ROOT / 'apps/web/frontend/src/lib/pageRoutes.ts').read_text()
     routes = set(re.findall(r"'(/[^']+)':\s*\(\)", route_source))
     assert routes == set(catalog['route_coverage']), 'Production routes need explicit scenario coverage'
     for mapped in catalog['route_coverage'].values():

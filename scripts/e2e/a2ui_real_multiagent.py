@@ -175,16 +175,15 @@ def main():
         assert result['conversation'] == members[0]['context_conversation_id']
         assert not result.get('failed') and result.get('errors') == [] and required <= set(result.get('passed', []))
     else:
-        chrome_evidence = Path(tempfile.mkdtemp(prefix='nola-a2ui-multiagent-', dir='/tmp'))
+        chrome_evidence = Path(tempfile.mkdtemp(prefix='nola-a2ui-multiagent-'))
         chrome_log = evidence / (chrome_evidence.name + '.log')
         save('chrome-evidence', {'path': str(chrome_evidence), 'client_id': source_client, 'log': str(chrome_log)})
         env = dict(os.environ, NOLA_A2UI_TEST_CONVERSATION=members[0]['context_conversation_id'],
             NOLA_A2UI_EVIDENCE_DIR=str(chrome_evidence), NOLA_A2UI_CLIENT_ID=source_client)
         for name in ('NOLA_A2UI_RESUME', 'NOLA_A2UI_RESUME_FOLLOWUP', 'NOLA_A2UI_ISOLATION_CONVERSATION'):
             env.pop(name, None)
-        # That existing runner is intentionally bound to the root's explicit state path.
-        assert args.state.resolve() == Path('/tmp/nola-a2ui-real-host-state.json').resolve(), 'Chrome runner state path differs'
-        result = subprocess.run(['node', str(repo / 'web/playwright_runtime/a2ui_real_flow.cjs')], env=env,
+        env['NOLA_A2UI_HOST_STATE'] = str(args.state.resolve(strict=True))
+        result = subprocess.run(['node', str(repo / 'apps/web/playwright_runtime/a2ui_real_flow.cjs')], env=env,
             stdout=chrome_log.open('w'), stderr=subprocess.STDOUT, timeout=args.timeout*2)
         assert result.returncode == 0, 'Real Chrome action/follow-up failed; inspect chrome-evidence.json for the attempt log'
     after = [next(surface for surface in surfaces(member) if surface['identity'] == original['identity']) for member, original in zip(members, before)]

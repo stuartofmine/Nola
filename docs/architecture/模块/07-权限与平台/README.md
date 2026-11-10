@@ -29,7 +29,7 @@ PermissionRequest、Grant、Decision 分离；平台权限适配器不能修改 
 | --- | --- |
 | [permission_policy.rs](../../../../core/nola-agent-engine/src/agent/runtime/permission_policy.rs) | 具体调用的政策判断与等待 |
 | [permission_source.rs](../../../../core/nola-store/src/permission_source.rs) | 权限来源及提交前沿校验 |
-| [platform_catalog_contract_tests.rs](../../../../cli/src/tools/platform_catalog_contract_tests.rs) | Host 实际注册工具与平台目录边界回归 |
+| [platform_catalog_contract_tests.rs](../../../../apps/cli/src/tools/platform_catalog_contract_tests.rs) | Host 实际注册工具与平台目录边界回归 |
 
 平台工具目录、政策判断、持久等待/决定、OS 授权和结果披露是不同边界。已注册 handler 不等于当前 Run 已准入；不得按自然语言关键词修补路由或授予权限。 逐模块差距与证据边界见[源码核对](../../总体设计/ARCHITECTURE_SOURCE_AUDIT_20261108.md)。
 
@@ -44,7 +44,7 @@ PermissionRequest、Grant、Decision 分离；平台权限适配器不能修改 
 删除工具时同步删除凭据入口，不能保留旧名字。新增工具须同时具备 Core
 策略元数据，否则不能因 Host 有 handler 就宣称平台已经接通。
 
-`cli/src/tools/platform_catalog_contract_tests.rs` 用实际 Rust 注册结果核对
+`apps/cli/src/tools/platform_catalog_contract_tests.rs` 用实际 Rust 注册结果核对
 Mac 分区集合及 Core 元数据，阻止手写目录继续漂移。Mac 原生测试另外核对
 身份绑定后工具仍在 enabled 集合；集合检查不能替代真实平台执行验收。
 远端开发工具包含后台任务能力，须在凭据中同时声明 background；

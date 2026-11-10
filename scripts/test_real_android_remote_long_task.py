@@ -66,10 +66,10 @@ def main():
             env=dict(os.environ)
             env['JAVA_HOME']=env.get('NOLA_ANDROID_JAVA_HOME',env.get('JAVA_HOME','/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home'))
             with (root/'build.log').open('w') as log:
-                subprocess.run([str(ROOT/'android/gradlew'),'-p',str(ROOT/'android'),':app:assembleDebug',':app:assembleDebugAndroidTest',
+                subprocess.run([str(ROOT/'apps/android/gradlew'),'-p',str(ROOT/'apps/android'),':app:assembleDebug',':app:assembleDebugAndroidTest',
                     '--no-daemon','--max-workers=2'],env=env,stdout=log,stderr=subprocess.STDOUT,check=True)
-        device('install','--user',args.user,'-r',ROOT/'android/app/build/outputs/apk/debug/app-debug.apk')
-        device('install','--user',args.user,'-r',ROOT/'android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk')
+        device('install','--user',args.user,'-r',ROOT/'apps/android/app/build/outputs/apk/debug/app-debug.apk')
+        device('install','--user',args.user,'-r',ROOT/'apps/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk')
         with observed_provider(upstream,model,secret,root/'provider.ndjson') as endpoint:
             project,env,config=fixture(root/'store',model,endpoint,profile='cautious')
             apply_config(ROOT/'target/debug/nola',project,env,config,root/'store')
@@ -81,7 +81,7 @@ def main():
             with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
             log=(root/'host.log').open('w')
             host=subprocess.Popen([str(ROOT/'target/debug/nola'),'web','--host','127.0.0.1','--port',str(port),
-                '--project',str(project),'--allow-dir',str(project),'--web-root',str(ROOT/'web'),'--no-skills'],cwd=project,
+                '--project',str(project),'--allow-dir',str(project),'--web-root',str(ROOT/'apps/web'),'--no-skills'],cwd=project,
                 env=env,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
             url=f'http://127.0.0.1:{port}'
             deadline=time.monotonic()+30

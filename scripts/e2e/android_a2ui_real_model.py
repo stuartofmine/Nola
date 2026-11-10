@@ -78,14 +78,14 @@ def main() -> int:
         env = dict(os.environ, NOLA_ANDROID_ABIS=abi)
         if env.get("NOLA_ANDROID_JAVA_HOME"):
             env["JAVA_HOME"] = env["NOLA_ANDROID_JAVA_HOME"]
-        result = subprocess.run([str(root / "android/gradlew"), ":app:assembleDebug", ":app:assembleDebugAndroidTest", "--no-daemon", "--max-workers=2", "--quiet"],
-                                cwd=root / "android", env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        result = subprocess.run([str(root / "apps/android/gradlew"), ":app:assembleDebug", ":app:assembleDebugAndroidTest", "--no-daemon", "--max-workers=2", "--quiet"],
+                                cwd=root / "apps/android", env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         (evidence / "build.log").write_bytes(result.stdout.replace(secret.encode(), b"[redacted]"))
         if result.returncode:
             raise SystemExit("Android build failed; see isolated evidence directory: " + str(evidence))
     print(json.dumps({"stage": "installing_android"}), flush=True)
-    device("install", "-r", str(root / "android/app/build/outputs/apk/debug/app-debug.apk"))
-    device("install", "-r", str(root / "android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"))
+    device("install", "-r", str(root / "apps/android/app/build/outputs/apk/debug/app-debug.apk"))
+    device("install", "-r", str(root / "apps/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"))
     target = "com.nola.ui.generative.GenerativeUiRealModelEndToEndTest"
     reverse = None
     try:

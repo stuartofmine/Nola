@@ -6,17 +6,17 @@ set -euo pipefail
 ROOT="${NOLA_REPOSITORY_ROOT:?NOLA_REPOSITORY_ROOT is required}"
 OUTPUT_ROOT="${NOLA_FIXTURE_OUTPUT_ROOT:?NOLA_FIXTURE_OUTPUT_ROOT is required}"
 DEPENDENCY_FILE="${NOLA_DEPENDENCY_FILE:?NOLA_DEPENDENCY_FILE is required}"
-FIXTURES="$OUTPUT_ROOT/NolaMac"
+FIXTURES="$OUTPUT_ROOT/apps/macos"
 READY="$OUTPUT_ROOT/.ready"
 
 rm -rf "$FIXTURES"
 mkdir -p "$FIXTURES" "$(dirname "$DEPENDENCY_FILE")"
-ditto "$ROOT/NolaMac/UI" "$FIXTURES/UI"
-ditto "$ROOT/NolaMac/Services" "$FIXTURES/Services"
-mkdir -p "$OUTPUT_ROOT/Shared/Presentation"
-install -m 644 "$ROOT/Shared/Presentation/AppleSoftwareUpdateSection.swift" "$OUTPUT_ROOT/Shared/Presentation/AppleSoftwareUpdateSection.swift"
+ditto "$ROOT/apps/macos/UI" "$FIXTURES/UI"
+ditto "$ROOT/apps/macos/Services" "$FIXTURES/Services"
+mkdir -p "$OUTPUT_ROOT/shared/apple/Presentation"
+install -m 644 "$ROOT/shared/apple/Presentation/AppleSoftwareUpdateSection.swift" "$OUTPUT_ROOT/shared/apple/Presentation/AppleSoftwareUpdateSection.swift"
 for catalog in AutomationCenter.xcstrings Localizable.xcstrings ModelCenter.xcstrings; do
-  install -m 644 "$ROOT/NolaMac/$catalog" "$FIXTURES/$catalog"
+  install -m 644 "$ROOT/apps/macos/$catalog" "$FIXTURES/$catalog"
 done
 touch "$READY"
 
@@ -26,15 +26,15 @@ escape_dependency_path() {
 
 {
   printf '%s:' "$(escape_dependency_path "$READY")"
-  find "$ROOT/NolaMac/UI" "$ROOT/NolaMac/Services" -type f -print | sort |
+  find "$ROOT/apps/macos/UI" "$ROOT/apps/macos/Services" -type f -print | sort |
     while IFS= read -r path; do
       printf ' %s' "$(escape_dependency_path "$path")"
     done
   for path in \
-    "$ROOT/NolaMac/AutomationCenter.xcstrings" \
-    "$ROOT/NolaMac/Localizable.xcstrings" \
-    "$ROOT/NolaMac/ModelCenter.xcstrings" \
-    "$ROOT/Shared/Presentation/AppleSoftwareUpdateSection.swift" \
+    "$ROOT/apps/macos/AutomationCenter.xcstrings" \
+    "$ROOT/apps/macos/Localizable.xcstrings" \
+    "$ROOT/apps/macos/ModelCenter.xcstrings" \
+    "$ROOT/shared/apple/Presentation/AppleSoftwareUpdateSection.swift" \
     "$ROOT/scripts/bundle_repository_fixtures.sh"; do
     printf ' %s' "$(escape_dependency_path "$path")"
   done

@@ -5,7 +5,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SCREENSHOT="${NOLA_MAC_STRUCTURED_SCREENSHOT:-/tmp/nola-mac-structured-response.png}"
+SCREENSHOT="${NOLA_MAC_STRUCTURED_SCREENSHOT:-$ROOT/.artifacts/nola-mac-structured-response.png}"
+
+mkdir -p "$(dirname "$SCREENSHOT")"
 
 NOLA_MAC_REAL_PROMPT='Read architecture.md, sample.swift, and note.txt using file tools. Then return a concise Chinese review directly in the assistant response with these exact visible sections: ## 架构结论, ## 风险清单, ## 示例代码. Include one Markdown table under 架构结论, three numbered risks, and a fenced swift code block under 示例代码. Mention StableStream and NOLA_MAC_TOOL_REAL_OK. Do not create or edit any file, and do not repeat any section.' \
 NOLA_MAC_REAL_EXPECTED_EXACT='' \

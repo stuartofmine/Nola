@@ -20,8 +20,8 @@ run_id，Store 在同一写事务中验证 Run、会话、remote_run_sources 中
 验收：Application 273 项库测试及 8 项权限/远端 Port 集成通过；最终 protocol-42
 Store 账本与远端内容 22 项通过，Port 2 项复跑通过。测试覆盖外来 Host 的旧/同/新
 游标、错误 Run、Run 终态后的镜像拒绝和无写入残留。日志：
-`/tmp/nola-mirror-owner-app-20261006.log`、`/tmp/nola-mirror-owner-store-20261006.log`、
-`/tmp/nola-mirror-owner-port-final-20261006.log`。Mac Port 已传递 runID 且 Swift
+`<evidence-dir>/nola-mirror-owner-app-20261006.log`、`<evidence-dir>/nola-mirror-owner-store-20261006.log`、
+`<evidence-dir>/nola-mirror-owner-port-final-20261006.log`。Mac Port 已传递 runID 且 Swift
 语法检查通过，本批未声称重新完成 Mac 构建或 UI 验收。
 
 远端显示事实不是本机执行授权（Service protocol 41）：远端 session mirror 与
@@ -36,9 +36,9 @@ Port 集成 8 项通过；Store 远端内容与运行投影 9 项通过，账本
 新增回归验证镜像和终态提交不能改写本机拒绝规则、重开后仍一致，并拒绝附带
 permission_grants 的旧持久化输入。旧测试中“镜像规则变成本机授权”的预期已
 改为“可展示、不可执行”；maintenance 终态丢弃调用配置的过期断言也改为保留
-准确准入配置。日志见 `/tmp/nola-remote-display-permission-ports-final-20261006.log`、
-`/tmp/nola-remote-display-permission-focused-20261006.log`、
-`/tmp/nola-remote-display-permission-ledger-final-20261006.log`。
+准确准入配置。日志见 `<evidence-dir>/nola-remote-display-permission-ports-final-20261006.log`、
+`<evidence-dir>/nola-remote-display-permission-focused-20261006.log`、
+`<evidence-dir>/nola-remote-display-permission-ledger-final-20261006.log`。
 
 Pi Session 先提交 storage，再 adopt 内存状态，最后 publish；未知提交结果或
 adoption 失败使 Session 不可继续使用，要求重开。Nola 同样以已提交事实驱动
@@ -51,7 +51,7 @@ adoption 失败使 Session 不可继续使用，要求重开。Nola 同样以已
 publication 成功结果。加入调用者已有 UoW 时，提交和回滚仍只归外层所有者。
 真实 SQLite 延迟外键在最外层 COMMIT 注入失败：修复前复现事务泄漏，修复后
 当前连接和冷重开均无该次设置及同步 outbox 残留；外层 UoW 所有权测试也通过
-（`/tmp/nola-publication-commit-cleanup-after-20261006.log`，2 项）。这只是
+（`<evidence-dir>/nola-publication-commit-cleanup-after-20261006.log`，2 项）。这只是
 事务清理边界，不代表跨进程恢复验收。
 
 随后补上 Store 写入栅栏：外层 COMMIT、外层 ROLLBACK 或命令 mutation
@@ -72,9 +72,9 @@ Service 协议升级为 43，避免继续复用缺少此语义的旧服务。
 真实 SQLite 延迟外键回归修复前失败，修复后验证失败连接拒绝写入、重开后无
 失败事务残留且可正常提交；丢失保存点覆盖 commit/rollback/drop 三个出口，
 另验证正常显式/自动回滚保留外层写入。Store 全库 317 passed / 1 ignored，见
-`/tmp/nola-repository-settlement-store-20261006.log`。
+`<evidence-dir>/nola-repository-settlement-store-20261006.log`。
 协议 43 下 Application 库 273/273、Service 库 15/15 通过，见
-`/tmp/nola-repository-settlement-application-service-20261006.log`。
+`<evidence-dir>/nola-repository-settlement-application-service-20261006.log`。
 这项覆盖的是 Store repository 事务结算，不是所有内存 adoption、跨进程故障
 或客户端增量切换的完成证明；独立 ContentUploadStore/CanonicalTextStore 的
 连接并非 NolaStore，此次没有将它们的事务边界计入上述覆盖。
@@ -85,18 +85,18 @@ Application publication 专项 2 passed。Application 全库为 269 passed / 2 f
 在回执故障注入前因 agent task 缺少 parent owner 被拒绝；
 `idle_task_claim_commits_without_external_host_effects` 缺少持久 Turn owner。
 这两项仍须补齐合法准入数据并复验，不得放宽所有者校验，也不得将全库标为通过。
-日志：`/tmp/nola-store-write-fence-store-20261006.log`、
-`/tmp/nola-store-write-fence-application-20261006.log`。
+日志：`<evidence-dir>/nola-store-write-fence-store-20261006.log`、
+`<evidence-dir>/nola-store-write-fence-application-20261006.log`。
 
 上述两项测试随后补齐准入事实，未放宽生产校验：终态回执测试保存父会话
 checkpoint 并设置 task owner，使注入的 committed-receipt 故障真正到达；
 idle task 测试通过 BeginTurn 和终态 transition 保存真实历史 Turn/assistant
 绑定，再执行 idle claim，断言 journal publication 仍属于该父 Run/assistant。
 更新后 Application 全库 271/271 通过，见
-`/tmp/nola-owner-fixtures-application-20261006.log`。这取代上面的失败状态，
+`<evidence-dir>/nola-owner-fixtures-application-20261006.log`。这取代上面的失败状态，
 不代表 UI 增量切换或所有跨进程恢复已完成。
 同一代码树的 Service 指导回执重启专项也通过（1/1，
-`/tmp/nola-owner-service-restart-20261006.log`）：真实 Service 三次生命周期中
+`<evidence-dir>/nola-owner-service-restart-20261006.log`）：真实 Service 三次生命周期中
 保留原回执，重启后用新观察采纳状态，重复观察不再次注入指导；不涉及外部模型调用。
 
 保存点 RELEASE 失败与 ROLLBACK 失败现在具有一致的恢复语义：Application
@@ -105,8 +105,8 @@ Service 将该错误列入销毁旧组合并重新打开的分类，且不自动
 这避免 Store 已启用写入栅栏、Service 却继续复用该连接的循环失败。
 真实 SQLite 回归模拟嵌套参与者提前释放保存点，验证外层清理后无未发布数据、
 旧 Runtime 拒绝新回执、新 Runtime 可正常执行。Application 回执专项 6/6
-通过（`/tmp/nola-savepoint-release-application-20261006.log`）。
-Service 库测试 15/15 通过（`/tmp/nola-savepoint-release-service-all-20261006.log`），
+通过（`<evidence-dir>/nola-savepoint-release-application-20261006.log`）。
+Service 库测试 15/15 通过（`<evidence-dir>/nola-savepoint-release-service-all-20261006.log`），
 包括新增 RELEASE 错误重开分类和原有真实 SQLite COMMIT 不确定性重开/回执核对。
 RELEASE 故障本身的注入在 Application 层，不能把分类测试描述为独立 Service
 进程的 RELEASE 故障注入验收。
@@ -192,7 +192,7 @@ Store 专项 24 项通过（包含无 continuation 的旧标记不能阻塞队�
 最新 suspension 按关联 attempt 的递增序号选择，不用相同毫秒时间戳和随机 UUID
 推断先后。两个同毫秒权限周期、反序 ID、关闭重开及拒绝复用 generation 的回归
 纳入 Store `runtime_task_e2e`，25/25 通过，日志
-`/tmp/nola-permission-cold-store-20261006.log`。这不替代 CLI 完整冷恢复验收。
+`<evidence-dir>/nola-permission-cold-store-20261006.log`。这不替代 CLI 完整冷恢复验收。
 
 首次 pending 冷恢复链路：scheduler 读取精确 suspension、原 attempt、原 child Run
 及决定；只读检查 session/delivery 所有者已退出（live PID 和未知所有者拒绝）后，
@@ -205,8 +205,8 @@ Store 专项 24 项通过（包含无 continuation 的旧标记不能阻塞队�
 验证：CLI `--bin nola permission` 89/89（包括数据库重开、真实 Application/Core
 父交接、原请求复用、伪造身份/参数拒绝、live/unknown owner 不消耗 suspension）。
 Service 的 COMMIT 故障专项 1/1，新增恢复查询在持续 receipt 故障下仍可读。
-日志 `/tmp/nola-permission-cold-owner-cli-20261006.log`、
-`/tmp/nola-permission-cold-service-20261006.log`。
+日志 `<evidence-dir>/nola-permission-cold-owner-cli-20261006.log`、
+`<evidence-dir>/nola-permission-cold-service-20261006.log`。
 此为线程与真实数据库/Application/Core 的组合测试，尚非 OS 子进程或真实模型
 端到端验收。grant 已提交后再次崩溃的 successor handoff 已补齐，见下节；
 父会话需有活跃 pump 或 idle inbox consumer，不能让子 worker 冒用其配置启动父 Run。
@@ -215,12 +215,12 @@ Service 的 COMMIT 故障专项 1/1，新增恢复查询在持续 receipt 故障
 本次 grant 的全部不可变身份，并执行 fresh lease CAS；本地已取消或失效的 worker
 不得先修改父状态、再在等待循环中发现失权。新增伪造 successor token 和已取消
 handoff 不产生父 inbox 命令的回归，CLI 权限专项89/89通过，日志
-`/tmp/nola-permission-parent-fence-20261006.log`。
+`<evidence-dir>/nola-permission-parent-fence-20261006.log`。
 
 补充真实 Service OS 进程验收：`permission_request_cold_restart_e2e` 连续四次
 启动服务，验证 pending 请求、自定义回复、审批后的 grant 跨进程保留；重启后续租
 不会改写首次 grant 记录，原 attempt 续租被拒绝。1/1 通过，日志
-`/tmp/nola-permission-grant-process-restart-20261006.log`。这仍不是 CLI worker
+`<evidence-dir>/nola-permission-grant-process-restart-20261006.log`。这仍不是 CLI worker
 进程被杀后重启并完成模型任务的验收；successor 协议生产接线与专项另行验证。
 
 ### 已提交 grant 后再次崩溃
@@ -241,9 +241,9 @@ handoff 与新 recovery 的提交顺序受存储保障。发送前仍需 fresh l
 最终专项：Core Task 合同9/9、CLI权限92/92、Store任务25/25、新successor4/4、
 FIFO1/1通过。CLI覆盖父仍为原owner、已为上一grant、旧handoff仍排队三种窗口；
 Store覆盖多次恢复/关闭重开、并发单胜、事件回滚及旧身份/取消拒绝。日志
-`/tmp/nola-permission-successor-core-20261006.log`、
-`/tmp/nola-permission-successor-atomic-cli-rerun-20261006.log`、
-`/tmp/nola-permission-successor-store-final-20261006.log`。
+`<evidence-dir>/nola-permission-successor-core-20261006.log`、
+`<evidence-dir>/nola-permission-successor-atomic-cli-rerun-20261006.log`、
+`<evidence-dir>/nola-permission-successor-store-final-20261006.log`。
 
 后续接线（2026-10-06）：删除普通worker的 `resume_pending -> Ok(None) -> new Turn`
 fallback。新增 `BeginTaskAssistantTurn`，在同一Application事务中校验完整lease、
@@ -256,13 +256,13 @@ worker及scheduler已接原Run终态对账，按持久终态原子收尾task/att
 不得覆盖awaiting_reconciliation。普通parent claim也需canonical确认，不以enqueue ACK开工。
 
 初版绑定专项5/5、CLI authority17/17、权限92/92通过，日志分别为
-`/tmp/nola-task-run-binding-20261006.log`、`/tmp/nola-task-authority-cli-20261006.log`、
-`/tmp/nola-task-binding-permission-cli-20261006.log`。
+`<evidence-dir>/nola-task-run-binding-20261006.log`、`<evidence-dir>/nola-task-authority-cli-20261006.log`、
+`<evidence-dir>/nola-task-binding-permission-cli-20261006.log`。
 父Core准入身份已补进Application事务，校验canonical parent中的任务类型、Running、
 取消标记、Core session身份、worker/token与input watermark；7种伪造/缺失分支均拒绝。
 补强后App专项6/6、CLI权限92/92通过，日志
-`/tmp/nola-task-run-binding-parent-20261006.log`、
-`/tmp/nola-task-binding-parent-permission-cli-20261006.log`。
+`<evidence-dir>/nola-task-run-binding-parent-20261006.log`、
+`<evidence-dir>/nola-task-binding-parent-permission-cli-20261006.log`。
 worker transport已删除`resume_existing_turn`猜测字段，恢复选择只依赖持久绑定。
 缺失Run的可操作恢复、父任务终态传递以及真实worker进程故障注入仍须纵向验收，
 不能把这些定向测试计作完整恢复闭环完成。
@@ -284,14 +284,14 @@ worker错误完成水位回滚；operator使用确切input水位。重复入队�
 同ID不同payload才冲突。普通子任务不得继承父worker执行凭据。
 
 Application receipt7项、binding7项通过：
-`/tmp/nola-terminal-receipt-app-20261006.log`。跨OS进程fixture两次运行真实worker函数，
+`<evidence-dir>/nola-terminal-receipt-app-20261006.log`。跨OS进程fixture两次运行真实worker函数，
 验证同一个已终态Run不重开、父FIFO仅一条相同命令；这是故障窗口fixture，不是网络模型
 或真实模型全链验收。CLI扩大回归曾34通过、1项HTTP MCP host-kill fixture失败；
 定位为macOS系统代理接管loopback请求，在测试作用域保存/设置/恢复NO_PROXY后通过，
 未修改系统代理或生产网络策略。最终CLI任务域35/35、Core receipt7/7、Store31/31通过：
-`/tmp/nola-terminal-receipt-task-runtime-final-20261006.log`、
-`/tmp/nola-terminal-receipt-core-20261006.log`、
-`/tmp/nola-terminal-receipt-store-rerun-20261006.log`。
+`<evidence-dir>/nola-terminal-receipt-task-runtime-final-20261006.log`、
+`<evidence-dir>/nola-terminal-receipt-core-20261006.log`、
+`<evidence-dir>/nola-terminal-receipt-store-rerun-20261006.log`。
 其中MCP测试真实kill了隔离Host进程并验证按replay safety恢复；不等于真实模型任务
 在任意崩溃窗口都完成验收。所有测试使用隔离数据库。
 
@@ -312,29 +312,29 @@ CLI已删除内存指导队列与AutomatedInput转换。公共入口持久提交
 及CLI锁闭包返回值堆分配后，默认栈专项通过，不以RUST_MIN_STACK作为解决方案。
 CLI专项覆盖无本地worker句柄提交40条、数据库重开、32条准入/其余明确拒绝、无lease
 不能交付、SessionStore重开后不重复注入及不新建Run：
-`/tmp/nola-guidance-cli-default-20261006.log`。Application binding/guidance 9项、terminal
+`<evidence-dir>/nola-guidance-cli-default-20261006.log`。Application binding/guidance 9项、terminal
 receipt 7项默认栈通过，含后续输入后清空Core去重记录再重放，以及真实ModelCompleted
 在指导Submitted/Accepted两种窗口先提交的终态竞争：
-`/tmp/nola-guidance-app-20261006.log`。
+`<evidence-dir>/nola-guidance-app-20261006.log`。
 最终CLI任务域默认栈36/36通过：
-`/tmp/nola-guidance-task-runtime-default-20261006.log`；包含上述指导专项，不重复累计。
+`<evidence-dir>/nola-guidance-task-runtime-default-20261006.log`；包含上述指导专项，不重复累计。
 
 缓存Host恢复已区分冻结运行设置与动态worker执行权：本次恢复必须显式携带执行权，
 检查不可变task→child/Run绑定并对原lease做fresh CAS后，才更新Host配置、SessionStore
 和执行器；不得借缓存补充调用方缺失的执行权，模型设置不随此次恢复请求更换。
 专项验证错误Run不续租、fresh身份更新revision、冻结模型不变及缺失/撤销身份拒绝；
-CLI任务域37/37通过：`/tmp/nola-resumed-authority-task-runtime-20261006.log`。
+CLI任务域37/37通过：`<evidence-dir>/nola-resumed-authority-task-runtime-20261006.log`。
 
 Service同request ID的回执以及receipt lookup保持不可变、只读，不能将原accepted
 checkpoint误认为当前状态。CLI指导专用恢复入口在查明原最终结果后，发新ID的
 Apply(None)观察当前状态；新观察若再次失联，则返回错误、不ACK FIFO，不递归采纳
 又一份历史回执。真实Service三次进程启动验证后续输入推进后，旧回执不变、新观察
 返回当前队列且不重复注入、Run数仍为1：
-`/tmp/nola-guidance-service-restart-20261006.log`，1/1通过。这是Service进程恢复测试，
+`<evidence-dir>/nola-guidance-service-restart-20261006.log`，1/1通过。这是Service进程恢复测试，
 不是网络模型任务或真实worker被杀的全链测试。
 CLI socket故障fixture验证恢复后必发不同request ID、清除lease，并在第二次观察也
 丢ACK时返回错误而非旧结果；与指导纵向链一同通过默认栈回归：
-`/tmp/nola-guidance-receipt-cli-final-20261006.log`（3项，包含1项既有本地化测试）。
+`<evidence-dir>/nola-guidance-receipt-cli-final-20261006.log`（3项，包含1项既有本地化测试）。
 
 无缓存 task child 的恢复准入已补齐：缺少显式 worker authority 时，通过持久子任务
 身份拒绝恢复；执行权检查位于 orphan delivery 所有权恢复之前。普通会话不受此限制。
@@ -370,3 +370,5 @@ Core 私有 checkpoint 正文分离及公开 assistant journal 传输/客户端�
 源选择、授权事实和文件内容版本也必须分别建模，不能把 durable memo 视为授权。
 实施和实际验收状态见
 整体方案第 8.10 节（本地工作记录，不随仓库分发）。
+
+`<evidence-dir>` 表示本地验收产物根目录；后面的路径相对该目录，产物不随公开仓库分发。

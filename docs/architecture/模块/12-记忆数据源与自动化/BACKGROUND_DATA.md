@@ -13,9 +13,9 @@
 | DataSource | `core/nola-application/src/data_source.rs`: DataSourceCommand/DataSourceReadResult | 已区分成功、空、拒绝、不可用、失败；RecordRead 校验 Pending/read_token |
 | Automation 用例 | `core/nola-application/src/automation.rs`: AutomationRunCommand | enqueue/claim/heartbeat/retry/finish；Finish 接受调用者提供的 status/result/error |
 | Automation 去重 | `core/nola-store/src/automation_store.rs`: enqueue_automation_run | 按 automation_id/occurrence_key 唯一；不是副作用 exactly-once 的证明 |
-| Mac 唤醒 | `cli/src/background_scheduler.rs` | 唤醒 App，声明自己不拥有业务成功；marker/last-check 与准入的崩溃边界需验收 |
-| Mac 执行收尾 | `NolaMac/Services/MacAutomationStore.swift`: finishRun 及其调用方 | 仍用 exitCode==0 决定 succeeded；已修提交拒绝/错误不发通知，精确 Run 结果绑定尚缺 |
-| OS 注册 | `NolaMac/Services/MacBackgroundSchedulerService.swift` | 注册 LaunchAgent，不应拥有调度业务事实或任务结果 |
+| Mac 唤醒 | `apps/cli/src/background_scheduler.rs` | 唤醒 App，声明自己不拥有业务成功；marker/last-check 与准入的崩溃边界需验收 |
+| Mac 执行收尾 | `apps/macos/Services/MacAutomationStore.swift`: finishRun 及其调用方 | 仍用 exitCode==0 决定 succeeded；已修提交拒绝/错误不发通知，精确 Run 结果绑定尚缺 |
+| OS 注册 | `apps/macos/Services/MacBackgroundSchedulerService.swift` | 注册 LaunchAgent，不应拥有调度业务事实或任务结果 |
 
 自动化的客户端收尾违反 INV-03/04/09：进程退出不是任务完成证明，未提交不能展示已持久成功。
 整改需绑定 occurrence 与 canonical RunResult/terminal seal，而不只是把 try? 换成日志。

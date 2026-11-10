@@ -59,7 +59,7 @@ def main():
         with (state / "host.log").open("w") as log:
             process = subprocess.Popen([
                 str(ROOT / "target/debug/nola"), "web", "--host", "127.0.0.1", "--port", str(port),
-                "--web-root", str(ROOT / "web"),
+                "--web-root", str(ROOT / "apps/web"),
             ], cwd=state, env=env, stdout=log, stderr=log, start_new_session=True)
             try:
                 token = home / ".nola/web/mobile-access-token"

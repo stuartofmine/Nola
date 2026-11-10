@@ -207,7 +207,7 @@ The macOS Debug Core archive includes `reqwest` proxy discovery code that refere
 
 The previous simulator startup hang occurred before Swift `main`: a dynamic Alamofire package product caused dyld to open an absolute `PackageFrameworks` path from the build host. `ModelDownloader` now uses native `URLSessionDownloadTask` with resume data, progress observation, cancellation, HTTP status validation, and atomic destination replacement. Alamofire was removed from the app/test package graph, so the app no longer links that dynamic product.
 
-Five shared Core JSON fixtures previously used `#filePath` to read the host checkout from inside the iOS Simulator. Missing resources caused XCTest failure symbolication to stall in CoreSymbolication. The fixtures now live in `NolaTests/Fixtures` and are resolved through the test bundle, making the tests sandbox-safe, parallel-safe, and independent of the checkout path.
+Five shared Core JSON fixtures previously used `#filePath` to read the host checkout from inside the iOS Simulator. Missing resources caused XCTest failure symbolication to stall in CoreSymbolication. The fixtures now live in `tests/apple/ios/Fixtures` and are resolved through the test bundle, making the tests sandbox-safe, parallel-safe, and independent of the checkout path.
 
 ### Verification evidence
 

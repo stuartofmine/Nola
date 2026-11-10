@@ -12,9 +12,9 @@ ANDROID_SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Library/Android/sdk}}"
 ADB="$ANDROID_SDK/platform-tools/adb"
 EMULATOR="$ANDROID_SDK/emulator/emulator"
 JDK_HOME="${NOLA_ANDROID_JAVA_HOME:-/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home}"
-ANDROID_CONFIG="$(mktemp /tmp/nola-real-mobile-skill.XXXXXX.json)"
-ANDROID_RESULT="$(mktemp /tmp/nola-real-mobile-skill-android.XXXXXX.log)"
-EVIDENCE_WORK_DIR="$(mktemp -d /tmp/nola-real-mobile-skill-evidence.XXXXXX)"
+ANDROID_CONFIG="$(mktemp "${TMPDIR:-/tmp}/nola-real-mobile-skill.XXXXXX.json")"
+ANDROID_RESULT="$(mktemp "${TMPDIR:-/tmp}/nola-real-mobile-skill-android.XXXXXX.log")"
+EVIDENCE_WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/nola-real-mobile-skill-evidence.XXXXXX")"
 PROVIDER_TRACE="$EVIDENCE_WORK_DIR/provider.ndjson"
 PROVIDER_READY="$EVIDENCE_WORK_DIR/provider-ready.json"
 PROVIDER_LOG="$EVIDENCE_WORK_DIR/provider-probe.log"
@@ -25,7 +25,7 @@ if [[ -n "${NOLA_IOS_SKILL_DERIVED_DATA:-}" ]]; then
     IOS_DERIVED_DATA="$NOLA_IOS_SKILL_DERIVED_DATA"
     mkdir -p "$IOS_DERIVED_DATA"
 elif [[ "${NOLA_IOS_REAL_CLEAN_BUILD:-0}" == "1" ]]; then
-    IOS_DERIVED_DATA="$(mktemp -d /tmp/nola-ios-real-skill-derived-data.XXXXXX)"
+    IOS_DERIVED_DATA="$(mktemp -d "${TMPDIR:-/tmp}/nola-ios-real-skill-derived-data.XXXXXX")"
     IOS_DERIVED_DATA_WAS_CREATED=1
 else
     IOS_DERIVED_DATA="${NOLA_REAL_E2E_CACHE_ROOT:-$ROOT/.artifacts/real-e2e-cache}/ios-skill-derived-data"
@@ -138,14 +138,14 @@ PY
 
     printf '[real-mobile-skill] building Android product and instrumentation for %s\n' "$ANDROID_ABI"
     (
-        cd "$ROOT/android"
+        cd "$ROOT/apps/android"
         JAVA_HOME="$JDK_HOME" ./gradlew \
             :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon --quiet
     )
     "$ADB" -s "$ANDROID_SERIAL" install -r \
-        "$ROOT/android/app/build/outputs/apk/debug/app-debug.apk" >/dev/null
+        "$ROOT/apps/android/app/build/outputs/apk/debug/app-debug.apk" >/dev/null
     "$ADB" -s "$ANDROID_SERIAL" install -r \
-        "$ROOT/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk" >/dev/null
+        "$ROOT/apps/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk" >/dev/null
     "$ADB" -s "$ANDROID_SERIAL" push "$ANDROID_CONFIG" \
         /data/local/tmp/nola-real-llm-e2e.json >/dev/null
     "$ADB" -s "$ANDROID_SERIAL" shell run-as com.nola mkdir -p /data/user/0/com.nola/files

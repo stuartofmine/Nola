@@ -43,9 +43,9 @@ def main():
     assert device('emu','avd','name').decode().splitlines()[0].startswith('nola_a2ui_isolated_')
     if not args.skip_build:
         with (evidence/'build.log').open('wb') as log:
-            subprocess.run(['./gradlew',':app:assembleDebug',':app:assembleDebugAndroidTest','-x','buildRustCore','--max-workers=2'], cwd=repo/'android',stdout=log,stderr=subprocess.STDOUT,check=True)
-    device('install','-r',str(repo/'android/app/build/outputs/apk/debug/app-debug.apk'))
-    device('install','-r',str(repo/'android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk'))
+            subprocess.run(['./gradlew',':app:assembleDebug',':app:assembleDebugAndroidTest','-x','buildRustCore','--max-workers=2'], cwd=repo/'apps/android',stdout=log,stderr=subprocess.STDOUT,check=True)
+    device('install','-r',str(repo/'apps/android/app/build/outputs/apk/debug/app-debug.apk'))
+    device('install','-r',str(repo/'apps/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk'))
     port = f'tcp:{parsed.port}'
     target = 'com.nola.ui.generative.GenerativeUiRealModelEndToEndTest'
     print(json.dumps({'stage':'starting_remote_action','evidence':str(evidence),'sourceHost':host}),flush=True)

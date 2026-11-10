@@ -59,9 +59,9 @@ Mac 使用已验证的现有 runtime executable，以 `model-siwc-bridge --datab
 
 同桥补全`account_status`、`models`、`refresh`、`sign_out`，绑定owner/account/Core revision；网络动作另绑定上次只读status返回的私有session revision。status不联网；models只GET目录并复用CLI sync_catalog写回同Core连接，不自动启用/选择、不制造能力事实；refresh只显式调用原刷新，sign_out额外要求明确确认且复用原撤销/保留revocation_unconfirmed语义。刷新或退出后私有会话与Core更新之间持账户锁再做CAS，冲突明确报告私有会话已变化、不得删除原数据或自动重试。Swift顺序发请求，网络操作有原Host超时；关闭进程不能被宣传为撤销已发送的刷新/退出，用户必须重新读状态。返回account/session/connection均为原脱敏结构，不让Swift使用API key目录或推理替代SIWC专用契约。
 
-2026-10-19：`cargo test -p nola_cli --lib model_siwc_native --locked` 4/4通过，日志`/tmp/nola-siwc-native-management-tests.log`。覆盖假OAuth回调、授权后取消不提交、重复finish、Core冲突、私有会话保留、双revision目录/刷新/明确退出和远端撤销未知、EOF与帧上限。无真实OAuth/推理。Mac Swift服务/UI和正常Run admission的同owner profile接线仍需集中验证，不能以此4项宣称原生推理已验收。
+2026-10-19：`cargo test -p nola_cli --lib model_siwc_native --locked` 4/4通过，日志`<evidence-dir>/nola-siwc-native-management-tests.log`。覆盖假OAuth回调、授权后取消不提交、重复finish、Core冲突、私有会话保留、双revision目录/刷新/明确退出和远端撤销未知、EOF与帧上限。无真实OAuth/推理。Mac Swift服务/UI和正常Run admission的同owner profile接线仍需集中验证，不能以此4项宣称原生推理已验收。
 
-随后同owner正常Run接线的集中Rust验证：`model_siwc` 20/20、`native_host_request::` 23/23、`cold_host_` 2/2通过，分别见`/tmp/nola-siwc-mac-owner-final-tests.log`、`/tmp/nola-native-host-request-final-tests.log`、`/tmp/nola-native-cold-host-final-tests.log`；包含Mac精确profile+revision准入、不接受普通API key、专用账户绑定与原冻结恢复。Host Mac descriptor schema测试1/1通过。Mac最终隔离原生验收22/22、0失败，日志`/tmp/nola-mac-siwc-native-validation-r4.log`，覆盖账户桥、授权迟到、profile准入、凭据边界与恢复；没有真实订阅账户或模型服务验收。
+随后同owner正常Run接线的集中Rust验证：`model_siwc` 20/20、`native_host_request::` 23/23、`cold_host_` 2/2通过，分别见`<evidence-dir>/nola-siwc-mac-owner-final-tests.log`、`<evidence-dir>/nola-native-host-request-final-tests.log`、`<evidence-dir>/nola-native-cold-host-final-tests.log`；包含Mac精确profile+revision准入、不接受普通API key、专用账户绑定与原冻结恢复。Host Mac descriptor schema测试1/1通过。Mac最终隔离原生验收22/22、0失败，日志`<evidence-dir>/nola-mac-siwc-native-validation-r4.log`，覆盖账户桥、授权迟到、profile准入、凭据边界与恢复；没有真实订阅账户或模型服务验收。
 
 Mac正常Run的冻结launch descriptor另携带必填nullable `model_profile_revision`：SIWC使用精确正数revision与profile ID，普通路径可显式null；缺字段拒绝。冷恢复必须读取原冻结revision并重验同owner账户，不能用当前profile revision重构不同配置。
 
@@ -98,3 +98,5 @@ Core 投影的 function envelope 可以包含布尔型 `x-nola-read-only`。这�
 用户点击“使用 ChatGPT 登录”即明确启动这一流程；Swift 在首次收到合法授权 URL 时自动交系统浏览器，轮询不重复开页，延迟出现的 URL 仍会打开。`authorized` 后自动发送一次 `finish`，不再要求重复保存确认。不确定提交结果只引导检查账户，不盲目重放。
 
 `committed` 后以“选择模型”为下一步；只有再次明确点击才先取新账户/session revision、再读取模型目录，成功返回 connection ID 并打开该连接的编辑页。目录失败保留已保存账户；过期授权引导重新登录。保存、目录读取、启用选择、推理验证是独立结果。关闭和取消推进本地 generation，使旧异步回执不能触发保存或导航；取消未确认时保留账户检查入口。协议仍为 1。界面测试使用隔离传输，不代替真实 OAuth 验收。
+
+`<evidence-dir>` 表示本地验收产物根目录；后面的路径相对该目录，产物不随公开仓库分发。

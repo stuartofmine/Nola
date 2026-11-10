@@ -5,7 +5,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-export NOLA_MAC_REAL_WORKSPACE="$(mktemp -d /tmp/nola-mac-denial-acceptance.XXXXXX)"
+export NOLA_MAC_REAL_WORKSPACE="$(mktemp -d "${TMPDIR:-/tmp}/nola-mac-denial-acceptance.XXXXXX")"
 export NOLA_MAC_REAL_ARTIFACT_ROOT="$NOLA_MAC_REAL_WORKSPACE"
 printf '[real-mac-denial] isolated workspace: %s\n' "$NOLA_MAC_REAL_WORKSPACE"
 runtime_status=0

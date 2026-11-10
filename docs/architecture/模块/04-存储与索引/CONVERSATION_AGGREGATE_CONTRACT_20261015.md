@@ -98,7 +98,7 @@ WebHost 连接入口与具体模型是不同对象；未指定远端模型时保
 
 本批全部实现后统一验证：原始 revision 冲突与 ABA、同一事务选择/执行位置、旧 metadata 不回滚配置、保存期间按会话阻止发送、失败保留原配置，以及跨端调用点不被新字段所有权误伤。
 
-本批最终结果：Mac 44/44、iOS 74/74、Rust/Core/CLI 89/89 通过，Android 431 通过及 2 项 opt-in 跳过。Mac 证据为 `/tmp/nola-mac-owner-cas.SmuXWv/Results-final.xcresult`；移动端证据目录 `/tmp/nola-mobile-protection-validation.pcPPSl`，iOS 最终结果 `iOSRetry.xcresult`。iOS 首轮旧夹具绕整包保存改变身份被正确拒绝，改为删除测试模型制造真实目录缺失后通过，未放宽生产保护。冲突后只刷新原 owner 的配置，不自动重放编辑，不替换草稿/消息，不切换当前会话；迟到回执不降级新版本。上述不是实际设备UI或真实模型验收。
+本批最终结果：Mac 44/44、iOS 74/74、Rust/Core/CLI 89/89 通过，Android 431 通过及 2 项 opt-in 跳过。Mac 证据为 `<evidence-dir>/nola-mac-owner-cas.SmuXWv/Results-final.xcresult`；移动端证据目录 `<evidence-dir>/nola-mobile-protection-validation.pcPPSl`，iOS 最终结果 `iOSRetry.xcresult`。iOS 首轮旧夹具绕整包保存改变身份被正确拒绝，改为删除测试模型制造真实目录缺失后通过，未放宽生产保护。冲突后只刷新原 owner 的配置，不自动重放编辑，不替换草稿/消息，不切换当前会话；迟到回执不降级新版本。上述不是实际设备UI或真实模型验收。
 
 ### 模型身份批次：当前验证记录
 
@@ -107,7 +107,7 @@ WebHost 连接入口与具体模型是不同对象；未指定远端模型时保
 - iOS：74 项通过，无跳过；模拟器测试，不代表真实 Host 或物理设备验收。
 - Android：431 项通过，2 项 opt-in 真实模型测试跳过；JVM 测试，不代表设备验收。
 - Core/CLI：62 项通过，CLI 编译检查通过；包含真实 HTTP 配置接口回归，不包含真实模型生成。
-- Mac：最终 43 项全部通过，无跳过或运行时告警。首轮暴露的无效身份夹具和 metadata 混写已修复；第二轮暴露的异步配置提交时序已补按会话发送门禁。证据：`/tmp/nola-mac-identity.LAj42f/Results-final.xcresult`。见 Mac 配置提交（本地工作记录，不随仓库分发）。
+- Mac：最终 43 项全部通过，无跳过或运行时告警。首轮暴露的无效身份夹具和 metadata 混写已修复；第二轮暴露的异步配置提交时序已补按会话发送门禁。证据：`<evidence-dir>/nola-mac-identity.LAj42f/Results-final.xcresult`。见 Mac 配置提交（本地工作记录，不随仓库分发）。
 
 仍需单独推进的边界：移动端具体 connectedHost 模型目录选择、未发送 Host 草稿连接定位冻结、移动端完整配置归档、整包参数与其他 metadata 的并发写入边界，以及真实跨端交互/性能验收。Mac 模型/参数编辑起点 revision 和执行位置原子提交已在后续批次收口，见上节；不得以本批测试替代仍未完成的工作。
 
@@ -151,9 +151,9 @@ WebHost 连接入口与具体模型是不同对象；未指定远端模型时保
 
 ### 移动端收口批次验证
 
-Android 整组 `./gradlew testDebugUnitTest`：112 suites、428 tests，426通过、2项显式真实模型测试跳过、0失败/错误；其中草稿11项、创建回执1项通过，无编译警告。证据 `/tmp/nola-android-draft-validation.b6fzMn/`。
+Android 整组 `./gradlew testDebugUnitTest`：112 suites、428 tests，426通过、2项显式真实模型测试跳过、0失败/错误；其中草稿11项、创建回执1项通过，无编译警告。证据 `<evidence-dir>/nola-android-draft-validation.b6fzMn/`。
 
-iOS 最终同一定向整组55/55通过、0失败、0跳过，`runtimeWarnings=[]`。范围包含草稿输入/仓储、原子配置创建、canonical真实数据库、模型安装及ChatManager并发/流式测试。证据 `/tmp/nola-ios-draft-aggregate.imdrZb/Results-3.xcresult`、`test-3.log`；保留既有NolaCore Copy Headers构建阶段告警，无新增Swift告警。首轮两项失败、第二轮一项失败，分别为JSON键顺序比较及流式fixture临时目录EPERM；改用完整结构断言与有限清理重试，最终清理失败仍抛错，未吞掉业务断言。详情见iOS专项文档。
+iOS 最终同一定向整组55/55通过、0失败、0跳过，`runtimeWarnings=[]`。范围包含草稿输入/仓储、原子配置创建、canonical真实数据库、模型安装及ChatManager并发/流式测试。证据 `<evidence-dir>/nola-ios-draft-aggregate.imdrZb/Results-3.xcresult`、`test-3.log`；保留既有NolaCore Copy Headers构建阶段告警，无新增Swift告警。首轮两项失败、第二轮一项失败，分别为JSON键顺序比较及流式fixture临时目录EPERM；改用完整结构断言与有限清理重试，最终清理失败仍抛错，未吞掉业务断言。详情见iOS专项文档。
 
 测试中同时收口：iOS新建会话在草稿退休CAS成功后才发布选中身份；已有选中会话读取异常或缺失时明确拒绝，不隐式创建替代会话。Android对应提交竞争同样在外部请求前校验和退休，失败保留原草稿。上述仓储/模拟器验证不等于真机多窗口与实际UI视觉验收。
 
@@ -175,4 +175,6 @@ Rust 大型任务恢复用例使用 `RUST_MIN_STACK=16777216`；默认测试线�
 
 最终审计发现 `productSettings` 自动生成同步 outbox，因此不能作为 Mac 设备本地草稿仓储。已改用以实际数据库作用域定位的独立本地草稿文件，并以真实仓储回归确认保存/删除均不增加同步队列。iOS 同样按实际数据库路径定位草稿，删除不再误用默认数据库目录。未迁移或清理任何用户同步数据。
 
-Apple 最终证据：Mac `/tmp/nola-mac-local-drafts.A5ZUHl/Results.xcresult`；iOS 完整运行及两项重跑的路径记录于 移动端实施文档（本地工作记录，不随仓库分发）。iOS 清理异常未被吞掉，也不将它描述为一次整组零失败通过。
+Apple 最终证据：Mac `<evidence-dir>/nola-mac-local-drafts.A5ZUHl/Results.xcresult`；iOS 完整运行及两项重跑的路径记录于 移动端实施文档（本地工作记录，不随仓库分发）。iOS 清理异常未被吞掉，也不将它描述为一次整组零失败通过。
+
+`<evidence-dir>` 表示本地验收产物根目录；后面的路径相对该目录，产物不随公开仓库分发。

@@ -52,7 +52,7 @@
 | 差距 | 源码依据 | 当前结论与约束 |
 | --- | --- | --- |
 | 记忆 owner 接线与验收范围 | [MemoryRecallQuery](../../../core/nola-application/src/memory.rs)、[Domain owner](../../../core/nola-domain/src/memory_owner.rs)、[Store](../../../core/nola-store/src/memory_store.rs) | 已新增必填 record.owner/binding、SQL 排名与 LIMIT 前 owner 过滤、owner 去重及不可变身份；Host 使用显式上下文，移动 profile 搜索走 Recall。原生 workspace/turn 选择 UI 和真实并发 provider 验收仍需独立验证，见记忆合同 |
-| 历史 provider 恢复清理 | [bootstrap](../../../core/nola-application-bootstrap/src/lib.rs)、[Mac Service supervisor](../../../NolaMac/Services/MacApplicationServiceClient.swift) | 已删除旧 schema provider 解码/转换、恢复标记、Service 参数与 Mac 普通启动扫描归档。显式归档只保留原文件，新库不导入旧配置；默认不匹配拒绝且保留原库 |
+| 历史 provider 恢复清理 | [bootstrap](../../../core/nola-application-bootstrap/src/lib.rs)、[Mac Service supervisor](../../../apps/macos/Services/MacApplicationServiceClient.swift) | 已删除旧 schema provider 解码/转换、恢复标记、Service 参数与 Mac 普通启动扫描归档。显式归档只保留原文件，新库不导入旧配置；默认不匹配拒绝且保留原库 |
 | 错误模型不完全收敛 | [ProtocolFailure](../../../core/nola-protocol/src/lib.rs)、Application/Store Port | wire 只有 code/message/recoverable/details?，部分内部端口仍 String；目标错误语义不能冒充已经类型化，更不能按 recoverable 布尔值盲目重试副作用 |
 | 纯分层与实际声明存在耦合 | [Application Goal 协调](../../../core/nola-application/src/goal_coordinator.rs)、[Application manifest](../../../core/nola-application/Cargo.toml)、[MCP manifest](../../../core/nola-mcp-host/Cargo.toml) | 如需进一步收敛，必须按实际用例调整类型所有权、调用者与门禁；文档不能隐去真实边或靠改包名宣称完成 |
 | 统一对话目标未等于底层对象删除 | [Room submission](../../../core/nola-application/src/agent_room/submission.rs)、[Room 用例](../../../core/nola-application/src/agent_room.rs) | 当前仍有 Room 身份、显式成员与主控选择路径；它们不是因文档目标存在就已删除的旧入口，也不授权增加新兼容分支 |

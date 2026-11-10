@@ -1,6 +1,6 @@
 # macOS
 
-实现位于 [NolaMac](../../../NolaMac/)，使用 SwiftUI/AppKit；不是 CLI 包装界面。
+实现位于 [NolaMac](../../../apps/macos)，使用 SwiftUI/AppKit；不是 CLI 包装界面。
 
 - [信息架构](UI_INFORMATION_ARCHITECTURE.md)、[应用设计](APP_DESIGN.md)。
 - [Apple 检查器](../apple/CONVERSATION_INSPECTOR.md)、[共享交互](../../design/README.md)。

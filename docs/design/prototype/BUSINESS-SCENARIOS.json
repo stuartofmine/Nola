@@ -66,9 +66,9 @@
                 "windows"
             ],
             "sources": [
-                "Nola/UI/OnboardingView.swift",
-                "web/frontend/src/pages/Login.svelte",
-                "cli/src/config.rs"
+                "apps/ios/UI/OnboardingView.swift",
+                "apps/web/frontend/src/pages/Login.svelte",
+                "apps/cli/src/config.rs"
             ],
             "states": [
                 {
@@ -151,9 +151,9 @@
                 "windows"
             ],
             "sources": [
-                "Nola/UI/OnboardingView.swift",
-                "web/frontend/src/pages/Login.svelte",
-                "cli/src/config.rs"
+                "apps/ios/UI/OnboardingView.swift",
+                "apps/web/frontend/src/pages/Login.svelte",
+                "apps/cli/src/config.rs"
             ],
             "states": [
                 {
@@ -248,9 +248,9 @@
                 "cli"
             ],
             "sources": [
-                "Nola/UI/OnboardingView.swift",
-                "web/frontend/src/pages/Login.svelte",
-                "cli/src/config.rs"
+                "apps/ios/UI/OnboardingView.swift",
+                "apps/web/frontend/src/pages/Login.svelte",
+                "apps/cli/src/config.rs"
             ],
             "states": [
                 {
@@ -366,9 +366,9 @@
                 "cli"
             ],
             "sources": [
-                "Nola/UI/OnboardingView.swift",
-                "web/frontend/src/pages/Login.svelte",
-                "cli/src/config.rs"
+                "apps/ios/UI/OnboardingView.swift",
+                "apps/web/frontend/src/pages/Login.svelte",
+                "apps/cli/src/config.rs"
             ],
             "states": [
                 {
@@ -450,10 +450,10 @@
                 "cli"
             ],
             "sources": [
-                "Nola/UI/ChatView.swift",
-                "NolaMac/Features/Chat/MacComposerView.swift",
-                "android/app/src/main/java/com/nola/ui/screen/chat/ChatScreen.kt",
-                "web/frontend/src/pages/Chat.svelte"
+                "apps/ios/UI/ChatView.swift",
+                "apps/macos/Features/Chat/MacComposerView.swift",
+                "apps/android/app/src/main/java/com/nola/ui/screen/chat/ChatScreen.kt",
+                "apps/web/frontend/src/pages/Chat.svelte"
             ],
             "states": [
                 {
@@ -547,10 +547,10 @@
                 "cli"
             ],
             "sources": [
-                "Nola/UI/ChatView.swift",
-                "NolaMac/Features/Chat/MacComposerView.swift",
-                "android/app/src/main/java/com/nola/ui/screen/chat/ChatScreen.kt",
-                "web/frontend/src/pages/Chat.svelte"
+                "apps/ios/UI/ChatView.swift",
+                "apps/macos/Features/Chat/MacComposerView.swift",
+                "apps/android/app/src/main/java/com/nola/ui/screen/chat/ChatScreen.kt",
+                "apps/web/frontend/src/pages/Chat.svelte"
             ],
             "states": [
                 {
@@ -650,10 +650,10 @@
                 "windows"
             ],
             "sources": [
-                "Nola/UI/ChatView.swift",
-                "NolaMac/Features/Chat/MacComposerView.swift",
-                "android/app/src/main/java/com/nola/ui/screen/chat/ChatScreen.kt",
-                "web/frontend/src/pages/Chat.svelte"
+                "apps/ios/UI/ChatView.swift",
+                "apps/macos/Features/Chat/MacComposerView.swift",
+                "apps/android/app/src/main/java/com/nola/ui/screen/chat/ChatScreen.kt",
+                "apps/web/frontend/src/pages/Chat.svelte"
             ],
             "states": [
                 {
@@ -738,10 +738,10 @@
                 "windows"
             ],
             "sources": [
-                "Nola/UI/ChatView.swift",
-                "NolaMac/Features/Chat/MacComposerView.swift",
-                "android/app/src/main/java/com/nola/ui/screen/chat/ChatScreen.kt",
-                "web/frontend/src/pages/Chat.svelte"
+                "apps/ios/UI/ChatView.swift",
+                "apps/macos/Features/Chat/MacComposerView.swift",
+                "apps/android/app/src/main/java/com/nola/ui/screen/chat/ChatScreen.kt",
+                "apps/web/frontend/src/pages/Chat.svelte"
             ],
             "states": [
                 {
@@ -843,10 +843,10 @@
                 "windows"
             ],
             "sources": [
-                "Nola/UI/ChatView.swift",
-                "NolaMac/Features/Chat/MacComposerView.swift",
-                "android/app/src/main/java/com/nola/ui/screen/chat/ChatScreen.kt",
-                "web/frontend/src/pages/Chat.svelte"
+                "apps/ios/UI/ChatView.swift",
+                "apps/macos/Features/Chat/MacComposerView.swift",
+                "apps/android/app/src/main/java/com/nola/ui/screen/chat/ChatScreen.kt",
+                "apps/web/frontend/src/pages/Chat.svelte"
             ],
             "states": [
                 {
@@ -931,10 +931,10 @@
                 "cli"
             ],
             "sources": [
-                "Nola/UI/ChatView.swift",
-                "NolaMac/Features/Chat/MacComposerView.swift",
-                "android/app/src/main/java/com/nola/ui/screen/chat/ChatScreen.kt",
-                "web/frontend/src/pages/Chat.svelte"
+                "apps/ios/UI/ChatView.swift",
+                "apps/macos/Features/Chat/MacComposerView.swift",
+                "apps/android/app/src/main/java/com/nola/ui/screen/chat/ChatScreen.kt",
+                "apps/web/frontend/src/pages/Chat.svelte"
             ],
             "states": [
                 {
@@ -1023,10 +1023,10 @@
                 "android"
             ],
             "sources": [
-                "Nola/UI/ChatView.swift",
-                "NolaMac/Features/Chat/MacComposerView.swift",
-                "android/app/src/main/java/com/nola/ui/screen/chat/ChatScreen.kt",
-                "web/frontend/src/pages/Chat.svelte"
+                "apps/ios/UI/ChatView.swift",
+                "apps/macos/Features/Chat/MacComposerView.swift",
+                "apps/android/app/src/main/java/com/nola/ui/screen/chat/ChatScreen.kt",
+                "apps/web/frontend/src/pages/Chat.svelte"
             ],
             "states": [
                 {
@@ -1120,10 +1120,10 @@
                 "cli"
             ],
             "sources": [
-                "Nola/UI/ChatView.swift",
-                "NolaMac/Features/Chat/MacComposerView.swift",
-                "android/app/src/main/java/com/nola/ui/screen/chat/ChatScreen.kt",
-                "web/frontend/src/pages/Chat.svelte"
+                "apps/ios/UI/ChatView.swift",
+                "apps/macos/Features/Chat/MacComposerView.swift",
+                "apps/android/app/src/main/java/com/nola/ui/screen/chat/ChatScreen.kt",
+                "apps/web/frontend/src/pages/Chat.svelte"
             ],
             "states": [
                 {
@@ -1215,10 +1215,10 @@
                 "cli"
             ],
             "sources": [
-                "Nola/UI/ChatView.swift",
-                "NolaMac/Features/Chat/MacComposerView.swift",
-                "android/app/src/main/java/com/nola/ui/screen/chat/ChatScreen.kt",
-                "web/frontend/src/pages/Chat.svelte"
+                "apps/ios/UI/ChatView.swift",
+                "apps/macos/Features/Chat/MacComposerView.swift",
+                "apps/android/app/src/main/java/com/nola/ui/screen/chat/ChatScreen.kt",
+                "apps/web/frontend/src/pages/Chat.svelte"
             ],
             "states": [
                 {
@@ -1323,8 +1323,8 @@
                 "cli"
             ],
             "sources": [
-                "NolaMac/Features/Chat/MacRemoteRunRecovery.swift",
-                "cli/src/core_agent_runtime.rs",
+                "apps/macos/Features/Chat/MacRemoteRunRecovery.swift",
+                "apps/cli/src/core_agent_runtime.rs",
                 "docs/design/shared/HOST_CONNECTION_WORKFLOW.md"
             ],
             "states": [
@@ -1435,8 +1435,8 @@
                 "cli"
             ],
             "sources": [
-                "NolaMac/Features/Chat/MacRemoteRunRecovery.swift",
-                "cli/src/core_agent_runtime.rs",
+                "apps/macos/Features/Chat/MacRemoteRunRecovery.swift",
+                "apps/cli/src/core_agent_runtime.rs",
                 "docs/design/shared/HOST_CONNECTION_WORKFLOW.md"
             ],
             "states": [
@@ -1534,8 +1534,8 @@
                 "windows"
             ],
             "sources": [
-                "NolaMac/Features/Chat/MacRemoteRunRecovery.swift",
-                "cli/src/core_agent_runtime.rs",
+                "apps/macos/Features/Chat/MacRemoteRunRecovery.swift",
+                "apps/cli/src/core_agent_runtime.rs",
                 "docs/design/shared/HOST_CONNECTION_WORKFLOW.md"
             ],
             "states": [
@@ -1659,8 +1659,8 @@
                 "cli"
             ],
             "sources": [
-                "NolaMac/Features/Chat/MacRemoteRunRecovery.swift",
-                "cli/src/core_agent_runtime.rs",
+                "apps/macos/Features/Chat/MacRemoteRunRecovery.swift",
+                "apps/cli/src/core_agent_runtime.rs",
                 "docs/design/shared/HOST_CONNECTION_WORKFLOW.md"
             ],
             "states": [
@@ -1746,8 +1746,8 @@
                 "windows"
             ],
             "sources": [
-                "NolaMac/Features/Chat/MacRemoteRunRecovery.swift",
-                "cli/src/core_agent_runtime.rs",
+                "apps/macos/Features/Chat/MacRemoteRunRecovery.swift",
+                "apps/cli/src/core_agent_runtime.rs",
                 "docs/design/shared/HOST_CONNECTION_WORKFLOW.md"
             ],
             "states": [
@@ -1833,8 +1833,8 @@
                 "cli"
             ],
             "sources": [
-                "NolaMac/Features/Chat/MacRemoteRunRecovery.swift",
-                "cli/src/core_agent_runtime.rs",
+                "apps/macos/Features/Chat/MacRemoteRunRecovery.swift",
+                "apps/cli/src/core_agent_runtime.rs",
                 "docs/design/shared/HOST_CONNECTION_WORKFLOW.md"
             ],
             "states": [
@@ -1927,8 +1927,8 @@
                 "cli"
             ],
             "sources": [
-                "NolaMac/Features/Chat/MacRemoteRunRecovery.swift",
-                "cli/src/core_agent_runtime.rs",
+                "apps/macos/Features/Chat/MacRemoteRunRecovery.swift",
+                "apps/cli/src/core_agent_runtime.rs",
                 "docs/design/shared/HOST_CONNECTION_WORKFLOW.md"
             ],
             "states": [
@@ -2014,8 +2014,8 @@
                 "windows"
             ],
             "sources": [
-                "NolaMac/Features/Chat/MacRemoteRunRecovery.swift",
-                "cli/src/core_agent_runtime.rs",
+                "apps/macos/Features/Chat/MacRemoteRunRecovery.swift",
+                "apps/cli/src/core_agent_runtime.rs",
                 "docs/design/shared/HOST_CONNECTION_WORKFLOW.md"
             ],
             "states": [
@@ -2107,8 +2107,8 @@
                 "cli"
             ],
             "sources": [
-                "NolaMac/Features/Chat/MacRemoteRunRecovery.swift",
-                "cli/src/core_agent_runtime.rs",
+                "apps/macos/Features/Chat/MacRemoteRunRecovery.swift",
+                "apps/cli/src/core_agent_runtime.rs",
                 "docs/design/shared/HOST_CONNECTION_WORKFLOW.md"
             ],
             "states": [
@@ -2195,8 +2195,8 @@
                 "cli"
             ],
             "sources": [
-                "NolaMac/Features/Chat/MacRemoteRunRecovery.swift",
-                "cli/src/core_agent_runtime.rs",
+                "apps/macos/Features/Chat/MacRemoteRunRecovery.swift",
+                "apps/cli/src/core_agent_runtime.rs",
                 "docs/design/shared/HOST_CONNECTION_WORKFLOW.md"
             ],
             "states": [
@@ -2282,9 +2282,9 @@
                 "windows"
             ],
             "sources": [
-                "Nola/UI/ModelsView.swift",
-                "web/frontend/src/pages/ModelCenter.svelte",
-                "cli/src/config.rs"
+                "apps/ios/UI/ModelsView.swift",
+                "apps/web/frontend/src/pages/ModelCenter.svelte",
+                "apps/cli/src/config.rs"
             ],
             "states": [
                 {
@@ -2375,9 +2375,9 @@
                 "cli"
             ],
             "sources": [
-                "Nola/UI/ModelsView.swift",
-                "web/frontend/src/pages/ModelCenter.svelte",
-                "cli/src/config.rs"
+                "apps/ios/UI/ModelsView.swift",
+                "apps/web/frontend/src/pages/ModelCenter.svelte",
+                "apps/cli/src/config.rs"
             ],
             "states": [
                 {
@@ -2485,9 +2485,9 @@
                 "cli"
             ],
             "sources": [
-                "Nola/UI/ModelsView.swift",
-                "web/frontend/src/pages/ModelCenter.svelte",
-                "cli/src/config.rs"
+                "apps/ios/UI/ModelsView.swift",
+                "apps/web/frontend/src/pages/ModelCenter.svelte",
+                "apps/cli/src/config.rs"
             ],
             "states": [
                 {
@@ -2573,9 +2573,9 @@
                 "cli"
             ],
             "sources": [
-                "Nola/UI/ModelsView.swift",
-                "web/frontend/src/pages/ModelCenter.svelte",
-                "cli/src/config.rs"
+                "apps/ios/UI/ModelsView.swift",
+                "apps/web/frontend/src/pages/ModelCenter.svelte",
+                "apps/cli/src/config.rs"
             ],
             "states": [
                 {
@@ -2666,9 +2666,9 @@
                 "windows"
             ],
             "sources": [
-                "Nola/UI/ModelsView.swift",
-                "web/frontend/src/pages/ModelCenter.svelte",
-                "cli/src/config.rs"
+                "apps/ios/UI/ModelsView.swift",
+                "apps/web/frontend/src/pages/ModelCenter.svelte",
+                "apps/cli/src/config.rs"
             ],
             "states": [
                 {
@@ -2759,9 +2759,9 @@
                 "windows"
             ],
             "sources": [
-                "Nola/UI/ModelsView.swift",
-                "web/frontend/src/pages/ModelCenter.svelte",
-                "cli/src/config.rs"
+                "apps/ios/UI/ModelsView.swift",
+                "apps/web/frontend/src/pages/ModelCenter.svelte",
+                "apps/cli/src/config.rs"
             ],
             "states": [
                 {
@@ -2863,9 +2863,9 @@
                 "cli"
             ],
             "sources": [
-                "Nola/UI/ModelsView.swift",
-                "web/frontend/src/pages/ModelCenter.svelte",
-                "cli/src/config.rs"
+                "apps/ios/UI/ModelsView.swift",
+                "apps/web/frontend/src/pages/ModelCenter.svelte",
+                "apps/cli/src/config.rs"
             ],
             "states": [
                 {
@@ -2954,9 +2954,9 @@
                 "android"
             ],
             "sources": [
-                "Nola/UI/ModelsView.swift",
-                "web/frontend/src/pages/ModelCenter.svelte",
-                "cli/src/config.rs"
+                "apps/ios/UI/ModelsView.swift",
+                "apps/web/frontend/src/pages/ModelCenter.svelte",
+                "apps/cli/src/config.rs"
             ],
             "states": [
                 {
@@ -3036,8 +3036,8 @@
                 "android"
             ],
             "sources": [
-                "NolaMac/Features/Chat/MacHostPermissionView.swift",
-                "android/app/src/main/java/com/nola/ui/screen/chat/HostPermissionEvent.kt",
+                "apps/macos/Features/Chat/MacHostPermissionView.swift",
+                "apps/android/app/src/main/java/com/nola/ui/screen/chat/HostPermissionEvent.kt",
                 "docs/design/shared/HOST_CONNECTION_WORKFLOW.md"
             ],
             "states": [
@@ -3133,8 +3133,8 @@
                 "mac"
             ],
             "sources": [
-                "NolaMac/Features/Chat/MacHostPermissionView.swift",
-                "android/app/src/main/java/com/nola/ui/screen/chat/HostPermissionEvent.kt",
+                "apps/macos/Features/Chat/MacHostPermissionView.swift",
+                "apps/android/app/src/main/java/com/nola/ui/screen/chat/HostPermissionEvent.kt",
                 "docs/design/shared/HOST_CONNECTION_WORKFLOW.md"
             ],
             "states": [
@@ -3223,8 +3223,8 @@
                 "windows"
             ],
             "sources": [
-                "NolaMac/Features/Chat/MacHostPermissionView.swift",
-                "android/app/src/main/java/com/nola/ui/screen/chat/HostPermissionEvent.kt",
+                "apps/macos/Features/Chat/MacHostPermissionView.swift",
+                "apps/android/app/src/main/java/com/nola/ui/screen/chat/HostPermissionEvent.kt",
                 "docs/design/shared/HOST_CONNECTION_WORKFLOW.md"
             ],
             "states": [
@@ -3310,8 +3310,8 @@
                 "cli"
             ],
             "sources": [
-                "NolaMac/Features/Chat/MacHostPermissionView.swift",
-                "android/app/src/main/java/com/nola/ui/screen/chat/HostPermissionEvent.kt",
+                "apps/macos/Features/Chat/MacHostPermissionView.swift",
+                "apps/android/app/src/main/java/com/nola/ui/screen/chat/HostPermissionEvent.kt",
                 "docs/design/shared/HOST_CONNECTION_WORKFLOW.md"
             ],
             "states": [
@@ -3452,8 +3452,8 @@
                 "windows"
             ],
             "sources": [
-                "NolaMac/Features/Chat/MacHostPermissionView.swift",
-                "android/app/src/main/java/com/nola/ui/screen/chat/HostPermissionEvent.kt",
+                "apps/macos/Features/Chat/MacHostPermissionView.swift",
+                "apps/android/app/src/main/java/com/nola/ui/screen/chat/HostPermissionEvent.kt",
                 "docs/design/shared/HOST_CONNECTION_WORKFLOW.md"
             ],
             "states": [
@@ -3569,8 +3569,8 @@
                 "android"
             ],
             "sources": [
-                "NolaMac/Features/Chat/MacHostPermissionView.swift",
-                "android/app/src/main/java/com/nola/ui/screen/chat/HostPermissionEvent.kt",
+                "apps/macos/Features/Chat/MacHostPermissionView.swift",
+                "apps/android/app/src/main/java/com/nola/ui/screen/chat/HostPermissionEvent.kt",
                 "docs/design/shared/HOST_CONNECTION_WORKFLOW.md"
             ],
             "states": [
@@ -3659,8 +3659,8 @@
                 "windows"
             ],
             "sources": [
-                "NolaMac/Features/Chat/MacHostPermissionView.swift",
-                "android/app/src/main/java/com/nola/ui/screen/chat/HostPermissionEvent.kt",
+                "apps/macos/Features/Chat/MacHostPermissionView.swift",
+                "apps/android/app/src/main/java/com/nola/ui/screen/chat/HostPermissionEvent.kt",
                 "docs/design/shared/HOST_CONNECTION_WORKFLOW.md"
             ],
             "states": [
@@ -3751,9 +3751,9 @@
                 "windows"
             ],
             "sources": [
-                "web/frontend/src/pages/Capabilities.svelte",
-                "NolaMac/Services/MacBuiltInSkillRegistry.swift",
-                "cli/src/config.rs"
+                "apps/web/frontend/src/pages/Capabilities.svelte",
+                "apps/macos/Services/MacBuiltInSkillRegistry.swift",
+                "apps/cli/src/config.rs"
             ],
             "states": [
                 {
@@ -3859,9 +3859,9 @@
                 "windows"
             ],
             "sources": [
-                "web/frontend/src/pages/Capabilities.svelte",
-                "NolaMac/Services/MacBuiltInSkillRegistry.swift",
-                "cli/src/config.rs"
+                "apps/web/frontend/src/pages/Capabilities.svelte",
+                "apps/macos/Services/MacBuiltInSkillRegistry.swift",
+                "apps/cli/src/config.rs"
             ],
             "states": [
                 {
@@ -3951,9 +3951,9 @@
                 "windows"
             ],
             "sources": [
-                "web/frontend/src/pages/Capabilities.svelte",
-                "NolaMac/Services/MacBuiltInSkillRegistry.swift",
-                "cli/src/config.rs"
+                "apps/web/frontend/src/pages/Capabilities.svelte",
+                "apps/macos/Services/MacBuiltInSkillRegistry.swift",
+                "apps/cli/src/config.rs"
             ],
             "states": [
                 {
@@ -4054,9 +4054,9 @@
                 "windows"
             ],
             "sources": [
-                "web/frontend/src/pages/Capabilities.svelte",
-                "NolaMac/Services/MacBuiltInSkillRegistry.swift",
-                "cli/src/config.rs"
+                "apps/web/frontend/src/pages/Capabilities.svelte",
+                "apps/macos/Services/MacBuiltInSkillRegistry.swift",
+                "apps/cli/src/config.rs"
             ],
             "states": [
                 {
@@ -4179,9 +4179,9 @@
                 "cli"
             ],
             "sources": [
-                "web/frontend/src/pages/Capabilities.svelte",
-                "NolaMac/Services/MacBuiltInSkillRegistry.swift",
-                "cli/src/config.rs"
+                "apps/web/frontend/src/pages/Capabilities.svelte",
+                "apps/macos/Services/MacBuiltInSkillRegistry.swift",
+                "apps/cli/src/config.rs"
             ],
             "states": [
                 {
@@ -4262,9 +4262,9 @@
                 "cli"
             ],
             "sources": [
-                "web/frontend/src/pages/Capabilities.svelte",
-                "NolaMac/Services/MacBuiltInSkillRegistry.swift",
-                "cli/src/config.rs"
+                "apps/web/frontend/src/pages/Capabilities.svelte",
+                "apps/macos/Services/MacBuiltInSkillRegistry.swift",
+                "apps/cli/src/config.rs"
             ],
             "states": [
                 {
@@ -4350,9 +4350,9 @@
                 "windows"
             ],
             "sources": [
-                "Nola/UI/DataSourcesView.swift",
-                "Nola/UI/Chat/PersonalIntelligenceDashboardView.swift",
-                "web/frontend/src/pages/DataSources.svelte"
+                "apps/ios/UI/DataSourcesView.swift",
+                "apps/ios/UI/Chat/PersonalIntelligenceDashboardView.swift",
+                "apps/web/frontend/src/pages/DataSources.svelte"
             ],
             "states": [
                 {
@@ -4473,9 +4473,9 @@
                 "windows"
             ],
             "sources": [
-                "Nola/UI/DataSourcesView.swift",
-                "Nola/UI/Chat/PersonalIntelligenceDashboardView.swift",
-                "web/frontend/src/pages/DataSources.svelte"
+                "apps/ios/UI/DataSourcesView.swift",
+                "apps/ios/UI/Chat/PersonalIntelligenceDashboardView.swift",
+                "apps/web/frontend/src/pages/DataSources.svelte"
             ],
             "states": [
                 {
@@ -4591,9 +4591,9 @@
                 "windows"
             ],
             "sources": [
-                "Nola/UI/DataSourcesView.swift",
-                "Nola/UI/Chat/PersonalIntelligenceDashboardView.swift",
-                "web/frontend/src/pages/DataSources.svelte"
+                "apps/ios/UI/DataSourcesView.swift",
+                "apps/ios/UI/Chat/PersonalIntelligenceDashboardView.swift",
+                "apps/web/frontend/src/pages/DataSources.svelte"
             ],
             "states": [
                 {
@@ -4690,9 +4690,9 @@
                 "cli"
             ],
             "sources": [
-                "Nola/UI/DataSourcesView.swift",
-                "Nola/UI/Chat/PersonalIntelligenceDashboardView.swift",
-                "web/frontend/src/pages/DataSources.svelte"
+                "apps/ios/UI/DataSourcesView.swift",
+                "apps/ios/UI/Chat/PersonalIntelligenceDashboardView.swift",
+                "apps/web/frontend/src/pages/DataSources.svelte"
             ],
             "states": [
                 {
@@ -4789,9 +4789,9 @@
                 "windows"
             ],
             "sources": [
-                "Nola/UI/DataSourcesView.swift",
-                "Nola/UI/Chat/PersonalIntelligenceDashboardView.swift",
-                "web/frontend/src/pages/DataSources.svelte"
+                "apps/ios/UI/DataSourcesView.swift",
+                "apps/ios/UI/Chat/PersonalIntelligenceDashboardView.swift",
+                "apps/web/frontend/src/pages/DataSources.svelte"
             ],
             "states": [
                 {
@@ -4912,9 +4912,9 @@
                 "android"
             ],
             "sources": [
-                "Nola/UI/DataSourcesView.swift",
-                "Nola/UI/Chat/PersonalIntelligenceDashboardView.swift",
-                "web/frontend/src/pages/DataSources.svelte"
+                "apps/ios/UI/DataSourcesView.swift",
+                "apps/ios/UI/Chat/PersonalIntelligenceDashboardView.swift",
+                "apps/web/frontend/src/pages/DataSources.svelte"
             ],
             "states": [
                 {
@@ -4994,9 +4994,9 @@
                 "android"
             ],
             "sources": [
-                "Nola/UI/DataSourcesView.swift",
-                "Nola/UI/Chat/PersonalIntelligenceDashboardView.swift",
-                "web/frontend/src/pages/DataSources.svelte"
+                "apps/ios/UI/DataSourcesView.swift",
+                "apps/ios/UI/Chat/PersonalIntelligenceDashboardView.swift",
+                "apps/web/frontend/src/pages/DataSources.svelte"
             ],
             "states": [
                 {
@@ -5078,9 +5078,9 @@
                 "windows"
             ],
             "sources": [
-                "NolaMac/Features/Chat/MacAgentRoomsView.swift",
-                "Nola/UI/Chat/IOSAgentRoomsView.swift",
-                "web/frontend/src/pages/WorkspaceReview.svelte"
+                "apps/macos/Features/Chat/MacAgentRoomsView.swift",
+                "apps/ios/UI/Chat/IOSAgentRoomsView.swift",
+                "apps/web/frontend/src/pages/WorkspaceReview.svelte"
             ],
             "states": [
                 {
@@ -5194,9 +5194,9 @@
                 "cli"
             ],
             "sources": [
-                "NolaMac/Features/Chat/MacAgentRoomsView.swift",
-                "Nola/UI/Chat/IOSAgentRoomsView.swift",
-                "web/frontend/src/pages/WorkspaceReview.svelte"
+                "apps/macos/Features/Chat/MacAgentRoomsView.swift",
+                "apps/ios/UI/Chat/IOSAgentRoomsView.swift",
+                "apps/web/frontend/src/pages/WorkspaceReview.svelte"
             ],
             "states": [
                 {
@@ -5316,9 +5316,9 @@
                 "cli"
             ],
             "sources": [
-                "NolaMac/Features/Chat/MacAgentRoomsView.swift",
-                "Nola/UI/Chat/IOSAgentRoomsView.swift",
-                "web/frontend/src/pages/WorkspaceReview.svelte"
+                "apps/macos/Features/Chat/MacAgentRoomsView.swift",
+                "apps/ios/UI/Chat/IOSAgentRoomsView.swift",
+                "apps/web/frontend/src/pages/WorkspaceReview.svelte"
             ],
             "states": [
                 {
@@ -5429,9 +5429,9 @@
                 "windows"
             ],
             "sources": [
-                "NolaMac/Features/Chat/MacAgentRoomsView.swift",
-                "Nola/UI/Chat/IOSAgentRoomsView.swift",
-                "web/frontend/src/pages/WorkspaceReview.svelte"
+                "apps/macos/Features/Chat/MacAgentRoomsView.swift",
+                "apps/ios/UI/Chat/IOSAgentRoomsView.swift",
+                "apps/web/frontend/src/pages/WorkspaceReview.svelte"
             ],
             "states": [
                 {
@@ -5516,9 +5516,9 @@
                 "windows"
             ],
             "sources": [
-                "NolaMac/Features/Chat/MacAgentRoomsView.swift",
-                "Nola/UI/Chat/IOSAgentRoomsView.swift",
-                "web/frontend/src/pages/WorkspaceReview.svelte"
+                "apps/macos/Features/Chat/MacAgentRoomsView.swift",
+                "apps/ios/UI/Chat/IOSAgentRoomsView.swift",
+                "apps/web/frontend/src/pages/WorkspaceReview.svelte"
             ],
             "states": [
                 {
@@ -5612,9 +5612,9 @@
                 "windows"
             ],
             "sources": [
-                "NolaMac/Features/Chat/MacAgentRoomsView.swift",
-                "Nola/UI/Chat/IOSAgentRoomsView.swift",
-                "web/frontend/src/pages/WorkspaceReview.svelte"
+                "apps/macos/Features/Chat/MacAgentRoomsView.swift",
+                "apps/ios/UI/Chat/IOSAgentRoomsView.swift",
+                "apps/web/frontend/src/pages/WorkspaceReview.svelte"
             ],
             "states": [
                 {
@@ -5736,12 +5736,12 @@
                 "windows"
             ],
             "sources": [
-                "web/frontend/src/pages/Activity.svelte",
-                "web/frontend/src/pages/Results.svelte",
-                "web/frontend/src/pages/Dashboard.svelte",
-                "web/frontend/src/pages/Today.svelte",
-                "Nola/UI/ScheduledActionsView.swift",
-                "Nola/UI/NotificationCenterView.swift"
+                "apps/web/frontend/src/pages/Activity.svelte",
+                "apps/web/frontend/src/pages/Results.svelte",
+                "apps/web/frontend/src/pages/Dashboard.svelte",
+                "apps/web/frontend/src/pages/Today.svelte",
+                "apps/ios/UI/ScheduledActionsView.swift",
+                "apps/ios/UI/NotificationCenterView.swift"
             ],
             "states": [
                 {
@@ -5837,12 +5837,12 @@
                 "windows"
             ],
             "sources": [
-                "web/frontend/src/pages/Activity.svelte",
-                "web/frontend/src/pages/Results.svelte",
-                "web/frontend/src/pages/Dashboard.svelte",
-                "web/frontend/src/pages/Today.svelte",
-                "Nola/UI/ScheduledActionsView.swift",
-                "Nola/UI/NotificationCenterView.swift"
+                "apps/web/frontend/src/pages/Activity.svelte",
+                "apps/web/frontend/src/pages/Results.svelte",
+                "apps/web/frontend/src/pages/Dashboard.svelte",
+                "apps/web/frontend/src/pages/Today.svelte",
+                "apps/ios/UI/ScheduledActionsView.swift",
+                "apps/ios/UI/NotificationCenterView.swift"
             ],
             "states": [
                 {
@@ -5963,12 +5963,12 @@
                 "windows"
             ],
             "sources": [
-                "web/frontend/src/pages/Activity.svelte",
-                "web/frontend/src/pages/Results.svelte",
-                "web/frontend/src/pages/Dashboard.svelte",
-                "web/frontend/src/pages/Today.svelte",
-                "Nola/UI/ScheduledActionsView.swift",
-                "Nola/UI/NotificationCenterView.swift"
+                "apps/web/frontend/src/pages/Activity.svelte",
+                "apps/web/frontend/src/pages/Results.svelte",
+                "apps/web/frontend/src/pages/Dashboard.svelte",
+                "apps/web/frontend/src/pages/Today.svelte",
+                "apps/ios/UI/ScheduledActionsView.swift",
+                "apps/ios/UI/NotificationCenterView.swift"
             ],
             "states": [
                 {
@@ -6064,12 +6064,12 @@
                 "windows"
             ],
             "sources": [
-                "web/frontend/src/pages/Activity.svelte",
-                "web/frontend/src/pages/Results.svelte",
-                "web/frontend/src/pages/Dashboard.svelte",
-                "web/frontend/src/pages/Today.svelte",
-                "Nola/UI/ScheduledActionsView.swift",
-                "Nola/UI/NotificationCenterView.swift"
+                "apps/web/frontend/src/pages/Activity.svelte",
+                "apps/web/frontend/src/pages/Results.svelte",
+                "apps/web/frontend/src/pages/Dashboard.svelte",
+                "apps/web/frontend/src/pages/Today.svelte",
+                "apps/ios/UI/ScheduledActionsView.swift",
+                "apps/ios/UI/NotificationCenterView.swift"
             ],
             "states": [
                 {
@@ -6156,12 +6156,12 @@
                 "windows"
             ],
             "sources": [
-                "web/frontend/src/pages/Activity.svelte",
-                "web/frontend/src/pages/Results.svelte",
-                "web/frontend/src/pages/Dashboard.svelte",
-                "web/frontend/src/pages/Today.svelte",
-                "Nola/UI/ScheduledActionsView.swift",
-                "Nola/UI/NotificationCenterView.swift"
+                "apps/web/frontend/src/pages/Activity.svelte",
+                "apps/web/frontend/src/pages/Results.svelte",
+                "apps/web/frontend/src/pages/Dashboard.svelte",
+                "apps/web/frontend/src/pages/Today.svelte",
+                "apps/ios/UI/ScheduledActionsView.swift",
+                "apps/ios/UI/NotificationCenterView.swift"
             ],
             "states": [
                 {
@@ -6242,8 +6242,8 @@
                 "windows"
             ],
             "sources": [
-                "Nola/UI/SettingsView.swift",
-                "web/frontend/src/pages/Settings.svelte",
+                "apps/ios/UI/SettingsView.swift",
+                "apps/web/frontend/src/pages/Settings.svelte",
                 "docs/design/shared/SOFTWARE_UPDATE_EXPERIENCE.md"
             ],
             "states": [
@@ -6346,8 +6346,8 @@
                 "windows"
             ],
             "sources": [
-                "Nola/UI/SettingsView.swift",
-                "web/frontend/src/pages/Settings.svelte",
+                "apps/ios/UI/SettingsView.swift",
+                "apps/web/frontend/src/pages/Settings.svelte",
                 "docs/design/shared/SOFTWARE_UPDATE_EXPERIENCE.md"
             ],
             "states": [
@@ -6458,8 +6458,8 @@
                 "cli"
             ],
             "sources": [
-                "Nola/UI/SettingsView.swift",
-                "web/frontend/src/pages/Settings.svelte",
+                "apps/ios/UI/SettingsView.swift",
+                "apps/web/frontend/src/pages/Settings.svelte",
                 "docs/design/shared/SOFTWARE_UPDATE_EXPERIENCE.md"
             ],
             "states": [
@@ -6551,8 +6551,8 @@
                 "windows"
             ],
             "sources": [
-                "Nola/UI/SettingsView.swift",
-                "web/frontend/src/pages/Settings.svelte",
+                "apps/ios/UI/SettingsView.swift",
+                "apps/web/frontend/src/pages/Settings.svelte",
                 "docs/design/shared/SOFTWARE_UPDATE_EXPERIENCE.md"
             ],
             "states": [
@@ -6663,8 +6663,8 @@
                 "cli"
             ],
             "sources": [
-                "Nola/UI/SettingsView.swift",
-                "web/frontend/src/pages/Settings.svelte",
+                "apps/ios/UI/SettingsView.swift",
+                "apps/web/frontend/src/pages/Settings.svelte",
                 "docs/design/shared/SOFTWARE_UPDATE_EXPERIENCE.md"
             ],
             "states": [
@@ -6748,8 +6748,8 @@
                 "windows"
             ],
             "sources": [
-                "Nola/UI/SettingsView.swift",
-                "web/frontend/src/pages/Settings.svelte",
+                "apps/ios/UI/SettingsView.swift",
+                "apps/web/frontend/src/pages/Settings.svelte",
                 "docs/design/shared/SOFTWARE_UPDATE_EXPERIENCE.md"
             ],
             "states": [

@@ -52,7 +52,7 @@ usage 从共享 Attempt 账本或已认证远端累计快照读取，切换不�
 
 ## Apple 客户端共享源码（2026-10-20）
 
-`Shared/Chat/` 由 Xcode 同时编入 iOS 与 macOS target，不复制平台版本，也不保留旧名称别名。
+`shared/apple/Chat/` 由 Xcode 同时编入 iOS 与 macOS target，不复制平台版本，也不保留旧名称别名。
 
 - `ConversationTurnInput` 固定本轮提交原文，明确历史由 Core 管理或由调用方提供已提交消息。不得把历史末尾 user 当成本轮输入，也不得按文本相等去重。iOS 在实际 Core 输入边界使用 prepared 历史；Mac 在实际 run 命令边界使用 coreManaged，历史只由 Core 读取一次。
 - `AuthoritativeTextReconciliation` 共用完整文本快照的 unchanged、append、replace 判断；缩短、分歧及清空均接受权威替换。iOS Markdown buffer 与 Mac presentation session 使用同一规则。

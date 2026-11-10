@@ -19,7 +19,7 @@ active submission、idle checkpoint 和显式完成共同调用 changed-owner pr
 日志单测 58 项、任务指导 9 项、流式/绑定 10 项及 idle checkpoint 2 项通过；
 这些是定向验收，不代表当前全 workspace 或全客户端通过。
 Store 日志专项现已重跑 49/49 通过，日志
-`/tmp/nola-journal-store-production-20261006.log`；覆盖 schema 38、idle source、
+`<evidence-dir>/nola-journal-store-production-20261006.log`；覆盖 schema 38、idle source、
 精确历史 owner、多组发布、回滚、冷重开及有界读取。旧 schema 32 迁移断言已
 纳入随后新增的任务表/约束；历史 handoff 的只读凭据仍不能授权旧身份写入。
 
@@ -38,10 +38,10 @@ schema33私有Text的2/8/32MiB显式规模验收已通过，仍不是公开传�
 
 当前生产链路已有独立正文日志写入，但客户端仍采用旧累计投影：
 
-- `cli/src/session.rs::capture_committed_assistant_projection` 在有 JSON 显示订阅时，以约 50 ms 限频查询累计 assistant。提交成功与可选显示读取错误已隔离；限频只降低常数，不能消除累计复制。
+- `apps/cli/src/session.rs::capture_committed_assistant_projection` 在有 JSON 显示订阅时，以约 50 ms 限频查询累计 assistant。提交成功与可选显示读取错误已隔离；限频只降低常数，不能消除累计复制。
 - `core/nola-store/src/remote_assistant_store.rs::load_committed_assistant` 在同一 SQLite read snapshot 获取 assistant、conversation revision 和 Run `next_event_sequence - 1`。正文预算为 8 MiB，且 `presentation_input_store.rs` 的合成展示输入另有 2 MiB 预算。
 - `commit_remote_assistant_projection` 每次删除该 assistant 全部 Parts、重新插入、再发布同步 replacement。发送、接收和同步均可能累计 O(n²)。
-- `cli/src/web_parts/native_bridge.rs::committed_assistant_replay_event` 重放的是最新累计 snapshot。Mac `MacRemoteRunRecovery.afterTraceSequence` 只属于 Trace；它不是正文连续游标。
+- `apps/cli/src/web_parts/native_bridge.rs::committed_assistant_replay_event` 重放的是最新累计 snapshot。Mac `MacRemoteRunRecovery.afterTraceSequence` 只属于 Trace；它不是正文连续游标。
 - `core_agent_runtime.rs` 的终态发送仍依赖完整 conversation projection；读取失败可能丢弃待发终态。增大预算不能解决大正文的恢复与完成状态交付。
 
 现有 Run ownership、authenticated source Host、canonical terminal 和 Core→Application 提交边界保留。**禁止从 Trace、未提交 Core Part delta、模型 token 或 UI 已显示文本反推 canonical 正文。**
@@ -295,7 +295,7 @@ schema33完整集合凭证及frame成员表；Application按128 operations、128
 canonical batch、128 chunks/256KiB原始UTF-8预算分帧，保留跨帧head CAS及generation。
 canonical public view只借用真实Part字段并映射初始message owner，不clone累计正文。
 新SQLite末帧故障/冷重开/篡改与planner回归已进入实际r3六crate lib验收（exit0），
-日志`/tmp/nola-journal-publication-set-libs-r3-20261002.log`，完整范围见整体方案第8.5节。
+日志`<evidence-dir>/nola-journal-publication-set-libs-r3-20261002.log`，完整范围见整体方案第8.5节。
 另有实际v32→33 additive migration及旧Run只读不授新写回归；不通过降低当前版本
 号伪造旧schema。prepared旧字段的全历史正文完整性不靠Replay重扫，读取仍验证自身
 manifest/chunk证明，物理GC与保留期另有合同。
@@ -310,3 +310,5 @@ manifest/chunk证明，物理GC与保留期另有合同。
 以及typed Remove操作批次、空正文root和追加root；另验证同一chunk在不同epoch/Run
 下不会抹掉manifest的owner绑定。该命令
 已通过。它不是Web生产订阅器，也不意味着跨端正文显示已经迁移。
+
+`<evidence-dir>` 表示本地验收产物根目录；后面的路径相对该目录，产物不随公开仓库分发。

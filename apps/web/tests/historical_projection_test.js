@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: Apache-2.0
+// Actual Web projection decoder/presenter; no browser or account required.
+const fs = require('fs');
+const path = require('path');
+const assert = require('assert');
+global.window = global;
+require('../app/static/js/agent-trace-runtime.js');
+const input = JSON.parse(fs.readFileSync(path.join(__dirname, '../../../core/tests/fixtures/historical_conversation_projection_v1.json')));
+let result;
+const store = NolaAgentTrace.createTraceStore({ onProjection(value) { result = value; } });
+store.ingestProjection(input, { conversationId: 'history' });
+assert.equal(result.parts.length, 5);
+assert.equal(result.tools.length, 0);
+assert(result.parts.every(part => part.kind === 'historical'));
+assert(result.assistantText.includes('  原文\\n🙂  '));
+assert.equal(result.thinkingText, ' reasoning 原文 ');
+assert(!result.assistantText.includes('supported'));
+assert(!result.assistantText.includes('deferred'));
+assert(!result.assistantText.includes('unknown_kind'));
+assert(!result.assistantText.includes('must not run'));
+assert.deepStrictEqual(result.parts[3].projection.fields, input.messages[0].parts[3].projection.fields);
+assert.strictEqual(result.parts[2].projection.fields.output.value, null);
+const invalid = structuredClone(input);
+invalid.messages[0].parts[0].projection.fields.markdown.availability = 'truncated';
+assert.throws(() => store.ingestProjection(invalid), /Unknown historical field availability/);
+console.log('Historical Web decoder/presenter: passed');
+const pending = JSON.parse(fs.readFileSync(path.join(__dirname, '../../../core/tests/fixtures/historical_unloaded_conversation_projection_v1.json')));
+store.ingestProjection(pending, {conversationId: 'history'});
+assert.equal(result.assistantText, 'opaque original evidence');
+assert(!result.assistantText.includes('not_loaded'));
+assert(!result.assistantText.includes('selection_budget'));
+assert.equal(result.tools.length, 0);
+assert.equal(result.parts.length, 5);

@@ -3,7 +3,7 @@
 # Real model -> Mac runtime -> five findings -> native table -> natural follow-up.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-AUDIT_WORKSPACE="$(mktemp -d /tmp/nola-mac-audit-acceptance.XXXXXX)"
+AUDIT_WORKSPACE="$(mktemp -d "${TMPDIR:-/tmp}/nola-mac-audit-acceptance.XXXXXX")"
 cp "$ROOT/scripts/fixtures/mac-audit/design.md" "$AUDIT_WORKSPACE/design.md"
 cp "$ROOT/scripts/fixtures/mac-audit/service.py" "$AUDIT_WORKSPACE/service.py"
 printf 'Preserved audit acceptance workspace: %s\n' "$AUDIT_WORKSPACE"

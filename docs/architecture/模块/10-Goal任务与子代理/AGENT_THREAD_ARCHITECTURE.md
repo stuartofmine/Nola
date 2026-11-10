@@ -105,7 +105,7 @@ Git 工作区准备在 agent 进程沙箱外，不能信任仓库转换程序。
 
 2026-11-06 只读检查：本机 Node v26.7.0 满足上游声明的版本下限，PATH 未发现 `srt`；未安装包、未执行后端初始化，不能把依赖不全误称为已经接通的后端。Node 可用也不证明 Seatbelt、bubblewrap 或代理能启动。
 
-`cli/sandbox-runtime/package.json` 精确固定 0.0.81；`cli/src/process_sandbox.rs` 检查安装版本/CLI 内容身份、可信 PATH 与环境白名单，生成显式私有 settings/HOME/TMP 并保持原 argv。安装须位于 agent 可写范围外；只允许已准入精确读写根，worker 写根收窄至原 worktree，并拒写共享 Git 元数据。目前网络默认拒绝，非空网络授权在尚未实现完整映射前明确拒绝；不传入账户凭据。未安装依赖、不探测 OS、不搜索环境 `srt`、不执行 Windows 安装；Windows 后端未接入。尚无传递依赖 lockfile，CLI 哈希不代表全部供应链证明。离线测试只执行本地 Git 或读取合成安装元数据，验证共享准备、冷恢复、配置冻结、两个启动入口缺依赖时不执行、退出证据及未知资源保留；没有执行 ASRT/Node 后端，不能声称 OS 隔离生效。原生文件工具、语言/Python/PDF等独立执行器、MCP/插件仍在范围外；保留但无调用方的 Web script helper 也不算已覆盖。
+`apps/cli/sandbox-runtime/package.json` 精确固定 0.0.81；`apps/cli/src/process_sandbox.rs` 检查安装版本/CLI 内容身份、可信 PATH 与环境白名单，生成显式私有 settings/HOME/TMP 并保持原 argv。安装须位于 agent 可写范围外；只允许已准入精确读写根，worker 写根收窄至原 worktree，并拒写共享 Git 元数据。目前网络默认拒绝，非空网络授权在尚未实现完整映射前明确拒绝；不传入账户凭据。未安装依赖、不探测 OS、不搜索环境 `srt`、不执行 Windows 安装；Windows 后端未接入。尚无传递依赖 lockfile，CLI 哈希不代表全部供应链证明。离线测试只执行本地 Git 或读取合成安装元数据，验证共享准备、冷恢复、配置冻结、两个启动入口缺依赖时不执行、退出证据及未知资源保留；没有执行 ASRT/Node 后端，不能声称 OS 隔离生效。原生文件工具、语言/Python/PDF等独立执行器、MCP/插件仍在范围外；保留但无调用方的 Web script helper 也不算已覆盖。
 
 未触发包安装、系统设置或另一种沙箱探针。实际 SRT 的初始化、网络代理与取消清理仍需在允许相应 API 的环境验证后接入；已有拒绝不证明 SRT 自身必然失败，但不构成可绕开原拒绝的许可。
 

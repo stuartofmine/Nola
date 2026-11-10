@@ -29,7 +29,7 @@ if [[ -n "${NOLA_MAC_REAL_WORKSPACE:-}" ]]; then
     WORKSPACE="$NOLA_MAC_REAL_WORKSPACE"
     mkdir -p "$WORKSPACE"
 else
-    WORKSPACE="$(mktemp -d /tmp/nola-mac-real-e2e.XXXXXX)"
+    WORKSPACE="$(mktemp -d "${TMPDIR:-/tmp}/nola-mac-real-e2e.XXXXXX")"
 fi
 ARTIFACT_ROOT="${NOLA_MAC_REAL_ARTIFACT_ROOT:-$WORKSPACE}"
 mkdir -p "$ARTIFACT_ROOT"
@@ -168,9 +168,9 @@ if [[ -f "$APP_DEBUG_CODE" ]]; then
     APP_CODE="$APP_DEBUG_CODE"
 fi
 if [[ "${NOLA_SKIP_MAC_BUILD:-0}" == "1" ]]; then
-    STALE_SWIFT_SOURCE="$(find "$ROOT/NolaMac" "$ROOT/Nola/Services" "$ROOT/Nola/LLM" \
+    STALE_SWIFT_SOURCE="$(find "$ROOT/apps/macos" "$ROOT/apps/ios/Services" "$ROOT/apps/ios/LLM" \
         -type f -name '*.swift' -newer "$APP_CODE" -print -quit 2>/dev/null || true)"
-    STALE_HOST_SOURCE="$(find "$ROOT/core/src" "$ROOT/cli/src" \
+    STALE_HOST_SOURCE="$(find "$ROOT/core/src" "$ROOT/apps/cli/src" \
         -type f \( -name '*.rs' -o -name '*.toml' \) -newer "$EMBEDDED_HOST" \
         -print -quit 2>/dev/null || true)"
     if [[ -n "$STALE_SWIFT_SOURCE" || -n "$STALE_HOST_SOURCE" ]]; then

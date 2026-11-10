@@ -12,7 +12,7 @@ if [[ -n "${NOLA_REAL_CLI_BINARY:-}" ]]; then
     BINARY="$NOLA_REAL_CLI_BINARY"
 else
     CARGO_TARGET_ROOT="$(
-        cargo metadata --manifest-path "$ROOT/cli/Cargo.toml" --no-deps --format-version 1 \
+        cargo metadata --manifest-path "$ROOT/apps/cli/Cargo.toml" --no-deps --format-version 1 \
             | python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])'
     )"
     BINARY="$CARGO_TARGET_ROOT/release/nola"
@@ -23,13 +23,13 @@ if [[ -n "${NOLA_IOS_REAL_DERIVED_DATA:-}" ]]; then
     DERIVED_DATA="$NOLA_IOS_REAL_DERIVED_DATA"
     mkdir -p "$DERIVED_DATA"
 elif [[ "${NOLA_IOS_REAL_CLEAN_BUILD:-0}" == "1" ]]; then
-    DERIVED_DATA="$(mktemp -d /tmp/nola-ios-real-host-derived-data.XXXXXX)"
+    DERIVED_DATA="$(mktemp -d "${TMPDIR:-/tmp}/nola-ios-real-host-derived-data.XXXXXX")"
     DERIVED_DATA_WAS_CREATED=1
 else
     DERIVED_DATA="${NOLA_REAL_E2E_CACHE_ROOT:-$ROOT/.artifacts/real-e2e-cache}/ios-derived-data"
     mkdir -p "$DERIVED_DATA"
 fi
-RUNTIME_ROOT="$(mktemp -d /tmp/nola-real-mobile-host.XXXXXX)"
+RUNTIME_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/nola-real-mobile-host.XXXXXX")"
 RUNTIME_HOME="$RUNTIME_ROOT/home"
 RUNTIME_PROJECT="$RUNTIME_ROOT/project"
 mkdir -p "$RUNTIME_PROJECT"
@@ -91,7 +91,7 @@ if [[ "${NOLA_SKIP_ANDROID:-0}" == "1" && "${NOLA_SKIP_IOS:-0}" == "1" ]]; then
 fi
 
 if [[ "${NOLA_SKIP_CLI_BUILD:-0}" != "1" ]]; then
-    cargo build --release --bin nola --manifest-path "$ROOT/cli/Cargo.toml"
+    cargo build --release --bin nola --manifest-path "$ROOT/apps/cli/Cargo.toml"
 fi
 [[ -x "$BINARY" ]] || { printf 'Nola CLI executable is missing: %s\n' "$BINARY" >&2; exit 2; }
 
@@ -201,7 +201,7 @@ HOST_COMMAND=("$BINARY" web)
 if [[ "${NOLA_REAL_MOBILE_DEBUG:-0}" == "1" ]]; then
     HOST_COMMAND+=(--debug)
 fi
-HOST_COMMAND+=(--host 0.0.0.0 --port "$PORT" --web-root "$ROOT/web" --project "$RUNTIME_PROJECT")
+HOST_COMMAND+=(--host 0.0.0.0 --port "$PORT" --web-root "$ROOT/apps/web" --project "$RUNTIME_PROJECT")
 (
     cd "$RUNTIME_PROJECT"
     HOME="$RUNTIME_HOME" NOLA_DB_PATH="$RUNTIME_ROOT/nola.sqlite" \
@@ -312,7 +312,7 @@ if [[ "${NOLA_SKIP_ANDROID:-0}" != "1" ]]; then
         )
     fi
     (
-        cd "$ROOT/android"
+        cd "$ROOT/apps/android"
         JAVA_HOME="$JDK_HOME" ./gradlew :app:testDebugUnitTest --rerun-tasks \
             "${ANDROID_TEST_ARGS[@]}"
     )

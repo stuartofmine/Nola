@@ -33,7 +33,7 @@ PY
 
 if [[ "${NOLA_SKIP_CLI_BUILD:-0}" != "1" ]]; then
     printf '[real-cli-web] building current CLI Web Host\n'
-    cargo build --release --bin nola --manifest-path "$ROOT/cli/Cargo.toml"
+    cargo build --release --bin nola --manifest-path "$ROOT/apps/cli/Cargo.toml"
     cargo build --release --bin nola-service --manifest-path "$ROOT/core/nola-service/Cargo.toml"
 fi
 
@@ -208,7 +208,7 @@ process = subprocess.Popen(
         "--port",
         str(port),
         "--web-root",
-        os.path.join(root, "web"),
+        os.path.join(root, "apps/web"),
     ],
     # The Web Host's process workspace is intentionally isolated from the
     # repository. Absolute web/config paths still exercise the production

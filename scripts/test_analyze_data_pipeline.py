@@ -11,7 +11,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 PIPELINE = (
     ROOT
-    / "NolaMac/Resources/NolaBuiltInSkills.bundle/analyze-data/scripts/analyze_table.py"
+    / "apps/macos/Resources/NolaBuiltInSkills.bundle/analyze-data/scripts/analyze_table.py"
 )
 
 

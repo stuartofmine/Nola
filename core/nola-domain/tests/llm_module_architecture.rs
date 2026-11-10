@@ -229,7 +229,7 @@ fn llm_production_modules_have_explicit_acyclic_dependencies() {
         .unwrap()
         .parent()
         .unwrap()
-        .join("cli/src");
+        .join("apps/cli/src");
     let facade = syn::parse_file(&fs::read_to_string(root.join("llm.rs")).unwrap()).unwrap();
     let mut files = BTreeMap::new();
     for item in facade.items {
@@ -315,7 +315,7 @@ fn execution_context_has_no_host_module_dependency() {
         .unwrap()
         .parent()
         .unwrap()
-        .join("cli/src/execution_context.rs");
+        .join("apps/cli/src/execution_context.rs");
     let (edges, host_edges, errors) =
         dependencies_with_host(&fs::read_to_string(source).unwrap(), &BTreeSet::new());
     assert!(errors.is_empty(), "execution context: {errors:?}");

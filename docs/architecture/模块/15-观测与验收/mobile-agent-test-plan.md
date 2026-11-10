@@ -116,11 +116,11 @@ adapter, reducer, presentation model, and mounted UI and assert:
 
 ```text
 cd core && cargo test --quiet
-cd cli && cargo test
-cd android && JAVA_HOME="$(/usr/libexec/java_home -v 17)" ./gradlew test
-cd android && JAVA_HOME="$(/usr/libexec/java_home -v 17)" \
+cd apps/cli && cargo test
+cd apps/android && JAVA_HOME="$(/usr/libexec/java_home -v 17)" ./gradlew test
+cd apps/android && JAVA_HOME="$(/usr/libexec/java_home -v 17)" \
   ./gradlew :app:compileDebugAndroidTestKotlin
-cd android && JAVA_HOME="$(/usr/libexec/java_home -v 17)" \
+cd apps/android && JAVA_HOME="$(/usr/libexec/java_home -v 17)" \
   ./gradlew connectedDebugAndroidTest
 xcrun simctl list devices available
 xcodebuild test -project Nola.xcodeproj -scheme Nola \

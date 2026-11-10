@@ -124,7 +124,7 @@ the `NOLA_REAL_E2E_CONFIG_JSON` secret and set the
 runs. Manual dispatch can select `smoke` or `full`. Receipts and redacted logs
 are uploaded even when a scenario fails.
 
-The Web product scenario uses `web/.venv/bin/python` and requires the Playwright
+The Web product scenario uses `apps/web/.venv/bin/python` and requires the Playwright
 browser installation owned by that environment. It never falls back to Xcode's
 system Python, because doing so makes the same repository pass or fail depending
 on shell path ordering.
@@ -264,7 +264,7 @@ filtered internal events may leave valid gaps.
 External execution units have a separate real-process contract test:
 
 ```bash
-cd cli
+cd apps/cli
 NOLA_RUN_REAL_EXTERNAL_EXECUTOR_E2E=1 \
 NOLA_EXTERNAL_EXECUTOR_BACKENDS=codex,claude_code,opencode \
 NOLA_CODEX_MODEL=gpt-5.6-sol \

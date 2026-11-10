@@ -4,9 +4,9 @@
 
 | 边界 | 入口与职责 | 契约与字段 |
 | --- | --- | --- |
-| Rust Host HTTP | `cli/src/web_parts/routes.rs`；本机Web、配对移动端、模型管理与运行观察 | [当前运行时接口](CURRENT_RUNTIME_INTERFACES.md)；[固定路由及源码](INTERFACE_CATALOG.md#rust-host-固定路由) |
+| Rust Host HTTP | `apps/cli/src/web_parts/routes.rs`；本机Web、配对移动端、模型管理与运行观察 | [当前运行时接口](CURRENT_RUNTIME_INTERFACES.md)；[固定路由及源码](INTERFACE_CATALOG.md#rust-host-固定路由) |
 | Core Application | `ApplicationCommand`；客户端/Host经Service或embedded端口提交 | [命令tag及类型入口](INTERFACE_CATALOG.md#application-顶层命令-tag)；[Application端口](../03-Application与事务/APPLICATION_PORT_CONTRACT.md) |
-| Cloudflare Worker | `backend/worker/src/index.ts`；身份、渠道、模型代理、源/结果、通知及replica传输 | [当前Worker分发](INTERFACE_CATALOG.md#worker-路由)；不等于本地执行Host或Core reducer |
+| Cloudflare Worker | `legacy/backend/worker/src/index.ts`；身份、渠道、模型代理、源/结果、通知及replica传输 | [当前Worker分发](INTERFACE_CATALOG.md#worker-路由)；不等于本地执行Host或Core reducer |
 
 ## 使用规则
 

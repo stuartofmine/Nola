@@ -86,5 +86,7 @@ Measure an already-built Release product with:
 ```bash
 python3 scripts/measure_mac_release_memory.py \
   --app /path/to/Release/Nola.app \
-  --output /tmp/nola-mac-release-memory.json
+  --output <evidence-dir>/nola-mac-release-memory.json
 ```
+
+`<evidence-dir>` 表示本地验收产物根目录；后面的路径相对该目录，产物不随公开仓库分发。

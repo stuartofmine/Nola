@@ -16,7 +16,7 @@ else
     mkdir -p "$DERIVED_DATA"
 fi
 CONFIG_PATH="${NOLA_CONFIG_PATH:-$HOME/.nola/config.json}"
-ARTIFACTS="$(mktemp -d /tmp/nola-mac-real-memory.XXXXXX)"
+ARTIFACTS="$(mktemp -d "${TMPDIR:-/tmp}/nola-mac-real-memory.XXXXXX")"
 printf '[real-mac-xctest] diagnostics: %s\n' "$ARTIFACTS"
 RUNTIME_ROOT="$ARTIFACTS/runtime"
 RUNTIME_HOME="$RUNTIME_ROOT/home"

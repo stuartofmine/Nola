@@ -10,7 +10,7 @@ Valdi_docs
 Frameworks
 core/target
 core/target_xcframework
-cli/target
+apps/cli/target
 /target/
 **/target/
 *.profraw
@@ -26,59 +26,47 @@ cli/target
 !/.github/pull_request_template.md
 !/.github/ISSUE_TEMPLATE/*.md
 !/docs/**/*.md
-!/backend/LOGGING.md
-!/backend/worker/README.md
-!/web/README.md
+!/apps/web/README.md
 !/third_party/a2ui/svelte/README.md
-!/web/frontend/src/vendor/a2ui-svelte/ADAPTATION.md
-!/cli/README.md
-!/cli/sandbox-runtime/README.md
+!/apps/web/frontend/src/vendor/a2ui-svelte/ADAPTATION.md
+!/apps/README.md
+!/shared/README.md
+!/tests/apple/README.md
+!/apps/cli/README.md
+!/apps/cli/sandbox-runtime/README.md
 !/transport/tailcat/README.md
 !/transport/tailcat/THIRD_PARTY_NOTICES.md
-!/Nola/README_PURCHASE.md
-!/NolaMac/Resources/NolaBuiltInSkills.bundle/**/*.md
+!/apps/ios/README_PURCHASE.md
+!/apps/macos/Resources/NolaBuiltInSkills.bundle/**/*.md
 .pytest_cache/
 **/.pytest_cache/
-Nola/Frameworks/
+apps/ios/Frameworks/
 .env
 .venv
 *.pyc
 *.db
-backend/gateway_usage.db
-backend/gunicorn.pid
-backend/push_scheduler.lock
-backend/logs/gunicorn.access.log
-backend/logs/gunicorn.error.log
 build
 *.log
 *.lock
 !/Cargo.lock
-!/cli/Cargo.lock
+!/apps/cli/Cargo.lock
 .DS_Store
 **/.DS_Store
 *.installed.sha256
-backend/redis.pid
-backend/venv
-backend/dump.rdb
-web/opencode-dev
-web/app/static/agent_artifacts
-web/claude-code
-web/native_browser/extension.pem
-backend/worker/package-lock.json
-backend/worker/node_modules
-backend/worker/.wrangler
-backend/.wrangler/cache/wrangler-account.json
-backend/worker/.dev.vars
+apps/web/opencode-dev
+apps/web/app/static/agent_artifacts
+apps/web/claude-code
+apps/web/native_browser/extension.pem
 instance/nola.db.schema-backup-20260512173936
 logsnola-cli
 logs
-android/.gradle/
-android/.kotlin/
-android/.idea/
+apps/android/.gradle/
+apps/android/.kotlin/
+apps/android/.idea/
 *.bin
 markstream-vue-main/
 markstream-angular/
-android/app/.cxx/
+apps/android/app/.cxx/
 参考资料
 .artifacts/real-e2e-cache/
 .artifacts/real-e2e/android-product-ui-final/android-real-chat-product-ui.evidence.observations/android-main-activity-real-chat--database.db-shm
@@ -91,18 +79,18 @@ build-ios-protocol
 
 # Local build/test artifacts (logs, DerivedData, xcresult bundles)
 .artifacts/
-/cli/scripts/nola
+/apps/cli/scripts/nola
 
 # Vendored Playwright Node runtime is assembled at build time (see scripts/bundle_playwright_runtime.sh)
-web/playwright_runtime/node_modules/
-web/frontend/node_modules/
-web/app/static/ui/
+apps/web/playwright_runtime/node_modules/
+apps/web/frontend/node_modules/
+apps/web/app/static/ui/
 
 # Host-private endpoint credentials must never be committed.
 .nola-host-secrets/
 
 # Isolated browser interaction test build
-web/app/static/ui-tests/
+apps/web/app/static/ui-tests/
 
 # Local Vite cache and isolated macOS build output
 /.vite/
@@ -130,3 +118,7 @@ web/app/static/ui-tests/
 
 # Local task/history records; public documentation lives under docs/.
 /Doc/
+
+# Historical implementations are local-only.
+/legacy/
+/backend/

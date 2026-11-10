@@ -11,7 +11,7 @@ class FirstReleaseBaselineTests(unittest.TestCase):
     def test_numeric_rust_contracts_start_at_one(self):
         definitions = []
         pattern = re.compile(r'\bconst\s+([A-Z][A-Z0-9_]*(?:VERSION|EPOCH))\s*:\s*[ui]\d+\s*=\s*(\d+)\s*;')
-        for directory in [ROOT / 'core', ROOT / 'cli/src']:
+        for directory in [ROOT / 'core', ROOT / 'apps/cli/src']:
             for path in directory.rglob('*.rs'):
                 if any(part in {'target', 'vendor'} for part in path.parts):
                     continue
@@ -22,18 +22,18 @@ class FirstReleaseBaselineTests(unittest.TestCase):
 
     def test_platform_service_and_abi_contracts_match_core(self):
         fixtures = {
-            'NolaMac/Services/MacApplicationServiceClient.swift': r'static let protocolVersion = (\d+)',
-            'Nola/Services/IOSApplicationRuntime.swift': r'expectedServiceProtocol: UInt32 = (\d+)',
-            'Nola/LLM/WebAgentProvider.swift': r'hostPermissionProtocolVersion = (\d+)',
-            'android/app/src/main/java/com/nola/data/remote/dto/Dtos.kt': r'HOST_PERMISSION_PROTOCOL_VERSION = (\d+)',
-            'android/app/src/main/java/com/nola/core/AndroidHostInvocation.kt': r'ANDROID_HOST_INVOCATION_BINDING_VERSION = (\d+)',
+            'apps/macos/Services/MacApplicationServiceClient.swift': r'static let protocolVersion = (\d+)',
+            'apps/ios/Services/IOSApplicationRuntime.swift': r'expectedServiceProtocol: UInt32 = (\d+)',
+            'apps/ios/LLM/WebAgentProvider.swift': r'hostPermissionProtocolVersion = (\d+)',
+            'apps/android/app/src/main/java/com/nola/data/remote/dto/Dtos.kt': r'HOST_PERMISSION_PROTOCOL_VERSION = (\d+)',
+            'apps/android/app/src/main/java/com/nola/core/AndroidHostInvocation.kt': r'ANDROID_HOST_INVOCATION_BINDING_VERSION = (\d+)',
         }
         for name, pattern in fixtures.items():
             with self.subTest(path=name):
                 match = re.search(pattern, (ROOT / name).read_text())
                 self.assertIsNotNone(match)
                 self.assertEqual(match[1], '1')
-        kotlin = (ROOT / 'android/app/src/main/java/com/nola/core/AgentCoreRuntime.kt').read_text()
+        kotlin = (ROOT / 'apps/android/app/src/main/java/com/nola/core/AgentCoreRuntime.kt').read_text()
         self.assertIn('abi == 1 && protocol == 1', kotlin)
 
     def test_string_tagged_contracts_and_their_platform_producers_are_v1(self):
@@ -41,13 +41,13 @@ class FirstReleaseBaselineTests(unittest.TestCase):
         self.assertIn('#[serde(rename = "nola.tool_result.v1")]', codec)
         self.assertIn('    V1,', codec)
         self.assertNotIn('    V2,', codec)
-        for name in ['Nola/Services/DeviceAgentCoordinator.swift',
-                     'android/app/src/main/java/com/nola/core/DeviceAgentCoordinator.kt',
+        for name in ['apps/ios/Services/DeviceAgentCoordinator.swift',
+                     'apps/android/app/src/main/java/com/nola/core/DeviceAgentCoordinator.kt',
                      'core/nola-mcp-host/src/mobile.rs', 'core/nola-store/src/execution_evidence.rs']:
             text = (ROOT / name).read_text()
             self.assertIn('nola.tool_result.v1', text)
             self.assertNotIn('nola.tool_result.v2', text)
-        provider = (ROOT / 'Nola/LLM/OpenAIProvider.swift').read_text()
+        provider = (ROOT / 'apps/ios/LLM/OpenAIProvider.swift').read_text()
         self.assertIn('__NOLA_CORE_CONTEXT_V1__', provider)
         self.assertNotIn('__NOLA_CORE_CONTEXT_V3__', provider)
 

@@ -85,7 +85,7 @@ It used a temporary private application home and temporary test credentials, no
 model request or user account. The Host and both transport processes exited; this
 does not constitute an app UI or cross-machine connectivity test.
 App-side automatic upgrade is implemented for the optional linked native SDK.
-Mac/iOS share `Shared/Protocol/NolaTailcatTransport.swift`; Android uses the same
+Mac/iOS share `shared/apple/Protocol/NolaTailcatTransport.swift`; Android uses the same
 Go Session through its optional AAR and Ktor adapter. It applies only to an
 already-paired, root-mounted private HTTP Host with an expected Host identity and
 no HTTPS certificate pin. Existing HTTPS/pinned/custom-prefix connections keep

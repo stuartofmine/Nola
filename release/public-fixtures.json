@@ -1,86 +1,86 @@
 [
   {
-    "path": "NolaMacTests/MacChatProductPathIntegrationTests.swift",
+    "path": "tests/apple/macos/MacChatProductPathIntegrationTests.swift",
     "rule": "secret_assignment",
     "sha256": "ccc3bb0eda1f6cfd0ee03335c93d3213c147acf9db6e7a89ec5e61b2ff2cb671"
   },
   {
-    "path": "NolaMacTests/MacChatProductPathIntegrationTests.swift",
+    "path": "tests/apple/macos/MacChatProductPathIntegrationTests.swift",
     "rule": "secret_assignment",
     "sha256": "692505d4c3dd43fcd8b393f659d59c684dcb2fcc75b0d81f04e323979a237df1"
   },
   {
-    "path": "NolaTests/OpenAIProviderTests.swift",
+    "path": "tests/apple/ios/OpenAIProviderTests.swift",
     "rule": "secret_assignment",
     "sha256": "27765e55b8b28c18c4f05203e7144bea74d86d0fb9b7ca7191a7955cf7b8f108"
   },
   {
-    "path": "NolaTests/OpenAIProviderTests.swift",
+    "path": "tests/apple/ios/OpenAIProviderTests.swift",
     "rule": "secret_assignment",
     "sha256": "27765e55b8b28c18c4f05203e7144bea74d86d0fb9b7ca7191a7955cf7b8f108"
   },
   {
-    "path": "NolaTests/WebAgentProviderTests.swift",
+    "path": "tests/apple/ios/WebAgentProviderTests.swift",
     "rule": "provider_key",
     "sha256": "3dc99c777827eb147f3c3a059a7ea827f243dc6da4c77d4ffe3cd999f61e5910"
   },
   {
-    "path": "cli/src/config.rs",
+    "path": "apps/cli/src/config.rs",
     "rule": "secret_assignment",
     "sha256": "56d6635310eddbdbdf7f8919f4cea7fdfb9f3565e7d9805914b269fdd88ac381"
   },
   {
-    "path": "cli/src/core_agent_host_recovery.rs",
+    "path": "apps/cli/src/core_agent_host_recovery.rs",
     "rule": "secret_assignment",
     "sha256": "eb825b3d8534ff98db41adfac934330bb030bb33ee06e5b70a156abd0cc26a00"
   },
   {
-    "path": "cli/src/delegated_invocation.rs",
+    "path": "apps/cli/src/delegated_invocation.rs",
     "rule": "secret_assignment",
     "sha256": "628004a9f598e81f4de718f6c6f000827806a423f2dc7fae38c4f0bac04928a1"
   },
   {
-    "path": "cli/src/host_invocation_request.rs",
+    "path": "apps/cli/src/host_invocation_request.rs",
     "rule": "secret_assignment",
     "sha256": "add2c209e4a8186144aaf2633110162a740ee6fe9a5cc62b8b57a7b31a0cc2dc"
   },
   {
-    "path": "cli/src/host_output_admission.rs",
+    "path": "apps/cli/src/host_output_admission.rs",
     "rule": "secret_assignment",
     "sha256": "6f4e9f2d6743d3f0ac1afd2c73bf2bf88e61ac3c7097d26a0c558bc602d12760"
   },
   {
-    "path": "cli/src/llm_parts/output_budget_contract_tests.rs",
+    "path": "apps/cli/src/llm_parts/output_budget_contract_tests.rs",
     "rule": "secret_assignment",
     "sha256": "ae1759590e54304ebd8a90bbec4011b4b7fdd43f6d327c600dc560c1f1f540c4"
   },
   {
-    "path": "cli/src/messaging_channel_worker.rs",
+    "path": "apps/cli/src/messaging_channel_worker.rs",
     "rule": "secret_assignment",
     "sha256": "434c3f871d9c0a0a810a9e15e021b108d7bfe8b4ed6cf25fd88fb708e8f3bd3d"
   },
   {
-    "path": "cli/src/model_siwc_tests.rs",
+    "path": "apps/cli/src/model_siwc_tests.rs",
     "rule": "private_key",
     "sha256": "33d15ad8b53d884b04268100329d33125f15ce0c52fa736d95b2a94a8be71e0d"
   },
   {
-    "path": "cli/src/tools/parts/git_worktree.rs",
+    "path": "apps/cli/src/tools/parts/git_worktree.rs",
     "rule": "secret_assignment",
     "sha256": "065f6173d5e11f0d8724b6f65b9e6559d829d949ebf5d2eda1acb535b4a44d3e"
   },
   {
-    "path": "cli/src/tools/test_parts/filesystem_context.rs",
+    "path": "apps/cli/src/tools/test_parts/filesystem_context.rs",
     "rule": "provider_key",
     "sha256": "82be8a4d9cdebab78235e6d0618fdea34065fcb6f498073283ff4ec7376e551a"
   },
   {
-    "path": "cli/src/tools/test_parts/filesystem_context.rs",
+    "path": "apps/cli/src/tools/test_parts/filesystem_context.rs",
     "rule": "provider_key",
     "sha256": "82be8a4d9cdebab78235e6d0618fdea34065fcb6f498073283ff4ec7376e551a"
   },
   {
-    "path": "cli/src/tools/test_parts/filesystem_context.rs",
+    "path": "apps/cli/src/tools/test_parts/filesystem_context.rs",
     "rule": "secret_assignment",
     "sha256": "82be8a4d9cdebab78235e6d0618fdea34065fcb6f498073283ff4ec7376e551a"
   }

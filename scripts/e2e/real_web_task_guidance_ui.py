@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "web/tests"))
+sys.path.insert(0, str(ROOT / "apps/web/tests"))
 from playwright_browser import launch_test_chromium
 
 

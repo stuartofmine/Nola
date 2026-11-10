@@ -24,14 +24,14 @@ members = [
     "core/nola-store",
     "core/nola-store-port",
     "core/nola-update-host",
-    "cli",
+    "apps/cli",
 ]
-exclude = ["cli/vendor/tiny_http"]
+exclude = ["apps/cli/vendor/tiny_http"]
 
 [patch.crates-io]
 # The Web Host streams channel-backed SSE bodies. The audited local patch
 # flushes each body read instead of buffering short replies until 8 KiB.
-tiny_http = { path = "cli/vendor/tiny_http" }
+tiny_http = { path = "apps/cli/vendor/tiny_http" }
 
 [profile.release]
 opt-level = 2

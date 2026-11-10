@@ -13,12 +13,12 @@ if [[ -n "${NOLA_IOS_REAL_DERIVED_DATA:-}" ]]; then
     DERIVED_DATA="$NOLA_IOS_REAL_DERIVED_DATA"
     mkdir -p "$DERIVED_DATA"
 else
-    DERIVED_DATA="$(mktemp -d /tmp/nola-ios-real-derived-data.XXXXXX)"
+    DERIVED_DATA="$(mktemp -d "${TMPDIR:-/tmp}/nola-ios-real-derived-data.XXXXXX")"
     DERIVED_DATA_WAS_CREATED=1
 fi
 JDK_HOME="${NOLA_ANDROID_JAVA_HOME:-/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home}"
 MOBILE_PLATFORM="${NOLA_REAL_MOBILE_PLATFORM:-all}"
-EVIDENCE_WORK_DIR="$(mktemp -d /tmp/nola-real-mobile-evidence.XXXXXX)"
+EVIDENCE_WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/nola-real-mobile-evidence.XXXXXX")"
 PROBE_PID=""
 
 case "$MOBILE_PLATFORM" in
@@ -103,12 +103,12 @@ stop_provider_probe() {
     fi
 }
 
-ANDROID_REPORT="$ROOT/android/app/build/test-results/testDebugUnitTest/TEST-com.nola.llm.provider.OpenAiProviderRealEndToEndTest.xml"
+ANDROID_REPORT="$ROOT/apps/android/app/build/test-results/testDebugUnitTest/TEST-com.nola.llm.provider.OpenAiProviderRealEndToEndTest.xml"
 if [[ "$MOBILE_PLATFORM" == "all" || "$MOBILE_PLATFORM" == "android" ]]; then
     printf '[real-mobile] running Android provider path\n'
     start_provider_probe android
     (
-        cd "$ROOT/android"
+        cd "$ROOT/apps/android"
         JAVA_HOME="$JDK_HOME" ./gradlew \
             :app:testDebugUnitTest \
             --rerun-tasks \

@@ -1770,7 +1770,7 @@ def _default_swepro_harness_dir() -> Path:
     configured = _first_env(["NOLA_SWEPRO_HARNESS_DIR", "SWEPRO_HARNESS_DIR"])
     if configured:
         return Path(configured).expanduser()
-    return Path("/private/tmp/SWE-bench_Pro-os")
+    return Path(__file__).resolve().parents[1] / ".artifacts" / "SWE-bench_Pro-os"
 
 
 def _csv_scalar(value: Any) -> str:
@@ -1914,7 +1914,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=50)
     parser.add_argument("--instance-id", action="append", default=[], help="Restrict execution to specified SWE-bench instance ids")
     parser.add_argument("--run-id", default=f"nola-cli-swebench-verified-{_now_ts()}")
-    parser.add_argument("--work-dir", default="/tmp/nola_swebench_cli_eval")
+    parser.add_argument("--work-dir", default=str(Path(__file__).resolve().parents[1] / ".artifacts" / "swebench_cli_eval"))
     parser.add_argument("--release", action="store_true", default=True)
     parser.add_argument("--no-release", action="store_false", dest="release")
     parser.add_argument("--max-iterations", type=int, default=60)
@@ -2100,7 +2100,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     repo_root = Path(__file__).resolve().parents[1]
-    cli_dir = repo_root / "cli"
+    cli_dir = repo_root / "apps/cli"
     requested_agent_mode = args.agent_mode.strip().lower()
     if requested_agent_mode == "auto":
         requested_agent_mode = "swe" if "swe" in args.dataset_name.lower() else "standard"

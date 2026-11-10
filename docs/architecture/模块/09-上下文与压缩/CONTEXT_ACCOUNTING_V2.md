@@ -63,7 +63,7 @@ or establish real-model summary quality/cache hit rate.
 
 The September 7 audit found the following production paths:
 
-- `cli/src/store/compaction.rs` opens SQLite and creates
+- `apps/cli/src/store/compaction.rs` opens SQLite and creates
   `context_runtime_ledgers` on every ledger operation.
 - `CliAgentHostDriver::execute_compaction` writes success before emitting
   `CompactionCompleted`. Core can subsequently reject the summary budget or
@@ -156,7 +156,7 @@ Core; do not silently remove one while deleting the Host ledger.
 - Update Core reducers and checkpoint round-trip coverage before removing the
   Host ledger. Application must commit terminal accounting on its durable path.
 - Remove `context_runtime_store`, its default-open fallback, all Host writes,
-  and `cli/src/store/compaction.rs` once their consumers use canonical state.
+  and `apps/cli/src/store/compaction.rs` once their consumers use canonical state.
 - Make task-budget enforcement read the same committed context projection used
   by clients. Preserve explicit distinctions between usage and estimates.
 - Expose bounded accounting fields in the context projection. Mac footer and
@@ -187,7 +187,7 @@ semantic compaction/recall; the latter alone does not establish transactional
 correctness.
 
 The September 7 Mac switching run passed two tests in
-`/tmp/nola-long-switch-isolated.xcresult`: process-scoped test-storage isolation
+`<evidence-dir>/nola-long-switch-isolated.xcresult`: process-scoped test-storage isolation
 and switching between two 10-million-character conversations twelve times.
 Measured cold completion was 226 ms, switching P95 207 ms including test
 settling, resident window 50 messages / 501,350 text bytes, cache growth about
@@ -229,3 +229,5 @@ whole-path memory measurements, and the UI search migration remain outstanding.
 ## 当前共享入口与复制（2026-10-28核对）
 
 Application context.rs与engine compaction_driver.rs分别承接用例及压缩推进，Host执行物理请求；各Renderer不另建压缩状态机。usage、cache measurement与diagnostic各有明确来源，remote_run_context_usage保存源记录摘要。统计未知与零值分开，复制诊断的camelCase字段必须原样保留，不受外层snake_case编码策略改写。
+
+`<evidence-dir>` 表示本地验收产物根目录；后面的路径相对该目录，产物不随公开仓库分发。

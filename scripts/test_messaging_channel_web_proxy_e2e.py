@@ -90,7 +90,7 @@ def main() -> int:
         env["NOLA_HOME"] = str(home)
         process = subprocess.Popen([
             str(binary), "web", "--host", "127.0.0.1", "--port", str(web_port),
-            "--project", str(ROOT), "--web-root", str(ROOT / "web"),
+            "--project", str(ROOT), "--web-root", str(ROOT / "apps/web"),
         ], cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         base = f"http://127.0.0.1:{web_port}"
         opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))

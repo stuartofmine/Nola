@@ -28,16 +28,18 @@ Configure a model connection and select a declared model before starting a conve
 
 | Component | Implementation | Responsibility |
 | --- | --- | --- |
-| macOS · `NolaMac/` | SwiftUI / AppKit | Native desktop client and platform Host integration |
-| iOS · `Nola/` | SwiftUI | Mobile client and iOS capabilities |
-| Android · `android/` | Kotlin / Compose | Mobile client, JNI integration and Android capabilities |
-| Windows · `windows/` | Native desktop shell + Web UI | Desktop client and owned local Host integration |
-| Web · `web/frontend/` | Svelte / TypeScript | Browser interface served by the Rust Host |
-| CLI · `cli/` | Rust | Terminal client, Agent Host and local HTTP service |
+| macOS · `apps/macos/` | SwiftUI / AppKit | Native desktop client and platform Host integration |
+| iOS · `apps/ios/` | SwiftUI | Mobile client and iOS capabilities |
+| Android · `apps/android/` | Kotlin / Compose | Mobile client, JNI integration and Android capabilities |
+| Windows · `apps/windows/` | Native desktop shell + Web UI | Desktop client and owned local Host integration |
+| Web · `apps/web/frontend/` | Svelte / TypeScript | Browser interface served by the Rust Host |
+| CLI · `apps/cli/` | Rust | Terminal client, Agent Host and local HTTP service |
 | Core · `core/` | Rust, C ABI / JNI | Domain contracts, Agent execution, Application Service, persistence and Host interfaces |
-| Shared Apple code · `Shared/` | Swift | Shared presentation and protocol code |
+| Shared Apple code · `shared/apple/` | Swift | Shared presentation and protocol code |
 
 Native clients have their own UI; the macOS client is not a CLI wrapper. Conversations and durable runtime state are managed by the local Application Service and Store. Remote Host access requires authentication and explicit authorization.
+
+See [source layout](docs/engineering/SOURCE_LAYOUT.md) for platform roots, shared modules and test locations.
 
 ## Build and run from source
 
@@ -46,16 +48,16 @@ Use stable Rust and Node.js 24 or newer. Apple clients require Xcode. Android bu
 From the repository root:
 
 ```sh
-npm --prefix web/frontend ci
-npm --prefix web/frontend run build
+npm --prefix apps/web/frontend ci
+npm --prefix apps/web/frontend run build
 cargo build --locked -p nola_cli -p nola_service --bins
 ./target/debug/nola --help
-./target/debug/nola web --host 127.0.0.1 --port 5001 --web-root "$PWD/web"
+./target/debug/nola web --host 127.0.0.1 --port 5001 --web-root "$PWD/apps/web"
 ```
 
 The same local build/start sequence is available as `./dev.sh`; `WEB_HOST` and `WEB_PORT` configure the listener.
 
-For model configuration, use the Web/native settings or `nola model apply-config /absolute/path/to/config.json`. `llm.default_model` must name a connection and model declared in the same configuration.
+For model configuration, use the Web/native settings or `nola model apply-config`. `llm.default_model` must name a connection and model declared in the same configuration.
 
 In the interactive CLI, `Ctrl+V` attaches a clipboard image; an absolute image path can also be pasted. Image analysis requires declared image-input support. After a permission denial, `/allow` opens conversation permissions. Explicit configuration denials and operating-system permissions must be changed at their source; request a retry afterward.
 
@@ -65,11 +67,11 @@ Run checks for the area being changed:
 
 ```sh
 cargo test --locked -p nola_domain -p nola_protocol -p nola_store -p nola_update_host
-npm --prefix web/frontend run check
-npm --prefix web/frontend test
+npm --prefix apps/web/frontend run check
+npm --prefix apps/web/frontend test
 ./scripts/test_mac_layers.sh contracts
 ./scripts/run_client_tests.sh
-(cd android && ./gradlew test)
+(cd apps/android && ./gradlew test)
 ```
 
 Apple test runners use isolated Test outputs. macOS Debug builds must retain their configured signing identity. Android instrumentation tests require a running emulator or explicitly selected device. Contract tests do not constitute real-model or cross-platform installation acceptance; consult the validation record（本地工作记录，不随仓库分发） for results and known gaps.

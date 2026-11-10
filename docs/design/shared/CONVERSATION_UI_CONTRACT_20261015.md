@@ -167,7 +167,7 @@ iOS 18+ 使用原生滚动阶段区分手势/减速；最低支持系统保留�
   Journal 过程与窄窗口。跳过仍为缺少私有长会话夹具。
   结果 `Test-NolaMac-2026.10.15_12-25-20-+0800.xcresult`。
 - iOS：31 项思考投影、Markdown 显现、粘贴及错误呈现测试通过。
-  结果 `/tmp/nola-ui-ios-20261015-final.xcresult`。完整 Host UI 回归另行记录，
+  结果 `<evidence-dir>/nola-ui-ios-20261015-final.xcresult`。完整 Host UI 回归另行记录，
   首次启动发现夹具 Host ID 未达到身份校验最低长度，修正夹具而未放宽生产校验。
 - Android：412 项 JVM 测试通过；arm64/x86_64 原生构建和 APK 构建通过。
   只读 AVD 中 8 项 Compose 交互测试全部通过，含过程折叠、身份保持、失败摘要、
@@ -176,7 +176,7 @@ iOS 18+ 使用原生滚动阶段区分手势/减速；最低支持系统保留�
 - Web：Svelte 检查、382 项测试、生产构建通过；真实组件 SSR 覆盖 7 种语言。
 - CLI：53 项终端回归通过，含 vt100 阅读视口在流追加与输入区增高时保持首行。
 - 已检查 Mac 窄屏深色过程截图和 Android 模拟器过程截图。
-  Android 证据 `/tmp/nola-android-ui-20261015/`。
+  Android 证据 `<evidence-dir>/nola-android-ui-20261015/`。
 
 ### 并行收尾发现
 
@@ -198,3 +198,5 @@ iOS 18+ 使用原生滚动阶段区分手势/减速；最低支持系统保留�
 - 未测真实会话 60Hz 帧耗时 p95、辅助功能最大字号与所有设备尺寸；不得据单元测试
   声称性能目标达成。Mac 构建脚本/headermap、Android SDK 工具版本及 CLI 链接器
   unwind 警告仍需独立构建治理，不以关闭警告冒充修复。
+
+`<evidence-dir>` 表示本地验收产物根目录；后面的路径相对该目录，产物不随公开仓库分发。

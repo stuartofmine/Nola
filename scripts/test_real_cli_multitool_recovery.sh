@@ -37,7 +37,7 @@ MODEL_FIXTURE="$(python3 "$ROOT/scripts/e2e/model_execution_fixture.py" \
 
 if [[ "${NOLA_SKIP_CLI_BUILD:-0}" != "1" ]]; then
     printf '[real-cli-multitool] building release CLI\n'
-    (cd "$ROOT/cli" && cargo build --release --bin nola --quiet)
+    (cd "$ROOT/apps/cli" && cargo build --release --bin nola --quiet)
 fi
 [[ -x "$NOLA_BIN" ]] || {
     printf 'Current Nola CLI binary is unavailable: %s\n' "$NOLA_BIN" >&2

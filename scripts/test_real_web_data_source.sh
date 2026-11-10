@@ -75,7 +75,7 @@ base_url="http://127.0.0.1:$port"
 HOME="$isolated_home" \
 NOLA_DB_PATH="$tmp/nola.db" \
 NOLA_CLI_DATA_SOURCES_STATE="$tmp/data-sources.json" \
-NOLA_WEB_ROOT="$ROOT/web" \
+NOLA_WEB_ROOT="$ROOT/apps/web" \
 "$BINARY" web --host 127.0.0.1 --port "$port" \
   >"$tmp/web.stdout.log" 2>"$tmp/web.stderr.log" &
 server_pid=$!

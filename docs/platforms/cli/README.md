@@ -1,8 +1,8 @@
 # CLI
 
-实现位于 [cli](../../../cli/)，提供终端客户端、Agent Host 和本地 HTTP 服务。
+实现位于 [cli](../../../apps/cli)，提供终端客户端、Agent Host 和本地 HTTP 服务。
 
-- [CLI 使用与配置](../../../cli/README.md)、[模型配置](../../architecture/模块/08-模型配置与调用/README.md)。
+- [CLI 使用与配置](../../../apps/cli/README.md)、[模型配置](../../architecture/模块/08-模型配置与调用/README.md)。
 - [执行与恢复](../../architecture/模块/05-执行与恢复/README.md)、[权限与平台](../../architecture/模块/07-权限与平台/README.md)。
 - 构建使用 `cargo build --locked -p nola_cli -p nola_service --bins`；实际命令与交互按键以 `nola --help` 和终端帮助为准。
 

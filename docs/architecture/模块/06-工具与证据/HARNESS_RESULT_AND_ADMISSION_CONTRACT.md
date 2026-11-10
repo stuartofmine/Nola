@@ -77,9 +77,9 @@ Host在操作前观察目标，在路径锁内再次比较资源身份和版本�
 
 ## 回归入口
 
-- `cargo test --manifest-path cli/Cargo.toml --lib output_store`
-- `cargo test --manifest-path cli/Cargo.toml --test tool_output_roundtrip_e2e`
-- `cargo test --manifest-path cli/Cargo.toml --test desktop_host_canonical_identity_e2e`
+- `cargo test --manifest-path apps/cli/Cargo.toml --lib output_store`
+- `cargo test --manifest-path apps/cli/Cargo.toml --test tool_output_roundtrip_e2e`
+- `cargo test --manifest-path apps/cli/Cargo.toml --test desktop_host_canonical_identity_e2e`
 - `cargo test --manifest-path core/Cargo.toml --test agent_core_host_contract`
 
 这些确定性回归不使用真实用户数据库，不替代真实模型和 Mac UI 验收。

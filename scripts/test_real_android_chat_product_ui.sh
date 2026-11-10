@@ -74,9 +74,9 @@ ORIGINAL_USER="$("$ADB" -s "$SERIAL" shell am get-current-user | tr -d '\r')"
 "$ADB" -s "$SERIAL" shell am switch-user "$TEST_USER"
 [[ "$("$ADB" -s "$SERIAL" shell am get-current-user | tr -d '\r')" == "$TEST_USER" ]] || exit 2
 
-(cd "$ROOT/android" && JAVA_HOME="$JDK_HOME" ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon --quiet)
-"$ADB" -s "$SERIAL" install --user "$TEST_USER" -r "$ROOT/android/app/build/outputs/apk/debug/app-debug.apk" >/dev/null
-"$ADB" -s "$SERIAL" install --user "$TEST_USER" -r "$ROOT/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk" >/dev/null
+(cd "$ROOT/apps/android" && JAVA_HOME="$JDK_HOME" ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon --quiet)
+"$ADB" -s "$SERIAL" install --user "$TEST_USER" -r "$ROOT/apps/android/app/build/outputs/apk/debug/app-debug.apk" >/dev/null
+"$ADB" -s "$SERIAL" install --user "$TEST_USER" -r "$ROOT/apps/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk" >/dev/null
 ORIGINAL_SCREEN_TIMEOUT="$("$ADB" -s "$SERIAL" shell settings --user "$TEST_USER" get system screen_off_timeout | tr -d '\r')"
 "$ADB" -s "$SERIAL" shell settings --user "$TEST_USER" put system screen_off_timeout 1800000
 "$ADB" -s "$SERIAL" shell input keyevent 224

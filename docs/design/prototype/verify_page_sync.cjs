@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // Chromium interaction acceptance for the standalone prototype; no app or model calls.
-const {chromium}=require('../../../web/playwright_runtime/node_modules/playwright-core');
+const {chromium}=require('../../../apps/web/playwright_runtime/node_modules/playwright-core');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const base=process.env.PROTOTYPE_URL||'http://127.0.0.1:8067';
-const out=process.env.PROTOTYPE_OUT||'/tmp/nola-prototype-sync-20261110';
+const out=process.env.PROTOTYPE_OUT||require('../../../apps/web/playwright_runtime/test_environment.cjs').artifactPath('nola-prototype-sync-20261110');
 (async()=>{
  fs.mkdirSync(out,{recursive:true});
- const browser=await chromium.launch({executablePath:process.env.CHROME_PATH||'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true});
+ const browser=await chromium.launch({...require('../../../apps/web/playwright_runtime/test_environment.cjs').browserOptions(),headless:true});
  const report={kind:'prototype-only',screens:[],cases:[],errors:[],externalRequests:[]};
  try{
  for(const [width,scheme,os] of [[320,'light','ios'],[320,'dark','ios'],[390,'light','ios'],[390,'dark','ios'],[390,'light','android'],[390,'dark','android'],[1000,'dark','desktop'],[1440,'light','desktop'],[1440,'dark','desktop']]){

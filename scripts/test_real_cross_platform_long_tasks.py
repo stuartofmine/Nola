@@ -117,7 +117,7 @@ def main():
                 'api_key_env':'NOLA_ACCEPTANCE_RELAY_KEY','models':[{'id':model}]}], 'default_model':{'connection':'acceptance','model':model}}}))
             env['NOLA_CONFIG_PATH'] = str(config)
             if args.platform == 'mac':
-                env.update(NOLA_MAC_REAL_XCTEST_DERIVED_DATA='/tmp/nola-ui-polish-mac-build',
+                env.update(NOLA_MAC_REAL_XCTEST_DERIVED_DATA=str(ROOT / '.artifacts/build-mac-long-tasks'),
                     NOLA_MAC_REAL_MEMORY_PRESERVE_ARTIFACTS='1', NOLA_MAC_REAL_PRESERVE_DERIVED_DATA='1',
                     NOLA_MAC_REAL_ONLY_TESTING='NolaMacTests/MacRealProductUIEndToEndTests/testRealStreamingSurvivesConversationSwitchAndKeepsLatestVisible|||NolaMacTests/MacModelTestReasoningTierTests',
                     NOLA_MAC_REAL_EVIDENCE_PROFILE='product_ui', NOLA_MAC_REAL_EXPECTED_TEST_COUNT='4',
@@ -128,7 +128,7 @@ def main():
                 device = next(d['udid'] for runtime, values in devices['devices'].items() if '.iOS-' in runtime
                     for d in values if d.get('isAvailable'))
                 env.update(INCLUDE_UI_TESTS='1', PARALLEL_TEST_WORKERS='1', SIMULATOR_SIGNING='adhoc',
-                    DESTINATION='platform=iOS Simulator,id='+device, DERIVED_DATA='/tmp/nola-mobile-summary-ios',
+                    DESTINATION='platform=iOS Simulator,id='+device, DERIVED_DATA=str(ROOT / '.artifacts/build-ios-long-tasks'),
                     RESULT_BUNDLE=str(root/'ios.xcresult'), XCODE_OPTS='-configuration Test -jobs 2 -collect-test-diagnostics never SWIFT_EMIT_LOC_STRINGS=NO')
                 for key, value in {'NOLA_UI_REPRO_ENDPOINT':endpoint, 'NOLA_UI_REPRO_MODEL':model,
                     'NOLA_UI_REPRO_PROTOCOL':'responses'}.items():
@@ -274,7 +274,7 @@ def web(root, env, endpoint, model):
         listener.bind(('127.0.0.1',0)); port = listener.getsockname()[1]
     host_log = (root/'host.log').open('w')
     host = subprocess.Popen([str(binary),'web','--host','127.0.0.1','--port',str(port),
-        '--web-root',str(ROOT/'web'),'--project',str(project),'--allow-dir',str(project)],
+        '--web-root',str(ROOT/'apps/web'),'--project',str(project),'--allow-dir',str(project)],
         cwd=project, env=host_env, stdout=host_log, stderr=subprocess.STDOUT)
     try:
         import urllib.request
@@ -288,9 +288,9 @@ def web(root, env, endpoint, model):
                 time.sleep(.2)
         else: raise TimeoutError('Isolated Web Host did not start')
         env.update(NOLA_LONG_WEB_URL=url,NOLA_LONG_WEB_OUT=str(root))
-        run(['npm','run','build'], env, root, 'web-build',cwd=ROOT/'web/frontend')
-        run(['node','web/playwright_runtime/real_cross_platform_long_task.cjs'],env,root,'web-long-task',timeout=600)
-        run(['node','web/playwright_runtime/ui_ergonomics_regression.cjs'],env,root,'web-ergonomics',timeout=300)
+        run(['npm','run','build'], env, root, 'web-build',cwd=ROOT/'apps/web/frontend')
+        run(['node','apps/web/playwright_runtime/real_cross_platform_long_task.cjs'],env,root,'web-long-task',timeout=600)
+        run(['node','apps/web/playwright_runtime/ui_ergonomics_regression.cjs'],env,root,'web-ergonomics',timeout=300)
     finally:
         host.terminate()
         try: host.wait(timeout=15)

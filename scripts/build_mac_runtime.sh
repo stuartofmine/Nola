@@ -50,8 +50,8 @@ write_dependency_file() {
   {
     printf '%s:' "$(escape_dependency_path "$HOST_DEST")"
     find \
-      "$ROOT/cli/src" \
-      "$ROOT/cli/vendor" \
+      "$ROOT/apps/cli/src" \
+      "$ROOT/apps/cli/vendor" \
       "$ROOT/core" \
       "$ROOT/third_party/a2ui/spec" \
       -type d \( -name target -o -name 'target_*' -o -name tests \) -prune -o \
@@ -59,7 +59,7 @@ write_dependency_file() {
       -print | sort | while IFS= read -r path; do
         printf ' %s' "$(escape_dependency_path "$path")"
       done
-    find "$ROOT/NolaMac/Resources/NolaBuiltInSkills.bundle" \
+    find "$ROOT/apps/macos/Resources/NolaBuiltInSkills.bundle" \
       -type f ! -name '*.pyc' -print | sort | while IFS= read -r path; do
         printf ' %s' "$(escape_dependency_path "$path")"
       done
@@ -67,11 +67,11 @@ write_dependency_file() {
       "$ROOT/Cargo.toml" \
       "$ROOT/Cargo.lock" \
       "$ROOT/rust-toolchain.toml" \
-      "$ROOT/cli/build.rs" \
+      "$ROOT/apps/cli/build.rs" \
       "$ROOT/scripts/build_mac_runtime.sh" \
       "$NOLA_RUST_BUILD_CACHE_HELPER" \
       "$NOLA_MAC_INSTALL_HELPER" \
-      "$ROOT/NolaMac/Resources/com.gaojc.Nola.background-scheduler.plist"; do
+      "$ROOT/apps/macos/Resources/com.gaojc.Nola.background-scheduler.plist"; do
       printf ' %s' "$(escape_dependency_path "$path")"
     done
     printf '\n'
@@ -146,7 +146,7 @@ fi
 nola_install_mac_executable "$HOST_ARTIFACT" "$HOST_DEST" "$INSTALL_SIGN"
 nola_install_mac_executable "$SERVICE_ARTIFACT" "$SERVICE_DEST" "$INSTALL_SIGN"
 
-AGENT_PLIST_SOURCE="$ROOT/NolaMac/Resources/com.gaojc.Nola.background-scheduler.plist"
+AGENT_PLIST_SOURCE="$ROOT/apps/macos/Resources/com.gaojc.Nola.background-scheduler.plist"
 if [[ -n "${NOLA_RUNTIME_OUTPUT_DIR:-}" ]]; then
   AGENT_PLIST_DEST="${RUNTIME_OUTPUT_DIR}/com.gaojc.Nola.background-scheduler.plist"
 else

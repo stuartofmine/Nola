@@ -7,7 +7,7 @@ This checklist separates code-enforced privacy behavior from App Store and Play 
 ## Code-enforced baseline
 
 - No tracking domains or cross-app tracking behavior are configured.
-- iOS Required Reason APIs are declared in `Nola/PrivacyInfo.xcprivacy`:
+- iOS Required Reason APIs are declared in `apps/ios/PrivacyInfo.xcprivacy`:
   - `CA92.1`: app-only preferences in `UserDefaults`.
   - `C617.1`: metadata for files inside Nola's app container.
   - `E174.1`: free-space checks before model downloads.

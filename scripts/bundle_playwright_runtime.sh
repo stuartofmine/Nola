@@ -1,7 +1,7 @@
 #!/bin/sh
 set -euo pipefail
 
-SOURCE="${NOLA_PLAYWRIGHT_SOURCE:-${SRCROOT}/web/playwright_runtime}"
+SOURCE="${NOLA_PLAYWRIGHT_SOURCE:-${SRCROOT}/apps/web/playwright_runtime}"
 DESTINATION="${NOLA_PLAYWRIGHT_OUTPUT:-${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/NolaPlaywrightRuntime}"
 CACHE="${NOLA_PLAYWRIGHT_CACHE:-${DERIVED_FILE_DIR}/nola-playwright-runtime}"
 

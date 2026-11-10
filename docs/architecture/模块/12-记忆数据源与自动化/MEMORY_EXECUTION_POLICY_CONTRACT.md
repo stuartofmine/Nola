@@ -112,7 +112,7 @@ Core 在 start_turn 形成持久化上下文和模型请求之前调用同一纯
 ### Host 准入模块的生产边界
 
 记忆权限解析不应属于庞大的 CoreAgentHost 编排实现。抽取
-`cli/src/host_memory_admission.rs`，负责独立 Host 配置、客户端约束、准入冻结、
+`apps/cli/src/host_memory_admission.rs`，负责独立 Host 配置、客户端约束、准入冻结、
 恢复上限与派发前校验；不负责 Run 生命周期、模型调用、UI 或持久化事务。
 
 实际消费者：native_bridge 在所有模型配置分支前做请求约束校验；runtime

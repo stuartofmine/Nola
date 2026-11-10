@@ -7,7 +7,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
 . "$ROOT/../scripts/lib/rust_build_cache.sh"
 nola_rust_build_cache_init "${CARGO:-cargo}"
 BINDINGS_MANIFEST="$ROOT/nola-mobile-bindings/Cargo.toml"
-OUTPUT_DIR="${1:-$ROOT/../android/app/src/main/cpp/rust}"
+OUTPUT_DIR="${1:-$ROOT/../apps/android/app/src/main/cpp/rust}"
 MIN_SDK="${NOLA_ANDROID_MIN_SDK:-26}"
 
 if ! nola_cargo ndk --version >/dev/null 2>&1; then
@@ -17,8 +17,8 @@ fi
 NDK_PATH="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}"
 if [[ -z "$NDK_PATH" ]]; then
   SDK_PATH="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
-  if [[ -z "$SDK_PATH" && -f "$ROOT/../android/local.properties" ]]; then
-    SDK_PATH=$(sed -n 's/^sdk\.dir=//p' "$ROOT/../android/local.properties" | tail -1 | sed 's/\\:/:/g; s/\\\\/\\/g')
+  if [[ -z "$SDK_PATH" && -f "$ROOT/../apps/android/local.properties" ]]; then
+    SDK_PATH=$(sed -n 's/^sdk\.dir=//p' "$ROOT/../apps/android/local.properties" | tail -1 | sed 's/\\:/:/g; s/\\\\/\\/g')
   fi
   if [[ -n "$SDK_PATH" && -d "$SDK_PATH/ndk" ]]; then
     NDK_PATH=$(find "$SDK_PATH/ndk" -mindepth 1 -maxdepth 1 -type d | sort | tail -1)

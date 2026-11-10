@@ -150,7 +150,7 @@ def main() -> int:
 
     build = subprocess.run(
         ["cargo", "build", "--quiet", "--bin", "nola", "--bin", "nola-agent-host"],
-        cwd=Path(__file__).resolve().parents[1] / "cli",
+        cwd=Path(__file__).resolve().parents[1] / "apps/cli",
         text=True,
         capture_output=True,
     )
@@ -163,7 +163,7 @@ def main() -> int:
     root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(root / "scripts"))
     from real_e2e_evidence import record_step
-    cli = root / "cli"
+    cli = root / "apps/cli"
     binary = cli / "target" / "debug" / "nola"
     agent_host = cli / "target" / "debug" / "nola-agent-host"
     if not binary.is_file() or not agent_host.is_file():
@@ -227,7 +227,7 @@ def main() -> int:
                 "--project",
                 str(root),
                 "--web-root",
-                str(root / "web"),
+                str(root / "apps/web"),
             ],
             cwd=root,
             env=environment,

@@ -6,7 +6,7 @@ const fs = require("fs");
 const path = require("path");
 
 const root = path.resolve(__dirname, "..");
-const resources = path.join(root, "android", "app", "src", "main", "res");
+const resources = path.join(root, "apps/android", "app", "src", "main", "res");
 const localeDirectories = fs
   .readdirSync(resources, { withFileTypes: true })
   .filter((entry) => entry.isDirectory() && /^values(?:-|$)/.test(entry.name))

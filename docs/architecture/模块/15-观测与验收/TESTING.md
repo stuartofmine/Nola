@@ -97,7 +97,7 @@ CLI and Web consume the same committed file through their production reducers;
 neither test owns a translated event copy. Run the cross-surface gates with:
 
 ```bash
-cd cli && cargo test --quiet canonical_core_parts_drive_cli_human_and_json_projections
+cd apps/cli && cargo test --quiet canonical_core_parts_drive_cli_human_and_json_projections
 web/.venv/bin/python -m pytest -q web/tests/test_agent_trace_runtime.py -k shared_core_part_lifecycle
 ```
 
@@ -116,7 +116,7 @@ xcodebuild test -project Nola.xcodeproj -scheme Nola \
 The Android production decoder/reducer gate reads the same fixture in place and must run on JDK 17:
 
 ```bash
-cd android
+cd apps/android
 JAVA_HOME=$(/usr/libexec/java_home -v 17) ./gradlew testDebugUnitTest \
   --tests '*AgentCoreCanonicalPartLifecycleTest*'
 ```
@@ -144,7 +144,7 @@ The CLI gate launches independent child processes and treats the saved checkpoin
 the only handoff:
 
 ```bash
-cd cli && cargo test --test pending_effect_recovery
+cd apps/cli && cargo test --test pending_effect_recovery
 ```
 
 The iOS and Android tests use the production Core bridge/coordinator and persisted
@@ -155,7 +155,7 @@ xcodebuild test -project Nola.xcodeproj -scheme Nola \
   -destination 'platform=iOS Simulator,name=<available simulator name>' \
   -only-testing:NolaTests/AgentCoreDeviceExactlyOnceTests
 
-cd android
+cd apps/android
 JAVA_HOME=$(/usr/libexec/java_home -v 17) ./gradlew testDebugUnitTest \
   --tests '*DeviceHostExactlyOnceCoordinatorTest*'
 ```
@@ -235,9 +235,9 @@ buffering.
 
 ### CLI and Web
 
-- `cli/tests/pty_interaction.rs`: shipped CLI binary inside a pseudo terminal,
+- `apps/cli/tests/pty_interaction.rs`: shipped CLI binary inside a pseudo terminal,
   including cursor editing, interruption, footer stability, and permission input.
-- `web/tests/test_agent_host_full_e2e.py`: shipped Web host, browser login, real DOM
+- `apps/web/tests/test_agent_host_full_e2e.py`: shipped Web host, browser login, real DOM
   interaction, permission approval, tool execution, streaming gates, and persistence.
 - DOM-only runtime tests remain integration tests even when they cover streaming.
 
@@ -249,8 +249,8 @@ a substitute for rerunning the relevant commands after later behavior changes.
 | Surface | Evidence |
 | --- | --- |
 | Shared Core | `cd core && cargo test --quiet`: 82 tests passed across the reported groups, including the canonical Trace contract |
-| CLI | `cd cli && cargo test --quiet`: 628 passed, 1 ignored; the integration group passed 5 tests |
-| Local Web | `web/.venv/bin/python -m pytest -q web/tests`: 17 passed; `cargo test --quiet web::tests`: 35 passed; `cargo test --quiet store::event::tests`: 3 passed |
+| CLI | `cd apps/cli && cargo test --quiet`: 628 passed, 1 ignored; the integration group passed 5 tests |
+| Local Web | `apps/web/.venv/bin/python -m pytest -q web/tests`: 17 passed; `cargo test --quiet web::tests`: 35 passed; `cargo test --quiet store::event::tests`: 3 passed |
 | macOS | `MacAgentCapabilityEndToEndTests`: 12/12 real Agent Host flows; `MacChatWorkspaceBehaviorTests`: 9/9 Trace, bubble, Markdown, and semantic no-op flows |
 | iOS | `AgentTraceContractTests`, `ChatStreamingRevealTokenizerTests`, and `CoreUserFlowTests.testCanonicalHostTranscriptRendersThinkingToolsAndIncrementalMarkdownExactlyOnce` passed |
 | Android | Full `./gradlew test` passed for Debug and Release; real-emulator `AgentTraceAndroidEndToEndTest` passed 1/1 |

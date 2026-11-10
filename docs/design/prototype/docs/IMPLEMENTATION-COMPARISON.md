@@ -38,4 +38,6 @@ python3 -m http.server 8067 --bind 127.0.0.1 --directory docs/design/prototype
 node docs/design/prototype/verify_page_sync.cjs
 ```
 
-脚本使用仓库现有 Playwright 和本机 Chrome；默认输出 `/tmp/nola-prototype-sync-20261109`，可用 `PROTOTYPE_OUT` 指定目录。它实际点击、输入、切换、保存和返回，不调用内部函数伪造操作。最终结果见 [VALIDATION.md](VALIDATION.md)。
+脚本使用仓库现有 Playwright 和本机 Chrome；默认输出 `<evidence-dir>/nola-prototype-sync-20261109`，可用 `PROTOTYPE_OUT` 指定目录。它实际点击、输入、切换、保存和返回，不调用内部函数伪造操作。最终结果见 [VALIDATION.md](VALIDATION.md)。
+
+`<evidence-dir>` 表示本地验收产物根目录；后面的路径相对该目录，产物不随公开仓库分发。

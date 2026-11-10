@@ -14,7 +14,7 @@ def main():
     errors = []
     links = 0
     documents = sorted((ROOT / 'docs').rglob('*.md'))
-    documents += [ROOT / path for path in ['README.md', 'README.zh-CN.md', 'AGENTS.md', 'cli/README.md', 'release/README.md']]
+    documents += [ROOT / path for path in ['README.md', 'README.zh-CN.md', 'AGENTS.md', 'apps/README.md', 'shared/README.md', 'tests/apple/README.md', 'apps/cli/README.md', 'release/README.md']]
     for document in documents:
         text = re.sub(r'```.*?```', '', document.read_text(), flags=re.S)
         for destination in re.findall(r'\]\(([^)\n]+)\)', text):
@@ -47,7 +47,9 @@ def main():
         tracked = subprocess.check_output(['git', 'ls-files', '-z', '--', 'Doc'], cwd=ROOT)
         if tracked:
             errors.append('Local Doc/ records are still tracked by Git')
-        for path in ['Doc/当前任务/record.md', 'Doc/历史任务/record.json']:
+        if subprocess.check_output(['git', 'ls-files', '-z', '--', 'legacy', 'backend'], cwd=ROOT):
+            errors.append('Historical implementations are still tracked by Git')
+        for path in ['Doc/当前任务/record.md', 'Doc/历史任务/record.json', 'legacy/backend/source.py', 'backend/source.py']:
             ignored = subprocess.run(['git', 'check-ignore', '--no-index', '-q', path], cwd=ROOT)
             if ignored.returncode:
                 errors.append(f'Local record is not ignored: {path}')

@@ -5,14 +5,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 test('native SIWC labels, phases and safe errors cover every Mac locale', () => {
-    const catalog = JSON.parse(readFileSync(new URL('../NolaMac/Localizable.xcstrings', import.meta.url), 'utf8'));
+    const catalog = JSON.parse(readFileSync(new URL('../apps/macos/Localizable.xcstrings', import.meta.url), 'utf8'));
     const files = ['UI/MacSiwcSignInView.swift', 'UI/MacSiwcAccountManagementView.swift', 'Services/MacSiwcAccountBridge.swift'];
     const keys = new Set(['Signed in', 'Signed out', 'Reauthorize %@', 'ChatGPT authorization on this Mac',
         'Add ChatGPT Authorization',
         'Authorize Nola independently for this Mac’s account store. This does not reuse Codex login or change a paired Host.',
         'The local runtime owns this authorization. Discover and enable models explicitly; signing in does not itself verify inference.']);
     for (const file of files) {
-        const source = readFileSync(new URL('../NolaMac/' + file, import.meta.url), 'utf8');
+        const source = readFileSync(new URL('../apps/macos/' + file, import.meta.url), 'utf8');
         for (const match of source.matchAll(/(?:Text|Button|Toggle|TextField|String\(localized:|confirmationDialog)\s*\(?\s*"([^"]+)"/g)) keys.add(match[1]);
         if (file.endsWith('MacSiwcSignInView.swift')) {
             const phases = source.slice(source.indexOf('private func phaseLabel'));

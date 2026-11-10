@@ -21,7 +21,7 @@ from e2e.cargo_paths import cargo_binary
 
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKER = ROOT / "backend/worker"
+WORKER = ROOT / "legacy/backend/worker"
 WRANGLER = WORKER / "node_modules/.bin/wrangler"
 NOLA = cargo_binary(ROOT)
 
@@ -131,7 +131,7 @@ def main() -> int:
 
     build = subprocess.run(
         ["cargo", "build", "--quiet", "--bin", "nola", "--bin", "nola-agent-host"],
-        cwd=ROOT / "cli",
+        cwd=ROOT / "apps/cli",
         text=True,
         capture_output=True,
     )
@@ -248,7 +248,7 @@ def main() -> int:
             web_process = subprocess.Popen(
                 [
                     str(NOLA), "web", "--host", "127.0.0.1", "--port", str(web_port),
-                    "--project", str(ROOT), "--web-root", str(ROOT / "web"),
+                    "--project", str(ROOT), "--web-root", str(ROOT / "apps/web"),
                 ],
                 cwd=ROOT,
                 env=host_environment,

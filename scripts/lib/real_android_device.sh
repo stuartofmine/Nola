@@ -62,7 +62,7 @@ real_android_require_device() {
         TMPDIR="$REAL_ANDROID_RUNTIME_TMP/" \
         "$REAL_ANDROID_EMULATOR" -avd "$avd" -no-window -no-audio -no-boot-anim \
             -gpu swiftshader_indirect -no-snapshot-save \
-            >"${NOLA_ANDROID_EMULATOR_LOG:-/tmp/nola-real-android-emulator.log}" 2>&1 &
+            >"${NOLA_ANDROID_EMULATOR_LOG:-$REAL_ANDROID_RUNTIME_TMP/emulator.log}" 2>&1 &
         REAL_ANDROID_STARTED_EMULATOR=1
     else
         printf '[real-android-device] reusing %s\n' "$REAL_ANDROID_DEVICE_ID"

@@ -8,13 +8,13 @@ Source checked: 2026-11-08. The canonical Store is a product-state schema and ow
 
 | Client/resource | Current source of identity | Meaning |
 | --- | --- | --- |
-| CLI / Rust Web | `cli/src/platform_paths.rs`, explicit `NOLA_DB_PATH` or resolved platform default | Same database identity is required to share conversations/models; CLI default uses the Store epoch in its filename |
+| CLI / Rust Web | `apps/cli/src/platform_paths.rs`, explicit `NOLA_DB_PATH` or resolved platform default | Same database identity is required to share conversations/models; CLI default uses the Store epoch in its filename |
 | macOS | `MacAppEnvironment.databaseURL`, supplied to the Service and child environment | The current Mac filename is not assumed to equal a separately launched CLI default |
 | iOS | `IOSApplicationRuntime` resolves its sandbox `nola-product.db` | Embedded Application owns the local writer |
 | Android | `AndroidApplicationRuntime` resolves no-backup `nola-product.db` | Device sandbox and pending-command journals are not a remote Host database |
 | Upload staging | Store content-upload adapters and a bounded auxiliary SQLite resource | Staging is not the canonical conversation/Run authority |
 | Code-memory index | Its explicit index/database resource | Derived search index, not a second conversation writer |
-| Worker / D1 | `backend/worker` current schema | Separate auth/transport/replica deployment; not local Agent state |
+| Worker / D1 | `legacy/backend/worker` current schema | Separate auth/transport/replica deployment; not local Agent state |
 
 Do not search, copy, merge or recreate other database files to make a selected path appear to work. Model weights, bookmarks, credentials, logs and browser resources have separate owners; their presence does not make them business truth.
 

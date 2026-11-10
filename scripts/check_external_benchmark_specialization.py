@@ -12,12 +12,11 @@ ROOT = Path(__file__).resolve().parents[1]
 BENCHMARK_ROOT = ROOT / "evals" / "benchmarks"
 PRODUCTION_ROOTS = (
     ROOT / "core" / "src",
-    ROOT / "cli" / "src",
-    ROOT / "Nola",
-    ROOT / "NolaMac",
-    ROOT / "android" / "app" / "src" / "main",
-    ROOT / "web" / "app",
-    ROOT / "backend" / "worker" / "src",
+    ROOT / "apps/cli" / "src",
+    ROOT / "apps/ios",
+    ROOT / "apps/macos",
+    ROOT / "apps/android" / "app" / "src" / "main",
+    ROOT / "apps/web" / "app",
 ) + tuple((ROOT / "core").glob("*/src"))
 
 

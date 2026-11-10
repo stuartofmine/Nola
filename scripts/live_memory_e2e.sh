@@ -133,7 +133,7 @@ printf '{"stage":"model-selection","model":"%s","endpoint":"%s","source":"%s"}\n
 
 if [[ "${NOLA_SKIP_CLI_BUILD:-0}" != "1" ]]; then
     run_with_timeout "${NOLA_REAL_E2E_BUILD_TIMEOUT_SECONDS:-600}" \
-        cargo build --manifest-path "$repo_root/cli/Cargo.toml" --release --bin nola --quiet
+        cargo build --manifest-path "$repo_root/apps/cli/Cargo.toml" --release --bin nola --quiet
 fi
 [[ -x "$nola_bin" ]] || { echo "Nola CLI binary is unavailable: $nola_bin" >&2; exit 2; }
 

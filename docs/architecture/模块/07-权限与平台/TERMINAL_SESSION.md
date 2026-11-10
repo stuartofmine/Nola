@@ -37,7 +37,7 @@ shell worker 通过 RuntimeTaskPort 取得执行所有权；非交互后端关�
 
 ### 崩溃恢复的准确含义与证据边界
 
-当前实现入口为 `cli/src/task_runtime_parts/supervision.rs::recover_orphaned_shell_tasks`。恢复不等于重新执行：
+当前实现入口为 `apps/cli/src/task_runtime_parts/supervision.rs::recover_orphaned_shell_tasks`。恢复不等于重新执行：
 
 - 仅客户端退出、原 worker 仍有有效租约：保留原 task/attempt，不能因重新打开会话启动第二个命令。
 - worker 租约过期且存在精确绑定的 Prepared 未派发证明：由 Store 原子判定是否允许重新派发；PID 不存在不是未执行证明。

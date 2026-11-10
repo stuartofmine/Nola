@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VENDOR = ROOT / 'web/frontend/src/vendor/a2ui-svelte'
+VENDOR = ROOT / 'apps/web/frontend/src/vendor/a2ui-svelte'
 REFERENCE = ROOT / 'third_party/a2ui'
 
 def sha(data):

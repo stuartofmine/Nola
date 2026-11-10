@@ -1,11 +1,13 @@
 * text=auto eol=lf
 *.pdf -text
 *.xlsx -text
+# Preserve upstream Windows batch wrapper bytes when relocating source roots.
+*.bat -text
 # Pinned external fixtures are verified byte-for-byte against their manifests.
 # Preserve upstream whitespace and avoid rendering multi-megabyte JSON records as text diffs.
 evals/benchmarks/terminal-bench/tasks/** -whitespace
 evals/benchmarks/longmemeval/cases/*.json -diff
-cli/src/tools/test_fixtures/*.pdf -diff
-cli/src/tools/test_fixtures/*.xlsx -diff
+apps/cli/src/tools/test_fixtures/*.pdf -diff
+apps/cli/src/tools/test_fixtures/*.xlsx -diff
 # Generated unified-diff context must retain the pinned renderer's indentation.
 third_party/a2ui/production-adaptation.patch -whitespace

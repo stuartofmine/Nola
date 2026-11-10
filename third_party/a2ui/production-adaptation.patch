@@ -1,5 +1,5 @@
 --- /dev/null
-+++ web/frontend/src/vendor/a2ui-svelte/ADAPTATION.md
++++ apps/web/frontend/src/vendor/a2ui-svelte/ADAPTATION.md
 @@ -0,0 +1,11 @@
 +# Nola renderer adaptation
 +
@@ -13,7 +13,7 @@
 +
 +The Surface maps the complete renderer palette to Nola design tokens, including manual appearance selection; native modal backgrounds use the same tokens. Text links reject URL credentials and control characters. Pending/deleted projections expose localized noninteractive status instead of an empty card. These changes affect rendering and URL admission only, not Core authority or wire interpretation.
 --- third_party/a2ui/svelte/src/lib/catalog/basic/Button.svelte
-+++ web/frontend/src/vendor/a2ui-svelte/catalog/basic/Button.svelte
++++ apps/web/frontend/src/vendor/a2ui-svelte/catalog/basic/Button.svelte
 @@ -1,7 +1,7 @@
  <script lang="ts">
  	import Slot from '../../render/Slot.svelte';
@@ -49,7 +49,7 @@
  	}
  </style>
 --- third_party/a2ui/svelte/src/lib/catalog/basic/CheckBox.svelte
-+++ web/frontend/src/vendor/a2ui-svelte/catalog/basic/CheckBox.svelte
++++ apps/web/frontend/src/vendor/a2ui-svelte/catalog/basic/CheckBox.svelte
 @@ -1,10 +1,11 @@
  <script lang="ts">
  	import type { Binding } from '../types.js';
@@ -77,7 +77,7 @@
  
  <div class="a2ui-checkbox-wrap" style:flex-grow={weight}>
 --- third_party/a2ui/svelte/src/lib/catalog/basic/ChoicePicker.svelte
-+++ web/frontend/src/vendor/a2ui-svelte/catalog/basic/ChoicePicker.svelte
++++ apps/web/frontend/src/vendor/a2ui-svelte/catalog/basic/ChoicePicker.svelte
 @@ -1,6 +1,6 @@
  <script lang="ts">
  	import type { Binding } from '../types.js';
@@ -124,7 +124,7 @@
  	}
  </style>
 --- third_party/a2ui/svelte/src/lib/catalog/basic/DateTimeInput.svelte
-+++ web/frontend/src/vendor/a2ui-svelte/catalog/basic/DateTimeInput.svelte
++++ apps/web/frontend/src/vendor/a2ui-svelte/catalog/basic/DateTimeInput.svelte
 @@ -1,10 +1,11 @@
  <script lang="ts">
  	import type { Binding } from '../types.js';
@@ -199,7 +199,7 @@
  		aria-label={ariaLabel ?? label}
  		oninput={(e) => write(e.currentTarget.value)}
 --- third_party/a2ui/svelte/src/lib/catalog/basic/Modal.svelte
-+++ web/frontend/src/vendor/a2ui-svelte/catalog/basic/Modal.svelte
++++ apps/web/frontend/src/vendor/a2ui-svelte/catalog/basic/Modal.svelte
 @@ -1,4 +1,5 @@
  <script lang="ts">
 +	import { onDestroy } from 'svelte';
@@ -324,7 +324,7 @@
  		background: none;
  		border: 1px solid var(--a2ui-color-border);
 --- third_party/a2ui/svelte/src/lib/catalog/basic/Slider.svelte
-+++ web/frontend/src/vendor/a2ui-svelte/catalog/basic/Slider.svelte
++++ apps/web/frontend/src/vendor/a2ui-svelte/catalog/basic/Slider.svelte
 @@ -1,10 +1,11 @@
  <script lang="ts">
  	import type { Binding } from '../types.js';
@@ -356,7 +356,7 @@
  	// `steps` is a count of intervals, not a step size.
  	const step = $derived(steps && steps > 0 ? (max - min) / steps : undefined);
 --- third_party/a2ui/svelte/src/lib/catalog/basic/Tabs.svelte
-+++ web/frontend/src/vendor/a2ui-svelte/catalog/basic/Tabs.svelte
++++ apps/web/frontend/src/vendor/a2ui-svelte/catalog/basic/Tabs.svelte
 @@ -12,6 +12,16 @@
  
  	// Selection is local component state — the spec keeps it off the data model.
@@ -410,7 +410,7 @@
  	.panel {
  		display: flex;
 --- third_party/a2ui/svelte/src/lib/catalog/basic/TextField.svelte
-+++ web/frontend/src/vendor/a2ui-svelte/catalog/basic/TextField.svelte
++++ apps/web/frontend/src/vendor/a2ui-svelte/catalog/basic/TextField.svelte
 @@ -1,10 +1,11 @@
  <script lang="ts">
  	import type { Binding } from '../types.js';
@@ -489,7 +489,7 @@
  		/>
  	{/if}
 --- third_party/a2ui/svelte/src/lib/catalog/basic/ValidationMessages.svelte
-+++ web/frontend/src/vendor/a2ui-svelte/catalog/basic/ValidationMessages.svelte
++++ apps/web/frontend/src/vendor/a2ui-svelte/catalog/basic/ValidationMessages.svelte
 @@ -1,5 +1,5 @@
  <script lang="ts">
 -	import type { ValidationResult } from '../../protocol/checks.js';
@@ -498,7 +498,7 @@
  	interface Props {
  		validation: ValidationResult;
 --- third_party/a2ui/svelte/src/lib/catalog/basic/markdown.ts
-+++ web/frontend/src/vendor/a2ui-svelte/catalog/basic/markdown.ts
++++ apps/web/frontend/src/vendor/a2ui-svelte/catalog/basic/markdown.ts
 @@ -22,13 +22,14 @@
  const SAFE_PROTOCOLS = new Set(['http:', 'https:', 'mailto:']);
  
@@ -516,7 +516,7 @@
  		return null;
  	}
 --- third_party/a2ui/svelte/src/lib/catalog/types.ts
-+++ web/frontend/src/vendor/a2ui-svelte/catalog/types.ts
++++ apps/web/frontend/src/vendor/a2ui-svelte/catalog/types.ts
 @@ -1,103 +1,11 @@
 -import type { Component } from 'svelte';
 -
@@ -631,7 +631,7 @@
 +    | { kind: 'nodes'; nodes: SlotNode[] }
 +    | { kind: 'tabs'; tabs: { title: string; nodes: SlotNode[] }[] };
 --- third_party/a2ui/svelte/src/lib/render/Node.svelte
-+++ web/frontend/src/vendor/a2ui-svelte/render/Node.svelte
++++ apps/web/frontend/src/vendor/a2ui-svelte/render/Node.svelte
 @@ -1,89 +1,67 @@
 -<!--
 -	Renders one A2UI component by id.
@@ -787,7 +787,7 @@
 +    <p role="status">{node.component}: unsupported renderer component</p>
  {/if}
 --- third_party/a2ui/svelte/src/lib/render/Slot.svelte
-+++ web/frontend/src/vendor/a2ui-svelte/render/Slot.svelte
++++ apps/web/frontend/src/vendor/a2ui-svelte/render/Slot.svelte
 @@ -1,34 +1,10 @@
 -<!--
 -	Renders the children of a slot.
@@ -832,7 +832,7 @@
 -{/each}
 +{#each nodes as node (node.key)}<Node id={node.id} />{/each}
 --- third_party/a2ui/svelte/src/lib/render/Surface.svelte
-+++ web/frontend/src/vendor/a2ui-svelte/render/Surface.svelte
++++ apps/web/frontend/src/vendor/a2ui-svelte/render/Surface.svelte
 @@ -1,78 +1,228 @@
 -<!--
 -	Mounts one A2UI surface.
@@ -1137,7 +1137,7 @@
 +    }
  </style>
 --- third_party/a2ui/svelte/src/lib/render/context.ts
-+++ web/frontend/src/vendor/a2ui-svelte/render/context.ts
++++ apps/web/frontend/src/vendor/a2ui-svelte/render/context.ts
 @@ -1,32 +1,21 @@
  import { getContext, setContext } from 'svelte';
 -import type { A2uiClient } from '../client.svelte.js';

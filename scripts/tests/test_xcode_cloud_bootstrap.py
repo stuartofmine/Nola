@@ -87,7 +87,7 @@ class XcodeCloudBootstrapTests(unittest.TestCase):
 
     def test_bootstrap_is_executable_and_core_cargo_phase_is_not_sandboxed(self):
         self.assertTrue(os.access(ROOT / "ci_scripts/ci_post_clone.sh", os.X_OK))
-        project = (ROOT / "NolaCore/NolaCore.xcodeproj/project.pbxproj").read_text()
+        project = (ROOT / "shared/apple-core/NolaCore.xcodeproj/project.pbxproj").read_text()
         # Each Core target configuration must override the project sandbox:
         # Cargo writes registry/target caches and may fetch pinned dependencies.
         configurations = [settings for settings in re.findall(r"buildSettings = \{(.*?)\};", project, re.S)

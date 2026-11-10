@@ -20,8 +20,8 @@
 | Provider 物理请求快照 | Host 派生、可丢弃、单个有界最近请求 | 已接受配置 + wire body + response witness → 可恢复热分叉候选 | 不可用走明确原因的冷恢复，不影响原文完整性 |
 | usage ledger | 已提交 physical attempt 事实 | provider usage/缺测事实 → 会话累计统计 | 缺测是 unknown，不补 0、不估造 cache read |
 
-实际入口：`cli/src/llm_parts/request_snapshot.rs` 的 PreparedModelRequest 保存实际 body、
-完成响应、配置及开始时间；`cli/src/agent_host_driver_parts/compaction_summary.rs` 的
+实际入口：`apps/cli/src/llm_parts/request_snapshot.rs` 的 PreparedModelRequest 保存实际 body、
+完成响应、配置及开始时间；`apps/cli/src/agent_host_driver_parts/compaction_summary.rs` 的
 CompactionRequestWitness 保存会话/配置身份、窗口及 usage，文件为 `compaction-request.json`。
 它不是 checkpoint 或原文备份，删除它最多损失热路径资格。
 
@@ -99,7 +99,7 @@ W-O-S≥512 的准入保护；实际必需输入能否放下仍由请求规划�
 
 ### 历史超限问题与当前完整请求准入
 
-2026-10-12 `/tmp/nola-mac-real-memory.xx14Ue/runtime/provider.ndjson` 的真实用量
+2026-10-12 `<evidence-dir>/nola-mac-real-memory.xx14Ue/runtime/provider.ndjson` 的真实用量
 显示：带 18 个工具的正常请求输入为 16672–21605 token，已超过配置 W=16000，
 更超过 P=9600；O=5600 已正确上线路。这次服务端接受请求只能证明任务流程可跑通，
 不能证明客户端窗口预算正确，也不能称为严格 16k 模型验收。
@@ -328,3 +328,5 @@ Host 取得一份完成的物理响应后，先通过现有 `ModelUsageReported`
 摘要请求必须同时容纳输出预留、证据保留指令、历史来源与滚动检查点。较小窗口可能在首个模型调用前就无法满足保守输入界限；此时明确拒绝、保留原文，并指引选择更大上下文窗口的模型。不能截断保留契约或把规划错误变成待确认的压缩成功。回归覆盖 8K 窗口/4K 输出预留的拒绝、零模型调用和零待处理写入，以及有效窗口下提交、再次维护与冷启动恢复。
 
 维护候选只有报告明确完成、无工具调用且符合摘要预算时才能采纳。测试传输同样必须报告自己的完成原因和工具调用事实；未知字段保持未知，不通过默认补全将未知候选标为成功。
+
+`<evidence-dir>` 表示本地验收产物根目录；后面的路径相对该目录，产物不随公开仓库分发。

@@ -137,7 +137,7 @@ STRICT_FINAL_VALIDATION_SKILLS = {
 
 BUILTIN_SKILL_ROOT = (
     Path(__file__).resolve().parents[1]
-    / "NolaMac/Resources/NolaBuiltInSkills.bundle"
+    / "apps/macos/Resources/NolaBuiltInSkills.bundle"
 )
 
 
@@ -288,13 +288,13 @@ def find_binary(repo: Path) -> Path:
 
 def newest_runtime_source_mtime_ns(repo: Path) -> int | None:
     roots = [
-        repo / "cli/src",
+        repo / "apps/cli/src",
         repo / "core/src",
-        repo / "NolaMac/Resources/NolaBuiltInSkills.bundle",
+        repo / "apps/macos/Resources/NolaBuiltInSkills.bundle",
     ]
     files = [
-        repo / "cli/Cargo.toml",
-        repo / "cli/build.rs",
+        repo / "apps/cli/Cargo.toml",
+        repo / "apps/cli/build.rs",
         repo / "core/Cargo.toml",
     ]
     for root in roots:
@@ -320,7 +320,7 @@ def build_or_find_binary(repo: Path) -> Path:
             "--example", "terminal_acceptance_oracle",
             "-p", "nola_service", "--bin", "nola-service",
             "--manifest-path",
-            str(repo / "cli/Cargo.toml"),
+            str(repo / "apps/cli/Cargo.toml"),
         ]
         print(
             f"[BUILD] current release binary required: {initial_error}", flush=True

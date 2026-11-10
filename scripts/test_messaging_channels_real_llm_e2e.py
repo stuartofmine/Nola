@@ -26,7 +26,7 @@ from e2e.cargo_paths import cargo_binary
 
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKER = ROOT / "backend/worker"
+WORKER = ROOT / "legacy/backend/worker"
 WRANGLER = WORKER / "node_modules/.bin/wrangler"
 NOLA = cargo_binary(ROOT)
 CLIENT_UUID = "805beab8-3185-4b21-984f-c7611f5895d3"
@@ -225,7 +225,7 @@ def main() -> int:
             "--var", "nola_backend_env:" + json.dumps(worker_config, separators=(",", ":"))]
         worker = subprocess.Popen(worker_args, cwd=WORKER, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         host_env = {**os.environ, "NOLA_HOME": str(nola_home), "NOLA_DB_PATH": str(root / "nola.db")}
-        host = subprocess.Popen([str(NOLA), "web", "--host", "127.0.0.1", "--port", str(host_port), "--project", str(workspace), "--web-root", str(ROOT / "web")], cwd=ROOT, env=host_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        host = subprocess.Popen([str(NOLA), "web", "--host", "127.0.0.1", "--port", str(host_port), "--project", str(workspace), "--web-root", str(ROOT / "apps/web")], cwd=ROOT, env=host_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         try:
             wait_ready(backend + "/healthz", worker)
             wait_ready(f"http://127.0.0.1:{host_port}/api/health", host)

@@ -47,9 +47,9 @@ ConcretePermissionSubject，再在获得原 effect identity 的提交路径冻�
 
 已核对的原实际链路（下方列明本轮收紧，未完成整体替换）：
 
-1. `cli/src/task_runtime_parts/supervision.rs` 从 capability/input 创建 ToolRequest，
+1. `apps/cli/src/task_runtime_parts/supervision.rs` 从 capability/input 创建 ToolRequest，
    调用 `tools::session_permission_rule` 得到字符串，写入 StoredPermissionRequest。
-2. `cli/src/tools/parts/permissions_output.rs` 为文件操作选择父目录，并可能通过
+2. `apps/cli/src/tools/parts/permissions_output.rs` 为文件操作选择父目录，并可能通过
    `nearest_permission_project_root` 扩大到项目根；浏览器资源统一为 browser。
    这些派生会依赖当前文件系统状态，不是原 Core effect 的冻结事实。
 3. `permission_source::capture` 比对 capability/input/指导及执行身份，未比对
@@ -185,7 +185,7 @@ Host evidence_id。subject_for 验证请求身份/输入摘要/目标、需求�
 delivery 的情况下接受客户端构造的 facts。invocation_digest 必须来自已提交规范化
 输入事实，不能采用模型自报摘要。生产归约与目标 Host 的证据校验尚未接线。
 
-现有 `cli/src/tools/parts/resource_evidence.rs::resource_content_version` 会读取文件
+现有 `apps/cli/src/tools/parts/resource_evidence.rs::resource_content_version` 会读取文件
 内容生成版本，validation_snapshot 还会遍历目录。它们服务执行/验证证据，不能
 直接复用为授权前资源解析，否则会在授权前完成受保护的读取。新解析只能收集
 允许范围内的身份元数据，资源内容读取仍必须等待执行授权。

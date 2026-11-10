@@ -4,15 +4,15 @@
 
 ## Project Structure & Module Organization
 
-Nola is a local-first personal AI assistant with several clients and shared services. `Nola/` contains the SwiftUI iOS app, with UI in `Nola/UI/`, services in `Nola/Services/`, LLM code in `Nola/LLM/`, assets in `Nola/Assets.xcassets/`, and localization in `*.lproj/`. `NolaMac/` contains the native SwiftUI/AppKit macOS app; its tests live in `NolaMacTests/`. iOS unit tests live in `NolaTests/`; UI tests live in `NolaUITests/`. `cli/` provides the independent Rust CLI and Rust Web Host. `web/` contains templates/static assets plus native host helpers, and `android/` is the Kotlin/Compose client. Shared TypeScript/Bazel modules are under `modules/`; the Rust FFI core is `core/`. Public docs are in `docs/`, organized by purpose and platform. `Doc/当前任务/` and `Doc/历史任务/` are local-only records; do not track or export them.
+Nola is a local-first personal AI assistant with several clients and shared services. `apps/ios/` contains the SwiftUI iOS app, with UI in `apps/ios/UI/`, services in `apps/ios/Services/`, LLM code in `apps/ios/LLM/`, assets in `apps/ios/Assets.xcassets/`, and localization in `*.lproj/`. `apps/macos/` contains the native SwiftUI/AppKit macOS app; its tests live in `tests/apple/macos/`. iOS unit tests live in `tests/apple/ios/`; UI tests live in `tests/apple/ios-ui/`. `apps/cli/` provides the independent Rust CLI and Rust Web Host. `apps/web/` contains templates/static assets plus native host helpers, and `apps/android/` is the Kotlin/Compose client. Shared TypeScript/Bazel modules are under `modules/`; the Rust FFI core is `core/`. Public docs are in `docs/`, organized by purpose and platform. `Doc/当前任务/` and `Doc/历史任务/` are local-only records; do not track or export them. Historical implementations in `legacy/` are also local-only and must not be tracked or exported.
 
 ## Build, Test, and Development Commands
 
 - Build the Svelte assets and start `nola web` for the local Web client.
 - `cd core && cargo test --quiet`: run Rust core tests.
 - `cd core && cargo build --release`: build Rust library artifacts.
-- `cd android && ./gradlew test`: run Android unit tests when Android code changes.
-- `cd android && ./gradlew connectedDebugAndroidTest`: run Android instrumentation tests with a running emulator or device; install `cargo-ndk` and Android Rust targets first.
+- `cd apps/android && ./gradlew test`: run Android unit tests when Android code changes.
+- `cd apps/android && ./gradlew connectedDebugAndroidTest`: run Android instrumentation tests with a running emulator or device; install `cargo-ndk` and Android Rust targets first.
 - `xcrun simctl list devices available`: list valid simulator destinations before running iOS tests; do not hard-code a simulator that is absent locally.
 - `./scripts/run_client_tests.sh`: run iOS tests with bounded parallel workers and automatic cleanup of XCTest simulator clones created by the run. Set `PARALLEL_TEST_WORKERS=<count>` to tune concurrency.
 - `./scripts/test_mac_layers.sh full`: run macOS tests against the architecture-qualified local Mac destination without polling connected iOS devices.
@@ -34,7 +34,7 @@ Do not ask for approval again for ordinary builds or tests. Use isolated test
 databases and fixtures; this authorization does not permit deleting user data,
 changing production credentials, or polling locked physical iOS devices.
 
-Place iOS Swift tests in `NolaTests/` or `NolaUITests/` and macOS tests in `NolaMacTests/`, with names ending in `Tests.swift`. Android JVM tests live in `android/app/src/test/`; device/Compose tests live in `android/app/src/androidTest/`. Rust CLI/Web tests can stay inline under `#[cfg(test)]` in `cli/`. Add tests for behavior changes, API contracts, scheduling, persistence, streaming message order, and FFI boundaries.
+Place iOS Swift tests in `tests/apple/ios/` or `tests/apple/ios-ui/` and macOS tests in `tests/apple/macos/`, with names ending in `Tests.swift`. Android JVM tests live in `apps/android/app/src/test/`; device/Compose tests live in `apps/android/app/src/androidTest/`. Rust CLI/Web tests can stay inline under `#[cfg(test)]` in `apps/cli/`. Add tests for behavior changes, API contracts, scheduling, persistence, streaming message order, and FFI boundaries.
 
 ## Commit & Pull Request Guidelines
 

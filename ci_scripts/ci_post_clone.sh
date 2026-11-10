@@ -7,7 +7,7 @@ export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
 export PATH="$CARGO_HOME/bin:$PATH"
 
 if ! command -v rustup >/dev/null 2>&1; then
-    NOLA_RUSTUP_INSTALLER=$(mktemp /tmp/nola-rustup-init.XXXXXX)
+    NOLA_RUSTUP_INSTALLER=$(mktemp "${TMPDIR:-/tmp}/nola-rustup-init.XXXXXX")
     trap 'rm -f "$NOLA_RUSTUP_INSTALLER"' EXIT HUP INT TERM
     curl --proto '=https' --tlsv1.2 --fail --location --retry 3 \
         https://sh.rustup.rs -o "$NOLA_RUSTUP_INSTALLER"

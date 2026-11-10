@@ -71,7 +71,7 @@ class LocalizationCoverageTests(unittest.TestCase):
     def test_android_audit_rejects_locale_placeholder_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            resources = root / "android/app/src/main/res"
+            resources = root / "apps/android/app/src/main/res"
             locale_dirs = ("de", "es", "fr", "ja", "ru", "zh")
             default = resources / "values/strings.xml"
             default.parent.mkdir(parents=True)

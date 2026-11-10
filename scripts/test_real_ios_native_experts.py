@@ -8,6 +8,7 @@ from pathlib import Path
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 
@@ -16,14 +17,14 @@ scenario = os.environ.get("NOLA_NATIVE_EXPERT_SCENARIO", "template_capture")
 if scenario not in {"template_capture", "public_reasoning_stop"}:
     raise SystemExit("Unknown native expert acceptance scenario")
 run_id = str(uuid.uuid4())
-runtime = Path("/tmp") / ("nola-room-real-ui-" + run_id)
+runtime = Path(tempfile.gettempdir()) / ("nola-room-real-ui-" + run_id)
 runtime.mkdir(mode=0o700)
 home = runtime / "home"
 (home / ".nola").mkdir(parents=True)
 project = runtime / "project"
 project.mkdir()
 database = runtime / "nola.db"
-derived = Path(os.environ.get("NOLA_IOS_REAL_DERIVED_DATA", "/tmp/nola-native-expert-derived-" + run_id))
+derived = Path(os.environ.get("NOLA_IOS_REAL_DERIVED_DATA", str(REPO / ".artifacts" / ("nola-native-expert-derived-" + run_id))))
 binary = Path(os.environ.get("NOLA_REAL_CLI_BINARY", str(REPO / "target/debug/nola")))
 config = json.loads(Path(os.environ.get("NOLA_CONFIG_PATH", str(Path.home() / ".nola/config.json"))).read_text())["llm"]
 selection = config["default_model"]

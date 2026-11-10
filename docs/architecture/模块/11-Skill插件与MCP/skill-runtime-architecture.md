@@ -8,7 +8,7 @@ macOS and CLI Web expose the same built-in Skill catalog. A Skill is an executab
 
 ## Single source of truth
 
-The canonical packages live in `NolaMac/Resources/NolaBuiltInSkills.bundle`. macOS loads that bundle directly. The CLI build embeds the same files into the Rust binary and materializes enabled packages under `~/.nola/cli/skills/built-in` at runtime. An installed CLI therefore does not require a Nola source checkout.
+The canonical packages live in `apps/macos/Resources/NolaBuiltInSkills.bundle`. macOS loads that bundle directly. The CLI build embeds the same files into the Rust binary and materializes enabled packages under `~/.nola/cli/skills/built-in` at runtime. An installed CLI therefore does not require a Nola source checkout.
 
 All built-in packages are shipped with the application. Nola never downloads a Skill or its reference files at task time. "On demand" below refers only to context loading: the files are already local, but the agent reads only the selected workflow and references.
 

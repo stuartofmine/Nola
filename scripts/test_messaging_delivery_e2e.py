@@ -18,7 +18,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKER = ROOT / "backend/worker"
+WORKER = ROOT / "legacy/backend/worker"
 WRANGLER = WORKER / "node_modules/.bin/wrangler"
 
 

@@ -241,7 +241,7 @@
       ],
       "timeoutSeconds": 600,
       "realModel": true,
-      "command": "test -x web/.venv/bin/python && NOLA_RUN_REAL_MODEL_E2E=1 web/.venv/bin/python -m pytest -q -rs web/tests/test_real_llm_web_agent_e2e.py",
+      "command": "test -x apps/web/.venv/bin/python && NOLA_RUN_REAL_MODEL_E2E=1 apps/web/.venv/bin/python -m pytest -q -rs apps/web/tests/test_real_llm_web_agent_e2e.py",
       "evidence": {
         "platforms": [
           "web"

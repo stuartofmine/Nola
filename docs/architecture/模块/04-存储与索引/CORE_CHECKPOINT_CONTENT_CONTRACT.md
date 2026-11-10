@@ -157,12 +157,14 @@ Core checkpoint过滤回归lib15、host contract10、turn context1，共26项通
 保持、完整wire字节、事件顺序、独立turn身份、cursor与revision不变；空批次不推进
 cursor。此处不再复制正文，但上游Created仍含两个Part、delta事件仍含累计Part，
 不能将局部所有权转移当作事件合同已经增量化。完整Core lib393、Host contract115、
-turn context2共510项通过，日志`/tmp/nola-owned-envelope-core-20261001.log`。
+turn context2共510项通过，日志`<evidence-dir>/nola-owned-envelope-core-20261001.log`。
 
 同日继续删除`checkpoint()`仅为取得session/revision/cursor/catalog而生成完整snapshot
 的额外副本，直接读取四个权威字段。checkpoint schema、created_at=0、reason、原
 借用state投影及终态裁剪保持不变；六态×17种reason与旧snapshot构造逐字节相同，
 另检查idle及cursor/revision/catalog边界。Core完整lib395、Host115、turn context2共
-512项通过，日志`/tmp/nola-checkpoint-metadata-core-20261001.log`。Application lib182
-和六组integration33均通过，`/tmp/nola-checkpoint-metadata-application-20261001.log`。
+512项通过，日志`<evidence-dir>/nola-checkpoint-metadata-core-20261001.log`。Application lib182
+和六组integration33均通过，`<evidence-dir>/nola-checkpoint-metadata-application-20261001.log`。
 这不是checkpoint状态已经无复制，也不是新的持久schema或增量恢复实现。
+
+`<evidence-dir>` 表示本地验收产物根目录；后面的路径相对该目录，产物不随公开仓库分发。

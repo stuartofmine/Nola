@@ -34,9 +34,9 @@ fn native_clients_cannot_construct_a_second_mutable_core_through_the_abi() {
         "core/nola-agent-engine/src/agent/mod.rs",
         "core/swift_shims/nola_core.h",
         "core/nola-mobile-bindings/src/lib.rs",
-        "Nola/Services/AgentCoreRuntime.swift",
-        "android/app/src/main/java/com/nola/core/AgentCoreRuntime.kt",
-        "android/app/src/main/cpp/nola_core_jni.cpp",
+        "apps/ios/Services/AgentCoreRuntime.swift",
+        "apps/android/app/src/main/java/com/nola/core/AgentCoreRuntime.kt",
+        "apps/android/app/src/main/cpp/nola_core_jni.cpp",
     ] {
         let source = fs::read_to_string(root.join(relative))
             .unwrap_or_else(|error| panic!("missing protected ABI surface {relative}: {error}"));
@@ -93,7 +93,7 @@ fn dependency_names(relative_manifest: &str) -> BTreeSet<String> {
 
 #[test]
 fn native_host_manifest_does_not_require_terminal_frontend_dependencies() {
-    let package = workspace_package("cli/Cargo.toml");
+    let package = workspace_package("apps/cli/Cargo.toml");
     let features = package["features"].as_object().expect("declared features");
     assert!(features.contains_key("native-host"));
     assert_eq!(features["native-host"], serde_json::json!([]),
@@ -357,7 +357,7 @@ fn new_application_and_runtime_sources_do_not_import_the_old_core_directly() {
 
 #[test]
 fn mac_views_do_not_bypass_the_application_client() {
-    let ui_root = workspace_root().join("NolaMac/UI");
+    let ui_root = workspace_root().join("apps/macos/UI");
     for path in source_files(&ui_root, "swift") {
         let source = fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
@@ -372,7 +372,7 @@ fn mac_views_do_not_bypass_the_application_client() {
 #[test]
 fn llm_facade_uses_real_module_boundaries_not_textual_inclusion() {
     let root = workspace_root();
-    let facade = fs::read_to_string(root.join("cli/src/llm.rs")).unwrap();
+    let facade = fs::read_to_string(root.join("apps/cli/src/llm.rs")).unwrap();
     for module in ["streaming", "provider_protocols", "responses"] {
         assert!(
             facade
@@ -382,10 +382,10 @@ fn llm_facade_uses_real_module_boundaries_not_textual_inclusion() {
         );
     }
     for relative in [
-        "cli/src/llm.rs",
-        "cli/src/llm_parts/streaming.rs",
-        "cli/src/llm_parts/provider_protocols.rs",
-        "cli/src/llm_parts/responses.rs",
+        "apps/cli/src/llm.rs",
+        "apps/cli/src/llm_parts/streaming.rs",
+        "apps/cli/src/llm_parts/provider_protocols.rs",
+        "apps/cli/src/llm_parts/responses.rs",
     ] {
         let source = fs::read_to_string(root.join(relative)).unwrap();
         let compact: String = source
@@ -411,8 +411,8 @@ fn swift_clients_require_the_current_application_service_protocol() {
     let protocol = fs::read_to_string(root.join("core/nola-protocol/src/lib.rs")).unwrap();
     let current = literal(&protocol, "pub const APPLICATION_SERVICE_PROTOCOL_VERSION:");
     for (path, declaration) in [
-        ("Nola/Services/IOSApplicationRuntime.swift", "static let expectedServiceProtocol:"),
-        ("NolaMac/Services/MacApplicationServiceClient.swift", "static let protocolVersion ="),
+        ("apps/ios/Services/IOSApplicationRuntime.swift", "static let expectedServiceProtocol:"),
+        ("apps/macos/Services/MacApplicationServiceClient.swift", "static let protocolVersion ="),
     ] {
         let source = fs::read_to_string(root.join(path)).unwrap();
         assert_eq!(literal(&source, declaration), current,

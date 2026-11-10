@@ -59,7 +59,7 @@ Every primary page uses the same four layers:
 
 ## Layout and component authority
 
-Use `MacDesignTokens`/`MacDesignColor` in `NolaMac/UI/MacPageChrome.swift`, theme assets and the responsive workspace layout for actual widths, gutters, targets and motion. Do not keep a second hard-coded 232/244-point sidebar or 300/360-point inspector specification in design prose. Native window layout adapts to available space; the central transcript keeps a readable width.
+Use `MacDesignTokens`/`MacDesignColor` in `apps/macos/UI/MacPageChrome.swift`, theme assets and the responsive workspace layout for actual widths, gutters, targets and motion. Do not keep a second hard-coded 232/244-point sidebar or 300/360-point inspector specification in design prose. Native window layout adapts to available space; the central transcript keeps a readable width.
 
 Borders and keyboard focus follow semantic theme tokens. Hover and pressed fills must remain visible in dark and light mode without changing control size. Reply copy actions have no permanent border or filled surface; touch targets and text insets remain usable.
 

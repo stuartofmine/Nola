@@ -14,7 +14,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BACKEND_DIR="$ROOT/backend"
+BACKEND_DIR="$ROOT/legacy/backend"
 BACKEND_PY="$BACKEND_DIR/.venv/bin/python"
 PIP_INDEX_URL="${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}"
 PIP_EXTRA_INDEX_URL="${PIP_EXTRA_INDEX_URL:-}"

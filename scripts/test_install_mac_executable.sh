@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 . "$(dirname "$0")/lib/install_mac_executable.sh"
-fixture=$(mktemp -d /tmp/nola-runtime-install-test.XXXXXX)
+fixture=$(mktemp -d "${TMPDIR:-/tmp}/nola-runtime-install-test.XXXXXX")
 destination="$fixture/helper"
 cleanup() {
     rm -f "$destination"

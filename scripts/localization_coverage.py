@@ -453,7 +453,7 @@ def android_placeholders(value: str) -> list[str]:
 
 
 def audit_android(quality: bool = False) -> list[str]:
-    resources = ROOT / "android/app/src/main/res"
+    resources = ROOT / "apps/android/app/src/main/res"
     default_path = resources / "values/strings.xml"
     if not default_path.exists():
         return ["android: missing values/strings.xml"]
@@ -517,9 +517,9 @@ def rust_match_strings(source: str, function_name: str) -> dict[str, str]:
 
 
 def audit_cli(quality: bool) -> list[str]:
-    source_path = ROOT / "cli/src/i18n.rs"
+    source_path = ROOT / "apps/cli/src/i18n.rs"
     if not source_path.exists():
-        return ["cli: missing cli/src/i18n.rs"]
+        return ["cli: missing apps/cli/src/i18n.rs"]
     source = source_path.read_text(encoding="utf-8")
     enum_match = re.search(r"pub enum Message\s*\{(.*?)\n\}", source, re.DOTALL)
     if enum_match is None:
@@ -648,10 +648,10 @@ def main() -> int:
     failures: list[str] = []
     if args.platform in {"all", "mac"}:
         failures.extend(
-            audit_apple("mac", ROOT / "NolaMac", ROOT / "NolaMac", MAC_LOCALES, args.quality)
+            audit_apple("mac", ROOT / "apps/macos", ROOT / "apps/macos", MAC_LOCALES, args.quality)
         )
     if args.platform in {"all", "ios"}:
-        failures.extend(audit_apple("ios", ROOT / "Nola", ROOT / "Nola", IOS_LOCALES, args.quality))
+        failures.extend(audit_apple("ios", ROOT / "apps/ios", ROOT / "apps/ios", IOS_LOCALES, args.quality))
     if args.platform in {"all", "android"}:
         failures.extend(audit_android(args.quality))
     if args.platform in {"all", "cli"}:

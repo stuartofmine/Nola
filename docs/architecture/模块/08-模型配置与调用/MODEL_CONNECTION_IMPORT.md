@@ -33,7 +33,7 @@ Nola 自有会话复用既有 `ModelAttemptRecord`、usage 部分归并与会话
 
 ## 2026-10-19 当前代码接线
 
-`cli/src/model_connection_host.rs` 实现用户明确指定绝对路径的 JSON/JSONC/TOML 读取、私密预览计划、十分钟有效期及确认前来源重读。计划仅存在 Host 进程，UI 只接收随机 token 和脱敏候选；独立 CLI 进程不能复用另一进程的 token。来源配置只读，外部 auth 文件和来源显式环境变量必须分别由调用者授权。禁止执行 auth 命令、展开文件引用或猜测未知供应商密钥目的地。
+`apps/cli/src/model_connection_host.rs` 实现用户明确指定绝对路径的 JSON/JSONC/TOML 读取、私密预览计划、十分钟有效期及确认前来源重读。计划仅存在 Host 进程，UI 只接收随机 token 和脱敏候选；独立 CLI 进程不能复用另一进程的 token。来源配置只读，外部 auth 文件和来源显式环境变量必须分别由调用者授权。禁止执行 auth 命令、展开文件引用或猜测未知供应商密钥目的地。
 
 | 来源 | 当前支持 | 明确不支持 |
 |---|---|---|
@@ -52,9 +52,9 @@ Host 目录取消使用 request UUID + 数据库 owner + connection/revision 绑
 
 Apple 目录使用独立 ephemeral URLSession，禁用 cookie/共享 credential/cache，拒绝重定向，三并发预算、十秒请求与资源超时、读取过程中两 MiB 上限；只向已绑定账户的精确协议地址追加 /models，不猜测额外 /v1。URLSession Task 取消并在提交前检查 cancellation；界面提供 Cancel discovery，退出页面取消活动请求，保留原目录/选择。已进入同步提交的结果不可回滚；界面重新加载已保存状态，不宣称已提交目录被撤销。Apple/Host 使用各自平台传输实现，相同限制不意味着已共同通过全部平台验收。
 
-本轮隔离验证：Rust `model_catalog_discovery` 1/1、`model_connection_host` 9/9（含慢响应主动取消与 revision 失效拒写）；Mac `MacModelConnectionServiceTests` 4/4（提前取消、实际/声明体积超限、重定向拒绝、匿名连接）；Web 类型检查 0 errors/0 warnings。测试不使用真实账户，Mac Test 配置结果为 `/tmp/nola-catalog-boundary-validation.xcresult`；iOS 同构传输的业务回归不借用 Mac 结果冒称已验收。
+本轮隔离验证：Rust `model_catalog_discovery` 1/1、`model_connection_host` 9/9（含慢响应主动取消与 revision 失效拒写）；Mac `MacModelConnectionServiceTests` 4/4（提前取消、实际/声明体积超限、重定向拒绝、匿名连接）；Web 类型检查 0 errors/0 warnings。测试不使用真实账户，Mac Test 配置结果为 `<evidence-dir>/nola-catalog-boundary-validation.xcresult`；iOS 同构传输的业务回归不借用 Mac 结果冒称已验收。
 
-后续集中验证：`cargo test -p nola_cli --lib model_ --locked` 为226通过/0失败/1既有忽略，包含文本探测、native bridge与CLI确认/覆盖解析；Core `model_connections_e2e` 12/12。Mac最终Test配置共26/26，其中账户服务5/5、导入/探测私有管道4/4；`/tmp/nola-mac-final-room-models-r3.log`。管道fixture暴露了Foundation整段读取对持久双向pipe的互等，实际服务已改4096字节有界POSIX读取，原帧上限保持。上述结果不包括随后新加的Codex source-login假进程测试，也不包含真实登录/计费账户。
+后续集中验证：`cargo test -p nola_cli --lib model_ --locked` 为226通过/0失败/1既有忽略，包含文本探测、native bridge与CLI确认/覆盖解析；Core `model_connections_e2e` 12/12。Mac最终Test配置共26/26，其中账户服务5/5、导入/探测私有管道4/4；`<evidence-dir>/nola-mac-final-room-models-r3.log`。管道fixture暴露了Foundation整段读取对持久双向pipe的互等，实际服务已改4096字节有界POSIX读取，原帧上限保持。上述结果不包括随后新加的Codex source-login假进程测试，也不包含真实登录/计费账户。
 
 ### 主线 B 的明确缺口
 
@@ -99,7 +99,7 @@ Kimi 依据：[当前官方 server API](https://www.kimi.com/code/docs/en/kimi-c
 
 刷新复用原owner槽，不制造历史槽；新登录CAS失败仅清理本操作新建且未引用的私有owner槽，原引用及来源token不动。子进程不继承API key/代理凭据，仅保留原HOME/PATH/TMPDIR/LANG/SYSTEMROOT/USERPROFILE公共运行环境并单独设置明确选择的CODEX_HOME。环境缺失导致来源无法运行时明确失败，不扫描其他凭据补救。同home锁保持到进程退出回收，而不是仅等UI报告取消。
 
-隔离验收：`cargo test -p nola_cli --lib model_source_login --locked` 3/3通过（`/tmp/nola-model-source-login-final-tests.log`）。假进程覆盖登录→来源认证→同owner显式刷新、刷新复用引用、取消/并发owner拒绝/错误账户handle/CAS拒晚写，以及确认与授权URL边界。没有启动真实Codex，没有读取真实账户或发送登录/刷新请求；不将fixture通过声明为真实订阅可调用。最终CLI binary构建已通过；Web状态生命周期由主代理独立验证。
+隔离验收：`cargo test -p nola_cli --lib model_source_login --locked` 3/3通过（`<evidence-dir>/nola-model-source-login-final-tests.log`）。假进程覆盖登录→来源认证→同owner显式刷新、刷新复用引用、取消/并发owner拒绝/错误账户handle/CAS拒晚写，以及确认与授权URL边界。没有启动真实Codex，没有读取真实账户或发送登录/刷新请求；不将fixture通过声明为真实订阅可调用。最终CLI binary构建已通过；Web状态生命周期由主代理独立验证。
 
 ### Kimi Code 本机服务管理切片
 
@@ -115,7 +115,7 @@ Kimi 依据：[当前官方 server API](https://www.kimi.com/code/docs/en/kimi-c
 
 本轮隔离验证：`cargo test -p nola_cli --lib model_kimi_login --locked` 最终3/3通过；包含重开owner观察现有flow、缺取消确认不DELETE、flow/server/account变化拒绝、HTTP200错误envelope拒绝、loopback与授权URL约束。Web `npm run check` 0 errors/0 warnings。未启动真实Kimi程序、未读取实际server bearer或OAuth材料、未请求真实登录或任何模型推理。
 
-加入两个来源管理切片后的最新CLI lib `model_`回归为232通过/0失败/1既有忽略。直接运行测试二进制时工作目录须为`cli/`（与Cargo默认一致）；既有shell路径测试依赖当前crate下的`src/`，不能从仓库根运行该二进制后将路径假设失败归为来源逻辑失败。
+加入两个来源管理切片后的最新CLI lib `model_`回归为232通过/0失败/1既有忽略。直接运行测试二进制时工作目录须为`apps/cli/`（与Cargo默认一致）；既有shell路径测试依赖当前crate下的`src/`，不能从仓库根运行该二进制后将路径假设失败归为来源逻辑失败。
 
 ### 独立 Nola ChatGPT 订阅正常调用（实现契约，集中验收中）
 
@@ -135,13 +135,13 @@ Kimi 依据：[当前官方 server API](https://www.kimi.com/code/docs/en/kimi-c
 
 审计复核网关目录和直接目标共用排除SIWC的谓词，客户端配置导出也独立拒绝SIWC；来源管理统一本机同源门禁，Core/私有账户revision失效不会自动切账。未发现需新增生产修复的基本操作阻断。本次只纠正文档过时状态，未重复全量测试、未发真实OAuth/模型请求；最新Mac隔离22/22证据及Rust专项目录见 `NOLA_SIWC.md`。
 
-2026-10-19 `cargo check -p nola_cli --lib --locked` r3通过，见 `/tmp/nola-siwc-integration-check-r3.log`。正常调用全套fixture仍在集中验收，首轮仅测试构造/新增enum穷尽分支编译报错已修，尚不写为通过。
+2026-10-19 `cargo check -p nola_cli --lib --locked` r3通过，见 `<evidence-dir>/nola-siwc-integration-check-r3.log`。正常调用全套fixture仍在集中验收，首轮仅测试构造/新增enum穷尽分支编译报错已修，尚不写为通过。
 
 ### OpenCode provider OAuth 管理（实现契约与隔离验收）
 
 整合安全审计（2026-10-19）：来源管理四组路由（Codex登录、Kimi登录、OpenCode登录、只读来源账户bind/refresh）统一要求POST、loopback peer、唯一Host/Origin/Content-Type。Host只允许明确本机literal或localhost，Origin必须与当前plain HTTP listener的Host（含端口）精确一致，不将localhost与127.0.0.1视为同源；缺失/null/重复Origin、DNS rebinding域名、跨站Fetch Metadata、简单表单/text请求均拒绝。本机现有Web使用loopback隐式信任，不具备远端session-cookie；此额外同源JSON门禁补足全局仅远端CSRF校验的本机缺口，不依赖CORS。远端登录session不解除来源本机限制。错误只返回静态code并no-store，来源JSON上限256KiB。Codex已完成回执也重新核对Core当前account revision，后续账户修改后不能从旧request恢复旧认证状态。
 
-安全回归：`model_source_management_requires_exact_local_browser_origin_and_json` 1/1（13种HTTP请求与peer边界），Codex来源回执3/3；日志分别为 `/tmp/nola-source-security-gate-tests.log`、`/tmp/nola-source-receipt-tests.log`。所有HTTP都是临时fixture，合法门禁后的无效JSON在打开用户store前拒绝；未将此用例宣称为真实OAuth登录验收。
+安全回归：`model_source_management_requires_exact_local_browser_origin_and_json` 1/1（13种HTTP请求与peer边界），Codex来源回执3/3；日志分别为 `<evidence-dir>/nola-source-security-gate-tests.log`、`<evidence-dir>/nola-source-receipt-tests.log`。所有HTTP都是临时fixture，合法门禁后的无效JSON在打开用户store前拒绝；未将此用例宣称为真实OAuth登录验收。
 
 依据当前已发布[v1.19.3 provider auth源码](https://github.com/anomalyco/opencode/blob/v1.19.3/packages/opencode/src/provider/auth.ts)与[发布版OpenAPI](https://github.com/anomalyco/opencode/blob/v1.19.3/packages/sdk/openapi.json)，使用文档公开的 `/global/health`、`/path`、`/doc`、`/provider/auth` 和 `/provider/{providerID}/oauth/authorize|callback`。开发分支已存在另一协议，本轮不做双读/接口回退；连接服务缺少所需当前契约则明确拒绝。
 
@@ -153,9 +153,9 @@ Kimi 依据：[当前官方 server API](https://www.kimi.com/code/docs/en/kimi-c
 
 入口为本机Host `/models?tab=api`，正常Host认证/CSRF之外再次限制来源操作请求为loopback。`POST /api/model-connections/opencode-login/{owners,connect,inspect,authorize,callback,forget}` 复用同一Core owner数据库；`forget`只移除本机操作锁的活动状态，无来源写请求。UI在authorize发送前保留request ID，失败不提供自动重试callback；账户owner切换在pending/unknown期间锁定。Basic密码、prompt输入、code不进Core文档或公开回执；控制密码仅在既有私有vault中保存。传输禁proxy/redirect、30秒超时、2MiB流式上限。内存attempt有10分钟TTL，不声称跨重启的幂等性或源端取消；用户重开页面后必须自行确认来源当前状态，不能自动重发。
 
-隔离用例位于 `cli/src/model_opencode_login_tests.rs`，覆盖owner/方法变化拒绝、prompt输入边界、回调HTTP200错误对象拒绝、不确定callback不重放、本地forget无DELETE与路径/loopback限制。2026-10-19 `cargo test -p nola_cli --lib model_opencode_login --locked` 2/2通过；同一测试二进制在CLI crate工作目录运行 `model_` 为235通过、0失败、1忽略，CLI模型参数filter 8/8、Web登录跳转1/1。Web check 0错误0警告（后续文案与owner切换UI改动由相应客户端验收追加）。未实际登录、读取真实凭据或调用付费/本地模型。
+隔离用例位于 `apps/cli/src/model_opencode_login_tests.rs`，覆盖owner/方法变化拒绝、prompt输入边界、回调HTTP200错误对象拒绝、不确定callback不重放、本地forget无DELETE与路径/loopback限制。2026-10-19 `cargo test -p nola_cli --lib model_opencode_login --locked` 2/2通过；同一测试二进制在CLI crate工作目录运行 `model_` 为235通过、0失败、1忽略，CLI模型参数filter 8/8、Web登录跳转1/1。Web check 0错误0警告（后续文案与owner切换UI改动由相应客户端验收追加）。未实际登录、读取真实凭据或调用付费/本地模型。
 
-`cli/src/model_source_account.rs` 只支持用户明确选定的 Codex auth JSON 与 Kimi Code OAuth 凭据 JSON。公开账户保存不透明引用，私有 Host 库只保存路径/来源，不复制 access/refresh token，不写来源文件、不发登录或刷新请求。检查结果区分 `login_required`、`expired`、`present_but_unsupported`、`invalid`、`unavailable`、`disconnected`。缺失或过期提示用户先在来源应用登录；存在凭据仍明确 `inference_supported=false`，Core 状态为不可用，不把订阅等同 API 权限。JWT expiry 仅用于拒绝过期，不验证或信任其账户声明。Kimi Code 当前文件字段参见官方 [OAuth wire types](https://github.com/MoonshotAI/kimi-code/blob/main/packages/oauth/src/types.ts) 与 [storage](https://github.com/MoonshotAI/kimi-code/blob/main/packages/oauth/src/storage.ts)。Kimi Desktop/Work 不使用此适配器。
+`apps/cli/src/model_source_account.rs` 只支持用户明确选定的 Codex auth JSON 与 Kimi Code OAuth 凭据 JSON。公开账户保存不透明引用，私有 Host 库只保存路径/来源，不复制 access/refresh token，不写来源文件、不发登录或刷新请求。检查结果区分 `login_required`、`expired`、`present_but_unsupported`、`invalid`、`unavailable`、`disconnected`。缺失或过期提示用户先在来源应用登录；存在凭据仍明确 `inference_supported=false`，Core 状态为不可用，不把订阅等同 API 权限。JWT expiry 仅用于拒绝过期，不验证或信任其账户声明。Kimi Code 当前文件字段参见官方 [OAuth wire types](https://github.com/MoonshotAI/kimi-code/blob/main/packages/oauth/src/types.ts) 与 [storage](https://github.com/MoonshotAI/kimi-code/blob/main/packages/oauth/src/storage.ts)。Kimi Desktop/Work 不使用此适配器。
 
 ## 反向模型网关
 
@@ -167,9 +167,9 @@ Kimi 依据：[当前官方 server API](https://www.kimi.com/code/docs/en/kimi-c
 
 允许本地派生的唯一用途是明确标识的预算/上下文估算；它不能写入原始provider `total_tokens`，也不把部分计数当完整费用。`request_count`用于识别空累加器与未知请求；`known_token_lower_bound`与`budget_token_lower_bound()`专供资源预算，优先使用报告total，否则仅在input/output均报告时相加，不加reasoning。原始累计计数溢出变未知，本地预算使用饱和运算。不新增供应商特例或历史存储转换。测试覆盖无usage、真实全0、只input、只output、只有cache、字段分散在多个流事件、两个物理请求一已知一未知、compaction落盘恢复、reasoning是output子集。
 
-2026-10-19 最终隔离验证：CLI `model_` 262通过、1忽略（`/tmp/nola-usage-model-final.log`），Responses 22通过、compaction 48通过（同前缀 `responses-final` / `compaction-final` 日志）；kernel用量3通过，AgentEngine context_window 13通过，Core冷恢复用量契约1通过、turn snapshot 3通过。Anthropic暖前缀fixture明确报告cache creation为0；缺此字段仍拒绝暖前缀预算，不能把未知补零。较广的agent_core_host_contract在主控范围修复后153/153通过（`/tmp/nola-core-host-contract-scope-final.log`）。此次未调用真实模型、OAuth或用户凭据。`ContextUsageSnapshot`保留既有显示投影的数字+reported，原始TokenUsage六计数为nullable，不把未报告显示为真实零；iOS独立原始用量链已同步nullable，新增用量与关联回归23/23通过（`/tmp/nola-ios-usage-presence-validation.log`）。
+2026-10-19 最终隔离验证：CLI `model_` 262通过、1忽略（`<evidence-dir>/nola-usage-model-final.log`），Responses 22通过、compaction 48通过（同前缀 `responses-final` / `compaction-final` 日志）；kernel用量3通过，AgentEngine context_window 13通过，Core冷恢复用量契约1通过、turn snapshot 3通过。Anthropic暖前缀fixture明确报告cache creation为0；缺此字段仍拒绝暖前缀预算，不能把未知补零。较广的agent_core_host_contract在主控范围修复后153/153通过（`<evidence-dir>/nola-core-host-contract-scope-final.log`）。此次未调用真实模型、OAuth或用户凭据。`ContextUsageSnapshot`保留既有显示投影的数字+reported，原始TokenUsage六计数为nullable，不把未报告显示为真实零；iOS独立原始用量链已同步nullable，新增用量与关联回归23/23通过（`<evidence-dir>/nola-ios-usage-presence-validation.log`）。
 
-`cli/src/model_gateway_host.rs` 提供 `/gateway/v1/models` 和三个显式 POST 路由：`responses`、`chat/completions`、`messages`。网关使用与 Web 会话不同的独立随机 bearer token，私有凭据库 CAS 签发/轮换/撤销；不会把该 token 转发上游。外部模型身份是 `nola/<profile_id>/<revision>`，模型 revision 变化返回 409，协议不匹配返回明确错误；不换模型、不换账户、不做协议翻译、不重试。
+`apps/cli/src/model_gateway_host.rs` 提供 `/gateway/v1/models` 和三个显式 POST 路由：`responses`、`chat/completions`、`messages`。网关使用与 Web 会话不同的独立随机 bearer token，私有凭据库 CAS 签发/轮换/撤销；不会把该 token 转发上游。外部模型身份是 `nola/<profile_id>/<revision>`，模型 revision 变化返回 409，协议不匹配返回明确错误；不换模型、不换账户、不做协议翻译、不重试。
 
 一次网关请求恰好至多一次上游 POST，转发模型输入、工具声明、续接 ID 与 SSE 原始事件；不进入 Nola Agent 执行器，绝不执行外部客户端的工具。只透传白名单协议头，供应商凭据从精确路由的 Host vault 获取。最多四个活动请求、32 MiB 请求体、10 秒连接及 300 秒请求时限、禁止重定向；已知网关 origin（含 loopback 别名）拒绝回环。响应提供独立 `X-Nola-Attempt-ID`，流错误不拼接新尝试。下游放弃响应将释放上游 reader；尚不声称阻塞 HTTP 栈具备独立主动取消接口。
 
@@ -179,7 +179,7 @@ JSON/SSE reader 附带有界 usage 观察器（最多 2 MiB 单事件/JSON），
 
 ## 外部客户端配置写入
 
-`cli/src/model_client_adapter.rs` 是与导入完全独立的写路径。明确选择已存在的绝对配置文件后，生成十分钟私有计划；公开预览只有来源、路径和将新增的字段，不含 token。确认重新检查完整源文件、网关 token revision 和模型 revision，再以同目录 0600 临时文件原子替换。JSONC 与 TOML 使用具体语法树保留无关字段/注释。进程内写串行化；最后重读至 rename 之间不宣称提供针对任意外部编辑器的跨进程 CAS。
+`apps/cli/src/model_client_adapter.rs` 是与导入完全独立的写路径。明确选择已存在的绝对配置文件后，生成十分钟私有计划；公开预览只有来源、路径和将新增的字段，不含 token。确认重新检查完整源文件、网关 token revision 和模型 revision，再以同目录 0600 临时文件原子替换。JSONC 与 TOML 使用具体语法树保留无关字段/注释。进程内写串行化；最后重读至 rename 之间不宣称提供针对任意外部编辑器的跨进程 CAS。
 
 | 目标客户端 | 新增的 Nola 自有字段 | 默认选择 |
 |---|---|---|
@@ -227,3 +227,5 @@ Mac 必须读取 Core 的稀疏 reasoning 声明；本地编辑器的 responses/
 授权页区分浏览器授权、保存账户、发现并启用模型三个步骤。保存成功留在结果页并给出模型设置入口；打开浏览器、保存和取消均由用户明确操作，不以目录成功冒充模型调用成功。Ultra 的能力边界显示在账户连接的模型列表。
 
 底层显式 agent tier 的 `siwc_responses` 解析与 Responses 共用受支持 effort 语义；这不规定聊天必须使用三档，聊天原生菜单保留完整声明列表。不得套用 Chat Completions 必须具备 low/medium/high 的条件。只有目录声明的普通 effort 可进入请求，`ultra` 仍不是单模型请求值。
+
+`<evidence-dir>` 表示本地验收产物根目录；后面的路径相对该目录，产物不随公开仓库分发。

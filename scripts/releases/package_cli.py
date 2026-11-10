@@ -42,7 +42,7 @@ def main():
             verify_contract_marker(path)
             shutil.copy2(path,bundle/'bin'/binary)
         for folder in ['app/static','app/templates']:
-            path=root/'web'/folder
+            path=root/'apps/web'/folder
             if path.is_dir():shutil.copytree(path,bundle/'web'/folder,ignore=shutil.ignore_patterns('__pycache__','agent_artifacts','*.db','*.log'))
         shutil.copytree(runtime,bundle/'web/playwright_runtime')
         shutil.copy2(root/'LICENSE',bundle/'LICENSE')

@@ -73,7 +73,7 @@ def cold_followup(root, config_path, binary):
                 sock.bind(('127.0.0.1',0)); port=sock.getsockname()[1]
             with (root/'host-cold.log').open('w') as log:
                 host = subprocess.Popen([str(binary),'web','--host','127.0.0.1','--port',str(port),
-                    '--web-root',str(ROOT/'web'),'--project',str(project),'--allow-dir',str(project),'--no-skills'],
+                    '--web-root',str(ROOT/'apps/web'),'--project',str(project),'--allow-dir',str(project),'--no-skills'],
                     cwd=project,env=env,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
                 url=f'http://127.0.0.1:{port}'
                 deadline=time.monotonic()+30
@@ -85,7 +85,7 @@ def cold_followup(root, config_path, binary):
                 browser_env={k:v for k,v in os.environ.items() if k in {'PATH','HOME','TMPDIR','LANG','USER','SHELL'}}
                 browser_env.update(NOLA_REMOTE_LONG_OUT=str(root),NOLA_REMOTE_LONG_URL=url)
                 with (root/'browser-cold.log').open('w') as output:
-                    process=subprocess.run(['node',str(ROOT/'web/playwright_runtime/remote_host_cold_followup.cjs')],
+                    process=subprocess.run(['node',str(ROOT/'apps/web/playwright_runtime/remote_host_cold_followup.cjs')],
                         env=browser_env,cwd=ROOT,stdout=output,stderr=subprocess.STDOUT,timeout=260)
                 ui=json.loads((root/'cold-browser-receipt.json').read_text())
                 assert process.returncode==0 and ui['passed'], 'Cold context recall failed; inspect private receipt'
@@ -143,7 +143,7 @@ def main():
                 sock.bind(('127.0.0.1',0)); port=sock.getsockname()[1]
             host_log=(root/'host.log').open('w')
             host=subprocess.Popen([str(args.binary),'web','--host','127.0.0.1','--port',str(port),
-                '--web-root',str(ROOT/'web'),'--project',str(project),'--allow-dir',str(project),'--no-skills'],
+                '--web-root',str(ROOT/'apps/web'),'--project',str(project),'--allow-dir',str(project),'--no-skills'],
                 cwd=project,env=env,stdout=host_log,stderr=subprocess.STDOUT,start_new_session=True)
             url=f'http://127.0.0.1:{port}'
             deadline=time.monotonic()+30
@@ -157,7 +157,7 @@ def main():
             browser_env={k:v for k,v in os.environ.items() if k in {'PATH','HOME','TMPDIR','LANG','USER','SHELL','TERM'}}
             browser_env.update(NOLA_REMOTE_LONG_OUT=str(root),NOLA_REMOTE_LONG_URL=url)
             output=(root/'browser.log').open('w')
-            browser=subprocess.Popen(['node',str(ROOT/'web/playwright_runtime/remote_host_hundreds_steps.cjs')],
+            browser=subprocess.Popen(['node',str(ROOT/'apps/web/playwright_runtime/remote_host_hundreds_steps.cjs')],
                 env=browser_env,cwd=ROOT,stdout=output,stderr=subprocess.STDOUT,start_new_session=True)
             deadline=time.monotonic()+args.timeout+420
             last=0

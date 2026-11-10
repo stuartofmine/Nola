@@ -7,7 +7,7 @@ require "json"
 require "cgi"
 
 ROOT = File.expand_path("..", __dir__)
-CATALOG_PATH = File.join(ROOT, "NolaMac", "Localizable.xcstrings")
+CATALOG_PATH = File.join(ROOT, "apps/macos", "Localizable.xcstrings")
 LOCALES = %w[en de es fr ja ko ru zh-Hans zh-Hant].freeze
 
 # String(localized:) calls without a default value expose their key as the
@@ -258,7 +258,7 @@ end
 
 def source_pairs
   pairs = {}
-  Dir[File.join(ROOT, "NolaMac", "**", "*.swift")].each do |path|
+  Dir[File.join(ROOT, "apps/macos", "**", "*.swift")].each do |path|
     source = File.read(path)
     source.scan(/\b\w+Text\(\s*"([^"]+)"\s*,\s*"((?:\\.|[^"])*)"/m) do |key, fallback|
       pairs[key] = fallback.gsub('\\"', '"')
@@ -302,24 +302,24 @@ def parse_android_strings(path)
 end
 
 def merge_cross_platform_memory!(memory)
-  apple_en = parse_apple_strings(File.join(ROOT, "Nola", "en.lproj", "Localizable.strings"))
+  apple_en = parse_apple_strings(File.join(ROOT, "apps/ios", "en.lproj", "Localizable.strings"))
   {
     "de" => "de", "es" => "es", "fr" => "fr", "ja" => "ja",
     "ru" => "ru", "zh-Hans" => "zh-Hans",
   }.each do |locale, directory|
-    localized = parse_apple_strings(File.join(ROOT, "Nola", "#{directory}.lproj", "Localizable.strings"))
+    localized = parse_apple_strings(File.join(ROOT, "apps/ios", "#{directory}.lproj", "Localizable.strings"))
     apple_en.each do |key, english|
       value = localized[key]
       memory[locale][english] = value if value && !value.empty? && value != english
     end
   end
 
-  android_en = parse_android_strings(File.join(ROOT, "android", "app", "src", "main", "res", "values", "strings.xml"))
+  android_en = parse_android_strings(File.join(ROOT, "apps/android", "app", "src", "main", "res", "values", "strings.xml"))
   {
     "de" => "values-de", "es" => "values-es", "fr" => "values-fr", "ja" => "values-ja",
     "ru" => "values-ru", "zh-Hans" => "values-zh",
   }.each do |locale, directory|
-    localized = parse_android_strings(File.join(ROOT, "android", "app", "src", "main", "res", directory, "strings.xml"))
+    localized = parse_android_strings(File.join(ROOT, "apps/android", "app", "src", "main", "res", directory, "strings.xml"))
     android_en.each do |key, english|
       value = localized[key]
       memory[locale][english] = value if value && !value.empty? && value != english

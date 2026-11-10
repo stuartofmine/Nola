@@ -35,6 +35,6 @@ PROTOTYPE_URL=http://127.0.0.1:8071 node docs/design/prototype/verify_business_l
 PROTOTYPE_URL=http://127.0.0.1:8071 node docs/design/prototype/verify_page_sync.cjs
 ```
 
-浏览器回放需要本机 Chrome 与已有 Playwright runtime 依赖；缺少依赖时运行 `npm ci --prefix web/playwright_runtime`。
+浏览器回放需要本机 Chrome 与已有 Playwright runtime 依赖；缺少依赖时运行 `npm ci --prefix apps/web/playwright_runtime`。
 
-生成清单使用 `sync_business_scenarios.py`，会检查状态分支、源码文件及生产 Web 路由新增遗漏。浏览器脚本阻止外部请求，回放、截图图册和回执默认写入本机 `/tmp`，不进入源码仓库。原型测试通过不代替真实客户端验收。
+生成清单使用 `sync_business_scenarios.py`，会检查状态分支、源码文件及生产 Web 路由新增遗漏。浏览器脚本阻止外部请求，回放、截图图册和回执默认写入仓库下被忽略的 `.artifacts/`，不进入源码仓库。原型测试通过不代替真实客户端验收。

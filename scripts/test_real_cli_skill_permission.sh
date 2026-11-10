@@ -17,7 +17,7 @@ if [[ "${NOLA_REAL_E2E_PREFLIGHT_ONLY:-0}" == "1" ]]; then
         "$PROFILE" "$BINARY" "$PROFILE"
     exit 0
 fi
-RUNTIME_ROOT="$(mktemp -d /tmp/nola-real-cli-skill-permission.XXXXXX)"
+RUNTIME_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/nola-real-cli-skill-permission.XXXXXX")"
 PROBE_PID=""
 
 cleanup() {
@@ -112,15 +112,15 @@ fi
 if [[ "${NOLA_SKIP_CLI_BUILD:-0}" != "1" ]]; then
     BUILD_STARTED=$SECONDS
     if [[ "$PROFILE" == "release" ]]; then
-        cargo build --release -p nola_cli --bin nola --example terminal_acceptance_oracle -p nola_service --bin nola-service --manifest-path "$ROOT/cli/Cargo.toml"
+        cargo build --release -p nola_cli --bin nola --example terminal_acceptance_oracle -p nola_service --bin nola-service --manifest-path "$ROOT/apps/cli/Cargo.toml"
     else
-        cargo build -p nola_cli --bin nola --example terminal_acceptance_oracle -p nola_service --bin nola-service --manifest-path "$ROOT/cli/Cargo.toml"
+        cargo build -p nola_cli --bin nola --example terminal_acceptance_oracle -p nola_service --bin nola-service --manifest-path "$ROOT/apps/cli/Cargo.toml"
     fi
     printf '{"stage":"build","profile":"%s","durationSeconds":%s}\n' \
         "$PROFILE" "$((SECONDS - BUILD_STARTED))"
 fi
 [[ -x "$BINARY" ]] || { printf 'Missing CLI binary: %s\n' "$BINARY" >&2; exit 2; }
-ORACLE="${NOLA_REAL_CLI_ORACLE:-$(nola_cargo_example "$ROOT" "$PROFILE" terminal_acceptance_oracle "$ROOT/cli/Cargo.toml")}"
+ORACLE="${NOLA_REAL_CLI_ORACLE:-$(nola_cargo_example "$ROOT" "$PROFILE" terminal_acceptance_oracle "$ROOT/apps/cli/Cargo.toml")}"
 [[ -x "$ORACLE" ]] || { printf 'Missing terminal oracle: %s\n' "$ORACLE" >&2; exit 2; }
 
 mkdir -p "$RUNTIME_ROOT/home/.nola" "$RUNTIME_ROOT/project" "$RUNTIME_ROOT/evidence"

@@ -3,7 +3,7 @@
 # Real mutation followed by a deliberately unmet postcondition, without retries.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-export NOLA_MAC_REAL_WORKSPACE="$(mktemp -d /tmp/nola-mac-incomplete.XXXXXX)"
+export NOLA_MAC_REAL_WORKSPACE="$(mktemp -d "${TMPDIR:-/tmp}/nola-mac-incomplete.XXXXXX")"
 printf '[real-mac-incomplete] isolated workspace: %s\n' "$NOLA_MAC_REAL_WORKSPACE"
 runtime_status=0
 printf 'OWNED_INCOMPLETE_ORIGINAL\n' >"$NOLA_MAC_REAL_WORKSPACE/answer.txt"

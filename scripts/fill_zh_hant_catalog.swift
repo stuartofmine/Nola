@@ -6,7 +6,7 @@
 import Foundation
 
 let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-let catalogURL = root.appendingPathComponent("NolaMac/Localizable.xcstrings")
+let catalogURL = root.appendingPathComponent("apps/macos/Localizable.xcstrings")
 let data = try Data(contentsOf: catalogURL)
 guard var catalog = try JSONSerialization.jsonObject(with: data) as? [String: Any],
       var strings = catalog["strings"] as? [String: Any] else {

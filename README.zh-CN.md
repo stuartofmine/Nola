@@ -28,14 +28,14 @@ CLI 可以通过带认证的本地 HTTP 服务，为 Web 和远程客户端提�
 
 | 组件 | 实现 | 职责 |
 | --- | --- | --- |
-| macOS · `NolaMac/` | SwiftUI / AppKit | 原生桌面客户端与平台 Host 集成 |
-| iOS · `Nola/` | SwiftUI | 移动客户端与 iOS 系统能力 |
-| Android · `android/` | Kotlin / Compose | 移动客户端、JNI 集成与 Android 系统能力 |
-| Windows · `windows/` | 桌面原生壳 + Web UI | 桌面客户端与受控本地 Host 集成 |
-| Web · `web/frontend/` | Svelte / TypeScript | 由 Rust Host 提供服务的浏览器界面 |
-| CLI · `cli/` | Rust | 终端客户端、Agent Host 与本地 HTTP 服务 |
+| macOS · `apps/macos/` | SwiftUI / AppKit | 原生桌面客户端与平台 Host 集成 |
+| iOS · `apps/ios/` | SwiftUI | 移动客户端与 iOS 系统能力 |
+| Android · `apps/android/` | Kotlin / Compose | 移动客户端、JNI 集成与 Android 系统能力 |
+| Windows · `apps/windows/` | 桌面原生壳 + Web UI | 桌面客户端与受控本地 Host 集成 |
+| Web · `apps/web/frontend/` | Svelte / TypeScript | 由 Rust Host 提供服务的浏览器界面 |
+| CLI · `apps/cli/` | Rust | 终端客户端、Agent Host 与本地 HTTP 服务 |
 | Core · `core/` | Rust、C ABI / JNI | 领域契约、Agent 执行、Application Service、持久化与 Host 接口 |
-| Apple 共享代码 · `Shared/` | Swift | 共用展示组件与协议代码 |
+| Apple 共享代码 · `shared/apple/` | Swift | 共用展示组件与协议代码 |
 
 各原生客户端拥有自己的界面；macOS App 不是 CLI 的外壳。对话和持久运行状态由本地 Application Service 与 Store 管理。远程 Host 访问需要认证和明确授权。
 
@@ -46,16 +46,16 @@ CLI 可以通过带认证的本地 HTTP 服务，为 Web 和远程客户端提�
 在仓库根目录执行：
 
 ```sh
-npm --prefix web/frontend ci
-npm --prefix web/frontend run build
+npm --prefix apps/web/frontend ci
+npm --prefix apps/web/frontend run build
 cargo build --locked -p nola_cli -p nola_service --bins
 ./target/debug/nola --help
-./target/debug/nola web --host 127.0.0.1 --port 5001 --web-root "$PWD/web"
+./target/debug/nola web --host 127.0.0.1 --port 5001 --web-root "$PWD/apps/web"
 ```
 
 也可运行 `./dev.sh` 执行上述本地构建与启动，使用 `WEB_HOST`、`WEB_PORT` 设置监听地址。
 
-模型可在 Web/原生客户端设置中配置，也可使用 `nola model apply-config /absolute/path/to/config.json`。`llm.default_model` 必须引用同一份配置中声明的连接和模型。
+模型可在 Web/原生客户端设置中配置，也可使用 `nola model apply-config`。`llm.default_model` 必须引用同一份配置中声明的连接和模型。
 
 CLI 交互中，按 `Ctrl+V` 添加剪贴板图片，也可粘贴图片的绝对路径。图片分析需要模型声明图片输入能力。权限拒绝后，用 `/allow` 查看会话权限；配置中的显式拒绝规则和操作系统权限需要在各自来源处修改，然后明确要求重试。
 
@@ -65,11 +65,11 @@ CLI 交互中，按 `Ctrl+V` 添加剪贴板图片，也可粘贴图片的绝对
 
 ```sh
 cargo test --locked -p nola_domain -p nola_protocol -p nola_store -p nola_update_host
-npm --prefix web/frontend run check
-npm --prefix web/frontend test
+npm --prefix apps/web/frontend run check
+npm --prefix apps/web/frontend test
 ./scripts/test_mac_layers.sh contracts
 ./scripts/run_client_tests.sh
-(cd android && ./gradlew test)
+(cd apps/android && ./gradlew test)
 ```
 
 Apple 测试脚本使用隔离的 Test 输出目录，macOS Debug 构建保留配置的签名身份。Android 设备测试需要已启动的模拟器或明确选定的设备。契约测试不等于真实模型或各平台安装验收；结果和已知限制见验收记录（本地工作记录，不随仓库分发）。
@@ -97,3 +97,5 @@ Apple 测试脚本使用隔离的 Test 输出目录，macOS Debug 构建保留�
 [贡献指南](CONTRIBUTING.md) · [安全策略](SECURITY.md)
 
 项目采用 [Apache-2.0](LICENSE) 许可证。
+
+平台代码、共享模块和测试位置见[源码目录约定](docs/engineering/SOURCE_LAYOUT.md)。

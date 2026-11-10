@@ -5,7 +5,7 @@ import { join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 
-const sourceRoot = join(resolve(process.argv[2]), 'web/frontend/src');
+const sourceRoot = join(resolve(process.argv[2]), 'apps/web/frontend/src');
 const require = createRequire(pathToFileURL(join(sourceRoot, '../package.json')));
 const ts = require('typescript');
 const { supportedLocales, messageCatalogs } = await import(pathToFileURL(join(sourceRoot, 'lib/i18n.ts')).href);

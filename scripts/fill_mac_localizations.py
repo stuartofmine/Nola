@@ -19,9 +19,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 AUDIT = ROOT / "scripts" / "localization_coverage.py"
-DEFAULT_BINARY = ROOT / "cli" / "target" / "debug" / "nola"
+DEFAULT_BINARY = ROOT / "apps/cli" / "target" / "debug" / "nola"
 MEMORY_PATH = ROOT / "scripts" / "mac_translation_memory.json"
-CATALOGS = tuple((ROOT / "NolaMac").glob("*.xcstrings"))
+CATALOGS = tuple((ROOT / "apps/macos").glob("*.xcstrings"))
 MISSING_RE = re.compile(r"^- mac: (.*): missing ([A-Za-z-]+)$")
 PLACEHOLDER_RE = re.compile(r"%(?:\d+\$)?(?:lld|ld|zu|@|d|i|u|f|s|c|%)")
 LANGUAGE_NAMES = {

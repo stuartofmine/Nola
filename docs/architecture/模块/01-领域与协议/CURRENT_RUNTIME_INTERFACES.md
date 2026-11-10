@@ -101,10 +101,10 @@ Task journal中的sealed是终态，只表示已封存，不自动表示成功�
 
 ## 源码索引
 
-- HTTP：`cli/src/web_parts/{routes,submission_frontier,paired_execution_selection}.rs`。
+- HTTP：`apps/cli/src/web_parts/{routes,submission_frontier,paired_execution_selection}.rs`。
 - 类型/命令：`core/nola-domain/src/remote_submission.rs`、`core/nola-application/src/{application_command,mobile_delegation,effect_delivery}.rs`。
 - 恢复/存储：`core/nola-mobile-bindings/src/child_pump.rs`、`core/nola-store/src/{effect_deliveries,permission_source}.rs`、`core/nola-store/src/assistant_journal/receive_content.rs`。
-- 客户端：`Shared/Protocol/RemoteSubmissionIdentity.swift`、`NolaMac/Services/MacApplicationPort.swift`、Android `AndroidEmbeddedChildExecutor.kt`。
+- 客户端：`shared/apple/Protocol/RemoteSubmissionIdentity.swift`、`apps/macos/Services/MacApplicationPort.swift`、Android `AndroidEmbeddedChildExecutor.kt`。
 
 历史验证范围见阶段归档（本地工作记录，不随仓库分发）。本页核对不重新激活归档任务或清空的待办。
 

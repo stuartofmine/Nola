@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // Exercises only the standalone prototype. All external requests are blocked.
-const {chromium} = require('../../../web/playwright_runtime/node_modules/playwright-core');
+const {chromium} = require('../../../apps/web/playwright_runtime/node_modules/playwright-core');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const base = process.env.PROTOTYPE_URL || 'http://127.0.0.1:8071';
-const out = process.env.PROTOTYPE_OUT || '/tmp/nola-prototype-business-20261110/qa';
+const out = process.env.PROTOTYPE_OUT || require('../../../apps/web/playwright_runtime/test_environment.cjs').artifactPath('nola-prototype-business-20261110/qa');
 const catalog = JSON.parse(fs.readFileSync(path.join(__dirname,'BUSINESS-SCENARIOS.json')));
 const report = {kind:'prototype-only',scenarios:catalog.scenarios.length,states:0,platformStates:0,transitions:0,unavailable:0,screens:[],errors:[],externalRequests:[],checks:[]};
 function contrast(a,b) {
@@ -14,7 +14,7 @@ function contrast(a,b) {
 }
 (async () => {
     fs.mkdirSync(out,{recursive:true});
-    const browser = await chromium.launch({executablePath:process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true});
+    const browser = await chromium.launch({...require('../../../apps/web/playwright_runtime/test_environment.cjs').browserOptions(),headless:true});
     let page;
     try {
         for (const platform of Object.keys(catalog.platforms)) for (const theme of ['light','dark']) {

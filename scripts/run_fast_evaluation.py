@@ -232,7 +232,7 @@ def run_case(case: dict[str, Any], remaining: float) -> CaseResult:
     if case.get("cwd") == "root":
         environment.setdefault(
             "NOLA_AGENT_CARGO_TARGET_DIR",
-            str(ROOT / "cli" / "target"),
+            str(ROOT / "apps/cli" / "target"),
         )
     started = time.monotonic()
     try:

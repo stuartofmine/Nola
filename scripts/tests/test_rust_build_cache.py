@@ -19,7 +19,7 @@ import xml.etree.ElementTree as ET
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 HELPER = REPOSITORY_ROOT / "scripts/lib/rust_build_cache.sh"
 BUILD_SCRIPTS = (
-    "cli/scripts/build.sh",
+    "apps/cli/scripts/build.sh",
     "scripts/build_cli_runtime.sh",
     "scripts/build_mac_runtime.sh",
     "core/scripts/build_and_copy.sh",
@@ -479,12 +479,12 @@ class RustBuildCacheTests(unittest.TestCase):
                          "Requires the macOS build-script sandbox")
     def test_runtime_copy_writes_only_exact_declared_outputs(self):
         fixture = self.root / "runtime fixture"
-        for relative in ("cli/src", "cli/resources", "cli/vendor", "core", "NolaMac/Resources"):
+        for relative in ("apps/cli/src", "apps/cli/resources", "apps/cli/vendor", "core", "apps/macos/Resources"):
             (fixture / relative).mkdir(parents=True, exist_ok=True)
-        for relative in ("Cargo.toml", "Cargo.lock", "cli/build.rs"):
+        for relative in ("Cargo.toml", "Cargo.lock", "apps/cli/build.rs"):
             (fixture / relative).write_text("fixture\n", encoding="utf-8")
         plist_name = "com.gaojc.Nola.background-scheduler.plist"
-        (fixture / "NolaMac/Resources" / plist_name).write_text("fixture plist\n", encoding="utf-8")
+        (fixture / "apps/macos/Resources" / plist_name).write_text("fixture plist\n", encoding="utf-8")
         artifacts = fixture / "target/debug"
         artifacts.mkdir(parents=True)
         for name in ("nola-agent-host", "nola-service"):
@@ -525,7 +525,7 @@ class RustBuildCacheTests(unittest.TestCase):
 
     def test_mac_target_override_precedence_and_debugger_profile(self):
         fixture = self.root / "workspace"
-        resources = fixture / "NolaMac/Resources"
+        resources = fixture / "apps/macos/Resources"
         resources.mkdir(parents=True)
         (resources / "com.gaojc.Nola.background-scheduler.plist").write_text("fixture\n")
         general_target = self.root / "general target"
@@ -775,7 +775,7 @@ class RustBuildCacheIntegrationTests(unittest.TestCase):
     def test_native_builds_share_target_and_cargo_owns_freshness(self):
         mac = (REPOSITORY_ROOT / "scripts/build_mac_runtime.sh").read_text()
         self.assertIn('${NOLA_AGENT_CARGO_TARGET_DIR:-${CARGO_TARGET_DIR:-${ROOT}/target}}', mac)
-        android = (REPOSITORY_ROOT / "android/app/build.gradle.kts").read_text()
+        android = (REPOSITORY_ROOT / "apps/android/app/build.gradle.kts").read_text()
         rust_task = android.split("val buildRustCore by", 1)[1].split("tasks.configureEach", 1)[0]
         self.assertIn("outputs.upToDateWhen { false }", rust_task)
         self.assertNotIn("inputs.files(fileTree", rust_task)
@@ -783,31 +783,31 @@ class RustBuildCacheIntegrationTests(unittest.TestCase):
         self.assertNotIn("-newer", mac)
         self.assertIn('"$ROOT/rust-toolchain.toml"', mac)
         runner = (REPOSITORY_ROOT / "scripts/run_real_mac_xctests.sh").read_text()
-        self.assertNotIn("$ROOT/cli/target", runner)
+        self.assertNotIn("$ROOT/apps/cli/target", runner)
         self.assertIn("${CARGO_TARGET_DIR:-$ROOT/target}", runner)
-        project = (REPOSITORY_ROOT / "NolaCore/NolaCore.xcodeproj/project.pbxproj").read_text()
+        project = (REPOSITORY_ROOT / "shared/apple-core/NolaCore.xcodeproj/project.pbxproj").read_text()
         self.assertNotIn("target/mac-runtime", project)
-        self.assertEqual(project.count('"$(SRCROOT)/../rust-toolchain.toml",'), 2)
+        self.assertEqual(project.count('"$(SRCROOT)/../../rust-toolchain.toml",'), 2)
 
     def test_shared_cli_artifacts_use_one_workspace_manifest(self):
         # The CLI and native runtime share artifact names. Resolving features
         # through different manifests can replace one with a different graph,
         # independently of whether the compiler cache itself is correct.
         for relative_path in (
-            "cli/scripts/build.sh",
+            "apps/cli/scripts/build.sh",
             "scripts/build_cli_runtime.sh",
             "scripts/build_mac_runtime.sh",
         ):
             with self.subTest(script=relative_path):
                 source = (REPOSITORY_ROOT / relative_path).read_text(encoding="utf-8")
-                self.assertNotIn('$ROOT/cli/Cargo.toml', source)
+                self.assertNotIn('$ROOT/apps/cli/Cargo.toml', source)
                 self.assertRegex(source, r'(?:ROOT|REPO_ROOT).*Cargo\.toml')
         # Both Xcode Rust phases must notice launcher-only edits even before
         # their first generated dependency file includes the helper.
-        project = (REPOSITORY_ROOT / "NolaCore/NolaCore.xcodeproj/project.pbxproj").read_text(
+        project = (REPOSITORY_ROOT / "shared/apple-core/NolaCore.xcodeproj/project.pbxproj").read_text(
             encoding="utf-8"
         )
-        self.assertEqual(project.count('"$(SRCROOT)/../scripts/lib/rust_build_cache.sh",'), 2)
+        self.assertEqual(project.count('"$(SRCROOT)/../../scripts/lib/rust_build_cache.sh",'), 2)
 
     def test_build_scripts_source_and_initialize_shared_launcher(self):
         for relative_path in BUILD_SCRIPTS:
