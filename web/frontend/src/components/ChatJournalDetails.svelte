@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { replyDisclosure } from '../lib/replyDisclosure';
     import { onMount } from 'svelte';
     import { api } from '../lib/api';
     import { taskDetailsOwner, loadTaskConversation } from '../lib/chatTaskDetails';
@@ -59,12 +60,12 @@
         {:else if childHref}<a class="task-conversation" href={childHref}>{t($locale, 'chatPage.taskOpenConversation')}</a>{/if}
     {/if}
     {#if showSummary && Object.keys(diagnostics).length}
-        <details class="technical"><summary>{t($locale, 'chatPage.toolTechnicalDetails')}</summary><pre>{JSON.stringify(diagnostics, null, 2)}</pre></details>
+        <details use:replyDisclosure class="technical"><summary>{t($locale, 'chatPage.toolTechnicalDetails')}</summary><pre>{JSON.stringify(diagnostics, null, 2)}</pre></details>
     {/if}
 {/snippet}
 
 {#if showSummary}
-    <details class="journal-detail" data-part-id={part.id} open={expanded}>
+    <details use:replyDisclosure class="journal-detail" data-part-id={part.id} open={expanded}>
         <summary class="part-summary" onclick={event => { event.preventDefault(); userExpanded = !expanded; }}>{title || t($locale, 'chatPage.details')}{#if stateLabel} · {stateLabel}{/if}</summary>
         {@render content()}
     </details>

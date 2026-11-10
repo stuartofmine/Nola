@@ -68,6 +68,11 @@ import UIKit
                             NolaSettingsToggleRow(icon: "bell", tint: DesignTokens.primaryColor,
                                 title: "任务完成通知", detail: "只在任务真实结束后提示；等待授权不表示已经完成。", isOn: .constant(true))
                         }
+                        DisclosureGroup("回复中的执行过程", isExpanded: .constant(true)) {
+                            Text("已检查输入与结果。工具详情沿阅读方向展开，正文保持原位；长段内容应正常换行。")
+                                .font(.body).textSelection(.enabled)
+                                .padding(.top, 8)
+                        }.disclosureGroupStyle(NolaRowDisclosureStyle())
                         NolaInlineEmptyState(icon: "doc.text", title: "没有可预览的文件", message: "选择附件后在独立阅读器中查看，返回时保留原位置。")
                     }.environment(\.dynamicTypeSize, large ? .accessibility5 : .large)
                         .environment(\.colorScheme, dark ? .dark : .light)

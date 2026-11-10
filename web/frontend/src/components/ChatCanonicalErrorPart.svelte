@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { replyDisclosure } from '../lib/replyDisclosure';
     import { locale, t } from '../lib/i18n';
     import type { CanonicalPart } from '../lib/chatTimeline';
     let { part }: {part: CanonicalPart} = $props();
@@ -12,7 +13,7 @@
 
 <section class="part-error" data-kind="failed" data-part-id={part.part_id} role="status">
     <strong>{title}</strong>
-    <details>
+    <details use:replyDisclosure>
         <summary>{t($locale, 'chatPage.toolTechnicalDetails')}</summary>
         <pre>{diagnostics}</pre>
     </details>

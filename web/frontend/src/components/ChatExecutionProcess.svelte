@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { replyDisclosure } from '../lib/replyDisclosure';
     import { locale, t } from '../lib/i18n';
     import { messagePresentation, executionProcessExpanded, isExecutionPresentation, liveReasoningParts } from '../lib/chatMessagePresentation';
     import { timelinePartText, timelineToolsNeedAttention } from '../lib/chatTimeline';
@@ -20,7 +21,7 @@
 </script>
 
 {#if needsAttention && !expanded && !live}<p class="process-attention" role="status">{t($locale, 'chatPage.processAttention')}</p>{/if}
-<details class="execution-process" open={expanded}>
+<details use:replyDisclosure class="execution-process" open={expanded}>
     <summary onclick={event => { event.preventDefault(); onprocessexpandedchange(!expanded); }}>
         <svg class="chevron" class:expanded viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5" /></svg>
         <span>{t($locale, thinkingOnly ? 'chatPage.thinking' : 'chatPage.executionProcess')}</span>
@@ -46,13 +47,13 @@
 </details>
 
 <style>
-    .execution-process { margin-bottom: 12px; min-width: 0; }
+    .execution-process { margin-bottom: 12px; min-width: 0; border-radius: 12px; transition: background-color var(--motion-base) var(--motion-disclosure); }
     .execution-process[open] { background: var(--panel); border-radius: 12px; }
     .process-attention { color: var(--danger); font-size: 12px; }
     summary { display: flex; align-items: center; gap: 8px; min-height: max(32px, var(--control-hit-size)); box-sizing: border-box; padding: 8px 0; cursor: pointer; color: var(--muted); border-radius: 12px; list-style: none; font-size: .875rem; font-weight: 500; transition: background-color 140ms ease, color 140ms ease; }
     summary::-webkit-details-marker { display: none; }
     summary:hover { background: color-mix(in srgb, currentColor 5%, transparent); color: var(--content); }
-    .chevron { flex: none; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; transition: transform 160ms ease-out; }
+    .chevron { flex: none; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; transition: transform var(--motion-base) var(--motion-disclosure); }
     .chevron.expanded { transform: rotate(90deg); }
     .activity-light { width: 6px; height: 6px; flex: none; border-radius: 50%; margin-inline-start: auto; background: var(--accent); animation: quiet-status 2.4s ease-in-out infinite; }
     @keyframes quiet-status { 0%, 100% { opacity: .65; } 50% { opacity: 1; } }

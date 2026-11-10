@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { replyDisclosure } from '../lib/replyDisclosure';
     import {getContext} from 'svelte';
     import {MESSAGE_PART_READING,type MessagePartReading} from '../lib/messagePartReading';
     import {executionProcessChoice,executionProcessExpanded} from '../lib/chatMessagePresentation';
@@ -26,7 +27,7 @@
     }
 </script>
 
-<details open={expanded}>
+<details use:replyDisclosure open={expanded}>
     <summary onclick={event => { event.preventDefault(); choose(!expanded); }}>
         {t($locale, completed ? 'chatPage.completedTools' : 'chatPage.toolActivity')} · {parts.length}
     </summary>

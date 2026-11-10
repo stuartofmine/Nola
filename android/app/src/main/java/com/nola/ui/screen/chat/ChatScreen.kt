@@ -208,6 +208,9 @@ import com.nola.ui.components.PermissionDialog
 import com.nola.ui.components.hostToolDisplayName
 import com.nola.ui.components.SmoothStreamingMarkdownRenderer
 import com.nola.ui.components.ThinkingBlock
+import com.nola.ui.components.NolaDisclosureChevron
+import com.nola.ui.components.nolaDisclosureEnter
+import com.nola.ui.components.nolaDisclosureExit
 import com.nola.ui.components.rememberReduceMotionEnabled
 import com.nola.ui.screen.intelligence.IntelligenceEntryKind
 import com.nola.ui.screen.intelligence.IntelligenceViewModel
@@ -2860,6 +2863,7 @@ private fun AgentCoreSkillRunList(
 
 @Composable
 private fun AgentCoreSkillRunCard(run: AgentCoreSkillRun) {
+    val reduceMotion = rememberReduceMotionEnabled()
     var expanded by remember(run.runId) { mutableStateOf(false) }
     val active = !run.status.isTerminal
     val statusLabel = stringResource(
@@ -2919,14 +2923,9 @@ private fun AgentCoreSkillRunCard(run: AgentCoreSkillRun) {
                     color = statusColor,
                 )
             }
-            Icon(
-                imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            NolaDisclosureChevron(expanded, reduceMotion, Modifier.size(18.dp))
         }
-        if (expanded) {
+        AnimatedVisibility(visible = expanded, enter = nolaDisclosureEnter(reduceMotion), exit = nolaDisclosureExit(reduceMotion)) {
             Column(
                 modifier = Modifier.padding(start = 39.dp, end = 11.dp, bottom = 11.dp),
                 verticalArrangement = Arrangement.spacedBy(5.dp),
@@ -3009,6 +3008,7 @@ private fun AgentCoreTaskCard(
     if (showDetail && loadDetail != null) key(task.ownerSessionId, task.ownerTurnId, task.id) {
         TaskChildDetailSheet(loadDetail, recovery) { showDetail = false }
     }
+    val reduceMotion = rememberReduceMotionEnabled()
     var expanded by remember(task.id) { mutableStateOf(false) }
     var draft by remember(task.id) { mutableStateOf("") }
     val active = task.state.isActive
@@ -3076,7 +3076,7 @@ private fun AgentCoreTaskCard(
                 Text("${(progress * 100).toInt()}%", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        if (expanded) {
+        AnimatedVisibility(visible = expanded, enter = nolaDisclosureEnter(reduceMotion), exit = nolaDisclosureExit(reduceMotion)) {
             Column(
                 modifier = Modifier.padding(start = 11.dp, end = 11.dp, bottom = 11.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),

@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { replyDisclosure } from '../lib/replyDisclosure';
     import { locale, t } from '../lib/i18n';
     import type { ChatReference } from '../lib/chatReferences';
     let { reference }: { reference: ChatReference } = $props();
@@ -16,7 +17,7 @@
         {#if reference.lineStart || reference.lineEnd}<dt>{t($locale, 'chatPage.referenceLines')}</dt><dd>{reference.lineStart || '…'}–{reference.lineEnd || '…'}</dd>{/if}
     </dl>
     {#if reference.uri || reference.sourceId || reference.rangeStart || reference.rangeEnd}
-        <details class="reference-details">
+        <details use:replyDisclosure class="reference-details">
             <summary>{t($locale, 'chatPage.toolTechnicalDetails')}</summary>
             {#if reference.uri}<p class="uri">{reference.uri}</p>{/if}
             <dl>

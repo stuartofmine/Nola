@@ -150,3 +150,22 @@ dialog:modal { animation: section-arrive var(--motion-base) ease-out; }
     button, .button, input, select, textarea, .card, .tabs, dialog,
     .management-content :is(section.card, div.card, form.card) { background: Canvas; box-shadow: none; }
 }
+
+
+/* Only reply disclosures: preserve native summary, keyboard and hidden semantics.
+   Auto -> auto updates (streaming text) do not animate the surrounding reply. */
+@supports (interpolate-size: allow-keywords) and selector(details::details-content) {
+    .reply-disclosure { interpolate-size: allow-keywords; }
+    .reply-disclosure::details-content {
+        block-size: 0;
+        opacity: 0;
+        overflow: clip;
+        transition: block-size var(--motion-base) var(--motion-disclosure),
+            opacity var(--motion-fast) ease-out,
+            content-visibility var(--motion-base) allow-discrete;
+    }
+    .reply-disclosure[open]::details-content { block-size: auto; opacity: 1; }
+}
+.reply-disclosure > summary::before {
+    transition: transform var(--motion-base) var(--motion-disclosure);
+}

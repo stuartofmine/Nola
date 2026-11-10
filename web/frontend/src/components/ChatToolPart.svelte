@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { replyDisclosure } from '../lib/replyDisclosure';
     import {getContext} from 'svelte';
     import {MESSAGE_PART_READING,readingPartKey,type MessagePartReading,type DisclosureField} from '../lib/messagePartReading';
     import { locale, t } from '../lib/i18n';
@@ -45,7 +46,7 @@
 
 {#key owner}
 {#if tool}
-    <details class="tool-part" data-tool-id={part.id} data-reading-part={readingPartKey(part)} data-reading-ticket={reading?.identity??''} data-state={tool.state} open={expanded}>
+    <details use:replyDisclosure class="tool-part" data-tool-id={part.id} data-reading-part={readingPartKey(part)} data-reading-ticket={reading?.identity??''} data-state={tool.state} open={expanded}>
         <summary onclick={event => { event.preventDefault(); toggle(); }}>
             <span class="tool-indicator" aria-hidden="true"></span>
             <span class="tool-heading"><span class="tool-title" title={title}>{title}</span>{#if !expanded && tool.state === 'failed' && tool.summary}<span class="tool-failure-summary">{tool.summary}</span>{/if}</span>
@@ -56,10 +57,10 @@
             {#if tool.summary !== null}<p class="tool-summary">{tool.summary}</p>{/if}
             {#each toolArtifacts(tool.artifacts) as reference}<ChatReferenceCard {reference} />{/each}
             {#if tool.origin || tool.hasInput || tool.permission || tool.resources.length || tool.outputPreview !== null || tool.hasStructuredResult}
-            <details class="tool-technical" open={technicalExpanded}>
+            <details use:replyDisclosure class="tool-technical" open={technicalExpanded}>
                 <summary onclick={event=>{event.preventDefault();chooseField('technical',!technicalExpanded);}}>{t($locale, 'chatPage.toolTechnicalDetails')}</summary>
             {#if tool.origin}<p class="tool-origin">{tool.origin}</p>{/if}
-            {#if input !== null}<details class="tool-input" open={inputExpanded}><summary onclick={event=>{event.preventDefault();chooseField('input',!inputExpanded);}}>{t($locale, 'chatPage.toolInput')}</summary>
+            {#if input !== null}<details use:replyDisclosure class="tool-input" open={inputExpanded}><summary onclick={event=>{event.preventDefault();chooseField('input',!inputExpanded);}}>{t($locale, 'chatPage.toolInput')}</summary>
                 {#if input.length > 2000}{#key owner}<ChatTextReader {part} field="input" text={input} title={title + ' · ' + t($locale, 'chatPage.toolInput')} />{/key}{/if}
                 <pre>{preview(input)}</pre>
             </details>{/if}
@@ -113,7 +114,7 @@
     .tool-state { color: var(--tool-tone); font-size: 12px; max-width: 45%; overflow-wrap: anywhere; }
     .tool-indicator { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--tool-tone); }
     .tool-chevron { color: var(--muted); font-size: 20px; transition: transform var(--motion-base) var(--motion-disclosure); }
-    details[open] .tool-chevron { transform: rotate(90deg); }
+    details[open] > summary .tool-chevron { transform: rotate(90deg); }
     .tool-details { min-width: 0; padding: 0 12px 12px; }
     .tool-summary { white-space: pre-wrap; line-height: 1.55; }
     @media (max-width: 700px) {
@@ -126,8 +127,6 @@
     pre { max-width: 100%; margin: 8px 0 0; padding: 10px; border-radius: 6px; background: var(--canvas); overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; font-size: 12px; }
     @media (prefers-reduced-motion: no-preference) {
         .tool-part[data-state='running'] .tool-indicator { animation: working 1.4s ease-in-out infinite; }
-        details[open] .tool-details { animation: reveal var(--motion-base) var(--motion-disclosure); }
     }
     @keyframes working { 50% { opacity: .35; } }
-    @keyframes reveal { from { opacity: 0; } to { opacity: 1; } }
 </style>

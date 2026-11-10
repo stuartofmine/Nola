@@ -499,13 +499,7 @@ fun HostToolCard(
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 2.dp, vertical = 4.dp)
-            .animateContentSize(
-                animationSpec = tween(
-                    durationMillis = if (reduceMotion) 0 else NolaMotion.base,
-                    easing = NolaMotion.emphasizedEasing
-                )
-            ),
+            .padding(horizontal = 2.dp, vertical = 4.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f),
             contentColor = MaterialTheme.colorScheme.onSurface
@@ -550,126 +544,124 @@ fun HostToolCard(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
                         maxLines = if (expanded) 6 else 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.animateContentSize(tween(if (reduceMotion) 0 else NolaMotion.disclosure,
+                            easing = NolaMotion.disclosureEasing))
                     )
                 }
-                if (expanded && !containsSensitiveData && fileSummary.isNotBlank()) {
-                    HostToolDetailBlock(
-                        title = stringResource(R.string.chat_host_tool_files),
-                        text = fileSummary
-                    )
-                }
-                if (expanded && !containsSensitiveData && visibleArgs.isNotBlank()) {
-                    HostToolDetailBlock(
-                        title = stringResource(R.string.chat_host_tool_parameters),
-                        text = visibleArgs
-                    )
-                }
-                if (expanded && !containsSensitiveData && redactedDetail.isNotBlank()) {
-                    HostToolDetailBlock(
-                        title = stringResource(R.string.chat_host_tool_result),
-                        text = redactedDetail
-                    )
-                }
-                if (expanded && !containsSensitiveData && visibleFullOutputRef.isNotBlank()) {
-                    HostToolDetailBlock(
-                        title = stringResource(R.string.chat_host_tool_full_output),
-                        text = visibleFullOutputRef
-                    )
-                }
-                if (expanded && !containsSensitiveData && recoveryGuidance.isNotBlank()) {
-                    HostToolDetailBlock(
-                        title = stringResource(R.string.chat_host_tool_recovery_title),
-                        text = recoveryGuidance
-                    )
-                }
-                if (expanded && redactedScreenshotWarning != null) {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = stringResource(R.string.chat_host_tool_screenshot_warning, redactedScreenshotWarning),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.tertiary
-                    )
-                }
-                if (expanded && containsSensitiveData) {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = stringResource(R.string.chat_host_tool_sensitive_result_hidden),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.tertiary
-                    )
-                }
-                if (expanded && hostToolShouldShowComputerScreenshotHint(toolName, containsSensitiveData, screenshotUri)) {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = stringResource(R.string.chat_host_tool_computer_screenshot_hint),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                if (expanded && !containsSensitiveData && screenshotUri != null) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    HostToolScreenshotPreview(
-                        screenshotUri = screenshotUri,
-                        onOpen = { runCatching { uriHandler.openUri(screenshotUri) } }
-                    )
-                }
-                if (expanded && !containsSensitiveData && (screenshotUri != null || finalUri != null || downloadUri != null)) {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        if (screenshotUri != null) {
-                            TextButton(
-                                modifier = Modifier.weight(1f),
-                                onClick = { runCatching { uriHandler.openUri(screenshotUri) } }
-                            ) {
-                                Text(
-                                    text = stringResource(R.string.chat_host_tool_open_screenshot),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
+                AnimatedVisibility(visible = expanded, enter = nolaDisclosureEnter(reduceMotion), exit = nolaDisclosureExit(reduceMotion)) {
+                    Column {
+                        if (!containsSensitiveData && fileSummary.isNotBlank()) {
+                            HostToolDetailBlock(
+                                title = stringResource(R.string.chat_host_tool_files),
+                                text = fileSummary
+                            )
                         }
-                        if (finalUri != null) {
-                            TextButton(
-                                modifier = Modifier.weight(1f),
-                                onClick = { runCatching { uriHandler.openUri(finalUri) } }
-                            ) {
-                                Text(
-                                    text = pageTitle?.takeIf { it.isNotBlank() } ?: stringResource(R.string.chat_host_tool_open_url),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
+                        if (!containsSensitiveData && visibleArgs.isNotBlank()) {
+                            HostToolDetailBlock(
+                                title = stringResource(R.string.chat_host_tool_parameters),
+                                text = visibleArgs
+                            )
                         }
-                        if (downloadUri != null) {
-                            TextButton(
-                                modifier = Modifier.weight(1f),
-                                onClick = { runCatching { uriHandler.openUri(downloadUri) } }
+                        if (!containsSensitiveData && redactedDetail.isNotBlank()) {
+                            HostToolDetailBlock(
+                                title = stringResource(R.string.chat_host_tool_result),
+                                text = redactedDetail
+                            )
+                        }
+                        if (!containsSensitiveData && visibleFullOutputRef.isNotBlank()) {
+                            HostToolDetailBlock(
+                                title = stringResource(R.string.chat_host_tool_full_output),
+                                text = visibleFullOutputRef
+                            )
+                        }
+                        if (!containsSensitiveData && recoveryGuidance.isNotBlank()) {
+                            HostToolDetailBlock(
+                                title = stringResource(R.string.chat_host_tool_recovery_title),
+                                text = recoveryGuidance
+                            )
+                        }
+                        if (redactedScreenshotWarning != null) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = stringResource(R.string.chat_host_tool_screenshot_warning, redactedScreenshotWarning),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.tertiary
+                            )
+                        }
+                        if (containsSensitiveData) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = stringResource(R.string.chat_host_tool_sensitive_result_hidden),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.tertiary
+                            )
+                        }
+                        if (hostToolShouldShowComputerScreenshotHint(toolName, containsSensitiveData, screenshotUri)) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = stringResource(R.string.chat_host_tool_computer_screenshot_hint),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (!containsSensitiveData && screenshotUri != null) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            HostToolScreenshotPreview(
+                                screenshotUri = screenshotUri,
+                                onOpen = { runCatching { uriHandler.openUri(screenshotUri) } }
+                            )
+                        }
+                        if (!containsSensitiveData && (screenshotUri != null || finalUri != null || downloadUri != null)) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Text(
-                                    text = downloadFilename?.takeIf { it.isNotBlank() }
-                                        ?: stringResource(R.string.chat_host_tool_open_download),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                                if (screenshotUri != null) {
+                                    TextButton(
+                                        modifier = Modifier.weight(1f),
+                                        onClick = { runCatching { uriHandler.openUri(screenshotUri) } }
+                                    ) {
+                                        Text(
+                                            text = stringResource(R.string.chat_host_tool_open_screenshot),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                                if (finalUri != null) {
+                                    TextButton(
+                                        modifier = Modifier.weight(1f),
+                                        onClick = { runCatching { uriHandler.openUri(finalUri) } }
+                                    ) {
+                                        Text(
+                                            text = pageTitle?.takeIf { it.isNotBlank() } ?: stringResource(R.string.chat_host_tool_open_url),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                                if (downloadUri != null) {
+                                    TextButton(
+                                        modifier = Modifier.weight(1f),
+                                        onClick = { runCatching { uriHandler.openUri(downloadUri) } }
+                                    ) {
+                                        Text(
+                                            text = downloadFilename?.takeIf { it.isNotBlank() }
+                                                ?: stringResource(R.string.chat_host_tool_open_download),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
-            Icon(
-                imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                contentDescription = if (expanded) {
-                    stringResource(R.string.common_collapse)
-                } else {
-                    stringResource(R.string.common_expand)
-                },
-                modifier = Modifier.size(18.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            NolaDisclosureChevron(expanded, reduceMotion, Modifier.size(18.dp),
+                stringResource(if (expanded) R.string.common_collapse else R.string.common_expand))
         }
     }
 }

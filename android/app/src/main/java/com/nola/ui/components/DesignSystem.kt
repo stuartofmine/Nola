@@ -35,6 +35,10 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -163,6 +167,24 @@ object NolaMotion {
     val emphasizedEasing = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
     val disclosureEasing = CubicBezierEasing(0.20f, 0.74f, 0.24f, 1f)
     val streamRevealEasing = CubicBezierEasing(0.16f, 0.76f, 0.22f, 1f)
+}
+
+/** The same glyph rotates with the body instead of swapping at the first frame. */
+@Composable
+fun NolaDisclosureChevron(
+    expanded: Boolean,
+    reduceMotion: Boolean,
+    modifier: Modifier = Modifier,
+    contentDescription: String? = null,
+) {
+    val rotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = tween(if (reduceMotion) 0 else NolaMotion.disclosure, easing = NolaMotion.disclosureEasing),
+        label = "reply-disclosure-chevron",
+    )
+    Icon(Icons.Filled.ExpandMore, contentDescription = contentDescription,
+        modifier = modifier.graphicsLayer { rotationZ = rotation },
+        tint = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 fun nolaDisclosureEnter(reduceMotion: Boolean): EnterTransition =

@@ -45,6 +45,7 @@ import com.nola.ui.components.ThinkingBody
 import com.nola.ui.components.thinkingExpandedAfterStatusChange
 import com.nola.ui.components.ThinkingBodyVisibleCharactersKey
 import androidx.compose.ui.semantics.semantics
+import com.nola.ui.components.NolaDisclosureChevron
 import com.nola.ui.components.nolaDisclosureEnter
 import com.nola.ui.components.nolaDisclosureExit
 import com.nola.ui.components.rememberReduceMotionEnabled
@@ -81,6 +82,7 @@ internal fun CanonicalActivityCards(
             automaticallyExpanded, finished = !(attention || activeReasoning), userChangedExpansion = false)
     }
     val expanded = choices.expandedFor(activity) ?: automaticallyExpanded
+    val reduceMotion = rememberReduceMotionEnabled()
     val singleReasoning = visible.singleOrNull() as? ConversationProjectionV1.Part.Reasoning
     val heading = if (singleReasoning == null) R.string.chat_execution_process else when {
         reasoningIsFinished(singleReasoning.state, isLive) -> R.string.thinking_process
@@ -94,21 +96,23 @@ internal fun CanonicalActivityCards(
             colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant),
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
             Text(stringResource(heading), modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
-            Icon(if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, contentDescription = null)
+            NolaDisclosureChevron(expanded, reduceMotion)
         }
-        if (expanded) Column(Modifier.padding(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            visible.forEachIndexed { index, part -> key(part.partId) {
-                if (visible.size > 1) Text("${index + 1}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                when (part) {
-                    is ConversationProjectionV1.Part.Reasoning -> ThinkingBody(part.summary.orEmpty(),
-                        Modifier.testTag("assistant.reasoning.block").semantics {
-                            this[ThinkingBodyVisibleCharactersKey] = part.summary.orEmpty().length
-                        })
-                    is ConversationProjectionV1.Part.Tool -> CanonicalActivityRow(part, details = part.partId in choices.detailsPartIds,
-                        onDetailsChanged = { onChoicesChanged(choices.details(activity, part.partId, it)) }, onReadText = onReadText)
-                    else -> Unit
-                }
-            } }
+        AnimatedVisibility(visible = expanded, enter = nolaDisclosureEnter(reduceMotion), exit = nolaDisclosureExit(reduceMotion)) {
+            Column(Modifier.padding(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                visible.forEachIndexed { index, part -> key(part.partId) {
+                    if (visible.size > 1) Text("${index + 1}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    when (part) {
+                        is ConversationProjectionV1.Part.Reasoning -> ThinkingBody(part.summary.orEmpty(),
+                            Modifier.testTag("assistant.reasoning.block").semantics {
+                                this[ThinkingBodyVisibleCharactersKey] = part.summary.orEmpty().length
+                            })
+                        is ConversationProjectionV1.Part.Tool -> CanonicalActivityRow(part, details = part.partId in choices.detailsPartIds,
+                            onDetailsChanged = { onChoicesChanged(choices.details(activity, part.partId, it)) }, onReadText = onReadText)
+                        else -> Unit
+                    }
+                } }
+            }
         }
     }
 }

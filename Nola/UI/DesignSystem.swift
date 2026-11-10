@@ -592,7 +592,7 @@ struct NolaRowDisclosureStyle: DisclosureGroupStyle {
     func makeBody(configuration: Configuration) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Button {
-                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.18)) {
+                withAnimation(reduceMotion ? nil : DesignTokens.disclosureAnimation) {
                     configuration.isExpanded.toggle()
                 }
             } label: {
@@ -604,12 +604,15 @@ struct NolaRowDisclosureStyle: DisclosureGroupStyle {
                         .rotationEffect(.degrees(configuration.isExpanded ? 180 : 0))
                         .accessibilityHidden(true)
                 }
+                .padding(.horizontal, DesignTokens.spacing_sm)
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(NolaActionButtonStyle())
             .accessibilityValue(configuration.isExpanded ? String(localized: "Expanded") : String(localized: "Collapsed"))
-            if configuration.isExpanded { configuration.content }
+            if configuration.isExpanded {
+                configuration.content.nolaDisclosureTransition(reduceMotion: reduceMotion)
+            }
         }
     }
 }

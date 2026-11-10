@@ -1423,6 +1423,7 @@ private struct MacJournalFailureView: View {
 
 @MainActor
 private struct MacJournalCompletedToolsView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let reference: MacJournalMessageReference
     let parts: [MacAssistantJournalPart]
     @Environment(\.journalPresentationOwner) private var owner
@@ -1441,7 +1442,8 @@ private struct MacJournalCompletedToolsView: View {
         VStack(alignment: .leading, spacing: 0) {
             Button { expanded.toggle() } label: {
                 HStack(spacing: 8) {
-                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                    Image(systemName: "chevron.right")
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
                     Label {
                         Text("\(parts.count) completed tools", tableName: "Chat")
                     } icon: {
@@ -1465,8 +1467,10 @@ private struct MacJournalCompletedToolsView: View {
                         }
                     }
                 }.padding(.top, 6)
+                    .macDisclosureTransition(reduceMotion: reduceMotion)
             }
         }
+        .animation(reduceMotion ? nil : MacDesignTokens.Motion.disclosureAnimation, value: expanded)
     }
 }
 
@@ -1533,7 +1537,7 @@ struct MacJournalToolView: View {
 
     var body: some View {
         DisclosureGroup(isExpanded: Binding(get: { expanded }, set: { expanded = $0 })) {
-            if expanded {
+            Group {
                 VStack(alignment: .leading, spacing: 10) {
                     if !part.bodies.contains(where: { $0.field == "tool_summary" }) {
                         inlineValue(tool.summary)
@@ -1544,7 +1548,7 @@ struct MacJournalToolView: View {
                             presentation: .toolField(content.field), usesMonospacedText: false)
                     }
                     DisclosureGroup(isExpanded: Binding(get: { technicalExpanded }, set: { technicalExpanded = $0 })) {
-                        if technicalExpanded { technicalDetails }
+                        technicalDetails
                     } label: {
                         Text("Technical details", tableName: "Chat")
                             .font(.caption).foregroundStyle(.secondary)
@@ -1638,6 +1642,7 @@ struct MacJournalToolView: View {
 
 @MainActor
 struct MacJournalProcessView<Content: View>: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let partIDs: [String]
     let delivery: MacChatMessage.DeliveryState?
     let requiresAttention: Bool
@@ -1665,7 +1670,8 @@ struct MacJournalProcessView<Content: View>: View {
             } label: {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
-                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                    Image(systemName: "chevron.right")
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
                         .font(.body.weight(.semibold))
                     Group {
                         if reasoningOnly { Text(hasLiveReasoning ? "Thinking" : "Thinking Process") }
@@ -1703,6 +1709,7 @@ struct MacJournalProcessView<Content: View>: View {
                 VStack(alignment: .leading, spacing: 6) { content() }
                     .padding(.horizontal, 12)
                     .padding(.bottom, 10)
+                    .macDisclosureTransition(reduceMotion: reduceMotion)
             }
         }
         .background(expanded ? MacDesignColor.surfaceRaised : Color.clear, in: RoundedRectangle(cornerRadius: 12))
@@ -1713,7 +1720,7 @@ struct MacJournalProcessView<Content: View>: View {
             }
         }
         .environment(\.journalProcessPartIDs, partIDs)
-        .animation(nil, value: expanded)
+        .animation(reduceMotion ? nil : MacDesignTokens.Motion.disclosureAnimation, value: expanded)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chat.journal.process")
     }
@@ -1721,6 +1728,7 @@ struct MacJournalProcessView<Content: View>: View {
 
 @MainActor
 private struct MacJournalActivityView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let reference: MacJournalMessageReference
     let part: MacAssistantJournalPart
     let activity: MacAssistantJournalMetadata.Activity
@@ -1754,7 +1762,8 @@ private struct MacJournalActivityView: View {
                     expansion = next
                 } label: {
                     HStack(spacing: 8) {
-                        Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        Image(systemName: "chevron.right")
+                            .rotationEffect(.degrees(expanded ? 90 : 0))
                             .font(.caption.weight(.semibold))
                         activityLabel
                         Spacer(minLength: 0)
@@ -1766,12 +1775,13 @@ private struct MacJournalActivityView: View {
                 .buttonStyle(.plain)
                 .accessibilityValue(expanded ? Text("Expanded", tableName: "Chat") : Text("Collapsed", tableName: "Chat"))
                 .accessibilityIdentifier(isReasoning ? "chat.journal.reasoning.toggle" : "chat.journal.step.toggle")
-                if expanded { details }
+                if expanded { details.macDisclosureTransition(reduceMotion: reduceMotion) }
             } else {
                 activityLabel
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .animation(reduceMotion ? nil : MacDesignTokens.Motion.disclosureAnimation, value: expanded)
         .accessibilityIdentifier(isReasoning ? "chat.journal.reasoning" : "chat.journal.step")
         .onChange(of: activity.isRunning, initial: true) { _, running in
             expansion.observe(isRunning: running)

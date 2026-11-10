@@ -931,7 +931,7 @@ struct MacRowDisclosureStyle: DisclosureGroupStyle {
     func makeBody(configuration: Configuration) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Button {
-                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.18)) {
+                withAnimation(reduceMotion ? nil : MacDesignTokens.Motion.disclosureAnimation) {
                     configuration.isExpanded.toggle()
                 }
             } label: {
@@ -948,7 +948,9 @@ struct MacRowDisclosureStyle: DisclosureGroupStyle {
             }
             .buttonStyle(MacActionButtonStyle())
             .accessibilityValue(Text(configuration.isExpanded ? "Expanded" : "Collapsed", tableName: "Chat"))
-            if configuration.isExpanded { configuration.content }
+            if configuration.isExpanded {
+                configuration.content.macDisclosureTransition(reduceMotion: reduceMotion)
+            }
         }
     }
 }
