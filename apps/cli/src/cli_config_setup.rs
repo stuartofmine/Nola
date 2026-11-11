@@ -93,30 +93,80 @@ fn prompt_config_secret(prompt: &str) -> Result<String, String> {
     let mut value = String::new();
     loop {
         match read().map_err(|err| format!("read secure input failed: {err}"))? {
-            Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
-                KeyCode::Enter => {
+            Event::Key(key) => match edit_secret_key(&mut value, &key) {
+                SecretKeyAction::Submit => {
                     print!("\r\n");
-                    io::stdout()
-                        .flush()
-                        .map_err(|err| format!("flush prompt failed: {err}"))?;
+                    io::stdout().flush().map_err(|err| format!("flush prompt failed: {err}"))?;
                     return Ok(value);
                 }
-                KeyCode::Backspace | KeyCode::Delete => {
-                    value.pop();
-                }
-                KeyCode::Char(ch)
-                    if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(ch, 'c' | 'C') =>
-                {
+                SecretKeyAction::Cancel => {
                     print!("\r\n");
                     let _ = io::stdout().flush();
                     return Err("configuration input cancelled".to_string());
                 }
-                KeyCode::Char(ch) if !ch.is_control() => value.push(ch),
-                _ => {}
+                SecretKeyAction::Continue => {}
             },
             Event::Paste(text) => value.push_str(&text),
             _ => {}
         }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum SecretKeyAction { Continue, Submit, Cancel }
+
+fn edit_secret_key(value: &mut String, key: &crossterm::event::KeyEvent) -> SecretKeyAction {
+    if key.kind != KeyEventKind::Press { return SecretKeyAction::Continue; }
+    // Treat terminal CR/LF variants as submission, never as literal m/j in a key.
+    if crate::composer::is_submit(key) { return SecretKeyAction::Submit; }
+    if key.code == KeyCode::Esc || key.modifiers.contains(KeyModifiers::CONTROL)
+        && matches!(key.code, KeyCode::Char('c' | 'C')) {
+        return SecretKeyAction::Cancel;
+    }
+    if key.modifiers == KeyModifiers::CONTROL && matches!(key.code, KeyCode::Char('u' | 'U')) {
+        value.clear();
+        return SecretKeyAction::Continue;
+    }
+    if key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER | KeyModifiers::HYPER | KeyModifiers::META) {
+        return SecretKeyAction::Continue;
+    }
+    match key.code {
+        KeyCode::Backspace | KeyCode::Delete => { value.pop(); }
+        KeyCode::Char(ch) if !ch.is_control() => value.push(ch),
+        _ => {}
+    }
+    SecretKeyAction::Continue
+}
+
+#[cfg(test)]
+mod secret_input_tests {
+    use super::*;
+    use crossterm::event::KeyEvent;
+
+    #[test]
+    fn secret_return_variants_do_not_mutate_the_key() {
+        for key in [KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+                    KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL),
+                    KeyEvent::new(KeyCode::Char('m'), KeyModifiers::CONTROL)] {
+            let mut value = String::new();
+            assert_eq!(edit_secret_key(&mut value, &key), SecretKeyAction::Submit);
+            assert!(value.is_empty());
+        }
+    }
+
+    #[test]
+    fn secret_shortcuts_cancel_clear_or_ignore_without_inserting_letters() {
+        let mut value = "fixture".to_string();
+        assert_eq!(edit_secret_key(&mut value, &KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL)), SecretKeyAction::Continue);
+        assert_eq!(value, "fixture");
+        assert_eq!(edit_secret_key(&mut value, &KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)), SecretKeyAction::Cancel);
+        assert_eq!(edit_secret_key(&mut value, &KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)), SecretKeyAction::Cancel);
+        edit_secret_key(&mut value, &KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+        assert!(value.is_empty());
+        edit_secret_key(&mut value, &KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT));
+        assert_eq!(value, "A");
+        edit_secret_key(&mut value, &KeyEvent::new_with_kind(KeyCode::Enter, KeyModifiers::NONE, KeyEventKind::Release));
+        assert_eq!(value, "A");
     }
 }
 

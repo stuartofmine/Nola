@@ -31,6 +31,7 @@ pub(crate) fn modal_key(key: &crossterm::event::KeyEvent) -> ModalKey {
 pub(crate) struct ModalEditor {
     pub(crate) text: String,
     pub(crate) cursor: usize,
+    pub(crate) input_rejected: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -41,14 +42,20 @@ impl ModalEditor {
 
     fn insert(&mut self, value: &str) {
         let normalized = value.replace("\r\n", "\n").replace('\r', "\n");
-        for ch in normalized.chars() {
-            // Preserve intentional line breaks; terminal control sequences and
-            // pasted tabs must not gain cursor/terminal ownership.
-            let ch = if ch == '\t' { ' ' } else { ch };
-            if ch.is_control() && ch != '\n' { continue; }
-            if self.text.len() + ch.len_utf8() > Self::LIMIT { break; }
-            self.text.insert(self.cursor, ch);
-            self.cursor += ch.len_utf8();
+        // Reject an oversized edit atomically: a shortened permission instruction
+        // must never be submitted as though it were the user's complete text.
+        let insertion: String = normalized.chars()
+            .map(|ch| if ch == '\t' { ' ' } else { ch })
+            .filter(|ch| !ch.is_control() || *ch == '\n')
+            .collect();
+        if self.text.len().saturating_add(insertion.len()) > Self::LIMIT {
+            self.input_rejected = true;
+            return;
+        }
+        if !insertion.is_empty() {
+            self.text.insert_str(self.cursor, &insertion);
+            self.cursor += insertion.len();
+            self.input_rejected = false;
         }
     }
 
@@ -67,7 +74,10 @@ impl ModalEditor {
                 | KeyCode::Up | KeyCode::Down | KeyCode::Backspace | KeyCode::Delete)
                 || key.modifiers == KeyModifiers::CONTROL && matches!(key.code, KeyCode::Char('a' | 'A' | 'e' | 'E' | 'b' | 'B' | 'f' | 'F' | 'u' | 'U' | 'w' | 'W' | 'k' | 'K')))
         {
-            return if crate::composer::edit(&mut self.text, &mut self.cursor, &key) { EditorAction::Redraw } else { EditorAction::Ignore };
+            let before = self.text.clone();
+            let changed = crate::composer::edit(&mut self.text, &mut self.cursor, &key);
+            if self.text != before { self.input_rejected = false; }
+            return if changed { EditorAction::Redraw } else { EditorAction::Ignore };
         }
         if key.kind == crossterm::event::KeyEventKind::Repeat
             && !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER | KeyModifiers::HYPER | KeyModifiers::META)
@@ -83,7 +93,7 @@ impl ModalEditor {
         }
         match key.code {
             KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => self.insert("\n"),
-            KeyCode::Enter if !self.text.trim().is_empty() => return EditorAction::Submit(self.text.trim().to_string()),
+            KeyCode::Enter if !self.input_rejected && !self.text.trim().is_empty() => return EditorAction::Submit(self.text.trim().to_string()),
             KeyCode::Char(ch) if !ch.is_control() => self.insert(&ch.to_string()),
             _ => return EditorAction::Ignore,
         }
@@ -211,12 +221,30 @@ mod tests {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let mut editor = ModalEditor::default();
         editor.apply(Event::Paste("字".repeat(2000)));
-        assert_eq!(editor.text.len(), 4095);
+        assert!(editor.text.is_empty());
+        assert!(editor.input_rejected);
         assert!(editor.text.is_char_boundary(editor.cursor));
         assert_eq!(editor.apply(Event::Key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL))), EditorAction::Ignore);
         assert_eq!(editor.apply(Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))), EditorAction::Cancel);
         assert_eq!(editor.apply(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))), EditorAction::Cancel);
     }
+    #[test]
+    fn oversized_modal_paste_preserves_draft_and_blocks_submission_until_edited() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut editor = ModalEditor::default();
+        editor.apply(Event::Paste("Keep this condition".into()));
+        let before = (editor.text.clone(), editor.cursor);
+        editor.apply(Event::Paste("字".repeat(2000)));
+        assert_eq!((editor.text.clone(), editor.cursor), before);
+        assert!(editor.input_rejected);
+        assert_eq!(editor.apply(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))), EditorAction::Ignore);
+        editor.apply(Event::Key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)));
+        assert!(editor.input_rejected, "cursor movement must not dismiss rejected input");
+        editor.apply(Event::Paste("!".into()));
+        assert!(!editor.input_rejected);
+        assert!(matches!(editor.apply(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))), EditorAction::Submit(_)));
+    }
+
     #[test]
     fn modal_shortcuts_cannot_accidentally_approve_or_submit() {
         use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};

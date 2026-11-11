@@ -1013,7 +1013,7 @@ fn read_interactive_prompt_line(
             }
             let sanitized = normalize_interactive_paste(&text);
             if sanitized.chars().any(|ch| !ch.is_whitespace()) {
-                let placeholder = format!("[Pasted Content {} chars]", sanitized.chars().count());
+                let placeholder = next_pasted_content_placeholder(&line, &sanitized, &pasted_contents);
                 line.insert_str(cursor, &placeholder);
                 cursor += placeholder.len();
                 pasted_contents.push(InteractivePastedContent {
@@ -1070,17 +1070,48 @@ fn normalize_interactive_paste(text: &str) -> String {
     crate::composer::normalize_paste(text)
 }
 
+// A length is not an identity: deleting one of two equally sized pastes
+// must not cause the remaining marker to resolve to the deleted source.
+fn next_pasted_content_placeholder(
+    input: &str,
+    content: &str,
+    pasted_contents: &[InteractivePastedContent],
+) -> String {
+    let mut id = pasted_contents.len() + 1;
+    loop {
+        let marker = format!("[Pasted Content #{id} · {} chars]", content.chars().count());
+        if !input.contains(&marker) && !content.contains(&marker)
+            && pasted_contents.iter().all(|paste|
+                paste.placeholder != marker && !paste.content.contains(&marker))
+        {
+            return marker;
+        }
+        id += 1;
+    }
+}
+
 fn expand_interactive_pasted_content(
     input: &str,
     pasted_contents: &[InteractivePastedContent],
 ) -> String {
-    let mut expanded = input.to_string();
-    for pasted in pasted_contents {
-        if let Some(start) = expanded.find(&pasted.placeholder) {
-            let end = start + pasted.placeholder.len();
-            expanded.replace_range(start..end, &pasted.content);
-        }
+    // Scan only authored composer text, never the sources inserted into it.
+    // Each stored paste corresponds to one marker, matching the prior contract.
+    let mut expanded = String::new();
+    let mut remaining = input;
+    let mut used = vec![false; pasted_contents.len()];
+    loop {
+        let next = pasted_contents.iter().enumerate()
+            .filter(|(index, paste)| !used[*index] && !paste.placeholder.is_empty())
+            .filter_map(|(index, paste)| remaining.find(&paste.placeholder).map(|offset| (offset, index)))
+            .min_by_key(|&(offset, _)| offset);
+        let Some((offset, index)) = next else { break; };
+        let paste = &pasted_contents[index];
+        expanded.push_str(&remaining[..offset]);
+        expanded.push_str(&paste.content);
+        remaining = &remaining[offset + paste.placeholder.len()..];
+        used[index] = true;
     }
+    expanded.push_str(remaining);
     expanded
 }
 
@@ -4012,5 +4043,40 @@ fn resume_selected_session_before_composer(config: &Config, emitter: &mut Emitte
             }
         }
         Some(_) => Ok(true),
+    }
+}
+
+#[cfg(test)]
+mod pasted_content_regression_tests {
+    use super::*;
+
+    #[test]
+    fn pasted_content_equal_lengths_remain_distinct_after_deletion() {
+        let first = next_pasted_content_placeholder("", "abc", &[]);
+        let mut pastes = vec![InteractivePastedContent { placeholder: first.clone(), content: "abc".into() }];
+        let second = next_pasted_content_placeholder(&first, "xyz", &pastes);
+        assert_ne!(first, second);
+        pastes.push(InteractivePastedContent { placeholder: second.clone(), content: "xyz".into() });
+        assert_eq!(expand_interactive_pasted_content(&second, &pastes), "xyz");
+        assert_eq!(expand_interactive_pasted_content(&format!("{second} {first}"), &pastes), "xyz abc");
+    }
+
+    #[test]
+    fn pasted_content_marker_avoids_existing_literal_and_preserves_unicode() {
+        let literal = "[Pasted Content #1 · 2 chars]";
+        let marker = next_pasted_content_placeholder(literal, "猫😀", &[]);
+        assert_ne!(marker, literal);
+        let pastes = vec![InteractivePastedContent { placeholder: marker.clone(), content: "猫😀".into() }];
+        assert_eq!(expand_interactive_pasted_content(&format!("{literal}\n{marker}"), &pastes), format!("{literal}\n猫😀"));
+    }
+
+    #[test]
+    fn pasted_content_expansion_never_rewrites_inserted_source() {
+        let pastes = vec![
+            InteractivePastedContent { placeholder: "[first]".into(), content: "literal [second]".into() },
+            InteractivePastedContent { placeholder: "[second]".into(), content: "replacement".into() },
+        ];
+        assert_eq!(expand_interactive_pasted_content("[first] [second]", &pastes),
+            "literal [second] replacement");
     }
 }

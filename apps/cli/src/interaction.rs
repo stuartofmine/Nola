@@ -952,6 +952,9 @@ fn render_modal_answer(editor: &crate::terminal_input::ModalEditor, columns: usi
             rows.push(format!("{} {line}", if line.contains('▏') { "›" } else { " " }));
         }
     }
+    if editor.input_rejected {
+        rows.extend(wrap_display_width(ui_text(UiText::InputRejectedTooLong), width));
+    }
     rows.push(format!("Enter ✓ · Esc / Ctrl+C × · Shift+Enter ↵ · ←/→ · {}/4096", editor.text.len()));
     rows.join("\n")
 }
@@ -1522,6 +1525,15 @@ mod modal_terminal_mode_tests {
             .collect::<String>();
         assert_eq!(contents, "第一行第二行很长，需要换行");
         assert!(render_modal_answer(&editor, 80).lines().count() < frame.lines().count());
+    }
+
+    #[test]
+    fn modal_answer_reports_oversized_rejected_paste() {
+        let mut editor = crate::terminal_input::ModalEditor::default();
+        editor.apply(Event::Paste("x".repeat(4097)));
+        let frame = render_modal_answer(&editor, 200);
+        assert!(frame.contains(ui_text(UiText::InputRejectedTooLong)));
+        assert!(editor.text.is_empty());
     }
 
     #[test]
