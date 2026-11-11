@@ -3000,10 +3000,6 @@ private struct HostToolEventCard: View {
             let origin = tool.origin
             Text([origin.kind, origin.providerTitle, origin.providerId, origin.namespace].compactMap { $0 }.joined(separator: " · "))
                 .font(.caption2).foregroundStyle(.secondary)
-            if let preview = tool.outputPreview, tool.output != nil {
-                toolTextBlock(title: NSLocalizedString("chat.host_tool.preview", value: "Preview", comment: "Independent tool preview"),
-                              text: preview, identifier: "chat.assistant.tool.preview.\(event.id)")
-            }
             if let permission = tool.permission {
                 Text([permission.permissionDomain, permission.decision, permission.rationale].compactMap { $0 }.joined(separator: " · "))
                     .font(.caption2).foregroundStyle(.secondary)
@@ -3018,9 +3014,10 @@ private struct HostToolEventCard: View {
 
     var body: some View {
         DisclosureGroup(isExpanded: readingExpansion ?? $expanded) {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 12) {
                 if let summary = canonicalTool?.summary, !event.containsSensitiveData {
                     Text(summary).font(.caption).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 if let tool = canonicalTool, !event.containsSensitiveData {
                     ForEach(Array(tool.artifacts.enumerated()), id: \.offset) { _, artifact in
@@ -3113,6 +3110,24 @@ private struct HostToolEventCard: View {
                     )
                 }
 
+                if !event.containsSensitiveData {
+                    if let tool = canonicalTool, let preview = tool.outputPreview,
+                       tool.output != nil, preview != details.result {
+                        toolTextBlock(
+                            title: NSLocalizedString("chat.host_tool.preview", value: "Preview", comment: "Independent tool preview"),
+                            text: preview,
+                            identifier: "chat.assistant.tool.preview.\(event.id)"
+                        )
+                    }
+                    if !details.result.isEmpty {
+                        toolTextBlock(
+                            title: NSLocalizedString("chat.host_tool.result", value: "结果", comment: "Host tool result title"),
+                            text: details.result,
+                            identifier: "chat.assistant.tool.result.\(event.id)"
+                        )
+                    }
+                }
+
                 DisclosureGroup(isExpanded: technicalReadingExpansion ?? $technicalExpanded) {
                     if technicalReadingExpansion?.wrappedValue ?? technicalExpanded {
                         canonicalDetails
@@ -3123,13 +3138,6 @@ private struct HostToolEventCard: View {
                                 identifier: "chat.assistant.tool.arguments.\(event.id)"
                             )
                         }
-                        if !event.containsSensitiveData, !details.result.isEmpty {
-                            toolTextBlock(
-                                title: NSLocalizedString("chat.host_tool.result", value: "结果", comment: "Host tool result title"),
-                                text: details.result,
-                                identifier: "chat.assistant.tool.result.\(event.id)"
-                            )
-                        }
                     }
                 } label: {
                     Text(NSLocalizedString("scheduled.run_detail.technical.title", value: "Technical details", comment: "Technical details"))
@@ -3138,19 +3146,22 @@ private struct HostToolEventCard: View {
                 }
                 .disclosureGroupStyle(NolaRowDisclosureStyle())
             }
-            .padding(.top, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 12)
         } label: {
             HStack(alignment: .top, spacing: 8) {
                 if event.status == .running && (canonicalTool == nil || canonicalTool?.state == .running) && !reduceMotion {
                     ProgressView()
                         .scaleEffect(0.58)
+                        .frame(width: 16, height: 16)
                 } else {
                     Image(systemName: event.status == .permissionRequired ? "exclamationmark.shield" : iconName)
                         .font(.caption.weight(.semibold))
                         .foregroundColor(tint)
+                        .frame(width: 16, height: 16)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
+                    HStack(alignment: .top, spacing: 6) {
                         Text(displayName)
                             .font(.caption.weight(.semibold))
                         Text(statusText)
@@ -3193,7 +3204,7 @@ private struct HostToolEventCard: View {
         text: String,
         identifier: String
     ) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(title)
                 .font(.caption2.weight(.semibold))
                 .foregroundColor(.secondary)
@@ -3206,9 +3217,10 @@ private struct HostToolEventCard: View {
                 .frame(minHeight: 44)
                 .accessibilityIdentifier(identifier + ".reader")
             }
-            Text(preview(text))
-                .font(.caption2.monospaced())
-                .foregroundColor(.secondary)
+            Text(ChatToolTextPresentation.preview(text))
+                .font(.caption.monospaced())
+                .foregroundColor(.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
         }
         .padding(8)
@@ -3219,10 +3231,6 @@ private struct HostToolEventCard: View {
         )
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(identifier)
-    }
-
-    private func preview(_ text: String) -> String {
-        preview(text, limit: ChatToolTextPresentation.previewLimit)
     }
 
     private func preview(_ text: String, limit: Int) -> String {
@@ -3278,7 +3286,17 @@ private struct HostToolTextReader: View {
 
 enum ChatToolTextPresentation {
     static let previewLimit = 1200
-    static func needsReader(_ text: String) -> Bool { text.count > previewLimit }
+    static let previewLineLimit = 16
+
+    static func needsReader(_ text: String) -> Bool {
+        text.count > previewLimit || text.split(separator: "\n", omittingEmptySubsequences: false).count > previewLineLimit
+    }
+
+    static func preview(_ text: String) -> String {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        let excerpt = String(lines.prefix(previewLineLimit).joined(separator: "\n").prefix(previewLimit))
+        return needsReader(text) ? excerpt + "\n…" : text
+    }
 }
 
 private struct SubmittingHostPermissionRequestKey: EnvironmentKey {
@@ -3425,7 +3443,7 @@ struct HostPermissionDecisionCard: View {
                         .fontWeight(.medium)
                 }
             } else {
-                HStack(spacing: 8) {
+                HStack(alignment: .top, spacing: 8) {
                     Image(systemName: icon)
                         .frame(width: 14)
                         .foregroundColor(.secondary)
@@ -3438,6 +3456,7 @@ struct HostPermissionDecisionCard: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .font(.caption2)
     }
 

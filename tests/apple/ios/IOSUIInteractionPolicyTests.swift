@@ -155,6 +155,15 @@ final class IOSUIInteractionPolicyTests: XCTestCase {
         XCTAssertTrue(ChatToolTextPresentation.needsReader(String(repeating: "👩‍💻", count: 1201)))
     }
 
+    func testToolPreviewBoundsManyShortLinesAndPreservesFullReaderText() {
+        let text = Array(repeating: "line", count: 17).joined(separator: "\n")
+        XCTAssertTrue(ChatToolTextPresentation.needsReader(text))
+        XCTAssertEqual(ChatToolTextPresentation.preview(text), Array(repeating: "line", count: 16).joined(separator: "\n") + "\n…")
+        XCTAssertEqual(ChatToolTextPresentation.preview("  first\n  second"), "  first\n  second")
+        let emoji = String(repeating: "👩‍💻", count: 1201)
+        XCTAssertEqual(ChatToolTextPresentation.preview(emoji), String(repeating: "👩‍💻", count: 1200) + "\n…")
+    }
+
     func testReasoningCompletionPreservesBothUserDisclosureChoices() {
         XCTAssertTrue(ChatThinkingDisclosurePolicy.expandedAfterStatusChange(current: true, isFinished: true))
         XCTAssertFalse(ChatThinkingDisclosurePolicy.expandedAfterStatusChange(current: false, isFinished: true))

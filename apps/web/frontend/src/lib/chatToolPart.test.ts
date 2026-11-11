@@ -16,6 +16,9 @@ test('actual tool component shows title, summary, preview and structured null in
             const html: string = render(ToolPart, {props: {part: {source: 'canonical', id: 'part', value}}}).body;
             for (const text of ['独立标题', '人类摘要', '技术预览', '>null</pre>', t(language, 'chatPage.toolPreview'), t(language, 'chatPage.toolResult')]) assert.ok(html.includes(text), text);
             assert.ok(!html.includes('<button'), 'A result descriptor is not an executable permission or reader');
+            assert.ok(html.indexOf('class="tool-output') < html.indexOf('class="tool-technical'), 'Readable output is available before optional diagnostics');
+            assert.ok(html.indexOf('class="tool-result') > html.indexOf('class="tool-technical'), 'Structured payload remains in diagnostics');
+            assert.match(html, /class="tool-brief/,'Collapsed calls retain the human-readable progress summary');
             for (const [state, key] of Object.entries({
                 pending: 'toolPending', running: 'toolRunning', completed: 'toolCompleted',
                 failed: 'toolFailed', cancelled: 'toolCancelled', sealed: 'toolSealed',
@@ -54,6 +57,10 @@ test('actual tool component shows title, summary, preview and structured null in
         }}}}).body;
         for (const label of ['Tool input', 'echo safe', 'Host · shell · capability', 'Report']) assert.ok(complete.includes(label), label);
         assert.ok(complete.includes('href="https://example.org/report"'));
+        const manyLines = Array(40).fill('short line').join('\n');
+        const bounded = render(ToolPart, {props: {part: {source: 'canonical', id: 'part', value: {...value, output_preview: manyLines, input: manyLines, output: manyLines}}}}).body;
+        for (const field of ['preview', 'input', 'result']) assert.ok(bounded.includes(`data-reader-field="${field}"`), 'Line-limited fields retain a complete-text reader');
+        assert.ok(bounded.includes('short line…'));
         const nullInput = render(ToolPart, {props: {part: {source: 'canonical', id: 'part', value: {...value, input: null}}}}).body;
         assert.match(nullInput, /class="tool-input/);
         assert.match(nullInput, />null<\/pre>/);

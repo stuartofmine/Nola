@@ -21,6 +21,16 @@ final class MacAssistantPresentationVisibilityTests: XCTestCase {
         }
     }
 
+    func testToolOutputIsSeparateFromSummaryAndTechnicalMetadata() {
+        for field in ["tool_output", "tool_output_text"] {
+            XCTAssertTrue(MacJournalToolFieldPresentation.isOutput(field))
+            XCTAssertFalse(MacJournalToolFieldPresentation.isResult(field))
+        }
+        for field in ["tool_input", "tool_summary", "tool_artifacts", "permission_decision", "future_field", ""] {
+            XCTAssertFalse(MacJournalToolFieldPresentation.isOutput(field))
+        }
+    }
+
     func testSettledEmptyThinkingDoesNotLeaveProcessRows() {
         for state in [MacAssistantTrace.State.completed, .cancelled] {
             let placeholder = MacAssistantTrace(kind: .thinking, title: "正在思考中", detail: "  ", state: state)

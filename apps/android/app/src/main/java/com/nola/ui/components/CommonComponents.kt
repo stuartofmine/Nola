@@ -723,13 +723,15 @@ internal fun continuousStatusAnimationEnabled(active: Boolean, reduceMotion: Boo
 
 @Composable
 private fun HostToolDetailBlock(title: String, text: String) {
+    val display = remember(text) { formattedToolDetail(text) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = 8.dp)
             .clip(RoundedCornerShape(NolaRadius.sm))
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f))
-            .padding(horizontal = 10.dp, vertical = 8.dp)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Text(
             text = title,
@@ -737,12 +739,15 @@ private fun HostToolDetailBlock(title: String, text: String) {
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Text(
-            text = text,
-            style = MaterialTheme.typography.bodySmall,
-            fontFamily = FontFamily.Monospace,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        androidx.compose.foundation.text.selection.SelectionContainer {
+            Text(
+                text = display,
+                modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp).verticalScroll(rememberScrollState()),
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+        }
     }
 }
 
@@ -897,24 +902,6 @@ fun PermissionDialog(
     val historyFull = permissionInstructions.size >= 16 || permissionInstructions.sumOf { it.permissionRequestId.toByteArray(Charsets.UTF_8).size.toLong() + it.instruction.toByteArray(Charsets.UTF_8).size } + permissionIdentity.toByteArray(Charsets.UTF_8).size >= 16384
     val haptics = rememberNolaHaptics()
     val displayName = hostToolDisplayName(toolName)
-    if (showingDetails) {
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { showingDetails = false },
-            title = { Text(stringResource(R.string.permission_required_title, displayName)) },
-            text = {
-                Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
-                    androidx.compose.foundation.text.selection.SelectionContainer { Text(message) }
-                    Spacer(Modifier.height(12.dp))
-                    PermissionDetailRow(stringResource(R.string.permission_detail_location), executionLocation)
-                    PermissionDetailRow(stringResource(R.string.permission_detail_data), dataBoundary)
-                    PermissionDetailRow(stringResource(R.string.permission_detail_validity), validity)
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showingDetails = false }) { Text(stringResource(R.string.common_close)) }
-            },
-        )
-    }
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -938,20 +925,25 @@ fun PermissionDialog(
                 )
             }
             Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = message,
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                stringResource(R.string.permission_detail_location) + ": " + executionLocation,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1, overflow = TextOverflow.Ellipsis,
-            )
+            // Keep the review next to the decision instead of sending users into a modal.
+            // Expanding preserves the complete review and allows long requests to scroll.
+            androidx.compose.foundation.text.selection.SelectionContainer {
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = if (showingDetails) Int.MAX_VALUE else 3,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = if (showingDetails) Modifier.heightIn(max = 280.dp)
+                        .verticalScroll(rememberScrollState()) else Modifier,
+                )
+            }
+            PermissionDetailRow(stringResource(R.string.permission_detail_location), executionLocation)
+            PermissionDetailRow(stringResource(R.string.permission_detail_data), dataBoundary)
+            PermissionDetailRow(stringResource(R.string.permission_detail_validity), validity)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = { showingDetails = true }) { Text(stringResource(R.string.canonical_details)) }
+                TextButton(onClick = { showingDetails = !showingDetails }) {
+                    Text(stringResource(if (showingDetails) R.string.canonical_hide_details else R.string.canonical_details))
+                }
                 if (onProvideInstruction != null) {
                     TextButton(onClick = { editingInstruction = !editingInstruction }, enabled = !historyFull) {
                         Text(stringResource(R.string.permission_add_instruction))

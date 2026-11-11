@@ -26,7 +26,8 @@ test('tool groups expose failures without automatically opening raw diagnostics'
         const failed = render(Component, {props: {parts: [part('failed')]}}).body;
         assert.match(failed, /<details open/);
         assert.doesNotMatch(failed, /data-state="failed" open/);
-        assert.match(failed, /class="tool-technical/);
+        assert.match(failed, /class="tool-output/);
+        assert.doesNotMatch(failed, /class="tool-technical/, "Preview-only calls do not need an empty diagnostics disclosure");
         assert.ok(failed.includes('Missing dependency'));
         const completed = render(Component, {props: {parts: [part('completed')]}}).body;
         assert.doesNotMatch(completed, /<details[^>]*\sopen(?:=|\s|>)/);

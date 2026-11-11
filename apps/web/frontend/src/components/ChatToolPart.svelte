@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { toolTextPreview } from '../lib/toolTextPreview';
     import { replyDisclosure } from '../lib/replyDisclosure';
     import {getContext} from 'svelte';
     import {MESSAGE_PART_READING,readingPartKey,type MessagePartReading,type DisclosureField} from '../lib/messagePartReading';
@@ -41,7 +42,9 @@
     }
     const result = $derived(tool?.hasStructuredResult ? structured(tool.structuredResult) : null);
     const input = $derived(tool?.hasInput ? structured(tool.input) : null);
-    function preview(text: string): string { return text.length > 2000 ? text.slice(0, 2000) + '…' : text; }
+    const inputPreview = $derived(input === null ? null : toolTextPreview(input));
+    const resultPreview = $derived(result === null ? null : toolTextPreview(result));
+    const outputPreview = $derived(tool?.outputPreview == null ? null : toolTextPreview(tool.outputPreview));
 </script>
 
 {#key owner}
@@ -49,43 +52,53 @@
     <details use:replyDisclosure class="tool-part" data-tool-id={part.id} data-reading-part={readingPartKey(part)} data-reading-ticket={reading?.identity??''} data-state={tool.state} open={expanded}>
         <summary onclick={event => { event.preventDefault(); toggle(); }}>
             <span class="tool-indicator" aria-hidden="true"></span>
-            <span class="tool-heading"><span class="tool-title" title={title}>{title}</span>{#if !expanded && tool.state === 'failed' && tool.summary}<span class="tool-failure-summary">{tool.summary}</span>{/if}</span>
+            <span class="tool-heading"><span class="tool-title" title={title}>{title}</span>{#if !expanded && tool.summary}<span class="tool-brief">{tool.summary}</span>{/if}</span>
             <span class="tool-state">{t($locale, stateLabels[tool.state])}</span>
             <span class="tool-chevron" aria-hidden="true">›</span>
         </summary>
         <div class="tool-details">
             {#if tool.summary !== null}<p class="tool-summary">{tool.summary}</p>{/if}
             {#each toolArtifacts(tool.artifacts) as reference}<ChatReferenceCard {reference} />{/each}
-            {#if tool.origin || tool.hasInput || tool.permission || tool.resources.length || tool.outputPreview !== null || tool.hasStructuredResult}
+            {#if tool.resources.length}
+                <section class="tool-resources" aria-label={t($locale, 'chatPage.toolResources')}>
+                    <h4>{t($locale, 'chatPage.toolResources')}</h4>
+                    <ul>{#each tool.resources as resource}<li><span class="resource-meta">{resource.type} · {resource.operation}</span><code>{resource.uri}</code></li>{/each}</ul>
+                </section>
+            {/if}
+            {#if tool.outputPreview !== null}
+                <section class="tool-output" aria-label={t($locale, 'chatPage.toolPreview')}>
+                <div class="field-heading"><h4>{t($locale, 'chatPage.toolPreview')}</h4>
+                {#if outputPreview?.truncated}{#key owner}<ChatTextReader {part} field="preview" text={tool.outputPreview} title={title + ' · ' + t($locale, 'chatPage.toolPreview')} />{/key}{/if}</div>
+                <pre class="tool-preview" aria-label={t($locale, 'chatPage.toolPreview')}>{outputPreview?.text}</pre>
+                </section>
+            {/if}
+            {#if tool.origin || tool.hasInput || tool.permission || tool.hasStructuredResult}
             <details use:replyDisclosure class="tool-technical" open={technicalExpanded}>
                 <summary onclick={event=>{event.preventDefault();chooseField('technical',!technicalExpanded);}}>{t($locale, 'chatPage.toolTechnicalDetails')}</summary>
-            {#if tool.origin}<p class="tool-origin">{tool.origin}</p>{/if}
+            <div class="technical-content">
+            {#if tool.origin}<section class="tool-origin"><h4>{t($locale, 'chatPage.toolSource')}</h4><p>{tool.origin}</p></section>{/if}
             {#if input !== null}<details use:replyDisclosure class="tool-input" open={inputExpanded}><summary onclick={event=>{event.preventDefault();chooseField('input',!inputExpanded);}}>{t($locale, 'chatPage.toolInput')}</summary>
-                {#if input.length > 2000}{#key owner}<ChatTextReader {part} field="input" text={input} title={title + ' · ' + t($locale, 'chatPage.toolInput')} />{/key}{/if}
-                <pre>{preview(input)}</pre>
+                {#if inputPreview?.truncated}{#key owner}<ChatTextReader {part} field="input" text={input} title={title + ' · ' + t($locale, 'chatPage.toolInput')} />{/key}{/if}
+                <pre>{inputPreview?.text}</pre>
             </details>{/if}
             {#if tool.permission}
                 <section class="tool-permission" aria-label={t($locale, 'chatPage.toolPermissionRecord')}>
                     <h4>{t($locale, 'chatPage.toolPermissionRecord')}</h4>
-                    <p>{tool.permission.domain}</p><p>{tool.permission.rationale}</p>
-                    {#if tool.permission.decision !== null}<p>{t($locale, 'chatPage.toolPermissionDecision')}: {tool.permission.decision}</p>{/if}
+                    <dl class="permission-facts">
+                        <dt>{t($locale, 'chatPage.toolPermissionDomain')}</dt><dd>{tool.permission.domain}</dd>
+                        <dt>{t($locale, 'chatPage.toolPermissionReason')}</dt><dd>{tool.permission.rationale}</dd>
+                        {#if tool.permission.decision !== null}<dt>{t($locale, 'chatPage.toolPermissionDecision')}</dt><dd>{tool.permission.decision}</dd>{/if}
+                    </dl>
                     <p class="muted">{t($locale, 'chatPage.toolPermissionReadOnly')}</p>
                 </section>
             {/if}
-            {#if tool.resources.length}
-                <section class="tool-resources" aria-label={t($locale, 'chatPage.toolResources')}>
-                    <h4>{t($locale, 'chatPage.toolResources')}</h4>
-                    <ul>{#each tool.resources as resource}<li><span>{resource.type} · {resource.operation}</span><code>{resource.uri}</code></li>{/each}</ul>
+            {#if result !== null}
+                <section aria-label={t($locale, 'chatPage.toolResult')}><div class="field-heading"><h4>{t($locale, 'chatPage.toolResult')}</h4>
+                {#if resultPreview?.truncated}{#key owner}<ChatTextReader {part} field="result" text={result} title={title + ' · ' + t($locale, 'chatPage.toolResult')} />{/key}{/if}</div>
+                <pre class="tool-result" aria-label={t($locale, 'chatPage.toolResult')}>{resultPreview?.text}</pre>
                 </section>
             {/if}
-            {#if tool.outputPreview !== null}
-                {#if tool.outputPreview.length > 2000}{#key owner}<ChatTextReader {part} field="preview" text={tool.outputPreview} title={title + ' · ' + t($locale, 'chatPage.toolPreview')} />{/key}{/if}
-                <pre class="tool-preview" aria-label={t($locale, 'chatPage.toolPreview')}>{preview(tool.outputPreview)}</pre>
-            {/if}
-            {#if result !== null}
-                {#if result.length > 2000}{#key owner}<ChatTextReader {part} field="result" text={result} title={title + ' · ' + t($locale, 'chatPage.toolResult')} />{/key}{/if}
-                <pre class="tool-result" aria-label={t($locale, 'chatPage.toolResult')}>{preview(result)}</pre>
-            {/if}
+            </div>
             </details>
             {/if}
         </div>
@@ -94,8 +107,23 @@
 {/key}
 
 <style>
-    .tool-permission,.tool-resources{border:1px solid var(--border);border-radius:6px;padding:10px;margin-top:10px;overflow-wrap:anywhere;min-width:0}h4{margin:0;font-size:13px}.tool-permission p{white-space:pre-wrap;margin:6px 0;font-size:12px}.tool-resources ul{margin:8px 0 0;padding-left:18px}.tool-resources li{margin:8px 0}.tool-resources code{display:block;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
-    .tool-part { --tool-tone: var(--muted); min-width: 0; margin: 6px 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
+    h4 { margin: 0; color: var(--muted); font-size: 12px; font-weight: 500; line-height: 1.5; }
+    .tool-resources, .tool-permission { min-width: 0; overflow-wrap: anywhere; }
+    .tool-resources ul { list-style: none; margin: 8px 0 0; padding: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .tool-resources li { display: grid; grid-template-columns: minmax(88px, 24%) minmax(0, 1fr); gap: 6px 12px; padding: 10px; align-items: baseline; }
+    .tool-resources li + li { border-top: 1px solid var(--border); }
+    .resource-meta { color: var(--muted); font-size: 12px; }
+    .tool-resources code { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.5; }
+    .field-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 4px 12px; min-width: 0; }
+    .field-heading :global(.reader-open) { margin: 0; padding: 4px 8px; font-size: 12px; }
+    .permission-facts { display: grid; grid-template-columns: minmax(88px, 24%) minmax(0, 1fr); gap: 8px 12px; font-size: 12px; line-height: 1.5; margin: 8px 0; }
+    .permission-facts dt { color: var(--muted); }
+    .permission-facts dd { margin: 0; min-width: 0; white-space: pre-wrap; }
+    .tool-permission .muted { margin: 8px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .technical-content { display: grid; gap: 16px; padding-bottom: 4px; min-width: 0; }
+    .technical-content > * { min-width: 0; }
+    .tool-origin p { margin: 6px 0 0; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+    .tool-part { container-type: inline-size; --tool-tone: var(--muted); min-width: 0; margin: 6px 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); box-shadow: 0 1px 2px color-mix(in srgb, var(--muted) 5%, transparent); }
     .tool-part[data-state='running'] { --tool-tone: var(--accent); }
     .tool-part[data-state='completed'] { --tool-tone: var(--success); }
     .tool-part[data-state='failed'] { --tool-tone: var(--danger); }
@@ -106,25 +134,37 @@
     .tool-heading { flex: 1; min-width: 0; overflow-wrap: anywhere; }
     .tool-title { font-weight: 600; display: -webkit-box; line-clamp: 2; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
     details[open] > summary .tool-title { display: block; }
-    .tool-failure-summary { display: -webkit-box; line-clamp: 2; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; color: var(--danger); font-size: 12px; font-weight: 400; margin-top: 4px; }
-    .tool-technical > summary { color: var(--muted); font-size: 12px; padding-inline: 0; }
-    .tool-technical > summary::before { content: '›'; font-size: 18px; }
-    .tool-technical[open] > summary::before { transform: rotate(90deg); }
+    .tool-brief { display: -webkit-box; line-clamp: 2; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; color: var(--muted); font-size: 12px; font-weight: 400; margin-top: 4px; }
+    .tool-part[data-state='failed'] .tool-brief { color: var(--danger); }
+    .tool-technical { border-top: 1px solid var(--border); margin-top: 0; }
+    .tool-technical > summary, .tool-input > summary { color: var(--muted); font-size: 12px; padding-inline: 0; }
+    .tool-technical > summary::before, .tool-input > summary::before { content: '›'; width: 12px; flex: 0 0 12px; text-align: center; font-size: 18px; }
+    .tool-technical[open] > summary::before, .tool-input[open] > summary::before { transform: rotate(90deg); }
     summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .tool-state { color: var(--tool-tone); font-size: 12px; max-width: 45%; overflow-wrap: anywhere; }
     .tool-indicator { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--tool-tone); }
     .tool-chevron { color: var(--muted); font-size: 20px; transition: transform var(--motion-base) var(--motion-disclosure); }
     details[open] > summary .tool-chevron { transform: rotate(90deg); }
-    .tool-details { min-width: 0; padding: 0 12px 12px; }
-    .tool-summary { white-space: pre-wrap; line-height: 1.55; }
+    .tool-details { display: grid; gap: 16px; min-width: 0; padding: 0 12px 12px 27px; }
+    .tool-details > * { min-width: 0; }
+    .tool-summary { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; font-size: 13px; }
     @media (max-width: 700px) {
+        .tool-details { padding-inline: 12px; }
+        .tool-resources li, .permission-facts { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+        .permission-facts dd + dt { margin-top: 8px; }
         .tool-part > summary { display: grid; grid-template-columns: 7px minmax(0, 1fr) 12px; gap: 2px 8px; font-size: 14px; line-height: 20px; }
         .tool-indicator { grid-column: 1; grid-row: 1; }
         .tool-heading { grid-column: 2; grid-row: 1; }
         .tool-state { grid-column: 2; grid-row: 2; max-width: 100%; }
         .tool-chevron { grid-column: 3; grid-row: 1 / 3; }
     }
-    pre { max-width: 100%; margin: 8px 0 0; padding: 10px; border-radius: 6px; background: var(--canvas); overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; font-size: 12px; }
+    @container (max-width: 420px) {
+        .tool-details { padding-inline: 12px; }
+        .tool-resources li, .permission-facts { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+        .permission-facts dd + dt { margin-top: 8px; }
+        .field-heading { align-items: flex-start; }
+    }
+    pre { max-height: min(320px, 45dvh); box-sizing: border-box; min-width: 0; max-width: 100%; margin: 8px 0 0; padding: 10px; border-radius: 6px; background: var(--canvas); overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; font-size: 12px; }
     @media (prefers-reduced-motion: no-preference) {
         .tool-part[data-state='running'] .tool-indicator { animation: working 1.4s ease-in-out infinite; }
     }

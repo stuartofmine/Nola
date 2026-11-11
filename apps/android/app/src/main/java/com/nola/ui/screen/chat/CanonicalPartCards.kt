@@ -41,6 +41,8 @@ import androidx.compose.ui.unit.dp
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import com.nola.R
+import com.nola.ui.components.formattedToolDetail
+import com.nola.ui.components.toolDetailExcerpt
 import com.nola.ui.components.ThinkingBody
 import com.nola.ui.components.thinkingExpandedAfterStatusChange
 import com.nola.ui.components.ThinkingBodyVisibleCharactersKey
@@ -148,6 +150,11 @@ private fun CanonicalActivityRow(part: ConversationProjectionV1.Part.Tool, detai
         }
         facts.summary?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         facts.artifacts.forEach { ArtifactCard(it) }
+        // Output is a task result, not technical metadata. Retain the reader action for long output.
+        facts.preview?.takeIf { it.isNotBlank() }?.let {
+            Fact(part.partId, CanonicalPartReadField.ToolPreview, onReadText,
+                stringResource(R.string.chat_host_tool_result), it, code = true)
+        }
         TextButton(onClick = { onDetailsChanged(!details) }) {
             Text(stringResource(if (details) R.string.canonical_hide_details else R.string.canonical_details))
         }
@@ -160,7 +167,6 @@ private fun CanonicalActivityRow(part: ConversationProjectionV1.Part.Tool, detai
                 }
                 Fact(part.partId, CanonicalPartReadField.ToolInput, onReadText, stringResource(R.string.canonical_input), facts.input.toString(), code = true)
                 facts.result?.let { Fact(part.partId, CanonicalPartReadField.ToolResult, onReadText, stringResource(R.string.canonical_result), it.toString(), code = true) }
-                facts.preview?.let { Fact(part.partId, CanonicalPartReadField.ToolPreview, onReadText, stringResource(R.string.canonical_preview), it, code = true) }
                 Fact(part.partId, CanonicalPartReadField.ToolOrigin, onReadText, stringResource(R.string.canonical_origin), listOfNotNull(facts.origin.kind, facts.origin.providerId, facts.origin.providerTitle, facts.origin.namespace).joinToString(" · "))
                 facts.permission?.let { Fact(part.partId, CanonicalPartReadField.ToolPermissionIdentity, onReadText, stringResource(R.string.canonical_permission_record), it.requestId) }
                 facts.startedAtMs?.let { Fact(part.partId, CanonicalPartReadField.ToolStarted, onReadText, stringResource(R.string.canonical_started), it.toString()) }
@@ -273,14 +279,23 @@ private fun PartCard(content: @Composable () -> Unit) {
 @Composable
 private fun Fact(partId: String, field: CanonicalPartReadField, onReadText: (CanonicalPartTextSnapshot) -> Unit,
     label: String, value: String, code: Boolean = false) {
-    Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    if (value.length > 2000) {
-        TextButton(onClick = { onReadText(CanonicalPartTextSnapshot(partId, field, label, value, code)) }) {
-            Text(stringResource(R.string.canonical_reader_open))
+    val display = remember(value, code) { if (code) formattedToolDetail(value) else value }
+    val excerpt = remember(display) { toolDetailExcerpt(display) }
+    Column(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(label, style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        SelectionContainer {
+            Text(excerpt.text,
+                modifier = Modifier.fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.32f), RoundedCornerShape(8.dp))
+                    .padding(10.dp),
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = if (code) FontFamily.Monospace else null)
         }
-    }
-    SelectionContainer {
-        Text(if (value.length > 2000) value.take(2000) + "…" else value,
-            style = MaterialTheme.typography.bodySmall, fontFamily = if (code) FontFamily.Monospace else null)
+        if (excerpt.truncated) {
+            TextButton(onClick = { onReadText(CanonicalPartTextSnapshot(partId, field, label, value, code)) }) {
+                Text(stringResource(R.string.canonical_reader_open))
+            }
+        }
     }
 }

@@ -1478,6 +1478,10 @@ nonisolated enum MacJournalToolFieldPresentation {
     static func isResult(_ field: String) -> Bool {
         field == "tool_summary" || field == "tool_artifacts"
     }
+
+    static func isOutput(_ field: String) -> Bool {
+        field == "tool_output" || field == "tool_output_text"
+    }
 }
 
 @MainActor
@@ -1547,6 +1551,23 @@ struct MacJournalToolView: View {
                             isFinal: tool.state != "running" && tool.state != "pending",
                             presentation: .toolField(content.field), usesMonospacedText: false)
                     }
+                    // Keep results alongside the execution summary, not buried
+                    // inside implementation metadata. Raw output stays collapsed
+                    // so a long response cannot move the reader unexpectedly.
+                    ForEach(part.bodies.filter { MacJournalToolFieldPresentation.isOutput($0.field) }, id: \.field) { content in
+                        DisclosureGroup {
+                            MacJournalTextPreview(reference: reference, partID: part.part_id, content: content,
+                                isFinal: tool.state != "running" && tool.state != "pending",
+                                presentation: .toolField(content.field))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(12)
+                                .background(MacDesignColor.panel, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        } label: {
+                            Text(fieldLabel(content.field)).font(.caption).foregroundStyle(.secondary)
+                        }
+                        .disclosureGroupStyle(MacRowDisclosureStyle())
+                        .accessibilityIdentifier("chat.journal.tool.output")
+                    }
                     DisclosureGroup(isExpanded: Binding(get: { technicalExpanded }, set: { technicalExpanded = $0 })) {
                         technicalDetails
                     } label: {
@@ -1556,23 +1577,29 @@ struct MacJournalToolView: View {
                     .disclosureGroupStyle(MacRowDisclosureStyle())
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("chat.journal.tool.technicalDetails")
-                }.padding(.top, 6)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 8)
             }
         } label: {
-            HStack {
+            HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "wrench.and.screwdriver")
+                    .frame(width: 20, height: 20)
+                    .foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 4) {
                     if case .inline(let title) = tool.title {
                         Text(verbatim: MacToolPresentationPolicy.displayTitle(for: title)).lineLimit(2)
                     } else {
                         Text(verbatim: MacToolPresentationPolicy.displayTitle(for: tool.capability_id)).lineLimit(2)
                     }
-                    if !expanded, tool.state == "failed", let summary = tool.summary,
+                    if !expanded, let summary = tool.summary,
                        case .inline(let text) = summary, !text.isEmpty {
-                        Text(verbatim: text).lineLimit(2).foregroundStyle(.red)
+                        Text(verbatim: text).lineLimit(2)
+                            .font(.caption)
+                            .foregroundStyle(tool.state == "failed" ? Color.red : Color.secondary)
                     }
                 }
-                Spacer(minLength: 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 MacJournalStatusText(state: tool.state)
             }
             .font(.body)
@@ -1584,53 +1611,92 @@ struct MacJournalToolView: View {
     }
 
     private var technicalDetails: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(verbatim: tool.capability_id + " · " + tool.tool_call_id)
-                .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-            GroupBox("Source") {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(verbatim: tool.origin.kind)
-                    inlineValue(tool.origin.provider_title)
-                    inlineValue(tool.origin.provider_id)
-                    inlineValue(tool.origin.namespace)
-                }.frame(maxWidth: .infinity, alignment: .leading)
+        VStack(alignment: .leading, spacing: 12) {
+            detailSection("Tool") {
+                diagnosticValue("capability_id", tool.capability_id)
+                diagnosticValue("tool_call_id", tool.tool_call_id)
+            }
+            detailSection("Source") {
+                diagnosticValue("kind", tool.origin.kind)
+                diagnosticText("provider_title", tool.origin.provider_title)
+                diagnosticText("provider_id", tool.origin.provider_id)
+                diagnosticText("namespace", tool.origin.namespace)
             }
             if let permission = tool.permission {
-                // Display facts only: all decision controls remain on
-                // the independently bound live permission challenge.
-                GroupBox("Permission") {
-                    VStack(alignment: .leading, spacing: 4) {
-                        inlineValue(permission.permission_domain)
-                        inlineValue(permission.rationale)
-                        inlineValue(permission.decision)
-                    }.frame(maxWidth: .infinity, alignment: .leading)
+                // Display facts only: controls stay on the live challenge.
+                detailSection("Permission") {
+                    diagnosticText("permission_domain", permission.permission_domain)
+                    diagnosticText("rationale", permission.rationale)
+                    diagnosticText("decision", permission.decision)
                 }
             }
             if case .inline(let resources) = tool.affected_resources, !resources.isEmpty {
-                GroupBox("Resources") {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(Array(resources.enumerated()), id: \.offset) { _, resource in
-                            Text(verbatim: "\(resource.resource_type) · \(resource.operation) · \(resource.uri)")
-                                .textSelection(.enabled)
+                detailSection("Resources") {
+                    ForEach(Array(resources.enumerated()), id: \.offset) { index, resource in
+                        if index > 0 { Divider() }
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(verbatim: resource.operation).font(.caption.weight(.medium))
+                            Text(verbatim: resource.resource_type).font(.caption).foregroundStyle(.secondary)
                         }
-                    }.frame(maxWidth: .infinity, alignment: .leading)
+                        Text(verbatim: resource.uri)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
-            ForEach(part.bodies.filter { !MacJournalToolFieldPresentation.isResult($0.field) }, id: \.field) { content in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(fieldLabel(content.field)).font(.caption).foregroundStyle(.secondary)
+            ForEach(part.bodies.filter {
+                !MacJournalToolFieldPresentation.isResult($0.field)
+                    && !MacJournalToolFieldPresentation.isOutput($0.field)
+            }, id: \.field) { content in
+                detailSection(fieldLabel(content.field)) {
                     MacJournalTextPreview(reference: reference, partID: part.part_id, content: content,
                         isFinal: tool.state != "running" && tool.state != "pending",
                         presentation: .toolField(content.field))
                 }
             }
             if let fullOutput = tool.full_output {
-                GroupBox("Full output") {
-                    Text(verbatim: "\(fullOutput.message_id) / \(fullOutput.part_id) / \(fullOutput.tool_call_id)")
-                        .font(.caption).textSelection(.enabled)
+                detailSection("Full output") {
+                    diagnosticValue("message_id", fullOutput.message_id)
+                    diagnosticValue("part_id", fullOutput.part_id)
+                    diagnosticValue("tool_call_id", fullOutput.tool_call_id)
                 }
             }
-        }.padding(.top, 6)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, 8)
+    }
+
+    private func detailSection<Content: View>(_ title: LocalizedStringKey,
+                                              @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(MacDesignColor.panel, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(MacDesignColor.controlOutline, lineWidth: 0.5)
+        }
+    }
+
+    private func diagnosticValue(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(verbatim: label).font(.caption2).foregroundStyle(.secondary)
+            Text(verbatim: value).font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder private func diagnosticText(_ label: String, _ value: MacJournalText?) -> some View {
+        if let value, case .inline(let text) = value, !text.isEmpty {
+            diagnosticValue(label, text)
+        }
     }
 
     @ViewBuilder private func inlineValue(_ value: MacJournalText?) -> some View {
