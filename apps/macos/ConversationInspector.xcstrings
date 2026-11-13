@@ -432,7 +432,6 @@
       }
     },
     "inspector.section.execution" : {
-      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -1607,7 +1606,8 @@
             "value" : "執行中"
           }
         }
-      }
+      },
+      "extractionState" : "stale"
     },
     "inspector.state.sealed" : {
       "extractionState" : "stale",

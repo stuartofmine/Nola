@@ -210,7 +210,8 @@
             "value" : "連線狀態不代表授權。受管理瀏覽器與 Chrome 會在使用時分別檢查存取權限。"
           }
         }
-      }
+      },
+      "extractionState" : "stale"
     },
     "A recovery decision is awaiting its receipt. Only that original decision can be recovered." : {
       "localizations" : {
@@ -720,7 +721,8 @@
             "value" : "瀏覽器"
           }
         }
-      }
+      },
+      "extractionState" : "stale"
     },
     "Browser actions are provided by the connected host." : {
       "localizations" : {
@@ -752,7 +754,8 @@
             "value" : "瀏覽器工作階段已連線"
           }
         }
-      }
+      },
+      "extractionState" : "stale"
     },
     "Cache disabled" : {
       "localizations" : {
@@ -1325,7 +1328,8 @@
             "value" : "Chrome 已連線"
           }
         }
-      }
+      },
+      "extractionState" : "stale"
     },
     "Chrome Extension" : {
       "localizations" : {
@@ -1578,7 +1582,8 @@
             "value" : "電腦使用"
           }
         }
-      }
+      },
+      "extractionState" : "stale"
     },
     "Configure Model" : {
       "localizations" : {
@@ -2776,7 +2781,8 @@
             "value" : "檔案"
           }
         }
-      }
+      },
+      "extractionState" : "stale"
     },
     "Finishing response" : {
       "localizations" : {
@@ -5552,7 +5558,8 @@
             "value" : "Playwright"
           }
         }
-      }
+      },
+      "extractionState" : "stale"
     },
     "Points" : {
       "localizations" : {
@@ -6756,7 +6763,8 @@
             "value" : "Shell 和 Git"
           }
         }
-      }
+      },
+      "extractionState" : "stale"
     },
     "Show original context" : {
       "extractionState" : "manual",
@@ -6861,7 +6869,8 @@
             "value" : "部分操作失败"
           }
         }
-      }
+      },
+      "extractionState" : "stale"
     },
     "Some operations have an unknown result" : {
       "localizations" : {

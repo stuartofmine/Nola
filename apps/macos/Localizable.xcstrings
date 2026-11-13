@@ -15439,7 +15439,8 @@
             "value" : "已阻止"
           }
         }
-      }
+      },
+      "comment" : "Canonical Run result"
     },
     "Blue" : {
       "extractionState" : "stale",
@@ -32535,7 +32536,8 @@
             "value" : "診斷"
           }
         }
-      }
+      },
+      "extractionState" : "stale"
     },
     "Diagnostics Error" : {
       "extractionState" : "stale",
@@ -107887,7 +107889,8 @@
             "value" : "重发分支"
           }
         }
-      }
+      },
+      "extractionState" : "stale"
     },
     "Reset" : {
       "extractionState" : "stale",
@@ -124764,7 +124767,8 @@
             "value" : "原始對話及草稿會保留。新分支將從這則編輯後的訊息開始。"
           }
         }
-      }
+      },
+      "extractionState" : "stale"
     },
     "The original message and sending snapshot could not be verified." : {
       "localizations" : {
@@ -130535,7 +130539,8 @@
             "value" : "Usar modelo predeterminado"
           }
         }
-      }
+      },
+      "extractionState" : "stale"
     },
     "Use default template" : {
       "localizations" : {
@@ -133460,7 +133465,8 @@
             "value" : "顯示或收起活動與結果"
           }
         }
-      }
+      },
+      "extractionState" : "stale"
     },
     "workspace.memory" : {
       "extractionState" : "manual",
@@ -134595,6 +134601,780 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "시스템 설정에서 Nola의 접근 권한을 확인한 후 돌아오면 상태가 갱신됩니다. 제한은 조직에서 관리할 수 있습니다."
+          }
+        }
+      }
+    },
+    "This message and everything after it will be replaced. Resend continues in this conversation." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diese Nachricht und alle folgenden Inhalte werden ersetzt. Die Nachricht wird in dieser Unterhaltung erneut gesendet."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This message and everything after it will be replaced. Resend continues in this conversation."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Se reemplazarán este mensaje y todo el contenido posterior. Se reenviará en esta conversación."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ce message et tout ce qui suit seront remplacés. Le message sera renvoyé dans cette conversation."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このメッセージ以降の内容を置き換え、同じ会話内で再送信します。"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Это сообщение и всё после него будут заменены. Сообщение будет отправлено повторно в том же разговоре."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此消息及其后的内容将被替换，并在当前会话中重新发送。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此訊息及其後的內容將被取代，並在目前對話中重新傳送。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 메시지와 이후 내용이 교체됩니다. 다시 보내면 같은 대화에서 계속됩니다."
+          }
+        }
+      }
+    },
+    "This adds a new expert context with the latest model and template. Previous replies stay in this conversation." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This adds a new expert context with the latest model and template. Previous replies stay in this conversation."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这将按最新模型和模板创建新的专家上下文。之前的回复仍保留在此会话。"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dies erstellt einen neuen Expertenkontext mit dem aktuellen Modell und der Vorlage. Frühere Antworten bleiben erhalten."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Se creará un contexto nuevo con el modelo y la plantilla actuales. Las respuestas anteriores se conservan."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Un nouveau contexte utilisera le modèle et le modèle de consigne actuels. Les réponses précédentes restent ici."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最新のモデルとテンプレートで新しいコンテキストを作成します。以前の返信はこの会話に残ります。"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Будет создан новый контекст с актуальной моделью и шаблоном. Прежние ответы останутся в беседе."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這將使用最新模型與範本建立新的專家上下文。先前的回覆仍保留在此對話中。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "최신 모델과 템플릿으로 새 전문가 컨텍스트를 만듭니다. 이전 답변은 이 대화에 유지됩니다."
+          }
+        }
+      }
+    },
+    "Use application default model" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use application default model"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "跟随应用默认模型"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Standardmodell der App verwenden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Usar el modelo predeterminado de la app"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Utiliser le modèle par défaut de l’app"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アプリのデフォルトモデルを使用"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Использовать модель приложения по умолчанию"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "跟隨應用程式預設模型"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "앱 기본 모델 사용"
+          }
+        }
+      }
+    },
+    "Expert conversations" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expert conversations"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "专家会话"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expertenunterhaltungen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conversaciones de expertos"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conversations des experts"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "エキスパートの会話"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Диалоги экспертов"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "專家對話"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "전문가 대화"
+          }
+        }
+      }
+    },
+    "No expert conversations yet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No expert conversations yet"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "还没有专家会话"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Noch keine Expertenunterhaltungen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aún no hay conversaciones de expertos"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aucune conversation d’expert"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "エキスパートの会話はまだありません"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Диалогов экспертов пока нет"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚無專家對話"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "아직 전문가 대화가 없습니다"
+          }
+        }
+      }
+    },
+    "Expert conversation · read only" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expert conversation · read only"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "专家会话 · 只读"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expertenunterhaltung · schreibgeschützt"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conversación de experto · solo lectura"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conversation d’expert · lecture seule"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "エキスパートの会話 · 読み取り専用"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Диалог эксперта · только чтение"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "專家對話 · 唯讀"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "전문가 대화 · 읽기 전용"
+          }
+        }
+      }
+    },
+    "Continue in main conversation" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continue in main conversation"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回到主会话继续"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "In Hauptunterhaltung fortfahren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continuar en la conversación principal"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continuer dans la conversation principale"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "メインの会話で続ける"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Продолжить в основном диалоге"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回到主對話繼續"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "메인 대화에서 계속"
+          }
+        }
+      }
+    },
+    "Update the connected Host to use experts from the main conversation." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Update the connected Host to use experts from the main conversation."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请更新所连接的 Host，以便由主 Agent 调度专家。"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aktualisiere den verbundenen Host, um Experten über die Hauptunterhaltung zu nutzen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Actualiza el Host conectado para usar expertos desde la conversación principal."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mettez à jour le Host connecté pour utiliser les experts depuis la conversation principale."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "メインの会話から専門家を利用するには、接続した Host を更新してください。"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обновите подключённый Host, чтобы использовать экспертов из основного разговора."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請更新已連線的 Host，以便由主 Agent 調度專家。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "메인 에이전트가 전문가를 호출할 수 있도록 연결된 Host를 업데이트하세요."
+          }
+        }
+      }
+    },
+    "main.experts.requiresTools" : {
+      "comment" : "Main model cannot delegate",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wähle ein Hauptmodell mit Werkzeugaufrufen oder entferne die ausgewählten Experten. Deine Nachricht bleibt erhalten."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose a main model that supports tool calls, or remove the selected experts. Your message is kept."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Elige un modelo principal compatible con herramientas o quita los expertos seleccionados. Tu mensaje se conserva."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choisissez un modèle principal prenant en charge les outils ou retirez les experts sélectionnés. Votre message est conservé."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ツール呼び出しに対応したメインモデルを選ぶか、選択したエキスパートを外してください。入力は保持されています。"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите основную модель с поддержкой инструментов или уберите выбранных экспертов. Сообщение сохранено."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请选择支持工具调用的主模型，或移除已选专家。你的输入已保留。"
+          }
+        }
+      }
+    },
+    "main.experts.enableTools" : {
+      "comment" : "Main expert dispatch is disabled",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aktiviere Expertenwerkzeuge für den Hauptagenten oder entferne die ausgewählten Experten. Deine Nachricht bleibt erhalten."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enable expert tools for the main Agent, or remove the selected experts. Your message is kept."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Activa las herramientas de expertos del agente principal o quita los expertos seleccionados. Tu mensaje se conserva."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Activez les outils experts de l’agent principal ou retirez les experts sélectionnés. Votre message est conservé."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "メインエージェントのエキスパートツールを有効にするか、選択したエキスパートを外してください。入力は保持されています。"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включите инструменты экспертов для основного агента или уберите выбранных экспертов. Сообщение сохранено."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请为主 Agent 启用专家工具，或移除已选专家。你的输入已保留。"
+          }
+        }
+      }
+    },
+    "main.experts.sourceChanged" : {
+      "comment" : "Do not silently rebase an expert selection",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Host-Daten haben sich geändert. Lade das Expertenverzeichnis neu und wähle die Experten erneut. Deine Nachricht bleibt erhalten."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The Host data changed. Reload its expert directory and select the experts again. Your message is kept."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Los datos del Host cambiaron. Actualiza su directorio y vuelve a seleccionar los expertos. Tu mensaje se conserva."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Les données de l’hôte ont changé. Actualisez son annuaire et sélectionnez à nouveau les experts. Votre message est conservé."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ホストのデータが変更されました。一覧を更新し、エキスパートを選び直してください。入力は保持されています。"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Данные хоста изменились. Обновите каталог и выберите экспертов заново. Сообщение сохранено."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "宿主机数据已变化。请刷新专家目录并重新选择专家。你的输入已保留。"
+          }
+        }
+      }
+    },
+    "run.blocked.inputBudget" : {
+      "comment" : "Canonical blocked input budget",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diese Anfrage überschreitet das Eingabebudget des Modells. Kürze den Verlauf oder Anhänge, aktiviere weniger Werkzeuge oder wähle ein Modell mit größerem Kontextfenster."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This request exceeds the model’s input budget. Shorten the conversation or attachments, reduce enabled tools, or choose a model with a larger context window."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La solicitud supera el presupuesto de entrada del modelo. Acorta la conversación o los adjuntos, reduce las herramientas o elige un modelo con mayor contexto."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cette demande dépasse le budget d’entrée du modèle. Réduisez la conversation, les pièces jointes ou les outils activés, ou choisissez un modèle avec une fenêtre de contexte plus grande."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "モデルの入力上限を超えています。会話や添付を短くする、ツールを減らす、またはコンテキストの大きいモデルを選んでください。"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запрос превышает входной бюджет модели. Сократите диалог или вложения, уменьшите число инструментов либо выберите модель с большим контекстом."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请求超出了模型的输入预算。请缩短对话或附件、减少启用的工具，或选择上下文窗口更大的模型。"
+          }
+        }
+      }
+    },
+    "Expert" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expert"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Experte"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Experto"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expert"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "エキスパート"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "전문가"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эксперт"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "专家"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "專家"
+          }
+        }
+      }
+    },
+    "Load more" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Load more"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mehr laden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cargar más"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Charger plus"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "さらに読み込む"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "더 불러오기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Загрузить ещё"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "加载更多"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "載入更多"
           }
         }
       }
