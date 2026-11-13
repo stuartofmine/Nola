@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Domain-owned configuration patch validation.
 use crate::generation::GenerationOptions;
-use serde_json::{Value, json};
+use serde_json::Value;
 use crate::generation::{validate_thinking_budget, REASONING_EFFORT_VALUES};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -391,26 +391,18 @@ pub fn validate_model_reasoning(
     let tiers = ["concise", "balanced", "detailed"];
     let options: Vec<&str> = match reasoning["control"].as_str() {
         Some("automatic") => Vec::new(),
-        Some("effort") if protocol != "anthropic" => {
+        Some("effort") => {
             let efforts = reasoning["efforts"]
                 .as_array()
                 .ok_or("efforts must be an array")?;
             if efforts.is_empty() {
                 return Err("invalid supported reasoning efforts".into());
             }
-            if matches!(protocol, "responses" | "siwc_responses") {
-                efforts.iter().filter_map(Value::as_str).collect()
-            } else {
-                if !["low", "medium", "high"]
-                    .iter()
-                    .all(|value| efforts.contains(&json!(value)))
-                {
-                    return Err(
-                        "Chat Completions three-tier control requires low, medium and high".into(),
-                    );
-                }
-                tiers.to_vec()
-            }
+            let mut options: Vec<&str> = efforts.iter().filter_map(Value::as_str).collect();
+            // Published Chat profiles may still store a product tier. Keep that
+            // syntax readable while accepting each explicitly declared effort.
+            if protocol == "chat_completions" { options.extend(tiers); }
+            options
         }
         Some("budget") if protocol == "anthropic" => {
             let budgets = reasoning["budgets"]

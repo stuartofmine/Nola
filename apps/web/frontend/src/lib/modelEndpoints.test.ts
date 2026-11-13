@@ -29,8 +29,8 @@ test('endpoint editing holds a stable model contract until confirmed reload', ()
     assert.deepEqual(snapshot.profiles[0].reasoning!.efforts, ['low', 'high']);
     assert.equal(snapshot.profiles[0].parameters.maxOutputTokens, 16384);
     assert.equal(snapshot.expectedRevisions.a, 4);
-    assert.deepEqual(endpointValidationError(snapshot, { ...snapshot.draft, wireProtocol: 'anthropic' }), { code: 'modelValidation.endpointReasoning', params: { model: 'a' }, cause: { code: 'modelValidation.control' } });
-    assert.equal(endpointValidationError(snapshot, { ...snapshot.draft, wireProtocol: 'chat_completions' })?.cause?.code, 'modelValidation.effortTiers');
+    assert.deepEqual(endpointValidationError(snapshot, { ...snapshot.draft, wireProtocol: 'anthropic' }), null);
+    assert.equal(endpointValidationError(snapshot, { ...snapshot.draft, wireProtocol: 'chat_completions' }), null);
 });
 
 test('invalid names, URL credentials, protocols and stale identities cannot be submitted', () => {

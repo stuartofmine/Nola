@@ -86,4 +86,23 @@ final class MacSharedProtocolTests: XCTestCase {
         XCTAssertEqual(models.map(\.displayName), ["A", "b"])
         XCTAssertThrowsError(try AppleModelCatalogDiscovery.parse(data: Data(#"{"models":[]}"#.utf8), response: response))
     }
+    func testDiscoveredReasoningMetadataSurvivesCoreCatalogSerialization() throws {
+        let url = try XCTUnwrap(URL(string: "https://models.example/v1/models"))
+        let response = try XCTUnwrap(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil))
+        for levels in [#""supported_reasoning_levels":[{"effort":"none"},{"effort":"low"},{"effort":"high"},{"effort":"max"},{"effort":"high"}]"#,
+                       #""reasoning_levels":["none","low","high","max"]"#] {
+            let body = "{\"data\":[{\"id\":\"fixture\",\"display_name\":\"Readable\",\"context_window\":128000,\"max_output_tokens\":32000," + levels + "}]}"
+            let model = try XCTUnwrap(AppleModelCatalogDiscovery.parse(data: Data(body.utf8), response: response).first)
+            XCTAssertEqual(model.reasoningLevels, ["none", "low", "high", "max"])
+            let entry = try XCTUnwrap(JSONSerialization.jsonObject(with: model.catalogData(wireProtocol: "chat_completions")) as? [String: Any])
+            XCTAssertEqual(entry["reasoning_levels"] as? [String], model.reasoningLevels)
+            XCTAssertEqual(entry["context_window"] as? Int, 128000)
+            XCTAssertEqual((entry["execution_capabilities"] as? [String: Any])?["reasoning"] as? Bool, true)
+        }
+        let body = #"{"data":[{"id":"gpt-looking-name"},{"id":"empty","supported_reasoning_levels":[],"reasoning_levels":["high"]}]}"#
+        let models = try AppleModelCatalogDiscovery.parse(data: Data(body.utf8), response: response)
+        XCTAssertTrue(models.allSatisfy { $0.reasoningLevels.isEmpty })
+        XCTAssertTrue(models.allSatisfy { $0.reasoningSupported == nil })
+    }
+
 }

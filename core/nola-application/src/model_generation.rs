@@ -122,8 +122,7 @@ pub fn resolve_model_reasoning(
         }
         match selection {
             ReasoningSelection::Effort { value } => {
-                if protocol == ModelProtocol::Anthropic
-                    || declared["control"] != "effort"
+                if declared["control"] != "effort"
                     || !declared["efforts"]
                         .as_array()
                         .is_some_and(|values| values.iter().any(|v| v.as_str() == Some(value)))
@@ -168,7 +167,8 @@ pub fn model_reasoning_default_selection(
     if preference == "automatic" {
         return Ok(None);
     }
-    if !matches!(protocol, ModelProtocol::Responses | ModelProtocol::SiwcResponses) {
+    if (protocol == ModelProtocol::Anthropic && declared["control"] == "budget")
+        || (protocol == ModelProtocol::ChatCompletions && ["concise", "balanced", "detailed"].contains(&preference)) {
         let tier: ReasoningTier = serde_json::from_value(Value::String(preference.into()))
             .map_err(|_| "invalid default thinking tier")?;
         let declaration = active_reasoning_declaration(declared)?;
@@ -199,6 +199,19 @@ pub fn model_reasoning_default_selection(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn sparse_chat_defaults_accept_native_efforts_and_keep_published_tiers_readable() {
+        for (preference, expected) in [("none", "none"), ("high", "high"), ("max", "max"), ("balanced", "low")] {
+            let declared = serde_json::json!({"control":"effort","efforts":["none","low","high","max"],"defaultPreference":preference});
+            assert_eq!(resolve_model_reasoning(&declared, ModelProtocol::ChatCompletions, 8192, true, None).unwrap(),
+                Some(ReasoningSelection::Effort { value: expected.into() }));
+        }
+        let declared = serde_json::json!({"control":"effort","efforts":["low","high"],"defaultPreference":"medium"});
+        assert!(resolve_model_reasoning(&declared, ModelProtocol::ChatCompletions, 8192, true, None).is_err());
+        let automatic = serde_json::json!({"control":"effort","efforts":["none","low","high"],"defaultPreference":"automatic"});
+        assert_eq!(resolve_model_reasoning(&automatic, ModelProtocol::ChatCompletions, 8192, true, None).unwrap(), None);
+    }
 
     #[test]
     fn inheritance_clear_and_explicit_selection_are_distinct() {

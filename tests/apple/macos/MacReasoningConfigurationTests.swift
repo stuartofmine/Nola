@@ -178,10 +178,10 @@ final class MacReasoningConfigurationTests: XCTestCase {
             supportsReasoning: true, requested: .null, tier: "balanced"
         )
         XCTAssertEqual(value, .object(["kind": .string("effort"), "value": .string("low")]))
-        XCTAssertThrowsError(try port.resolveReasoning(
+        XCTAssertEqual(try port.resolveReasoning(
             declaration: declaration, wireProtocol: .anthropic, outputLimit: 4096,
             supportsReasoning: true, requested: .null, tier: "balanced"
-        ))
+        ), .object(["kind": .string("effort"), "value": .string("low")]))
         XCTAssertThrowsError(try port.resolveReasoning(
             declaration: declaration, wireProtocol: .responses, outputLimit: 4096,
             supportsReasoning: false, requested: .null, tier: "balanced"
@@ -377,7 +377,7 @@ final class MacReasoningConfigurationTests: XCTestCase {
         XCTAssertFalse(budget.isValid(for: .responses))
         let effort = MacReasoningConfiguration(control: .effort, efforts: ["high"])
         XCTAssertTrue(effort.isValid(for: .responses))
-        XCTAssertFalse(effort.isValid(for: .anthropic))
+        XCTAssertTrue(effort.isValid(for: .anthropic))
         XCTAssertTrue(effort.isValid(for: .chatCompletions), "Exact effort controls preserve sparse declarations")
         var inheritedBudget = budget
         inheritedBudget.outputLimit = 4096
@@ -386,9 +386,9 @@ final class MacReasoningConfigurationTests: XCTestCase {
     func testThinkingControlsAreProtocolSpecific() {
         XCTAssertEqual(MacReasoningConfiguration.availableControls(for: .responses), [.automatic, .effort])
         XCTAssertEqual(MacReasoningConfiguration.availableControls(for: .chatCompletions), [.automatic, .effort])
-        XCTAssertEqual(MacReasoningConfiguration.availableControls(for: .anthropic), [.automatic, .budget])
+        XCTAssertEqual(MacReasoningConfiguration.availableControls(for: .anthropic), [.automatic, .effort, .budget])
         XCTAssertFalse(MacReasoningConfiguration(control: .budget).supports(.responses))
-        XCTAssertFalse(MacReasoningConfiguration(control: .effort).supports(.anthropic))
+        XCTAssertTrue(MacReasoningConfiguration(control: .effort).supports(.anthropic))
     }
     func testReasoningMenuLabelsAreBundled() throws {
         let path = try XCTUnwrap(Bundle.main.path(forResource: "Reasoning", ofType: "strings", inDirectory: nil, forLocalization: "en"))

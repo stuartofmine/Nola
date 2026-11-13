@@ -48,8 +48,9 @@ build_xcode_target_archive() {
         *) cargo_profile="dev" ;;
       esac
     else
-      # The iOS FFI runtime currently requires optimized Rust code. Dev builds
-      # reproducibly fault in AgentRuntime::try_new on device/simulator.
+      # Keep mobile optimization and one shared release cache: opt-level=0
+      # has caused runtime initialization faults, and a new profile duplicates
+      # every SDK dependency tree.
       cargo_profile="release"
     fi
   fi
@@ -71,38 +72,23 @@ build_xcode_target_archive() {
     mkdir -p "$(dirname "$dependency_file")"
     {
       printf '%s:' "$(escape_dependency_path "$output")"
-      find "$ROOT" "$ROOT/../third_party/a2ui/spec" \
-        -type d \( -name target -o -name 'target_*' \) -prune -o \
-        -type f \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'build.rs' -o -name '*.sql' -o -name '*.json' -o -name '*.h' -o -name 'module.modulemap' \) \
-        -print | sort | while IFS= read -r path; do
-          printf ' %s' "$(escape_dependency_path "$path")"
-        done
-      local workspace_root
-      workspace_root="$(cd "$ROOT/.." && pwd -P)"
-      for path in \
-        "$workspace_root/Cargo.toml" \
-        "$workspace_root/Cargo.lock" \
-        "$ROOT/scripts/build_xcframework.sh" \
-        "$workspace_root/scripts/lib/rust_build_cache.sh"; do
-        printf ' %s' "$(escape_dependency_path "$path")"
-      done
+      {
+        find "$ROOT" "$ROOT/../third_party/a2ui/spec" \
+          -type d \( -name target -o -name 'target_*' -o -name tests \) -prune -o \
+          -type f \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'build.rs' -o -name '*.sql' -o -name '*.json' -o -name '*.h' -o -name 'module.modulemap' \) \
+          -print
+        local workspace_root
+        workspace_root="$(cd "$ROOT/.." && pwd -P)"
+        printf '%s\n' \
+          "$workspace_root/Cargo.toml" \
+          "$workspace_root/Cargo.lock" \
+          "$workspace_root/.cargo/config.toml" \
+          "$workspace_root/rust-toolchain.toml" \
+          "$ROOT/scripts/build_xcframework.sh" \
+          "$workspace_root/scripts/lib/rust_build_cache.sh"
+      } | LC_ALL=C sort -u | sed 's/[\\ #]/\\&/g' | awk '{ printf " %s", $0 }'
       printf '\n'
     } > "$dependency_file"
-  }
-
-  core_sources_are_newer() {
-    local artifact="$1"
-    [[ ! -f "$artifact" ]] && return 0
-    find "$ROOT" \
-      -type d \( -name target -o -name 'target_*' \) -prune -o \
-      -type f \( -name '*.rs' -o -name 'Cargo.toml' -o -name 'build.rs' -o -name '*.sql' -o -name '*.h' -o -name 'module.modulemap' \) \
-      -newer "$artifact" -print -quit | grep -q . && return 0
-    local workspace_root
-    workspace_root="$(cd "$ROOT/.." && pwd -P)"
-    [[ "$workspace_root/Cargo.toml" -nt "$artifact" || \
-       "$workspace_root/Cargo.lock" -nt "$artifact" || \
-       "$ROOT/scripts/build_xcframework.sh" -nt "$artifact" || \
-       "$workspace_root/scripts/lib/rust_build_cache.sh" -nt "$artifact" ]]
   }
 
   for arch in $requested_archs; do
@@ -130,37 +116,39 @@ build_xcode_target_archive() {
   done
 
   mkdir -p "$derived_dir"
-  if [[ -f "$output" ]] && \
-     [[ -f "$profile_stamp" ]] && \
-     [[ "$(cat "$profile_stamp")" == "$cargo_profile" ]] && \
-     ! core_sources_are_newer "$output"; then
-    echo "Xcode Rust core is up to date; skipping Cargo build"
-    write_dependency_file
-    return
-  fi
   for target in "${targets[@]}"; do
     if ! rustup target list --installed | grep -q "^$target$"; then
       rustup target add "$target"
     fi
-    local library="$ROOT/target/$target/$cargo_output_profile/libnola_mobile_bindings.a"
-    if core_sources_are_newer "$library"; then
-      CARGO_TARGET_DIR="$ROOT/target" nola_cargo build \
-        --locked \
-        --manifest-path "$BINDINGS_MANIFEST" \
-        --target "$target" \
-        --profile "$cargo_profile"
-    else
-      echo "Reusing current Rust core artifact: $library"
+    local target_dir="${NOLA_CORE_CARGO_TARGET_DIR:-${CARGO_TARGET_DIR:-$ROOT/target}}"
+    local target_args=(--target "$target")
+    # Native Mac builds reuse the CLI's host dependency graph. Cross builds
+    # retain their existing target cache instead of cold-migrating SDK outputs.
+    if [[ "$platform" == macosx && "$target" == "$(rustc -vV | sed -n 's/^host: //p')" ]]; then
+      target_dir="${NOLA_CORE_CARGO_TARGET_DIR:-${CARGO_TARGET_DIR:-$ROOT/../target}}"
+      target_args=()
     fi
+    local artifact_dir="$target_dir/$target/$cargo_output_profile"
+    [[ ${#target_args[@]} -ne 0 ]] || artifact_dir="$target_dir/$cargo_output_profile"
+    local library="$artifact_dir/libnola_mobile_bindings.a"
+    # Cargo validates the real transitive inputs, including JSON resources,
+    # features, flags and toolchain. An archive mtime is not a freshness proof.
+    CARGO_TARGET_DIR="$target_dir" nola_cargo rustc \
+      --locked --manifest-path "$ROOT/../Cargo.toml" -p nola_mobile_bindings \
+      --lib --crate-type staticlib ${target_args[@]+"${target_args[@]}"} --profile "$cargo_profile"
     libraries+=("$library")
   done
 
   if [ "${#libraries[@]}" -eq 1 ]; then
-    cp "${libraries[0]}" "$output"
+    if ! cmp -s "${libraries[0]}" "$output"; then cp "${libraries[0]}" "$output"; fi
   else
-    lipo -create "${libraries[@]}" -output "$output"
+    local merged="$derived_dir/libnola_core.merged.a"
+    lipo -create "${libraries[@]}" -output "$merged"
+    if ! cmp -s "$merged" "$output"; then mv "$merged" "$output"; else rm "$merged"; fi
   fi
-  printf '%s\n' "$cargo_profile" > "$profile_stamp"
+  if [[ ! -f "$profile_stamp" || "$(cat "$profile_stamp")" != "$cargo_profile" ]]; then
+    printf '%s\n' "$cargo_profile" > "$profile_stamp"
+  fi
   write_dependency_file
   echo "Built Xcode Rust core: $output"
 }
@@ -176,52 +164,7 @@ echo "🦀 Building xcframework for nola_core in $OUT_DIR"
 echo "Using Rust: $(rustup --version)"
 echo "Using Cargo: $(nola_cargo --version)"
 
-# Check if we need to rebuild by comparing source timestamps
-NEEDS_REBUILD=false
-
-if [ ! -d "$XCFRAMEWORK_PATH" ]; then
-  echo "📦 XCFramework doesn't exist, full build required"
-  NEEDS_REBUILD=true
-else
-  # Find the newest source file
-  NEWEST_SOURCE=$(
-    {
-      find "$ROOT/src" -type f -name "*.rs" -print
-      find "$ROOT/nola-mobile-bindings/src" -type f -name "*.rs" -print
-      find "$ROOT/nola-store/src" -type f -name "*.rs" -print
-      find "$ROOT/nola-domain/src" -type f -name "*.rs" -print
-      find "$ROOT/nola-host-protocol/src" -type f -name "*.rs" -print
-      find "$ROOT/swift_shims" -type f \( -name "*.h" -o -name "module.modulemap" \) -print
-      printf '%s\n' \
-        "$ROOT/../Cargo.toml" \
-        "$ROOT/../Cargo.lock" \
-        "$ROOT/../.cargo/config.toml" \
-        "$ROOT/Cargo.toml" \
-        "$ROOT/Cargo.lock" \
-        "$ROOT/nola-mobile-bindings/Cargo.toml" \
-        "$ROOT/nola-store/Cargo.toml" \
-        "$ROOT/nola-domain/Cargo.toml" \
-        "$ROOT/nola-host-protocol/Cargo.toml" \
-        "$ROOT/../scripts/lib/rust_build_cache.sh"
-    } | xargs stat -f "%m %N" 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-
-  )
-  if [ -n "$NEWEST_SOURCE" ]; then
-    SOURCE_TIME=$(stat -f "%m" "$NEWEST_SOURCE" 2>/dev/null || echo "0")
-    XCFRAMEWORK_TIME=$(stat -f "%m" "$XCFRAMEWORK_PATH" 2>/dev/null || echo "0")
-    
-    if [ "$SOURCE_TIME" -gt "$XCFRAMEWORK_TIME" ]; then
-      echo "🔄 Source files newer than XCFramework, rebuilding..."
-      NEEDS_REBUILD=true
-    else
-      echo "✅ XCFramework is up-to-date, skipping build"
-      mkdir -p "$DEST_PROJECT_FRAMEWORKS"
-      rm -rf "$DEST_PROJECT_FRAMEWORKS/nola_core.xcframework"
-      cp -R "$XCFRAMEWORK_PATH" "$DEST_PROJECT_FRAMEWORKS/"
-      echo "💡 To force rebuild: rm -rf $XCFRAMEWORK_PATH"
-      exit 0
-    fi
-  fi
-fi
+# Cargo checks all transitive inputs for each requested SDK.
 
 # Targets to build
 TARGETS=(
@@ -241,7 +184,7 @@ for T in "${TARGETS[@]}"; do
     rustup target add $T
   fi
   # Workspace profiles disable incremental caches and debug information.
-  CARGO_TARGET_DIR="$ROOT/target" nola_cargo build --manifest-path "$BINDINGS_MANIFEST" --target "$T" --release
+  CARGO_TARGET_DIR="$ROOT/target" nola_cargo rustc --manifest-path "$BINDINGS_MANIFEST" --lib --crate-type staticlib --target "$T" --release
 done
 
 LIBS=()

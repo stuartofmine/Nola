@@ -197,10 +197,29 @@ fn environment(name: &str, request: &ImportPlanRequest) -> Option<String> {
         .filter(|s| !s.is_empty() && !s.chars().any(char::is_control))
 }
 
+// Provider lists can expose Codex/Magpie objects or plain effort names.
+// Preserve catalog observations (including future names); Core decides which
+// controls are executable. An explicit empty list is not a fallback signal.
+fn catalog_reasoning_levels(config: &Value) -> Vec<String> {
+    let values = config.get("supported_reasoning_levels")
+        .or_else(|| config.get("reasoning_levels"))
+        .and_then(Value::as_array);
+    let mut levels = Vec::new();
+    for item in values.into_iter().flatten() {
+        if let Some(effort) = item.as_str().or_else(|| item.get("effort").and_then(Value::as_str)) {
+            if !effort.is_empty() && !levels.iter().any(|value| value == effort) {
+                levels.push(effort.to_owned());
+            }
+        }
+    }
+    levels
+}
+
 fn make_model(id: &str, config: &Value, protocol: ModelProtocol) -> CatalogModel {
     let modalities = config["modalities"]["input"]
         .as_array()
         .or_else(|| config["architecture"]["input_modalities"].as_array())
+        .or_else(|| config["modalities"].as_array())
         .map(|items| {
             items
                 .iter()
@@ -213,29 +232,32 @@ fn make_model(id: &str, config: &Value, protocol: ModelProtocol) -> CatalogModel
     let supports = |name: &str| supported.is_some_and(|items| items.iter().any(|v| v.as_str() == Some(name)));
     let tool_calls = config.get("tool_call").and_then(Value::as_bool)
         .or_else(|| supported.map(|_| supports("tools")));
-    let has_metadata = tool_calls.is_some() || supported.is_some() || config["reasoning"].is_boolean()
+    let reasoning_levels = catalog_reasoning_levels(config);
+    let has_metadata = !reasoning_levels.is_empty() || tool_calls.is_some() || supported.is_some() || config["reasoning"].is_boolean()
         || config["temperature"].is_boolean() || config["architecture"]["input_modalities"].is_array()
         || config["modalities"]["input"].is_array();
     let declared = has_metadata.then(|| ModelExecutionCapabilities {
         tool_calls: ModelExecutionCapabilities::for_import(tool_calls).tool_calls,
         image_input: modalities.iter().any(|v| v == "image"),
-        reasoning: config["reasoning"].as_bool().unwrap_or_else(|| supports("reasoning") || supports("reasoning_effort")),
+        reasoning: config["reasoning"].as_bool().unwrap_or_else(|| !reasoning_levels.is_empty() || supports("reasoning") || supports("reasoning_effort")),
         sampling_parameters: config["temperature"].as_bool().unwrap_or_else(|| supports("temperature")),
         ..Default::default()
     });
     CatalogModel {
         model_id: id.into(),
-        display_name: text(config, "name").unwrap_or(id).into(),
+        display_name: text(config, "display_name").or_else(|| text(config, "name")).unwrap_or(id).into(),
         protocol,
         context_window: config["limit"]["context"]
             .as_u64()
+            .or_else(|| config["context_window"].as_u64())
             .or_else(|| config["max_context_size"].as_u64())
             .or_else(|| config["context_length"].as_u64()),
         output_limit: config["limit"]["output"].as_u64()
             .or_else(|| config["top_provider"]["max_completion_tokens"].as_u64())
             .or_else(|| config["max_output_tokens"].as_u64()),
         modalities,
-        reasoning_levels: vec![], summary_supported: None,
+        reasoning_levels,
+        summary_supported: config["supports_reasoning_summary_parameter"].as_bool(),
         execution_capabilities: declared,
     }
 }

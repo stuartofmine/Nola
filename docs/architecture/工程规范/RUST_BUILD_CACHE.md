@@ -91,13 +91,13 @@ BSD `install`；Xcode脚本沙盒保持开启。
 
 ```sh
 # 本机安装后，既有构建入口自动选择 mbx
-sh cli/scripts/build.sh --debug
+sh apps/cli/scripts/build.sh --debug
 
 # 明确要求缓存，否则失败
-NOLA_RUST_BUILD_CACHE=required sh cli/scripts/build.sh --debug
+NOLA_RUST_BUILD_CACHE=required sh apps/cli/scripts/build.sh --debug
 
 # 临时关闭仓库包装
-NOLA_RUST_BUILD_CACHE=off sh cli/scripts/build.sh --debug
+NOLA_RUST_BUILD_CACHE=off sh apps/cli/scripts/build.sh --debug
 
 # 本机 workspace target 已显式纳管；新 checkout 先决定是否 adopt
 mbx test -p nola_cli --bin nola
@@ -150,3 +150,25 @@ fixture不调用真实Cargo，不能代替上述真实项目构建验收。
 备份；未删除任何编译产物。恢复后的stats确认managed targets及pruned bytes均为0。
 这是实际发生并已撤回的布局改变，不是“从未迁移”的证据；后续手工验证同样必须
 显式指定target，不能只依靠构建脚本的保护。
+
+
+## 2026-11：构建范围和产物存储
+
+- 过滤单元测试使用 `bash scripts/test_rust.sh <package> <filter>`，默认限制
+  `--lib`。集成测试明确传 `--test <target>`。单独使用测试名称过滤器不会阻止
+  Cargo 链接其他集成测试；避免无意生成大量测试可执行文件。
+- Apple / Android 原生桥只请求 `cargo rustc --lib --crate-type staticlib`，
+  不同时生成未使用的动态库。Mac 本机架构复用 workspace host target；跨 SDK
+  缓存仍独立，不能把不同 SDK、features 或编译参数强行视为同一份产物。
+- Xcode 脚本调用 Cargo 校验传递依赖，不用归档修改时间绕过 JSON、配置和工具链
+  变更。依赖路径批量转义，避免为每个源文件启动一个 sed 进程。复制前比较内容，
+  避免未变化的静态库触发 Swift/JNI 重新链接。
+- iOS 开发继续复用 release profile，保留运行时需要的优化；不使用曾导致
+  初始化故障的 opt-level=0，也不新增一套重复的开发 profile / SDK 依赖缓存。
+- `python3 scripts/maintain_build_storage.py` 默认只预览。确认范围后添加
+  `--apply`，只移除当前 checkout Debug 中具有匹配 Cargo fingerprint 的过期集成
+  测试可执行文件；每个包保留最新 8 个。依赖库、应用、Release、日志及会话不在范围。
+  清理会取得 Cargo profile 锁；构建进行中明确拒绝。已删的测试程序下次由 Cargo 重建。
+
+清理器测试包含真实的最小 Cargo 项目：验证锁竞争、保留依赖、删除测试程序后可
+重新构建。空间收益以文件系统实际可用空间为准，不用 APFS 逻辑大小冒充物理释放量。

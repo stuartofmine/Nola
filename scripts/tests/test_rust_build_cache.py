@@ -155,6 +155,59 @@ class RustBuildCacheTests(unittest.TestCase):
         for record in records:
             self.assertEqual(record["argv"], list(arguments))
 
+    def test_filtered_test_launcher_scopes_targets_and_preserves_test_arguments(self):
+        script = REPOSITORY_ROOT / "scripts/test_rust.sh"
+        for arguments, expected in [
+            (["case_name"], ["--lib", "case_name"]),
+            (["--test", "contract", "case_name"], ["--test", "contract", "case_name"]),
+            (["case_name", "--", "--test"], ["--lib", "case_name", "--", "--test"]),
+        ]:
+            self.log_path.unlink(missing_ok=True)
+            env = {**os.environ, "CARGO": str(self.cargo), "NOLA_TEST_LOG": str(self.log_path),
+                   "NOLA_RUST_BUILD_CACHE": "off", "NOLA_RUST_TARGET_WARN_BYTES": "0"}
+            result = subprocess.run(["/bin/bash", str(script), "nola_domain", *arguments], env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            records = [json.loads(line) for line in self.log_path.read_text().splitlines()]
+            self.assertEqual(records[-1]["argv"], ["test", "--locked", "--manifest-path", str(REPOSITORY_ROOT / "Cargo.toml"), "-p", "nola_domain", *expected])
+
+    def test_xcode_build_rechecks_cargo_and_preserves_unchanged_archive(self):
+        checkout = self.root.resolve() / "fixture"
+        (checkout / "core/scripts").mkdir(parents=True)
+        (checkout / "scripts/lib").mkdir(parents=True)
+        (checkout / "third_party/a2ui/spec").mkdir(parents=True)
+        shutil.copy(REPOSITORY_ROOT / "core/scripts/build_xcframework.sh", checkout / "core/scripts")
+        shutil.copy(HELPER, checkout / "scripts/lib")
+        resource = checkout / "core/runtime.json"
+        resource.write_text('{}')
+        self.cargo.write_text(f"#!{sys.executable}\n"
+            "import os,pathlib,sys,json\n"
+            "with open(os.environ['NOLA_TEST_LOG'],'a') as log: log.write(json.dumps(sys.argv[1:])+'\\n')\n"
+            "out=pathlib.Path(os.environ['CARGO_TARGET_DIR'])/'debug/libnola_mobile_bindings.a'\n"
+            "out.parent.mkdir(parents=True,exist_ok=True)\n"
+            "if not out.exists(): out.write_bytes(b'fixture-static-archive')\n")
+        for name, body in [("rustup", "echo aarch64-apple-darwin"), ("rustc", "echo 'host: aarch64-apple-darwin'")]:
+            tool = self.bin_directory / name
+            tool.write_text("#!/bin/sh\n" + body + "\n")
+            tool.chmod(0o755)
+        derived = checkout / "derived"
+        env = {**os.environ, "PATH": str(self.bin_directory) + ":/usr/bin:/bin", "HOME": str(self.fixture_home),
+               "CARGO": str(self.cargo), "NOLA_TEST_LOG": str(self.log_path), "NOLA_RUST_BUILD_CACHE": "off",
+               "NOLA_RUST_TARGET_WARN_BYTES": "0", "PLATFORM_NAME": "macosx", "ARCHS": "arm64", "CONFIGURATION": "Test",
+               "DERIVED_FILE_DIR": str(derived), "NOLA_DEPENDENCY_FILE": str(derived / "core.d"),
+               "CARGO_TARGET_DIR": str(checkout / "target")}
+        archive = derived / "nola_core/libnola_core.a"
+        timestamps = []
+        for iteration in range(3):
+            if iteration == 2: resource.write_text('{"changed":true}')
+            result = subprocess.run(["/bin/bash", str(checkout / "core/scripts/build_xcframework.sh"), "--xcode-target"], env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            timestamps.append(archive.stat().st_mtime_ns)
+        self.assertEqual(len(set(timestamps)), 1)
+        calls = [json.loads(line) for line in self.log_path.read_text().splitlines()]
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(calls[0], ["rustc", "--locked", "--manifest-path", str(checkout / "core/../Cargo.toml"), "-p", "nola_mobile_bindings", "--lib", "--crate-type", "staticlib", "--profile", "dev"])
+        self.assertIn(str(resource), (derived / "core.d").read_text())
+
     def test_mac_tests_cannot_replace_the_signed_debug_application(self):
         scheme = ET.parse(REPOSITORY_ROOT / "Nola.xcodeproj/xcshareddata/xcschemes/NolaMac.xcscheme").getroot()
         self.assertEqual(scheme.find("TestAction").attrib["buildConfiguration"], "Test")
@@ -827,9 +880,9 @@ class RustBuildCacheIntegrationTests(unittest.TestCase):
                 if relative_path == "scripts/build_mac_runtime.sh":
                     self.assertRegex(commands, r"\bnola_cargo_exec(?:_owned_group)?\b")
                 elif relative_path == "core/scripts/build_android.sh":
-                    self.assertRegex(commands, r"\bnola_cargo\s+ndk\s+[^\n]*\bbuild\b")
+                    self.assertRegex(commands, r"\bnola_cargo\s+ndk\s+[^\n]*\b(?:build|rustc)\b")
                 else:
-                    self.assertRegex(commands, r"\bnola_cargo\s+build\b")
+                    self.assertRegex(commands, r"\bnola_cargo\s+(?:build|rustc)\b")
 
 
 if __name__ == "__main__":

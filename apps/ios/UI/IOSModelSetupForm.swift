@@ -157,7 +157,8 @@ struct IOSModelSetupForm: View {
             let model: ModelInfo
             if let savedModel { model = savedModel }
             else {
-                let connection = try service.create(name: name, endpoint: endpoint, wireProtocol: wire, secret: secret, modelID: modelID)
+                let connection = try service.create(name: name, endpoint: endpoint, wireProtocol: wire, secret: secret, modelID: modelID,
+                    discoveredModel: discoveredModels.first { $0.id == modelID.trimmingCharacters(in: .whitespacesAndNewlines) })
                 guard let profile = try service.application.listModelProfiles().first(where: {
                     guard $0.enabled, $0.deletedAtMs == nil,
                           let source = try? JSONSerialization.jsonObject(with: Data($0.sourceJSON.utf8)) as? [String: Any] else { return false }

@@ -185,6 +185,7 @@ fn captured_configured_wire_request(
         "auto",
         |_| Ok(()),
     );
+    assert!(result.is_ok(), "provider request failed: {result:?}");
     let request = server.join().unwrap();
     assert_eq!(result.unwrap().content, "ok");
     assert_eq!(cfg.max_output_tokens, admitted_tokens);
@@ -493,4 +494,24 @@ fn zero_output_limit_is_rejected_before_any_provider_request() {
             std::io::ErrorKind::WouldBlock
         );
     }
+}
+
+#[test]
+fn anthropic_native_effort_off_and_automatic_have_distinct_wire_bodies() {
+    use super::provider_protocols::anthropic_request_body;
+    let mut cfg = configuration("anthropic", "http://127.0.0.1/v1".into(), 8192);
+    let automatic = anthropic_request_body(&cfg, &[], &[], "auto").unwrap();
+    assert!(automatic.get("thinking").is_none());
+    assert!(automatic.get("output_config").is_none());
+    for level in ["low", "high", "max"] {
+        cfg.reasoning_selection = Some(ReasoningSelection::Effort {value:level.into()});
+        let body = anthropic_request_body(&cfg, &[], &[], "auto").unwrap();
+        assert!(body.get("thinking").is_none());
+        assert_eq!(body["output_config"], json!({"effort":level}));
+        assert!(body["thinking"].get("budget_tokens").is_none());
+    }
+    cfg.reasoning_selection = Some(ReasoningSelection::Effort {value:"none".into()});
+    let off = anthropic_request_body(&cfg, &[], &[], "auto").unwrap();
+    assert_eq!(off["thinking"], json!({"type":"disabled"}));
+    assert!(off.get("output_config").is_none());
 }

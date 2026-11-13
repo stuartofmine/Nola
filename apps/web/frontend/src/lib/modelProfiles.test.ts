@@ -24,8 +24,8 @@ test('budget controls only expose valid tiers under the edited output limit', ()
 test('editor rejects protocol mismatches and missing declared efforts before save', () => {
     const draft = reasoningDraft({ control: 'effort', efforts: ['low', 'high'], budgets: [] });
     assert.equal(reasoningValidationError(draft, 'responses', 512), null);
-    assert.ok(reasoningValidationError(draft, 'chat_completions', 512));
-    assert.ok(reasoningValidationError(draft, 'anthropic', 16384));
+    assert.equal(reasoningValidationError(draft, 'chat_completions', 512), null);
+    assert.equal(reasoningValidationError(draft, 'anthropic', 16384), null);
     assert.ok(reasoningValidationError(draft, 'unknown', 16384));
     assert.deepEqual(reasoningOptions(draft, 'unknown'), []);
     assert.ok(reasoningValidationError({ ...draft, efforts: [] }, 'responses', 16384));
@@ -47,9 +47,9 @@ test('Mac thinking defaults survive Web edits and choices follow the protocol', 
     assert.equal(draft.defaultPreference, 'high');
     assert.deepEqual(reasoningChanges(stored, draft), {});
     assert.deepEqual(reasoningOptions(draft, 'responses'), ['low', 'high']);
-    assert.deepEqual(reasoningOptions(draft, 'chat_completions'), []);
+    assert.deepEqual(reasoningOptions(draft, 'chat_completions'), ['low', 'high']);
     draft.efforts.push('medium');
-    assert.deepEqual(reasoningOptions(draft, 'chat_completions'), ['concise', 'balanced', 'detailed']);
+    assert.deepEqual(reasoningOptions(draft, 'chat_completions'), ['low', 'medium', 'high']);
     draft.defaultPreference = 'automatic';
     assert.equal(reasoningChanges(stored, draft).reasoning?.defaultPreference, 'automatic');
     assert.equal(stored.defaultPreference, 'high');
@@ -157,4 +157,13 @@ test('endpoint/model ordering matches stored order without mutating the input', 
     const groups = groupedProfiles(input);
     assert.deepEqual(groups.map(group => group.models.map(value => value.id)), [['a', 'b'], ['c']]);
     assert.deepEqual(input.map(value => value.id), ['b', 'c', 'a']);
+});
+
+
+test('native efforts retain exact defaults and do not become token budgets', () => {
+    const draft = reasoningDraft({control:'effort', efforts:['low','high','max'], defaultPreference:'max'});
+    assert.deepEqual(reasoningOptions(draft, 'anthropic'), ['low','high','max']);
+    assert.equal(reasoningValidationError(draft, 'anthropic', 8192), null);
+    assert.ok(reasoningValidationError({...draft, defaultPreference:'none'}, 'anthropic', 8192));
+    assert.equal(reasoningValidationError({...draft, defaultPreference:'balanced'}, 'chat_completions', 8192), null);
 });

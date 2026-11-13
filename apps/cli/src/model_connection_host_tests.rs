@@ -370,16 +370,15 @@ fn discovery_is_a_bounded_get_and_keeps_model_selection_unchanged() {
         assert_eq!(request.url(), "/v1/models");
         request
             .respond(tiny_http::Response::from_string(
-                r#"{"data":[{"id":"discovered"}]}"#,
+                r#"{"data":[{"id":"discovered","supported_reasoning_levels":[{"effort":"low"},{"effort":"high"},{"effort":"max"}]}]}"#,
             ))
             .unwrap();
     });
     let refreshed = discover_catalog(&store, "discover", saved.revision, &[]).unwrap();
     worker.join().unwrap();
-    assert_eq!(
-        refreshed.document.catalog.unwrap().models[0].model_id,
-        "discovered"
-    );
+    let catalog = refreshed.document.catalog.unwrap();
+    assert_eq!(catalog.models[0].model_id, "discovered");
+    assert_eq!(catalog.models[0].reasoning_levels, ["low", "high", "max"]);
     assert!(store.model_profiles().unwrap().is_empty());
 }
 
@@ -570,4 +569,27 @@ experimental_bearer_token = "isolated-import-key"
     std::fs::write(&source,document.replace("12345","12346")).unwrap();
     let changed=plan_import(&store,input,&[]).unwrap();
     assert_eq!(changed.candidates[0].issue.as_deref(),Some("api_credential_required"));
+}
+
+#[test]
+fn provider_catalog_preserves_declared_efforts_without_guessing_or_overwriting_empty_lists() {
+    for (field, values) in [
+        ("supported_reasoning_levels", json!([{"effort":"none"},{"effort":"low"},{"effort":"high"},{"effort":"max"},{"effort":"high"}])),
+        ("reasoning_levels", json!(["none","low","high","max"])),
+    ] {
+        let mut entry = json!({"display_name":"Readable", "context_window":128000,"max_output_tokens":32000});
+        entry[field] = values;
+        for protocol in [ModelProtocol::ChatCompletions, ModelProtocol::Responses] {
+            let model = make_model("unrecognized/model", &entry, protocol);
+            assert_eq!(model.reasoning_levels, ["none","low","high","max"]);
+            assert_eq!(model.display_name, "Readable");
+            assert_eq!(model.context_window, Some(128000));
+            assert!(model.execution_capabilities.unwrap().reasoning);
+        }
+    }
+    let absent = make_model("gpt-known-looking-name", &json!({}), ModelProtocol::Responses);
+    assert!(absent.reasoning_levels.is_empty());
+    assert!(absent.execution_capabilities.is_none());
+    let empty = make_model("fixture", &json!({"supported_reasoning_levels":[],"reasoning_levels":["high"]}), ModelProtocol::Responses);
+    assert!(empty.reasoning_levels.is_empty());
 }

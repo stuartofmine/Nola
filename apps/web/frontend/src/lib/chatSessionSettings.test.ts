@@ -92,7 +92,7 @@ test('installed local models can be selected and receive conversation-scoped def
 
 test('effort controls expose their complete declared values while budget controls retain their supported tiers', () => {
     assert.deepEqual(sessionReasoningOptions(profile), ['low', 'high']);
-    assert.deepEqual(sessionReasoningOptions({ ...profile, endpoint: { ...profile.endpoint, wireProtocol: 'chat_completions' } }), []);
+    assert.deepEqual(sessionReasoningOptions({ ...profile, endpoint: { ...profile.endpoint, wireProtocol: 'chat_completions' } }), ['low', 'high']);
     assert.deepEqual(sessionReasoningOptions({ ...profile, endpoint: { ...profile.endpoint, wireProtocol: 'chat_completions' }, reasoning: { control: 'effort', efforts: ['low', 'medium', 'high'], budgets: [] } }), ['low', 'medium', 'high']);
     assert.deepEqual(sessionReasoningOptions({ ...profile, endpoint: { ...profile.endpoint, wireProtocol: 'anthropic' }, reasoning: { control: 'budget', efforts: [], budgets: [1024, 2048, 4096] } }), ['concise', 'balanced', 'detailed']);
     assert.deepEqual(sessionReasoningOptions(profile, { wireProtocol: 'anthropic', reasoning: { control: 'budget', efforts: [], budgets: [1024, 2048, 9999] } }), []);

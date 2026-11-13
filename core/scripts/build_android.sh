@@ -65,7 +65,7 @@ for pair in "${ABIS[@]}"; do
   echo "Building nola_core for $abi ($target)"
   (
     cd "$ROOT"
-    CARGO_TARGET_DIR="$ROOT/target" nola_cargo ndk -t "$abi" -P "$MIN_SDK" build --manifest-path "$BINDINGS_MANIFEST" --release
+    CARGO_TARGET_DIR="$ROOT/target" nola_cargo ndk -t "$abi" -P "$MIN_SDK" rustc --manifest-path "$BINDINGS_MANIFEST" --lib --crate-type staticlib --release
   )
   archive="$ROOT/target/$target/release/libnola_mobile_bindings.a"
   if [[ ! -f "$archive" ]]; then

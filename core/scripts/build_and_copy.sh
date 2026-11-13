@@ -28,21 +28,24 @@ if [[ "${1:-}" == "--out-dir" ]]; then
 fi
 
 echo "Building nola mobile bindings for $TARGET..."
-CARGO_TARGET_DIR="$ROOT/target" nola_cargo build --manifest-path "$BINDINGS_MANIFEST" --release
-
 LIB_NAME="libnola_core.a"
 BUILD_DIR="$ROOT/target/release"
 LIB_PATH="$BUILD_DIR/libnola_mobile_bindings.a"
 
 if [[ "$TARGET" == "darwin" ]]; then
-    CARGO_TARGET_DIR="$ROOT/target" nola_cargo build --manifest-path "$BINDINGS_MANIFEST" --release --target x86_64-apple-darwin
-    CARGO_TARGET_DIR="$ROOT/target" nola_cargo build --manifest-path "$BINDINGS_MANIFEST" --release --target aarch64-apple-darwin || true
-
-    LIB_X86="$ROOT/target/x86_64-apple-darwin/release/libnola_mobile_bindings.a"
-    LIB_ARM="$ROOT/target/aarch64-apple-darwin/release/libnola_mobile_bindings.a"
-    if [[ -f "$LIB_X86" && -f "$LIB_ARM" ]]; then
-        lipo -create -output "$LIB_PATH" "$LIB_X86" "$LIB_ARM"
-    fi
+    # Build only the two requested slices; do not also build an unused host copy.
+    for triple in x86_64-apple-darwin aarch64-apple-darwin; do
+        CARGO_TARGET_DIR="$ROOT/target" nola_cargo rustc --locked --manifest-path "$BINDINGS_MANIFEST" --lib --crate-type staticlib --release --target "$triple"
+    done
+    mkdir -p "$BUILD_DIR"
+    MERGED="$BUILD_DIR/libnola_core.merged.a"
+    lipo -create -output "$MERGED" \
+        "$ROOT/target/x86_64-apple-darwin/release/libnola_mobile_bindings.a" \
+        "$ROOT/target/aarch64-apple-darwin/release/libnola_mobile_bindings.a"
+    if ! cmp -s "$MERGED" "$LIB_PATH"; then mv "$MERGED" "$LIB_PATH"; else rm "$MERGED"; fi
+else
+    CARGO_TARGET_DIR="$ROOT/target" nola_cargo rustc --locked --manifest-path "$BINDINGS_MANIFEST" --lib --crate-type staticlib --release --target "$TARGET"
+    LIB_PATH="$ROOT/target/$TARGET/release/libnola_mobile_bindings.a"
 fi
 
 if [[ ! -f "$LIB_PATH" ]]; then
@@ -51,7 +54,7 @@ if [[ ! -f "$LIB_PATH" ]]; then
 fi
 
 mkdir -p "$OUT_DIR"
-cp "$LIB_PATH" "$OUT_DIR/$LIB_NAME"
-cp "$ROOT/swift_shims/nola_core.h" "$OUT_DIR/"
+if ! cmp -s "$LIB_PATH" "$OUT_DIR/$LIB_NAME"; then cp "$LIB_PATH" "$OUT_DIR/$LIB_NAME"; fi
+if ! cmp -s "$ROOT/swift_shims/nola_core.h" "$OUT_DIR/nola_core.h"; then cp "$ROOT/swift_shims/nola_core.h" "$OUT_DIR/"; fi
 
 echo "Copied $LIB_NAME and header to $OUT_DIR"

@@ -124,7 +124,7 @@ nola_rust_target_storage_warning() {
     nola_target_size=${nola_target_size%%[!0-9]*}
     [ -n "$nola_target_size" ] || return 0
     if [ "$nola_target_size" -gt 25165824 ]; then
-        printf '%s\n' 'warning: Rust target exceeds 24 GiB; mbx may retain the entire newest target. Preview Nola-only Debug cleanup with: sh scripts/clean_rust_workspace.sh' >&2
+        printf '%s\n' 'warning: Rust target exceeds 24 GiB; mbx may retain the entire newest target. Preview unused integration-test runner cleanup with: python3 scripts/maintain_build_storage.py' >&2
     fi
 }
 

@@ -137,7 +137,7 @@ nonisolated struct MacReasoningConfiguration: Codable, Hashable, Sendable {
         case automatic, effort, budget
     }
     static func availableControls(for wireProtocol: MacModelWireProtocol) -> [Control] {
-        wireProtocol == .anthropic ? [.automatic, .budget] : [.automatic, .effort]
+        wireProtocol == .anthropic ? [.automatic, .effort, .budget] : [.automatic, .effort]
     }
 
     func supports(_ wireProtocol: MacModelWireProtocol) -> Bool {

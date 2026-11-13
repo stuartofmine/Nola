@@ -875,3 +875,54 @@ fn imported_tools_default_on_then_provider_false_overrides_on_configuration() {
     assert_eq!(source["executionCapabilities"]["toolCalls"], false);
     assert_eq!(source["executionCapabilityBasis"], "catalog_declaration");
 }
+
+#[test]
+fn sparse_chat_catalog_controls_are_exact_and_survive_profile_resolution() {
+    let mut store = NolaStore::open(":memory:").unwrap();
+    let saved = save(&mut store, connection("reasoning"), None);
+    let mut discovered = model("sparse", ModelProtocol::ChatCompletions);
+    discovered.execution_capabilities = None;
+    discovered.reasoning_levels = ["default", "none", "low", "high", "max", "ultra"].map(str::to_owned).to_vec();
+    let catalog = refresh(&mut store, "reasoning", saved.revision, vec![discovered.clone()], 2);
+    select(&mut store, "reasoning", catalog.revision, &["chat_completions:sparse"], Some("chat_completions:sparse"));
+    let profile = store.list_model_profiles().unwrap().remove(0);
+    let source: Value = serde_json::from_str(&profile.source_json).unwrap();
+    assert_eq!(source["reasoning"]["efforts"], serde_json::json!(["none", "low", "high", "max"]));
+    let resolve = |store: &mut NolaStore, request: Value| execute_application_command(store,
+        ApplicationCommand::ResolveRemoteModelProfile { profile_id: profile.id.clone(), expected_revision: profile.revision, request });
+    for effort in ["none", "low", "high", "max"] {
+        let request = serde_json::json!({"reasoning_selection":{"kind":"effort","value":effort}});
+        let resolved = resolve(&mut store, request).unwrap();
+        assert_eq!(resolved["resolved"]["runtime"]["reasoning_selection"], serde_json::json!({"kind":"effort","value":effort}));
+    }
+    let resolved = resolve(&mut store, serde_json::json!({"reasoning_selection":null})).unwrap();
+    assert!(resolved["resolved"]["runtime"].is_object());
+    assert!(resolved["resolved"]["runtime"]["reasoning_selection"].is_null());
+    for unsupported in ["medium", "ultra"] {
+        assert!(resolve(&mut store, serde_json::json!({"reasoning_selection":{"kind":"effort","value":unsupported}})).is_err());
+    }
+    assert_eq!(store.model_connection("reasoning").unwrap().unwrap().document.catalog.unwrap().models[0].reasoning_levels, discovered.reasoning_levels);
+}
+
+#[test]
+fn observed_anthropic_efforts_are_admitted_without_changing_provider_defaults() {
+    let mut store = NolaStore::open(":memory:").unwrap();
+    let mut route = connection("anthropic");
+    route.protocols = vec![ModelProtocol::Anthropic];
+    let saved = save(&mut store, route, None);
+    let mut discovered = model("adaptive-observed", ModelProtocol::Anthropic);
+    discovered.execution_capabilities = None;
+    discovered.reasoning_levels = vec!["low".into(), "high".into()];
+    let catalog = refresh(&mut store, "anthropic", saved.revision, vec![discovered], 2);
+    select(&mut store, "anthropic", catalog.revision, &["anthropic:adaptive-observed"], Some("anthropic:adaptive-observed"));
+    let profile = store.list_model_profiles().unwrap().remove(0);
+    let source: Value = serde_json::from_str(&profile.source_json).unwrap();
+    assert_eq!(source["reasoning"]["efforts"], serde_json::json!(["low","high"]));
+    let resolve = |store: &mut NolaStore, request| execute_application_command(store,
+        ApplicationCommand::ResolveRemoteModelProfile { profile_id: profile.id.clone(), expected_revision: profile.revision, request });
+    assert!(resolve(&mut store, serde_json::json!({"reasoning_selection":null})).unwrap()["resolved"]["runtime"]["reasoning_selection"].is_null());
+    let selected = resolve(&mut store, serde_json::json!({"reasoning_selection":{"kind":"effort","value":"high"}})).unwrap();
+    assert_eq!(selected["resolved"]["runtime"]["reasoning_selection"], serde_json::json!({"kind":"effort","value":"high"}));
+    assert!(resolve(&mut store, serde_json::json!({"reasoning_selection":{"kind":"effort","value":"none"}})).is_err());
+    assert_eq!(store.model_connection("anthropic").unwrap().unwrap().document.catalog.unwrap().models[0].reasoning_levels, ["low", "high"]);
+}

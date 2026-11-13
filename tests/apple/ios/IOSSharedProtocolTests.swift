@@ -106,6 +106,58 @@ final class IOSSharedProtocolTests: XCTestCase {
         XCTAssertEqual(String(data: data, encoding: .utf8), "{\"data\":[]}")
     }
 
+    func testDiscoveredReasoningMetadataSurvivesCoreCatalogSerialization() throws {
+        let url = try XCTUnwrap(URL(string: "https://models.example/v1/models"))
+        let response = try XCTUnwrap(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil))
+        for levels in [#""supported_reasoning_levels":[{"effort":"none"},{"effort":"low"},{"effort":"high"},{"effort":"max"},{"effort":"high"}]"#,
+                       #""reasoning_levels":["none","low","high","max"]"#] {
+            let body = "{\"data\":[{\"id\":\"fixture\",\"display_name\":\"Readable\",\"context_window\":128000,\"max_output_tokens\":32000," + levels + "}]}"
+            let model = try XCTUnwrap(AppleModelCatalogDiscovery.parse(data: Data(body.utf8), response: response).first)
+            XCTAssertEqual(model.reasoningLevels, ["none", "low", "high", "max"])
+            let entry = try XCTUnwrap(JSONSerialization.jsonObject(with: model.catalogData(wireProtocol: "chat_completions")) as? [String: Any])
+            XCTAssertEqual(entry["reasoning_levels"] as? [String], model.reasoningLevels)
+            XCTAssertEqual(entry["context_window"] as? Int, 128000)
+            XCTAssertEqual((entry["execution_capabilities"] as? [String: Any])?["reasoning"] as? Bool, true)
+        }
+        let body = #"{"data":[{"id":"gpt-looking-name"},{"id":"empty","supported_reasoning_levels":[],"reasoning_levels":["high"]}]}"#
+        let models = try AppleModelCatalogDiscovery.parse(data: Data(body.utf8), response: response)
+        XCTAssertTrue(models.allSatisfy { $0.reasoningLevels.isEmpty })
+        XCTAssertTrue(models.allSatisfy { $0.reasoningSupported == nil })
+    }
+
+    @MainActor func testDiscoveredModelCanUpdateAnExistingManualConnectionWithoutLosingEfforts() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("catalog-efforts-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let database = root.appendingPathComponent("isolated.sqlite")
+        let application = try IOSApplicationRuntime(databaseURL: database)
+        let service = IOSModelConnectionService(application: application)
+        let initial = try service.create(name: "Fixture", endpoint: "https://fixture.invalid/v1", wireProtocol: "chat_completions", secret: "", modelID: "fixture-model")
+        let discovered = AppleModelCatalogDiscovery.Model(id: "fixture-model", displayName: "Discovered", reasoningLevels: ["low", "high"])
+        let refreshed = try service.create(name: "Fixture", endpoint: "https://fixture.invalid/v1", wireProtocol: "chat_completions", secret: "", modelID: "fixture-model", discoveredModel: discovered)
+        XCTAssertEqual(refreshed.id, initial.id)
+        XCTAssertGreaterThan(refreshed.revision, initial.revision)
+        XCTAssertEqual(refreshed.document.catalog?.models.first?.reasoning_levels, ["low", "high"])
+        let reopened = try IOSApplicationRuntime(databaseURL: database)
+        let profile = try XCTUnwrap(reopened.listModelProfiles().first { $0.modelName == "fixture-model" })
+        let source = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(profile.sourceJSON.utf8)) as? [String: Any])
+        XCTAssertEqual((source["reasoning"] as? [String: Any])?["efforts"] as? [String], ["low", "high"])
+    }
+
+    @MainActor func testObservedAnthropicEffortsKeepExactDeclaredLevels() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("anthropic-catalog-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let application = try IOSApplicationRuntime(databaseURL: root.appendingPathComponent("isolated.sqlite"))
+        let service = IOSModelConnectionService(application: application)
+        let model = AppleModelCatalogDiscovery.Model(id: "adaptive-observed", displayName: "Fixture", reasoningLevels: ["low", "high"])
+        let saved = try service.create(name: "Fixture", endpoint: "https://fixture.invalid/v1", wireProtocol: "anthropic", secret: "", modelID: model.id, discoveredModel: model)
+        XCTAssertEqual(saved.document.catalog?.models.first?.reasoning_levels, ["low", "high"])
+        let profile = try XCTUnwrap(application.listModelProfiles().first { $0.modelName == model.id })
+        let source = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(profile.sourceJSON.utf8)) as? [String: Any])
+        XCTAssertEqual((source["reasoning"] as? [String: Any])?["efforts"] as? [String], ["low", "high"])
+    }
+
 }
 
 
@@ -121,4 +173,5 @@ private nonisolated final class IOSCatalogFixtureProtocol: URLProtocol, @uncheck
         client?.urlProtocolDidFinishLoading(self)
     }
     override func stopLoading() {}
+
 }

@@ -43,10 +43,8 @@ export function canSelectProfile(profile: RemoteProfile): boolean {
 const efforts = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 
 export function reasoningOptions(value: ReasoningConfiguration, protocol: string, outputLimit = value.outputLimit ?? 16384) {
-    if (value.control === 'effort' && ['responses', 'chat_completions'].includes(protocol)) {
-        return protocol === 'responses'
-            ? efforts.filter(option => value.efforts?.includes(option))
-            : ['low', 'medium', 'high'].every(option => value.efforts?.includes(option)) ? ['concise', 'balanced', 'detailed'] : [];
+    if (value.control === 'effort' && ['responses', 'chat_completions', 'anthropic'].includes(protocol)) {
+        return efforts.filter(option => value.efforts?.includes(option));
     }
     return value.control === 'budget' && protocol === 'anthropic'
         && value.budgets?.length === 3
@@ -59,14 +57,14 @@ export function reasoningValidationError(value: ReasoningConfiguration, protocol
     if (!['responses', 'chat_completions', 'anthropic'].includes(protocol)) return { code: 'modelValidation.protocol' };
     if (value.efforts?.some(option => !efforts.includes(option))) return { code: 'modelValidation.efforts' };
     if (value.budgets?.some(budget => !Number.isSafeInteger(budget) || budget < 0)) return { code: 'modelValidation.budgets' };
-    if (value.control === 'budget' && protocol !== 'anthropic' || value.control === 'effort' && protocol === 'anthropic') {
+    if (value.control === 'budget' && protocol !== 'anthropic') {
         return { code: 'modelValidation.control' };
     }
     const options = reasoningOptions(value, protocol, outputLimit);
     if (value.control === 'budget' && options.length === 0) return { code: 'modelValidation.budgetTiers', params: { minimum: 1024 } };
-    if (value.control === 'effort' && options.length === 0) return protocol === 'responses'
-        ? { code: 'modelValidation.effortRequired' } : { code: 'modelValidation.effortTiers' };
-    if (value.defaultPreference != null && value.defaultPreference !== 'automatic' && !options.includes(value.defaultPreference)) {
+    if (value.control === 'effort' && options.length === 0) return { code: 'modelValidation.effortRequired' };
+    if (value.defaultPreference != null && value.defaultPreference !== 'automatic' && !options.includes(value.defaultPreference)
+        && !(protocol === 'chat_completions' && value.control === 'effort' && ['concise', 'balanced', 'detailed'].includes(value.defaultPreference))) {
         return { code: 'modelValidation.default' };
     }
     return null;

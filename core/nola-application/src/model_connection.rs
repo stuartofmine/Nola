@@ -408,11 +408,10 @@ fn effective_capabilities(
 }
 
 fn catalog_reasoning(entry: &CatalogModel) -> Result<Value, String> {
-    // ChatGPT's picker also advertises Ultra, a multi-agent execution mode.
-    // Keep that source observation in the catalog; it is not a single-model
-    // Responses effort and must never enter an execution profile or wire request.
+    // Keep catalog observations intact. Provider default is omission and Ultra
+    // is a harness orchestration mode, neither is a single-model wire effort.
     let efforts: Vec<String> = entry.reasoning_levels.iter().filter(|value| {
-        !(entry.protocol == nola_domain::generation::ModelProtocol::SiwcResponses && value.as_str() == "ultra")
+        !["default", "automatic", "ultra"].contains(&value.as_str())
     }).cloned().collect();
     if efforts.is_empty() { return Ok(Value::Null); }
     let declaration = nola_domain::reasoning_tiers::ReasoningCapabilityDeclaration::Effort {

@@ -4,7 +4,7 @@ import XCTest
 
 final class ReasoningEffortSelectionTests: XCTestCase {
     func testEveryDeclaredEffortSurvivesProfileAndConversationRoundTrips() throws {
-        for effort in ["none", "low", "medium", "high", "xhigh", "automatic"] {
+        for effort in ["none", "minimal", "low", "medium", "high", "xhigh", "max", "automatic"] {
             var parameters = ModelParameters.webAlignedCloudDefaults
             parameters.reasoningPreference = effort
             parameters.temperature = 0.25

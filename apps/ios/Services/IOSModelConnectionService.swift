@@ -85,7 +85,7 @@ nonisolated final class IOSModelConnectionService: Sendable {
             connectionID: connectionID, endpoint: endpoint, wireProtocol: wireProtocol)
         return (reference, secret)
     }
-    func create(name: String, endpoint: String, wireProtocol: String, secret: String, modelID: String) throws -> IOSModelConnectionSnapshot {
+    func create(name: String, endpoint: String, wireProtocol: String, secret: String, modelID: String, discoveredModel: AppleModelCatalogDiscovery.Model? = nil) throws -> IOSModelConnectionSnapshot {
         let endpoint = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         let modelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URLComponents(string: endpoint), let scheme = url.scheme, ["https", "http"].contains(scheme),
@@ -117,10 +117,14 @@ nonisolated final class IOSModelConnectionService: Sendable {
         var entries: [AgentCoreJSONValue] = try (previous?.document.catalog?.models ?? []).map {
             try JSONDecoder().decode(AgentCoreJSONValue.self, from: JSONEncoder().encode($0))
         }
-        if !(previous?.document.catalog?.models ?? []).contains(where: { $0.model_id == modelID && $0.protocol == wireProtocol }) {
-            entries.append(.object(["model_id": .string(modelID), "display_name": .string(modelID),
-                "protocol": .string(wireProtocol), "context_window": .null, "output_limit": .null,
-                "modalities": .array([]), "reasoning_levels": .array([]), "execution_capabilities": .null]))
+        if let observed = discoveredModel, observed.id == modelID {
+            let entry = try JSONDecoder().decode(AgentCoreJSONValue.self, from: observed.catalogData(wireProtocol: wireProtocol))
+            if let index = previous?.document.catalog?.models.firstIndex(where: { $0.model_id == modelID && $0.protocol == wireProtocol }) {
+                entries[index] = entry
+            } else { entries.append(entry) }
+        } else if !(previous?.document.catalog?.models ?? []).contains(where: { $0.model_id == modelID && $0.protocol == wireProtocol }) {
+            let manual = AppleModelCatalogDiscovery.Model(id: modelID, displayName: modelID)
+            entries.append(try JSONDecoder().decode(AgentCoreJSONValue.self, from: manual.catalogData(wireProtocol: wireProtocol)))
         }
         // Core commits the account, manual model catalog, and enabled profile together.
         // A hand-entered model ID never requires a /models request or a probe.
@@ -162,10 +166,8 @@ nonisolated final class IOSModelConnectionService: Sendable {
         let credential = try credential(connectionID: connection.id, endpoint: connection.base_url, wireProtocol: wire)
         let models = try await AppleModelCatalogDiscovery.discover(
             endpoint: connection.base_url, wireProtocol: wire, secret: credential.secret)
-        let entries: [AgentCoreJSONValue] = models.map {
-            .object(["model_id": .string($0.id), "display_name": .string($0.displayName),
-                "protocol": .string(wire), "context_window": .null, "output_limit": .null,
-                "modalities": .array([]), "reasoning_levels": .array([]), "execution_capabilities": .null])
+        let entries: [AgentCoreJSONValue] = try models.map {
+            try JSONDecoder().decode(AgentCoreJSONValue.self, from: $0.catalogData(wireProtocol: wire))
         }
         try Task.checkCancellation()
         return try command(["type": .string("refresh_connection_catalog"), "connection_id": .string(connection.id),

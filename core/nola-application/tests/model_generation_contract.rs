@@ -228,14 +228,10 @@ fn budget_requires_anthropic_declared_integer_and_strict_output_headroom() {
         .is_err());
     }
     let efforts = json!({"control":"effort","efforts":["low","medium","high"]});
-    assert!(resolve_model_reasoning(
-        &efforts,
-        ModelProtocol::Anthropic,
-        16384,
-        true,
+    assert_eq!(resolve_model_reasoning(
+        &efforts, ModelProtocol::Anthropic, 16384, true,
         Some(&json!({"kind":"effort","value":"low"}))
-    )
-    .is_err());
+    ).unwrap(), effort("low"));
 }
 
 #[test]
@@ -283,4 +279,14 @@ fn turn_output_limit_constrains_selected_budget_not_unselected_tiers() {
         Some(&json!({"kind":"budget","tokens":8192}))
     )
     .is_err());
+}
+
+#[test]
+fn native_effort_has_exact_defaults_and_keeps_budget_controls_distinct() {
+    let declaration = json!({"control":"effort","efforts":["none","low","high","max"],"defaultPreference":"high"});
+    assert_eq!(resolve_model_reasoning(&declaration, ModelProtocol::Anthropic, 8192, true, None).unwrap(), effort("high"));
+    assert_eq!(resolve_model_reasoning(&declaration, ModelProtocol::Anthropic, 8192, true, Some(&Value::Null)).unwrap(), None);
+    assert_eq!(resolve_model_reasoning(&declaration, ModelProtocol::Anthropic, 8192, true, Some(&json!({"kind":"effort","value":"none"}))).unwrap(), effort("none"));
+    assert!(resolve_model_reasoning(&declaration, ModelProtocol::Anthropic, 8192, true, Some(&json!({"kind":"effort","value":"medium"}))).is_err());
+    assert!(resolve_model_reasoning(&declaration, ModelProtocol::Anthropic, 8192, true, Some(&json!({"kind":"budget","tokens":1024}))).is_err());
 }

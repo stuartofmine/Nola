@@ -1015,18 +1015,22 @@ pub(super) fn anthropic_request_body(
         }
     }
     if let Some(selection) = &cfg.reasoning_selection {
-        let budget = match selection {
-            nola_core::agent::reasoning::ReasoningSelection::Budget { tokens } => *tokens,
-            _ => {
-                return Err("Anthropic budget adapter does not support an effort selection".into())
+        selection.validate(max_tokens)?;
+        match selection {
+            nola_core::agent::reasoning::ReasoningSelection::Budget { tokens } => {
+                body["thinking"] = json!({"type":"enabled", "budget_tokens":tokens});
             }
-        };
-        nola_core::agent::reasoning::ReasoningSelection::Budget { tokens: budget }
-            .validate(max_tokens)?;
-        body["thinking"] = json!({
-            "type": "enabled",
-            "budget_tokens": budget,
-        });
+            nola_core::agent::reasoning::ReasoningSelection::Effort { value } if value == "none" => {
+                // Off is a distinct, explicitly admitted control, never a token
+                // budget or Anthropic's provider-default effort.
+                body["thinking"] = json!({"type":"disabled"});
+            }
+            nola_core::agent::reasoning::ReasoningSelection::Effort { value } => {
+                // Native effort does not prove support for adaptive thinking.
+                // Leave the thinking mode at the provider default.
+                body["output_config"] = json!({"effort":value});
+            }
+        }
     }
     Ok(body)
 }

@@ -58,3 +58,5 @@ revision 为正数。Core 新建、配置更新和 checkpoint 恢复均校验，
 所选 profile/revision 的端点、能力及 reasoning 由 Application 的 resolve_remote_model_profile 查询同一个 resolver；端侧不按全局首 profile 限制其他连接，也不维护 reasoning 白名单。凭据按已验证 connection/account 引用在本机解析，缺少本机凭据明确不可用，禁止借用另一账户的全局 key。
 
 原生能力边界（2026-11-08）：iOS/Android 已投影模型声明的实际 effort，并通过共享 profile resolver 传入调用；不再描述为 iOS 只能执行 automatic。Mac 本机与 Web 同样保留精确 effort，聊天不再并列粗粒度三档。连接 Host 与 budget UI 的差异不能从本机 effort 测试推导，见[跨端配置接线](../13-客户端投影/CLIENT_INTERACTION_AND_CONFIGURATION.md)。Android 手动连接的 secret 使用独立 credential reference，不借用另一账户的全局 key；本次不迁移或改写用户配置。
+
+推理档位的目录来源、参考实现与当前协议边界见[目录与请求契约](REASONING_CATALOG_AND_WIRE.md)。

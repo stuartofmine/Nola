@@ -72,9 +72,6 @@ impl ReasoningCapabilityDeclaration {
         match self {
             Self::Automatic {} => Ok(()),
             Self::Effort { values } => {
-                if protocol == ModelProtocol::Anthropic {
-                    return Err(ReasoningTierError::IncompatibleProtocol);
-                }
                 if values.is_empty() {
                     return Err(ReasoningTierError::EmptyEfforts);
                 }
@@ -82,13 +79,6 @@ impl ReasoningCapabilityDeclaration {
                     if !REASONING_EFFORT_VALUES.contains(&value.as_str()) {
                         return Err(ReasoningTierError::UnknownEffort(value.clone()));
                     }
-                }
-                if protocol == ModelProtocol::ChatCompletions
-                    && !["low", "medium", "high"]
-                        .iter()
-                        .all(|required| values.iter().any(|value| value == required))
-                {
-                    return Err(ReasoningTierError::MissingChatTiers);
                 }
                 Ok(())
             }
@@ -238,7 +228,7 @@ mod tests {
     }
 
     #[test]
-    fn chat_requires_and_maps_all_three_exact_efforts() {
+    fn chat_maps_declared_efforts_without_requiring_three_levels() {
         for (tier, expected) in TIERS.into_iter().zip(["low", "medium", "high"]) {
             assert_eq!(
                 resolve_reasoning_tier(
@@ -259,7 +249,7 @@ mod tests {
                 ReasoningTier::Balanced,
                 8192
             ),
-            Err(ReasoningTierError::MissingChatTiers)
+            Ok(Some(ReasoningSelection::Effort { value: "low".into() }))
         );
     }
 
@@ -345,7 +335,7 @@ mod tests {
                 ReasoningTier::Balanced,
                 16384
             ),
-            Err(ReasoningTierError::IncompatibleProtocol)
+            Ok(Some(ReasoningSelection::Effort { value: "medium".into() }))
         );
         for protocol in [ModelProtocol::Responses, ModelProtocol::ChatCompletions] {
             assert_eq!(

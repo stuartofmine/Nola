@@ -140,10 +140,8 @@ nonisolated final class MacModelConnectionService: Sendable {
         let credential = try credential(connectionID: connection.id, endpoint: connection.base_url, wireProtocol: wire)
         let models = try await AppleModelCatalogDiscovery.discover(
             endpoint: connection.base_url, wireProtocol: wire, secret: credential.secret)
-        let entries: [MacCanonicalJSONValue] = models.map {
-            .object(["model_id": .string($0.id), "display_name": .string($0.displayName),
-                "protocol": .string(wire), "context_window": .null, "output_limit": .null,
-                "modalities": .array([]), "reasoning_levels": .array([]), "execution_capabilities": .null])
+        let entries: [MacCanonicalJSONValue] = try models.map {
+            try JSONDecoder().decode(MacCanonicalJSONValue.self, from: $0.catalogData(wireProtocol: wire))
         }
         try Task.checkCancellation()
         return try command(["type": .string("refresh_connection_catalog"), "connection_id": .string(connection.id),

@@ -230,22 +230,33 @@ pub(super) fn classify_network_error_hint(error: &reqwest::Error) -> String {
     message
 }
 
+fn is_explicit_loopback_host(host: Option<&str>) -> bool {
+    host.is_some_and(|host| host.eq_ignore_ascii_case("localhost")
+        || host.trim_start_matches('[').trim_end_matches(']')
+            .parse::<std::net::IpAddr>().is_ok_and(|address| address.is_loopback()))
+}
+
 pub(super) fn build_stream_client(
     endpoint_host: Option<&str>,
     resolved_addr: Option<SocketAddr>,
 ) -> Result<Client, String> {
     static DEFAULT_STREAM_CLIENT: OnceLock<Result<Client, String>> = OnceLock::new();
+    static LOOPBACK_STREAM_CLIENT: OnceLock<Result<Client, String>> = OnceLock::new();
+    let loopback = is_explicit_loopback_host(endpoint_host);
     if resolved_addr.is_none() {
-        return DEFAULT_STREAM_CLIENT
+        let cache = if loopback { &LOOPBACK_STREAM_CLIENT } else { &DEFAULT_STREAM_CLIENT };
+        return cache
             .get_or_init(|| {
-                stream_client_builder()?
-                    .build()
+                let builder = stream_client_builder()?;
+                let builder = if loopback { builder.no_proxy() } else { builder };
+                builder.build()
                     .map_err(|err| format!("{} {err}", tr(Message::FailedCreateHttpClientPrefix)))
             })
             .clone();
     }
 
     let mut builder = stream_client_builder()?;
+    if loopback { builder = builder.no_proxy(); }
     if let (Some(host), Some(addr)) = (endpoint_host, resolved_addr) {
         builder = builder.resolve(host, addr);
     }
@@ -260,6 +271,20 @@ pub(super) fn build_native_stream_client() -> Result<Client, String> {
         .redirect(reqwest::redirect::Policy::none())
         .build().map_err(|error| format!("native model HTTP client unavailable: {error}")))
         .clone()
+}
+
+#[cfg(test)]
+mod loopback_proxy_tests {
+    #[test]
+    fn bypass_is_limited_to_explicit_loopback_hosts() {
+        for host in ["localhost", "LOCALHOST", "127.0.0.1", "127.42.0.9", "::1", "[::1]"] {
+            assert!(super::is_explicit_loopback_host(Some(host)), "{host}");
+        }
+        for host in ["localhost.example.com", "example.com", "192.168.0.1", "10.0.0.1", "::", "127.0.0.1.example.com"] {
+            assert!(!super::is_explicit_loopback_host(Some(host)), "{host}");
+        }
+        assert!(!super::is_explicit_loopback_host(None));
+    }
 }
 
 #[cfg(test)]

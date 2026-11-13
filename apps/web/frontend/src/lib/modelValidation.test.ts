@@ -11,13 +11,17 @@ test('reasoning checks return stable codes independently of language', () => {
     const cases: [Partial<ReasoningConfiguration>, string, string][] = [
         [{}, 'invalid', 'protocol'], [{ efforts: ['unknown'] }, 'responses', 'efforts'],
         [{ budgets: [-1], control: 'automatic' }, 'responses', 'budgets'],
-        [{ budgets: [NaN] }, 'responses', 'budgets'], [{}, 'anthropic', 'control'],
+        [{ budgets: [NaN] }, 'responses', 'budgets'],
         [{ control: 'budget' }, 'responses', 'control'],
         [{ control: 'budget', budgets: [1024, 1024, 2048] }, 'anthropic', 'budgetTiers'],
-        [{ efforts: [] }, 'responses', 'effortRequired'], [{}, 'chat_completions', 'effortTiers'],
+        [{ efforts: [] }, 'responses', 'effortRequired'],
         [{ defaultPreference: 'high' }, 'responses', 'default'],
     ];
     for (const [change, protocol, code] of cases) assert.equal(reasoningValidationError({ ...base, ...change }, protocol, 16384)?.code, `modelValidation.${code}`);
+    for (const protocol of ['anthropic', 'chat_completions', 'responses']) {
+        assert.equal(reasoningValidationError(base, protocol, 16384), null);
+        assert.equal(reasoningValidationError({ ...base, efforts: [] }, protocol, 16384)?.code, 'modelValidation.effortRequired');
+    }
     assert.deepEqual(reasoningValidationError({ ...base, control: 'budget' }, 'anthropic', 16384)?.params, { minimum: 1024 });
 });
 

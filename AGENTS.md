@@ -49,3 +49,15 @@ Do not commit production secrets, local databases, generated logs, `.env` files,
 Do not infer tool authorization or select Web, memory, file, Skill, MCP, or platform tools by matching keywords in the user's text. The model selects a tool from its schema, and Core evaluates the concrete tool call, resource, permission, and result. Do not repair routing mistakes by adding language-specific keyword or exclusion lists; fix the tool contract, catalog, model guidance, or recoverable protocol handling instead. Regression coverage must include natural follow-ups, multilingual prompts, ambiguous words such as “search” and “current,” unknown-tool recovery, and real-model end-to-end sessions.
 
 Architecture, audit, and comparison prompts that mention capability names such as tools, skills, memory, or permissions are one semantic task; capability names are not routing or authorization signals. Clients must not rewrite prompts or force tools from language-specific phrase lists.
+
+## Rust Build Scope
+
+Filtered Rust unit tests must select `--lib`; integration tests must select
+`--test <target>`. A bare filter still compiles every integration target and can
+link many large test executables without running them. For example use
+`cargo test -p nola_application --lib model_generation`, or
+`cargo test -p nola_application --test model_connections_e2e`.
+Use `scripts/test_rust.sh <package> [filter]` for the bounded unit-test default.
+Preview disposable integration runner cleanup with
+`python3 scripts/maintain_build_storage.py`; `--apply` preserves dependencies,
+normal executables, release outputs, databases and recorded task evidence.

@@ -61,8 +61,7 @@
     const primaryModelId = $derived(primaryChatModelId(draftCatalog));
     const editableGroups = $derived(groups.filter(group => group.models.some(model => model.provider === 'openai-compatible')));
     const thinkingOptions = $derived(reasoningOptions(thinking, editing?.endpoint.wireProtocol ?? '', Number(draft.maxOutputTokens ?? 16384)));
-    const protocolEfforts = $derived(editing?.endpoint.wireProtocol === 'responses'
-        ? ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] : ['low', 'medium', 'high']);
+    const protocolEfforts = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
     const displayedEfforts = $derived([...new Set([...protocolEfforts, ...thinking.efforts])]);
     const declarationError = $derived<ModelValidationIssue | null>(metadata.executionCapabilitiesConfirmed
         ? null : { code: 'modelValidation.executionDeclaration' });
@@ -70,7 +69,9 @@
         ?? reasoningValidationError(thinking, editing?.endpoint.wireProtocol ?? '', Number(draft.maxOutputTokens ?? 16384)));
     const parameterError = $derived(editing ? executionParameterValidationError({ ...editing,
         parameters: { ...editing.parameters, ...draft }, executionCapabilities: metadata.executionCapabilities }) : null);
-    const invalidThinkingDefault = $derived(thinking.defaultPreference != null && thinking.defaultPreference !== 'automatic' && !thinkingOptions.includes(thinking.defaultPreference));
+    const legacyThinkingDefault = $derived(editing?.endpoint.wireProtocol === 'chat_completions' && thinking.control === 'effort'
+        && ['concise', 'balanced', 'detailed'].includes(thinking.defaultPreference ?? ''));
+    const invalidThinkingDefault = $derived(!legacyThinkingDefault && thinking.defaultPreference != null && thinking.defaultPreference !== 'automatic' && !thinkingOptions.includes(thinking.defaultPreference));
     const dirty = $derived(!!editing && (Object.keys(metadataChanges(editing, metadata)).length > 0 || Object.keys(parameterChanges(editing.parameters, draft)).length > 0 || Object.keys(reasoningChanges(editing.reasoning, thinking)).length > 0));
     const fields = [
         { key: 'temperature', label: 'models.temperature', min: 0, max: 2, step: 0.05 },
@@ -333,9 +334,10 @@
             <p class="muted">{t($locale, 'remote.thinking.hint')}</p>
             <label>{t($locale, 'remote.thinking.control')}<select bind:value={thinking.control} onchange={() => { thinking.defaultPreference = null; }}>
                 <option value="automatic">{t($locale, 'remote.thinking.automatic')}</option>
+                <option value="effort">{t($locale, 'remote.thinking.effort')}</option>
                 {#if editing.endpoint.wireProtocol === 'anthropic'}
                     <option value="budget">{t($locale, 'remote.thinking.budget')}</option>
-                {:else}<option value="effort">{t($locale, 'remote.thinking.effort')}</option>{/if}
+                {/if}
             </select></label>
             {#if thinking.control === 'effort'}
                 <div class="efforts">
@@ -355,6 +357,7 @@
             {#if thinkingOptions.length > 0 || invalidThinkingDefault}
                 <label>{t($locale, 'remote.thinking.default')}<select value={thinking.defaultPreference ?? 'automatic'} onchange={event => { thinking.defaultPreference = event.currentTarget.value; }}>
                     <option value="automatic">{t($locale, 'remote.thinking.automatic')}</option>
+                    {#if legacyThinkingDefault}<option value={thinking.defaultPreference ?? ''}>{thinkingTitle(thinking.defaultPreference ?? '')}</option>{/if}
                     {#if invalidThinkingDefault}<option value={thinking.defaultPreference ?? ''} disabled>{t($locale, 'remote.thinking.unsupported', { value: thinking.defaultPreference ?? '' })}</option>{/if}
                     {#each thinkingOptions as option}
                         <option value={option}>{thinkingTitle(option)}</option>
