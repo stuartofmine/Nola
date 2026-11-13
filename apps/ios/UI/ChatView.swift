@@ -132,6 +132,7 @@ struct ChatView: View {
     @State private var commandError: String?
     @State private var showNoModelWarning: Bool = false
     @State private var showExpertPicker = false
+    @State private var showExpertConversations = false
     @State private var expertSourceOwner: AppleConversationSourceOwner = .unavailable
     @State private var showExpertSourceNotice = false
     @State private var showLocalExpertManagement = false
@@ -855,6 +856,7 @@ struct ChatView: View {
                 Image("nola-search").renderingMode(.template).resizable().scaledToFit()
                     .frame(width: 23, height: 23).frame(width: 44, height: 44)
             }.accessibilityLabel(Text("chat.search.loaded.title"))
+            chatTopBar(showsHistoryToggle: false).actionsMenu
 
         }
         .buttonStyle(.plain).padding(.horizontal, 4).padding(.vertical, 8)
@@ -907,6 +909,7 @@ struct ChatView: View {
                 expertSelection = []
                 queuedWorkDestination = nil; workToolsPresentation = nil
                 showExpertPicker = false
+                showExpertConversations = false
                 refreshExpertSourceOwner()
             }
             .onChange(of: processingState.blocksInput) { _, _ in refreshExpertSourceOwner() }
@@ -915,6 +918,21 @@ struct ChatView: View {
                 Button("Cancel", role: .cancel) {}
             } message: { Text("chat.experts.sourceUnavailable.detail") }
             .sheet(isPresented: $showLocalExpertManagement) { IOSAgentRoomsView() }
+            .sheet(isPresented: $showExpertConversations) {
+                if let submission = expertSubmission,
+                   submission.conversationAssociation?.conversationID == container.chatManager.currentConversationId?.uuidString {
+                    IOSExpertConversations(workspace: agentRoomWorkspace, submission: submission)
+                        .environmentObject(container)
+                } else {
+                    NavigationStack {
+                        ContentUnavailableView(String(localized: "chat.experts.conversations"), systemImage: "person.2",
+                            description: Text("chat.experts.conversations.empty"))
+                            .toolbar { ToolbarItem(placement: .confirmationAction) {
+                                Button("Done") { showExpertConversations = false }
+                            } }
+                    }
+                }
+            }
             .sheet(isPresented: $showExpertPicker) {
                 VStack {
                     IOSChatExpertPicker(agents: expertDirectory, onManagementClosed: {
@@ -1306,6 +1324,7 @@ struct ChatView: View {
             onShowProgress: { conversationInspectorPane = .progress },
             onShowResources: { conversationInspectorPane = .resources },
             onShowWorkTools: openWorkTools,
+            onShowExpertConversations: { composerFocused = false; showExpertConversations = true },
             reasoningEfforts: composerReasoningEfforts,
             reasoningPreference: composerReasoningPreference,
             reasoningSelectionEnabled: !processingState.blocksInput,
@@ -1548,7 +1567,7 @@ struct ChatView: View {
             if expertMentionsVisible {
                 ExpertMentionPanel(candidates: expertMentionCandidates, highlightedID: highlightedExpertID ?? expertMentionCandidates.first?.id,
                                    error: expertSourceOwner == .local ? expertDirectoryError : String(localized: "chat.experts.sourceUnavailable.detail"), select: selectExpertMention)
-                    .task {
+                    .task(id: container.chatManager.currentConversationId) {
                         guard requireLocalExpertOwner() else { return }
                         do {
                             expertDirectory = try IOSAgentRoomService(runtime: container.applicationRuntime).directory().agents
@@ -1727,7 +1746,7 @@ struct ChatView: View {
     private var expertMentionCandidates: [ExpertMentionCandidate] {
         guard expertSourceOwner == .local, let query = ExpertMentionQuery.atEnd(of: inputText)?.query else { return [] }
         return expertDirectory.filter { $0.availability == "active" && !expertSelection.contains($0.id) &&
-            (query.isEmpty || $0.name.localizedCaseInsensitiveContains(query)) }
+            (query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) || $0.description.localizedCaseInsensitiveContains(query)) }
             .map { ExpertMentionCandidate(id: $0.id, name: $0.name, detail: $0.description) }
     }
     private func selectExpertMention(_ id: String) {

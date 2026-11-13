@@ -93,10 +93,11 @@ test('public prose remains outside the process disclosure while activity preserv
             const html = render(Component, {props: {ownerKey:"fixture-owner",message: {id: 'message', role: 'assistant', state: 'running', canonical: null, parts}}}).body;
             assert.ok(html.indexOf('BEFORE_SENTINEL') < html.indexOf('<details class="execution-process'));
             assert.ok(html.indexOf('LIVE_SENTINEL') < html.indexOf('AFTER_SENTINEL'));
-            assert.ok(html.indexOf('AFTER_SENTINEL') < html.lastIndexOf('<details class="execution-process'));
+            assert.ok(html.lastIndexOf('</details>') < html.indexOf('AFTER_SENTINEL'));
+            assert.equal((html.match(/<details class="execution-process/g) ?? []).length, 1);
             assert.ok(html.indexOf('BEFORE_SENTINEL') < html.indexOf('AFTER_SENTINEL'));
             assert.ok(html.includes(t(language, 'chatPage.completedTools')));
-            assert.equal((html.match(/<details/g) ?? []).length, 7); // Two process segments, four tool disclosures, and a completed-tool group.
+            assert.equal((html.match(/<details/g) ?? []).length, 6); // One process, four tool disclosures, and a completed-tool group.
         }
     } finally { await server.close(); }
 });
@@ -179,13 +180,12 @@ test('A2UI and tool boundaries retain public prose and reveal the following reas
         for (const summary of ['CURRENT','CURRENT DELTA']) {
             current.value.summary = summary;
             const html = render(Component,{props:{ownerKey:"fixture-owner",message:{id:'message',role:'assistant',state:'running',canonical:null,parts:[...parts,privateText]},surface:surfaceSlot}}).body;
-            assert.ok(html.indexOf('EARLIER') < html.indexOf('PUBLIC-PROGRESS'));
+            assert.ok(html.indexOf('EARLIER') < html.indexOf(summary));
+            assert.ok(html.indexOf(summary) < html.indexOf('PUBLIC-PROGRESS'));
             assert.ok(html.indexOf('PUBLIC-PROGRESS') < html.indexOf('SURFACE-ANCHOR'));
-            assert.ok(html.indexOf('SURFACE-ANCHOR') < html.indexOf(summary));
             const processes = [...html.matchAll(/<details class="execution-process[^>]*>/g)].map(match => match[0]);
-            assert.equal(processes.length, 3);
-            assert.doesNotMatch(processes[0], /\bopen\b/);
-            assert.match(processes[2], /\bopen\b/);
+            assert.equal(processes.length, 1);
+            assert.match(processes[0], /\bopen\b/);
             assert.ok(!html.includes('PRIVATE-CANDIDATE'));
         }
     } finally { await server.close(); }
@@ -199,10 +199,11 @@ test('process segments retain hard boundaries including empty and withheld text'
     const parts = [reasoning('r1'), tool('one'), surface, reasoning('r2'), text('empty', ''), reasoning('r3'), hidden, reasoning('r4'), text('answer', 'FINAL')];
     const groups = messageFlowPresentation(parts);
     assert.deepEqual(groups.map(group => [group.id, group.kind]), [
-        ['r1', 'process'], ['surface', 'part'], ['r2', 'process'], ['empty', 'part'],
-        ['r3', 'process'], ['hidden', 'part'], ['r4', 'process'], ['answer', 'text'],
+        ['execution-process', 'process'], ['surface', 'part'], ['empty', 'part'],
+        ['hidden', 'part'], ['answer', 'text'],
     ]);
     assert.deepEqual(groups.filter(group => group.kind === 'process').flatMap(group => group.parts.map(part => part.id)), ['r1', 'one', 'r2', 'r3', 'r4']);
+    assert.deepEqual(groups.find(group => group.kind === 'process')?.rounds.map(round => round.map(part => part.id)), [['r1', 'one'], ['r2'], ['r3'], ['r4']]);
     assert.ok(!groups.some(group => group.kind === 'text' && group.text.includes('PRIVATE')));
 });
 
@@ -294,4 +295,10 @@ test('an exact TaskControl reuses one task summary and a plain saved Task grants
         const savedOnly = render(Component, {props: {...props, message: {...props.message, parts: [{...task, value: {...task.value, supports_guidance: true, supports_cancellation: true}}]}}}).body;
         assert.ok(!savedOnly.includes('task-actions'));
     } finally { await server.close(); }
+});
+
+test('completed empty reasoning does not leave an empty disclosure', () => {
+    const empty: TimelinePart = {source: 'canonical', id: 'r', value: {kind: 'reasoning', part_id: 'r', revision: 1, state: 'running', summary: '  '}};
+    assert.deepEqual(messageFlowPresentation([empty]), []);
+    assert.equal(messageFlowPresentation([empty], true)[0]?.kind, 'process');
 });

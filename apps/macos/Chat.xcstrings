@@ -1,6 +1,7 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "chat.expert_sessions" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Expert sessions"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "专家会话"}}}},
     "%lld completed tools" : {
       "localizations" : {
         "zh-Hans" : {

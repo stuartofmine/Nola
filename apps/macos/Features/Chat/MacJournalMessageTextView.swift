@@ -549,11 +549,10 @@ nonisolated enum MacJournalFailurePresentation {
 
 nonisolated enum MacJournalPartFlow {
     static func segments(_ parts: [MacAssistantJournalPart]) -> [AppleMessagePartFlowSegment<MacAssistantJournalPart>] {
-        AppleMessagePartFlow.segments(parts, id: \.part_id) { part in
+        MacSingleExecutionFlow.segments(parts, id: \.part_id) { part in
             switch part.metadata {
-            case .reasoning: .reasoning
-            case .tool: .tool
-            default: .content
+            case .reasoning, .tool: true
+            default: false
             }
         }
     }
@@ -873,6 +872,16 @@ enum MacJournalTextRead {
     }
 }
 
+nonisolated enum MacExpertReplyPresentation {
+    static func includes(_ metadata: MacAssistantJournalMetadata) -> Bool {
+        switch metadata {
+        case .text(let text): return text.visibility == "public"
+        case .source, .citation, .attachment, .uiSurface: return true
+        default: return false
+        }
+    }
+}
+
 @MainActor
 struct MacJournalMessageTextView: View {
     @Environment(\.uiSurfaceContext) private var uiSurfaceContext
@@ -884,6 +893,7 @@ struct MacJournalMessageTextView: View {
     var taskGuidance: [String: MacCoreTaskGuidanceQueue] = [:]
     var onReferencesLoaded: (MacAssistantJournalIdentity, Set<String>, Set<String>, Set<String>) -> Void = { _, _, _, _ in }
     var presentationOwner: MacJournalPresentationOwner?
+    var publicReplyOnly = false
     @State private var localOwner = MacJournalPresentationOwner()
     @State private var terminalOutcome: (owner: MacJournalOwnerKey, value: String)?
     private var outcome: String? {
@@ -965,7 +975,9 @@ struct MacJournalMessageTextView: View {
         return VStack(alignment: .leading, spacing: 12) {
             if let projection {
                 let loadedReference = projection.reference
-                let ordered = projection.parts
+                let ordered = publicReplyOnly ? projection.parts.filter {
+                    MacExpertReplyPresentation.includes($0.metadata)
+                } : projection.parts
                 ForEach(MacJournalPartFlow.segments(ordered)) { segment in
                     if segment.kind == .process {
                         let process = MacJournalProcessProjection(segment.parts)
@@ -1739,10 +1751,8 @@ struct MacJournalProcessView<Content: View>: View {
                     Image(systemName: "chevron.right")
                         .rotationEffect(.degrees(expanded ? 90 : 0))
                         .font(.body.weight(.semibold))
-                    Group {
-                        if reasoningOnly { Text(hasLiveReasoning ? "Thinking" : "Thinking Process") }
-                        else { Text("Execution process", tableName: "Chat") }
-                    }.fixedSize(horizontal: false, vertical: true)
+                    Text("Execution process", tableName: "Chat")
+                        .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 8)
                     if expanded, toolCount > 0 {
                         Label { Text(verbatim: String(toolCount)) } icon: { Image(systemName: "wrench.and.screwdriver") }

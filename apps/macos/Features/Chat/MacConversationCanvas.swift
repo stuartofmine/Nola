@@ -10,7 +10,7 @@ struct MacConversationCanvas: View {
     @Bindable var model: MacWorkspaceModel
     var composerFocused: FocusState<Bool>.Binding
     var showsComposer: Bool
-    var expertWorkspace: MacAgentRoomWorkspace?
+    @ObservedObject var expertWorkspace: MacAgentRoomWorkspace
     @Binding var expertSelection: Set<String>
     @State private var highlightedExpertID: String?
     @State private var dismissedExpertMention: String?
@@ -30,7 +30,7 @@ struct MacConversationCanvas: View {
         showsComposer: Bool = true,
         expertSelection: Binding<Set<String>> = .constant([]),
         sendToExperts: (() -> Void)? = nil,
-        expertWorkspace: MacAgentRoomWorkspace? = nil,
+        expertWorkspace: MacAgentRoomWorkspace,
         modelSetupRequired: Bool = false,
         conversationControls: AnyView = AnyView(EmptyView()),
         modelControls: AnyView = AnyView(EmptyView()),
@@ -90,7 +90,7 @@ struct MacConversationCanvas: View {
                             .transition(reduceMotion ? .identity : .move(edge: .top).combined(with: .opacity))
                     }
                     MacExecutionReadinessBanner(location: model.executionLocation)
-                    if let expertWorkspace, expertWorkspace.conversationAssociation?.conversationID == model.selectedConversationID {
+                    if let association = expertWorkspace.conversationAssociation, association.conversationID == model.selectedConversationID {
                         MacUnifiedExpertTranscript(model: model, workspace: expertWorkspace, width: viewport.size.width, viewportStore: viewportStore)
                             .id(model.selectedConversationID)
                     } else if model.isSelectedConversationLoading {
@@ -142,9 +142,7 @@ struct MacConversationCanvas: View {
                 VStack(spacing: MacDesignTokens.Spacing.md) {
                     if hasInterruption {
                     MacConversationInterruptionSurface(maxHeight: min(320, viewport.size.height * 0.42)) {
-                    if let expertWorkspace {
-                        MacExpertPermissionDock(workspace: expertWorkspace, conversationID: model.selectedConversationID)
-                    }
+                    MacExpertPermissionDock(workspace: expertWorkspace, conversationID: model.selectedConversationID)
                     if let failure = model.localSubmissionFailure,
                        failure.conversationID == model.selectedConversationID {
                         VStack(alignment: .leading, spacing: 8) {
@@ -364,14 +362,14 @@ struct MacConversationCanvas: View {
                         }, highlightedID: highlightedCommand ?? ComposerCommand.candidates(model.draft).first?.rawValue,
                         error: nil, select: completeCommand, accessibilityTitle: "composer.command.help", identifierPrefix: "chat.command.", showsAvatar: false)
                     }
-                    if expertMentionsVisible, let expertWorkspace {
+                    if expertMentionsVisible {
                         ExpertMentionPanel(candidates: expertMentionCandidates,
                             highlightedID: highlightedExpertID ?? expertMentionCandidates.first?.id,
                             error: expertWorkspace.directoryError, select: selectExpertMention)
                             .task { await expertWorkspace.refreshExpertDirectory() }
 
                     }
-                    if !expertSelection.isEmpty, let expertWorkspace {
+                    if !expertSelection.isEmpty {
                         ScrollView(.horizontal) {
                             HStack {
                                 ForEach(expertWorkspace.directory.filter { expertSelection.contains($0.id) }) { agent in
@@ -422,7 +420,7 @@ struct MacConversationCanvas: View {
     }
     private var expertMentionCandidates: [ExpertMentionCandidate] {
         guard let query = ExpertMentionQuery.atEnd(of: model.selectedComposerState.draft)?.query else { return [] }
-        return (expertWorkspace?.directory ?? []).filter { $0.availability == "active" && !expertSelection.contains($0.id) &&
+        return expertWorkspace.directory.filter { $0.availability == "active" && !expertSelection.contains($0.id) &&
             (query.isEmpty || $0.name.localizedCaseInsensitiveContains(query)) }
             .map { ExpertMentionCandidate(id: $0.id, name: $0.name, detail: $0.description) }
     }
@@ -483,6 +481,18 @@ struct MacConversationCanvas: View {
         return true
     }
 
+    private var hasExpertInterruption: Bool {
+        guard let association = expertWorkspace.conversationAssociation,
+              association.conversationID == model.selectedConversationID else { return false }
+        return association.room.room.participants.contains { participant in
+            guard let owner = expertWorkspace.executionService?.owners[participant.contextConversationID] else { return false }
+            return owner.isRunning || owner.selectedPendingRemotePermission != nil
+                || owner.selectedPendingUserInputRequest != nil || owner.hasDeferredUserInputWaits
+                || owner.currentUnknownEffectRecovery != nil || owner.localRunRecovery != nil
+                || owner.remoteRunRecovery != nil
+        }
+    }
+
     private var hasInterruption: Bool {
         (model.localRunRecovery?.conversationID == model.selectedConversationID && model.localRunRecovery != nil)
             || (model.localSubmissionFailure?.conversationID == model.selectedConversationID && model.localSubmissionFailure != nil)
@@ -491,5 +501,6 @@ struct MacConversationCanvas: View {
             || (model.remoteRunRecovery == nil && model.remoteObservationNeedsAttention)
             || model.selectedPendingRemotePermission != nil
             || model.selectedPendingUserInputRequest != nil
+            || hasExpertInterruption
     }
 }

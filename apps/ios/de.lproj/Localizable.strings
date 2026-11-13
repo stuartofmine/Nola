@@ -3134,3 +3134,6 @@
 
 "settings.navigation.general" = "Allgemein";
 "settings.navigation.general.detail" = "Darstellung, Mitteilungen und Updates";
+
+"chat.experts.conversations" = "Expertengespräche";
+"chat.experts.conversations.empty" = "Erwähne einen Experten in diesem Gespräch, um hier die Ausführungsdetails zu sehen.";

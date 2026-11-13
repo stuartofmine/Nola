@@ -28,7 +28,7 @@ final class MacAssistantJournalTransportTests: XCTestCase {
             permission: nil, state: "completed", display_key: nil, affected_resources: .inline([]), artifacts: "0",
             full_output: nil, started_at_ms: nil, finished_at_ms: nil)))
         let mixed = MacJournalPartFlow.segments([prose, settled, tool, surface, next])
-        XCTAssertEqual(mixed.map { $0.parts.map(\.part_id) }, [["answer"], ["first", "tool"], ["surface"], ["next"]])
+        XCTAssertEqual(mixed.map { $0.parts.map(\.part_id) }, [["answer"], ["first", "tool", "next"], ["surface"]])
         XCTAssertEqual(MacJournalPartFlow.liveReasoning([next, surface, prose], delivery: .running).map(\.part_id), ["next"])
         // Earlier commentary is not the current answer.
         XCTAssertFalse(MacJournalPartFlow.liveReasoning([prose, settled, placeholder, next], delivery: .running).isEmpty)
@@ -624,7 +624,7 @@ final class MacAssistantJournalTransportTests: XCTestCase {
         XCTAssertTrue(expansion.isExpanded(isRunning: true), "Explicit expansion survives state changes")
     }
 
-    func testProductionFlowPreservesCanonicalOrderInsteadOfMovingLateReasoningBeforeAnswer() {
+    func testSingleExecutionKeepsLeadingAnswerOutsideAndActivityOrderInside() {
         let owner = MacAssistantJournalIdentity(source_store_epoch: "epoch", conversation_id: "conversation",
             run_id: "run", assistant_message_id: "assistant")
         func part(_ id: String, _ position: String, _ metadata: MacAssistantJournalMetadata) -> MacAssistantJournalPart {
@@ -636,8 +636,9 @@ final class MacAssistantJournalTransportTests: XCTestCase {
         let step = part("step", "3", .step(.init(title: .inline("Inspect"), state: "completed")))
         let second = part("reasoning-2", "4", .reasoning(.init(title: .inline("reasoning"), state: "running")))
         let flow = MacJournalPartFlow.segments([answer, first, step, second])
-        XCTAssertEqual(flow.map { $0.parts.map(\.part_id) }, [["answer"], ["reasoning-1"], ["step"], ["reasoning-2"]])
-        XCTAssertEqual(flow.flatMap(\.parts).map(\.part_id), ["answer", "reasoning-1", "step", "reasoning-2"])
+        XCTAssertEqual(flow.map { $0.parts.map(\.part_id) }, [["answer"], ["reasoning-1", "reasoning-2"], ["step"]])
+        XCTAssertEqual(flow.filter { $0.kind == .process }.count, 1)
+        XCTAssertEqual(flow.filter { $0.kind == .content }.flatMap(\.parts).map(\.part_id), ["answer", "step"])
         XCTAssertEqual(answer.order_key.position, "1", "Presentation never rewrites journal chronology")
     }
 
@@ -1074,8 +1075,10 @@ final class MacAssistantJournalTransportTests: XCTestCase {
             default: break
             }
         }
-        XCTAssertEqual(MacJournalPartFlow.segments(originalOrder).flatMap(\.parts).map(\.part_id), originalOrder.map(\.part_id))
-        XCTAssertTrue(MacJournalPartFlow.segments(originalOrder).allSatisfy { $0.parts.count == 1 },
+        let flow = MacJournalPartFlow.segments(originalOrder)
+        XCTAssertEqual(Set(flow.flatMap(\.parts).map(\.part_id)), Set(originalOrder.map(\.part_id)))
+        XCTAssertEqual(flow.filter { $0.kind == .process }.count, 1)
+        XCTAssertTrue(flow.filter { $0.kind == .content }.allSatisfy { $0.parts.count == 1 },
             "Every non-R/T kind in this canonical sequence remains an individual anchor")
         XCTAssertThrowsError(try JSONDecoder().decode(MacAssistantJournalMetadata.self,
             from: Data(#"{"kind":"future_kind","data":{}}"#.utf8)), "Unknown kinds must fail, not disappear from the read model")

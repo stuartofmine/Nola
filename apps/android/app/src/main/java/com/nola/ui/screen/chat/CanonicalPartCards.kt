@@ -67,12 +67,10 @@ internal fun CanonicalActivityCards(
     onReadText: (CanonicalPartTextSnapshot) -> Unit,
     thinkingEnabled: Boolean = true,
 ) {
-    // Callers pass a contiguous canonical segment. Keep steps in that order.
-    require(parts.all { it is ConversationProjectionV1.Part.Reasoning || it is ConversationProjectionV1.Part.Tool })
+    // All message activities retain their relative canonical order in one disclosure.
+    require(parts.all(::isExecutionActivity))
     val activity = parts
-    val placeholderId = visibleReasoningPlaceholderId(activity, isLive)
-    val visible = activity.filter { it !is ConversationProjectionV1.Part.Reasoning ||
-        (thinkingEnabled && (!it.summary.isNullOrBlank() || it.partId == placeholderId)) }
+    val visible = visibleExecutionActivities(activity, isLive, thinkingEnabled)
     if (visible.isEmpty()) return
     val attention = activity.any { it is ConversationProjectionV1.Part.Tool && it.state in setOf(
         ConversationProjectionV1.ActivityState.Failed, ConversationProjectionV1.ActivityState.WaitingForPermission,
@@ -91,7 +89,7 @@ internal fun CanonicalActivityCards(
         singleReasoning.summary.isNullOrBlank() -> R.string.chat_processing
         else -> R.string.chat_thinking
     }
-    Column(Modifier.fillMaxWidth()
+    Column(Modifier.fillMaxWidth().testTag("assistant.execution.disclosure")
         .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f), RoundedCornerShape(12.dp))
         .padding(horizontal = 12.dp)) {
         TextButton(onClick = { onChoicesChanged(choices.expanded(activity, !expanded)) },
@@ -111,6 +109,10 @@ internal fun CanonicalActivityCards(
                             })
                         is ConversationProjectionV1.Part.Tool -> CanonicalActivityRow(part, details = part.partId in choices.detailsPartIds,
                             onDetailsChanged = { onChoicesChanged(choices.details(activity, part.partId, it)) }, onReadText = onReadText)
+                        is ConversationProjectionV1.Part.Historical -> {
+                            if (part.projection.canonicalKind == "reasoning") ThinkingBody(part.projection.decodedText.orEmpty())
+                            else part.projection.timelineText?.takeIf { it.isNotBlank() }?.let { Text(it) }
+                        }
                         else -> Unit
                     }
                 } }

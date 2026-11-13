@@ -4,12 +4,14 @@
     import {locale,t} from '../lib/i18n';
     import {conversationHref} from '../lib/conversations';
     import type {TimelineMessage} from '../lib/chatTimeline';
+    import {timelineMessageText} from '../lib/chatTimeline';
     import {RunObserver} from '../lib/runObservation';
     import {createRoomReplyProjection} from '../lib/roomReplyProjection';
     import ChatMessageContent from './ChatMessageContent.svelte';
     import ChatReadOnlySurfacePart from './ChatReadOnlySurfacePart.svelte';
     import ChatPermissionPanel from './ChatPermissionPanel.svelte';
-    let {contextId,executionId,running,hostId,roomId,hideContext=false,active=true,message=$bindable<TimelineMessage|null>(null)}:{contextId:string;executionId:string;running:boolean;hostId:string;roomId:string;hideContext?:boolean;active?:boolean;message?:TimelineMessage|null}=$props();
+    import Markdown from './Markdown.svelte';
+    let {contextId,executionId,running,hostId,roomId,hideContext=false,active=true,compact=false,permissionInteractive=true,message=$bindable<TimelineMessage|null>(null)}:{contextId:string;executionId:string;running:boolean;hostId:string;roomId:string;hideContext?:boolean;active?:boolean;compact?:boolean;permissionInteractive?:boolean;message?:TimelineMessage|null}=$props();
     let permissions=$state<Record<string,unknown>[]>([]);
     let failed=$state(false);
     let visible=$state(typeof document==='undefined'||!document.hidden);
@@ -45,14 +47,15 @@
     });
 </script>
 <svelte:document onvisibilitychange={()=>visible=!document.hidden} />
-{#if message}{@const renderedMessage = message}{#key JSON.stringify([hostId, contextId, executionId, renderedMessage.id])}<ChatMessageContent message={renderedMessage} ownerKey={JSON.stringify([hostId,contextId,executionId])} readingActive={active}>
+{#if message && compact}<Markdown source={timelineMessageText(message)} />
+{:else if message}{@const renderedMessage = message}{#key JSON.stringify([hostId, contextId, executionId, renderedMessage.id])}<ChatMessageContent message={renderedMessage} ownerKey={JSON.stringify([hostId,contextId,executionId])} readingActive={active}>
     {#snippet surface(part)}
         <ChatReadOnlySurfacePart {part} {hostId} conversationId={contextId} messageId={renderedMessage.id} active={active && visible} />
     {/snippet}
 </ChatMessageContent>{/key}{/if}
-{#each permissions as challenge (`${challenge.request_id}:${challenge.nonce}`)}
+{#if permissionInteractive}{#each permissions as challenge (`${challenge.request_id}:${challenge.nonce}`)}
     <ChatPermissionPanel {challenge} runId={executionId} active={active&&visible&&running}
         reviewText={typeof challenge.safe_review_text==='string'?challenge.safe_review_text:''} />
-{/each}
+{/each}{/if}
 {#if failed}<p role="status">{t($locale,'rooms.failed')}</p>{/if}
 {#if !hideContext}<a href={conversationHref(contextId)}>{t($locale,'rooms.context')}</a>{/if}

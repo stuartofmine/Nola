@@ -15,6 +15,7 @@ struct MacRoomCanonicalMessage: View {
     @Environment(\.colorScheme) private var scheme
     @ScaledMetric(relativeTo: .caption) private var identityColumnWidth: CGFloat = 48
     var isExpert = true
+    var publicReplyOnly = false
     private var usesExpertIdentity: Bool { message.role != .user && isExpert }
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -52,7 +53,8 @@ struct MacRoomCanonicalMessage: View {
                     },
                     showsRoleAvatar: !isExpert,
                     assistantBubbleFill: isExpert ? AppleExpertAppearance.selected(appearance, agentID: senderIdentity).fill(scheme) : nil,
-                    journalPresentationOwner: message.journalReference.map { journalResidency.owner(for: $0) })
+                    journalPresentationOwner: message.journalReference.map { journalResidency.owner(for: $0) },
+                    publicReplyOnly: publicReplyOnly)
                 }
             }
         }
@@ -63,7 +65,6 @@ struct MacRoomCanonicalMessage: View {
 private struct MacRoomOwnerControls: View {
     @Bindable var model: MacWorkspaceModel
     let name: String
-    let open: () -> Void
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if model.isRunning, let context = model.selectedConversationID {
@@ -212,7 +213,7 @@ struct MacUnifiedExpertTranscript: View {
                             },
                             participantName: row.name ?? "Nola", senderIdentity: row.agentID ?? "nola",
                             showsSender: index == 0 || transcriptRows[index - 1].context != row.context || transcriptRows[index - 1].message.role != message.role,
-                            width: min(720, width), isExpert: row.name != nil)
+                            width: min(720, width), isExpert: row.name != nil, publicReplyOnly: row.name != nil)
                             .background { MacTranscriptMessageAnchor(messageID: message.id, controller: scrollController) }
                     }
                 }
@@ -266,7 +267,7 @@ struct MacExpertPermissionDock: View {
         if let association = workspace.conversationAssociation, association.conversationID == conversationID {
             ForEach(association.room.room.participants) { participant in
                 if let owner = workspace.executionService?.owners[participant.contextConversationID] {
-                    MacRoomOwnerControls(model: owner, name: participant.displayName, open: {})
+                    MacRoomOwnerControls(model: owner, name: participant.displayName)
                 }
             }
         }
@@ -449,5 +450,58 @@ struct MacExpertDirectoryManagementView: View {
     private func refreshModelOptions() {
         do { modelOptions = try workspace.agentModelOptions?() ?? []; configurationError = nil }
         catch { configurationError = error.localizedDescription }
+    }
+}
+
+/// Full child histories live in the inspector, never below the parent conversation.
+struct MacExpertSessionsInspector: View {
+    @ObservedObject var workspace: MacAgentRoomWorkspace
+    let conversationID: String?
+    @State private var selectedContextID: String?
+
+    var body: some View {
+        if let association = workspace.conversationAssociation,
+           association.conversationID == conversationID {
+            if let participant = association.room.room.participants.first(where: {
+                $0.contextConversationID == selectedContextID
+            }), let owner = workspace.executionService?.owners[participant.contextConversationID] {
+                VStack(alignment: .leading, spacing: 12) {
+                    Button { selectedContextID = nil } label: {
+                        Label(String(localized: "chat.expert_sessions", table: "Chat"), systemImage: "chevron.left")
+                    }.accessibilityIdentifier("chat.expert-session.back")
+                    Text(participant.displayName).font(.headline)
+                    MacRoomOwnerControls(model: owner, name: participant.displayName)
+                    ForEach(owner.selectedMessages) { message in
+                        MacRoomCanonicalMessage(model: owner, message: message,
+                            contextID: participant.contextConversationID,
+                            isCurrentOwner: {
+                                workspace.conversationAssociation?.conversationID == conversationID &&
+                                owner.selectedConversationID == participant.contextConversationID
+                            }, participantName: participant.displayName, senderIdentity: participant.agentID,
+                            showsSender: true, width: 300)
+                    }
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    if association.room.room.participants.isEmpty {
+                        Text("No experts in this conversation").font(.callout).foregroundStyle(.secondary)
+                    }
+                    ForEach(association.room.room.participants) { participant in
+                        Button { selectedContextID = participant.contextConversationID } label: {
+                            HStack {
+                                AppleExpertAvatar(name: participant.displayName, size: 28)
+                                Text(participant.displayName)
+                                Spacer()
+                                Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                            }.frame(minHeight: 40).contentShape(Rectangle())
+                        }.buttonStyle(.plain)
+                            .disabled(workspace.executionService?.owners[participant.contextConversationID] == nil)
+                            .accessibilityIdentifier("chat.expert-session." + participant.id)
+                    }
+                }
+            }
+        } else {
+            Text("No experts in this conversation").font(.callout).foregroundStyle(.secondary)
+        }
     }
 }

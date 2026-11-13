@@ -9,7 +9,9 @@ nonisolated struct ExpertMentionQuery: Equatable {
 
     static func atEnd(of text: String) -> Self? {
         let value = text as NSString
-        guard let match = try? NSRegularExpression(pattern: "(?:^|\\s)@([^\\s@]*)$").firstMatch(
+        // CJK text does not need spaces between words. Keep the boundary
+        // check for Latin identifiers and email addresses.
+        guard let match = try? NSRegularExpression(pattern: "(?:^|[\\s\\p{Han}\\p{Hiragana}\\p{Katakana}\\p{Hangul}，。！？、：；（「『])[@＠]([^\\s@＠]*)\\z").firstMatch(
             in: text, range: NSRange(location: 0, length: value.length)) else { return nil }
         let queryRange = match.range(at: 1)
         return Self(range: NSRange(location: queryRange.location - 1, length: queryRange.length + 1),

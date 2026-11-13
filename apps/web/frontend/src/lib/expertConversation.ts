@@ -1,8 +1,26 @@
-import type { RoomParticipant, RoomSubmission } from './agentRooms.ts';
+import type { PersistentAgent, RoomParticipant, RoomSubmission } from './agentRooms.ts';
 
 export interface AttributedExpertSubmission {
     submission: RoomSubmission;
     participant: RoomParticipant;
+}
+
+/** An expert can have multiple turns; separate contexts must never be merged. */
+export function groupExpertSessions(items: readonly AttributedExpertSubmission[]) {
+    const sessions = new Map<string, { participant: RoomParticipant; replies: AttributedExpertSubmission[] }>();
+    for (const item of items) {
+        const contextId = item.participant.context_conversation_id;
+        const session = sessions.get(contextId);
+        if (session) session.replies.push(item);
+        else sessions.set(contextId, { participant: item.participant, replies: [item] });
+    }
+    return [...sessions.values()];
+}
+
+export function expertDirectoryMatches(agents: readonly PersistentAgent[], query: string, selectedAgentIds: ReadonlySet<string>) {
+    const needle = query.normalize('NFKC').toLocaleLowerCase();
+    return agents.filter(agent => agent.availability === 'active' && !selectedAgentIds.has(agent.id)
+        && agent.name.normalize('NFKC').toLocaleLowerCase().includes(needle));
 }
 
 /** Project only submissions bound by the Host to a visible canonical user

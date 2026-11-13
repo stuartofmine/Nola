@@ -20,11 +20,11 @@ test('compact presentation keeps a single conversation manager and settings owne
 
 test('composer keeps focus indication and grouped work tools share one collapsible inspector', () => {
     assert.match(chat, /\.composer:focus-within\s*\{[^}]*outline: 2px solid var\(--primary\)/);
-    for (const tabs of ["['overview', 'progress', 'goal']", "['review', 'artifacts']", "['resources', 'execution', 'participants', 'settings']"]) assert.ok(chat.includes(tabs));
+    for (const tabs of ["['overview', 'progress', 'goal']", "['review', 'artifacts']", "['resources', 'execution', 'participants', 'expertSessions', 'settings']"]) assert.ok(chat.includes(tabs));
     assert.ok(chat.includes('aria-controls="chat-details"'));
     assert.ok(chat.includes('aria-expanded={selected}'));
     assert.ok(chat.includes('inspectorTab = inspectorTab === tab ? null : tab'));
-    for (const tab of ['overview', 'review', 'artifacts', 'resources', 'settings', 'participants']) {
+    for (const tab of ['overview', 'review', 'artifacts', 'resources', 'settings', 'participants', 'expertSessions']) {
         assert.ok(chat.includes(`data-inspector-section="${tab}"`));
     }
     assert.doesNotMatch(chat, /inspector-page-picker|hidden=\{inspectorTab !==/);

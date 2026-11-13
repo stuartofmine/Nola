@@ -4,6 +4,14 @@ import XCTest
 @testable import Nola
 
 @MainActor final class MacExpertTemplateHostTests: XCTestCase {
+    func testParentExpertReplyExcludesPrivateExecutionDetails() {
+        XCTAssertTrue(MacExpertReplyPresentation.includes(.text(.init(is_final: true, visibility: "public", review: nil))))
+        XCTAssertTrue(MacExpertReplyPresentation.includes(.text(.init(is_final: false, visibility: "public", review: nil))))
+        XCTAssertFalse(MacExpertReplyPresentation.includes(.text(.init(is_final: true, visibility: "private", review: nil))))
+        XCTAssertFalse(MacExpertReplyPresentation.includes(.reasoning(.init(title: .inline("Thinking"), state: "running"))))
+        XCTAssertFalse(MacExpertReplyPresentation.includes(.step(.init(title: .inline("Executing"), state: "completed"))))
+    }
+
     func testHostInstructionProducerPreservesStyleAndNonemptyCustomDefinitionExactly() {
         let definitions = MacExpertInstructionProducer.definitions(style: .detailed,
             customSystemPrompt: "  My precise model instructions.\n")

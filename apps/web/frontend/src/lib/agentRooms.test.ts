@@ -35,6 +35,11 @@ test('ordinary text, empty selection and stale members never select a recipient'
 test('completion syntax does not reinterpret email addresses or natural language', () => {
     assert.equal(mentionQuery('请 @研'), '研');
     assert.equal(mentionQuery('@'), '');
-    for (const value of ['mail@example.org', 'search current', '当前搜索', 'please @Agent continue']) assert.equal(mentionQuery(value), null);
+    for (const value of ['mail@example.org', 'mail＠example.org', 'search current', '当前搜索', 'please @Agent continue', '@＠name', '@研究\n']) assert.equal(mentionQuery(value), null);
     assert.equal(removeMentionQuery('请 @研'), '请 ');
+    for (const mark of ['@', '＠']) {
+        const draft = `请看${mark}研究，再补充`;
+        assert.equal(mentionQuery(draft, 5), '研究');
+        assert.equal(removeMentionQuery(draft, 5), '请看，再补充');
+    }
 });

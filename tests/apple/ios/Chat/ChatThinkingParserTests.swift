@@ -26,7 +26,7 @@ final class ChatThinkingParserTests: XCTestCase {
         }, liveReasoning: true))
     }
 
-    @MainActor func testContiguousFlowPreservesTextReasoningToolAndSurfaceAnchors() throws {
+    @MainActor func testSingleProcessPreservesExecutionOrderAndExternalContentAnchors() throws {
         let first = IOSConversationProjectionV1.Part.reasoning(.init(partID: "r1", revision: 1,
             state: .completed, title: "Thinking", summary: "inspect"))
         let second = IOSConversationProjectionV1.Part.reasoning(.init(partID: "r2", revision: 1,
@@ -39,10 +39,67 @@ final class ChatThinkingParserTests: XCTestCase {
             markdown: "Finished", isFinal: true, review: nil))
         let ordered = [first, prose, second, tool, surface, final]
         let flow = ChatExecutionProcessPolicy.segments(ordered)
-        XCTAssertEqual(flow.map { $0.parts.map(\.partID) }, [["r1"], ["text"], ["r2", "tool"], ["surface"], ["final"]])
-        XCTAssertEqual(flow.flatMap(\.parts), ordered)
+        XCTAssertEqual(flow.map { $0.parts.map(\.partID) }, [["r1", "r2", "tool"], ["text"], ["surface"], ["final"]])
+        XCTAssertEqual(flow.filter { $0.kind == .process }.count, 1)
+        XCTAssertEqual(flow.filter { $0.kind == .content }.flatMap(\.parts), [prose, surface, final])
+        XCTAssertEqual(flow.first?.id, "execution-process")
         XCTAssertEqual(ChatExecutionProcessPolicy.liveReasoning(ordered, live: true).map(\.partID), ["r2"])
         XCTAssertTrue(ChatExecutionProcessPolicy.liveReasoning(ordered, live: false).isEmpty)
+    }
+
+    @MainActor func testEmptyReasoningDoesNotCreateAnEmptyExecutionDisclosure() {
+        let hidden = IOSConversationProjectionV1.Part.reasoning(.init(partID: "hidden", revision: 1,
+            state: .running, title: "Thinking", summary: nil))
+        let empty = IOSConversationProjectionV1.Part.reasoning(.init(partID: "empty", revision: 1,
+            state: .running, title: "Thinking", summary: " \n "))
+        let answer = IOSConversationProjectionV1.Part.text(.init(partID: "answer", revision: 1,
+            markdown: "Answer", isFinal: true, review: nil))
+        XCTAssertTrue(ChatExecutionProcessPolicy.segments([hidden, empty]).isEmpty)
+        XCTAssertEqual(ChatExecutionProcessPolicy.segments([hidden, answer, empty]).flatMap(\.parts), [answer])
+        XCTAssertTrue(ChatExecutionProcessPolicy.liveReasoning([hidden, empty], live: true).isEmpty)
+    }
+
+    @MainActor func testProcessIdentitySurvivesAdditionalRoundsAndTextAnchors() {
+        let reasoning = IOSConversationProjectionV1.Part.reasoning(.init(partID: "r1", revision: 1,
+            state: .completed, title: "Thinking", summary: "Plan"))
+        let answer = IOSConversationProjectionV1.Part.text(.init(partID: "answer", revision: 1,
+            markdown: "Interim result", isFinal: true, review: nil))
+        let next = IOSConversationProjectionV1.Part.reasoning(.init(partID: "r2", revision: 1,
+            state: .running, title: "Thinking", summary: "Verify"))
+        let before = ChatExecutionProcessPolicy.segments([answer, reasoning])
+        let after = ChatExecutionProcessPolicy.segments([answer, reasoning, next])
+        XCTAssertEqual(before.first?.parts, [answer])
+        XCTAssertEqual(before.first { $0.kind == .process }?.id, after.first { $0.kind == .process }?.id)
+        XCTAssertEqual(after.filter { $0.kind == .process }.count, 1)
+        XCTAssertEqual(after.first { $0.kind == .process }?.parts.map(\.partID), ["r1", "r2"])
+        XCTAssertFalse(ChatExecutionProcessPolicy.segmentExpanded(choices: [false], liveReasoning: true))
+    }
+
+    @MainActor func testHistoricalExecutionJoinsOneGroupButSurfaceStaysOutside() throws {
+        func historical(_ kind: String, id: String) throws -> IOSConversationProjectionV1.Part {
+            let projection = try JSONDecoder().decode(IOSConversationProjectionV1.HistoricalProjection.self,
+                from: JSONSerialization.data(withJSONObject: ["owner": [:], "canonical_revision": 1,
+                    "canonical_kind": kind, "status": ["state": "unsupported", "reason": "Details unavailable"], "fields": [:]]))
+            return .historical(id: id, revision: 1, projection: projection)
+        }
+        let reasoning = try historical("reasoning", id: "old-reasoning")
+        let surface = try historical("ui_surface", id: "old-surface")
+        let tool = try historical("tool", id: "old-tool")
+        let flow = ChatExecutionProcessPolicy.segments([reasoning, surface, tool])
+        XCTAssertEqual(flow.filter { $0.kind == .process }.count, 1)
+        XCTAssertEqual(flow.first?.parts.map(\.partID), ["old-reasoning", "old-tool"])
+        XCTAssertEqual(flow.filter { $0.kind == .content }.flatMap(\.parts), [surface])
+        XCTAssertFalse(ChatExecutionProcessPolicy.isExecution(surface))
+    }
+
+    @MainActor func testLegacyToolEventsKeepFirstCallOrderAndLatestReceiptWithoutDuplicates() {
+        let first = HostAgentToolEvent(id: "a", name: "first", status: .running)
+        let second = HostAgentToolEvent(id: "b", name: "second", status: .failed)
+        let completed = HostAgentToolEvent(id: "a", name: "first", status: .succeeded)
+        let result = ChatExecutionProcessPolicy.legacyEvents([first, second, completed])
+        XCTAssertEqual(result.map(\.id), ["a", "b"])
+        XCTAssertEqual(result.map(\.status), [.succeeded, .failed])
+        XCTAssertTrue(ChatExecutionProcessPolicy.legacyEvents([]).isEmpty)
     }
 
     @MainActor func testUnknownErrorKeyUsesNamedFailureAndTaskControlsDoNotRepeatSummary() {

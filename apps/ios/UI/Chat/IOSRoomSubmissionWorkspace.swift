@@ -11,7 +11,7 @@ nonisolated struct IOSRoomDraft: Codable, Equatable, Sendable {
     var mentionQuery: String? { ExpertMentionQuery.atEnd(of: text)?.query }
 
     mutating func mention(_ id: String) {
-        if mentionQuery != nil, let at = text.lastIndex(of: "@") { text = String(text[..<at]) }
+        if let query = ExpertMentionQuery.atEnd(of: text) { text = query.removing(from: text) }
         participantID = id
         revision &+= 1
     }

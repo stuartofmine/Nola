@@ -3133,3 +3133,6 @@
 
 "settings.navigation.general" = "General";
 "settings.navigation.general.detail" = "Apariencia, notificaciones y actualizaciones";
+
+"chat.experts.conversations" = "Conversaciones con expertos";
+"chat.experts.conversations.empty" = "Menciona a un experto en esta conversación para ver aquí los detalles de ejecución.";

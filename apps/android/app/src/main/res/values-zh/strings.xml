@@ -1325,4 +1325,6 @@
     <string name="models_web_host_paste_setup">粘贴连接信息</string>
     <string name="models_web_host_invalid_setup">请在宿主机的 Nola 中复制连接信息，再粘贴到这里。</string>
     <string name="permission_review_unavailable">操作详情不可用。请拒绝本次请求，或请宿主机提供可审阅的操作信息。</string>
+    <string name="chat_expert_sessions">专家会话</string>
+    <string name="chat_expert_sessions_empty">邀请专家后，可在此查看专家会话。</string>
 </resources>

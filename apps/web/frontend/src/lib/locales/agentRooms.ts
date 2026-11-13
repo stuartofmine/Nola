@@ -30,6 +30,8 @@ const entries: Record<string, string[]> = {
     name: ['会话名称', 'Room name', 'Raumname', 'Nombre de sala', 'Nom du salon', 'ルーム名', 'Название комнаты'],
     members: ['参与者', 'Participants', 'Teilnehmer', 'Participantes', 'Participants', '参加者', 'Участники'],
     experts: ['专家', 'Experts', 'Expert:innen', 'Expertos', 'Experts', '専門家', 'Эксперты'],
+    expertSessions: ['专家会话', 'Expert sessions', 'Expertensitzungen', 'Sesiones de expertos', 'Sessions d’experts', '専門家の会話', 'Беседы с экспертами'],
+    noExpertSessions: ['这个会话还没有专家会话。', 'No expert sessions in this conversation yet.', 'Noch keine Expertensitzungen in dieser Unterhaltung.', 'Aún no hay sesiones de expertos en esta conversación.', 'Pas encore de session d’expert dans cette conversation.', 'この会話にはまだ専門家の会話がありません。', 'В этой беседе пока нет сеансов с экспертами.'],
     noExperts: ['没有可用的专家。', 'No experts are available.', 'Keine Expert:innen verfügbar.', 'No hay expertos disponibles.', 'Aucun expert disponible.', '利用できる専門家はいません。', 'Нет доступных экспертов.'],
     expertStarting: ['等待专家回复…', 'Waiting for expert…', 'Warte auf Expert:in…', 'Esperando al experto…', 'En attente de l’expert…', '専門家の応答を待っています…', 'Ожидание ответа эксперта…'],
     expertWorking: ['正在回复', 'Replying', 'Antwortet', 'Respondiendo', 'Répond', '返信中', 'Отвечает'],

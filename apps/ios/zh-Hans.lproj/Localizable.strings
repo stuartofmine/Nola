@@ -3286,3 +3286,6 @@
 "model.web_host.invalid_setup" = "请在宿主机的 Nola 中复制连接信息，再粘贴到这里。";
 
 "model.web_host.paste_setup" = "粘贴连接信息";
+
+"chat.experts.conversations" = "专家会话";
+"chat.experts.conversations.empty" = "在当前会话中 @ 专家后，可在这里查看执行详情。";

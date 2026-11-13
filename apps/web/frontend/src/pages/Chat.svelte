@@ -43,7 +43,7 @@
     import { createConversationDraftStore, parseChatConversation, parseChatConversations } from '../lib/chatConversations';
     import type { ChatConversation } from '../lib/chatConversations';
     import { mentionQuery, removeMentionQuery, roomCommand, type AgentDirectory, type RoomSnapshot, type RoomSubmission } from '../lib/agentRooms';
-    import { projectExpertSubmissions, toggleExpertParticipant } from '../lib/expertConversation';
+    import { expertDirectoryMatches, groupExpertSessions, projectExpertSubmissions, toggleExpertParticipant } from '../lib/expertConversation';
     import ExpertConversationReply from '../components/ExpertConversationReply.svelte';
     import ExpertReplyFrame from '../components/ExpertReplyFrame.svelte';
     import ExpertManager from '../components/ExpertManager.svelte';
@@ -195,11 +195,11 @@
     let drafts = createConversationDraftStore();
     const scroll = new ChatScrollOwnership();
     let active = $state<ChatConversation | null>(null);
-    let inspectorTab = $state<'overview' | 'review' | 'artifacts' | 'goal' | 'progress' | 'execution' | 'participants' | 'resources' | 'settings' | null>(null);
+    let inspectorTab = $state<'overview' | 'review' | 'artifacts' | 'goal' | 'progress' | 'execution' | 'participants' | 'expertSessions' | 'resources' | 'settings' | null>(null);
     const inspectorGroups: {label: string; icon: 'progress' | 'artifacts' | 'file'; tabs: Exclude<typeof inspectorTab, null>[]}[] = [
         {label: 'task', icon: 'progress', tabs: ['overview', 'progress', 'goal']},
         {label: 'artifacts', icon: 'artifacts', tabs: ['review', 'artifacts']},
-        {label: 'context', icon: 'file', tabs: ['resources', 'execution', 'participants', 'settings']},
+        {label: 'context', icon: 'file', tabs: ['resources', 'execution', 'participants', 'expertSessions', 'settings']},
     ];
     const inspectorActivitySections = ['progress', 'goal', 'execution'] as const;
     const inspectorLabel = $derived(t($locale, 'chatInspector.panel'));
@@ -569,9 +569,11 @@
         return true;
     }
     let mentionDismissed = $state<string | null>(null);
+    let mentionCaret = $state(0);
     let mentionIndex = $state(0);
     let mentionLoading = $state(false);
     let mentionSelecting = $state(false);
+    let mentionDirectoryError = $state(false);
     let mentionDirectoryRequest = 0, mentionSelectionRequest = 0;
     const expertManifestCache = new Map<string,ExpertMessageManifest | null>();
     function expertScope(conversationId = active?.conversationId) {
@@ -579,25 +581,31 @@
         return () => !disposed && !!conversationId && hostId===sourceHost && clientId===sourceClient && workspaceHost===workspace
             && draftSelection===selection && generation===sourceGeneration && active?.conversationId===conversationId;
     }
-    const expertMentionQuery = $derived(mentionQuery(draft));
+    const expertMentionQuery = $derived(mentionQuery(draft, mentionCaret));
     const mentionsVisible = $derived(mentionFocused && expertMentionQuery !== null && mentionDismissed !== draft);
-    const expertMentionCandidates = $derived((expertDirectory?.agents ?? []).filter(agent => agent.availability === 'active'
-        && !expertRoom?.room.participants.some(member => member.agent_id === agent.id && selectedExperts.includes(member.id))
-        && agent.name.toLocaleLowerCase().includes((expertMentionQuery ?? '').toLocaleLowerCase())));
-    async function loadMentionDirectory(text = draft) {
-        if (!canInteract || mentionQuery(text) === null || expertDirectory || mentionLoading || !active) return;
+    const expertMentionCandidates = $derived(expertDirectoryMatches(expertDirectory?.agents ?? [], expertMentionQuery ?? '',
+        new Set(expertRoom?.room.participants.filter(member => member.active && selectedExperts.includes(member.id)).map(member => member.agent_id))));
+    function syncMentionCaret(input: HTMLTextAreaElement) {
+        const caret = input.selectionStart;
+        if (caret !== mentionCaret) { mentionCaret = caret; mentionDismissed = null; mentionIndex = 0; }
+    }
+    async function loadMentionDirectory() {
+        if (!canInteract || !active || mentionLoading) return;
         const scope=expertScope(),request=++mentionDirectoryRequest;
         const current=()=>scope()&&request===mentionDirectoryRequest;
-        mentionLoading=true;
+        mentionLoading=true; mentionDirectoryError=false;
         try {
             const directory=await roomCommand<AgentDirectory>({type:'directory'});
-            if(current()){expertDirectory=directory;expertError='';}
-        } catch {if(current())expertError='Unable to load experts.';}
+            if(current())expertDirectory=directory;
+        } catch {if(current())mentionDirectoryError=true;}
         finally {if(current())mentionLoading=false;}
     }
+    $effect(() => {
+        if (mentionsVisible && canInteract && active && selectingConversation === null) untrack(() => { void loadMentionDirectory(); });
+    });
     async function chooseMention(agentId: string) {
         if (!canInteract || !active || expertsLoading || mentionSelecting || !expertMentionCandidates.some(agent=>agent.id===agentId)) return;
-        const owner=active.conversationId,original=draft,scope=expertScope(owner),request=++mentionSelectionRequest;
+        const owner=active.conversationId,original=draft,caret=mentionCaret,scope=expertScope(owner),request=++mentionSelectionRequest;
         const current=()=>scope()&&request===mentionSelectionRequest&&canInteract;
         mentionSelecting=true;
         try {
@@ -608,11 +616,13 @@
                 expertRoom=association.room;
             }
             await toggleExpert(agentId);
-            if(!current()||draft!==original)return;
+            if(!current()||draft!==original||caret!==mentionCaret)return;
             const member=expertRoom?.room.participants.find(member=>member.agent_id===agentId&&member.active);
             if(!member||!selectedExperts.includes(member.id))return;
-            draft=removeMentionQuery(draft);drafts.write(owner,draft);mentionIndex=0;
-            await tick();if(current())composer?.focus();
+            draft=removeMentionQuery(draft,caret);drafts.write(owner,draft);mentionIndex=0;
+            const nextCaret=caret-(original.length-draft.length);
+            await tick();
+            if(current()&&composer){composer.focus();composer.setSelectionRange(nextCaret,nextCaret);mentionCaret=nextCaret;}
         } catch {if(current())expertError='Unable to prepare experts for this conversation.';}
         finally {if(scope()&&request===mentionSelectionRequest)mentionSelecting=false;}
     }
@@ -623,6 +633,9 @@
     let attributedExperts = $derived.by(() => expertRoom && timeline
         ? projectExpertSubmissions(expertRoom.room.id, active?.conversationId ?? '', expertRoom.room.participants, expertSubmissions,
             new Set(timeline.messages.filter(message => message.canonical?.role === 'user').map(message => message.id))) : []);
+    const expertSessions = $derived(groupExpertSessions(attributedExperts));
+    let expandedExpertContext = $state<string | null>(null);
+    const canShowExpertDetails = $derived(!managementContentSelected && inspectorTab !== null && expandedInspectorSections.includes('expertSessions'));
     let expertRequest = 0;
     let expertPoll: ReturnType<typeof setInterval> | null = null;
     $effect(() => {
@@ -736,9 +749,10 @@
         submissionController?.detach();
         active = conversation;
         contentTabs = selectContentTab(workspaceHost.contentTabs.get(conversation.conversationId) ?? emptyContentTabs(), conversationTabKey);
-        mentionDismissed = null; mentionIndex = 0; mentionLoading = false; mentionSelecting = false; ++mentionDirectoryRequest; ++mentionSelectionRequest;
+        mentionDismissed = null; mentionIndex = 0; mentionLoading = false; mentionSelecting = false; mentionDirectoryError = false; ++mentionDirectoryRequest; ++mentionSelectionRequest;
         ++expertRequest; expertsLoading = false; expertResumeMessage = null; managingExperts = false;
         expertRoom = null; expertDirectory = null; expertSubmissions = []; expertAdmissionPending = false;
+        expandedExpertContext = null;
         selectedExperts = [...(workspaceHost.expertSelections.get(conversation.conversationId) ?? [])]; expertError = '';
         expertIntentStorageError='';
         try { expertRetryIntent = loadExpertIntent(localStorage, {hostId,clientId}, conversation.conversationId); }
@@ -955,10 +969,9 @@
         }
         if (mentionsVisible && !composing && !event.isComposing && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
             if (event.key === 'Escape') { event.preventDefault(); mentionDismissed = draft; return; }
-            if (['ArrowUp', 'ArrowDown', 'Enter', 'Tab'].includes(event.key)) {
+            if (expertMentionCandidates.length && ['ArrowUp', 'ArrowDown', 'Enter', 'Tab'].includes(event.key)) {
                 event.preventDefault();
                 const count = expertMentionCandidates.length;
-                if (!count) return;
                 mentionIndex = Math.min(mentionIndex, count - 1);
                 if (event.key === 'Enter' || event.key === 'Tab') void chooseMention(expertMentionCandidates[mentionIndex].id);
                 else { mentionIndex = (mentionIndex + (event.key === 'ArrowUp' ? -1 : 1) + count) % count;
@@ -968,6 +981,11 @@
         }
         if (!composerEnterSubmits(event, composing)) return;
         event.preventDefault(); send();
+    }
+    function showExpertSessions() {
+        if (managementContentSelected) updateContentTabs(selectContentTab(contentTabs, conversationTabKey));
+        if (viewportWidth <= 700) navigationPanel?.closePanel();
+        inspectorTab = 'expertSessions';
     }
     function resume() { if (canInteract) return submissionController?.resume(); }
     function stop() { if (canInteract) return submissionController?.stop(); }
@@ -986,7 +1004,7 @@
                 captureConversationReading(); submissionController?.detach(); submissionController = null;
                 active = null; timeline = null; turn = null; contentTabs = emptyContentTabs();
                 draft = ''; attachments = []; permissionState = null; reasoningState = null;
-                mentionLoading=false;mentionSelecting=false;++mentionDirectoryRequest;++mentionSelectionRequest;++expertRequest;
+                mentionLoading=false;mentionSelecting=false;mentionDirectoryError=false;expandedExpertContext=null;++mentionDirectoryRequest;++mentionSelectionRequest;++expertRequest;
                 expertRoom = null; expertDirectory = null; selectedExperts = []; expertSubmissions = []; expertRetryIntent = null; expertIntentStorageError = ''; expertAdmissionPending = false;
                 ++expertRequest; expertsLoading = false; managingExperts = false; historicalRecoveryOwners = []; uiSurfaces = [];
                 challenge = null; reviewText = ''; pendingText = ''; pendingAttachmentNames = []; selectedMessageId = null;
@@ -1165,7 +1183,7 @@
         <div class="global-navigation"><a class="desktop-mark" href="/today" aria-label="Nola">n</a><WorkspaceListNavigation category={listCategory} visible={navigationExpanded} onchange={setListCategory} /><button class="sidebar-toggle panel-toggle" title={t($locale, 'shell.toggleSidebar')} aria-label={t($locale, 'shell.toggleSidebar')} aria-expanded={navigationExpanded} onclick={() => navigationExpanded = !navigationExpanded}><PrototypeIcon name="sidebar" size={18} /></button></div>
         <button class="navigation-toggle" aria-label={t($locale, contentTabs.selected === conversationTabKey ? 'shell.workspace' : 'chatPage.title')} onclick={() => contentTabs.selected === conversationTabKey ? navigateWorkspace('/conversations') : updateContentTabs(selectContentTab(contentTabs, conversationTabKey))}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 5-7 7 7 7" /></svg></button>
         <h1 class="sr-only">{selectedContentTab ? selectedContentTab.kind === 'pdf' ? selectedContentTab.resource.displayName : t($locale, selectedContentTab.titleKey) : active?.title || t($locale, 'chatPage.title')}</h1>
-        {#if viewportWidth <= 700}<div class="mobile-chat-heading"><strong>{selectedContentTab ? selectedContentTab.kind === 'pdf' ? selectedContentTab.resource.displayName : t($locale, selectedContentTab.titleKey) : active?.title || t($locale, 'chatPage.title')}</strong><small>{selectedExperts.length ? (expertRoom?.room.participants.filter(expert => selectedExperts.includes(expert.id)).map(expert => expert.display_name).join(' · ') || 'Nola') : 'Nola'}</small></div>{#if selectedContentTab}<button class="panel-toggle mobile-content-close" aria-label={t($locale, 'chatInspector.closeTab')} onclick={() => closeWorkspaceContentTab(contentTabs.selected)}>×</button>{:else}<button class="panel-toggle" aria-label={t($locale, 'chatInspector.context')} onclick={() => toggleInspector('resources')}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6m-6 4h6"/></svg></button><button class="panel-toggle" aria-label={t($locale, 'rooms.members')} onclick={() => void openExperts()}><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="7" r="4"/><path d="M5 22v-4a7 7 0 0 1 14 0v4"/></svg></button>{/if}{:else}<ContentTabStrip ownerKey={contentWorkspaceKey} state={contentTabs} title={active?.title || t($locale, 'chatPage.title')}
+        {#if viewportWidth <= 700}<div class="mobile-chat-heading"><strong>{selectedContentTab ? selectedContentTab.kind === 'pdf' ? selectedContentTab.resource.displayName : t($locale, selectedContentTab.titleKey) : active?.title || t($locale, 'chatPage.title')}</strong><small>{selectedExperts.length ? (expertRoom?.room.participants.filter(expert => selectedExperts.includes(expert.id)).map(expert => expert.display_name).join(' · ') || 'Nola') : 'Nola'}</small></div>{#if selectedContentTab}<button class="panel-toggle mobile-content-close" aria-label={t($locale, 'chatInspector.closeTab')} onclick={() => closeWorkspaceContentTab(contentTabs.selected)}>×</button>{:else}<button class="panel-toggle" aria-label={t($locale, 'chatInspector.context')} onclick={() => toggleInspector('resources')}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6m-6 4h6"/></svg></button>{/if}{:else}<ContentTabStrip ownerKey={contentWorkspaceKey} state={contentTabs} title={active?.title || t($locale, 'chatPage.title')}
             onselect={key => updateContentTabs(selectContentTab(contentTabs, key))}
             onclose={closeWorkspaceContentTab} />{/if}
         {#if active}{@render inspectorControls()}{/if}
@@ -1178,6 +1196,7 @@
                 <button type="button" onclick={() => toggleInspector('resources')}>{t($locale, 'chatInspector.context')}</button>
                 <button type="button" onclick={() => toggleInspector('execution')}>{t($locale, 'chatInspector.execution')}</button>
                 {#if canInteract}<button type="button" onclick={() => toggleInspector('settings')}>{t($locale, 'chatInspector.settings')}</button>{/if}
+                <button type="button" aria-controls="chat-details" aria-expanded={inspectorTab === 'expertSessions'} onclick={showExpertSessions}>{t($locale, 'rooms.expertSessions')}</button>
                 <button type="button" aria-expanded={inspectorTab === 'participants'} onclick={() => void openExperts()}>{t($locale, 'rooms.members')}{selectedExperts.length ? ` · ${selectedExperts.length}` : ''}</button>
         </ToolbarPopover>{/if}
     </header>
@@ -1259,7 +1278,7 @@
                         {#each messageExperts as item, index (item.submission.input.submission_id)}
                                 <article class="expert-message" data-expert-submission={item.submission.input.submission_id}>
                                     {#if item.submission.context_conversation_id && item.submission.execution_id}
-                                        <ExpertConversationReply active={contentTabs.selected===conversationTabKey} {hostId}
+                                        <ExpertConversationReply compact active={contentTabs.selected===conversationTabKey} permissionInteractive={!(canShowExpertDetails && expandedExpertContext === item.submission.context_conversation_id)} {hostId}
                                             agentId={item.participant.agent_id} name={item.participant.display_name}
                                             status={t($locale, `rooms.${item.submission.state}`)}
                                             roomId={item.submission.input.room_id} contextId={item.submission.context_conversation_id}
@@ -1333,7 +1352,7 @@
                 {#if mentionsVisible}
                     <div class="expert-mentions" id="expert-mentions" role="listbox" aria-label={t($locale, 'rooms.experts')}>
                         {#if mentionLoading}<p role="status">{t($locale, 'rooms.loading')}</p>
-                        {:else if expertError}<p role="alert">{expertError}</p>
+                        {:else if mentionDirectoryError}<p role="alert">{t($locale, 'chatInspector.expertsUnavailable')}</p>
                         {:else if !expertMentionCandidates.length}<p>{t($locale, 'rooms.noExperts')}</p>{/if}
                         {#each expertMentionCandidates as agent, index (agent.id)}
                             <button type="button" role="option" tabindex="-1" disabled={mentionSelecting || expertsLoading} id={`expert-mention-${index}`} aria-selected={index === mentionIndex}
@@ -1346,8 +1365,8 @@
                 {/if}
                 <textarea id="chat-composer" bind:this={composer} bind:value={draft} aria-controls={commandsVisible ? 'composer-commands' : mentionsVisible ? 'expert-mentions' : undefined} role="combobox" aria-autocomplete="list" aria-expanded={commandsVisible || mentionsVisible}
                     aria-activedescendant={commandsVisible && commandCandidates.length ? `composer-command-${Math.min(commandIndex, commandCandidates.length - 1)}` : mentionsVisible && expertMentionCandidates.length ? `expert-mention-${Math.min(mentionIndex, expertMentionCandidates.length - 1)}` : undefined}
-                    onfocus={() => { mentionFocused = true; void loadMentionDirectory(); }} onblur={() => mentionFocused = false}
-                    oninput={event => { commandDismissed = null; commandIndex = 0; commandError = ''; mentionDismissed = null; mentionIndex = 0; if (active && !composerUnavailable) drafts.write(active.conversationId, event.currentTarget.value); void loadMentionDirectory(event.currentTarget.value); }} onkeydown={composerKeydown} oncompositionstart={() => composing = true} oncompositionend={() => composing = false} placeholder={t($locale, 'chatPage.placeholder')} disabled={composerUnavailable} aria-busy={selectingConversation !== null || conversationWriting} rows="1"></textarea>
+                    onfocus={event => { mentionFocused = true; syncMentionCaret(event.currentTarget); }} onblur={() => mentionFocused = false} onselect={event => syncMentionCaret(event.currentTarget)} onkeyup={event => syncMentionCaret(event.currentTarget)} onclick={event => syncMentionCaret(event.currentTarget)}
+                    oninput={event => { commandDismissed = null; commandIndex = 0; commandError = ''; mentionDismissed = null; mentionIndex = 0; if (active && !composerUnavailable) drafts.write(active.conversationId, event.currentTarget.value); syncMentionCaret(event.currentTarget); }} onkeydown={composerKeydown} oncompositionstart={() => composing = true} oncompositionend={() => composing = false} placeholder={t($locale, 'chatPage.placeholder')} disabled={composerUnavailable} aria-busy={selectingConversation !== null || conversationWriting} rows="1"></textarea>
                 <div class="composer-footer">
                 {#if active}<div class="composer-attachments"><ChatTextAttachments showHelp={false} bind:this={textAttachments} draftStore={workspaceHost?.attachments} conversationId={active.conversationId} {generation} busy={busy || composerUnavailable} onattachments={(files, reading) => { attachments = [...files]; attachmentsReading = reading; }} /></div>{/if}
                 <ChatModelMenu selection={modelState} onopen={() => sessionSettings?.refreshModelCatalog()} onselect={choice => sessionSettings?.selectModel(choice)} onsettings={() => { inspectorTab = 'settings'; }} onreload={() => sessionSettings?.reloadSettings()} />
@@ -1411,6 +1430,40 @@
 </div>
             </details>
             {/each}
+            <details class="inspector-section" data-inspector-section="expertSessions" open={expandedInspectorSections.includes('expertSessions')} ontoggle={event => setInspectorExpanded('expertSessions', event.currentTarget.open)}>
+                <summary>{t($locale, 'rooms.expertSessions')}{expertSessions.length ? ` · ${expertSessions.length}` : ''}</summary>
+                <div class="inspector-content expert-session-list">
+                    {#if canShowExpertDetails}
+                        {#each expertSessions as session (session.participant.context_conversation_id)}
+                            {@const contextId = session.participant.context_conversation_id}
+                            {@const expanded = expandedExpertContext === contextId}
+                            <button type="button" class="expert-session-toggle" aria-expanded={expanded}
+                                onclick={() => expandedExpertContext = expanded ? null : contextId}>
+                                <span>{session.participant.display_name}</span><small>{session.replies.length}</small>
+                            </button>
+                            {#if expanded}
+                                <div class="expert-session-thread">
+                                    {#each session.replies as {submission, participant} (submission.input.submission_id)}
+                                        <Markdown source={submission.input.text} />
+                                        {#if submission.execution_id}
+                                            <ExpertConversationReply active {hostId} agentId={participant.agent_id} name={participant.display_name}
+                                                status={t($locale, `rooms.${submission.state}`)} roomId={submission.input.room_id} {contextId}
+                                                executionId={submission.execution_id} running={submission.state === 'executing'} />
+                                        {:else}
+                                            <p role="status">{t($locale, `rooms.${submission.state}`)}</p>
+                                        {/if}
+                                    {/each}
+                                </div>
+                            {/if}
+                        {:else}
+                            <p>{t($locale, 'rooms.noExpertSessions')}</p>
+                        {/each}
+                        {#if timeline?.window?.hasMore}
+                            <button type="button" onclick={() => void loadHistory('prepend')} disabled={historyLoading || busy}>{t($locale, 'chatPage.history')}</button>
+                        {/if}
+                    {/if}
+                </div>
+            </details>
             <details class="inspector-section" data-inspector-section="participants" open={expandedInspectorSections.includes('participants')} ontoggle={event => setInspectorExpanded('participants', event.currentTarget.open)}>
                 <summary>{t($locale, 'chatInspector.participants')}</summary><div class="inspector-content">{@render expertPicker()}</div>
             </details>
@@ -1525,6 +1578,10 @@
     .response-identity { display: flex; flex: none; min-width: 0; align-items: center; gap: 7px; font-size: 14px; line-height: 20px; overflow-wrap: anywhere; }
     .response-avatar { display: grid; place-items: center; width: 19px; height: 19px; border: 1px solid var(--outline); border-radius: 50%; color: var(--content); font-size: 13px; }
     .expert-picker { display: flex; flex-direction:column; align-items:stretch; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--surface); font-size: 12px; }
+    .expert-session-list, .expert-session-thread { display: grid; gap: 10px; min-width: 0; overflow-wrap: anywhere; }
+    .expert-session-toggle { min-height: 44px; display: flex; justify-content: space-between; align-items: center; text-align: start; gap: 8px; }
+    .expert-session-toggle small, .expert-session-list > p { color: var(--muted); }
+    .expert-session-thread { border-inline-start: 1px solid var(--border); padding-inline-start: 8px; }
     .expert-picker-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; }
     .expert-picker label { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; cursor: pointer; }
     .expert-picker input { width: 16px; height: 16px; }

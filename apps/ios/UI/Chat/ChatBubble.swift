@@ -456,10 +456,14 @@ struct ChatBubble: View {
 
     private func processExpansion(_ parts: [IOSConversationProjectionV1.Part], live: Bool) -> Binding<Bool> {
         let keys = parts.map { readingKey($0.partID) }
+        let owner = readingKey("execution-process")
         return Binding(get: {
-            ChatExecutionProcessPolicy.segmentExpanded(choices: keys.compactMap { processReading[$0] },
+            processReading[owner] ?? ChatExecutionProcessPolicy.segmentExpanded(choices: keys.compactMap { processReading[$0] },
                 liveReasoning: !ChatExecutionProcessPolicy.liveReasoning(parts, live: live).isEmpty)
-        }, set: { value in for key in keys { processReading[key] = value } })
+        }, set: { value in
+            processReading[owner] = value
+            for key in keys { processReading[key] = value }
+        })
     }
 
     private func toolExpansion(_ partID: String, technical: Bool) -> Binding<Bool> {
@@ -761,7 +765,7 @@ struct ChatBubble: View {
                                 expanded: processExpansion(segment.parts, live: runtime.isActive),
                                 toolExpanded: { toolExpansion($0, technical: false) },
                                 technicalExpanded: { toolExpansion($0, technical: true) },
-                                reader: toolReader)
+                                reader: toolReader, historicalContent: canonicalContent)
                         } else {
                             ForEach(segment.parts, id: \.partID) { part in
                                 canonicalContent(part)
@@ -774,47 +778,26 @@ struct ChatBubble: View {
                         .font(.caption).buttonStyle(.borderless).frame(minHeight: 44)
                     if !isStreaming { answerContextFooter }
                 }
-                if message.canonicalParts.isEmpty && runtime.showsThinking {
-                    ChatThinkingProcessView(
-                        text: thinkingText,
-                        isFinished: !runtime.isActive || message.thinkingFinished,
-                        isRetrieving: runtime.isRetrieving
-                    )
-                    .padding(.bottom, 4)
-                }
-
-                if message.canonicalParts.isEmpty && runtime.hasTools {
-                    HostToolEventsView(
-                        events: message.liveHostToolEvents,
+                if message.canonicalParts.isEmpty,
+                   !thinkingText.isEmpty || !message.hostToolEvents.isEmpty {
+                    ChatLegacyExecutionProcess(text: thinkingText,
+                        events: ChatExecutionProcessPolicy.legacyEvents(message.hostToolEvents),
                         activities: message.traceActivities,
-                        canonicalTools: message.canonicalTools,
-                        pendingPermissionRequest: pendingHostPermissionRequest,
-                        onPermissionDecision: onHostPermissionDecision,
-                        expandedByDefault: false
-                    )
-                    .padding(.bottom, 4)
+                        isLive: runtime.isActive && !message.thinkingFinished,
+                        expanded: Binding(get: {
+                            processReading[readingKey("execution-process")] ??
+                                (runtime.isActive && !message.thinkingFinished && !thinkingText.isEmpty)
+                        }, set: { processReading[readingKey("execution-process")] = $0 }))
                 }
 
-                if (!message.canonicalParts.isEmpty || !runtime.hasTools), let pendingHostPermissionRequest {
+                // Approval remains actionable regardless of disclosure state.
+                if let pendingHostPermissionRequest {
                     HostPermissionDecisionCard(request: pendingHostPermissionRequest, onPermissionDecision: onHostPermissionDecision)
-                }
-
-                let historicalTools = isStreaming ? message.failedHistoricalToolEvents : message.hostToolEvents
-                if message.canonicalParts.isEmpty && !historicalTools.isEmpty {
-                    HostToolEventsView(
-                        events: historicalTools,
-                        activities: message.traceActivities,
-                        canonicalTools: message.canonicalTools,
-                        pendingPermissionRequest: nil,
-                        onPermissionDecision: onHostPermissionDecision,
-                        expandedByDefault: false
-                    )
-                    .padding(.bottom, 4)
                 }
 
                 if message.canonicalParts.isEmpty { taskPresentation(nil) }
 
-                if runtime.showsWaiting {
+                if runtime.showsWaiting || (runtime.isRetrieving && !runtime.hasThinking && !runtime.hasTools && !runtime.hasContent && !runtime.showsPhase) {
                     HStack(spacing: 9) {
                         ChatThinkingStatusIcon(isFinished: false)
                         Text(NSLocalizedString(
@@ -2601,10 +2584,57 @@ enum ChatExecutionProcessPolicy {
         }
     }
 
+    /// One message-owned process anchored at its first visible execution Part.
+    /// Prose and cards retain their relative order outside the disclosure.
     static func segments(_ parts: [IOSConversationProjectionV1.Part]) -> [AppleMessagePartFlowSegment<IOSConversationProjectionV1.Part>] {
-        AppleMessagePartFlow.segments(parts, id: { $0.partID }, kind: {
-            switch $0 { case .reasoning: .reasoning; case .tool: .tool; default: .content }
-        })
+        let execution = parts.filter(isVisibleExecution)
+        var inserted = false
+        var result: [AppleMessagePartFlowSegment<IOSConversationProjectionV1.Part>] = []
+        for part in parts {
+            if isExecution(part) {
+                if !inserted, isVisibleExecution(part) {
+                    result.append(.init(id: "execution-process", kind: .process, parts: execution))
+                    inserted = true
+                }
+            } else {
+                result.append(.init(id: "part:" + part.partID, kind: .content, parts: [part]))
+            }
+        }
+        return result
+    }
+
+    static func isExecution(_ part: IOSConversationProjectionV1.Part) -> Bool {
+        switch part {
+        case .tool, .reasoning: return true
+        case .historical(_, _, let history):
+            return history.canonicalKind == "tool" || history.canonicalKind == "reasoning"
+        default: return false
+        }
+    }
+
+    static func isVisibleExecution(_ part: IOSConversationProjectionV1.Part) -> Bool {
+        switch part {
+        case .tool: return true
+        case .reasoning(let value):
+            return !(value.summary ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .historical(_, _, let history):
+            // Preserve explicit detail reads without moving interactive surfaces.
+            return isExecution(part) && (IOSHistoricalPartRequest(history) != nil ||
+                !(history.timelineText ?? "").isEmpty || !(history.status.reason ?? "").isEmpty)
+        default: return false
+        }
+    }
+
+    /// Legacy snapshots lack interleaved Parts: keep first-call order and the
+    /// latest receipt per call instead of repeating live and historical groups.
+    static func legacyEvents(_ events: [HostAgentToolEvent]) -> [HostAgentToolEvent] {
+        var order: [String] = []
+        var latest: [String: HostAgentToolEvent] = [:]
+        for event in events {
+            if latest[event.id] == nil { order.append(event.id) }
+            latest[event.id] = event
+        }
+        return order.compactMap { latest[$0] }
     }
 
     static func segmentExpanded(choices: [Bool], liveReasoning: Bool) -> Bool {
@@ -2617,14 +2647,14 @@ enum ChatExecutionProcessPolicy {
         // choices remain owned by the message even when segments regroup.
         return parts.filter {
             guard case .reasoning(let reasoning) = $0 else { return false }
-            return reasoning.state == .running && !(reasoning.summary ?? "").isEmpty
+            return reasoning.state == .running && isVisibleExecution($0)
         }
     }
 
 
 }
 
-private struct ChatCanonicalExecutionProcess: View {
+private struct ChatCanonicalExecutionProcess<HistoricalContent: View>: View {
     let parts: [IOSConversationProjectionV1.Part]
     let events: [HostAgentToolEvent]
     let activities: [AgentTraceActivity]
@@ -2634,9 +2664,7 @@ private struct ChatCanonicalExecutionProcess: View {
     let technicalExpanded: (String) -> Binding<Bool>
     let reader: (String) -> Binding<HostToolTextSnapshot?>
 
-    private var containsTools: Bool {
-        parts.contains { if case .tool = $0 { true } else { false } }
-    }
+    let historicalContent: (IOSConversationProjectionV1.Part) -> HistoricalContent
 
     var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
@@ -2660,13 +2688,14 @@ private struct ChatCanonicalExecutionProcess: View {
                                 technicalReadingExpansion: technicalExpanded(part.partID),
                                 readingSelection: reader(part.partID))
                         }
+                    case .historical: historicalContent(part)
                     default: EmptyView()
                     }
                 }
             }.padding(.top, 8)
         } label: {
-            Label(containsTools ? NSLocalizedString("chat.execution_process", value: "Execution process", comment: "Ordered reasoning and tools") : L10n.chatThinkingProcess,
-                systemImage: containsTools ? "list.bullet" : "sparkles")
+            Label(NSLocalizedString("chat.execution_process", value: "Execution process", comment: "Ordered reasoning and tools"),
+                systemImage: "list.bullet")
                 .font(.callout.weight(.medium)).foregroundStyle(.secondary)
                 .frame(minHeight: 44, alignment: .leading)
                 .accessibilityIdentifier("chat.execution.process.toggle")
@@ -2677,120 +2706,36 @@ private struct ChatCanonicalExecutionProcess: View {
     }
 }
 
-private struct HostToolEventsView: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+private struct ChatLegacyExecutionProcess: View {
+    let text: String
     let events: [HostAgentToolEvent]
     let activities: [AgentTraceActivity]
-    let canonicalTools: [IOSConversationProjectionV1.ToolPart]
-    let pendingPermissionRequest: HostAgentPermissionRequest?
-    let onPermissionDecision: (String, HostAgentPermissionDecision) -> Void
-    @State private var expanded: Bool
-
-    init(
-        events: [HostAgentToolEvent],
-        activities: [AgentTraceActivity],
-        canonicalTools: [IOSConversationProjectionV1.ToolPart] = [],
-        pendingPermissionRequest: HostAgentPermissionRequest?,
-        onPermissionDecision: @escaping (String, HostAgentPermissionDecision) -> Void,
-        expandedByDefault: Bool
-    ) {
-        self.events = events
-        self.activities = activities
-        self.canonicalTools = canonicalTools
-        self.pendingPermissionRequest = pendingPermissionRequest
-        self.onPermissionDecision = onPermissionDecision
-        _expanded = State(initialValue: expandedByDefault)
-    }
-
-    private var visibleCanonicalTools: [IOSConversationProjectionV1.ToolPart] {
-        canonicalTools.filter { tool in events.contains { $0.id == tool.toolCallID } }
-    }
-
-    private var activityStatus: String {
-        let permissionRequired = events.filter { $0.status == .permissionRequired }.count
-        let running = events.filter { event in
-            event.status == .running && canonicalTools.first(where: { $0.toolCallID == event.id }).map { $0.state == .running } != false
-        }.count
-        let failed = events.filter { $0.status == .failed }.count
-        let cancelled = events.filter { $0.status == .cancelled }.count
-        if permissionRequired > 0 {
-            return NSLocalizedString(
-                "chat.host_tool.status.permission_required",
-                value: "Confirmation required",
-                comment: "Tool permission confirmation status"
-            )
-        }
-        if visibleCanonicalTools.contains(where: { $0.state == .waitingForInput }) {
-            return NSLocalizedString("chat.host_tool.status.waiting_input", value: "Input required", comment: "Tool waits for user input")
-        }
-        if running > 0 {
-            return String(format: NSLocalizedString("chat.tool_activity.running_format", value: "%d running", comment: "Running tool count"), running)
-        }
-        if visibleCanonicalTools.contains(where: { $0.state == .pending }) {
-            return NSLocalizedString("chat.host_tool.status.pending", value: "Pending", comment: "Tool is queued")
-        }
-        if failed > 0 {
-            return String(format: NSLocalizedString("chat.tool_activity.failed_format", value: "%d failed", comment: "Failed tool count"), failed)
-        }
-        if cancelled > 0 {
-            return String(format: NSLocalizedString("chat.tool_activity.cancelled_format", value: "%d cancelled", comment: "Cancelled tool count"), cancelled)
-        }
-        let sealed = visibleCanonicalTools.filter { $0.state == .sealed }.count
-        if sealed == events.count && sealed > 0 {
-            return NSLocalizedString("chat.host_tool.status.sealed", value: "Sealed", comment: "Activity is sealed, not necessarily successful")
-        }
-        return String(format: NSLocalizedString("chat.tool_activity.completed_format", value: "%d completed", comment: "Completed tool count"), events.count - sealed)
-    }
-
-    private var activityTint: Color {
-        if events.contains(where: { $0.status == .permissionRequired }) { return .orange }
-        if events.contains(where: { $0.status == .running }) { return DesignTokens.primaryColor }
-        if events.contains(where: { $0.status == .failed }) { return DesignTokens.dangerColor }
-        if events.contains(where: { $0.status == .cancelled }) { return .secondary }
-        return DesignTokens.successColor
-    }
+    let isLive: Bool
+    @Binding var expanded: Bool
 
     var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(events) { event in
-                    HostToolEventCard(
-                        event: event,
-                        activity: activities.first(where: { $0.spanId == event.id }),
-                        canonicalTool: canonicalTools.first { $0.toolCallID == event.id }
-                    )
-                    .nolaDisclosureTransition(reduceMotion: reduceMotion)
+            VStack(alignment: .leading, spacing: 12) {
+                if !text.isEmpty {
+                    ChatSmoothStreamingMarkdownView(content: text, isStreaming: isLive)
+                        .foregroundStyle(.secondary).textSelection(.enabled)
+                        .accessibilityIdentifier("chat.assistant.thinking")
                 }
-            }
-            .padding(.top, 8)
+                ForEach(events) { event in
+                    HostToolEventCard(event: event,
+                        activity: activities.first { $0.spanId == event.id })
+                }
+            }.padding(.top, 8)
         } label: {
-            HStack(spacing: 8) {
-                    Image(systemName: "wrench.and.screwdriver")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(DesignTokens.primaryColor)
-                    Text(NSLocalizedString("chat.tool_activity", value: "Tool activity", comment: "Tool activity group title"))
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.primary)
-                    Spacer(minLength: 0)
-                    Text(activityStatus)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(activityTint)
-            }
-            .padding(.horizontal, 4)
-            .padding(.vertical, 6)
-            .accessibilityValue(activityStatus)
-            .accessibilityIdentifier("chat.assistant.tools.toggle")
+            Label(NSLocalizedString("chat.execution_process", value: "Execution process", comment: "Ordered reasoning and tools"),
+                systemImage: "list.bullet")
+                .font(.callout.weight(.medium)).foregroundStyle(.secondary)
+                .frame(minHeight: 44, alignment: .leading)
+                .accessibilityIdentifier("chat.execution.process.toggle")
         }
         .disclosureGroupStyle(NolaRowDisclosureStyle())
-        .animation(reduceMotion ? nil : DesignTokens.disclosureAnimation, value: expanded)
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("chat.assistant.tools")
-
-        // A current challenge stays actionable even when the tool group is
-        // collapsed. Historical tool metadata is never approval authority.
-        if let pendingPermissionRequest {
-            HostPermissionDecisionCard(request: pendingPermissionRequest, onPermissionDecision: onPermissionDecision)
-        }
+        .accessibilityIdentifier("chat.execution.process")
     }
 }
 
@@ -3763,92 +3708,6 @@ enum ChatThinkingDisclosurePolicy {
         // A new active round is visible by default, but never overrides an
         // explicit collapse. Completion preserves the reader's current choice.
         !isFinished && !userChangedExpansion ? true : current
-    }
-}
-
-private struct ChatThinkingProcessView: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    let text: String
-    let isFinished: Bool
-    let isRetrieving: Bool
-    @State private var isExpanded: Bool
-    @State private var userChangedExpansion = false
-
-    init(text: String, isFinished: Bool, isRetrieving: Bool) {
-        self.text = text
-        self.isFinished = isFinished
-        self.isRetrieving = isRetrieving
-        _isExpanded = State(initialValue: ChatThinkingDisclosurePolicy.initialExpanded(isFinished: isFinished))
-    }
-
-    private var title: String {
-        if isFinished {
-            return L10n.chatThinkingProcess
-        }
-        return L10n.chatThinkingShort
-    }
-
-    var body: some View {
-        DisclosureGroup(isExpanded: Binding(
-            get: { isExpanded },
-            set: { isExpanded = $0; userChangedExpansion = true }
-        )) {
-            if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                HStack(spacing: 8) {
-                    ProgressView()
-                        .scaleEffect(0.65)
-                    Text(L10n.chatAIThinking)
-                        .font(.footnote)
-                        .foregroundColor(.secondary)
-                }
-                .padding(.top, 6)
-            } else {
-                Text(text)
-                    .font(.footnote)
-                    .foregroundColor(.secondary)
-                    .textSelection(.enabled)
-                    .padding(.top, 6)
-                    .transaction { transaction in
-                        // Streaming reasoning should grow in place. It must not
-                        // inherit the timeline's insertion/scroll animations.
-                        transaction.animation = nil
-                    }
-            }
-        } label: {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 7) {
-                    ChatThinkingStatusIcon(isFinished: isFinished)
-                    Text(title)
-                        .font(.footnote.weight(.semibold))
-                        .foregroundColor(.secondary)
-                    Spacer(minLength: 0)
-                }
-
-
-            }
-            .frame(minHeight: 44)
-            .contentShape(Rectangle())
-        }
-        .disclosureGroupStyle(NolaRowDisclosureStyle())
-        .padding(.horizontal, 12)
-        .padding(.vertical, 4)
-        .background(
-            RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous)
-                .fill(isExpanded ? DesignTokens.rowFillColor : .clear)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous)
-                .stroke(isExpanded ? DesignTokens.borderColor : .clear, lineWidth: 1)
-        )
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("chat.assistant.thinking")
-        .animation(reduceMotion ? nil : DesignTokens.disclosureAnimation, value: isExpanded)
-        .onChange(of: isFinished) { _, finished in
-            // Completion updates the status, not the user's reading position.
-            // Previously finished messages still initialize collapsed.
-            isExpanded = ChatThinkingDisclosurePolicy.expandedAfterStatusChange(
-                current: isExpanded, isFinished: finished, userChangedExpansion: userChangedExpansion)
-        }
     }
 }
 

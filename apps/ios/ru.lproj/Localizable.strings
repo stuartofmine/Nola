@@ -3134,3 +3134,6 @@
 
 "settings.navigation.general" = "Общие";
 "settings.navigation.general.detail" = "Оформление, уведомления и обновления";
+
+"chat.experts.conversations" = "Беседы с экспертами";
+"chat.experts.conversations.empty" = "Упомяните эксперта в этой беседе, чтобы увидеть здесь подробности выполнения.";

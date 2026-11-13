@@ -35,7 +35,7 @@ import XCTest
     }
 
     func testSharedMentionQueryPreservesUnicodeAndRejectsEmail() throws {
-        for text in ["mail@example.org", "text @name continued", "@@name"] {
+        for text in ["mail@example.org", "mail＠example.org", "text @name continued", "@＠name", "@研究\n"] {
             XCTAssertNil(ExpertMentionQuery.atEnd(of: text))
         }
         let text = "👩🏽‍💻 讨论 @研究"
@@ -43,6 +43,22 @@ import XCTest
         XCTAssertEqual(query.query, "研究")
         XCTAssertEqual(query.removing(from: text), "👩🏽‍💻 讨论 ")
         XCTAssertEqual(ExpertMentionQuery.atEnd(of: "@")?.query, "")
+        for mark in ["@", "＠"] {
+            let adjacent = "请看\(mark)研究"
+            let match = try XCTUnwrap(ExpertMentionQuery.atEnd(of: adjacent))
+            XCTAssertEqual(match.query, "研究")
+            XCTAssertEqual(match.removing(from: adjacent), "请看")
+        }
+    }
+
+    func testRoomMentionSelectionRemovesFullwidthTokenWithoutLosingDraft() {
+        var draft = IOSRoomDraft(text: "请＠研究", participantID: nil)
+        draft.mention("expert-research")
+        XCTAssertEqual(draft.text, "请")
+        XCTAssertEqual(draft.participantID, "expert-research")
+        XCTAssertEqual(draft.revision, 1)
+        draft.acknowledge(revision: 0)
+        XCTAssertEqual(draft.text, "请", "A stale receipt cannot erase the current draft")
     }
 
     func testNativeKeyboardCommandsSelectMentionsWithoutSending() throws {

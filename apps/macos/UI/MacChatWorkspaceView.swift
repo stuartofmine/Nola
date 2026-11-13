@@ -711,6 +711,8 @@ struct MacChatWorkspaceView: View {
                 close: { activeOverlay = nil; showsInspector = false; codeReference = nil },
                 showsHeaderNavigation: false,
                 participants: inspectorParticipants,
+                expertSessions: AnyView(MacExpertSessionsInspector(workspace: roomWorkspace,
+                    conversationID: model.selectedConversationID).id(model.selectedConversationID)),
                 canReadLocalFiles: canReadLocalConversationFiles,
                 inspectFile: openCodeReference,
                 openReview: { openContent(.review($0)) }

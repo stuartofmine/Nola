@@ -224,6 +224,8 @@ struct IOSAgentRoomTimeline: View {
     var ordinaryMessageTimes: [UUID: Int64] = [:]
     var ordinaryConversationID: UUID?
     var showsOwnerControls = true
+    var showsExpertDetails = true
+    var participantID: String?
     var association: IOSConversationRoomAssociation?
     var submissions: [IOSRoomSubmission] = []
     var pending: [IOSRoomSubmissionWorkspace.Pending] = []
@@ -259,6 +261,8 @@ struct IOSAgentRoomTimeline: View {
             return context + "/" + execution
         })
         let rows = workspace.rows.filter { row in
+            if let participantID, row.participant.id != participantID { return false }
+            if !showsExpertDetails && row.message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return false }
             if let association {
                 return row.message.role != .user && submissions.contains {
                     IOSAgentRoomService.sender(for: $0, association: association)?.id == row.participant.id &&
@@ -314,7 +318,7 @@ struct IOSAgentRoomTimeline: View {
         VStack(spacing: 0) {
             if showsOwnerControls { ScrollView(.horizontal) {
                 HStack(spacing: 12) {
-                    ForEach(workspace.room?.room.participants ?? []) { participant in
+                    ForEach((workspace.room?.room.participants ?? []).filter { participantID == nil || $0.id == participantID }) { participant in
                         if let owner = UUID(uuidString: participant.contextConversationID),
                            let execution = container.chatManager.executionForConversation(owner) {
                             IOSAgentRoomMemberStatus(participant: participant, execution: execution)
@@ -367,7 +371,16 @@ struct IOSAgentRoomTimeline: View {
                                 Text(String(format: String(localized: "room.sent_to"), row.participant.displayName))
                                     .font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .trailing)
                             }
-                        if let owner = UUID(uuidString: row.participant.contextConversationID),
+                        if !showsExpertDetails {
+                            ChatSmoothStreamingMarkdownView(content: row.message.content,
+                                isStreaming: row.projected.state == .running || row.projected.state == .pending)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(12)
+                                .background(expertColors.color(for: row.participant.agentID).fill(colorScheme),
+                                    in: RoundedRectangle(cornerRadius: 16))
+                                .accessibilityIdentifier("chat.expert.answer." + row.projected.messageID)
+                        } else if let owner = UUID(uuidString: row.participant.contextConversationID),
                            let execution = container.chatManager.executionForConversation(owner) {
                             IOSAgentRoomLiveMessage(row: row, execution: execution,
                                 bubbleFill: expertColors.color(for: row.participant.agentID).fill(colorScheme),
@@ -629,6 +642,40 @@ struct IOSChatExpertPicker: View {
     }
 }
 
+/// Child transcripts are navigated from the current conversation's More menu.
+/// Navigating here does not switch the parent conversation or submit new work.
+struct IOSExpertConversations: View {
+    @ObservedObject var workspace: IOSAgentRoomWorkspace
+    @ObservedObject var submission: IOSRoomSubmissionWorkspace
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List(workspace.room?.room.participants ?? []) { participant in
+                NavigationLink {
+                    IOSAgentRoomTimeline(workspace: workspace, participantID: participant.id,
+                        submissions: (submission.submissions[workspace.room?.room.id ?? ""] ?? []).filter {
+                            $0.contextConversationID == participant.contextConversationID
+                        }, pending: (submission.pending[workspace.room?.room.id ?? ""] ?? []).filter {
+                            $0.input.participantID == participant.id
+                        }, onRetry: submission.retry, onCancelPending: submission.cancelPending)
+                        .navigationTitle(participant.displayName)
+                        .navigationBarTitleDisplayMode(.inline)
+                } label: {
+                    HStack(spacing: 12) {
+                        IOSAgentRoomAvatar(participant: participant)
+                        Text(participant.displayName)
+                    }.frame(minHeight: 44)
+                }.accessibilityIdentifier("chat.expert.conversation." + participant.id)
+            }
+            .navigationTitle(Text("chat.experts.conversations"))
+            .toolbar { ToolbarItem(placement: .confirmationAction) {
+                Button("Done") { dismiss() }
+            } }
+        }
+    }
+}
+
 struct IOSUnifiedExpertConversation: View {
     @EnvironmentObject private var container: ServiceContainer
     @ObservedObject var workspace: IOSAgentRoomWorkspace
@@ -636,6 +683,7 @@ struct IOSUnifiedExpertConversation: View {
     let ordinaryMessages: [ChatMessage]
     let ordinaryMessageTimes: [UUID: Int64]
     let conversationID: UUID?
+    var showsExpertDetails = false
     private var receiptReadIdentity: [String] {
         [conversationID?.uuidString ?? "", submission.conversationAssociation?.roomID ?? ""] +
             ordinaryMessages.filter { $0.role == .user }.map {
@@ -646,7 +694,7 @@ struct IOSUnifiedExpertConversation: View {
         VStack(spacing: 0) {
             IOSAgentRoomTimeline(workspace: workspace, ordinaryMessages: ordinaryMessages,
                 ordinaryMessageTimes: ordinaryMessageTimes,
-                ordinaryConversationID: conversationID, showsOwnerControls: false, association: submission.conversationAssociation,
+                ordinaryConversationID: conversationID, showsOwnerControls: false, showsExpertDetails: showsExpertDetails, association: submission.conversationAssociation,
                 submissions: workspace.room.flatMap { submission.submissions[$0.room.id] } ?? [],
                 pending: workspace.room.flatMap { submission.pending[$0.room.id] } ?? [],
                 onRetry: submission.retry, onCancelPending: submission.cancelPending)
@@ -675,10 +723,10 @@ struct IOSUnifiedExpertConversation: View {
             }
             if let error = submission.expertResumeError { Text(error).font(.caption).foregroundStyle(.red).padding(.horizontal) }
 
-            // Before the first canonical reply arrives, keep stop/recovery
-            // reachable. Once a reply exists it owns these controls inline.
+            // The parent shows answer text only, so keep permission, stop and
+            // recovery reachable there even after a child reply arrives.
             ForEach(workspace.room?.room.participants ?? []) { participant in
-                if !workspace.rows.contains(where: { $0.participant.id == participant.id && $0.message.role == .assistant }),
+                if !showsExpertDetails || !workspace.rows.contains(where: { $0.participant.id == participant.id && $0.message.role == .assistant }),
                    let id = UUID(uuidString: participant.contextConversationID),
                    let execution = container.chatManager.executionForConversation(id) {
                     IOSAgentRoomMemberStatus(participant: participant, execution: execution)

@@ -45,6 +45,7 @@ struct ChatTopBar: View {
     var onShowProgress: () -> Void = {}
     var onShowResources: () -> Void = {}
     var onShowWorkTools: () -> Void = {}
+    var onShowExpertConversations: () -> Void = {}
     var reasoningEfforts: [String] = []
     var reasoningPreference: String = "automatic"
     var reasoningSelectionEnabled = true
@@ -191,6 +192,8 @@ struct ChatTopBar: View {
             Button(String(localized: "work.tools.title"), systemImage: "square.grid.2x2", action: onShowWorkTools)
                 .accessibilityIdentifier("chat.work_tools.open")
             Divider()
+            Button(String(localized: "chat.experts.conversations"), systemImage: "bubble.left.and.bubble.right", action: onShowExpertConversations)
+                .accessibilityIdentifier("chat.experts.conversations")
             Button(String(localized: "chat.experts.title"), systemImage: "person.2", action: onShowRooms)
                 .accessibilityIdentifier("chat.experts.open")
             Button(String(localized: "inspector.progress", table: "ConversationInspector"), systemImage: "checklist", action: onShowProgress)

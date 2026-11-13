@@ -57,7 +57,7 @@ struct MacChatInspector: View {
             case .goal: String(localized: "Goal")
             case .context: String(localized: "Context")
             case .execution: String(localized: "Execution")
-            case .participants: String(localized: "Participants")
+            case .participants: String(localized: "chat.expert_sessions", table: "Chat")
             }
         }
         var iconAsset: String {
@@ -87,6 +87,7 @@ struct MacChatInspector: View {
     private let close: (() -> Void)?
     private let showsHeaderNavigation: Bool
     private let participants: [MacInspectorParticipant]
+    private let expertSessions: AnyView?
     private let canReadLocalFiles: Bool
     private let inspectFile: (MacCodeReference) -> Void
     private let openReview: (URL) -> Void
@@ -112,6 +113,7 @@ struct MacChatInspector: View {
         close: (() -> Void)? = nil,
         showsHeaderNavigation: Bool = false,
         participants: [MacInspectorParticipant] = [],
+        expertSessions: AnyView? = nil,
         canReadLocalFiles: Bool = false,
         inspectFile: @escaping (MacCodeReference) -> Void = { _ in },
         openReview: @escaping (URL) -> Void = { _ in }
@@ -121,6 +123,7 @@ struct MacChatInspector: View {
         self.close = close
         self.showsHeaderNavigation = showsHeaderNavigation
         self.participants = participants
+        self.expertSessions = expertSessions
         self.canReadLocalFiles = canReadLocalFiles
         self.inspectFile = inspectFile
         self.openReview = openReview
@@ -209,7 +212,9 @@ struct MacChatInspector: View {
         case .execution:
             MacInspectorProgressView(model: model, mode: .execution)
             MacInspectorActivityView(model: model, chromeSnapshot: chrome.snapshot)
-        case .participants: MacInspectorParticipantsView(participants: participants)
+        case .participants:
+            if let expertSessions { expertSessions }
+            else { MacInspectorParticipantsView(participants: participants) }
         case .context:
             MacInspectorWorkingContextView(model: model)
             MacInspectorOverviewHeader(model: model, hostDisplayName: hostDisplayName)

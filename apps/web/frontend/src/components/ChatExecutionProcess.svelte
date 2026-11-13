@@ -8,7 +8,7 @@
     import ChatToolPart from './ChatToolPart.svelte';
     import ChatToolGroup from './ChatToolGroup.svelte';
 
-    let { parts, live, choices, onexpandedchange, expandedChoice, onprocessexpandedchange }: { parts: TimelinePart[]; live: boolean;
+    let { parts, rounds, live, choices, onexpandedchange, expandedChoice, onprocessexpandedchange }: { parts: TimelinePart[]; rounds: TimelinePart[][]; live: boolean;
         choices: Record<string, boolean>; onexpandedchange: (id: string, expanded: boolean) => void;
         expandedChoice: boolean | null; onprocessexpandedchange: (expanded: boolean) => void } = $props();
     const needsAttention = $derived(timelineToolsNeedAttention(parts));
@@ -17,7 +17,7 @@
     const expanded = $derived(executionProcessExpanded(expandedChoice, needsAttention || currentReasoning.length > 0 || readingToolDetails));
     const thinkingOnly = $derived(parts.every(part => part.value.kind === 'reasoning'
         || part.value.kind === 'historical' && isExecutionPresentation({id: part.id, kind: 'part', part})));
-    const groups = $derived(messagePresentation(parts).filter(isExecutionPresentation));
+    const groups = $derived(rounds.flatMap(round => messagePresentation(round).filter(isExecutionPresentation)));
 </script>
 
 {#if needsAttention && !expanded && !live}<p class="process-attention" role="status">{t($locale, 'chatPage.processAttention')}</p>{/if}
@@ -38,7 +38,11 @@
                 {:else if part.value.kind === 'reasoning' || timelinePartText(part, 'reasoning')}
                     <section class="reasoning" aria-label={t($locale, 'chatPage.thinking')}>
                         {#if !thinkingOnly}<small>{t($locale, 'chatPage.thinking')}</small>{/if}
-                        <Markdown source={timelinePartText(part, 'reasoning')} />
+                        {#if timelinePartText(part, 'reasoning').trim()}
+                            <Markdown source={timelinePartText(part, 'reasoning')} />
+                        {:else if live && currentReasoning.includes(part)}
+                            <small role="status">{t($locale, 'chatPage.working')}</small>
+                        {/if}
                     </section>
                 {/if}
             {/if}

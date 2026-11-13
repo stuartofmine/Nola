@@ -1336,4 +1336,6 @@
     <string name="models_web_host_paste_setup">Paste Connection Setup</string>
     <string name="models_web_host_invalid_setup">Copy Connection Setup from Nola on the host, then paste it here.</string>
     <string name="permission_review_unavailable">Operation details are unavailable. Deny this request or ask the host to provide a reviewable operation.</string>
+    <string name="chat_expert_sessions">Expert sessions</string>
+    <string name="chat_expert_sessions_empty">Expert conversations will appear here after an expert is invited.</string>
 </resources>

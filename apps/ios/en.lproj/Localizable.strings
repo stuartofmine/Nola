@@ -3296,3 +3296,6 @@
 "model.web_host.invalid_setup" = "Copy Connection Setup from Nola on the host, then paste it here.";
 
 "model.web_host.paste_setup" = "Paste Connection Setup";
+
+"chat.experts.conversations" = "Expert conversations";
+"chat.experts.conversations.empty" = "Mention an expert in this conversation to view their execution details here.";

@@ -3119,3 +3119,6 @@
 
 "settings.navigation.general" = "一般";
 "settings.navigation.general.detail" = "外観、通知、ソフトウェアアップデート";
+
+"chat.experts.conversations" = "エキスパートとの会話";
+"chat.experts.conversations.empty" = "この会話でエキスパートをメンションすると、実行の詳細をここで確認できます。";
