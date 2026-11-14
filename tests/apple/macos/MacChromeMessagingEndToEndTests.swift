@@ -30,6 +30,15 @@ struct MacChromeMessagingEndToEndTests {
         #expect(!MacPlaywrightRuntimeService.shared.snapshot(bundle: bundle).isAvailable,
             "A runtime missing its owner queue must not be exported")
         try Data().write(to: runtime.appendingPathComponent("owner_queue.cjs"))
+        #expect(!MacPlaywrightRuntimeService.shared.snapshot(bundle: bundle).isAvailable,
+            "A runtime missing Browser Use must not be exported")
+        for file in ["browser_use.cjs", "browser_use/worker.py", "browser_use/requirements.lock",
+                     "browser_use/site-packages/browser_use/__init__.py", "browser_use/python/bin/python3"] {
+            let url = runtime.appendingPathComponent(file)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data().write(to: url)
+            if file.hasSuffix("bin/python3") { try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path) }
+        }
         let broker = MacChromeMessagingConfiguration(
             serverURL: URL(string: "http://127.0.0.1:12345")!,
             token: "fixture-token", hostID: "fixture", localUserID: "fixture",
@@ -306,6 +315,53 @@ struct MacChromeMessagingEndToEndTests {
         first.stop()
         let (_, response) = try await URLSession.shared.data(from: b.serverURL.appendingPathComponent("api/health"))
         #expect((response as? HTTPURLResponse)?.statusCode == 200)
+    }
+
+    @Test("Concurrent warm-up and chat reuse one ready broker")
+    func concurrentStartsShareReadyListener() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let service = MacChromeMessagingService(installer: nil)
+        defer { service.stop() }
+        let requested = MacChromeMessagingConfiguration(serverURL: URL(string: "http://127.0.0.1:0")!,
+            token: "concurrent-fixture", hostID: "fixture", localUserID: "test",
+            fileURL: directory.appendingPathComponent("broker.json"))
+        let ports = try await withThrowingTaskGroup(of: Int.self) { group in
+            for _ in 0..<16 {
+                group.addTask { try service.ensureStarted(configuration: requested).serverURL.port ?? 0 }
+            }
+            var ports: [Int] = []
+            for try await port in group { ports.append(port) }
+            return ports
+        }
+        #expect(ports.count == 16)
+        #expect(!ports.contains(0))
+        #expect(Set(ports).count == 1)
+        let (_, response) = try await URLSession.shared.data(
+            from: URL(string: "http://127.0.0.1:\(ports[0])/api/health")!)
+        #expect((response as? HTTPURLResponse)?.statusCode == 200)
+    }
+
+    @Test("An occupied port fails only its broker and a later start can recover")
+    func occupiedPortDoesNotReplaceExistingBroker() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let first = MacChromeMessagingService(installer: nil)
+        let second = MacChromeMessagingService(installer: nil)
+        defer { first.stop(); second.stop() }
+        func configuration(_ name: String, _ port: Int) -> MacChromeMessagingConfiguration {
+            .init(serverURL: URL(string: "http://127.0.0.1:\(port)")!, token: name,
+                hostID: name, localUserID: "test", fileURL: directory.appendingPathComponent(name + ".json"))
+        }
+        let active = try first.ensureStarted(configuration: configuration("first", 0))
+        #expect(throws: (any Error).self) {
+            try second.ensureStarted(configuration: configuration("second", active.serverURL.port!))
+        }
+        let (_, response) = try await URLSession.shared.data(from: active.serverURL.appendingPathComponent("api/health"))
+        #expect((response as? HTTPURLResponse)?.statusCode == 200)
+        let recovered = try second.ensureStarted(configuration: configuration("second", 0))
+        #expect(recovered.serverURL.port != 0)
+        #expect(recovered.serverURL.port != active.serverURL.port)
     }
 
     private func post(

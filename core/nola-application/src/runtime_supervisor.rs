@@ -130,6 +130,10 @@ impl RuntimeSupervisor {
         }
     }
 
+    pub(crate) fn has_hot_overlay(&self) -> bool {
+        !self.active_runs.is_empty() || self.terminal_execution.is_some()
+    }
+
     pub(crate) fn ensure_usable(&self) -> Result<(), String> {
         match &self.poison_reason {
             Some(reason) => Err(format!(

@@ -105,7 +105,8 @@ fun ConversationListScreen(
     experts: Map<String, List<String>> = emptyMap(),
     onLoadPreview: (String) -> Unit,
     error: String? = null,
-    onRetry: () -> Unit = {}
+    onRetry: () -> Unit = {},
+    expertChildren: @Composable (Conversation) -> Unit = {}
 ) {
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
@@ -151,7 +152,7 @@ fun ConversationListScreen(
         containerColor = MaterialTheme.colorScheme.surface,
         topBar = {
             NolaTopAppBar(title = stringResource(R.string.conversations_title),
-                titleStyle = MaterialTheme.typography.titleMedium) {}
+                titleStyle = MaterialTheme.typography.headlineSmall.copy(fontSize = 28.sp, lineHeight = 36.sp)) {}
         },
         floatingActionButton = {
             FloatingActionButton(onClick = onNewConversation, containerColor = MaterialTheme.colorScheme.primary,
@@ -198,7 +199,7 @@ fun ConversationListScreen(
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Row(verticalAlignment = Alignment.Top) {
                                 Text(ConversationTitlePresentationPolicy.displayTitle(conv.title, conv.id, stringResource(R.string.chat_new_chat)),
-                                    modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp, lineHeight = 24.sp),
+                                    modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium.copy(fontSize = 16.sp, lineHeight = 23.sp, fontWeight = FontWeight.Medium),
                                     maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Spacer(Modifier.width(8.dp))
                                 Text((if (android.text.format.DateUtils.isToday(conv.lastActiveAt)) timeFmt else dayFmt).format(Date(conv.lastActiveAt)),
@@ -221,10 +222,11 @@ fun ConversationListScreen(
                                 }
                                 append(preview)
                             }, style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 22.sp),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
 
                     }
+                    expertChildren(conv)
                     if (conv.id != visible.lastOrNull()?.id) HorizontalDivider(
                         modifier = Modifier.padding(horizontal = nolaPageGutter()), thickness = 0.5.dp,
                         color = MaterialTheme.colorScheme.outlineVariant)

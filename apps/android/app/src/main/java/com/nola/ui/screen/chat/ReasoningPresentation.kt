@@ -24,3 +24,11 @@ internal fun visibleReasoningPlaceholderId(parts: List<ConversationProjectionV1.
         it is ConversationProjectionV1.Part.Reasoning || it is ConversationProjectionV1.Part.Tool
     } as? ConversationProjectionV1.Part.Reasoning)
         ?.takeUnless { reasoningIsFinished(it.state, isLive) }?.partId
+
+/** A live preview describes one active step, never the result of earlier calls. */
+internal fun currentExecutionActivity(parts: List<ConversationProjectionV1.Part>, isLive: Boolean): ConversationProjectionV1.Part? =
+    if (!isLive) null else parts.lastOrNull { part -> when (part) {
+        is ConversationProjectionV1.Part.Tool -> part.state in setOf(ConversationProjectionV1.ActivityState.Running, ConversationProjectionV1.ActivityState.Pending)
+        is ConversationProjectionV1.Part.Reasoning -> part.state == ConversationProjectionV1.ActivityState.Running
+        else -> false
+    } }

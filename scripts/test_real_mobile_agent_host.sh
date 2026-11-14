@@ -342,7 +342,7 @@ print(selected["udid"])
 
     printf '[real-mobile-host] iOS production WebAgentProvider on %s\n' "$IOS_DEVICE_ID"
     if [[ "${NOLA_SKIP_IOS_BUILD:-0}" != "1" ]]; then
-        xcodebuild build-for-testing -project "$ROOT/Nola.xcodeproj" -scheme Nola \
+        xcodebuild build-for-testing -project "$ROOT/apple/Nola.xcodeproj" -scheme Nola \
             -destination "platform=iOS Simulator,id=$IOS_DEVICE_ID" \
             -derivedDataPath "$DERIVED_DATA" CODE_SIGNING_ALLOWED=NO -quiet
     fi

@@ -1,13 +1,13 @@
 /* Shared surface language: opaque semantic fill with continuous corners.
    Navigation selection stays a background change; it does not gain a frame. */
 :root {
-    --material-fill: var(--bg);
+    --material-fill: var(--surface, #ffffff);
     --material-gradient: var(--material-fill);
     --material-highlight: transparent;
     --material-shadow: none;
 }
 :root[data-theme=dark] {
-    --material-fill: #111;
+    --material-fill: var(--surface, #1b1b19);
     --material-highlight: transparent;
     --material-shadow: none;
 }

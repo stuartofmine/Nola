@@ -20,7 +20,7 @@ def test_matrix_has_unique_auditable_cross_platform_scenarios():
     scenarios = MODULE.load_matrix(Path(__file__).with_name("real_e2e_matrix.json"))
     identifiers = [scenario["id"] for scenario in scenarios]
     assert len(identifiers) == len(set(identifiers))
-    assert {"core", "cli", "web", "mac", "ios", "android", "backend"} == {
+    assert {"core", "cli", "web", "mac", "ios", "android"} == {
         platform for scenario in scenarios for platform in scenario["platforms"]
     }
     assert all(scenario["layer"] for scenario in scenarios)
@@ -37,7 +37,7 @@ def test_smoke_slice_contains_a_real_chain_for_every_client_platform():
         for platform in scenario["platforms"]
     }
     assert real_platforms == {"cli", "web", "mac", "ios", "android"}
-    assert any("backend" in scenario["platforms"] for scenario in selected)
+    assert not any("backend" in scenario["platforms"] for scenario in selected)
 
 
 def test_explicit_scenario_selection_is_not_hidden_by_default_smoke_suite():
@@ -62,6 +62,37 @@ def test_invalid_or_duplicate_matrix_is_rejected(tmp_path):
         assert "duplicate scenario id" in str(error)
     else:
         raise AssertionError("duplicate real E2E scenario was accepted")
+
+
+def test_deleted_repository_entrypoints_cannot_contribute_declared_coverage(tmp_path):
+    value = json.loads(Path(__file__).with_name("real_e2e_matrix.json").read_text())
+    invalid = tmp_path / "matrix.json"
+    for command in ("./scripts/deleted-audit-fixture.sh", "python3 scripts/deleted-audit-fixture.py"):
+        value["scenarios"][0]["command"] = command
+        invalid.write_text(json.dumps(value))
+        try:
+            MODULE.load_matrix(invalid)
+        except ValueError as error:
+            assert "references missing repository script" in str(error)
+        else:
+            raise AssertionError("a missing entrypoint was counted as a declared scenario")
+
+
+def test_standalone_coverage_excludes_missing_scripts_and_exits_nonzero(tmp_path):
+    import subprocess
+    import sys
+    value = json.loads(Path(__file__).with_name("real_e2e_matrix.json").read_text())
+    missing = value["scenarios"][0]
+    missing["command"] = "python3 scripts/deleted-audit-fixture.py"
+    matrix = tmp_path / "matrix.json"
+    matrix.write_text(json.dumps(value))
+    result = subprocess.run([sys.executable, str(Path(__file__).with_name("real_e2e_coverage.py")),
+        "--matrix", str(matrix), "--suite", "full"], capture_output=True, text=True, check=False)
+    assert result.returncode == 1
+    report = json.loads(result.stdout)
+    assert report["complete"] is False
+    assert missing["id"] not in report["consideredScenarios"]
+    assert any("references missing repository script" in error for error in report["matrixErrors"])
 
 
 def test_product_ui_scenario_without_ui_boundary_is_rejected(tmp_path):
@@ -166,11 +197,11 @@ def test_runner_records_timeout_metadata_when_adapter_never_reports(tmp_path):
 def test_runner_emits_heartbeat_for_a_long_running_scenario(tmp_path, capsys):
     scenario = {
         "id": "heartbeat",
-        "platforms": ["backend"],
+        "platforms": ["web"],
         "layer": "system",
         "timeoutSeconds": 5,
         "command": "sleep 1.2",
-        "evidence": {"platforms": ["backend"], "modules": ["http"], "boundaries": ["backend-http"]},
+        "evidence": {"platforms": ["web"], "modules": ["http"], "boundaries": ["host-http"]},
     }
     MODULE.run_scenario(scenario, tmp_path, {"NOLA_E2E_HEARTBEAT_SECONDS": "1"})
     assert "RUNNING" in capsys.readouterr().out

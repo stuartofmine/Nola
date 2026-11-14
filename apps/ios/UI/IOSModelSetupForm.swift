@@ -4,6 +4,7 @@ import SwiftUI
 /// One model setup editor; Core owns enabled models and default selection.
 struct IOSModelSetupForm: View {
     let service: IOSModelConnectionService
+    var onDraftChanged: (Bool) -> Void = { _ in }
     let onSaved: (ModelInfo) -> Void
     private enum Field: Hashable { case endpoint, key, model, name }
     @FocusState private var focusedField: Field?
@@ -21,6 +22,11 @@ struct IOSModelSetupForm: View {
     @State private var discovering = false
     @State private var discoveryAttempt: UUID?
     private var discoveryRoute: [String] { [endpoint, secret, wire, name] }
+
+    private var hasDraft: Bool {
+        !endpoint.isEmpty || !secret.isEmpty || !modelID.isEmpty || !name.isEmpty
+            || wire != "chat_completions" || savedModel != nil
+    }
 
     private var saveDisabled: Bool {
         busy || endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -68,13 +74,18 @@ struct IOSModelSetupForm: View {
                     ForEach(discoveredModels, id: \.id) { Text($0.displayName).tag($0.id) }
                 }.accessibilityIdentifier("model.setup.discovered")
             }
+            field(NSLocalizedString("model.connections.protocol", comment: "Protocol")) {
+                Picker(NSLocalizedString("model.connections.protocol", comment: "Protocol"), selection: $wire) {
+                    Text(verbatim: "Chat Completions").tag("chat_completions")
+                    Text(verbatim: "Responses").tag("responses")
+                    Text(verbatim: "Anthropic Messages").tag("anthropic")
+                }.labelsHidden().frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .accessibilityIdentifier("model.setup.protocol")
+            }
+            Text(NSLocalizedString("model.protocol.guidance", value: "For tools with reasoning, choose Responses if your service supports it. Some Chat Completions models require reasoning to be disabled explicitly.", comment: "API protocol compatibility guidance"))
+                .font(.footnote).foregroundStyle(.secondary)
             DisclosureGroup(isExpanded: $showsAdvanced) {
                 VStack(alignment: .leading, spacing: 12) {
-                    Picker(NSLocalizedString("model.connections.protocol", comment: "Protocol"), selection: $wire) {
-                        Text("Chat Completions").tag("chat_completions")
-                        Text("Responses").tag("responses")
-                        Text("Anthropic Messages").tag("anthropic")
-                    }
                     field(NSLocalizedString("model.connections.name", comment: "Connection name")) {
                         TextField(NSLocalizedString("model.setup.name_hint", value: "Optional connection name", comment: "Optional connection name"), text: $name)
                             .focused($focusedField, equals: .name)
@@ -101,6 +112,7 @@ struct IOSModelSetupForm: View {
         }
         .textInputAutocapitalization(.never).autocorrectionDisabled()
         .onChange(of: discoveryRoute) { _, _ in cancelDiscovery(); discoveredModels = [] }
+        .onChange(of: hasDraft, initial: true) { _, value in onDraftChanged(value) }
         .onDisappear { cancelDiscovery() }
     }
 
@@ -167,8 +179,52 @@ struct IOSModelSetupForm: View {
                 model = configured; savedModel = configured; secret = ""
             }
             try ModelSelectionManager.commitSelectedModel(model, using: service.application)
-            savedModel = nil; endpoint = ""; modelID = ""; name = ""; secret = ""
+            savedModel = nil; endpoint = ""; modelID = ""; name = ""; secret = ""; wire = "chat_completions"
             onSaved(model)
         } catch { self.error = error.localizedDescription }
+    }
+}
+
+struct IOSModelProtocolEditor: View {
+    let model: ModelInfo
+    let service: IOSModelConnectionService
+    let onSaved: (ModelInfo) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var wire: ModelWireProtocol
+    @State private var error: String?
+    @State private var saving = false
+
+    init(model: ModelInfo, service: IOSModelConnectionService, onSaved: @escaping (ModelInfo) -> Void) {
+        self.model = model; self.service = service; self.onSaved = onSaved
+        _wire = State(initialValue: model.wireProtocol ?? .chatCompletions)
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                Text(model.effectiveUpstreamModelId).textSelection(.enabled)
+                Text(model.baseURL ?? "").font(.footnote).foregroundStyle(.secondary).textSelection(.enabled)
+                Picker(NSLocalizedString("model.connections.protocol", comment: "Protocol"), selection: $wire) {
+                    Text("Responses").tag(ModelWireProtocol.responses)
+                    Text("Chat Completions").tag(ModelWireProtocol.chatCompletions)
+                }.accessibilityIdentifier("model.protocol.selection")
+            } footer: {
+                Text(NSLocalizedString("model.protocol.guidance", value: "For tools with reasoning, choose Responses if your service supports it. Some Chat Completions models require reasoning to be disabled explicitly.", comment: "API protocol compatibility guidance"))
+            }
+            if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
+            Button(NSLocalizedString("model.setup.save", value: "Save and use", comment: "Save and use model")) {
+                saving = true; error = nil
+                defer { saving = false }
+                do {
+                    let configured = try service.configureProtocol(for: model, wireProtocol: wire)
+                    try ModelSelectionManager.commitSelectedModel(configured, using: service.application)
+                    onSaved(configured)
+                    dismiss()
+                } catch { self.error = error.localizedDescription }
+            }.disabled(saving || wire == model.wireProtocol)
+                .frame(minHeight: 44).accessibilityIdentifier("model.protocol.save")
+        }
+        .navigationTitle(NSLocalizedString("model.connections.protocol", comment: "Protocol"))
+        .toolbar { ToolbarItem(placement: .cancellationAction) { Button(L10n.close) { dismiss() } } }
     }
 }

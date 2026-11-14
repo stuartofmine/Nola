@@ -103,7 +103,7 @@ private fun SurfaceContent(
         if (restoring) {
             restoreFailed = false
             try {
-                currentRestore(snapshot.identity)?.let { unresolved = it }
+                currentRestore(snapshot.identity)?.let { editing.restore(it, snapshot.identity) }
                 restoring = false
                 failure = null
             }
@@ -157,7 +157,7 @@ private fun SurfaceContent(
     }
     val render: @Composable (String) -> Unit = { id ->
         GenerativeUiNode(id, renderedSnapshot, enabled,
-            value = { node, binding, committed -> drafts[node to binding] ?: committed },
+            value = { node, binding, committed -> if (snapshot.phase == UiSurfacePhase.Ready) drafts[node to binding] ?: committed else committed },
             edit = { node, binding, value ->
                 if (enabled && latest.nodes[node]?.bindings?.containsKey(binding) == true) {
                     if (draftRevision == null) draftRevision = latest.revision
@@ -176,8 +176,12 @@ private fun SurfaceContent(
     }
     Column(Modifier.semantics { this[UiSurfaceIdentitySemantics] = snapshot.identity },
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        renderedSnapshot.root_instance_id?.let { render(it) }
-            ?: snapshot.summary.takeIf { it.isNotEmpty() }?.let { Text(it) }
+        when (snapshot.phase) {
+            UiSurfacePhase.Pending -> Text(context.getString(R.string.ui_surface_pending))
+            UiSurfacePhase.Deleted -> Text(context.getString(R.string.ui_surface_deleted))
+            else -> renderedSnapshot.root_instance_id?.let { render(it) }
+                ?: snapshot.summary.takeIf { it.isNotEmpty() }?.let { Text(it) }
+        }
         if (pending) LinearProgressIndicator(Modifier.fillMaxWidth())
         failure?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         if (restoreFailed) TextButton(onClick = { restoreAttempt += 1 }) {

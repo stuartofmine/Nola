@@ -5,6 +5,23 @@ import XCTest
 
 @MainActor
 final class MacEditedResendTests: XCTestCase {
+    func testInPlaceEditKeepsOwnerAndStableRetryIdentity() throws {
+        var draft = AppleMessageEditDraft(sourceConversationID: "existing-conversation", sourceMessageID: "user-message",
+            expectedSourceRevision: 7, expectedMessageRevision: 3, text: "original")
+        draft.text = "edited"
+        let input = try XCTUnwrap(draft.inPlacePreparation())
+        XCTAssertEqual(input.conversation_id, "existing-conversation")
+        XCTAssertEqual(input.message_id, "user-message")
+        XCTAssertEqual(input.expected_revision, 7)
+        XCTAssertEqual(input.expected_message_revision, 3)
+        XCTAssertEqual(input, draft.inPlacePreparation())
+        XCTAssertEqual(input.edited_text, "edited")
+        draft.text = "another edit"
+        XCTAssertNotEqual(input.operation_id, draft.inPlacePreparation()?.operation_id)
+        draft.text = "  "
+        XCTAssertNil(draft.inPlacePreparation())
+    }
+
     func testExpertConfigurationOnlyChangesExplicitSelections() throws {
         let original: MacCanonicalJSONValue = .object([
             "modelSelectionID": .string("configured:original"),

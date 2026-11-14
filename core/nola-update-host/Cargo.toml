@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-nola_store = { path = "../nola-store" }
+nola_domain = { path = "../nola-domain" }
 base64 = "0.21"
 hex = "0.4"
 ring = "0.17"

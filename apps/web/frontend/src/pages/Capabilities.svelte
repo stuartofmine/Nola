@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { randomId } from '../lib/randomId';
     import { workspacePageApi } from '../lib/workspacePageLocation';
     const api = workspacePageApi(unscopedApi);
     import { workspaceElements } from '../lib/workspacePageLocation';
@@ -34,6 +35,9 @@
     let dialog: HTMLDialogElement;
     let retryButton = $state<HTMLButtonElement>();
     let read: AbortController | undefined;
+    let reviewRead: AbortController | undefined;
+    let reviewLoading = $state(false);
+    let disposed = false;
     const items = $derived(settings ? mode === 'skills' ? settings.skills : settings.mcp_servers : []);
     const filtered = $derived(items.map((item, index) => ({ item, index })).filter(({ item }) =>
         (source === 'all' || (source === 'builtin') === builtin(item)) &&
@@ -42,6 +46,7 @@
     const sections = $derived(capabilitySections(filtered, mode));
     function displayName(item: Capability) { return capabilityName(item, t($locale, 'capability.unnamed')); }
     function showError(cause: unknown) {
+        if (disposed) return;
         errorDetail = '';
         if (cause instanceof CapabilityValidationError) error = cause.key;
         else { error = 'capability.requestFailed'; errorDetail = errorMessage(cause); }
@@ -71,27 +76,40 @@
         }
         finally { busy = false; }
     }
-    onMount(() => { void load(); return () => read?.abort(); });
+    onMount(() => { void load(); return () => { disposed = true; read?.abort(); reviewRead?.abort(); }; });
     function edit(item?: Capability, index: number | null = null) {
         if (busy) return;
-        selected = index; original = item ?? { name: t($locale, mode === 'skills' ? 'capability.newSkill' : 'capability.newMcp'), enabled: mode === 'skills', ...(mode === 'skills' ? { id: crypto.randomUUID(), category_id: 'custom' } : { server_id: crypto.randomUUID() }) };
-        draft = capabilityDraft(original); error = ''; notice = ''; dialog.showModal();
+        try {
+            const next = item ?? { name: t($locale, mode === 'skills' ? 'capability.newSkill' : 'capability.newMcp'), enabled: mode === 'skills', ...(mode === 'skills' ? { id: randomId(), category_id: 'custom' } : { server_id: randomId() }) };
+            selected = index; original = next;
+            draft = capabilityDraft(original); error = ''; notice = ''; dialog.showModal();
+        } catch (cause) { showError(cause); }
     }
     function addLocalMcp() {
-        edit({ server_id: crypto.randomUUID(), name: t($locale, 'capability.newMcp'), command: '', enabled: false });
+        try { edit({ server_id: randomId(), name: t($locale, 'capability.newMcp'), command: '', enabled: false }); }
+        catch (cause) { showError(cause); }
     }
     async function openSkillReview() {
+        if (disposed || reviewLoading) return;
+        const controller = new AbortController(); reviewRead = controller;
+        reviewLoading = true;
         try {
-            skillReview = await api('/api/agent/skill-settings-review');
-            await tick(); reviewDialog.showModal();
-        } catch (cause) { showError(cause); }
+            const result = await api<typeof skillReview>('/api/agent/skill-settings-review', {signal: controller.signal});
+            if (disposed || controller.signal.aborted) return;
+            skillReview = result;
+            await tick();
+            if (!disposed && !controller.signal.aborted) reviewDialog.showModal();
+        } catch (cause) { if (!controller.signal.aborted) showError(cause); }
+        finally { if (!disposed) reviewLoading = false; }
     }
     async function confirmSkillReview() {
         if (!skillReview?.pending || busy) return;
         if (!await confirmation.ask({ title: t($locale, 'capability.reviewTitle'), description: t($locale, 'capability.reviewHint'), confirmLabel: t($locale, 'capability.useCore'), cancelLabel: t($locale, 'capability.cancel') })) return;
+        if (disposed) return;
         busy = true;
         try {
             await api('/api/agent/skill-settings-review', { method: 'POST', body: JSON.stringify({ expected_revision: skillReview.expected_revision, use_core_settings: true }) });
+            if (disposed) return;
             reviewDialog.close(); skillReview = undefined; error = ''; errorDetail = '';
         } catch (cause) { showError(cause); return; }
         finally { busy = false; }
@@ -100,13 +118,14 @@
     async function close(event?: Event) {
         event?.preventDefault(); if (busy) return;
         if (dirty && !await confirmation.ask({ title: t($locale, 'capability.discardTitle'), description: t($locale, 'capability.discardBody'), confirmLabel: t($locale, 'capability.discard'), cancelLabel: t($locale, 'capability.keepEditing'), destructive: true })) return;
-        dialog.close(); original = undefined;
+        if (!disposed) { dialog.close(); original = undefined; }
     }
     async function persist(replacement?: Capability) {
-        if (busy || !settings) return;
+        if (disposed || busy || !settings) return;
         busy = true; error = ''; notice = '';
         try {
             const result = capabilitySnapshot(await api<unknown>('/api/agent/settings', { method: 'POST', body: JSON.stringify(capabilityMutation(settings, mode, selected, replacement)) }));
+            if (disposed) return;
             settings = result;
             executionBackends = result.execution_backends;
             dialog.close(); original = undefined; notice = replacement ? 'capability.saved' : 'capability.deleted';
@@ -122,12 +141,14 @@
     async function remove() {
         if (busy || !original || (mode === 'skills' && builtin(original))) return;
         if (!await confirmation.ask({ title: t($locale, 'capability.deleteTitle'), description: t($locale, 'capability.deleteBody'), confirmLabel: t($locale, 'capability.delete'), destructive: true })) return;
+        if (disposed) return;
         if (selected === null) { dialog.close(); original = undefined; return; }
         await persist();
     }
     async function restore() {
         if (busy || !original || mode !== 'skills') return;
         if (!await confirmation.ask({ title: t($locale, 'capability.restoreTitle'), description: t($locale, 'capability.restoreBody'), confirmLabel: t($locale, 'capability.restore') })) return;
+        if (disposed || !original) return;
         try { await persist(restoredSkill(original)); } catch (cause) { showError(cause); }
     }
     function switchMode(next: CapabilityMode) {
@@ -156,7 +177,7 @@
             <p class="muted">{backend.display_name}: {t($locale, 'execution.scope.noApprovalBridge')}</p>
         {/each}
     </aside>
-    <div class="retained-settings">{#if skillReview?.pending || settings?.skill_settings_backup_key}<button disabled={busy} onclick={openSkillReview}>{t($locale, 'capability.reviewTitle')}</button>{/if}</div>
+    <div class="retained-settings">{#if skillReview?.pending || settings?.skill_settings_backup_key}<button disabled={busy || reviewLoading} aria-busy={reviewLoading} onclick={openSkillReview}>{t($locale, 'capability.reviewTitle')}</button>{/if}</div>
     {#if skillReview?.pending}<p class="notice" role="status">{t($locale, 'capability.reviewHint')}</p>{/if}
     <div class="tabs" role="tablist" aria-label={t($locale, 'capability.type')}>
         {#each ['skills', 'mcp'] as value}<button id="capability-{value}" role="tab" aria-selected={mode === value} aria-controls="capability-panel" tabindex={mode === value ? 0 : -1} onkeydown={tabKey} disabled={busy} onclick={() => switchMode(value as CapabilityMode)}>{t($locale, value === 'skills' ? 'capability.skills' : 'capability.mcp')}</button>{/each}
@@ -204,7 +225,7 @@
         </div>
     </form>{/if}
 </dialog>
-<dialog use:ownDialog bind:this={reviewDialog} aria-label={t($locale, 'capability.reviewTitle')}>
+<dialog use:ownDialog bind:this={reviewDialog} oncancel={event => { if (busy) event.preventDefault(); }} aria-label={t($locale, 'capability.reviewTitle')}>
     {#if skillReview}
         <h2>{t($locale, 'capability.reviewTitle')}</h2>
         {#if skillReview.pending}<p>{t($locale, 'capability.reviewHint')}</p>{/if}

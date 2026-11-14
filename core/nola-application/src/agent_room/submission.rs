@@ -162,10 +162,20 @@ pub fn submissions<R: ProductSettingRepository + ?Sized>(
     limit: usize,
     offset: usize,
 ) -> Result<Vec<RoomSubmission>, String> {
+    read_submissions(store,room_id,limit,offset,true)
+}
+
+pub(crate) fn all_submissions<R: ProductSettingRepository + ?Sized>(store:&R,room_id:&str,limit:usize,offset:usize)
+    -> Result<Vec<RoomSubmission>,String> {
+    read_submissions(store,room_id,limit,offset,false)
+}
+fn read_submissions<R: ProductSettingRepository + ?Sized>(store:&R,room_id:&str,limit:usize,offset:usize,public:bool)
+    -> Result<Vec<RoomSubmission>,String> {
     load(store, room_id)?.ok_or("room_not_found")?;
-    store
-        .list_room_submissions(&prefix(room_id)?, limit.min(200), offset)
-        .map_err(|e| e.to_string())?
+    if limit==0 {return Err("invalid_room_submission_page_bounds".into());}
+    let rows=if public {store.list_public_room_submissions(&prefix(room_id)?,limit.min(200),offset)}
+        else {store.list_room_submissions(&prefix(room_id)?,limit.min(200),offset)};
+    rows.map_err(|e| e.to_string())?
         .into_iter()
         .map(|row| {
             let value: RoomSubmission =

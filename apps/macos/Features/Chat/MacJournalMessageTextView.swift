@@ -549,10 +549,11 @@ nonisolated enum MacJournalFailurePresentation {
 
 nonisolated enum MacJournalPartFlow {
     static func segments(_ parts: [MacAssistantJournalPart]) -> [AppleMessagePartFlowSegment<MacAssistantJournalPart>] {
-        MacSingleExecutionFlow.segments(parts, id: \.part_id) { part in
+        AppleMessagePartFlow.segments(parts, id: \.part_id) { part in
             switch part.metadata {
-            case .reasoning, .tool: true
-            default: false
+            case .reasoning: .reasoning
+            case .tool: .tool
+            default: .content
             }
         }
     }
@@ -566,15 +567,17 @@ nonisolated enum MacJournalPartFlow {
     static func hasLiveReasoning(_ parts: [MacAssistantJournalPart], delivery: MacChatMessage.DeliveryState?) -> Bool {
         !liveReasoning(parts, delivery: delivery).isEmpty
     }
+    static func processDelivery(run: MacChatMessage.DeliveryState?, isLatest: Bool) -> MacChatMessage.DeliveryState? {
+        guard run == .running else { return run }
+        return isLatest ? .running : nil
+    }
     static func delivery(_ parts: [MacAssistantJournalPart]) -> MacChatMessage.DeliveryState? {
         let states = parts.compactMap { part -> String? in
             switch part.metadata { case .reasoning(let value): value.state; case .tool(let value): value.state; default: nil }
         }
         if states.contains(where: { !["completed", "sealed", "cancelled", "failed"].contains($0) }) { return .running }
-        if states.contains("failed") { return .failed }
-        if states.contains("cancelled") { return .cancelled }
-        if states.contains("sealed") { return nil }
-        return .completed
+        // Step outcomes are not an outcome for reasoning or for the run.
+        return nil
     }
 }
 
@@ -596,8 +599,25 @@ nonisolated struct MacJournalProcessProjection {
             default: return nil
             }
         }
-        return ["waiting_for_permission", "waiting_for_input", "pending", "failed"]
+        return ["waiting_for_permission", "waiting_for_input"]
             .first { states.contains($0) }
+    }
+    var currentActivityTitle: String? {
+        guard let current = activities.last(where: { part in
+            switch part.metadata {
+            case .tool(let tool): return ["running", "pending"].contains(tool.state)
+            case .reasoning(let activity): return activity.isRunning
+            default: return false
+            }
+        }) else { return nil }
+        switch current.metadata {
+        case .tool(let tool) where ["running", "pending"].contains(tool.state):
+            if case .inline(let title) = tool.title, !title.isEmpty { return title }
+            return String(localized: "Activity")
+        case .reasoning(let activity) where activity.isRunning:
+            return String(localized: "Thinking")
+        default: return nil
+        }
     }
     var requiresAttention: Bool {
         attentionState != nil
@@ -617,9 +637,39 @@ nonisolated struct MacJournalProcessProjection {
 
 nonisolated enum MacJournalProcessStatus {
     static func primary(delivery: MacChatMessage.DeliveryState?, attention: String?) -> String? {
-        if let delivery, delivery != .running { return delivery.rawValue }
-        if attention == "waiting_for_permission" || attention == "waiting_for_input" { return attention }
-        return delivery?.rawValue
+        // Only an unresolved user action belongs on the process disclosure.
+        // Tool outcomes remain on their own rows; run failures render separately.
+        guard delivery == .running else { return nil }
+        return ["waiting_for_permission", "waiting_for_input"].contains(attention ?? "") ? attention : nil
+    }
+}
+
+/// Reference metadata is a compact footer; prose and interactive surfaces keep
+/// their committed flow. All canonical reference IDs remain in coverage.
+nonisolated struct MacJournalSourceGrouping {
+    var parts: [MacAssistantJournalPart] = []
+    var referenceIDs = Set<String>()
+    init(_ journal: [MacAssistantJournalPart]) {
+        var seen = Set<String>()
+        for part in journal {
+            let uri: MacJournalText
+            let fallback: String
+            switch part.metadata {
+            case .source(let source): uri = source.uri; fallback = source.source_id
+            case .citation(let citation):
+                uri = citation.uri; fallback = citation.source_id
+                // Distinct pinpoint citations retain their own locations/ranges.
+                if citation.location != nil || citation.byte_range != nil {
+                    referenceIDs.insert(part.part_id); parts.append(part); continue
+                }
+            default: continue
+            }
+            referenceIDs.insert(part.part_id)
+            let key: String
+            if case .inline(let value) = uri, !value.isEmpty { key = "uri:" + value }
+            else { key = "source:" + fallback }
+            if seen.insert(key).inserted { parts.append(part) }
+        }
     }
 }
 
@@ -872,16 +922,6 @@ enum MacJournalTextRead {
     }
 }
 
-nonisolated enum MacExpertReplyPresentation {
-    static func includes(_ metadata: MacAssistantJournalMetadata) -> Bool {
-        switch metadata {
-        case .text(let text): return text.visibility == "public"
-        case .source, .citation, .attachment, .uiSurface: return true
-        default: return false
-        }
-    }
-}
-
 @MainActor
 struct MacJournalMessageTextView: View {
     @Environment(\.uiSurfaceContext) private var uiSurfaceContext
@@ -893,13 +933,20 @@ struct MacJournalMessageTextView: View {
     var taskGuidance: [String: MacCoreTaskGuidanceQueue] = [:]
     var onReferencesLoaded: (MacAssistantJournalIdentity, Set<String>, Set<String>, Set<String>) -> Void = { _, _, _, _ in }
     var presentationOwner: MacJournalPresentationOwner?
-    var publicReplyOnly = false
     @State private var localOwner = MacJournalPresentationOwner()
     @State private var terminalOutcome: (owner: MacJournalOwnerKey, value: String)?
+    @State private var terminalFeedback: (owner: MacJournalOwnerKey, value: String)?
     private var outcome: String? {
         terminalOutcome?.owner == reference.ownerKey ? terminalOutcome?.value : nil
     }
     private var owner: MacJournalPresentationOwner { presentationOwner ?? localOwner }
+    private var effectiveDelivery: MacChatMessage.DeliveryState? {
+        if let deliveryState { return deliveryState }
+        guard let outcome else { return nil }
+        if outcome == "cancelled" { return .cancelled }
+        if outcome == "failed" { return .failed }
+        return .completed // terminal delivery is not a claim of skill/task success
+    }
     // SwiftUI may evaluate a reused row before onChange delivers its next
     // reference. Never paint the previous conversation/Run for that one frame.
     private var selectedProjection: MacJournalPresentationOwner.Projection? { owner.projection(matching: reference) }
@@ -909,8 +956,8 @@ struct MacJournalMessageTextView: View {
     @ViewBuilder private func journalParts(_ visibleParts: [MacAssistantJournalPart],
         allParts: [MacAssistantJournalPart], reference loadedReference: MacJournalMessageReference,
         inlineReasoning: Bool = false) -> some View {
-        // Tool compaction sees the untouched canonical sequence. Every other
-        // Part remains at its own position; only Copy assembles public prose.
+        // Owned reads still use canonical Parts. Reference metadata is grouped
+        // separately; prose, tools and interactive surfaces keep their flow.
         let grouping = MacJournalCompletedToolGrouping(allParts)
         ForEach(visibleParts, id: \.part_id) { part in
             if let group = grouping.groups[part.part_id] {
@@ -930,7 +977,7 @@ struct MacJournalMessageTextView: View {
             } else if case .error(let failure) = part.metadata {
                 MacJournalFailureView(reference: loadedReference, part: part, failure: failure)
             } else if case .skill(let skill) = part.metadata {
-                MacJournalSkillView(reference: loadedReference, part: part, skill: skill)
+                MacJournalSkillView(reference: loadedReference, part: part, skill: skill, delivery: effectiveDelivery)
             } else if case .modelAttempt(let attempt) = part.metadata {
                 MacJournalModelAttemptView(reference: loadedReference, part: part, attempt: attempt)
             } else if case .task(let task) = part.metadata {
@@ -975,18 +1022,20 @@ struct MacJournalMessageTextView: View {
         return VStack(alignment: .leading, spacing: 12) {
             if let projection {
                 let loadedReference = projection.reference
-                let ordered = publicReplyOnly ? projection.parts.filter {
-                    MacExpertReplyPresentation.includes($0.metadata)
-                } : projection.parts
-                ForEach(MacJournalPartFlow.segments(ordered)) { segment in
+                let ordered = projection.parts
+                let sources = MacJournalSourceGrouping(ordered)
+                let flow = MacJournalPartFlow.segments(ordered.filter { !sources.referenceIDs.contains($0.part_id) })
+                let latestProcessID = flow.last(where: { $0.kind == .process })?.id
+                ForEach(flow) { segment in
                     if segment.kind == .process {
                         let process = MacJournalProcessProjection(segment.parts)
-                        MacJournalProcessView(partIDs: segment.parts.map(\.part_id), delivery: MacJournalPartFlow.delivery(segment.parts),
-                            requiresAttention: process.requiresAttention,
+                        let processDelivery = MacJournalPartFlow.processDelivery(run: effectiveDelivery,
+                            isLatest: segment.id == latestProcessID)
+                        MacJournalProcessView(partIDs: segment.parts.map(\.part_id), delivery: processDelivery,
+                            requiresAttention: processDelivery == .running && process.requiresAttention,
                             toolCount: process.toolCount, attentionState: process.attentionState,
-                            hasLiveReasoning: MacJournalPartFlow.hasLiveReasoning(segment.parts, delivery: deliveryState),
                             reasoningOnly: process.toolCount == 0,
-                            settledStatus: MacJournalPartFlow.delivery(segment.parts) == nil ? "sealed" : nil) {
+                            currentActivityTitle: processDelivery == .running ? process.currentActivityTitle : nil) {
                             journalParts(segment.parts, allParts: ordered,
                                 reference: loadedReference, inlineReasoning: true)
                         }
@@ -994,10 +1043,18 @@ struct MacJournalMessageTextView: View {
                         journalParts(segment.parts, allParts: ordered, reference: loadedReference)
                     }
                 }
+                if !sources.parts.isEmpty {
+                    MacJournalReferenceFooter(reference: loadedReference, parts: sources.parts)
+                        .id(loadedReference.ownerKey)
+                }
             }
             if let state = MacJournalRunStatus.attentionState(outcome) {
-                MacJournalStatusText(state: state)
-                    .accessibilityIdentifier("chat.journal.runOutcome")
+                VStack(alignment: .leading, spacing: 4) {
+                    MacJournalStatusText(state: state)
+                    if terminalFeedback?.owner == reference.ownerKey, let feedback = terminalFeedback?.value {
+                        Text(feedback).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                    }
+                }.accessibilityIdentifier("chat.journal.runOutcome")
             }
             if let error = owner.error {
                 Text(error).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
@@ -1023,6 +1080,7 @@ struct MacJournalMessageTextView: View {
                 if let terminal, terminal.runID == current.cursor.identity.run_id,
                    terminal.conversationID == current.cursor.identity.conversation_id {
                     terminalOutcome = (current.ownerKey, terminal.result.value.kind.rawValue)
+                    terminalFeedback = terminal.result.value.blockedFeedback.map { (current.ownerKey, $0) }
                 }
             } catch { /* Never invent success when the canonical result cannot be read. */ }
         }
@@ -1054,6 +1112,43 @@ struct MacJournalMessageTextView: View {
 }
 
 @MainActor
+private struct MacJournalReferenceFooter: View {
+    let reference: MacJournalMessageReference
+    let parts: [MacAssistantJournalPart]
+    @State private var showsAll = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 5) {
+                Text("Sources", tableName: "Chat")
+                Text(parts.count, format: .number)
+            }.font(.caption).foregroundStyle(.secondary)
+            ForEach(Array(parts.prefix(showsAll ? parts.count : 3).enumerated()), id: \.element.part_id) { index, part in
+                switch part.metadata {
+                case .source(let value):
+                    MacJournalSourceView(reference: reference, part: part, title: value.title,
+                        uri: value.uri, mime: value.mime_type, referenceNumber: index + 1)
+                case .citation(let value):
+                    MacJournalSourceView(reference: reference, part: part, title: value.title,
+                        uri: value.uri, mime: value.mime_type, location: value.location, referenceNumber: index + 1)
+                default: EmptyView()
+                }
+            }
+            if parts.count > 3 {
+                Button { showsAll.toggle() } label: {
+                    Text(showsAll ? "Show fewer sources" : "Show all sources", tableName: "Chat")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .frame(minHeight: 28).contentShape(Rectangle())
+                }.buttonStyle(.plain)
+                    .accessibilityIdentifier("chat.journal.sources.toggle")
+                    .accessibilityValue(showsAll ? Text("Expanded", tableName: "Chat") : Text("Collapsed", tableName: "Chat"))
+            }
+        }.accessibilityElement(children: .contain)
+            .accessibilityIdentifier("chat.journal.references")
+    }
+}
+
+@MainActor
 private struct MacJournalSourceView: View {
     let reference: MacJournalMessageReference
     let part: MacAssistantJournalPart
@@ -1063,9 +1158,12 @@ private struct MacJournalSourceView: View {
     var location: MacAssistantJournalMetadata.Location?
     var operation: MacJournalText?
     var isAttachment = false
+    var referenceNumber: Int? = nil
+    @State private var showsDetails = false
+    @State private var resolvedTitle: String?
+    @State private var resolvedTitleKey: MacJournalFieldReadKey?
     @State private var resolvedURI: String?
     @State private var resolvedKey: MacJournalFieldReadKey?
-    @State private var technicalExpanded = false
 
     private var uriContent: MacAssistantJournalContentReference? {
         guard case .field(let field) = uri else { return nil }
@@ -1080,16 +1178,24 @@ private struct MacJournalSourceView: View {
     private var address: String? {
         inline(uri) ?? (resolvedKey == readKey ? resolvedURI : nil)
     }
+    private var titleReadKey: MacJournalFieldReadKey {
+        let field: String? = { if case .field(let field) = title { return field }; return nil }()
+        return .init(databaseURL: reference.databaseURL, identity: reference.cursor.identity,
+            partID: part.part_id, content: part.bodies.first { $0.field == field })
+    }
+    private var name: String? {
+        inline(title) ?? (resolvedTitleKey == titleReadKey ? resolvedTitle : nil)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let address {
                 MacJournalArtifactList(reference: reference, artifacts: [
-                    .init(uri: address, name: inline(title) ?? address,
+                    .init(uri: address, name: name ?? URL(string: address)?.host ?? address,
                         mimeType: mime.flatMap(inline), operation: operation.flatMap(inline))
-                ])
-            } else if let name = inline(title) {
-                Label { Text(verbatim: name) } icon: { Image(systemName: isAttachment ? "doc" : "link") }
+                ], referenceStyle: !isAttachment, referenceNumber: referenceNumber, onDetails: { showsDetails = true })
+            } else if let name {
+                Text(verbatim: name).font(isAttachment ? .body : .caption).foregroundStyle(.secondary)
                 if let operation = operation.flatMap(inline) {
                     Text(verbatim: operation).font(.caption).foregroundStyle(.secondary)
                 }
@@ -1104,39 +1210,38 @@ private struct MacJournalSourceView: View {
                     Text(verbatim: section).font(.caption)
                 }
             }
-            // Field-backed titles/URIs/evidence remain bounded reads of this
-            // exact Part. Never invent a destination from a truncated URI.
-            ForEach(part.bodies.filter { MacJournalSourceFieldPresentation.isPrimary($0.field) }, id: \.field) { content in
-                MacJournalTextPreview(reference: reference, partID: part.part_id,
-                    content: content, isFinal: true, presentation: .plain, usesMonospacedText: false)
-            }
-            DisclosureGroup(isExpanded: $technicalExpanded) {
-                if technicalExpanded {
+        }
+        .contextMenu {
+            Button { showsDetails = true } label: { Text("Details") }
+        }
+        .accessibilityAction(named: Text("Details")) { showsDetails = true }
+        .popover(isPresented: $showsDetails) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    if let name { Text(verbatim: name).font(.callout.weight(.medium)) }
                     if let address { Text(verbatim: address).font(.caption).textSelection(.enabled) }
-                    switch part.metadata {
-                    case .source(let source):
-                        Text(verbatim: source.source_id).font(.caption).textSelection(.enabled)
-                    case .citation(let citation):
-                        Text(verbatim: citation.source_id + " · " + citation.citation_id)
-                            .font(.caption).textSelection(.enabled)
-                        Text(verbatim: citation.origin_tool_call_id).font(.caption).textSelection(.enabled)
-                        if let range = citation.byte_range {
-                            Text(verbatim: "[\(range.start), \(range.end))").font(.caption.monospaced()).textSelection(.enabled)
-                        }
-                    case .attachment(let attachment):
-                        Text(verbatim: attachment.attachment_id).font(.caption).textSelection(.enabled)
-                    default: EmptyView()
-                    }
-                    ForEach(part.bodies.filter { !MacJournalSourceFieldPresentation.isPrimary($0.field) }, id: \.field) { content in
+                    ForEach(part.bodies, id: \.field) { content in
                         MacJournalTextPreview(reference: reference, partID: part.part_id,
                             content: content, isFinal: true,
-                            presentation: content.field == "source_evidence" ? .structured("evidence") : .plain)
+                            presentation: content.field == "source_evidence" ? .structured("evidence") : .plain,
+                            usesMonospacedText: false)
                     }
-                }
-            } label: { Text("Technical details", tableName: "Chat").font(.caption).foregroundStyle(.secondary) }
-            .disclosureGroupStyle(MacRowDisclosureStyle())
+                }.padding(16)
+            }.frame(width: 440, height: 300)
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(isAttachment ? "chat.journal.attachment" : "chat.journal.source")
+        .onChange(of: reference.ownerKey) { _, _ in showsDetails = false }
+        .task(id: titleReadKey) {
+            let key = titleReadKey
+            resolvedTitle = nil; resolvedTitleKey = nil
+            guard let content = key.content else { return }
+            do {
+                let value = try await MacJournalTextRead.completeSmallText(reference, partID: part.part_id, content: content)
+                try Task.checkCancellation()
+                resolvedTitle = value; resolvedTitleKey = key
+            } catch { /* Unresolved titles never borrow text from another Part. */ }
+        }
         .task(id: readKey) {
             let key = readKey
             resolvedURI = nil
@@ -1175,6 +1280,7 @@ private struct MacJournalTaskView: View {
     let guidance: MacCoreTaskGuidanceQueue?
     let onSendGuidance: (String, String) -> Void
     let onRequestCancellation: (String) -> Void
+    @Environment(\.macTranscriptReadOnly) private var readOnly
     @State private var draft = ""
     private var terminal: Bool { task.isTerminal }
 
@@ -1195,7 +1301,7 @@ private struct MacJournalTaskView: View {
                     Text(verbatim: message.content).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                 }
             }
-            if task.acceptsInteraction {
+            if !readOnly, task.acceptsInteraction {
                 HStack {
                     if task.supportsGuidance {
                     TextField(String(localized: "Task guidance", table: "Chat"), text: $draft)
@@ -1215,7 +1321,7 @@ private struct MacJournalTaskView: View {
                     }
                 }
             }
-            if task.supportsCancellation {
+            if !readOnly, task.supportsCancellation {
                 MacOwnedTaskRecoveryView(reference: reference, taskID: task.task_id)
             }
             // Controls send exact Task IDs to the existing admission port;
@@ -1243,7 +1349,10 @@ private struct MacJournalStatusText: View {
         default: "Unknown"
         }
     }
-    var body: some View { Text(label).font(.caption).foregroundStyle(.secondary) }
+    var body: some View {
+        MacFlowingStatusText(text: Text(label), isRunning: state == "running")
+            .font(.caption)
+    }
 }
 
 @MainActor
@@ -1251,17 +1360,30 @@ private struct MacJournalSkillView: View {
     let reference: MacJournalMessageReference
     let part: MacAssistantJournalPart
     let skill: MacAssistantJournalMetadata.Skill
+    let delivery: MacChatMessage.DeliveryState?
+    @State private var showsDetails = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            MacJournalSkillHeader(value: .init(skill: skill)).equatable()
+            HStack(spacing: 6) {
+                MacJournalSkillHeader(value: .init(skill: skill, delivery: delivery)).equatable()
+                Button { showsDetails.toggle() } label: {
+                    Image(systemName: "info.circle").frame(width: 28, height: 28)
+                }.buttonStyle(.plain).foregroundStyle(.secondary)
+                    .accessibilityLabel(Text("Details"))
+                    .accessibilityIdentifier("chat.journal.skill.details")
+                    .popover(isPresented: $showsDetails) {
+                        MacJournalSkillDetails(skillID: skill.skill_id, runID: skill.run_id, mode: skill.mode,
+                            modelTurns: skill.model_turns, toolCalls: skill.tool_calls, elapsedMillis: skill.elapsed_millis)
+                            .padding(16).frame(width: 280)
+                    }
+            }
             ForEach(part.bodies, id: \.field) { content in
                 MacJournalTextPreview(reference: reference, partID: part.part_id, content: content,
-                    isFinal: skill.state != "running", presentation: .plain)
+                    isFinal: skill.state != "running" || (delivery != nil && delivery != .running), presentation: .plain)
             }
-            MacJournalSkillDetails(skillID: skill.skill_id, runID: skill.run_id, mode: skill.mode)
-                .equatable()
         }.accessibilityIdentifier("chat.journal.skill")
+            .onChange(of: reference.ownerKey) { _, _ in showsDetails = false }
     }
 }
 
@@ -1273,10 +1395,12 @@ nonisolated struct MacJournalSkillHeaderValue: Equatable {
     let toolCalls: String
     let elapsedMillis: String
 
-    init(skill: MacAssistantJournalMetadata.Skill) {
-        if case .inline(let name) = skill.display_name { title = name }
-        else { title = skill.skill_id }
-        state = skill.state
+    init(skill: MacAssistantJournalMetadata.Skill, delivery: MacChatMessage.DeliveryState? = nil) {
+        if case .inline(let name) = skill.display_name, !name.isEmpty, name != skill.skill_id { title = name }
+        else { title = MacBuiltInSkillID(rawValue: skill.skill_id)?.localizedTitle ?? skill.skill_id }
+        if skill.state == "running", let delivery, delivery != .running {
+            state = delivery == .cancelled ? "cancelled" : "incomplete"
+        } else { state = skill.state }
         modelTurns = skill.model_turns
         toolCalls = skill.tool_calls
         elapsedMillis = skill.elapsed_millis
@@ -1295,11 +1419,6 @@ private struct MacJournalSkillHeader: View, Equatable {
                 Spacer(minLength: 8)
                 MacJournalStatusText(state: value.state)
             }
-            HStack(spacing: 16) {
-                LabeledContent("Model turns", value: value.modelTurns)
-                LabeledContent("Tool calls", value: value.toolCalls)
-                Text("\(value.elapsedMillis) ms")
-            }.font(.caption).foregroundStyle(.secondary)
         }.transaction { $0.animation = nil }
     }
 }
@@ -1309,13 +1428,31 @@ struct MacJournalSkillDetails: View, Equatable {
     let skillID: String
     let runID: String
     let mode: String
+    var modelTurns: String? = nil
+    var toolCalls: String? = nil
+    var elapsedMillis: String? = nil
 
     var body: some View {
-        DisclosureGroup("Details") {
-            Text(verbatim: "\(skillID) · \(runID) · \(mode)")
-                .font(.caption).textSelection(.enabled)
-        }
-        .disclosureGroupStyle(MacRowDisclosureStyle()).transaction { $0.animation = nil }
+        VStack(alignment: .leading, spacing: 8) {
+            if let modelTurns {
+                LabeledContent { Text(verbatim: modelTurns) } label: { Text("Model turns", tableName: "Chat") }
+            }
+            if let toolCalls {
+                LabeledContent { Text(verbatim: toolCalls) } label: { Text("Tool calls", tableName: "Chat") }
+            }
+            if let elapsedMillis, let duration = Self.duration(elapsedMillis) {
+                Text(verbatim: duration).foregroundStyle(.secondary)
+            }
+        }.font(.caption).textSelection(.enabled).transaction { $0.animation = nil }
+    }
+
+    static func duration(_ milliseconds: String) -> String? {
+        guard let value = Int64(milliseconds), value >= 0 else { return nil }
+        let formatter = DateComponentsFormatter()
+        formatter.allowedUnits = [.hour, .minute, .second]
+        formatter.unitsStyle = .abbreviated
+        formatter.maximumUnitCount = 2
+        return formatter.string(from: Double(value) / 1000)
     }
 }
 
@@ -1490,10 +1627,6 @@ nonisolated enum MacJournalToolFieldPresentation {
     static func isResult(_ field: String) -> Bool {
         field == "tool_summary" || field == "tool_artifacts"
     }
-
-    static func isOutput(_ field: String) -> Bool {
-        field == "tool_output" || field == "tool_output_text"
-    }
 }
 
 @MainActor
@@ -1563,23 +1696,6 @@ struct MacJournalToolView: View {
                             isFinal: tool.state != "running" && tool.state != "pending",
                             presentation: .toolField(content.field), usesMonospacedText: false)
                     }
-                    // Keep results alongside the execution summary, not buried
-                    // inside implementation metadata. Raw output stays collapsed
-                    // so a long response cannot move the reader unexpectedly.
-                    ForEach(part.bodies.filter { MacJournalToolFieldPresentation.isOutput($0.field) }, id: \.field) { content in
-                        DisclosureGroup {
-                            MacJournalTextPreview(reference: reference, partID: part.part_id, content: content,
-                                isFinal: tool.state != "running" && tool.state != "pending",
-                                presentation: .toolField(content.field))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(12)
-                                .background(MacDesignColor.panel, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        } label: {
-                            Text(fieldLabel(content.field)).font(.caption).foregroundStyle(.secondary)
-                        }
-                        .disclosureGroupStyle(MacRowDisclosureStyle())
-                        .accessibilityIdentifier("chat.journal.tool.output")
-                    }
                     DisclosureGroup(isExpanded: Binding(get: { technicalExpanded }, set: { technicalExpanded = $0 })) {
                         technicalDetails
                     } label: {
@@ -1589,29 +1705,23 @@ struct MacJournalToolView: View {
                     .disclosureGroupStyle(MacRowDisclosureStyle())
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("chat.journal.tool.technicalDetails")
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 8)
+                }.padding(.top, 6)
             }
         } label: {
-            HStack(alignment: .top, spacing: 8) {
+            HStack {
                 Image(systemName: "wrench.and.screwdriver")
-                    .frame(width: 20, height: 20)
-                    .foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 4) {
                     if case .inline(let title) = tool.title {
                         Text(verbatim: MacToolPresentationPolicy.displayTitle(for: title)).lineLimit(2)
                     } else {
                         Text(verbatim: MacToolPresentationPolicy.displayTitle(for: tool.capability_id)).lineLimit(2)
                     }
-                    if !expanded, let summary = tool.summary,
+                    if !expanded, tool.state == "failed", let summary = tool.summary,
                        case .inline(let text) = summary, !text.isEmpty {
-                        Text(verbatim: text).lineLimit(2)
-                            .font(.caption)
-                            .foregroundStyle(tool.state == "failed" ? Color.red : Color.secondary)
+                        Text(verbatim: text).lineLimit(2).foregroundStyle(.red)
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                Spacer(minLength: 8)
                 MacJournalStatusText(state: tool.state)
             }
             .font(.body)
@@ -1623,92 +1733,53 @@ struct MacJournalToolView: View {
     }
 
     private var technicalDetails: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            detailSection("Tool") {
-                diagnosticValue("capability_id", tool.capability_id)
-                diagnosticValue("tool_call_id", tool.tool_call_id)
-            }
-            detailSection("Source") {
-                diagnosticValue("kind", tool.origin.kind)
-                diagnosticText("provider_title", tool.origin.provider_title)
-                diagnosticText("provider_id", tool.origin.provider_id)
-                diagnosticText("namespace", tool.origin.namespace)
+        VStack(alignment: .leading, spacing: 10) {
+            Text(verbatim: tool.capability_id + " · " + tool.tool_call_id)
+                .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+            GroupBox("Source") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(verbatim: tool.origin.kind)
+                    inlineValue(tool.origin.provider_title)
+                    inlineValue(tool.origin.provider_id)
+                    inlineValue(tool.origin.namespace)
+                }.frame(maxWidth: .infinity, alignment: .leading)
             }
             if let permission = tool.permission {
-                // Display facts only: controls stay on the live challenge.
-                detailSection("Permission") {
-                    diagnosticText("permission_domain", permission.permission_domain)
-                    diagnosticText("rationale", permission.rationale)
-                    diagnosticText("decision", permission.decision)
+                // Display facts only: all decision controls remain on
+                // the independently bound live permission challenge.
+                GroupBox("Permission") {
+                    VStack(alignment: .leading, spacing: 4) {
+                        inlineValue(permission.permission_domain)
+                        inlineValue(permission.rationale)
+                        inlineValue(permission.decision)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             if case .inline(let resources) = tool.affected_resources, !resources.isEmpty {
-                detailSection("Resources") {
-                    ForEach(Array(resources.enumerated()), id: \.offset) { index, resource in
-                        if index > 0 { Divider() }
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Text(verbatim: resource.operation).font(.caption.weight(.medium))
-                            Text(verbatim: resource.resource_type).font(.caption).foregroundStyle(.secondary)
+                GroupBox("Resources") {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(resources.enumerated()), id: \.offset) { _, resource in
+                            Text(verbatim: "\(resource.resource_type) · \(resource.operation) · \(resource.uri)")
+                                .textSelection(.enabled)
                         }
-                        Text(verbatim: resource.uri)
-                            .font(.system(.caption, design: .monospaced))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+                    }.frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            ForEach(part.bodies.filter {
-                !MacJournalToolFieldPresentation.isResult($0.field)
-                    && !MacJournalToolFieldPresentation.isOutput($0.field)
-            }, id: \.field) { content in
-                detailSection(fieldLabel(content.field)) {
+            ForEach(part.bodies.filter { !MacJournalToolFieldPresentation.isResult($0.field) }, id: \.field) { content in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(fieldLabel(content.field)).font(.caption).foregroundStyle(.secondary)
                     MacJournalTextPreview(reference: reference, partID: part.part_id, content: content,
                         isFinal: tool.state != "running" && tool.state != "pending",
                         presentation: .toolField(content.field))
                 }
             }
             if let fullOutput = tool.full_output {
-                detailSection("Full output") {
-                    diagnosticValue("message_id", fullOutput.message_id)
-                    diagnosticValue("part_id", fullOutput.part_id)
-                    diagnosticValue("tool_call_id", fullOutput.tool_call_id)
+                GroupBox("Full output") {
+                    Text(verbatim: "\(fullOutput.message_id) / \(fullOutput.part_id) / \(fullOutput.tool_call_id)")
+                        .font(.caption).textSelection(.enabled)
                 }
             }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.top, 8)
-    }
-
-    private func detailSection<Content: View>(_ title: LocalizedStringKey,
-                                              @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-            content()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .background(MacDesignColor.panel, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(MacDesignColor.controlOutline, lineWidth: 0.5)
-        }
-    }
-
-    private func diagnosticValue(_ label: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(verbatim: label).font(.caption2).foregroundStyle(.secondary)
-            Text(verbatim: value).font(.system(.caption, design: .monospaced))
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    @ViewBuilder private func diagnosticText(_ label: String, _ value: MacJournalText?) -> some View {
-        if let value, case .inline(let text) = value, !text.isEmpty {
-            diagnosticValue(label, text)
-        }
+        }.padding(.top, 6)
     }
 
     @ViewBuilder private func inlineValue(_ value: MacJournalText?) -> some View {
@@ -1726,9 +1797,8 @@ struct MacJournalProcessView<Content: View>: View {
     let requiresAttention: Bool
     let toolCount: Int
     let attentionState: String?
-    let hasLiveReasoning: Bool
     let reasoningOnly: Bool
-    var settledStatus: String? = nil
+    var currentActivityTitle: String? = nil
     @ViewBuilder var content: () -> Content
     @Environment(\.journalPresentationOwner) private var owner
     @Environment(\.colorSchemeContrast) private var contrast
@@ -1736,7 +1806,15 @@ struct MacJournalProcessView<Content: View>: View {
     @State private var hovering = false
     private var expanded: Bool {
         AppleMessagePartFlow.isExpanded(choices: partIDs.compactMap { (owner?.processChoices ?? localChoices)[$0] },
-            defaultExpanded: hasLiveReasoning)
+            defaultExpanded: false)
+    }
+
+    private var heading: String {
+        if delivery == .running {
+            let title = currentActivityTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return title.flatMap { $0.isEmpty ? nil : $0 } ?? String(localized: "Processing")
+        }
+        return reasoningOnly ? String(localized: "Thinking Process") : String(localized: "Execution process", table: "Chat")
     }
 
     var body: some View {
@@ -1748,27 +1826,26 @@ struct MacJournalProcessView<Content: View>: View {
             } label: {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
-                    Image(systemName: "chevron.right")
-                        .rotationEffect(.degrees(expanded ? 90 : 0))
-                        .font(.body.weight(.semibold))
-                    Text("Execution process", tableName: "Chat")
-                        .fixedSize(horizontal: false, vertical: true)
+                    Group {
+                        if delivery == .running {
+                            MacFlowingStatusText(text: Text(verbatim: heading)).lineLimit(1)
+                        } else { Text(verbatim: heading) }
+                    }.fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 8)
                     if expanded, toolCount > 0 {
                         Label { Text(verbatim: String(toolCount)) } icon: { Image(systemName: "wrench.and.screwdriver") }
                             .accessibilityLabel(Text("Tool calls", tableName: "Chat"))
                             .accessibilityValue(Text(verbatim: String(toolCount)))
                     }
-                    if let state = settledStatus ?? MacJournalProcessStatus.primary(delivery: delivery, attention: attentionState) {
+                    if let state = MacJournalProcessStatus.primary(delivery: delivery, attention: attentionState) {
                         MacJournalStatusText(state: state)
                     }
+                    Image(systemName: "chevron.down")
+                        .rotationEffect(.degrees(expanded ? 180 : 0))
+                        .font(.caption2.weight(.medium)).foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
                     }
-                    if attentionState == "failed", delivery != .failed {
-                        Text("Some operations failed", tableName: "Chat")
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.leading, 22)
-                    }
+
                 }
                 .font(.body)
                 .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
@@ -1780,6 +1857,7 @@ struct MacJournalProcessView<Content: View>: View {
             .buttonStyle(.plain)
             .onHover { hovering = $0 }
             .accessibilityValue(expanded ? Text("Expanded", tableName: "Chat") : Text("Collapsed", tableName: "Chat"))
+            .accessibilityLabel(Text(verbatim: heading))
             .accessibilityIdentifier("chat.journal.process.toggle")
             if expanded {
                 VStack(alignment: .leading, spacing: 6) { content() }
@@ -1819,7 +1897,7 @@ private struct MacJournalActivityView: View {
             else { localExpansion = newValue }
         }
     }
-    // The enclosing process owns automatic disclosure. Once opened, its
+    // The enclosing process owns disclosure. Once the user opens it,
     // reasoning remains readable without another click for every model round.
     private var expanded: Bool { expansion.userChoice ?? true }
 
@@ -1892,15 +1970,18 @@ private struct MacJournalActivityView: View {
 
     private var activityLabel: some View {
         HStack(spacing: 6) {
-            if activity.isRunning {
+            if isReasoning {
+                Image(systemName: "sparkles")
+            } else if activity.isRunning {
                 MacBreathingStatusLight(diameter: 10)
             } else {
                 Image(systemName: MacJournalActivityTitle.symbol(state: activity.state))
             }
-            Text(MacJournalActivityTitle.label(isReasoning: isReasoning, isRunning: activity.isRunning,
-                inlineTitle: { if case .inline(let title) = activity.title { return title }; return nil }()))
+            MacFlowingStatusText(text: Text(MacJournalActivityTitle.label(isReasoning: isReasoning, isRunning: activity.isRunning,
+                inlineTitle: { if case .inline(let title) = activity.title { return title }; return nil }())),
+                isRunning: activity.isRunning)
                 .lineLimit(2)
-            if ["pending", "waiting_for_permission", "waiting_for_input", "failed", "cancelled"].contains(activity.state) {
+            if !isReasoning && ["pending", "waiting_for_permission", "waiting_for_input", "failed", "cancelled"].contains(activity.state) {
                 MacJournalStatusText(state: activity.state)
             }
         }
@@ -1941,7 +2022,8 @@ private struct MacJournalTextPreview: View {
                     nodes: projection.presentation.renderedTextNodes,
                     animateNewNodes: projection.hasStreamed,
                     contentIsFinal: projection.presentation.isComplete,
-                    previouslyRevealedNodeIDs: state.revealedNodeIDs
+                    previouslyRevealedNodeIDs: state.revealedNodeIDs,
+                    mutableNodeID: projection.presentation.mutableTextNode?.id
                 )
             } else if presentation == .markdown {
                 MacMarkdownView(
@@ -1997,6 +2079,10 @@ private struct MacJournalArtifactList: View {
     }
     let reference: MacJournalMessageReference
     let artifacts: [MacCorePartArtifact]
+    var referenceStyle = false
+    var referenceNumber: Int? = nil
+    var onDetails: (() -> Void)? = nil
+    @State private var hoveredReference: Int?
     @State private var localOwner: MacJournalOwnerKey?
     @State private var proofFailed = false
     @State private var proofRetry = 0
@@ -2004,23 +2090,26 @@ private struct MacJournalArtifactList: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            ForEach(Array(artifacts.enumerated()), id: \.offset) { _, artifact in
+            ForEach(Array(artifacts.enumerated()), id: \.offset) { index, artifact in
                 let destination = MacJournalArtifactDestination.resolve(artifact.uri, localJournal: localOwner == reference.ownerKey)
-                Button {
-                    switch destination {
-                    case .web(let url): openURL(url)
-                    case .localFile(let url): MacQuickLookController.shared.preview([url])
-                    case nil: break
-                    }
-                } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Label(artifact.name, systemImage: "doc")
-                        if let mime = artifact.mimeType { Text(verbatim: mime).font(.caption).foregroundStyle(.secondary) }
-                        if let operation = artifact.operation { Text(verbatim: operation).font(.caption).foregroundStyle(.secondary) }
+                Group {
+                    if referenceStyle, case .web(let url) = destination {
+                        Link(destination: url) { referenceLabel(artifact, highlighted: hoveredReference == index) }
+                            .buttonStyle(.plain)
+                    } else if referenceStyle {
+                        Button { open(destination) } label: { referenceLabel(artifact, highlighted: hoveredReference == index) }
+                            .buttonStyle(.plain).disabled(destination == nil)
+                    } else {
+                        Button { open(destination) } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Label(artifact.name, systemImage: "doc")
+                                if let mime = artifact.mimeType { Text(verbatim: mime).font(.caption).foregroundStyle(.secondary) }
+                                if let operation = artifact.operation { Text(verbatim: operation).font(.caption).foregroundStyle(.secondary) }
+                            }
+                        }.buttonStyle(.link).disabled(destination == nil)
                     }
                 }
-                .buttonStyle(.link)
-                .disabled(destination == nil)
+                .onHover { hoveredReference = $0 ? index : nil }
                 .help(artifact.uri)
                 .contextMenu {
                     if case .some(.localFile(let url)) = destination {
@@ -2029,6 +2118,7 @@ private struct MacJournalArtifactList: View {
                     } else if case .some(.web(let url)) = destination {
                         Button("Open Link") { openURL(url) }
                     }
+                    if let onDetails { Button { onDetails() } label: { Text("Details") } }
                 }
             }
             if proofFailed {
@@ -2041,6 +2131,9 @@ private struct MacJournalArtifactList: View {
             let key = reference.ownerKey
             localOwner = nil
             proofFailed = false
+            // Web references need no local-file provenance lookup, especially
+            // when a research reply has dozens of citations.
+            if artifacts.allSatisfy({ if case .web = MacJournalArtifactDestination.resolve($0.uri, localJournal: false) { return true }; return false }) { return }
             do {
                 let local = try await MacJournalTextRead.isLocal(reference)
                 try Task.checkCancellation()
@@ -2052,6 +2145,29 @@ private struct MacJournalArtifactList: View {
             }
         }
     }
+
+    private func open(_ destination: MacJournalArtifactDestination?) {
+        switch destination {
+        case .web(let url): openURL(url)
+        case .localFile(let url): MacQuickLookController.shared.preview([url])
+        case nil: break
+        }
+    }
+
+    private func referenceLabel(_ artifact: MacCorePartArtifact, highlighted: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            if let referenceNumber { Text(verbatim: "[\(referenceNumber)]").monospacedDigit() }
+            Text(verbatim: artifact.name).lineLimit(2)
+                .underline(highlighted)
+            if let host = URL(string: artifact.uri)?.host {
+                Text(verbatim: host).lineLimit(1).truncationMode(.middle)
+            }
+        }
+        .font(.caption).foregroundStyle(highlighted ? Color.primary : Color(nsColor: .secondaryLabelColor))
+        .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+
 }
 
 @MainActor

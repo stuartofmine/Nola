@@ -1,0 +1,2 @@
+# Browser Use is an execution dependency; Nola keeps its own model loop.
+browser-use==1.0.2

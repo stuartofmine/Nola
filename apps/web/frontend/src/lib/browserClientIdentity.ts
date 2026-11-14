@@ -8,8 +8,8 @@ export function readBrowserClientId(hostId: string, storage: Pick<Storage, 'getI
     return value;
 }
 export async function ensureBrowserClientId(hostId: string): Promise<string> {
+    if (typeof navigator === 'undefined' || !navigator.locks) throw new Error('browser_secure_connection_required');
     try {
-        if (!navigator.locks) throw new Error('locks unavailable');
         return await navigator.locks.request(browserIdentityKey(hostId), () => {
             const saved = readBrowserClientId(hostId);
             const value = saved ?? `web-${crypto.randomUUID()}`;

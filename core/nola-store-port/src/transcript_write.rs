@@ -33,6 +33,9 @@ pub struct AppendMessagesResult {
 
 pub trait TranscriptWriteRepository {
     type Error: std::fmt::Display;
+    /// Raw ledger count and greatest ordinal, including hidden messages.
+    /// Visibility changes must never reuse an existing ledger ordinal.
+    fn message_frontier(&self, conversation_id: &str) -> Result<(usize, i64), Self::Error>;
     fn has_active_run(&self, conversation_id: &str) -> Result<bool, Self::Error>;
     fn conversation_id_for_run(&self, run_id: &str) -> Result<Option<String>, Self::Error>;
     /// A failed count check or any Part/publication failure leaves no partial write.

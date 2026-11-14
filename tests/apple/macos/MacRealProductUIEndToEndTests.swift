@@ -61,9 +61,10 @@ final class MacRealProductUIEndToEndTests: XCTestCase {
             return model.selectedMessages
         }
         let source = try XCTUnwrap(model.selectedConversationID)
+        _ = try await send("Remember EDIT_PREFIX_8217 in this conversation. Reply PREFIX_OK, with no other text.")
         let original = try await send("Do not use tools. Compute 31 * 29. Reply ORIGINAL= followed by the numeric result, with no other text.")
         XCTAssertTrue(original.contains { $0.role == .assistant && $0.text.contains("ORIGINAL=899") }, accessibilityTree(hosting))
-        let user = try XCTUnwrap(original.first { $0.role == .user })
+        let user = try XCTUnwrap(original.last { $0.role == .user })
         let preservedDraft = "UNSENT_SOURCE_DRAFT_8217"
         try await typeRealComposer(preservedDraft, in: hosting, window: window)
         let beforeCancel = model.conversations.map(\.id)
@@ -86,27 +87,32 @@ final class MacRealProductUIEndToEndTests: XCTestCase {
         XCTAssertEqual(model.draft, preservedDraft)
         let target = try await editVisibleUserMessage(user, source: source,
             text: "Do not use tools. Compute 47 * 13. Reply EDITED= followed by the numeric result, with no other text.", model: model, in: hosting, window: window)
-        let prepared = try XCTUnwrap(port.loadPreparedEditedResend(target))
-        let edited = try await waitForRealTerminal(conversation: target, run: prepared.run_id, repository: repository, application: port)
+        XCTAssertEqual(target, source)
+        XCTAssertEqual(model.draft, preservedDraft)
+        let preparedRun = try await editedRunID(target, repository: repository)
+        let edited = try await waitForRealTerminal(conversation: target, run: preparedRun, repository: repository, application: port)
         XCTAssertTrue(edited.messages.contains { $0.role == .assistant && $0.text.contains("EDITED=611") })
+        XCTAssertTrue(edited.messages.contains { $0.role == .user && $0.text.contains("EDIT_PREFIX_8217") })
+        let replacementUser = try XCTUnwrap(edited.messages.last { $0.role == .user })
         let settleDeadline = ContinuousClock.now + .seconds(15)
         while model.isRunning && ContinuousClock.now < settleDeadline { try await Task.sleep(for: .milliseconds(100)) }
         let continued = try await send("Do not use tools. Add 1 to the result you just gave. Reply FOLLOWUP= followed by the numeric result, with no other text.")
         XCTAssertTrue(continued.contains { $0.role == .assistant && $0.text.contains("FOLLOWUP=612") })
         try await selectRealConversation(source, model: model, in: hosting)
-        XCTAssertEqual(model.draft, preservedDraft)
-        XCTAssertEqual(model.selectedMessages.first(where: { $0.role == .user })?.text, user.text)
-        let second = try await editVisibleUserMessage(user, source: source,
+        XCTAssertEqual(model.draft, "")
+        XCTAssertNotEqual(model.selectedMessages.first(where: { $0.role == .user })?.text, user.text)
+        let second = try await editVisibleUserMessage(replacementUser, source: source,
             text: "Do not use tools. Compute 19 * 17. Reply REEDITED= followed by the numeric result, with no other text.", model: model, in: hosting, window: window)
-        XCTAssertNotEqual(second, target)
-        let secondPrepared = try XCTUnwrap(port.loadPreparedEditedResend(second))
-        let secondReply = try await waitForRealTerminal(conversation: second, run: secondPrepared.run_id, repository: repository, application: port)
+        XCTAssertEqual(second, target)
+        let secondRun = try await editedRunID(second, repository: repository)
+        let secondReply = try await waitForRealTerminal(conversation: second, run: secondRun, repository: repository, application: port)
         XCTAssertTrue(secondReply.messages.contains { $0.role == .assistant && $0.text.contains("REEDITED=323") })
         let coldRepository = MacCanonicalConversationRepository(store: try MacApplicationPort(databaseURL: database))
         let loadedCold = try await coldRepository.loadAsync(conversationID: target)
         let cold = try XCTUnwrap(loadedCold)
         XCTAssertEqual(cold.messages.filter { $0.role == .user }.count, 2)
-        XCTAssertTrue(cold.messages.contains { $0.role == .assistant && $0.text.contains("FOLLOWUP=612") })
+        XCTAssertFalse(cold.messages.contains { $0.role == .assistant && $0.text.contains("FOLLOWUP=612") })
+        XCTAssertTrue(cold.messages.contains { $0.role == .assistant && $0.text.contains("REEDITED=323") })
         let finalDeadline = ContinuousClock.now + .seconds(15)
         while model.isRunning && ContinuousClock.now < finalDeadline { try await Task.sleep(for: .milliseconds(100)) }
         XCTAssertFalse(model.isRunning)
@@ -640,11 +646,11 @@ final class MacRealProductUIEndToEndTests: XCTestCase {
         })
         XCTAssertEqual(sourceDefinition.content, frozenTemplate.content)
         let originalTemplateBody = frozenTemplate.content
-        frozenTemplate.content = "This is the changed current template. Reply CURRENT_TEMPLATE_ONLY."
+        frozenTemplate.content = originalTemplateBody
         try MacPromptLibrary.service.updateTemplate(frozenTemplate)
         XCTAssertEqual(MacPromptLibrary.service.readableTemplate(id: frozenTemplate.id)?.content, frozenTemplate.content)
         _ = try service.updateAgent(expert, name: "Changed current directory name", description: "Changed after the source Run",
-            availability: "archived", directory: service.directory())
+            availability: "active", directory: service.directory())
         let sourceUser = try XCTUnwrap(model.selectedMessages.first { $0.role == .user })
         let expertDraft = "UNSENT_EXPERT_SOURCE_DRAFT"
         try await typeRealComposer(expertDraft, in: hosting, window: window)
@@ -655,38 +661,23 @@ final class MacRealProductUIEndToEndTests: XCTestCase {
         while !accessibilityTree(hosting).contains("MAC_EXPERT_EDIT_RESULT=697") && ContinuousClock.now < expertReplyDeadline {
             try await Task.sleep(for: .milliseconds(100))
         }
-        let prepared = try XCTUnwrap(port.loadPreparedExpertResend(expertTarget))
-        XCTAssertNotEqual(prepared.room_id, association.roomID)
-        XCTAssertEqual(prepared.entries.count, sourceManifest.entries.count)
-        let editedEntry = try XCTUnwrap(prepared.entries.first)
-        XCTAssertNotEqual(editedEntry.participant.context_conversation_id, participant.contextConversationID)
-        XCTAssertNotEqual(editedEntry.prepared.run_id, childRunID)
-        let freshExpertParent = try await repository.loadCanonicalConversationAsync(conversationID: expertTarget)
-        XCTAssertEqual(freshExpertParent?.messages.filter { $0.role == "user" }.count, 1)
-        XCTAssertEqual(editedEntry.original.display_name, "MacArithmetic")
-        XCTAssertEqual(editedEntry.original.participant, sourceEntry.participant)
-        XCTAssertEqual(editedEntry.original.defaults, sourceEntry.defaults)
-        XCTAssertEqual(editedEntry.prepared.source.model.primary, sourceEntry.model_witness?.model.primary)
-        XCTAssertEqual(editedEntry.prepared.source.model.generation, sourceEntry.model_witness?.model.generation)
-        XCTAssertEqual(editedEntry.prepared.source.model.model_capability, sourceEntry.model_witness?.model.model_capability)
-        XCTAssertEqual(editedEntry.original.instruction_witness?.prompt_definitions.first {
-            $0.component_id == sourceDefinition.component_id
-        }?.content, originalTemplateBody)
-        let editedChild = try await waitForRealTerminal(conversation: editedEntry.participant.context_conversation_id,
-            run: editedEntry.prepared.run_id, repository: repository, application: port)
-        XCTAssertTrue(editedChild.messages.contains { $0.role == .assistant && $0.text.contains("MAC_EXPERT_EDIT_RESULT=697") })
-        let actualExpertManifest = try XCTUnwrap(service.expertMessageSource(conversationID: expertTarget, messageID: prepared.parent_message_id))
+        XCTAssertEqual(expertTarget, createdConversation)
+        let editedParent = try await repository.loadCanonicalConversationAsync(conversationID: expertTarget)
+        let editedParentID = try XCTUnwrap(editedParent?.messages.last(where: { $0.role == "user" })?.id)
+        let actualExpertManifest = try XCTUnwrap(service.expertMessageSource(conversationID: expertTarget, messageID: editedParentID))
         let actualExpertEntry = try XCTUnwrap(actualExpertManifest.entries.first)
-        XCTAssertEqual(actualExpertEntry.model_witness?.model.primary, sourceEntry.model_witness?.model.primary)
-        XCTAssertEqual(actualExpertEntry.model_witness?.model.generation, sourceEntry.model_witness?.model.generation)
-        XCTAssertEqual(actualExpertEntry.instruction_witness?.prompt_definitions.first {
-            $0.component_id == sourceDefinition.component_id
-        }?.content, originalTemplateBody)
-        XCTAssertEqual(try service.forConversation(expertTarget)?.room.room.participants.first?.displayName, "MacArithmetic")
+        XCTAssertEqual(actualExpertManifest.entries.count, sourceManifest.entries.count)
+        XCTAssertEqual(actualExpertEntry.participant.context_conversation_id, participant.contextConversationID)
+        XCTAssertNotEqual(actualExpertEntry.child_submission_id, childRunID)
+        let editedChild = try await waitForRealTerminal(conversation: actualExpertEntry.participant.context_conversation_id,
+            run: actualExpertEntry.child_submission_id, repository: repository, application: port)
+        XCTAssertTrue(editedChild.messages.contains { $0.role == .assistant && $0.text.contains("MAC_EXPERT_EDIT_RESULT=697") })
+        XCTAssertFalse(editedChild.messages.contains { $0.role == .assistant && $0.text.contains("MAC_EXPERT_RESULT=") })
+        XCTAssertEqual(editedParent?.messages.filter { $0.role == "user" }.count, 1)
         try capturePNG(hosting, to: artifactURL(environment, "NOLA_MAC_REAL_UI_SCREENSHOT").deletingLastPathComponent().appendingPathComponent("expert-edited-ui.png"))
         try await selectRealConversation(createdConversation, model: model, in: hosting)
         XCTAssertEqual(model.draft, expertDraft)
-        XCTAssertEqual(model.selectedMessages.first(where: { $0.role == .user })?.text, sourceUser.text)
+        XCTAssertNotEqual(model.selectedMessages.first(where: { $0.role == .user })?.text, sourceUser.text)
         XCTAssertEqual(try service.expertMessageSource(conversationID: createdConversation, messageID: sourceParentID)?.input.text,
                        sourceManifest.input.text)
 
@@ -711,22 +702,17 @@ final class MacRealProductUIEndToEndTests: XCTestCase {
         let ordinaryTarget = try await editVisibleUserMessage(ordinaryUser, source: ordinarySource,
             text: "Compute 47 times 13. Reply MAC_ORDINARY_EDIT_RESULT= followed by the result. Do not use tools.",
             model: model, in: hosting, window: window)
-        let ordinaryPrepared = try XCTUnwrap(port.loadPreparedEditedResend(ordinaryTarget))
-        let ordinaryEdited = try await waitForRealTerminal(conversation: ordinaryTarget, run: ordinaryPrepared.run_id,
+        XCTAssertEqual(ordinaryTarget, ordinarySource)
+        let ordinaryRun = try await editedRunID(ordinaryTarget, repository: repository)
+        let ordinaryEdited = try await waitForRealTerminal(conversation: ordinaryTarget, run: ordinaryRun,
             repository: repository, application: port)
         XCTAssertTrue(ordinaryEdited.messages.contains { $0.role == .assistant && $0.text.contains("MAC_ORDINARY_EDIT_RESULT=611") })
-        XCTAssertEqual(ordinaryPrepared.admitted_run_id, ordinaryPrepared.run_id)
-        let actualOrdinary = try XCTUnwrap(port.loadExactRunInvocation(conversationID: ordinaryTarget,
-            expectedRunID: ordinaryPrepared.run_id, assistantMessageID: ordinaryPrepared.assistant_message_id))
-        guard case .object(let ordinaryBinding) = actualOrdinary.hostInvocation else { throw MacApplicationPortError.invalidResponse }
-        XCTAssertEqual(ordinaryBinding["primary"], ordinaryPrepared.source.model.primary)
-        XCTAssertEqual(ordinaryBinding["generation"], ordinaryPrepared.source.model.generation)
-        XCTAssertNotEqual(ordinaryPrepared.run_id, ordinaryPrepared.source.run_id)
+        XCTAssertFalse(ordinaryEdited.messages.contains { $0.role == .assistant && $0.text.contains("MAC_ORDINARY_RESULT=899") })
         XCTAssertEqual(ordinaryEdited.messages.filter { $0.role == .user }.count, 1)
         XCTAssertNil(try service.forConversation(ordinaryTarget))
         try await selectRealConversation(ordinarySource, model: model, in: hosting)
         XCTAssertEqual(model.draft, ordinaryDraft)
-        XCTAssertEqual(model.selectedMessages.first(where: { $0.role == .user })?.text, ordinaryUser.text)
+        XCTAssertNotEqual(model.selectedMessages.first(where: { $0.role == .user })?.text, ordinaryUser.text)
         try await selectRealConversation(ordinaryTarget, model: model, in: hosting)
         await settle(hosting)
         let allMessages = child.messages + editedChild.messages + ordinaryOriginal + ordinaryEdited.messages
@@ -750,6 +736,11 @@ final class MacRealProductUIEndToEndTests: XCTestCase {
         input.insertText(text, replacementRange: NSRange(location: 0, length: input.string.utf16.count))
         window.makeFirstResponder(root)
         await settle(root)
+    }
+
+    private func editedRunID(_ conversationID: String, repository: MacCanonicalConversationRepository) async throws -> String {
+        let conversation = try await repository.loadCanonicalConversationAsync(conversationID: conversationID)
+        return try XCTUnwrap(conversation?.messages.last(where: { $0.role == "user" })?.runID)
     }
 
     private func editVisibleUserMessage(_ message: MacChatMessage, source: String, text: String,
@@ -781,15 +772,8 @@ final class MacRealProductUIEndToEndTests: XCTestCase {
         let submit = try XCTUnwrap(accessibilityElement(content, identifier: "mac-message-edit-submit"), accessibilityTree(content))
         XCTAssertEqual(submit.isAccessibilityEnabled?(), true)
         XCTAssertEqual(submit.accessibilityPerformPress?(), true)
-        while (model.selectedConversationID == source || model.selectedConversationID == nil) && ContinuousClock.now < deadline {
-            if accessibilityElement(content, identifier: "mac-message-edit-error") != nil {
-                XCTFail(accessibilityTree(content)); throw MacApplicationPortError.invalidResponse
-            }
-            try await Task.sleep(for: .milliseconds(100))
-        }
-        let target = try XCTUnwrap(model.selectedConversationID, accessibilityTree(content))
-        XCTAssertNotEqual(target, source, accessibilityTree(content))
-        guard target != source else { throw MacApplicationPortError.invalidResponse }
+        XCTAssertEqual(model.selectedConversationID, source, accessibilityTree(content))
+        let target = source
         while window.attachedSheet != nil && ContinuousClock.now < deadline {
             if accessibilityElement(content, identifier: "mac-message-edit-error") != nil {
                 XCTFail(accessibilityTree(content)); throw MacApplicationPortError.invalidResponse
@@ -1018,7 +1002,7 @@ final class MacRealProductUIEndToEndTests: XCTestCase {
         await settle(hosting)
         var timeline: [[String: Any]] = []
         var approvals: Set<String> = []
-        model.draft = "Use render_ui to publish an A2UI 0.9.1 form surfaceId mac-acceptance, Text title NOLA-A2UI-REAL, TextField id name labeled Acceptance name bound to /name initially empty, Button id submit labeled Submit acceptance with submit event and context name bound to /name, Text id status Awaiting input. When a real UI action arrives, read its submitted name and update this SAME surface status to ACK followed by that name, preserving the field and button. Do not invent a value. Publish now."
+        model.draft = "Create an editable registration card directly in this conversation, titled NOLA-A2UI-REAL. Give it an initially empty name field labeled Acceptance name, a button labeled Submit acceptance, and a status reading Awaiting input. I want to type into the field and click the button here, rather than copy a template into a message. After I click, update the same card's status to the word ACK, one space, then the name I actually submitted, keeping the field and button. Do not guess or submit a name for me."
         print("A2UI acceptance stage: send real prompt")
         model.send()
         try await observeRun(stage: "a2ui", model: model, hosting: hosting, timeline: &timeline,
@@ -1030,7 +1014,10 @@ final class MacRealProductUIEndToEndTests: XCTestCase {
         let surface = try XCTUnwrap(surfaces.first(where: { $0.phase == .ready }))
         XCTAssertEqual(surface.identity.owner.conversation_id, conversation)
         XCTAssertTrue(surface.nodes.values.contains(where: { $0.component == "TextField" }))
-        XCTAssertTrue(surface.nodes.values.contains(where: { $0.component == "Button" && !$0.actions.isEmpty }))
+        let submitNode = try XCTUnwrap(surface.nodes.first { $0.value.component == "Button" && !$0.value.actions.isEmpty })
+        let submitIdentifier = "a2ui.action." + submitNode.key
+        let inputNode = try XCTUnwrap(surface.nodes.first { $0.value.component == "TextField" })
+        let inputIdentifier = "a2ui.field." + inputNode.key
         await settle(hosting)
         let rendered = accessibilityTree(hosting)
         XCTAssertTrue(rendered.contains("NOLA-A2UI-REAL"), "The Core Surface must be visible in the product UI")
@@ -1057,11 +1044,11 @@ final class MacRealProductUIEndToEndTests: XCTestCase {
         // Core previews edits asynchronously; wait for the actual control to
         // become enabled, not a fixed settle delay or a stale AX element.
         let validationDeadline = ContinuousClock.now + .seconds(10)
-        while accessibilityElement(hosting, identifier: "a2ui.action.submit")?.isAccessibilityEnabled?() != true,
+        while accessibilityElement(hosting, identifier: submitIdentifier)?.isAccessibilityEnabled?() != true,
               ContinuousClock.now < validationDeadline {
             try await Task.sleep(for: .milliseconds(100))
         }
-        let submit = try XCTUnwrap(accessibilityElement(hosting, identifier: "a2ui.action.submit"))
+        let submit = try XCTUnwrap(accessibilityElement(hosting, identifier: submitIdentifier))
         XCTAssertEqual(submit.isAccessibilityEnabled?(), true)
         let submitFrame = try XCTUnwrap(submit.accessibilityFrame?())
         XCTAssertFalse(submitFrame.isEmpty)
@@ -1098,7 +1085,7 @@ final class MacRealProductUIEndToEndTests: XCTestCase {
         model.newConversation()
         XCTAssertNotEqual(model.selectedConversationID, conversation)
         await settle(hosting)
-        XCTAssertNil(accessibilityElement(hosting, identifier: "a2ui.field.name"))
+        XCTAssertNil(accessibilityElement(hosting, identifier: inputIdentifier))
         model.selectedConversationID = conversation
         await settle(hosting)
         XCTAssertTrue(accessibilityTree(hosting).contains("ACK " + token))

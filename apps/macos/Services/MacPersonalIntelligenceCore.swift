@@ -115,6 +115,10 @@ nonisolated struct MacCoreContextComponent: Codable, Equatable, Sendable {
         self.content = .string(content)
         self.source = source
     }
+    init(kind: String, id: String, content: MacCoreJSONValue, source: MacCoreContextComponentSource? = nil) {
+        self.kind = kind; self.id = id; self.content = content; self.source = source
+    }
+
 }
 
 struct MacCoreContextMetrics: Codable, Equatable {

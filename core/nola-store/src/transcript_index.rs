@@ -27,6 +27,54 @@ pub(super) fn terms(text: &str) -> Vec<String> {
 impl NolaStore {
     pub(super) fn ranked_transcript_candidates(&self, conversation: &str, query: &str)
         -> StoreResult<Vec<(String, String)>> {
+        if self.is_read_only() {
+            let ready: bool = self.connection.query_row(
+                "SELECT COUNT(*)=2 FROM sqlite_master
+                 WHERE name IN ('transcript_index_heads', 'transcript_bm25')",
+                [],
+                |row| row.get(0),
+            )?;
+            if !ready {
+                return Ok(Vec::new());
+            }
+            let incomplete: bool = self.connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM messages m
+                 JOIN message_parts p ON p.message_id=m.id WHERE m.conversation_id=?1
+                 AND p.kind='text' AND p.state='completed' AND NOT EXISTS(
+                     SELECT 1 FROM transcript_index_heads h WHERE h.part_id=p.id
+                     AND h.stamp=CAST(p.updated_at_ms AS TEXT)||':'||COALESCE(p.content_digest,'')))",
+                [conversation],
+                |row| row.get(0),
+            )?;
+            if incomplete {
+                return Ok(Vec::new());
+            }
+            let mut query_terms = terms(query);
+            query_terms.sort();
+            query_terms.dedup();
+            query_terms.truncate(32);
+            if query_terms.is_empty() {
+                return Ok(Vec::new());
+            }
+            let expression = query_terms
+                .iter()
+                .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
+                .collect::<Vec<_>>()
+                .join(" OR ");
+            let mut statement = self.connection.prepare(
+                "SELECT message,part FROM transcript_bm25
+                 JOIN messages m ON m.id=transcript_bm25.message
+                 JOIN message_parts p ON p.id=transcript_bm25.part AND p.message_id=m.id
+                 WHERE transcript_bm25 MATCH ?1 AND conversation=?2
+                 ORDER BY bm25(transcript_bm25),m.ordinal DESC,p.ordinal DESC LIMIT 80",
+            )?;
+            let result = statement
+                .query_map(params![expression, conversation], |row| {
+                    Ok((row.get(0)?, row.get(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(result);
+        }
         let transaction = if self.connection.is_autocommit() {
             Some(self.connection.unchecked_transaction()?)
         } else { None };

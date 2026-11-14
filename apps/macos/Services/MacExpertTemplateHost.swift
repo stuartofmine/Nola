@@ -13,8 +13,31 @@ import CryptoKit
             definition_revision: nil, platform: .string("macos")) }
     }
 
-    static func capture(_ preview: AppleExpertCapturePreview<MacCanonicalJSONValue>) throws -> AppleExpertCaptureContext<MacCanonicalJSONValue> {
-        let authority = AppleExpertTemplateAuthority.local()
+    /// Private desktop-control callback. Only the real started Main request is
+    /// accepted; template bodies and identity never come from model arguments.
+    static func captureMainRequest(_ request: MacCanonicalJSONValue, conversationID: String, runID: String,
+                                   using store: MacApplicationPort) throws -> AppleExpertCaptureContext<MacCanonicalJSONValue> {
+        guard case .object(let envelope) = request,
+              envelope["session_id"] == .string(conversationID), envelope["turn_id"] == .string(runID),
+              case .object(let payload)? = envelope["payload"], payload["capability_id"] == .string("delegate_expert"),
+              case .string(let call)? = payload["call_id"], !call.isEmpty,
+              case .object(let input)? = payload["input"], input["action"] == .string("request"),
+              case .string(let target)? = input["target_participant_id"], case .string(let text)? = input["text"] else {
+            throw MacApplicationPortError.invalidResponse
+        }
+        let authority: AppleExpertTemplateAuthority = try store.executeExpertHost(.derivePeerAuthority(request: request, authority: .local()))
+        let inReplyTo: String?
+        if case .string(let id)? = input["in_reply_to"] { inReplyTo = id } else { inReplyTo = nil }
+        let peer = AppleExpertPeerInput(sourceContextID: conversationID, sourceRunID: runID, callID: call,
+            targetParticipantID: target, kind: "request", text: text, inReplyTo: inReplyTo)
+        let preview: AppleExpertCapturePreview<MacCanonicalJSONValue> = try store.executeExpertHost(.previewPeer(input: peer, authority: authority))
+        guard preview.participants.count == 1, preview.participants.first?.participant.participant_id == target else { throw MacApplicationPortError.invalidResponse }
+        return try capture(preview, using: store, authority: authority)
+    }
+
+    static func capture(_ preview: AppleExpertCapturePreview<MacCanonicalJSONValue>,
+                        using store: MacApplicationPort = .shared,
+                        authority: AppleExpertTemplateAuthority = .local()) throws -> AppleExpertCaptureContext<MacCanonicalJSONValue> {
         let selections = try preview.participants.map { peer -> AppleExpertCaptureSelection<MacCanonicalJSONValue> in
             guard case .object(let defaults) = peer.defaults else { throw MacApplicationPortError.invalidResponse }
             let selected: String?
@@ -25,7 +48,7 @@ import CryptoKit
             } else {
                 // A missing desktop default is an intentional absent managed
                 // template. An invalid/unreadable explicit default throws.
-                selected = try MacPromptLibrary.defaultTemplateID()?.uuidString
+                selected = try MacPromptLibrary.defaultTemplateID(using: store)?.uuidString
                 source = selected == nil ? .noTemplate : .hostDefault
             }
             let style: MacResponseStyle
@@ -42,8 +65,9 @@ import CryptoKit
                 source: source, template_id: selected,
                 host_user_instructions: definitions(style: style, customSystemPrompt: parameters.customSystemPrompt))
         }
+        let selected = Set(selections.compactMap { $0.template_id.flatMap(UUID.init(uuidString:)) })
         return .init(actor: authority.actor, request_host_id: authority.request_host_id, selections: selections,
-            builtins: BuiltInPromptTemplates.templates().map { .init(provider_id: "apple.prompt-templates",
+            builtins: BuiltInPromptTemplates.templates().filter { selected.contains($0.id) }.map { .init(provider_id: "apple.prompt-templates",
                 template_id: $0.id.uuidString, content: $0.content, platform: .string("macos")) })
     }
 }

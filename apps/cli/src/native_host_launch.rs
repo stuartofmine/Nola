@@ -110,6 +110,7 @@ impl Launch {
             session: HostSessionRequest {
                 edited_resend_operation_id: None,
                 user_delegation: None,
+                main_expert_selection: None,
                 supports_reviewed_text_parts: false, session_id: self.session, permission_scope_id: None,
                 save_session: true, host_submission_id: None, host_user_message_id: None, host_assistant_message_id: None,
                 expected_configuration_revision: None, expected_parent_message_id: None,

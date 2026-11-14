@@ -18,7 +18,7 @@ def main():
     actual = {path.name for path in ROOT.iterdir()}
     for old in sorted(actual & OLD_ROOTS):
         errors.append(f'Obsolete source root remains: {old}')
-    for folder in ['apps/ios', 'apps/macos', 'apps/android', 'apps/web', 'apps/windows', 'apps/cli', 'shared/apple', 'shared/apple-core', 'shared/mlx-runtime', 'shared/models', 'tests/apple/ios', 'tests/apple/macos', 'tests/apple/ios-ui', 'tests/apple/mlx']:
+    for folder in ['apps/ios', 'apps/macos', 'apps/android', 'apps/web', 'apps/windows', 'apps/cli', 'shared/apple', 'shared/apple-core', 'shared/design-tokens', 'shared/mlx-runtime', 'tests/apple/ios', 'tests/apple/macos', 'tests/apple/ios-ui', 'tests/apple/mlx']:
         if not (ROOT / folder).is_dir():
             errors.append(f'Missing source root: {folder}')
     for fixture in (ROOT / 'tests/apple/macos/SourceFixtures').iterdir():
@@ -58,7 +58,7 @@ def main():
             assets += 1
     projects = 0
     if platform.system() == 'Darwin':
-        for project, base in [('Nola.xcodeproj/project.pbxproj', ROOT), ('shared/apple-core/NolaCore.xcodeproj/project.pbxproj', ROOT / 'shared/apple-core')]:
+        for project, base in [('apple/Nola.xcodeproj/project.pbxproj', ROOT), ('shared/apple-core/NolaCore.xcodeproj/project.pbxproj', ROOT / 'shared/apple-core')]:
             data = json.loads(subprocess.check_output(['plutil', '-convert', 'json', '-o', '-', str(ROOT / project)]))
             for item in data['objects'].values():
                 if item.get('isa') == 'PBXFileSystemSynchronizedRootGroup' or (item.get('isa') == 'PBXFileReference' and item.get('sourceTree') == 'SOURCE_ROOT'):

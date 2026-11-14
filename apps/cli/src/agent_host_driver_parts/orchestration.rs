@@ -890,6 +890,9 @@ pub struct RuntimeToolResult {
     pub outcome: ToolOutcome,
     pub task_promotion: Option<RuntimeTaskPromotion>,
     pub task_update: Option<RuntimeTaskUpdate>,
+    /// No terminal response may be published while a durable Host command's
+    /// commit is unresolved. The original effect remains recoverable.
+    pub pending_error: Option<String>,
 }
 
 fn coarse_code_intelligence_fallback(
@@ -1006,6 +1009,7 @@ impl RuntimeToolResult {
             outcome,
             task_promotion: None,
             task_update: None,
+            pending_error: None,
         }
     }
 
@@ -1014,7 +1018,17 @@ impl RuntimeToolResult {
             outcome,
             task_promotion: None,
             task_update: Some(task_update),
+            pending_error: None,
         }
+    }
+
+    pub fn pending(message: String) -> Self {
+        let mut result = Self::completed(ToolOutcome {
+            text: message.clone(), display: "Task preparation pending".into(), error: true,
+            data: None, full_output_ref: None, execution: None, activation: None, artifacts: Vec::new(),
+        });
+        result.pending_error = Some(message);
+        result
     }
 }
 
@@ -1575,6 +1589,10 @@ pub struct CliAgentHostDriver {
     /// Delegated allowlists remain authoritative. Native authorization-only
     /// Hosts admit dynamic MCP descriptors only through their frozen Core policy.
     configured_tool_allowlist: Option<HashSet<String>>,
+    /// Trusted persistent-expert scope, applied before Host policy capture.
+    expert_leaf: bool,
+    /// Actual Main schema surface; absent dispatch is not discoverable authority.
+    main_expert_dispatch_available: bool,
     mcp_extension_policy: Option<nola_core::tool_policy::ToolPolicyInput>,
     turn_policy: HostTurnPolicy,
     current_turn_project_overview_file_count: Option<usize>,

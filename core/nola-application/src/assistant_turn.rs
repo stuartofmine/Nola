@@ -221,7 +221,7 @@ pub(crate) fn admit_with_core<R: RunCreationRepository
     + crate::repositories::AssistantAdmissionRepositories
     + nola_store_port::runtime_task::RuntimeTaskRepository + ?Sized>(
     store: &mut R,
-    command: BeginAssistantTurn,
+    mut command: BeginAssistantTurn,
     lease: Option<crate::RuntimeTaskLeaseWitness>,
 ) -> Result<(AcceptedAssistantTurn, AgentCore), String> {
     if command.core_config.automation_execution_spec.is_some() {
@@ -231,6 +231,7 @@ pub(crate) fn admit_with_core<R: RunCreationRepository
     let at = command.created_at_ms;
     crate::assistant_publication_transaction::with_publication_transaction(store, |store| {
         if let Some(lease) = &lease {
+            crate::expert_peer_task::decorate_task_admission(store,lease,&mut command)?;
             store.validate_runtime_task_turn_admission(lease, &child, at)
                 .map_err(|error| error.to_string())?;
         } else if store.is_runtime_task_child_session(&child).map_err(|error| error.to_string())? {
@@ -268,6 +269,7 @@ fn begin_assistant_turn_in_transaction<R: RunCreationRepository
     mut command: BeginAssistantTurn,
     successor: Option<SuccessorAdmission>,
 ) -> Result<(AcceptedAssistantTurn, AgentCore), String> {
+    crate::main_expert_selection::admit(store, &mut command)?;
     if let AgentSubmission::AutomatedInput {
         origin: nola_agent_engine::agent::AgentInputOrigin::GoalContinuation,
         items, submission_id, ..

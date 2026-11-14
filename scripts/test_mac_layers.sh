@@ -42,7 +42,7 @@ real_local_model_suite="MacLocalModelRealInferenceEndToEndTests"
 
 args=(
   test
-  -project "$ROOT/Nola.xcodeproj"
+  -project "$ROOT/apple/Nola.xcodeproj"
   -scheme NolaMac
   -configuration Test
   -destination "$DESTINATION"

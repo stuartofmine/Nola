@@ -28,6 +28,8 @@ struct PermissionsSetupView: View {
     @State private var currentStep = 0
     @State private var isRequestingPermissions = false
     @State private var permissionResults: [DataSourceType: Bool] = [:]
+    @State private var requestTask: Task<Void, Never>?
+    @State private var requestOwner: UUID?
     @State private var showError = false
     @State private var errorMessage: String?
     
@@ -85,7 +87,10 @@ struct PermissionsSetupView: View {
                 .animation(reduceMotion ? nil : DesignTokens.responsiveAnimation, value: currentStep)
             
             // Comment in English.
-            TabView(selection: $currentStep) {
+            TabView(selection: Binding(
+                get: { currentStep },
+                set: { if !isRequestingPermissions { currentStep = $0 } }
+            )) {
                 ForEach(0..<steps.count, id: \.self) { index in
                     StepView(
                         step: steps[index],
@@ -106,7 +111,7 @@ struct PermissionsSetupView: View {
             VStack(spacing: 16) {
                 if currentStep < steps.count {
                     Button {
-                        Task {
+                        requestTask = Task { @MainActor in
                             await requestCurrentPermission()
                         }
                     } label: {
@@ -140,6 +145,8 @@ struct PermissionsSetupView: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
+                    .disabled(isRequestingPermissions)
+                    .accessibilityIdentifier("permissions.setup.skip")
                 } else {
                     Button {
                         dismiss()
@@ -160,6 +167,13 @@ struct PermissionsSetupView: View {
             .padding(.bottom, 16)
             .background(.ultraThinMaterial)
         }
+        .interactiveDismissDisabled(isRequestingPermissions)
+        .onDisappear {
+            requestOwner = nil
+            requestTask?.cancel()
+            requestTask = nil
+            isRequestingPermissions = false
+        }
         .alert(L10n.permissionsRequestFailed, isPresented: $showError) {
             Button(L10n.ok, role: .cancel) {}
             Button(L10n.permissionsGoToSettings) {
@@ -170,11 +184,20 @@ struct PermissionsSetupView: View {
         }
     }
     
+    @MainActor
     private func requestCurrentPermission() async {
-        guard currentStep < steps.count else { return }
-        
+        guard !isRequestingPermissions, currentStep < steps.count else { return }
+        let sourceIndex = currentStep
+        let owner = UUID()
+        requestOwner = owner
         isRequestingPermissions = true
-        let step = steps[currentStep]
+        let step = steps[sourceIndex]
+        defer {
+            if requestOwner == owner {
+                requestOwner = nil
+                isRequestingPermissions = false
+            }
+        }
         
         do {
             let granted: Bool
@@ -191,40 +214,34 @@ struct PermissionsSetupView: View {
                 
             case .health:
                 granted = try await DataSourcePermissionManager.shared.requestHealthPermission()
-                if granted {
-                    await MainActor.run {
-                        container.healthDataSourceEnabled = true
-                    }
+                if granted, !Task.isCancelled, requestOwner == owner {
+                    container.healthDataSourceEnabled = true
                 }
                 
             case .url:
                 granted = true
             }
             
-            await MainActor.run {
-                permissionResults[step.type] = granted
-                
-                // Comment in English.
-                if granted {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        withAnimation {
-                            currentStep += 1
-                        }
-                    }
-                } else {
-                    errorMessage = L10n.format("permissions.setup.error_permission_format", step.title)
-                    showError = true
+            guard PermissionSetupRequestCompletion.accepts(
+                sourceIndex: sourceIndex, currentIndex: currentStep,
+                owner: owner, activeOwner: requestOwner, cancelled: Task.isCancelled
+            ) else { return }
+            permissionResults[step.type] = granted
+            if granted {
+                withAnimation(reduceMotion ? nil : DesignTokens.responsiveAnimation) {
+                    currentStep = sourceIndex + 1
                 }
-                
-                isRequestingPermissions = false
-            }
-            
-        } catch {
-            await MainActor.run {
-                errorMessage = error.localizedDescription
+            } else {
+                errorMessage = L10n.format("permissions.setup.error_permission_format", step.title)
                 showError = true
-                isRequestingPermissions = false
             }
+        } catch {
+            guard PermissionSetupRequestCompletion.accepts(
+                sourceIndex: sourceIndex, currentIndex: currentStep,
+                owner: owner, activeOwner: requestOwner, cancelled: Task.isCancelled
+            ) else { return }
+            errorMessage = error.localizedDescription
+            showError = true
         }
     }
     
@@ -232,6 +249,13 @@ struct PermissionsSetupView: View {
         if let url = URL(string: UIApplication.openSettingsURLString) {
             UIApplication.shared.open(url)
         }
+    }
+}
+
+/// An OS permission callback can outlive the page that initiated it.
+enum PermissionSetupRequestCompletion {
+    static func accepts(sourceIndex: Int, currentIndex: Int, owner: UUID, activeOwner: UUID?, cancelled: Bool) -> Bool {
+        !cancelled && activeOwner == owner && currentIndex == sourceIndex
     }
 }
 

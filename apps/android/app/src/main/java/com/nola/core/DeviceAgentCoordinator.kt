@@ -40,6 +40,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.int
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonArray
@@ -117,7 +118,8 @@ internal fun encodeDeviceAgentInputSubmission(
     put("turn_context_items", JsonArray(emptyList()))
     put("turn_context_platform", "android")
     put("turn_context_components", JsonArray(turnContextComponents.map { component ->
-        Json.encodeToJsonElement(AgentCoreContextComponent.serializer(), component)
+        val encoded = Json.encodeToJsonElement(AgentCoreContextComponent.serializer(), component)
+        if (component.kind == "main_expert_selection") JsonObject(encoded.jsonObject + ("source" to JsonNull)) else encoded
     }))
     put(
         "items",
@@ -141,7 +143,7 @@ internal fun encodeDeviceAgentInputSubmission(
  * performs model, permission, persistence, and device I/O, then returns every
  * result as a normalized Host response before exposing Core events to the UI.
  */
-class DeviceAgentCoordinator(
+class DeviceAgentCoordinator internal constructor(
     private val modelClient: AgentModelClient,
     private val permissionBroker: AndroidAgentPermissionBroker,
     private val hostExecutor: AndroidAgentHostExecutor,
@@ -149,6 +151,10 @@ class DeviceAgentCoordinator(
     private val modelCapability: AndroidModelCapabilityProfile,
     private val refreshToolPlan: (() -> AgentCoreAndroidToolPlan)? = null,
     private val childToolPlan: ((String) -> AgentCoreAndroidToolPlan)? = null,
+    private val prepareChildExecutor: (suspend (JsonObject) -> AndroidPreparedChildExecutor)? = null,
+    private val expertExchange: (suspend (JsonObject) -> JsonObject)? = null,
+    private val expertDelegationEnabled: Boolean = false,
+    private val delegationAllowed: Boolean = true,
     private val embeddedMailbox: Boolean = false,
     private val captureDelegation: Boolean = false,
     private val prepareRecovery: (suspend (JsonObject, JsonObject) -> AgentCoreAndroidToolPlan)? = null,
@@ -240,7 +246,7 @@ class DeviceAgentCoordinator(
                 toolPlan = toolPlan,
                 config = config,
             )
-            val admittedConfig = if (captureDelegation && childToolPlan != null && config.preparedHostInvocation != null) {
+            val admittedConfig = if (captureDelegation && childToolPlan != null && prepareChildExecutor != null && config.preparedHostInvocation != null) {
                 canonicalApplication.mobileCommand(buildJsonObject {
                     put("type", "capture_mobile_delegation_configuration"); put("config",runtimeConfig)
                     put("settings",buildJsonObject { put("project_root", "android-device"); put("selected_profile",JsonNull); put("agents",buildJsonObject {}) })
@@ -753,7 +759,7 @@ class DeviceAgentCoordinator(
                             val transition = submitHostResponse(
                                 runtime,
                                 request,
-                                modelToolCallDeltaPayload(modelEvent),
+                                modelToolCallDeltaPayload(modelEvent, attemptId),
                                 state,
                             )
                             acceptTransition(transition, toolPlan, state, emitEvent)
@@ -932,8 +938,23 @@ class DeviceAgentCoordinator(
         // it from the selected conversation or from the tool's arguments.
         AndroidAgentPermissionMode.fromWireValue(payload.string("permission_profile")
             ?: error("Tool Host request has no admitted permission profile"))
+        if (toolName == "delegate_expert" || toolName == "expert_exchange") {
+            if (toolName == "delegate_expert") check(expertDelegationEnabled && delegationAllowed && !embeddedMailbox) { "Only the main Agent may delegate experts" }
+            // The legacy alias is not advertised. Core accepts only the exact frozen
+            // effect's existing Task/read controls; it cannot admit a new delegation.
+            val handler = checkNotNull(expertExchange) { "The source-bound expert Host adapter is unavailable" }
+            val bound = JsonObject(request + ("delivery" to state.hostJournal.responseDelivery(request)))
+            val prepared = handler(bound)
+            val response = prepared.getValue("response").jsonObject
+            val committed = submitHostResponse(runtime, request, response, state)
+            prepared["prepared"]?.jsonObject?.get("task")?.jsonObject?.get("id")?.jsonPrimitive?.content?.let { taskId ->
+                AndroidEmbeddedChildExecutor.start(taskId, canonicalApplication, checkNotNull(prepareChildExecutor))
+            }
+            state.cancellationEvidence.returnedLocally(request, canonicalApplication.descriptor.conversationId)
+            return committed
+        }
         if (toolName == "read_task" || toolName == "wait_task") {
-            check(!embeddedMailbox && childToolPlan != null) { "Task result executor is unavailable" }
+            check(!embeddedMailbox && delegationAllowed && childToolPlan != null) { "Task result executor is unavailable" }
             var deadline: Long? = null
             try {
               while (true) {
@@ -958,7 +979,7 @@ class DeviceAgentCoordinator(
             }
         }
         if (toolName == "send_agent_message") {
-            check(!embeddedMailbox && childToolPlan != null) { "Task guidance executor is unavailable" }
+            check(!embeddedMailbox && delegationAllowed && childToolPlan != null) { "Task guidance executor is unavailable" }
             val response = canonicalApplication.mobileCommand(buildJsonObject {
                 put("type", "prepare_mobile_task_guidance"); put("input", buildJsonObject {
                     put("request", JsonObject(request + ("delivery" to state.hostJournal.responseDelivery(request))))
@@ -969,7 +990,7 @@ class DeviceAgentCoordinator(
             return submitHostResponse(runtime, request, response, state)
         }
         if (toolName == "spawn_agent") {
-            check(!embeddedMailbox && childToolPlan != null) { "Independent child executor is unavailable" }
+            check(!embeddedMailbox && delegationAllowed && childToolPlan != null) { "Independent child executor is unavailable" }
             val prepared=canonicalApplication.mobileCommand(buildJsonObject {
                 put("type","prepare_mobile_delegated_task");put("input",buildJsonObject {
                     put("request",JsonObject(request + ("delivery" to state.hostJournal.responseDelivery(request))))
@@ -979,18 +1000,8 @@ class DeviceAgentCoordinator(
             val promotion=prepared["response"] as? JsonObject ?: error("Core delegation response is missing")
             val committed=submitHostResponse(runtime,request,promotion,state)
             val task=prepared.getValue("prepared").jsonObject.getValue("task").jsonObject
-            AndroidEmbeddedChildExecutor.start(task.getValue("id").jsonPrimitive.content,canonicalApplication) { childConfig ->
-                val refresh = { checkNotNull(childToolPlan)(childConfig.getValue("session_id").jsonPrimitive.content) }
-                val plan = refresh()
-                AndroidPreparedChildExecutor(plan.tools) { childApplication ->
-                    val child=DeviceAgentCoordinator(modelClient,permissionBroker,hostExecutor,childApplication,modelCapability,
-                        refreshToolPlan=refresh,embeddedMailbox=true)
-                    val execute: suspend (JsonObject,AgentCoreTransitionRuntime,RunState)->Unit = { envelope,sink,childState ->
-                        child.executeEmbeddedRequest(envelope,sink,config,plan,childState,canonicalApplication.descriptor.conversationId)
-                    }
-                    execute
-                }
-            }
+            AndroidEmbeddedChildExecutor.start(task.getValue("id").jsonPrimitive.content, canonicalApplication,
+                checkNotNull(prepareChildExecutor) { "A frozen child model executor is unavailable" })
             return committed
         }
         if (toolName == "render_ui") {
@@ -1290,7 +1301,7 @@ class DeviceAgentCoordinator(
         })}
     }
 
-    private suspend fun buildRuntimeConfig(
+    internal suspend fun buildRuntimeConfig(
         sessionId: String,
         history: List<AgentCoreMessage>,
         tools: List<JsonElement>,
@@ -1300,9 +1311,16 @@ class DeviceAgentCoordinator(
         val hostId = config.hostId?.trim().takeUnless { it.isNullOrEmpty() }
             ?: toolPlan.identity.hostId?.trim().takeUnless { it.isNullOrEmpty() }
             ?: "android-device"
+        val workerDeniedTools = setOf("delegate_expert", "expert_exchange", "spawn_agent", "read_task", "wait_task", "send_agent_message")
+        val exposedTools = if (delegationAllowed) tools else tools.filterNot { tool ->
+            (tool as? JsonObject)?.get("function")?.jsonObject?.get("name")?.jsonPrimitive?.content in workerDeniedTools
+        }
         val mcp = prepareMcp(hostId,sessionId,toolPlan)
         val uiContract = canonicalApplication.uiCapabilityContract()
         val uiDescriptor = uiContract.getValue("descriptor").jsonObject
+        val peerTool = if (expertDelegationEnabled && delegationAllowed && !embeddedMailbox && expertExchange != null && modelSupportsToolCalls) canonicalApplication.mobileCommand(buildJsonObject { put("type", "read_expert_exchange_capability") }).jsonObject.let {
+            require(it["version"]?.jsonPrimitive?.int == 1); it.getValue("tool").jsonObject
+        } else null
         val capabilities = buildJsonObject {
             put("model.stream", internalCapability("model.stream", "Model", "model", streaming = true))
             put(
@@ -1317,16 +1335,19 @@ class DeviceAgentCoordinator(
                 "host.cancel",
                 internalCapability("host.cancel", "Cancellation", "tool", exposure = "hidden"),
             )
+            peerTool?.let { tool -> put("delegate_expert", capabilityDescriptor("delegate_expert", "Delegate expert", "tool", "visible", null,
+                tool.getValue("function").jsonObject.getValue("parameters"), false, false, "serial", "cooperative", "recoverable", "execute", "internal",
+                permissionContract = buildJsonObject { put("risk", "ordinary_read") })) }
             mcp["capabilities"]?.jsonObject?.forEach { (id,descriptor)->put(id,descriptor) }
-            toolPlan.allowedTools.forEach { allowed ->
-                put(allowed.toolId, if (allowed.toolId == "render_ui") uiDescriptor else toolCapability(allowed, tools))
+            toolPlan.allowedTools.filter { delegationAllowed || it.toolId !in workerDeniedTools }.forEach { allowed ->
+                put(allowed.toolId, if (allowed.toolId == "render_ui") uiDescriptor else toolCapability(allowed, exposedTools))
             }
         }
         val result = buildJsonObject {
             put("session_id", sessionId)
             put("model", config.model?.trim().takeUnless { it.isNullOrEmpty() } ?: "android-active-model")
             put("initial_items", initialItems(history, sessionId))
-            put("tools", JsonArray(if (modelSupportsToolCalls) tools + mcp.getValue("tools").jsonArray else emptyList()))
+            put("tools", JsonArray(if (modelSupportsToolCalls) exposedTools + mcp.getValue("tools").jsonArray + listOfNotNull(peerTool) else emptyList()))
             put("memory_policy", automaticMemoryPolicyConfig())
             val stablePromptDigest = config.stablePromptDigest
                 ?.trim()
@@ -1648,13 +1669,6 @@ class DeviceAgentCoordinator(
         put("delta", delta)
     }
 
-    private fun modelToolCallDeltaPayload(event: AgentModelEvent.ToolCallDelta): JsonObject = buildJsonObject {
-        put("type", "model_tool_call_delta")
-        put("part_id", event.partId)
-        put("call_id", event.callId)
-        put("capability_id", event.capabilityId)
-        put("arguments_delta", event.argumentsDelta)
-    }
 
     private fun toolName(schema: JsonElement): String? =
         (schema as? JsonObject)?.objectValue("function")?.string("name")

@@ -523,6 +523,7 @@ fn prepare_web_chat_context(
         },
         existing_summary: None,
         summary_result: None,
+        evaluated_at: None,
     })
 }
 
@@ -2257,30 +2258,44 @@ fn first_message_title(value: &str) -> Option<String> {
     }
 }
 
-fn adopt_first_message_conversation_title(
-    conversation_id: &str,
-    visible_user_text: &str,
-) -> Result<(), String> {
-    let Some(title) = first_message_title(visible_user_text) else {
-        return Ok(());
-    };
-    let store = NolaStore::open_default()?;
+fn adopt_first_message_conversation_title_after_admission(
+    identity:&nola_domain::remote_submission::RemoteSubmissionIdentity,
+    request_digest:&str,
+    visible_user_text:&str,
+)->Result<bool,String>{
+    adopt_first_message_conversation_title_at(&NolaStore::open_default()?,identity,request_digest,visible_user_text)
+}
+
+fn adopt_first_message_conversation_title_at(
+    store:&NolaStore,
+    identity:&nola_domain::remote_submission::RemoteSubmissionIdentity,
+    request_digest:&str,
+    visible_user_text:&str,
+)->Result<bool,String>{
+    let mut app=crate::application_port::CliApplicationPort::persistent(store.path())?;
+    let receipt:nola_domain::remote_submission::SourceSubmissionReceipt=app.execute(
+        nola_application::ApplicationCommand::ReadSourceSubmissionReceipt {identity:identity.clone(),request_digest:request_digest.into()})?;
+    receipt.validate()?;
+    if receipt.identity!=*identity || receipt.request_digest!=request_digest {return Err("title_admission_source_changed".into());}
+    if receipt.phase!=nola_domain::remote_submission::RemoteSubmissionPhase::Admitted {return Ok(false);}
+    let conversation_id=&identity.conversation_id;
+    let Some(title)=first_message_title(visible_user_text) else {return Ok(false);};
     if !store.web_automatic_title_is_current(conversation_id)? {
-        return Ok(());
+        return Ok(false);
     }
     let Some(value) = store.get_web_conversation(conversation_id)? else {
-        return Ok(());
+        return Ok(false);
     };
     let mut conversation = serde_json::from_value::<WebConversation>(value)
         .map_err(|error| format!("parse web conversation failed: {error}"))?;
     if conversation.title_source != ConversationTitleSource::Automatic {
-        return Ok(());
+        return Ok(false);
     }
     conversation.title = title;
     conversation.title_source = ConversationTitleSource::FirstMessage;
     conversation.updated_at = now_string();
     if store.rename_web_conversation(conversation_id,&conversation.title,ConversationTitleSource::FirstMessage,conversation.revision)? {
-        Ok(())
+        Ok(true)
     } else {
         Err(format!("web conversation {conversation_id} does not exist"))
     }
@@ -4351,5 +4366,69 @@ mod tests {
     #[test]
     fn svelte_data_source_gallery_executes_actual_editor_and_localization_contract() {
         run_svelte_contract_tests(&["dataSources.test.ts"]);
+    }
+}
+
+#[cfg(test)]
+mod admitted_first_message_title_tests {
+    use super::*;
+    use nola_application::{ApplicationCommand, BeginAssistantTurn};
+    use nola_core::agent::{host::*,AgentCoreConfig,AgentSubmission,AgentItem,ItemId,SessionId};
+    use nola_domain::remote_submission::{RemoteSubmissionIdentity,RegisteredSourceSubmission};
+
+    fn setup(path:&Path)->(NolaStore,crate::application_port::CliApplicationPort,RemoteSubmissionIdentity,String){
+        let store=NolaStore::open(path).unwrap();
+        store.create_web_conversation(&json!(WebConversation::new("main".into(),"New conversation".into(),"2026-11-12T00:00:00Z".into(),"2026-11-12T00:00:00Z".into()))).unwrap();
+        let identity=RemoteSubmissionIdentity{source_host_id:"title-test-host".into(),client_id:"title-client".into(),conversation_id:"main".into(),
+            submission_id:uuid::Uuid::new_v4().to_string(),user_message_id:"main-user".into(),assistant_message_id:"main-assistant".into()};
+        let mut app=crate::application_port::CliApplicationPort::persistent(path).unwrap();
+        let request=json!({"conversationId":identity.conversation_id,"expected_host_id":identity.source_host_id,"client_id":identity.client_id,
+            "submission_id":identity.submission_id,"user_message_id":identity.user_message_id,"assistant_message_id":identity.assistant_message_id,"messages":[{"role":"user","content":"Actual user input"}]});
+        let registration:RegisteredSourceSubmission=app.execute(ApplicationCommand::RegisterSourceSubmission{identity:identity.clone(),request}).unwrap();
+        (store,app,identity,registration.receipt.request_digest)
+    }
+    fn begin(app:&mut crate::application_port::CliApplicationPort,identity:&RemoteSubmissionIdentity,components:Vec<nola_core::context_engine::ContextComponent>)->Result<nola_application::AcceptedAssistantTurn,String>{
+        let model=HostCapabilityDescriptor{id:"model.stream".into(),title:"Fixture model".into(),route:HostCapabilityRoute::Model,
+            availability:CapabilityAvailability::Available,exposure:HostCapabilityExposure::Internal,permission_domain:None,input_schema:json!({"type":"object"}),input_normalization:Default::default(),
+            output_policy:HostOutputPolicy{preview_char_limit:1000,persist_full_output:true,allow_artifacts:false},supports_streaming:true,supports_argument_streaming:false,
+            parallelism:HostCapabilityParallelism::Serial,cancellation:HostCancellationMode::Cooperative,replay_safety:HostReplaySafety::Recoverable};
+        let config=AgentCoreConfig{session_id:Some(SessionId::from_string(identity.conversation_id.clone())),model:Some("fixture".into()),turn_identity:crate::test_model_identity::identity(),
+            host_catalog:Some(HostCapabilityCatalog{host_id:HostId("title-test-host".into()),revision:1,availability_epoch:1,lease:None,capabilities:[("model.stream".into(),model)].into_iter().collect()}),..Default::default()};
+        let existing=app.load_conversation(&identity.conversation_id)?.unwrap();
+        app.begin_assistant_turn(BeginAssistantTurn{conversation_id:identity.conversation_id.clone(),expected_configuration_revision:Some(existing.configuration_revision),expected_parent_message_id:None,
+            conversation_title:existing.title,user_message_id:identity.user_message_id.clone(),user_part_id:"main-user:text".into(),user_text:"Actual user input".into(),user_content_json:None,
+            assistant_message_id:identity.assistant_message_id.clone(),context_checkpoint_id:None,core_config:config,created_at_ms:10,
+            submission:AgentSubmission::UserInput{items:vec![AgentItem::user_message(ItemId::from_string(identity.user_message_id.clone()),"Actual user input")],
+                turn_context_items:vec![],turn_context_platform:Default::default(),turn_context_components:components,submission_id:Some(identity.submission_id.clone()),submitted_at_epoch_ms:Some(10),delivery:nola_core::agent::AgentInputDelivery::CurrentTurn}}).map_err(|error|error.to_string())
+    }
+    #[test]
+    fn prepared_or_wrong_epoch_source_cannot_adopt_a_title(){
+        let root=tempfile::tempdir().unwrap();let(store,mut app,id,digest)=setup(&root.path().join("rejected.db"));
+        assert!(!adopt_first_message_conversation_title_at(&store,&id,&digest,"Stale draft must not rename").unwrap());
+        let component=nola_core::context_engine::ContextComponent{kind:nola_core::context_engine::ContextComponentKind::MainExpertSelection,
+            id:nola_domain::expert_task_target::MAIN_EXPERT_SELECTION_COMPONENT_ID.into(),source:None,
+            content:json!({"version":1,"expected_source_store_epoch":"retired-store","selected_experts":[{"agent_id":"reviewer","agent_revision":1}]})};
+        assert!(begin(&mut app,&id,vec![component]).unwrap_err().contains("main_expert_selection_source_changed"));
+        assert!(!adopt_first_message_conversation_title_at(&store,&id,&digest,"Stale draft must not rename").unwrap());
+        let view=store.get_web_conversation("main").unwrap().unwrap();assert_eq!(view["title"],"New conversation");assert_eq!(view["titleSource"],"automatic");
+        assert!(app.load_conversation("main").unwrap().unwrap().messages.is_empty());
+    }
+    #[test]
+    fn admitted_provider_failure_still_adopts_title_and_preserves_a_later_user_title(){
+        let root=tempfile::tempdir().unwrap();let(store,mut app,id,digest)=setup(&root.path().join("admitted.db"));
+        let admitted=begin(&mut app,&id,vec![]).unwrap();
+        let requests=app.claim_committed_host_requests(nola_application::ClaimCommittedHostRequests{run_id:id.submission_id.clone(),worker_generation:"title-fixture".into(),lease_owner:"title-fixture".into(),claimed_at_ms:11,lease_expires_at_ms:1000,limit:20}).unwrap();
+        let request=requests.requests.into_iter().find(|request|matches!(request.payload,HostRequest::ModelStream{..})).unwrap();
+        for (sequence,payload) in [(1,HostResponse::ExecutionStarted),(2,HostResponse::Failed{error:HostError{code:"provider_unavailable".into(),message:"Fixture provider could not connect".into(),retryable:false,http_status:Some(503)}})] {
+            app.reduce_and_accept_host_response(nola_application::ReduceAndAcceptHostResponse{conversation_id:id.conversation_id.clone(),run_id:id.submission_id.clone(),invocation_config_digest:admitted.invocation_config_digest.clone(),received_at_ms:12+sequence as i64,
+                response:HostResponseEnvelope{request_id:request.request_id.clone(),attempt_id:request.attempt_id.clone(),effect_id:request.effect_id.clone(),delegated_invocation_id:request.delegated_invocation_id.clone(),host_id:request.host_id.clone(),lease_id:request.lease_id.clone(),
+                    session_id:request.session_id.clone(),turn_id:request.turn_id.clone(),catalog_revision:request.catalog_revision,availability_epoch:request.availability_epoch,delivery:request.delivery.clone(),sequence,payload}}).unwrap();
+        }
+        assert!(adopt_first_message_conversation_title_at(&store,&id,&digest,"Actual user input").unwrap());
+        let view=store.get_web_conversation("main").unwrap().unwrap();assert_eq!(view["title"],"Actual user input");assert_eq!(view["titleSource"],"first_message");
+        let mut wrong=id.clone();wrong.client_id="different-client".into();assert!(adopt_first_message_conversation_title_at(&store,&wrong,&digest,"Foreign title").is_err());
+        store.rename_web_conversation("main","My chosen title",crate::store::ConversationTitleSource::User,view["revision"].as_i64().unwrap()).unwrap();
+        assert!(!adopt_first_message_conversation_title_at(&store,&id,&digest,"Do not overwrite my title").unwrap());
+        assert_eq!(store.get_web_conversation("main").unwrap().unwrap()["title"],"My chosen title");
     }
 }

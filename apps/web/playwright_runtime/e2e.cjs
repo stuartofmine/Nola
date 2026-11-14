@@ -17,7 +17,7 @@ async function main() {
     const controls = Array.from({length: 300}, (_, index) => `<button aria-label="Control ${index}">${index}</button>`).join('');
     response.end(`<!doctype html><html><body>
       <label>Name <input aria-label="Name"></label>
-      <button onclick="document.querySelector('#result').textContent='Saved'">Save</button>
+      <button onclick="document.querySelector('#result').textContent='Saved '+document.querySelector('input').value">Save</button>
       <button onclick="window.open('/popup', '_blank')">Open popup</button>
       <p id="result">Idle</p>
       ${controls}
@@ -53,6 +53,8 @@ async function main() {
     assert.deepEqual(absent.sessions, [], 'reading a browser session must not start it');
     const started = await call('start', { session_id: sessionID, headless: true, persistent: true });
     assert.equal(started.running, true);
+    assert.equal(started.engine, 'browser-use');
+    assert.equal(started.engine_version, '1.0.2');
     assert.equal(started.sandboxed, true);
     assert.equal(started.headless, true);
     assert.ok(started.preview_url?.startsWith('http://127.0.0.1:'));
@@ -98,11 +100,13 @@ async function main() {
     save = currentPage.elements.find(element => element.name === 'Save');
     assert.ok(input?.ref);
     assert.ok(save?.ref);
-    const typed = await call('type_text', { session_id: sessionID, ref: input.ref, revision: currentPage.revision, text: 'Nola' });
+    let typed = await call('type_text', { session_id: sessionID, ref: input.ref, revision: currentPage.revision, text: 'Nola' });
+    input = typed.elements.find(element => element.name === 'Name');
+    typed = await call('type_text', { session_id: sessionID, ref: input.ref, revision: typed.revision, text: ' 你好', clear: false });
     const currentSave = typed.elements.find(element => element.name === 'Save');
     assert.ok(currentSave?.ref);
     const clicked = await call('click', { session_id: sessionID, ref: currentSave.ref, revision: typed.revision, screenshot: true });
-    assert.match(clicked.text, /Saved/);
+    assert.match(clicked.text, /Saved Nola 你好/);
     assert.match(clicked.screenshot_data_url, /^data:image\/png;base64,/);
     await assert.rejects(
       call('click', { session_id: sessionID, ref: staleSave.ref, revision: staleRevision }),
@@ -160,7 +164,8 @@ async function main() {
   } finally {
     bridge.kill('SIGTERM');
     server.close();
-    fs.rmSync(stateRoot, { recursive: true, force: true });
+    if (bridge.exitCode === null && bridge.signalCode === null) await new Promise(resolve => bridge.once('exit', resolve));
+    fs.rmSync(stateRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }
 

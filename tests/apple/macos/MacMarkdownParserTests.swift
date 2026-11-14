@@ -9,6 +9,49 @@ import AppKit
 
 final class MacMarkdownParserTests: XCTestCase {
     @MainActor
+    func testExternalInlineReferenceStylePreservesTargetsAndOtherText() throws {
+        let original = try AttributedString(markdown: "**正文** **[来源](https://example.com/report)** [Source](http://example.com/source) [文件](file:///tmp/fixture.txt)")
+        let styled = AppleInlineReferenceStyle.applying(to: original, color: Color("NolaTextSecondary"))
+        XCTAssertEqual(String(styled.characters), String(original.characters))
+        let external = styled.runs.filter { ["http", "https"].contains($0.link?.scheme ?? "") }
+        XCTAssertEqual(external.count, 2)
+        for run in external {
+            XCTAssertEqual(run.font, .caption)
+            XCTAssertEqual(run.foregroundColor, Color("NolaTextSecondary"))
+            XCTAssertFalse(run.inlinePresentationIntent?.contains(.stronglyEmphasized) == true)
+        }
+        XCTAssertEqual(styled.runs.first { $0.link?.scheme == "file" }?.font, nil)
+        XCTAssertTrue(styled.runs.contains { $0.link == nil && $0.inlinePresentationIntent?.contains(.stronglyEmphasized) == true })
+        XCTAssertEqual(styled.runs.compactMap(\.link), original.runs.compactMap(\.link))
+    }
+
+    @MainActor
+    func testInlineTableReferencesRenderInLightAndDarkAppearance() throws {
+        let source = """
+        | 时间 | 事件 | 经过和影响 |
+        | --- | --- | --- |
+        | 阶段一 | 整理资料 | 保留正文的阅读层级，引用紧随所支持的句子。[来源](https://example.com/one) |
+        | 阶段二 | 比较记录 | 这是一段较长的合成说明，用于验证换行后链接仍以小号灰色显示。[来源](https://example.com/two) |
+        | 阶段三 | 核对结果 | 保留原链接目标与可访问性。[Source](https://example.com/three) |
+        """
+        for dark in [false, true] {
+            let root = MacMarkdownView(markdown: source, isStreaming: false, animatesAppends: false)
+                .padding(20).frame(width: 900).background(Color("NolaCanvas"))
+                .environment(\.colorScheme, dark ? .dark : .light)
+            let host = NSHostingView(rootView: root)
+            host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+            host.frame.size = host.fittingSize
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let image = NSImage(size: host.bounds.size); image.addRepresentation(bitmap)
+            let attachment = XCTAttachment(image: image)
+            attachment.name = "inline-reference-table-\(dark ? "dark" : "light")"
+            attachment.lifetime = .keepAlways; add(attachment)
+        }
+    }
+
+    @MainActor
     func testControlInteractionColorsResolveInBothAppearances() throws {
         func renderedChannel(_ color: Color, scheme: ColorScheme) throws -> CGFloat {
             let view = NSHostingView(rootView: Rectangle().fill(color)

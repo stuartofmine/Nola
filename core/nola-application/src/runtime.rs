@@ -46,6 +46,10 @@ impl<R> ApplicationRuntime<R> {
             supervisor: RuntimeSupervisor::new(),
         }
     }
+
+    pub fn has_hot_overlay(&self) -> bool {
+        self.supervisor.has_hot_overlay()
+    }
 }
 
 impl<R: crate::repositories::RuntimeExecutionRepositories> ApplicationRuntime<R> {
@@ -157,7 +161,15 @@ impl<R: crate::repositories::RuntimeExecutionRepositories> ApplicationRuntime<R>
                     || deferred.saturating_add(estimated_response_bytes(&input.response))
                         >= STREAM_COMMIT_BYTE_BUDGET)
             }
-            ApplicationCommand::BeginAssistantTurn { .. }
+            ApplicationCommand::ExpertPeerTaskAction {..}|ApplicationCommand::AgentRoomAtSource {..} => Ok(!command.is_read_only_query()),
+            ApplicationCommand::AdmitExpertConversationMessage {..}
+            | ApplicationCommand::PrepareEditedExpertResend {..}
+            | ApplicationCommand::AdmitExpertPeer {..}
+            | ApplicationCommand::ClarifyExpertPeer {..}
+            | ApplicationCommand::PrepareExpertPeerTask {..}
+            | ApplicationCommand::AbortExpertPeerTaskPreparation {..}
+            | ApplicationCommand::ReceiveRemoteExpertParentAdmission { .. }
+            | ApplicationCommand::BeginAssistantTurn { .. }
             | ApplicationCommand::PromoteQueuedAssistantTurn { .. }
             | ApplicationCommand::BeginQueuedUserTurn { .. }
             | ApplicationCommand::RespondToConversationWait { .. }
@@ -194,11 +206,41 @@ impl<R: crate::repositories::RuntimeExecutionRepositories> ApplicationRuntime<R>
         }
     }
 
-    fn execute_in_unit_of_work(
+    #[inline(never)]
+    fn execute_in_unit_of_work(&mut self, mut command: ApplicationCommand) -> Result<Value, String> {
+        if matches!(&command,ApplicationCommand::ReduceAndAcceptHostResponse{..}) {
+            crate::task_guidance::prepare_command(&mut self.store,&mut command)?;
+            crate::task_terminal::validate_command(&self.store,&command)?;
+            let ApplicationCommand::ReduceAndAcceptHostResponse{input}=command else {unreachable!()};
+            return self.reduce_host_response_in_unit_of_work(Box::new(input));
+        }
+        // These commands have always used the repository dispatcher. Keep the
+        // common worker/private Host adapter out of the much larger supervisor
+        // reducer frame on small native/background thread stacks.
+        if matches!(&command,
+            ApplicationCommand::ClaimCommittedHostRequests{..}|ApplicationCommand::ClaimApplicationControlRequests{..}
+            |ApplicationCommand::LoadMobileTaskWakePlan{..}|ApplicationCommand::LoadMobileTaskChildConfiguration{..}
+            |ApplicationCommand::AdmitMobileTaskChild{..}|ApplicationCommand::CaptureMobileDelegationConfiguration{..}
+            |ApplicationCommand::PrepareMobileDelegatedTask{..}|ApplicationCommand::ObserveMobileTask{..}
+            |ApplicationCommand::PrepareMobileTaskGuidance{..}|ApplicationCommand::InspectMobilePermissionRequest{..}
+            |ApplicationCommand::InspectMobileMcpRequest{..}
+            |ApplicationCommand::AbortExpertPeerTaskPreparation{..}|ApplicationCommand::LoadExpertPeerForEffect{..}
+            |ApplicationCommand::ReadExpertExchangeCapability|ApplicationCommand::DeriveExpertPeerAuthority{..}|ApplicationCommand::PrepareExpertPeerTask{..}
+            |ApplicationCommand::ExpertPeerTaskAction{..}|ApplicationCommand::ExpertPeerDirectory{..}|ApplicationCommand::PreviewExpertPeer{..}
+            |ApplicationCommand::AdmitExpertPeer{..}|ApplicationCommand::LoadExpertPeerForSubmission{..}|ApplicationCommand::LoadExpertPeer{..}|ApplicationCommand::ClarifyExpertPeer{..}) {
+            crate::task_guidance::prepare_command(&mut self.store,&mut command)?;
+            crate::task_terminal::validate_command(&self.store,&command)?;
+            return crate::execute_application_command(&mut self.store,command);
+        }
+        self.execute_supervised_command_in_unit_of_work(Box::new(command))
+    }
+
+    #[inline(never)]
+    fn execute_supervised_command_in_unit_of_work(
         &mut self,
-        mut command: ApplicationCommand,
+        mut command: Box<ApplicationCommand>,
     ) -> Result<Value, String> {
-        if let ApplicationCommand::ReduceAndCommitActiveSubmission { input } = &command {
+        if let ApplicationCommand::ReduceAndCommitActiveSubmission { input } = command.as_ref() {
             if matches!(input.submission, AgentSubmission::ApplyPermissionPolicy { .. }) {
                 return Err("permission policy requires its dedicated claimed-notification command".into());
             }
@@ -214,9 +256,89 @@ impl<R: crate::repositories::RuntimeExecutionRepositories> ApplicationRuntime<R>
                 );
             }
         }
-        crate::task_guidance::prepare_command(&mut self.store, &mut command)?;
-        crate::task_terminal::validate_command(&self.store, &command)?;
-        match command {
+        crate::task_guidance::prepare_command(&mut self.store, &mut *command)?;
+        crate::task_terminal::validate_command(&self.store, command.as_ref())?;
+        match command.as_ref() {
+            ApplicationCommand::PromoteQueuedAssistantTurn {..}
+            | ApplicationCommand::BeginAssistantTurn {..}
+            | ApplicationCommand::BeginTaskAssistantTurn {..}
+            | ApplicationCommand::BeginAutomationAssistantTurn {..} => self.execute_admission_command(command),
+            ApplicationCommand::ApplyPendingTaskNotice {..}
+            | ApplicationCommand::InspectOwnedTaskRecovery {..}
+            | ApplicationCommand::ResolveOwnedTaskRecovery {..}
+            | ApplicationCommand::ImportHostAgentTaskGuidanceProjection {..}
+            | ApplicationCommand::ImportHostAgentTaskTerminalProjection {..}
+            | ApplicationCommand::RecoverExpiredAgentTask {..}
+            | ApplicationCommand::ClaimAgentTaskFair {..}
+            | ApplicationCommand::ApplyTaskGuidance {..} => self.execute_expert_task_control_command(command),
+            ApplicationCommand::RespondToConversationWait {..}
+            | ApplicationCommand::ReadPermissionConfiguration {..}
+            | ApplicationCommand::LoadConversationPermissionProjectionV1 {..}
+            | ApplicationCommand::ApplyActivePermissionPolicy {..} => self.execute_permission_control_command(command),
+            ApplicationCommand::ResolveUnknownEffectRecovery {..}
+            | ApplicationCommand::RequestRunCancellation {..}
+            | ApplicationCommand::LoadRunCancellationDeliveryFacts {..}
+            | ApplicationCommand::ClaimCancellationHostRequests {..}
+            | ApplicationCommand::InspectCancellationProcessOwners {..}
+            | ApplicationCommand::ValidateCancellationProcessObservations {..}
+            | ApplicationCommand::RecoverObservedOrphanedRun {..}
+            | ApplicationCommand::PrepareRunEffectRecovery {..}
+            | ApplicationCommand::RecoverExpiredRunDeliveries {..}
+            | ApplicationCommand::RecoverOrphanedRuns {..} => self.execute_recovery_control_command(command),
+            ApplicationCommand::LoadSessionGoalProjection {..}
+            | ApplicationCommand::LoadHostExecutionState {..}
+            | ApplicationCommand::LoadCommittedHostRequests {..} => self.execute_current_read_command(command),
+            ApplicationCommand::ReduceAndCommitActiveSubmission {..} => self.execute_active_submission_command(command),
+            ApplicationCommand::StageArchiveManifest {..}
+            | ApplicationCommand::PublishUploadedTranscript {..}
+            | ApplicationCommand::BeginContentUpload {..}
+            | ApplicationCommand::AppendContentChunk {..}
+            | ApplicationCommand::ContentUploadProgress {..}
+            | ApplicationCommand::ReadContentUploadChunk {..}
+            | ApplicationCommand::SealContentUpload {..}
+            | ApplicationCommand::CancelContentUpload {..} => self.execute_uploaded_content_command(command),
+            _ => execute_application_command(&mut self.store,*command),
+        }
+    }
+
+    #[inline(never)]
+    fn execute_admission_command(&mut self,command:Box<ApplicationCommand>)->Result<Value,String>{
+        match *command {
+            ApplicationCommand::PromoteQueuedAssistantTurn { input } => {
+                let promoted = crate::assistant_turn::promote_with_core(&mut self.store, input)?;
+                let Some((accepted, core)) = promoted else { return Ok(Value::Null) };
+                let active = self.store.active_run(&accepted.begin.conversation_id).map_err(|e| e.to_string())?
+                    .ok_or("promoted successor has no active Run")?;
+                let checkpoint_revision = self.store.checkpoint_revision(&accepted.begin.conversation_id)
+                    .map_err(|e| e.to_string())?.ok_or("promoted successor has no checkpoint")?;
+                let encoded = serde_json::to_value(&accepted).map_err(|e| e.to_string())?;
+                self.supervisor.retain(RetainHotRun {
+                    run_id: accepted.begin.run_id, conversation_id: accepted.begin.conversation_id, core,
+                    terminal: accepted.execution.control.turn_status.is_terminal(), checkpoint_revision,
+                    next_event_sequence: active.next_event_sequence,
+                    invocation_config_digest: accepted.invocation_config_digest,
+                    deferred_events: Vec::new(), deferred_host_events: Vec::new(), deferred_traces: Vec::new(), deferred_bytes: 0,
+                });
+                Ok(encoded)
+            }
+            ApplicationCommand::BeginAssistantTurn { input } => {
+                self.admit_assistant_turn(input, None)
+            }
+            ApplicationCommand::BeginTaskAssistantTurn { lease, input } => {
+                self.admit_assistant_turn(input, Some(lease))
+            }
+            ApplicationCommand::BeginAutomationAssistantTurn { lease, input } => {
+                let (accepted, core) = crate::automation_execution::admit_with_core(&mut self.store, lease, input)?;
+                if let Some(core) = core { self.retain_admitted_turn(accepted, core) }
+                else { serde_json::to_value(accepted).map_err(|error|error.to_string()) }
+            }
+            _ => Err("invalid_internal_runtime_command_family".into()),
+        }
+    }
+
+    #[inline(never)]
+    fn execute_expert_task_control_command(&mut self,command:Box<ApplicationCommand>)->Result<Value,String>{
+        match *command {
             ApplicationCommand::ApplyPendingTaskNotice { conversation_id, consumer_id, now_ms } => {
                 use crate::task_terminal::PreparedTaskTerminalImport;
                 let Some((command_id, prepared)) = crate::task_terminal::claim_local_notice(
@@ -269,119 +391,6 @@ impl<R: crate::repositories::RuntimeExecutionRepositories> ApplicationRuntime<R>
                     }
                 }
                 Ok(reply)
-            }
-            ApplicationCommand::ResolveUnknownEffectRecovery { input } => {
-                let run_id=input.run_id.clone();
-                let conversation_id=input.conversation_id.clone();
-                let revision=self.store.checkpoint_revision(&conversation_id).map_err(|e|e.to_string())?;
-                let hot=self.supervisor.take_current(&run_id,&conversation_id,revision);
-                let (core,deferred_events,deferred_host_events,deferred_traces,previous)=match hot {
-                    Some(hot)=>(Some(hot.core),hot.deferred_events,hot.deferred_host_events,hot.deferred_traces,
-                        Some((hot.checkpoint_revision,hot.next_event_sequence,hot.invocation_config_digest,hot.deferred_bytes))),
-                    None=>(None,Vec::new(),Vec::new(),Vec::new(),None),
-                };
-                let invocation_config_digest=input.invocation_config_digest.clone();
-                let resolved=crate::unknown_effect_recovery::resolve_with_core(&mut self.store,input,core,deferred_events,deferred_host_events,deferred_traces)?;
-                if let Some(core)=resolved.core {
-                    let (checkpoint_revision,next_event_sequence,invocation_config_digest,deferred_bytes,terminal)=match resolved.accepted {
-                        Some(accepted)=>(accepted.commit.checkpoint_revision,accepted.commit.next_event_sequence,invocation_config_digest,0,accepted.control.turn_status.is_terminal()),
-                        None=>{
-                            let (revision,sequence,digest,bytes)=previous.ok_or("recovery overlay lacks original owner")?;
-                            (revision,sequence,digest,bytes,false)
-                        },
-                    };
-                    self.supervisor.retain(RetainHotRun{run_id,conversation_id,core,terminal,checkpoint_revision,next_event_sequence,
-                        invocation_config_digest,deferred_events:resolved.deferred_events,deferred_host_events:resolved.deferred_host_events,deferred_traces:resolved.deferred_traces,deferred_bytes});
-                }
-                serde_json::to_value(resolved.reply).map_err(|e|e.to_string())
-            }
-            ApplicationCommand::RespondToConversationWait { input } => {
-                let result = match crate::user_input_wait::prepare(&self.store, &input)? {
-                    crate::user_input_wait::PreparedWaitResponse::Settled(result) => result,
-                    crate::user_input_wait::PreparedWaitResponse::Apply(command) => {
-                        let accepted = self.execute_active_submission_in_unit_of_work(command, |accepted, _| accepted)?;
-                        crate::user_input_wait::applied(&self.store, &input, accepted)?
-                    }
-                };
-                serde_json::to_value(result).map_err(|error| error.to_string())
-            }
-            ApplicationCommand::PromoteQueuedAssistantTurn { input } => {
-                let promoted = crate::assistant_turn::promote_with_core(&mut self.store, input)?;
-                let Some((accepted, core)) = promoted else { return Ok(Value::Null) };
-                let active = self.store.active_run(&accepted.begin.conversation_id).map_err(|e| e.to_string())?
-                    .ok_or("promoted successor has no active Run")?;
-                let checkpoint_revision = self.store.checkpoint_revision(&accepted.begin.conversation_id)
-                    .map_err(|e| e.to_string())?.ok_or("promoted successor has no checkpoint")?;
-                let encoded = serde_json::to_value(&accepted).map_err(|e| e.to_string())?;
-                self.supervisor.retain(RetainHotRun {
-                    run_id: accepted.begin.run_id, conversation_id: accepted.begin.conversation_id, core,
-                    terminal: accepted.execution.control.turn_status.is_terminal(), checkpoint_revision,
-                    next_event_sequence: active.next_event_sequence,
-                    invocation_config_digest: accepted.invocation_config_digest,
-                    deferred_events: Vec::new(), deferred_host_events: Vec::new(), deferred_traces: Vec::new(), deferred_bytes: 0,
-                });
-                Ok(encoded)
-            }
-            ApplicationCommand::BeginAssistantTurn { input } => {
-                self.admit_assistant_turn(input, None)
-            }
-            ApplicationCommand::BeginTaskAssistantTurn { lease, input } => {
-                self.admit_assistant_turn(input, Some(lease))
-            }
-            ApplicationCommand::BeginAutomationAssistantTurn { lease, input } => {
-                let (accepted, core) = crate::automation_execution::admit_with_core(&mut self.store, lease, input)?;
-                if let Some(core) = core { self.retain_admitted_turn(accepted, core) }
-                else { serde_json::to_value(accepted).map_err(|error|error.to_string()) }
-            }
-            ApplicationCommand::LoadSessionGoalProjection { conversation_id } => {
-                let revision = self.store.checkpoint_revision(&conversation_id).map_err(|e| e.to_string())?;
-                if let Some(goal) = revision.and_then(|revision| self.supervisor.current_goal(&conversation_id, revision)) {
-                    if self.store.checkpoint_revision(&conversation_id).map_err(|e| e.to_string())? != revision {
-                        return Err("Goal projection changed during read".into());
-                    }
-                    serde_json::to_value(Some(goal)).map_err(|e| e.to_string())
-                } else {
-                    crate::execute_application_command(&mut self.store,
-                        ApplicationCommand::LoadSessionGoalProjection { conversation_id })
-                }
-            }
-            ApplicationCommand::LoadHostExecutionState { conversation_id } => {
-                let revision = self.store.checkpoint_revision(&conversation_id).map_err(|e| e.to_string())?
-                    .ok_or("Host execution state has no committed revision")?;
-                let state = match self.supervisor.execution_state(&conversation_id, revision) {
-                    Some(state) => state,
-                    None => crate::host_execution_state::load(&self.store, &conversation_id)?,
-                };
-                if self.store.checkpoint_revision(&conversation_id).map_err(|e| e.to_string())? != Some(revision) {
-                    return Err("Host execution state changed during read".into());
-                }
-                serde_json::to_value(state).map_err(|e| e.to_string())
-            }
-            ApplicationCommand::ReadPermissionConfiguration {
-                conversation_id, source_host_id, client_id, unresolved_run_ids,
-                source_unconfirmed, minimum_policy_revision,
-            } => {
-                let supervisor = &self.supervisor;
-                self.store.with_consistent_read(|store| {
-                    let active = store.active_run(&conversation_id).map_err(|e| e.to_string())?;
-                    let revision = store.checkpoint_revision(&conversation_id).map_err(|e| e.to_string())?;
-                    let current = active.as_ref().map(|active|
-                        supervisor.current_permissions(&active.run_id, &conversation_id, revision))
-                        .transpose()?.flatten();
-                    crate::application_command::read_permission_configuration(store,
-                        &conversation_id, source_host_id.as_deref(), client_id.as_deref(),
-                        &unresolved_run_ids, source_unconfirmed, minimum_policy_revision, current.as_ref())
-                })
-            }
-            ApplicationCommand::LoadConversationPermissionProjectionV1 { conversation_id, run_id, scope } => {
-                let revision = self.store.checkpoint_revision(&conversation_id).map_err(|e| e.to_string())?;
-                if let Some(current) = self.supervisor.current_permissions(&run_id, &conversation_id, revision)? {
-                    crate::application_command::read_permission_projection(
-                        &self.store, conversation_id, run_id, scope, Some(&current))
-                } else {
-                    crate::execute_application_command(&mut self.store,
-                        ApplicationCommand::LoadConversationPermissionProjectionV1 { conversation_id, run_id, scope })
-                }
             }
             ApplicationCommand::ImportHostAgentTaskGuidanceProjection { projection } => {
                 use crate::task_guidance::PreparedTaskGuidanceImport;
@@ -452,6 +461,49 @@ impl<R: crate::repositories::RuntimeExecutionRepositories> ApplicationRuntime<R>
                 })
                 .map_err(|e| e.to_string())
             }
+            _ => Err("invalid_internal_runtime_command_family".into()),
+        }
+    }
+
+    #[inline(never)]
+    fn execute_permission_control_command(&mut self,command:Box<ApplicationCommand>)->Result<Value,String>{
+        match *command {
+            ApplicationCommand::RespondToConversationWait { input } => {
+                let result = match crate::user_input_wait::prepare(&self.store, &input)? {
+                    crate::user_input_wait::PreparedWaitResponse::Settled(result) => result,
+                    crate::user_input_wait::PreparedWaitResponse::Apply(command) => {
+                        let accepted = self.execute_active_submission_in_unit_of_work(command, |accepted, _| accepted)?;
+                        crate::user_input_wait::applied(&self.store, &input, accepted)?
+                    }
+                };
+                serde_json::to_value(result).map_err(|error| error.to_string())
+            }
+            ApplicationCommand::ReadPermissionConfiguration {
+                conversation_id, source_host_id, client_id, unresolved_run_ids,
+                source_unconfirmed, minimum_policy_revision,
+            } => {
+                let supervisor = &self.supervisor;
+                self.store.with_consistent_read(|store| {
+                    let active = store.active_run(&conversation_id).map_err(|e| e.to_string())?;
+                    let revision = store.checkpoint_revision(&conversation_id).map_err(|e| e.to_string())?;
+                    let current = active.as_ref().map(|active|
+                        supervisor.current_permissions(&active.run_id, &conversation_id, revision))
+                        .transpose()?.flatten();
+                    crate::application_command::read_permission_configuration(store,
+                        &conversation_id, source_host_id.as_deref(), client_id.as_deref(),
+                        &unresolved_run_ids, source_unconfirmed, minimum_policy_revision, current.as_ref())
+                })
+            }
+            ApplicationCommand::LoadConversationPermissionProjectionV1 { conversation_id, run_id, scope } => {
+                let revision = self.store.checkpoint_revision(&conversation_id).map_err(|e| e.to_string())?;
+                if let Some(current) = self.supervisor.current_permissions(&run_id, &conversation_id, revision)? {
+                    crate::application_command::read_permission_projection(
+                        &self.store, conversation_id, run_id, scope, Some(&current))
+                } else {
+                    crate::execute_application_command(&mut self.store,
+                        ApplicationCommand::LoadConversationPermissionProjectionV1 { conversation_id, run_id, scope })
+                }
+            }
             ApplicationCommand::ApplyActivePermissionPolicy { conversation_id, policy, now_ms } => {
                 let input = crate::permission_policy::prepare_apply(&mut self.store, &conversation_id, &policy, now_ms)?;
                 let result = match input {
@@ -459,6 +511,38 @@ impl<R: crate::repositories::RuntimeExecutionRepositories> ApplicationRuntime<R>
                     None => None,
                 };
                 serde_json::to_value(result).map_err(|error| error.to_string())
+            }
+            _ => Err("invalid_internal_runtime_command_family".into()),
+        }
+    }
+
+    #[inline(never)]
+    fn execute_recovery_control_command(&mut self,command:Box<ApplicationCommand>)->Result<Value,String>{
+        match *command {
+            ApplicationCommand::ResolveUnknownEffectRecovery { input } => {
+                let run_id=input.run_id.clone();
+                let conversation_id=input.conversation_id.clone();
+                let revision=self.store.checkpoint_revision(&conversation_id).map_err(|e|e.to_string())?;
+                let hot=self.supervisor.take_current(&run_id,&conversation_id,revision);
+                let (core,deferred_events,deferred_host_events,deferred_traces,previous)=match hot {
+                    Some(hot)=>(Some(hot.core),hot.deferred_events,hot.deferred_host_events,hot.deferred_traces,
+                        Some((hot.checkpoint_revision,hot.next_event_sequence,hot.invocation_config_digest,hot.deferred_bytes))),
+                    None=>(None,Vec::new(),Vec::new(),Vec::new(),None),
+                };
+                let invocation_config_digest=input.invocation_config_digest.clone();
+                let resolved=crate::unknown_effect_recovery::resolve_with_core(&mut self.store,input,core,deferred_events,deferred_host_events,deferred_traces)?;
+                if let Some(core)=resolved.core {
+                    let (checkpoint_revision,next_event_sequence,invocation_config_digest,deferred_bytes,terminal)=match resolved.accepted {
+                        Some(accepted)=>(accepted.commit.checkpoint_revision,accepted.commit.next_event_sequence,invocation_config_digest,0,accepted.control.turn_status.is_terminal()),
+                        None=>{
+                            let (revision,sequence,digest,bytes)=previous.ok_or("recovery overlay lacks original owner")?;
+                            (revision,sequence,digest,bytes,false)
+                        },
+                    };
+                    self.supervisor.retain(RetainHotRun{run_id,conversation_id,core,terminal,checkpoint_revision,next_event_sequence,
+                        invocation_config_digest,deferred_events:resolved.deferred_events,deferred_host_events:resolved.deferred_host_events,deferred_traces:resolved.deferred_traces,deferred_bytes});
+                }
+                serde_json::to_value(resolved.reply).map_err(|e|e.to_string())
             }
             ApplicationCommand::RequestRunCancellation { input } => {
                 self.retain_cancellation_recovery(&input.conversation_id, &input.expected_run_id)?;
@@ -552,6 +636,60 @@ impl<R: crate::repositories::RuntimeExecutionRepositories> ApplicationRuntime<R>
                 )?;
                 Ok(serde_json::json!(outcome.changed))
             }
+            _ => Err("invalid_internal_runtime_command_family".into()),
+        }
+    }
+
+    #[inline(never)]
+    fn execute_current_read_command(&mut self,command:Box<ApplicationCommand>)->Result<Value,String>{
+        match *command {
+            ApplicationCommand::LoadSessionGoalProjection { conversation_id } => {
+                let revision = self.store.checkpoint_revision(&conversation_id).map_err(|e| e.to_string())?;
+                if let Some(goal) = revision.and_then(|revision| self.supervisor.current_goal(&conversation_id, revision)) {
+                    if self.store.checkpoint_revision(&conversation_id).map_err(|e| e.to_string())? != revision {
+                        return Err("Goal projection changed during read".into());
+                    }
+                    serde_json::to_value(Some(goal)).map_err(|e| e.to_string())
+                } else {
+                    crate::execute_application_command(&mut self.store,
+                        ApplicationCommand::LoadSessionGoalProjection { conversation_id })
+                }
+            }
+            ApplicationCommand::LoadHostExecutionState { conversation_id } => {
+                let revision = self.store.checkpoint_revision(&conversation_id).map_err(|e| e.to_string())?
+                    .ok_or("Host execution state has no committed revision")?;
+                let state = match self.supervisor.execution_state(&conversation_id, revision) {
+                    Some(state) => state,
+                    None => crate::host_execution_state::load(&self.store, &conversation_id)?,
+                };
+                if self.store.checkpoint_revision(&conversation_id).map_err(|e| e.to_string())? != Some(revision) {
+                    return Err("Host execution state changed during read".into());
+                }
+                serde_json::to_value(state).map_err(|e| e.to_string())
+            }
+            ApplicationCommand::LoadCommittedHostRequests { run_id } => {
+                let committed = self.effective_host_requests(&run_id)?;
+                serde_json::to_value(committed).map_err(|error| error.to_string())
+            }
+            _ => Err("invalid_internal_runtime_command_family".into()),
+        }
+    }
+
+    #[inline(never)]
+    fn execute_active_submission_command(&mut self,command:Box<ApplicationCommand>)->Result<Value,String>{
+        match *command {
+            ApplicationCommand::ReduceAndCommitActiveSubmission { input } => {
+                let accepted = self.execute_active_submission_in_unit_of_work(input,
+                    |accepted, _| accepted)?;
+                serde_json::to_value(accepted).map_err(|error| error.to_string())
+            }
+            _ => Err("invalid_internal_runtime_command_family".into()),
+        }
+    }
+
+    #[inline(never)]
+    fn execute_uploaded_content_command(&mut self,command:Box<ApplicationCommand>)->Result<Value,String>{
+        match *command {
             ApplicationCommand::StageArchiveManifest { input } => {
                 let result = crate::archive_restore::stage_archive_manifest(
                     &mut self.store,
@@ -578,149 +716,143 @@ impl<R: crate::repositories::RuntimeExecutionRepositories> ApplicationRuntime<R>
             | ApplicationCommand::CancelContentUpload { .. }) => {
                 self.execute_content_upload(command)
             }
-            ApplicationCommand::ReduceAndAcceptHostResponse { input } => {
-                if let Some(accepted) = crate::reconcile_committed_terminal_response(&self.store, &input)? {
-                    return serde_json::to_value(accepted).map_err(|error| error.to_string());
-                }
-                let run_id = input.run_id.clone();
-                let conversation_id = input.conversation_id.clone();
-                let checkpoint_revision =
-                    RunEffectRepository::checkpoint_revision(&self.store, &conversation_id)
-                        .map_err(|error| {
-                            format!("load hot Run checkpoint revision failed: {error}")
-                        })?;
-                let hot =
-                    self.supervisor
-                        .take_current(&run_id, &conversation_id, checkpoint_revision);
-                let response_bytes = estimated_response_bytes(&input.response);
-                let terminal = input.response.payload.is_terminal();
-                let delta_only = response_has_incremental_projection(&input.response);
-                let (
-                    hot_core,
-                    hot_revision,
-                    hot_sequence,
-                    hot_digest,
-                    mut prior_deferred_events,
-                    mut deferred_host_events,
-                    mut deferred_traces,
-                    deferred_bytes,
-                ) = match hot {
-                    Some(run) => (
-                        Some(run.core),
-                        Some(run.checkpoint_revision),
-                        Some(run.next_event_sequence),
-                        Some(run.invocation_config_digest),
-                        run.deferred_events,
-                        run.deferred_host_events,
-                        run.deferred_traces,
-                        run.deferred_bytes,
-                    ),
-                    None => (None, None, None, None, Vec::new(), Vec::new(), Vec::new(), 0),
-                };
-                // A durable command receipt may only acknowledge durable state.
-                // Otherwise replay after a crash would return the receipt while
-                // silently dropping the hot-only delta that it acknowledged.
-                // Delegated workers wait for durable per-event acknowledgement before
-                // continuing external execution, including below the byte budget.
-                // An interrupted permission is a recoverable checkpoint boundary,
-                // even though it does not finish the Run or its Host effect.
-                // A model restart must also commit the discarded partials before
-                // the Host is allowed to start another physical request.
-                let recovery_boundary = host_response_requires_recovery_boundary(&input.response);
-                let persist = self.supervisor.requires_durable_ack()
-                    || recovery_boundary
-                    || terminal
-                    || deferred_bytes.saturating_add(response_bytes) >= STREAM_COMMIT_BYTE_BUDGET;
-                let deferred_events = if persist {
-                    std::mem::take(&mut prior_deferred_events)
-                } else {
-                    Vec::new()
-                };
-                let invocation_config_digest = input.invocation_config_digest.clone();
-                if persist {
-                    self.store
-                        .append_host_event_history(&run_id, &deferred_host_events)
-                        .map_err(|error| {
-                            format!("commit deferred Host responses failed: {error}")
-                        })?;
-                    deferred_host_events.clear();
-                    crate::execution_trace_journal::record_accepted(&mut self.store, &conversation_id, &deferred_traces)?;
-                    deferred_traces.clear();
-                }
-                let (mut accepted, core, deferred_host_event) =
-                    reduce_and_accept_host_response_with_core(
-                        &mut self.store,
-                        input,
-                        hot_core,
-                        hot_revision,
-                        hot_sequence,
-                        hot_digest.as_deref(),
-                        deferred_events,
-                        persist,
-                        persist && !delta_only,
-                    )?;
-                // The reducer supplies its actual binding/normalization facts.
-                // A caller must never infer a no-bind fact merely because this
-                // response remained below the durable byte boundary.
-                if let Some(event) = deferred_host_event {
-                    deferred_host_events.push(event);
-                }
-                let next_terminal = core.turn_status().is_terminal();
-                let next_checkpoint_revision = accepted.commit.checkpoint_revision;
-                let next_event_sequence = accepted.commit.next_event_sequence;
-                let next_deferred_events = if persist {
-                    Vec::new()
-                } else {
-                    deferred_traces.extend(accepted.traces.iter().cloned());
-                    let mut controls = Vec::new();
-                    for event in std::mem::take(&mut accepted.events) {
-                        if !matches!(event.event, AgentEvent::PartUpdated { .. }) {
-                            controls.push(event.clone());
-                        }
-                        prior_deferred_events.push(event);
-                    }
-                    accepted.events = controls;
-                    prior_deferred_events
-                };
-                self.supervisor.retain(RetainHotRun {
-                    run_id,
-                    conversation_id,
-                    core,
-                    terminal: next_terminal,
-                    checkpoint_revision: next_checkpoint_revision,
-                    next_event_sequence,
-                    invocation_config_digest,
-                    deferred_events: next_deferred_events,
-                    deferred_traces,
-                    deferred_host_events,
-                    deferred_bytes: if persist {
-                        0
-                    } else {
-                        deferred_bytes.saturating_add(response_bytes)
-                    },
-                });
-                // Durability and projection shape are independent contracts.
-                // A receipt must commit its delta, but must not duplicate the
-                // entire growing conversation on every progress/token event.
-                // Boundary responses publish scalar control only; permissions
-                // are read under their exact witness, and bodies use journals.
-                accepted
-                    .events
-                    .retain(|event| !matches!(event.event, AgentEvent::PartUpdated { .. }));
-                let encoded = serde_json::to_value(&accepted).map_err(|error| error.to_string())?;
-                Ok(encoded)
-            }
-            ApplicationCommand::ReduceAndCommitActiveSubmission { input } => {
-                let accepted = self.execute_active_submission_in_unit_of_work(input,
-                    |accepted, _| accepted)?;
-                serde_json::to_value(accepted).map_err(|error| error.to_string())
-            }
-            ApplicationCommand::LoadCommittedHostRequests { run_id } => {
-                let committed = self.effective_host_requests(&run_id)?;
-                serde_json::to_value(committed).map_err(|error| error.to_string())
-            }
-            command => execute_application_command(&mut self.store, command),
+            _ => Err("invalid_internal_runtime_command_family".into()),
         }
+    }
+
+    #[inline(never)]
+    fn reduce_host_response_in_unit_of_work(&mut self,input:Box<crate::ReduceAndAcceptHostResponse>)->Result<Value,String>{
+        let input=*input;
+        if let Some(accepted) = crate::reconcile_committed_terminal_response(&self.store, &input)? {
+            return serde_json::to_value(accepted).map_err(|error| error.to_string());
+        }
+        let run_id = input.run_id.clone();
+        let conversation_id = input.conversation_id.clone();
+        let checkpoint_revision =
+            RunEffectRepository::checkpoint_revision(&self.store, &conversation_id)
+                .map_err(|error| {
+                    format!("load hot Run checkpoint revision failed: {error}")
+                })?;
+        let hot =
+            self.supervisor
+                .take_current(&run_id, &conversation_id, checkpoint_revision);
+        let response_bytes = estimated_response_bytes(&input.response);
+        let terminal = input.response.payload.is_terminal();
+        let delta_only = response_has_incremental_projection(&input.response);
+        let (
+            hot_core,
+            hot_revision,
+            hot_sequence,
+            hot_digest,
+            mut prior_deferred_events,
+            mut deferred_host_events,
+            mut deferred_traces,
+            deferred_bytes,
+        ) = match hot {
+            Some(run) => (
+                Some(run.core),
+                Some(run.checkpoint_revision),
+                Some(run.next_event_sequence),
+                Some(run.invocation_config_digest),
+                run.deferred_events,
+                run.deferred_host_events,
+                run.deferred_traces,
+                run.deferred_bytes,
+            ),
+            None => (None, None, None, None, Vec::new(), Vec::new(), Vec::new(), 0),
+        };
+        // A durable command receipt may only acknowledge durable state.
+        // Otherwise replay after a crash would return the receipt while
+        // silently dropping the hot-only delta that it acknowledged.
+        // Delegated workers wait for durable per-event acknowledgement before
+        // continuing external execution, including below the byte budget.
+        // An interrupted permission is a recoverable checkpoint boundary,
+        // even though it does not finish the Run or its Host effect.
+        // A model restart must also commit the discarded partials before
+        // the Host is allowed to start another physical request.
+        let recovery_boundary = host_response_requires_recovery_boundary(&input.response);
+        let persist = self.supervisor.requires_durable_ack()
+            || recovery_boundary
+            || terminal
+            || deferred_bytes.saturating_add(response_bytes) >= STREAM_COMMIT_BYTE_BUDGET;
+        let deferred_events = if persist {
+            std::mem::take(&mut prior_deferred_events)
+        } else {
+            Vec::new()
+        };
+        let invocation_config_digest = input.invocation_config_digest.clone();
+        if persist {
+            self.store
+                .append_host_event_history(&run_id, &deferred_host_events)
+                .map_err(|error| {
+                    format!("commit deferred Host responses failed: {error}")
+                })?;
+            deferred_host_events.clear();
+            crate::execution_trace_journal::record_accepted(&mut self.store, &conversation_id, &deferred_traces)?;
+            deferred_traces.clear();
+        }
+        let (mut accepted, core, deferred_host_event) =
+            reduce_and_accept_host_response_with_core(
+                &mut self.store,
+                input,
+                hot_core,
+                hot_revision,
+                hot_sequence,
+                hot_digest.as_deref(),
+                deferred_events,
+                persist,
+                persist && !delta_only,
+            )?;
+        // The reducer supplies its actual binding/normalization facts.
+        // A caller must never infer a no-bind fact merely because this
+        // response remained below the durable byte boundary.
+        if let Some(event) = deferred_host_event {
+            deferred_host_events.push(event);
+        }
+        let next_terminal = core.turn_status().is_terminal();
+        let next_checkpoint_revision = accepted.commit.checkpoint_revision;
+        let next_event_sequence = accepted.commit.next_event_sequence;
+        let next_deferred_events = if persist {
+            Vec::new()
+        } else {
+            deferred_traces.extend(accepted.traces.iter().cloned());
+            let mut controls = Vec::new();
+            for event in std::mem::take(&mut accepted.events) {
+                if !matches!(event.event, AgentEvent::PartUpdated { .. }) {
+                    controls.push(event.clone());
+                }
+                prior_deferred_events.push(event);
+            }
+            accepted.events = controls;
+            prior_deferred_events
+        };
+        self.supervisor.retain(RetainHotRun {
+            run_id,
+            conversation_id,
+            core,
+            terminal: next_terminal,
+            checkpoint_revision: next_checkpoint_revision,
+            next_event_sequence,
+            invocation_config_digest,
+            deferred_events: next_deferred_events,
+            deferred_traces,
+            deferred_host_events,
+            deferred_bytes: if persist {
+                0
+            } else {
+                deferred_bytes.saturating_add(response_bytes)
+            },
+        });
+        // Durability and projection shape are independent contracts.
+        // A receipt must commit its delta, but must not duplicate the
+        // entire growing conversation on every progress/token event.
+        // Boundary responses publish scalar control only; permissions
+        // are read under their exact witness, and bodies use journals.
+        accepted
+            .events
+            .retain(|event| !matches!(event.event, AgentEvent::PartUpdated { .. }));
+        let encoded = serde_json::to_value(&accepted).map_err(|error| error.to_string())?;
+        Ok(encoded)
     }
 
     fn admit_assistant_turn(&mut self, input: crate::BeginAssistantTurn,

@@ -122,10 +122,6 @@ struct ChatEmptyStateCard: View {
                 suggestionIcon(icon)
                 suggestionText(title)
                 Spacer(minLength: 4)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.tertiary)
-                    .accessibilityHidden(true)
             }
         } else {
             VStack(alignment: .leading, spacing: 10) {

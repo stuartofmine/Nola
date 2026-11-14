@@ -145,3 +145,46 @@ fn rejected_start_never_grants_physical_execution() {
     );
     assert!(worker.join().unwrap().is_err());
 }
+
+#[test]
+fn delivery_abort_is_effect_scoped_and_never_acknowledges_a_response_or_stop() {
+    let (mut host, mailbox) = bounded_host_mailbox::<OpaqueProtocol>(2).unwrap();
+    let worker = std::thread::spawn(move || {
+        let first = host.dispatch(fixture_request(), &mut |_| panic!("abort must not forge a response"));
+        assert!(first.unwrap_err().contains("stop remains unconfirmed"));
+        let mut next = fixture_request(); next.effect_id.0 = "healthy-sibling".into();
+        host.dispatch(next, &mut |_| Ok(()))
+    });
+    let (ticket, request) = mailbox.poll(Duration::from_secs(5)).unwrap().unwrap();
+    assert!(!mailbox.abort_delivery("foreign-effect").unwrap());
+    assert!(mailbox.abort_delivery(&request.effect_id.0).unwrap());
+    assert!(mailbox.respond(ticket, reply(&request, 1, Response::Started)).is_err());
+    let (next_ticket, next) = mailbox.poll(Duration::from_secs(5)).unwrap().unwrap();
+    assert_eq!(next.effect_id.0, "healthy-sibling");
+    assert!(mailbox.respond(ticket, reply(&request, 2, Response::Finished)).is_err(), "an aborted or unknown ticket never gets an ACK");
+    mailbox.respond(next_ticket, reply(&next, 1, Response::Started)).unwrap();
+    mailbox.respond(next_ticket, reply(&next, 2, Response::Finished)).unwrap();
+    worker.join().unwrap().unwrap();
+}
+
+#[test]
+fn busy_delivery_abort_waits_for_the_real_application_ack_and_leaves_mailbox_open() {
+    let (mut host, mailbox) = bounded_host_mailbox::<OpaqueProtocol>(1).unwrap();
+    let (entered_tx, entered) = std::sync::mpsc::sync_channel(1);
+    let (release, held) = std::sync::mpsc::sync_channel(1);
+    let worker = std::thread::spawn(move || host.dispatch(fixture_request(), &mut |_| {
+        entered_tx.send(()).unwrap(); held.recv().unwrap(); Ok(())
+    }));
+    let (ticket, request) = mailbox.poll(Duration::from_secs(5)).unwrap().unwrap();
+    let endpoint = mailbox.clone(); let effect = request.effect_id.0.clone();
+    let (finished, observed) = std::sync::mpsc::sync_channel(1);
+    let native = std::thread::spawn(move || finished.send(endpoint.respond(ticket, reply(&request, 1, Response::Started))).unwrap());
+    entered.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(mailbox.abort_delivery(&effect).unwrap());
+    assert!(observed.try_recv().is_err(), "abort is not a synthetic commit ACK");
+    release.send(()).unwrap();
+    observed.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
+    native.join().unwrap();
+    assert!(worker.join().unwrap().unwrap_err().contains("stop remains unconfirmed"));
+    assert!(mailbox.poll(Duration::ZERO).unwrap().is_none(), "effect abort does not close the owner mailbox");
+}

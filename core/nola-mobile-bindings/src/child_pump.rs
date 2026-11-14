@@ -518,6 +518,7 @@ pub extern "C" fn nola_core_child_pump_start(
         let observer = mailbox.clone();
         // Renewal cadence stays comfortably inside both independent leases.
         let cadence = (task_lease_ms / 4).clamp(100, 1000) as u64;
+        let abort_mailbox = mailbox.clone();
         let mut driver = CommittedRuntimeDriver::with_delivery_identity_and_timing(
             host,
             identity.worker_generation,
@@ -526,7 +527,11 @@ pub extern "C" fn nola_core_child_pump_start(
                 lease_duration: Duration::from_secs(30),
                 heartbeat_cadence: Duration::from_millis(cadence),
             },
-        );
+        ).with_delivery_abort(Arc::new(move |effect_id| {
+            // Transport abort only. The shared driver then drains the exact
+            // committed Cancel, whose native handler must prove physical stop.
+            let _ = abort_mailbox.abort_delivery(effect_id);
+        }));
         std::thread::Builder::new().name(format!("nola-child-{}",start.task_id)).spawn(move||{
             let result=std::panic::catch_unwind(std::panic::AssertUnwindSafe(||
                 driver.execute(&mut port,&mut |_|{}).map_err(|error|format!("child pump: {error:?}"))))

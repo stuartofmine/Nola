@@ -10,6 +10,13 @@ impl ConsistentReadRepository for NolaStore {
     ) -> Result<T, String> {
         NolaStore::with_consistent_read(self, reader)
     }
+
+    fn with_consistent_read_mut<T>(
+        &mut self,
+        reader: impl FnOnce(&mut Self) -> Result<T, String>,
+    ) -> Result<T, String> {
+        NolaStore::with_consistent_read_mut(self, reader)
+    }
 }
 impl ResumeSnapshotRepository for NolaStore {
     type ResumeError = StoreError;

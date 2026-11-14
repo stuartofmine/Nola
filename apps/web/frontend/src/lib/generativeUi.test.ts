@@ -57,6 +57,26 @@ test('surface Part retains its independent exact revision and tool provenance', 
     assert.equal(uiIdentityKey(reference!.identity), uiIdentityKey(identity));
 });
 
+test('historical API rejects pending/live state as well as interactive bindings', async context => {
+    Object.defineProperty(globalThis, 'document', {configurable: true, value: {cookie: ''}});
+    context.after(() => { Reflect.deleteProperty(globalThis, 'document'); });
+    const {readUiSurfaceRevision} = await import('./generativeUi.ts');
+    let phase = 'pending';
+    const node = {instance_id: 'root', component_id: 'root', component: 'Text', props: {text: 'saved'}, slots: {}, bindings: {}, actions: {}, validation_errors: []};
+    context.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({snapshot: {
+        identity, revision: 2, catalog_id: 'catalog', catalog_digest: 'digest', phase,
+        root_instance_id: 'root', nodes: {root: node}, summary: 'saved',
+    }})));
+    for (const invalid of ['pending', 'ready', 'unknown']) {
+        phase = invalid;
+        await assert.rejects(readUiSurfaceRevision({identity, revision: 2}), /Historical UI/);
+    }
+    for (const valid of ['read_only', 'deleted']) {
+        phase = valid;
+        assert.equal((await readUiSurfaceRevision({identity, revision: 2}))?.phase, valid);
+    }
+});
+
 test('surface Part rejects cross-message or cross-conversation ownership', () => {
     assert.throws(() => uiSurfaceReference(part(), 'other', 'message'));
     assert.throws(() => uiSurfaceReference(part(), 'conversation', 'other'));

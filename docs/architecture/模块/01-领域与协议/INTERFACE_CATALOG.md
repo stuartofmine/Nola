@@ -440,6 +440,8 @@
 | `LoadPreparedExpertResend` | `load_prepared_expert_resend` | [definition](../../../../core/nola-application/src/application_command.rs#L1757) |
 | `LoadExpertMessageManifest` | `load_expert_message_manifest` | [definition](../../../../core/nola-application/src/application_command.rs#L1758) |
 | `LoadExpertChildInstructions` | `load_expert_child_instructions` | [definition](../../../../core/nola-application/src/application_command.rs#L1759) |
+| `LoadPreparedInPlaceResend` | `load_prepared_in_place_resend` | [definition](../../../../core/nola-application/src/application_command.rs) |
+| `PrepareInPlaceResend` | `prepare_in_place_resend` | [definition](../../../../core/nola-application/src/in_place_resend.rs) |
 | `PrepareEditedResend` | `prepare_edited_resend` | [definition](../../../../core/nola-application/src/application_command.rs#L1760) |
 | `LoadPreparedEditedResend` | `load_prepared_edited_resend` | [definition](../../../../core/nola-application/src/application_command.rs#L1761) |
 | `LoadEditedResendHostMaterial` | `load_edited_resend_host_material` | [definition](../../../../core/nola-application/src/application_command.rs#L1762) |

@@ -34,4 +34,34 @@ final class IOSExpertConfigurationDraftTests: XCTestCase {
         XCTAssertThrowsError(try AppleExpertConfigurationDraft(defaults: .object(["modelSelectionID": .bool(false)])))
         XCTAssertThrowsError(try AppleExpertConfigurationDraft(defaults: .object(["selectedPromptTemplateID": .signedInteger(7)])))
     }
+    func testReasoningOverrideChangesOnlyExpertPreferenceAndAutomaticRemovesIt() throws {
+        let original: AgentCoreJSONValue = .object([
+            "expertReasoningEffort": .string("high"),
+            "modelOverrides": .object(["configured:model": .object(["temperature": .number(0.25)])]),
+            "unknownCoreOwnedField": .array([.null, .bool(true)])
+        ])
+        var draft = try AppleExpertConfigurationDraft(defaults: original)
+        XCTAssertEqual(draft.reasoningEffort, "high")
+        XCTAssertEqual(try draft.applying(to: original), original)
+        draft.reasoningEffort = "xhigh"
+        guard case .object(var expected) = original else { return XCTFail("Expected defaults object") }
+        expected["expertReasoningEffort"] = .string("xhigh")
+        XCTAssertEqual(try draft.applying(to: original), .object(expected))
+        draft.reasoningEffort = "automatic"
+        expected.removeValue(forKey: "expertReasoningEffort")
+        XCTAssertEqual(try draft.applying(to: original), .object(expected))
+        XCTAssertEqual(try AppleExpertConfigurationDraft(defaults: .object([:])).reasoningEffort, "automatic")
+        XCTAssertThrowsError(try AppleExpertConfigurationDraft(defaults: .object(["expertReasoningEffort": .bool(false)])))
+    }
+
+    func testMentionCompletionCannotTargetAnotherUnsentOrSavedOwner() {
+        let a = UUID(), b = UUID()
+        XCTAssertTrue(IOSExpertMentionCompletionPolicy.accepts(owner: nil, draftOwner: .unsent(a),
+            currentOwner: nil, currentDraftOwner: .unsent(a)))
+        XCTAssertFalse(IOSExpertMentionCompletionPolicy.accepts(owner: nil, draftOwner: .unsent(a),
+            currentOwner: nil, currentDraftOwner: .unsent(b)), "Two nil conversation IDs do not identify the same unsaved draft")
+        XCTAssertFalse(IOSExpertMentionCompletionPolicy.accepts(owner: a, draftOwner: .conversation(a),
+            currentOwner: b, currentDraftOwner: .conversation(b)))
+    }
+
 }

@@ -28,7 +28,7 @@ final class MacAssistantJournalTransportTests: XCTestCase {
             permission: nil, state: "completed", display_key: nil, affected_resources: .inline([]), artifacts: "0",
             full_output: nil, started_at_ms: nil, finished_at_ms: nil)))
         let mixed = MacJournalPartFlow.segments([prose, settled, tool, surface, next])
-        XCTAssertEqual(mixed.map { $0.parts.map(\.part_id) }, [["answer"], ["first", "tool", "next"], ["surface"]])
+        XCTAssertEqual(mixed.map { $0.parts.map(\.part_id) }, [["answer"], ["first", "tool"], ["surface"], ["next"]])
         XCTAssertEqual(MacJournalPartFlow.liveReasoning([next, surface, prose], delivery: .running).map(\.part_id), ["next"])
         // Earlier commentary is not the current answer.
         XCTAssertFalse(MacJournalPartFlow.liveReasoning([prose, settled, placeholder, next], delivery: .running).isEmpty)
@@ -54,6 +54,139 @@ final class MacAssistantJournalTransportTests: XCTestCase {
 
 
 
+    func testReferenceFooterDeduplicatesSourceAndCitationWithoutDroppingCoverage() {
+        func part(_ id: String, _ metadata: MacAssistantJournalMetadata) -> MacAssistantJournalPart {
+            .init(identity: .init(source_store_epoch: "epoch", conversation_id: "c", run_id: "r", assistant_message_id: "a"),
+                part_id: id, generation: "1", revision: "1", metadata_revision: "1",
+                order_key: .init(section: "0", position: "0"), metadata: metadata, bodies: [])
+        }
+        let source = part("source", .source(.init(source_id: "s", title: .inline("Source"), uri: .inline("https://example.com"), mime_type: nil, evidence: nil)))
+        let citation = part("citation", .citation(.init(citation_id: "c", source_id: "s", title: .inline("Source"), uri: .inline("https://example.com"), mime_type: nil, origin_tool_call_id: "call", location: nil, byte_range: nil)))
+        let pinpoint = part("pinpoint", .citation(.init(citation_id: "p", source_id: "s", title: .inline("Page two"), uri: .inline("https://example.com"), mime_type: nil, origin_tool_call_id: "call", location: .init(page: "2", line_start: nil, line_end: nil, section: nil), byte_range: nil)))
+        let grouped = MacJournalSourceGrouping([source, citation, pinpoint])
+        XCTAssertEqual(grouped.parts.map(\.part_id), ["source", "pinpoint"])
+        XCTAssertEqual(grouped.referenceIDs, ["source", "citation", "pinpoint"])
+    }
+
+    @MainActor
+    func testReferenceFooterStartsWithCompactCitationsAndExpandsWithoutDuplicateLinks() async throws {
+        let accessibility = try MacHostedAccessibilitySession()
+        defer { accessibility.restore() }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("reference-footer-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let identity = MacAssistantJournalIdentity(source_store_epoch: "fixture", conversation_id: "c", run_id: "r", assistant_message_id: "a")
+        func part(_ id: String, _ metadata: MacAssistantJournalMetadata) -> MacAssistantJournalPart {
+            .init(identity: identity, part_id: id, generation: "1", revision: "1", metadata_revision: "1",
+                order_key: .init(section: "0", position: "0"), metadata: metadata, bodies: [])
+        }
+        let sources = (0..<31).flatMap { i in
+            [part("source-\(i)", .source(.init(source_id: "s\(i)", title: .inline("Source \(i)"), uri: .inline("https://example.com/\(i)"), mime_type: nil, evidence: nil))),
+             part("cite-\(i)", .citation(.init(citation_id: "c\(i)", source_id: "s\(i)", title: .inline("Source \(i)"), uri: .inline("https://example.com/\(i)"), mime_type: nil, origin_tool_call_id: "call", location: nil, byte_range: nil)))]
+        }
+        let skill = part("skill", .skill(.init(run_id: "skill:fixture:host_effect:7", skill_id: "conduct-deep-research",
+            display_name: .inline("conduct-deep-research"), mode: "inline", state: "running",
+            model_turns: "8", tool_calls: "10", elapsed_millis: "116945")))
+        let parts = [skill] + sources
+        let reference = MacJournalMessageReference(databaseURL: root.appendingPathComponent("fixture.sqlite"),
+            cursor: .init(identity: identity, sequence: "1", record_digest: "fixture"))
+        let owner = MacJournalPresentationOwner(readParts: { _, _, _ in parts })
+        let content = VStack(alignment: .leading, spacing: 12) {
+            Text("A concise answer stays visible above its sources.")
+            MacJournalMessageTextView(reference: reference, deliveryState: .completed, presentationOwner: owner)
+            Spacer()
+        }.padding(20).environment(\.accessibilityEnabled, true)
+            .frame(width: 520, height: 500).background(Color(nsColor: .windowBackgroundColor))
+        let host = NSHostingView(rootView: AnyView(content.environment(\.colorScheme, .dark)))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFrontRegardless()
+        defer { owner.cancel(); window.orderOut(nil); window.contentView = nil; window.close() }
+        func objects() -> [AnyObject] {
+            var queue: [AnyObject] = [host], result: [AnyObject] = [], seen = Set<ObjectIdentifier>()
+            var index = 0
+            while index < queue.count, result.count < 4000 {
+                let object = queue[index]; index += 1
+                guard seen.insert(ObjectIdentifier(object)).inserted else { continue }
+                result.append(object)
+                let children = object.accessibilityChildren?() ?? []
+                queue += (children + NSAccessibility.unignoredChildren(from: children)).map { $0 as AnyObject }
+                if let view = object as? NSView { queue += view.subviews }
+            }
+            return result
+        }
+        let deadline = ContinuousClock.now + .seconds(3)
+        while !objects().contains(where: { ($0.accessibilityIdentifier?() ?? nil) == "chat.journal.sources.toggle" }), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(objects().filter { ($0.accessibilityRole?() ?? nil) == .link }.count, 3)
+        let visibleText = objects().compactMap { object -> String? in
+            if let element = object as? any NSAccessibilityProtocol { return element.accessibilityValue() as? String }
+            return nil
+        }.joined(separator: " ")
+        for hidden in ["116945", "host_effect", "Model turns", "Tool calls"] {
+            XCTAssertFalse(visibleText.contains(hidden), "Technical metadata must not occupy the reply: \(hidden)")
+        }
+        func capture(_ name: String) throws {
+            host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let attachment = XCTAttachment(data: try XCTUnwrap(bitmap.representation(using: .png, properties: [:])), uniformTypeIdentifier: "public.png")
+            attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+        }
+        try capture("compact-references-dark")
+        let toggle = try XCTUnwrap(objects().first { ($0.accessibilityIdentifier?() ?? nil) == "chat.journal.sources.toggle" })
+        XCTAssertTrue(toggle.accessibilityPerformPress?() ?? false)
+        try await Task.sleep(for: .milliseconds(250))
+        let sourceRows = Set(objects().compactMap { object -> String? in
+            guard (object.accessibilityIdentifier?() ?? nil) == "chat.journal.source",
+                  (object.accessibilityRole?() ?? nil) == .group,
+                  let frame = object.accessibilityFrame?() else { return nil }
+            return NSStringFromRect(frame)
+        })
+        XCTAssertEqual(sourceRows.count, 31, "Each unique source has one rendered row, rather than one per source/citation record")
+        let collapse = try XCTUnwrap(objects().first { ($0.accessibilityIdentifier?() ?? nil) == "chat.journal.sources.toggle" })
+        XCTAssertTrue(collapse.accessibilityPerformPress?() ?? false)
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(objects().filter { ($0.accessibilityRole?() ?? nil) == .link }.count, 3)
+        host.rootView = AnyView(content.environment(\.colorScheme, .light))
+        window.appearance = NSAppearance(named: .aqua)
+        try await Task.sleep(for: .milliseconds(250))
+        try capture("compact-references-light")
+
+    }
+
+    func testRunActivityDoesNotEndWhenAnIndividualToolCompletes() {
+        XCTAssertEqual(MacJournalPartFlow.processDelivery(run: .running, isLatest: true), .running)
+        XCTAssertNil(MacJournalPartFlow.processDelivery(run: .running, isLatest: false))
+        XCTAssertEqual(MacJournalPartFlow.processDelivery(run: .failed, isLatest: true), .failed)
+        XCTAssertEqual(MacJournalPartFlow.processDelivery(run: .completed, isLatest: true), .completed)
+        XCTAssertNil(MacJournalPartFlow.processDelivery(run: nil, isLatest: true))
+    }
+
+    @MainActor
+    func testSkillDisplayUsesCatalogNameAndHumanDurationWithoutInventingSuccess() {
+        let skill = MacAssistantJournalMetadata.Skill(run_id: "skill:fixture:host_effect:7", skill_id: "conduct-deep-research",
+            display_name: .inline("conduct-deep-research"), mode: "inline", state: "running",
+            model_turns: "8", tool_calls: "10", elapsed_millis: "116945")
+        let display = MacJournalSkillHeaderValue(skill: skill, delivery: .completed)
+        XCTAssertEqual(display.title, MacBuiltInSkillID.deepResearch.localizedTitle)
+        XCTAssertEqual(display.state, "incomplete")
+        let duration = MacJournalSkillDetails.duration("116945")
+        XCTAssertNotNil(duration)
+        XCTAssertFalse(duration?.contains("116945") ?? true)
+        XCTAssertNil(MacJournalSkillDetails.duration("-1"))
+        XCTAssertNil(MacJournalSkillDetails.duration("unknown"))
+    }
+
+    func testTerminalReplyCannotLeaveItsHistoricalSkillVisiblyRunning() {
+        let skill = MacAssistantJournalMetadata.Skill(run_id: "r", skill_id: "research", display_name: .inline("Research"),
+            mode: "inline", state: "running", model_turns: "8", tool_calls: "10", elapsed_millis: "116945")
+        XCTAssertEqual(MacJournalSkillHeaderValue(skill: skill, delivery: .running).state, "running")
+        XCTAssertEqual(MacJournalSkillHeaderValue(skill: skill, delivery: .completed).state, "incomplete")
+        XCTAssertEqual(MacJournalSkillHeaderValue(skill: skill, delivery: .failed).state, "incomplete")
+        XCTAssertEqual(MacJournalSkillHeaderValue(skill: skill, delivery: .cancelled).state, "cancelled")
+    }
+
     func testSkillChromeDependsOnlyOnVisibleMetadata() {
         func skill(state: String = "running", calls: String = "2") -> MacAssistantJournalMetadata.Skill {
             .init(run_id: "run", skill_id: "research", display_name: .inline("Research"),
@@ -70,14 +203,14 @@ final class MacAssistantJournalTransportTests: XCTestCase {
         XCTAssertEqual(MacJournalRunStatus.attentionState("incomplete"), "incomplete")
         XCTAssertEqual(MacJournalRunStatus.attentionState("blocked"), "blocked")
         XCTAssertNil(MacJournalRunStatus.attentionState("action_completed"))
-        XCTAssertEqual(MacJournalProcessStatus.primary(delivery: .running, attention: nil), "running")
+        XCTAssertNil(MacJournalProcessStatus.primary(delivery: .running, attention: nil))
     }
 
     func testProcessDisclosureUsesRunDeliveryAndPreservesExplicitChoice() {
-        XCTAssertEqual(MacJournalProcessStatus.primary(delivery: .completed, attention: "failed"), "completed")
-        XCTAssertEqual(MacJournalProcessStatus.primary(delivery: .running, attention: "failed"), "running")
+        XCTAssertNil(MacJournalProcessStatus.primary(delivery: .completed, attention: "failed"))
+        XCTAssertNil(MacJournalProcessStatus.primary(delivery: .running, attention: "failed"))
         XCTAssertEqual(MacJournalProcessStatus.primary(delivery: .running, attention: "waiting_for_permission"), "waiting_for_permission")
-        XCTAssertEqual(MacJournalProcessStatus.primary(delivery: .cancelled, attention: "waiting_for_permission"), "cancelled")
+        XCTAssertNil(MacJournalProcessStatus.primary(delivery: .cancelled, attention: "waiting_for_permission"))
         XCTAssertFalse(AppleMessagePartFlow.isExpanded(choices: [Bool](), defaultExpanded: false))
         XCTAssertTrue(AppleMessagePartFlow.isExpanded(choices: [Bool](), defaultExpanded: true))
         XCTAssertTrue(AppleMessagePartFlow.isExpanded(choices: [true], defaultExpanded: false))
@@ -232,6 +365,31 @@ final class MacAssistantJournalTransportTests: XCTestCase {
         XCTAssertEqual(separated.map { $0.parts.map(\.part_id) }, [[parts[0].part_id], [boundary.part_id], [parts[1].part_id]])
     }
 
+    func testRecoveredToolFailureNeverBecomesThinkingOutcome() {
+        let identity = MacAssistantJournalIdentity(source_store_epoch: "test", conversation_id: "c", run_id: "r", assistant_message_id: "m")
+        func tool(_ id: String, _ state: String) -> MacAssistantJournalPart {
+            .init(identity: identity, part_id: id, generation: "1", revision: "1", metadata_revision: "1",
+                order_key: .init(section: "parts", position: id), metadata: .tool(.init(
+                    execution_source: .model, tool_call_id: id, capability_id: "bash", title: .inline(id), summary: nil,
+                    origin: .init(kind: "builtin", provider_id: nil, provider_title: nil, namespace: nil),
+                    permission: nil, state: state, display_key: nil, affected_resources: .inline([]),
+                    artifacts: "tool_artifacts", full_output: nil, started_at_ms: nil, finished_at_ms: nil)), bodies: [])
+        }
+        let failed = tool("first attempt", "failed")
+        let retry = tool("retry", "running")
+        let live = MacJournalProcessProjection([failed, retry])
+        XCTAssertEqual(live.currentActivityTitle, "retry")
+        XCTAssertFalse(live.requiresAttention)
+        XCTAssertEqual(MacJournalPartFlow.delivery(live.activities), .running)
+        let settled = MacJournalProcessProjection([failed, tool("retry", "completed")])
+        XCTAssertNil(settled.currentActivityTitle)
+        XCTAssertNil(settled.attentionState)
+        XCTAssertNil(MacJournalPartFlow.delivery(settled.activities))
+        XCTAssertNil(MacCanonicalPartFlow.delivery([.failed, .completed]))
+        XCTAssertNil(MacJournalProcessStatus.primary(delivery: .failed, attention: "failed"))
+        XCTAssertEqual(settled.activities.map(\.part_id), ["first attempt", "retry"], "Retain exact history without treating it as a process outcome")
+    }
+
     func testCompletedToolGroupingPreservesOrderAndNeverHidesNonSuccessStates() {
         func part(_ id: String, _ state: String?) -> MacAssistantJournalPart {
             let metadata: MacAssistantJournalMetadata = if let state {
@@ -253,7 +411,7 @@ final class MacAssistantJournalTransportTests: XCTestCase {
             XCTAssertEqual(process.activities.filter { if case .tool = $0.metadata { return true }; return false }.map(\.part_id),
                 parts.filter { if case .tool = $0.metadata { return true }; return false }.map(\.part_id))
             XCTAssertEqual(process.requiresAttention,
-                ["failed", "pending", "waiting_for_permission", "waiting_for_input"].contains(boundary ?? ""))
+                ["waiting_for_permission", "waiting_for_input"].contains(boundary ?? ""))
             XCTAssertEqual(grouping.groups["a"]?.map(\.part_id), ["a", "b", "c"])
             XCTAssertEqual(grouping.hiddenIDs, ["b", "c"])
             let flattened = parts.flatMap { part -> [String] in
@@ -624,7 +782,7 @@ final class MacAssistantJournalTransportTests: XCTestCase {
         XCTAssertTrue(expansion.isExpanded(isRunning: true), "Explicit expansion survives state changes")
     }
 
-    func testSingleExecutionKeepsLeadingAnswerOutsideAndActivityOrderInside() {
+    func testProductionFlowPreservesCanonicalOrderInsteadOfMovingLateReasoningBeforeAnswer() {
         let owner = MacAssistantJournalIdentity(source_store_epoch: "epoch", conversation_id: "conversation",
             run_id: "run", assistant_message_id: "assistant")
         func part(_ id: String, _ position: String, _ metadata: MacAssistantJournalMetadata) -> MacAssistantJournalPart {
@@ -636,9 +794,8 @@ final class MacAssistantJournalTransportTests: XCTestCase {
         let step = part("step", "3", .step(.init(title: .inline("Inspect"), state: "completed")))
         let second = part("reasoning-2", "4", .reasoning(.init(title: .inline("reasoning"), state: "running")))
         let flow = MacJournalPartFlow.segments([answer, first, step, second])
-        XCTAssertEqual(flow.map { $0.parts.map(\.part_id) }, [["answer"], ["reasoning-1", "reasoning-2"], ["step"]])
-        XCTAssertEqual(flow.filter { $0.kind == .process }.count, 1)
-        XCTAssertEqual(flow.filter { $0.kind == .content }.flatMap(\.parts).map(\.part_id), ["answer", "step"])
+        XCTAssertEqual(flow.map { $0.parts.map(\.part_id) }, [["answer"], ["reasoning-1"], ["step"], ["reasoning-2"]])
+        XCTAssertEqual(flow.flatMap(\.parts).map(\.part_id), ["answer", "reasoning-1", "step", "reasoning-2"])
         XCTAssertEqual(answer.order_key.position, "1", "Presentation never rewrites journal chronology")
     }
 
@@ -1075,10 +1232,8 @@ final class MacAssistantJournalTransportTests: XCTestCase {
             default: break
             }
         }
-        let flow = MacJournalPartFlow.segments(originalOrder)
-        XCTAssertEqual(Set(flow.flatMap(\.parts).map(\.part_id)), Set(originalOrder.map(\.part_id)))
-        XCTAssertEqual(flow.filter { $0.kind == .process }.count, 1)
-        XCTAssertTrue(flow.filter { $0.kind == .content }.allSatisfy { $0.parts.count == 1 },
+        XCTAssertEqual(MacJournalPartFlow.segments(originalOrder).flatMap(\.parts).map(\.part_id), originalOrder.map(\.part_id))
+        XCTAssertTrue(MacJournalPartFlow.segments(originalOrder).allSatisfy { $0.parts.count == 1 },
             "Every non-R/T kind in this canonical sequence remains an individual anchor")
         XCTAssertThrowsError(try JSONDecoder().decode(MacAssistantJournalMetadata.self,
             from: Data(#"{"kind":"future_kind","data":{}}"#.utf8)), "Unknown kinds must fail, not disappear from the read model")

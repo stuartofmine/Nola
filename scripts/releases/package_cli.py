@@ -30,7 +30,7 @@ def main():
     source=json.loads((root/'release/update-source.json').read_text());version=source['version']
     if args.output.exists():raise SystemExit('Output already exists')
     runtime=args.browser_runtime.resolve()
-    for name in ['bin/node','bridge.cjs','owner_queue.cjs','node_modules/playwright-core/LICENSE']:
+    for name in ['bin/node','bridge.cjs','owner_queue.cjs','browser_use.cjs','browser_use/worker.py','browser_use/requirements.lock','browser_use/python/bin/python3','browser_use/site-packages/browser_use/__init__.py','node_modules/playwright-core/LICENSE']:
         if not (runtime/name).is_file():raise SystemExit('Managed browser runtime is incomplete: '+name)
     subprocess.run(['python3',str(root/'scripts/releases/prepare_version.py'),'--check'],check=True)
     name=f'Nola-cli-macos-aarch64-{version}'
@@ -41,7 +41,7 @@ def main():
             if not path.is_file():raise SystemExit('Release executable missing: '+binary)
             verify_contract_marker(path)
             shutil.copy2(path,bundle/'bin'/binary)
-        for folder in ['app/static','app/templates']:
+        for folder in ['app/static']:
             path=root/'apps/web'/folder
             if path.is_dir():shutil.copytree(path,bundle/'web'/folder,ignore=shutil.ignore_patterns('__pycache__','agent_artifacts','*.db','*.log'))
         shutil.copytree(runtime,bundle/'web/playwright_runtime')

@@ -63,11 +63,16 @@ private struct ChatDocumentPicker: UIViewControllerRepresentable {
 enum ChatPasteboardAttachmentResolver {
     static func attachmentURLs(
         from pasteboard: UIPasteboard,
+        onFailure: (Error) -> Void = { _ in },
         writeImage: (Data) -> URL?
     ) -> [URL]? {
-        if let urls = pasteboard.urls, !urls.isEmpty { return urls }
-        guard let image = pasteboard.image, let data = image.pngData(), let url = writeImage(data) else {
-            return nil
+        if let urls = pasteboard.urls, !urls.isEmpty, urls.allSatisfy(\.isFileURL) { return urls }
+        // A copied web link belongs in the text draft. Only local files and
+        // actual bitmap representations enter the attachment pipeline.
+        guard let image = pasteboard.image else { return nil }
+        guard let data = image.pngData(), let url = writeImage(data) else {
+            onFailure(CocoaError(.fileWriteUnknown))
+            return [] // handled failure; do not silently invoke UIKit image paste
         }
         return [url]
     }
@@ -88,6 +93,7 @@ enum ChatComposerAccessibility {
 
 final class ChatPasteAwareTextView: UITextView {
     var onPasteFiles: (([URL]) -> Void)?
+    var onPasteFailure: ((Error) -> Void)?
     var mentionsVisible = false
     var mentionCommand: (String) -> Bool = { _ in false }
     override var keyCommands: [UIKeyCommand]? {
@@ -109,6 +115,7 @@ final class ChatPasteAwareTextView: UITextView {
         let pasteboard = UIPasteboard.general
         if let urls = ChatPasteboardAttachmentResolver.attachmentURLs(
             from: pasteboard,
+            onFailure: { [weak self] in self?.onPasteFailure?($0) },
             writeImage: { data in
                 let url = FileManager.default.temporaryDirectory
                     .appendingPathComponent("nola-pasted-image-\(UUID().uuidString).png")
@@ -116,7 +123,7 @@ final class ChatPasteAwareTextView: UITextView {
                 return url
             }
         ) {
-            onPasteFiles?(urls)
+            if !urls.isEmpty { onPasteFiles?(urls) }
             return
         }
         super.paste(sender)
@@ -128,6 +135,7 @@ private struct ChatPasteAwareEditor: UIViewRepresentable {
     let isEditable: Bool
     let focus: FocusState<Bool>.Binding
     let onPasteFiles: ([URL]) -> Void
+    let onPasteFailure: (Error) -> Void
     var mentionsVisible = false
     var mentionCommand: (String) -> Bool = { _ in false }
 
@@ -155,6 +163,7 @@ private struct ChatPasteAwareEditor: UIViewRepresentable {
         if view.text != text { view.text = text }
         view.isEditable = isEditable
         view.onPasteFiles = onPasteFiles
+        view.onPasteFailure = onPasteFailure
         if focus.wrappedValue && !view.isFirstResponder {
             view.becomeFirstResponder()
         } else if !focus.wrappedValue && view.isFirstResponder {
@@ -612,7 +621,7 @@ struct ChatComposer<ModelControl: View>: View {
                     .padding(4)
                     .background(NolaSurfaceBackground(fill: DesignTokens.surfaceColor,
                                                       border: focus.wrappedValue ? DesignTokens.primaryColor : DesignTokens.borderColor,
-                                                      cornerRadius: 24, raised: false))
+                                                      cornerRadius: 25, raised: false))
                 } else {
                     HStack(alignment: .bottom, spacing: 3) {
                         attachmentButton
@@ -662,6 +671,7 @@ struct ChatComposer<ModelControl: View>: View {
                 isEditable: true,
                 focus: focus,
                 onPasteFiles: { onBeginAttachFiles()(.success($0)) },
+                onPasteFailure: { onBeginAttachFiles()(.failure($0)) },
                 mentionsVisible: mentionsVisible,
                 mentionCommand: mentionCommand
             )
@@ -692,7 +702,7 @@ struct ChatComposer<ModelControl: View>: View {
         }
         .frame(width: composerButtonSize, height: composerButtonSize)
         .contentShape(Rectangle())
-        .buttonStyle(NolaPressableButtonStyle())
+        .buttonStyle(ComposerSendButtonStyle())
         .disabled(!canSend)
         .animation(reduceMotion ? nil : DesignTokens.streamRevealAnimation, value: canSend)
         .animation(reduceMotion ? nil : DesignTokens.streamRevealAnimation, value: isGenerating)
@@ -816,5 +826,11 @@ struct ChatComposer<ModelControl: View>: View {
             }
             .padding(.horizontal, 2)
         }
+    }
+}
+
+private struct ComposerSendButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.opacity(configuration.isPressed ? 0.82 : 1)
     }
 }

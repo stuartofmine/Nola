@@ -53,6 +53,18 @@ nonisolated extension IOSApplicationRuntime {
         }
         let preview: AppleExpertCapturePreview<AgentCoreJSONValue> = try expertHostOperation(.preview(input: input, authority: authority))
         guard preview.participants.map(\.participant) == input.selected_participants else { throw IOSApplicationRuntimeError.invalidResponse }
+        return try expertHostOperation(.admit(input: input, context: expertCaptureContext(preview, authority: authority)))
+    }
+
+    func captureExpertPeer(_ input: AppleExpertPeerInput, authority: AppleExpertTemplateAuthority) throws -> AppleExpertPeerMaterial<AgentCoreJSONValue> {
+        let preview: AppleExpertCapturePreview<AgentCoreJSONValue> = try expertHostOperation(.previewPeer(input: input, authority: authority))
+        guard preview.participants.count == 1,
+              preview.participants.first?.participant.participant_id == input.targetParticipantID else { throw IOSApplicationRuntimeError.invalidResponse }
+        return try expertHostOperation(.admitPeer(input: input, context: expertCaptureContext(preview, authority: authority)))
+    }
+
+    private func expertCaptureContext(_ preview: AppleExpertCapturePreview<AgentCoreJSONValue>,
+        authority: AppleExpertTemplateAuthority) throws -> AppleExpertCaptureContext<AgentCoreJSONValue> {
         let builtinCatalog = BuiltInPromptTemplates.templates()
         let snapshot: PromptTemplateSnapshot?
         if let setting = try productSetting(key: "prompt.templates") {
@@ -83,9 +95,9 @@ nonisolated extension IOSApplicationRuntime {
                 source: source, template_id: selected,
                 host_user_instructions: IOSExpertInstructionProducer.definitions(parameters: parameters))
         }
-        return try expertHostOperation(.admit(input: input, context: .init(actor: authority.actor,
+        return .init(actor: authority.actor,
             request_host_id: authority.request_host_id, selections: selections,
-            builtins: builtinCatalog.map { .init(provider_id: "apple.prompt-templates", template_id: $0.id.uuidString,
-                content: $0.content, platform: .string("ios")) })))
+            builtins: builtinCatalog.filter { template in selections.contains { $0.template_id.flatMap(UUID.init(uuidString:)) == template.id } }.map { .init(provider_id: "apple.prompt-templates", template_id: $0.id.uuidString,
+                content: $0.content, platform: .string("ios")) })
     }
 }

@@ -49,6 +49,22 @@ nonisolated public struct ModelExecutionCapabilities: Codable, Hashable, Sendabl
     public var samplingRequiresNoReasoning: Bool = false
     public var chatOutputTokenField: ChatOutputTokenField? = nil
 
+    private enum CodingKeys: String, CodingKey {
+        case toolCalls, imageInput, reasoning, samplingParameters, samplingRequiresNoReasoning, chatOutputTokenField
+    }
+
+    public init(from decoder: Decoder) throws {
+        let fields = try decoder.container(keyedBy: CodingKeys.self)
+        toolCalls = try fields.decode(Bool.self, forKey: .toolCalls)
+        imageInput = try fields.decode(Bool.self, forKey: .imageInput)
+        reasoning = try fields.decode(Bool.self, forKey: .reasoning)
+        samplingParameters = try fields.decode(Bool.self, forKey: .samplingParameters)
+        samplingRequiresNoReasoning = fields.contains(.samplingRequiresNoReasoning)
+            ? try fields.decode(Bool.self, forKey: .samplingRequiresNoReasoning) : false
+        chatOutputTokenField = fields.contains(.chatOutputTokenField)
+            ? try fields.decode(ChatOutputTokenField.self, forKey: .chatOutputTokenField) : nil
+    }
+
     public init(
         toolCalls: Bool = false,
         imageInput: Bool = false,

@@ -3,6 +3,26 @@
 import Foundation
 import Combine
 
+/// Composer chips are selections, not a projection of the asynchronously loaded directory.
+nonisolated struct MacExpertSelectionChip: Identifiable, Equatable {
+    let id: String
+    let name: String
+
+    static func rows(agentIDs: Set<String>, observedRevisions: [String: Int64],
+                     directory: [MacPersistentAgent], joined: [MacRoomParticipant],
+                     fallbackName: String = String(localized: "Expert")) -> [Self] {
+        agentIDs.sorted().map { id in
+            let revision = observedRevisions[id]
+            let member = joined.first { $0.active && $0.agentID == id
+                && (revision == nil || $0.agentRevision == revision) }
+            let agent = directory.first { $0.id == id && (revision == nil || $0.revision == revision) }
+            let name = [member?.displayName, agent?.name].compactMap { $0 }
+                .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? fallbackName
+            return Self(id: id, name: name)
+        }
+    }
+}
+
 nonisolated struct MacRoomDraft: Codable, Equatable, Sendable {
     var text = ""
     var participantID: String?
@@ -24,6 +44,8 @@ nonisolated struct MacRoomDraft: Codable, Equatable, Sendable {
     }
 }
 
+nonisolated enum MacExpertMentionPreparationError: Error { case reintroductionRequired }
+
 @MainActor final class MacAgentRoomWorkspace: ObservableObject {
     nonisolated struct Pending: Codable, Equatable, Identifiable, Sendable {
         let input: MacRoomSubmissionInput
@@ -34,9 +56,47 @@ nonisolated struct MacRoomDraft: Codable, Equatable, Sendable {
     }
     let service: MacAgentRoomService
     var executionService: MacRoomExecutionService?
+    var agentReasoningEfforts: (@MainActor (String) throws -> [String])?
     var agentModelOptions: (@MainActor () throws -> [MacChatModelOption])?
+    var requiresMainSource = false
+    @Published private(set) var mainSourceReady = false
+    var mainCommand: (@MainActor (String?, MacCanonicalJSONValue) async throws -> MacCanonicalJSONValue)? {
+        didSet { mainSourceReady = mainCommand != nil }
+    }
+    var mainIsRemote: (@MainActor () -> Bool)?
+    var mainSourceEpoch: (@MainActor (String) -> String?)?
+    var mainSourceIdentity: (@MainActor (String) -> String?)?
+    private var mainConversationID: String?
+    private var selectedSourceEpochs: [String: [String: String]] = [:]
+    private var selectedSourceIDs: [String: [String: String]] = [:]
+
+    private func mainRead<T: Decodable>(_ command: [String: MacCanonicalJSONValue], owner: String?) async throws -> T {
+        guard let mainCommand else { throw MacApplicationPortError.serviceUnavailable }
+        let value = try await mainCommand(owner, .object(command))
+        return try JSONDecoder().decode(T.self, from: JSONEncoder().encode(value))
+    }
+
+    func capturedMainSourceEpoch(owner: String, agentIDs: Set<String>) throws -> String? {
+        guard mainIsRemote?() == true else {
+            guard agentIDs.allSatisfy({ selectedSourceIDs[owner]?[$0] == nil }) else {
+                throw MacApplicationPortError.rejected("The expert source changed. Select the experts again before sending.")
+            }
+            return nil
+        }
+        let epochs = Set(agentIDs.compactMap { selectedSourceEpochs[owner]?[$0] })
+        let identities = Set(agentIDs.compactMap { selectedSourceIDs[owner]?[$0] })
+        guard epochs.count == 1, identities.count == 1, let epoch = epochs.first,
+              let identity = identities.first, mainSourceIdentity?(owner) == identity,
+              mainSourceEpoch?(owner) == epoch,
+              agentIDs.allSatisfy({ selectedSourceEpochs[owner]?[$0] == epoch && selectedSourceIDs[owner]?[$0] == identity }) else {
+            throw MacApplicationPortError.rejected("The expert Host changed. Select the experts again before sending.")
+        }
+        return epoch
+    }
+
     @Published var rooms: [MacAgentRoomSnapshot] = []
     @Published var directory: [MacPersistentAgent] = []
+    private var mentionedExpertRevisions: [String: [String: Int64]] = [:]
     @Published private(set) var selectedRoom: MacAgentRoomSnapshot?
     @Published private(set) var drafts: [String: MacRoomDraft] = [:]
     @Published private(set) var submissions: [String: [MacRoomSubmission]] = [:]
@@ -51,6 +111,7 @@ nonisolated struct MacRoomDraft: Codable, Equatable, Sendable {
     @Published private(set) var resumingExpertMessage: String?
     @Published private(set) var expertResumeError: String?
     private var pendingCompleteExpertInput: AppleAdmitExpertConversationMessage?
+    private var pendingExpertRevisions: [String: Int64] = [:]
     @Published private(set) var pendingExpertIDs: [String] = []
     private var restoreEpoch: UInt64 = 0
     var pendingAdmissionText: String? { pendingAdmission?.text }
@@ -71,8 +132,34 @@ nonisolated struct MacRoomDraft: Codable, Equatable, Sendable {
         return try await Task.detached { try service.admitExperts(input, context: context) }.value
     }
 
+    /// Continue the current joined snapshot, never silently select a newer directory revision.
+    func selectCurrentChild(_ child: AppleExpertChildConversation, parentID: String) async throws {
+        guard child.isCurrent, child.active, let revision = child.agentRevision else {
+            throw MacApplicationPortError.rejected(String(localized: "This expert history is read only"))
+        }
+        let service = service
+        let association = try await MacConversationReadTask.run { try service.forConversation(parentID) }
+        guard let association, association.conversationID == parentID,
+              association.room.room.participants.contains(where: {
+                  $0.active && $0.id == child.participantID && $0.agentID == child.agentID
+                  && $0.agentRevision == revision && $0.contextConversationID == child.conversationID
+              }) else { throw MacApplicationPortError.rejected(String(localized: "This expert history is read only")) }
+        mentionedExpertRevisions[parentID, default: [:]][child.agentID] = revision
+    }
+
     func restoreConversation(_ conversationID: String) async {
+        mainConversationID = conversationID
+        restoreEpoch &+= 1
+        let mainReadEpoch = restoreEpoch
         guard !isAdmitting else { return }
+        if mainIsRemote?() == true, mainCommand != nil {
+            do {
+                let association: MacConversationRoomAssociation? = try await mainRead(["type": .string("for_conversation"), "conversation_id": .string(conversationID)], owner: conversationID)
+                guard mainConversationID == conversationID, restoreEpoch == mainReadEpoch, mainIsRemote?() == true else { return }
+                conversationAssociation = association; directoryError = nil
+            } catch { if mainConversationID == conversationID { conversationAssociation = nil; directoryError = error.localizedDescription } }
+            return
+        }
         restoreEpoch &+= 1
         let epoch = restoreEpoch
         conversationAssociation = nil
@@ -95,37 +182,81 @@ nonisolated struct MacRoomDraft: Codable, Equatable, Sendable {
             pendingAdmission = restored.1?.0.input
             pendingCompleteExpertInput = restored.1?.0.completeInput
             pendingExpertIDs = restored.1?.0.expertIDs ?? []
+            pendingExpertRevisions = restored.1?.0.expertRevisions ?? [:]
             admissionError = pendingAdmission == nil ? nil : "An expert message is pending. Retry sends the original message."
         } catch { admissionError = error.localizedDescription }
     }
 
 
     /// Freeze the entire user message before any suspension; retry never substitutes edited text.
-    func sendExperts(conversationID: String, text: String, agentIDs: Set<String>) async -> String? {
+    func recordMainExpertSelection(_ agent: MacPersistentAgent, conversationID: String) {
+        mentionedExpertRevisions[conversationID, default: [:]][agent.id] = agent.revision
+        if let epoch = mainSourceEpoch?(conversationID), let identity = mainSourceIdentity?(conversationID) {
+            selectedSourceEpochs[conversationID, default: [:]][agent.id] = epoch
+            selectedSourceIDs[conversationID, default: [:]][agent.id] = identity
+        } else {
+            selectedSourceEpochs[conversationID]?[agent.id] = nil
+            selectedSourceIDs[conversationID]?[agent.id] = nil
+        }
+    }
+
+    func selectionChips(conversationID: String?, agentIDs: Set<String>) -> [MacExpertSelectionChip] {
+        let association = conversationAssociation?.conversationID == conversationID ? conversationAssociation : nil
+        return MacExpertSelectionChip.rows(agentIDs: agentIDs,
+            observedRevisions: conversationID.flatMap { mentionedExpertRevisions[$0] } ?? [:],
+            directory: directory, joined: association?.room.room.participants ?? [])
+    }
+
+    func mainExpertSelection(conversationID: String, agentIDs: Set<String>) async throws -> [AppleMainExpertSelectionEntry] {
+        guard !requiresMainSource || mainSourceReady else { throw MacApplicationPortError.serviceUnavailable }
+        let service = service
+        _ = try capturedMainSourceEpoch(owner: conversationID, agentIDs: agentIDs)
+        let room: MacConversationRoomAssociation?
+        if mainCommand != nil { room = try await mainRead(["type": .string("for_conversation"), "conversation_id": .string(conversationID)], owner: conversationID) }
+        else { room = try await MacConversationReadTask.run { try service.forConversation(conversationID) } }
+        let joined = (room?.room.room.participants ?? []).filter(\.active).map {
+            AppleExpertParticipantReference(participant_id: $0.id, agent_id: $0.agentID,
+                agent_revision: $0.agentRevision, context_conversation_id: $0.contextConversationID)
+        }
+        return try AppleMainExpertSelectionContext.capture(agentIDs: agentIDs,
+            observedRevisions: mentionedExpertRevisions[conversationID] ?? [:], joined: joined).selectedExperts
+    }
+
+    func sendExperts(conversationID: String, text: String, agentIDs: Set<String>, messageID: String? = nil, createdAtMs: Int64? = nil) async -> String? {
         guard !isAdmitting, !agentIDs.isEmpty else { return nil }
         if admissionOwner != conversationID {
             await restoreConversation(conversationID)
             guard admissionOwner == conversationID, !isAdmitting else { return nil }
         }
         if let pendingAdmission {
-            guard pendingAdmission.conversationID == conversationID else {
+            guard pendingAdmission.conversationID == conversationID,
+                  messageID == nil || (pendingAdmission.messageID == messageID && pendingAdmission.text == text
+                    && pendingAdmission.createdAtMs == createdAtMs) else {
                 admissionError = "Retry the pending expert message in its original conversation."
                 return nil
             }
         } else {
             guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
             pendingAdmission = .init(conversationID: conversationID,
-                messageID: UUID().uuidString.lowercased(), text: text,
-                createdAtMs: Int64(Date().timeIntervalSince1970 * 1000))
+                messageID: messageID ?? UUID().uuidString.lowercased(), text: text,
+                createdAtMs: createdAtMs ?? Int64(Date().timeIntervalSince1970 * 1000))
             pendingExpertIDs = agentIDs.sorted()
+            pendingExpertRevisions = (mentionedExpertRevisions[conversationID] ?? [:]).filter { agentIDs.contains($0.key) }
         }
         guard let input = pendingAdmission else { return nil }
+        // A new explicit @ selection may repair an unadmitted stale selection.
+        // Never change an already captured complete Core admission.
+        if pendingCompleteExpertInput == nil {
+            for (id, revision) in mentionedExpertRevisions[conversationID] ?? [:] where pendingExpertIDs.contains(id) {
+                pendingExpertRevisions[id] = revision
+            }
+        }
         isAdmitting = true
         defer { isAdmitting = false }
         do {
             let service = service
             let frozen = MacAgentRoomService.ExpertAdmissionDraft(conversationID: conversationID,
-                input: input, expertIDs: pendingExpertIDs, completeInput: pendingCompleteExpertInput)
+                input: input, expertIDs: pendingExpertIDs, expertRevisions: pendingExpertRevisions, completeInput: pendingCompleteExpertInput)
             let previousRevision = admissionStorageRevision
             admissionStorageRevision = try await Task.detached {
                 try service.saveExpertAdmission(frozen, expectedRevision: previousRevision)
@@ -133,7 +264,17 @@ nonisolated struct MacRoomDraft: Codable, Equatable, Sendable {
             var association = try await Task.detached { try service.ensureForConversation(input.conversationID) }.value
             let available = try await Task.detached { try service.directory().agents }.value
             for id in pendingExpertIDs {
-                if association.room.room.participants.contains(where: { $0.agentID == id && $0.active }) { continue }
+                let member = association.room.room.participants.first { $0.agentID == id && $0.active }
+                if pendingCompleteExpertInput == nil, let observed = pendingExpertRevisions[id] {
+                    // Joined contexts own an immutable expert snapshot. Only an
+                    // unjoined selection must still match the fresh directory.
+                    let revision = member?.agentRevision
+                        ?? available.first(where: { $0.id == id && $0.availability == "active" })?.revision
+                    guard revision == observed else {
+                        throw MacApplicationPortError.rejected(String(localized: "The selected expert changed. Select it again before sending."))
+                    }
+                }
+                if member != nil { continue }
                 guard let agent = available.first(where: { $0.id == id && $0.availability == "active" }) else {
                     throw MacApplicationPortError.rejected("Selected expert is unavailable")
                 }
@@ -153,7 +294,7 @@ nonisolated struct MacRoomDraft: Codable, Equatable, Sendable {
             else { complete = try await Task.detached { try service.expertAdmissionInput(input, agentIDs: selectedIDs, association: frozenAssociation) }.value }
             pendingCompleteExpertInput = complete
             let saved = MacAgentRoomService.ExpertAdmissionDraft(conversationID: conversationID, input: input,
-                expertIDs: selectedIDs, completeInput: complete)
+                expertIDs: selectedIDs, expertRevisions: pendingExpertRevisions, completeInput: complete)
             let completeRevision = admissionStorageRevision
             admissionStorageRevision = try await Task.detached { try service.saveExpertAdmission(saved, expectedRevision: completeRevision) }.value
             let manifest = try await admitCompleteExpertIntent(complete)
@@ -177,6 +318,7 @@ nonisolated struct MacRoomDraft: Codable, Equatable, Sendable {
             pendingAdmission = nil
             pendingCompleteExpertInput = nil
             pendingExpertIDs = []
+            pendingExpertRevisions = [:]
             admissionError = nil
             return input.text
         } catch { admissionError = error.localizedDescription; return nil }
@@ -466,12 +608,74 @@ nonisolated struct MacRoomDraft: Codable, Equatable, Sendable {
         var value = draft; value.participantID = nil; value.revision &+= 1; drafts[id] = value
         persistDraft(id)
     }
+    /// Explicit ID selection can include experts not yet joined. Blank unsaved
+    /// composers validate directory identity only; send admission creates their room.
+    func prepareExpertMention(agentID: String, expectedRevision: Int64, conversationID: String,
+                              isPersisted: Bool, allowReintroduction: Bool = false) async throws {
+        guard !requiresMainSource || mainSourceReady else { throw MacApplicationPortError.serviceUnavailable }
+        if mainCommand != nil {
+            let fresh: MacAgentDirectory = try await mainRead(["type": .string("directory")], owner: conversationID)
+            guard let agent = fresh.agents.first(where: { $0.id == agentID && $0.availability == "active" }), agent.revision == expectedRevision else {
+                throw MacApplicationPortError.rejected("The selected expert changed. Select it again.")
+            }
+            var association: MacConversationRoomAssociation? = isPersisted
+                ? try await mainRead(["type": .string("for_conversation"), "conversation_id": .string(conversationID)], owner: conversationID) : nil
+            if let current = association?.room.room.participants.first(where: { $0.agentID == agentID && $0.active }), current.agentRevision != expectedRevision {
+                guard allowReintroduction, let room = association?.room else { throw MacExpertMentionPreparationError.reintroductionRequired }
+                let _: MacAgentRoomSnapshot = try await mainRead(["type": .string("rejoin"), "input": .object([
+                    "room_id": .string(room.room.id), "expected_room_revision": .signedInteger(room.revision),
+                    "agent_id": .string(agentID), "expected_agent_revision": .signedInteger(expectedRevision),
+                    "at_ms": .signedInteger(Int64(Date().timeIntervalSince1970 * 1000))])], owner: conversationID)
+                association = try await mainRead(["type": .string("for_conversation"), "conversation_id": .string(conversationID)], owner: conversationID)
+            }
+            recordMainExpertSelection(agent, conversationID: conversationID)
+            if mainConversationID == conversationID { conversationAssociation = association }
+            return
+        }
+        let service = service
+        let fresh = try await Task.detached { try service.directory().agents }.value
+        guard let agent = fresh.first(where: { $0.id == agentID && $0.availability == "active" }),
+              agent.revision == expectedRevision else {
+            throw MacApplicationPortError.rejected(String(localized: "The mentioned assistant is unavailable. Remove or replace the mention.", table: "Chat"))
+        }
+        if !isPersisted {
+            mentionedExpertRevisions[conversationID, default: [:]][agentID] = expectedRevision
+            return
+        }
+        var association = try await Task.detached { try service.ensureForConversation(conversationID) }.value
+        if let previous = association.room.room.participants.first(where: { $0.agentID == agentID && $0.active }),
+           previous.agentRevision != agent.revision {
+            let catalog = try await Task.detached { try service.roleTemplates() }.value
+            guard catalog.features.rejoin else {
+                throw MacApplicationPortError.rejected(String(localized: "This Host does not support expert reintroduction."))
+            }
+            guard allowReintroduction else { throw MacExpertMentionPreparationError.reintroductionRequired }
+            let room = association.room
+            _ = try await Task.detached { try service.rejoin(agent: agent, room: room) }.value
+            association = try await Task.detached { try service.ensureForConversation(conversationID) }.value
+        } else if !association.room.room.participants.contains(where: { $0.agentID == agentID && $0.active }) {
+            let room = association.room
+            _ = try await Task.detached { try service.join(agent: agent, room: room) }.value
+            association = try await Task.detached { try service.ensureForConversation(conversationID) }.value
+        }
+        guard association.room.room.participants.contains(where: { $0.agentID == agentID && $0.active }) else {
+            throw MacApplicationPortError.invalidResponse
+        }
+        mentionedExpertRevisions[conversationID, default: [:]][agentID] = expectedRevision
+        if admissionOwner == conversationID, !isAdmitting { conversationAssociation = association }
+    }
+
     func refreshExpertDirectory() async {
+        guard !requiresMainSource || mainSourceReady else { return }
+        let owner = mainConversationID
         let service = service
         do {
-            directory = try await Task.detached { try service.directory().agents }.value
-            directoryError = nil
-        } catch { directoryError = error.localizedDescription }
+            let fresh: MacAgentDirectory
+            if mainCommand != nil { fresh = try await mainRead(["type": .string("directory")], owner: owner) }
+            else { fresh = try await Task.detached { try service.directory() }.value }
+            guard owner == mainConversationID else { return }
+            directory = fresh.agents; directoryError = nil
+        } catch { if owner == mainConversationID { directoryError = error.localizedDescription } }
     }
 
     func refreshDirectory() async {
@@ -541,15 +745,18 @@ nonisolated struct MacRoomDraft: Codable, Equatable, Sendable {
             await select(room)
         } catch { directoryError = error.localizedDescription }
     }
-    func createAgent(name: String, description: String, defaults: MacCanonicalJSONValue) async {
+    @discardableResult
+    func createAgent(name: String, description: String, defaults: MacCanonicalJSONValue) async -> String? {
         let service = service
+        let id = UUID().uuidString.lowercased()
         do {
             let updated = try await Task.detached {
                 try service.createAgent(name: name, description: description, defaults: defaults,
-                    directory: service.directory())
+                    directory: service.directory(), id: id)
             }.value
             directory = updated.agents; directoryError = nil
-        } catch { directoryError = error.localizedDescription }
+            return id
+        } catch { directoryError = error.localizedDescription; return nil }
     }
     func updateAgent(_ agent: MacPersistentAgent, name: String, description: String, isEnabled: Bool,
                      defaults: MacCanonicalJSONValue? = nil) async {

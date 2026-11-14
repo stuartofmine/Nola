@@ -28,6 +28,16 @@ enum MacTranscriptMessageMotionPolicy {
         return Set(current.dropFirst(previous.count))
     }
 }
+private struct MacTranscriptReadOnlyKey: EnvironmentKey {
+    static let defaultValue = false
+}
+extension EnvironmentValues {
+    var macTranscriptReadOnly: Bool {
+        get { self[MacTranscriptReadOnlyKey.self] }
+        set { self[MacTranscriptReadOnlyKey.self] = newValue }
+    }
+}
+
 private struct MacUISurfaceContextKey: EnvironmentKey {
     static let defaultValue: MacUISurfaceContext? = nil
 }
@@ -61,6 +71,8 @@ struct MacTranscriptView: View {
     var pendingUI: (AppleUISurfaceIdentity) throws -> AppleUISubmission<MacCanonicalJSONValue>? = { _ in nil }
     var submitUI: (AppleUISubmission<MacCanonicalJSONValue>) async -> AppleUISubmissionOutcome<MacCanonicalJSONValue> = { _ in .rejected("交互入口不可用。") }
     var readLocalSource: () throws -> Bool = { false }
+    var permitsFollowupUIActions = true
+    var sourceAuthors: [String: String] = [:]
     @State private var scrollController = MacTranscriptScrollController()
     @State private var journalResidency = MacJournalPresentationResidency()
     @State private var trackedConversationID = ""
@@ -255,11 +267,15 @@ struct MacTranscriptView: View {
 
     private func messageRow(_ message: MacChatMessage, transcriptWidth: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 12) {
+        if let source = sourceAuthors[message.canonicalMessageID ?? ""] {
+            Text(source).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .trailing)
+                .accessibilityIdentifier("expert.message.author." + (message.canonicalMessageID ?? ""))
+        }
         MacMessageSurfaceContent(scope: .init(conversationID: conversationID,
                 messageID: message.canonicalMessageID ?? message.journalReference?.cursor.identity.assistant_message_id ?? "",
                 runID: message.journalReference?.cursor.identity.run_id),
             context: .init(readChanges: readUIChanges, preview: previewUI,
-                readRevision: readUIRevision, pendingSubmission: pendingUI, submit: submitUI, readLocalSource: readLocalSource),
+                readRevision: readUIRevision, pendingSubmission: pendingUI, submit: submitUI, permitsFollowupActions: permitsFollowupUIActions, readLocalSource: readLocalSource),
             isCurrent: { trackedConversationID == conversationID }) {
         MacMessageView(
             conversationID: conversationID,
@@ -277,6 +293,7 @@ struct MacTranscriptView: View {
                 guard let runID = message.journalReference?.cursor.identity.run_id else { return }
                 onRequestTaskCancellation(taskID, runID)
             },
+            userDisplayName: sourceAuthors[message.canonicalMessageID ?? ""],
             journalPresentationOwner: message.journalReference.map { journalResidency.owner(for: $0) }
         )
         }

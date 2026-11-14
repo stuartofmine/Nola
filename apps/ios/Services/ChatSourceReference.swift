@@ -191,3 +191,13 @@ nonisolated public struct ChatSourceReference: Codable, Equatable, Identifiable,
 extension Notification.Name {
     static let chatAgentSourceReferencesDidChange = Notification.Name("chatAgentSourceReferencesDidChange")
 }
+
+extension ChatSourceReference {
+    /// Source/citation aliases share a row; distinct pinpoint citations remain visible.
+    static func bibliography(_ references: [ChatSourceReference]) -> [ChatSourceReference] {
+        references.reduce(into: []) { result, reference in
+            if !result.contains(where: { ($0.uri.isEmpty ? $0.sourceID : $0.uri) == (reference.uri.isEmpty ? reference.sourceID : reference.uri) && $0.location == reference.location &&
+                $0.rangeStart == reference.rangeStart && $0.rangeEnd == reference.rangeEnd }) { result.append(reference) }
+        }
+    }
+}

@@ -92,7 +92,8 @@ struct MacThinkingProcessRow: View {
                 }
                 .frame(width: 16, height: 16)
 
-                Text(showsTimeline ? title : collapsedTitle)
+                MacFlowingStatusText(text: Text(showsTimeline ? title : collapsedTitle),
+                    isRunning: isStreaming && visibleTraces.last?.state == .running)
                     .font(.system(size: 11.5, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -275,7 +276,7 @@ private struct MacGroupedToolTraceRow: View {
                             .foregroundStyle(group.state == .failed ? Color.red : Color.secondary)
                             .frame(width: 16, height: 16)
                     }
-                    Text(title)
+                    MacFlowingStatusText(text: Text(title), isRunning: group.state == .running)
                         .font(.system(size: 11.5, weight: .semibold))
                         .foregroundStyle(group.state == .failed ? Color.red : Color.secondary)
                         .lineLimit(1)
@@ -349,7 +350,7 @@ struct MacThinkingPhaseRow: View {
                         .fill(trace.state == .running ? Color.accentColor : Color.secondary.opacity(0.55))
                         .frame(width: 5, height: 5)
                         .frame(width: 16, height: 16)
-                    Text(summary)
+                    MacFlowingStatusText(text: Text(summary), isRunning: trace.state == .running)
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)

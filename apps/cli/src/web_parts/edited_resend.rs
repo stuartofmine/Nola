@@ -297,7 +297,7 @@ mod edited_resend_renderer_contract_tests {
 type ExpertHostFailure = nola_application::host_expert_template_operation::HostExpertOperationError;
 use nola_application::host_expert_template_operation::HostExpertTemplateOperation;
 
-fn expert_host_authority() -> nola_application::expert_template_capture::HostExpertTemplateAuthority {
+pub(crate) fn expert_host_authority() -> nola_application::expert_template_capture::HostExpertTemplateAuthority {
     nola_application::expert_template_capture::HostExpertTemplateAuthority {
         actor: nola_core::agent::resource_access::AgentResourcePrincipal {
             kind: nola_core::agent::resource_access::AgentResourcePrincipalKind::LocalUser,
@@ -310,10 +310,17 @@ fn expert_capture_context(
     app: &mut crate::application_port::CliApplicationPort,
     input: &nola_domain::expert_message::AdmitExpertConversationMessage,
 ) -> Result<nola_application::expert_template_capture::HostExpertTemplateCaptureContext, ExpertHostFailure> {
-    use nola_application::expert_template_capture::{HostExpertTemplateCaptureContext, HostExpertTemplateSelection, HostExpertTemplateSelectionSource};
     let authority = expert_host_authority();
     let preview: nola_application::expert_template_capture::ExpertTemplateCapturePreview = app.execute_expert_host_operation(
         &uuid::Uuid::new_v4().to_string(), HostExpertTemplateOperation::PreviewCapture { input: input.clone(), authority: authority.clone() })?;
+    expert_capture_from_preview(preview, authority)
+}
+
+fn expert_capture_from_preview(
+    preview: nola_application::expert_template_capture::ExpertTemplateCapturePreview,
+    authority: nola_application::expert_template_capture::HostExpertTemplateAuthority,
+) -> Result<nola_application::expert_template_capture::HostExpertTemplateCaptureContext, ExpertHostFailure> {
+    use nola_application::expert_template_capture::{HostExpertTemplateCaptureContext, HostExpertTemplateSelection, HostExpertTemplateSelectionSource};
     let host_settings = NolaStore::open_default().and_then(|store| load_agent_settings_from_store(&store))?;
     let mut selections = Vec::with_capacity(preview.participants.len());
     for participant in preview.participants {
@@ -364,24 +371,28 @@ fn expert_admit_response(request: &mut Request) -> Response<Box<dyn Read + Send>
         Ok(value) => value,
         Err(_) => return json_response(StatusCode(422), json!({"code":"invalid_expert_message_intent"})),
     };
-    let result = (|| -> Result<Value,ExpertHostFailure> {
-        validate_edited_resend_web_owner(&input.expected_host_id, &input.client_id)?;
-        let mut app = crate::application_port::CliApplicationPort::persistent_default()?;
-        let original: Option<nola_domain::expert_message::ExpertMessageManifest> = app.execute_expert_host_operation(
-            &uuid::Uuid::new_v4().to_string(), HostExpertTemplateOperation::LoadManifest {
-                conversation_id: input.input.conversation_id.clone(), message_id: input.input.user_message_id.clone(), authority: expert_host_authority(),
-            })?;
-        let manifest = if let Some(original) = original {
-            if original.input != input.input { return Err("expert_message_submission_conflict".into()); }
-            original
-        } else {
-            let context = expert_capture_context(&mut app, &input.input)?;
-            app.execute_expert_host_operation(&uuid::Uuid::new_v4().to_string(),
-                HostExpertTemplateOperation::Admit { input: input.input, context })?
-        };
-        Ok(json!({"host_id":host_identity(),"client_id":input.client_id,"manifest":manifest}))
-    })();
-    expert_http_result(result)
+    expert_http_result(execute_expert_admit(input))
+}
+
+fn execute_expert_admit(input: WebExpertMessageAdmit) -> Result<Value, ExpertHostFailure> {
+    validate_edited_resend_web_owner(&input.expected_host_id, &input.client_id)?;
+    let mut app = crate::application_port::CliApplicationPort::persistent_default()?;
+    let original: Option<nola_domain::expert_message::ExpertMessageManifest> = app.execute_expert_host_operation(
+        &uuid::Uuid::new_v4().to_string(), HostExpertTemplateOperation::LoadManifest {
+            conversation_id: input.input.conversation_id.clone(), message_id: input.input.user_message_id.clone(), authority: expert_host_authority(),
+        })?;
+    let manifest = if let Some(original) = original {
+        if original.input != input.input { return Err("expert_message_submission_conflict".into()); }
+        original
+    } else {
+        let context = expert_capture_context(&mut app, &input.input)?;
+        app.execute_expert_host_operation(&format!("expert-admit:{}",input.input.submission_id),
+            HostExpertTemplateOperation::Admit { input: input.input, context }).map_err(|error|match error {
+                ExpertHostFailure::Rejected{message,..}=>ExpertHostFailure::Rejected{code:"expert_admission_rejected".into(),message},
+                pending=>pending,
+            })?
+    };
+    Ok(json!({"host_id":host_identity(),"client_id":input.client_id,"manifest":manifest}))
 }
 fn expert_resend_public_response(client:&str,prepared:nola_domain::expert_message::PreparedExpertResend)
     -> Result<Value,String> {
@@ -466,5 +477,79 @@ mod expert_http_closed_intent_tests {
         assert!(duplicate.validate().is_err());
         let mut empty=parsed.input;empty.selected_participants.clear();
         assert!(empty.validate().is_err());
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WebInPlaceResendPrepare {
+    expected_host_id: String,
+    client_id: String,
+    input: nola_domain::edited_resend::PrepareInPlaceResend,
+}
+fn in_place_resend_prepare_response(request: &mut Request) -> Response<Box<dyn Read + Send>> {
+    let body = match read_json_value(request) { Ok(value) => value, Err(response) => return response };
+    let result = (|| -> Result<Value, String> {
+        let input: WebInPlaceResendPrepare = serde_json::from_value(body).map_err(|e| e.to_string())?;
+        validate_edited_resend_web_owner(&input.expected_host_id, &input.client_id)?;
+        let mut app = crate::application_port::CliApplicationPort::persistent_default()?;
+        let prepared: nola_domain::edited_resend::PreparedInPlaceResend = app.execute(
+            nola_application::ApplicationCommand::PrepareInPlaceResend { input: input.input })?;
+        let target: Option<Value> = app.execute(nola_application::ApplicationCommand::LoadConversation {
+            conversation_id: prepared.input.conversation_id.clone() })?;
+        let target = target.ok_or("in_place_resend_conversation_missing")?;
+        Ok(json!({"host_id":host_identity(),"client_id":input.client_id,"prepared":prepared,
+            "target":{"id":target["id"],"title":target["title"],"revision":target["revision"],"configuration_revision":target["configuration_revision"]}}))
+    })();
+    match result { Ok(value)=>json_response(StatusCode(200),value),
+        Err(error)=>json_response(StatusCode(409),json!({"code":"in_place_resend_rejected","error":error})) }
+}
+fn validate_web_in_place_resend(body: &Value) -> Result<(), String> {
+    let Some(marker) = body.get("in_place_resend_operation_id") else { return Ok(()) };
+    let operation_id = marker.as_str().ok_or("invalid_resend_operation")?;
+    validate_edited_resend_web_owner(body["expected_host_id"].as_str().unwrap_or(""),body["client_id"].as_str().unwrap_or(""))?;
+    let mut app = crate::application_port::CliApplicationPort::persistent_default()?;
+    let prepared: Option<nola_domain::edited_resend::PreparedInPlaceResend> = app.execute(
+        nola_application::ApplicationCommand::LoadPreparedInPlaceResend { operation_id:operation_id.into() })?;
+    let p = prepared.ok_or("in_place_resend_not_prepared")?;
+    validate_web_in_place_resend_shape(body, &p)
+}
+fn validate_web_in_place_resend_shape(body: &Value, p: &nola_domain::edited_resend::PreparedInPlaceResend) -> Result<(), String> {
+    if body.as_object().ok_or("invalid_resend_body")?.keys().any(|key| !matches!(key.as_str(),
+        "in_place_resend_operation_id"|"conversationId"|"client_id"|"expected_host_id"|"submission_id"|
+        "user_message_id"|"assistant_message_id"|"messages"|"current_user_display_text"|"timezone"|"language"|
+        "execution_backend"|"expected_configuration_revision"|"expected_parent_message_id"|"tool_plan_ref"|"request_digest"|
+        "context_components"|"context_messages"|"history"|"permission_profile"|"model_test_mode")) {
+        return Err("resend_renderer_configuration_forbidden".into());
+    }
+    if body["in_place_resend_operation_id"]!=p.input.operation_id||!p.experts.is_empty() || body["conversationId"]!=p.input.conversation_id || body["submission_id"]!=p.run_id
+        ||body["user_message_id"]!=p.user_message_id||body["assistant_message_id"]!=format!("{}:assistant",p.run_id)
+        ||body["current_user_display_text"]!=p.input.edited_text
+        ||body["messages"]!=json!([{"role":"user","content":p.input.edited_text}]) {
+        return Err("in_place_resend_request_changed".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod in_place_resend_web_tests {
+    use super::*;
+    #[test]
+    fn in_place_resend_keeps_owner_and_binds_exact_prepared_text_without_renderer_credentials() {
+        let operation = uuid::Uuid::new_v4().to_string();
+        let p = nola_domain::edited_resend::PreparedInPlaceResend {
+            input: nola_domain::edited_resend::PrepareInPlaceResend { operation_id: operation.clone(), conversation_id:"same".into(),
+                message_id:"original".into(), expected_revision:3, expected_message_revision:2, edited_text:"new text".into(), created_at_ms:1 },
+            run_id:operation.clone(), user_message_id:format!("{operation}:user"), experts:vec![],
+        };
+        let body=json!({"in_place_resend_operation_id":operation,"conversationId":"same","submission_id":operation,
+            "user_message_id":p.user_message_id,"assistant_message_id":format!("{operation}:assistant"),
+            "current_user_display_text":"new text","messages":[{"role":"user","content":"new text"}],"expected_parent_message_id":"retained-prefix"});
+        validate_web_in_place_resend_shape(&body,&p).unwrap();
+        for (key,value) in [("conversationId",json!("new-branch")),("user_message_id",json!("wrong")),
+            ("api_key",json!("forbidden")),("messages",json!([{"role":"user","content":"changed"}]))] {
+            let mut changed=body.clone(); changed[key]=value;
+            assert!(validate_web_in_place_resend_shape(&changed,&p).is_err(),"{key}");
+        }
     }
 }

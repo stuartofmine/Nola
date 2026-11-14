@@ -29,7 +29,7 @@ internal fun CanonicalUiReference(
 internal fun CanonicalUiReferenceUnavailable(part: UiReferencePresentation) {
     Column {
         if (part.summary.isNotBlank()) Text(part.summary)
-        Text(stringResource(R.string.ui_version_readonly, part.reference.revision.toString()))
+        Text(stringResource(R.string.ui_version_readonly))
         Text(stringResource(R.string.ui_version_unavailable))
     }
 }

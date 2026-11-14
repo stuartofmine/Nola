@@ -24,7 +24,7 @@ import Combine
     private var journalSequences: [String: UInt64] = [:]
     private var subscriptions: [String: Set<AnyCancellable>] = [:]
 
-    func open(_ snapshot: IOSAgentRoomSnapshot, container: ServiceContainer) throws {
+    func open(_ snapshot: IOSAgentRoomSnapshot, container: ServiceContainer, observesExecution: Bool = true) throws {
         if let current = room, current.room.id == snapshot.room.id, current.revision > snapshot.revision { return }
         guard let store = container.conversationStore as? ConversationProjectionStore else {
             throw IOSApplicationRuntimeError.rejected("Canonical conversation store is unavailable")
@@ -45,7 +45,37 @@ import Combine
         try install(snapshot, projections: loaded, eventSequences: loadedCursors)
         historyCursors = older
         hasOlderMessages = !older.isEmpty
-        for participant in snapshot.room.participants { observe(participant, container: container) }
+        if observesExecution {
+            for participant in snapshot.room.participants { observe(participant, container: container) }
+        }
+    }
+
+    /// A scoped Core history response already owns its provenance and message
+    /// window. Installing it never creates a ChatManager execution owner.
+    func installReadOnlyHistory(_ snapshot: IOSAgentRoomSnapshot, window: IOSConversationProjectionWindowV1) throws {
+        guard snapshot.room.participants.count == 1,
+              let owner = snapshot.room.participants.first?.contextConversationID,
+              window.projection.conversationID == owner else { throw IOSApplicationRuntimeError.invalidResponse }
+        try install(snapshot, projections: [owner: window.projection], eventSequences: [owner: window.eventSequence])
+        historyCursors[owner] = window.hasMore ? window.beforeOrdinal : nil
+        hasOlderMessages = !historyCursors.isEmpty
+    }
+
+    func appendReadOnlyHistory(_ window: IOSConversationProjectionWindowV1) throws {
+        let owner = window.projection.conversationID
+        guard room?.room.participants.count == 1,
+              room?.room.participants.first?.contextConversationID == owner,
+              messages[owner] != nil else { throw IOSApplicationRuntimeError.invalidResponse }
+        let existing = Set(messageOrder[owner, default: []])
+        messageOrder[owner] = window.projection.messages.map(\.messageID).filter { !existing.contains($0) }
+            + messageOrder[owner, default: []]
+        for message in window.projection.messages {
+            if let current = messages[owner]?[message.messageID], current.revision >= message.revision { continue }
+            messages[owner]?[message.messageID] = message
+        }
+        historyCursors[owner] = window.hasMore ? window.beforeOrdinal : nil
+        hasOlderMessages = !historyCursors.isEmpty
+        rebuild()
     }
 
     /// Installs an atomically captured presentation without selecting or starting any execution.

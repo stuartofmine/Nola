@@ -62,6 +62,10 @@ class AndroidCanonicalAgentRuntimeRecoveryTest {
         val completed = loadAndroidCanonicalTerminalSeal(descriptor, "distinct-core") { seal }
         assertEquals(result, completed?.result)
         assertEquals("original-assistant", completed?.assistantMessageId)
+        assertEquals(result,loadAndroidHistoryTerminal(identity) {seal}?.result)
+        val foreignEpoch=JsonObject(identity+("source_store_epoch" to JsonPrimitive("other-epoch")))
+        assertThrows(IllegalArgumentException::class.java) {loadAndroidHistoryTerminal(foreignEpoch) {seal}}
+
         for (key in listOf("conversation_id", "run_id", "assistant_message_id", "source_store_epoch")) {
             val changedIdentity = JsonObject(identity + (key to JsonPrimitive(if (key == "source_store_epoch") "" else "foreign")))
             assertThrows(IllegalArgumentException::class.java) {

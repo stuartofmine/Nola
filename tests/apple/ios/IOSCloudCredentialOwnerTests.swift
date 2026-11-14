@@ -3,6 +3,36 @@ import XCTest
 
 @MainActor
 final class IOSCloudCredentialOwnerTests: XCTestCase {
+    func testExplicitProtocolChangeRebindsCredentialAndPreservesOriginalRoute() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = try IOSApplicationRuntime(databaseURL: root.appendingPathComponent("route.db"))
+        let vault = Vault()
+        let service = IOSModelConnectionService(application: runtime, credentials: vault.owner)
+        let original = try service.create(name: "Fixture", endpoint: "https://fixture.invalid/v1",
+            wireProtocol: "chat_completions", secret: "test-route-secret", modelID: "arbitrary-model")
+        let profile = try XCTUnwrap(try runtime.listModelProfiles().first)
+        let model = try XCTUnwrap(ModelSelectionManager.modelInfo(from: profile))
+        let configured = try service.configureProtocol(for: model, wireProtocol: .responses)
+        XCTAssertEqual(configured.wireProtocol, .responses)
+        XCTAssertEqual(configured.effectiveUpstreamModelId, "arbitrary-model")
+        let retained = try XCTUnwrap(try runtime.modelProfile(id: model.id))
+        XCTAssertEqual(retained.sourceJSON, profile.sourceJSON)
+        XCTAssertEqual(retained.parametersJSON, profile.parametersJSON)
+        XCTAssertTrue(retained.enabled)
+        let sources = try runtime.listModelProfiles()
+        XCTAssertEqual(sources.count, 2)
+        XCTAssertFalse(sources.contains { $0.sourceJSON.contains("test-route-secret") })
+        let updated = try XCTUnwrap(try runtime.modelProfile(id: configured.id))
+        let source = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(updated.sourceJSON.utf8)) as? [String: Any])
+        let connectionID = try XCTUnwrap(source["connectionID"] as? String)
+        XCTAssertNotEqual(connectionID, original.id)
+        XCTAssertEqual(try service.credential(connectionID: connectionID, endpoint: "https://fixture.invalid/v1", wireProtocol: "responses").secret, "test-route-secret")
+        XCTAssertThrowsError(try service.credential(connectionID: original.id, endpoint: "https://fixture.invalid/v1", wireProtocol: "responses"))
+        XCTAssertEqual(try service.configureProtocol(for: model, wireProtocol: .responses).id, configured.id)
+        XCTAssertEqual(try runtime.listModelProfiles().count, 2)
+    }
+
     func testConnectionAccountPublishesOnlyOpaqueSecretAndDisablesExecutionOnDisconnect() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

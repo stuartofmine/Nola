@@ -2,6 +2,11 @@
 // Typed mobile adapter for canonical shared rooms. No client-owned member database.
 import Foundation
 
+nonisolated enum IOSExpertMentionFailure: LocalizedError {
+    case requiresRejoin
+    var errorDescription: String? { String(localized: "experts.mention.rejoin_message") }
+}
+
 nonisolated struct IOSRoomParticipant: Codable, Identifiable, Equatable, Sendable {
     let id: String
     let agentID: String
@@ -236,6 +241,37 @@ nonisolated final class IOSAgentRoomService: Sendable {
         return try JSONDecoder().decode(Result.self, from: JSONEncoder().encode(result))
     }
 
+    func childHistory(conversationID: String, childID: String, beforeOrdinal: Int64? = nil) throws -> AppleExpertChildHistory<IOSConversationProjectionWindowV1> {
+        let result: AppleExpertChildHistory<IOSConversationProjectionWindowV1> = try command([
+            "type": .string("child_history"), "conversation_id": .string(conversationID),
+            "child_conversation_id": .string(childID), "before_ordinal": beforeOrdinal.map(AgentCoreJSONValue.signedInteger) ?? .null,
+            "limit": .signedInteger(80), "content_byte_limit": .signedInteger(262_144)])
+        try result.validate(parentID: conversationID, childID: childID)
+        guard result.window.projection.conversationID == childID else { throw IOSApplicationRuntimeError.invalidResponse }
+        if result.window.hasMore {
+            guard let next = result.window.beforeOrdinal, beforeOrdinal.map({ next < $0 }) ?? true else {
+                throw IOSApplicationRuntimeError.invalidResponse
+            }
+        }
+        return result
+    }
+
+    func peerExchanges(conversationID: String, limit: Int = 100, offset: Int = 0) throws -> AppleExpertPeerExchanges {
+        let result: AppleExpertPeerExchanges = try command(["type": .string("peer_exchanges"),
+            "conversation_id": .string(conversationID), "limit": .signedInteger(Int64(limit)),
+            "offset": .signedInteger(Int64(offset))])
+        try result.validate(contextID: conversationID, offset: offset)
+        return result
+    }
+
+    func childConversations(conversationID: String, limit: Int = 30, offset: Int = 0) throws -> AppleExpertChildConversations {
+        let result: AppleExpertChildConversations = try command(["type": .string("child_conversations"),
+            "conversation_id": .string(conversationID), "limit": .signedInteger(Int64(limit)),
+            "offset": .signedInteger(Int64(offset))])
+        try result.validate(parentID: conversationID, offset: offset)
+        return result
+    }
+
     struct UserMessageAdmission: Codable, Equatable, Sendable {
         let conversationID: String
         let messageID: String
@@ -312,6 +348,51 @@ nonisolated final class IOSAgentRoomService: Sendable {
         }
     }
 
+    func roleTemplates() throws -> AppleExpertRoleTemplateCatalog {
+        try command(["type": .string("role_templates")])
+    }
+
+    /// Mention admission uses the candidate's observed revision and stable ID.
+    /// Directory names never route a join; archive/update races are rejected.
+    func joinMention(agentID: String, expectedAgentRevision: Int64, conversationID: String) throws -> IOSConversationRoomAssociation {
+        let agent = try validateMention(agentID: agentID, expectedAgentRevision: expectedAgentRevision)
+        let association = try ensureForConversation(conversationID)
+        if let active = association.room.room.participants.first(where: { $0.agentID == agentID && $0.active }) {
+            if active.agentRevision != expectedAgentRevision {
+                guard (try? roleTemplates().features.rejoin) == true else {
+                    throw IOSApplicationRuntimeError.rejected(String(localized: "experts.configuration.unsupported"))
+                }
+                throw IOSExpertMentionFailure.requiresRejoin
+            }
+            return association
+        }
+        _ = try join(agent: agent, room: association.room)
+        return try ensureForConversation(conversationID)
+    }
+
+    /// Invoked only after the user explicitly confirms replacing the active
+    /// participant with the latest observed expert configuration.
+    func rejoinMention(agentID: String, expectedAgentRevision: Int64, conversationID: String) throws -> IOSConversationRoomAssociation {
+        guard (try? roleTemplates().features.rejoin) == true else {
+            throw IOSApplicationRuntimeError.rejected(String(localized: "experts.configuration.unsupported"))
+        }
+        let agent = try validateMention(agentID: agentID, expectedAgentRevision: expectedAgentRevision)
+        let association = try ensureForConversation(conversationID)
+        let _: IOSAgentRoomSnapshot = try command(["type": .string("rejoin"), "input": .object([
+            "room_id": .string(association.roomID), "expected_room_revision": .signedInteger(association.room.revision),
+            "agent_id": .string(agent.id), "expected_agent_revision": .signedInteger(agent.revision), "at_ms": timestamp
+        ])])
+        return try ensureForConversation(conversationID)
+    }
+
+    func validateMention(agentID: String, expectedAgentRevision: Int64) throws -> IOSPersistentAgent {
+        guard let agent = try directory().agents.first(where: { $0.id == agentID && $0.availability == "active" }),
+              agent.revision == expectedAgentRevision else {
+            throw IOSApplicationRuntimeError.rejected(String(localized: "experts.mention.changed"))
+        }
+        return agent
+    }
+
     func directory() throws -> IOSAgentDirectory {
         try command(["type": .string("directory")])
     }
@@ -340,6 +421,7 @@ nonisolated final class IOSAgentRoomService: Sendable {
         let input: UserMessageAdmission?
         let expertIDs: [String]
         var plan: AppleAdmitExpertConversationMessage? = nil
+        var expertRevisions: [String: Int64]? = nil
     }
 
     func loadExpertAdmission(conversationID: String) throws -> (ExpertAdmissionDraft, Int64)? {
@@ -348,7 +430,8 @@ nonisolated final class IOSAgentRoomService: Sendable {
         if value == .null { return nil }
         let setting = try JSONDecoder().decode(IOSCanonicalProductSetting.self, from: JSONEncoder().encode(value))
         let draft = try JSONDecoder().decode(ExpertAdmissionDraft.self, from: Data(setting.valueJSON.utf8))
-        guard draft.conversationID == conversationID,
+        guard Set(draft.expertRevisions?.keys.map { $0 } ?? []).isSubset(of: Set(draft.expertIDs)),
+              draft.conversationID == conversationID,
               draft.input.map({ $0.conversationID == conversationID }) ?? true,
               draft.plan.map({ plan in
                   plan.conversation_id == conversationID && plan.user_message_id == draft.input?.messageID

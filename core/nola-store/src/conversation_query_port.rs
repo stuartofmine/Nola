@@ -19,6 +19,9 @@ impl ConversationQueryRepository for NolaStore {
     fn list_conversations(&self) -> Result<Vec<ConversationSummary>, Self::Error> {
         NolaStore::list_conversations(self)
     }
+    fn list_root_conversation_page(&self, query: &ConversationListQuery) -> Result<Vec<ConversationSummary>, Self::Error> {
+        NolaStore::list_root_conversation_page(self, query)
+    }
     fn list_conversation_page(&self, query: &ConversationListQuery) -> Result<Vec<ConversationSummary>, Self::Error> {
         NolaStore::list_conversation_page(self, query)
     }

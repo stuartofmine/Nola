@@ -17,13 +17,13 @@ class VersionPreparationTests(unittest.TestCase):
     def test_dry_run_and_one_identity_update_only_distribution_files(self):
         with tempfile.TemporaryDirectory() as name:
             root = Path(name)
-            for folder in ('release', 'apps/windows', 'apps/android/app', 'Nola.xcodeproj'):
+            for folder in ('release', 'apps/windows', 'apps/android/app', 'apple/Nola.xcodeproj'):
                 (root/folder).mkdir(parents=True, exist_ok=True)
             (root/'release/update-source.json').write_text(json.dumps({'version':'1.0.0','build':1}))
             (root/'apps/windows/package.json').write_text('{"version":"1.0.0"}')
             (root/'apps/windows/package-lock.json').write_text('{"version":"1.0.0","packages":{"":{"version":"1.0.0"}}}')
             (root/'apps/android/app/build.gradle.kts').write_text('versionCode = 1\nversionName = "1.0.0"')
-            (root/'Nola.xcodeproj/project.pbxproj').write_text('CURRENT_PROJECT_VERSION = 1;\nMARKETING_VERSION = 1.0;')
+            (root/'apple/Nola.xcodeproj/project.pbxproj').write_text('CURRENT_PROJECT_VERSION = 1;\nMARKETING_VERSION = 1.0;')
             (root/'untouched.db').write_bytes(b'user-data')
             before = (root/'release/update-source.json').read_bytes()
             prepare.prepare(root, '1.1.0', 2, True)
@@ -32,7 +32,7 @@ class VersionPreparationTests(unittest.TestCase):
             self.assertEqual(prepare.validate_identity(root), {'version':'1.1.0','build':2})
             self.assertEqual(json.loads((root/'apps/windows/package-lock.json').read_text())['packages']['']['version'],'1.1.0')
             self.assertIn('versionCode = 2',(root/'apps/android/app/build.gradle.kts').read_text())
-            self.assertIn('MARKETING_VERSION = 1.1.0;',(root/'Nola.xcodeproj/project.pbxproj').read_text())
+            self.assertIn('MARKETING_VERSION = 1.1.0;',(root/'apple/Nola.xcodeproj/project.pbxproj').read_text())
             self.assertEqual((root/'untouched.db').read_bytes(),b'user-data')
             with self.assertRaises(ValueError): prepare.prepare(root,'1.2.0',2)
             with self.assertRaises(ValueError): prepare.prepare(root,'01.2.0',3)

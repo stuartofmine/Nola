@@ -100,14 +100,64 @@ mod unix {
     struct SharedApplication {
         runtime: Mutex<Option<ApplicationRuntime>>,
         database_path: PathBuf,
+        read_pool: nola_application_bootstrap::ReadStorePool,
+        owner_available: std::sync::atomic::AtomicBool,
         projection_waiters: Mutex<Vec<Weak<ProjectionWakeSender>>>,
     }
 
     type ApplicationRuntimeGuard<'a> = nola_application_bootstrap::RuntimeOwnerGuard<'a>;
 
     impl SharedApplication {
+        fn new(runtime: Option<ApplicationRuntime>, database_path: PathBuf) -> Self {
+            let has_owner = runtime.is_some();
+            Self {
+                runtime: Mutex::new(runtime),
+                read_pool: nola_application_bootstrap::ReadStorePool::new(database_path.clone()),
+                database_path,
+                owner_available: std::sync::atomic::AtomicBool::new(has_owner),
+                projection_waiters: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn can_serve_read_replica(&self) -> bool {
+            self.owner_available
+                .load(std::sync::atomic::Ordering::Acquire)
+                && self.read_pool.is_enabled()
+        }
+
         fn lock(&self) -> Result<ApplicationRuntimeGuard<'_>, String> {
-            nola_application_bootstrap::acquire_owned_runtime(&self.runtime, &self.database_path)
+            match nola_application_bootstrap::acquire_owned_runtime(
+                &self.runtime,
+                &self.database_path,
+            ) {
+                Ok(guard) => {
+                    self.owner_available
+                        .store(true, std::sync::atomic::Ordering::Release);
+                    Ok(guard)
+                }
+                Err(error) => {
+                    self.owner_available
+                        .store(false, std::sync::atomic::Ordering::Release);
+                    self.read_pool.clear();
+                    Err(error)
+                }
+            }
+        }
+
+        fn reopen_runtime(&self, runtime: &mut ApplicationRuntimeGuard<'_>) -> Result<(), String> {
+            self.read_pool.clear();
+            match runtime.reopen() {
+                Ok(()) => {
+                    self.owner_available
+                        .store(true, std::sync::atomic::Ordering::Release);
+                    Ok(())
+                }
+                Err(error) => {
+                    self.owner_available
+                        .store(false, std::sync::atomic::Ordering::Release);
+                    Err(error)
+                }
+            }
         }
 
         fn wait_for_projection<T>(
@@ -357,8 +407,8 @@ mod unix {
         // strict single-writer stream, while Health and request decoding do
         // not queue behind a long transaction or a client that sent only a
         // partial frame.
-        let application = Arc::new(SharedApplication {
-            runtime: Mutex::new(Some(
+        let application = Arc::new(SharedApplication::new(
+            Some(
                 nola_application_bootstrap::open_with_policy_diagnosed(
                     database_path,
                     policy,
@@ -372,10 +422,9 @@ mod unix {
                     },
                     detail: error.detail,
                 })?,
-            )),
-            database_path: database_path.to_path_buf(),
-            projection_waiters: Mutex::new(Vec::new()),
-        });
+            ),
+            database_path.to_path_buf(),
+        ));
         let connections = super::connection_budget::ConnectionBudget::for_process();
         let mut retiring = false;
         loop {
@@ -416,8 +465,12 @@ mod unix {
                     let _ = thread::Builder::new()
                         .name("nola-service-connection".into())
                         // Core restores complete frozen Run/delegation snapshots here.
-                        // Budget the worker stack explicitly, including unoptimized Hosts.
-                        .stack_size(16 * 1024 * 1024)
+                        // Budget 8 MiB for unoptimized debug frames and 4 MiB in release.
+                        .stack_size(if cfg!(debug_assertions) {
+                            8 * 1024 * 1024
+                        } else {
+                            4 * 1024 * 1024
+                        })
                         .spawn(move || {
                             let _permit = permit;
                             let _ = handle_connection(stream, &application);
@@ -468,12 +521,8 @@ mod unix {
         #[test]
         fn absent_owner_cannot_turn_an_original_mutation_into_a_rejection() {
             let directory = tempfile::tempdir().unwrap();
-            let shared = super::SharedApplication {
-                runtime: super::Mutex::new(None),
-                // Opening this directory as an SQLite file actually fails.
-                database_path: directory.path().to_owned(),
-                projection_waiters: super::Mutex::new(Vec::new()),
-            };
+            // Opening this directory as an SQLite file actually fails.
+            let shared = super::SharedApplication::new(None, directory.path().to_owned());
             let (connection, _peer) = super::UnixStream::pair().unwrap();
             let envelope = serde_json::json!({
                 "protocol_version": nola_protocol::APPLICATION_SERVICE_PROTOCOL_VERSION,
@@ -504,10 +553,10 @@ mod unix {
             use nola_domain::agent_task_admission::{AgentTaskAdmission, AgentTaskCancellationAuthorization, AGENT_TASK_ADMISSION_VERSION};
             let directory = tempfile::tempdir().unwrap();
             let path = directory.path().join("queued-control.db");
-            let shared = super::SharedApplication {
-                runtime: super::Mutex::new(Some(nola_application_bootstrap::open(&path).unwrap())),
-                database_path:path, projection_waiters:super::Mutex::new(Vec::new()),
-            };
+            let shared = super::SharedApplication::new(
+                Some(nola_application_bootstrap::open(&path).unwrap()),
+                path,
+            );
             // Synthetic valid metadata tests only the service queue-time gate;
             // successful source export and destination ownership have separate
             // real SQLite coverage in task_cancellation_transfer_e2e.
@@ -562,11 +611,7 @@ mod unix {
             let directory = tempfile::tempdir().unwrap();
             let path = directory.path().join("admission-boundary.db");
             let runtime = nola_application_bootstrap::open(&path).unwrap();
-            let shared = super::SharedApplication {
-                runtime: super::Mutex::new(Some(runtime)),
-                database_path: path.clone(),
-                projection_waiters: super::Mutex::new(Vec::new()),
-            };
+            let shared = super::SharedApplication::new(Some(runtime), path.clone());
             let (connection, _peer) = super::UnixStream::pair().unwrap();
             // Syntactically valid metadata is not proof of a real source commit.
             // This test checks transport rejection, not successful admission.
@@ -700,11 +745,7 @@ mod unix {
             )
             .unwrap();
             let attempt = attempt.unwrap();
-            let shared = super::SharedApplication {
-                runtime: super::Mutex::new(Some(runtime)),
-                database_path: path.clone(),
-                projection_waiters: super::Mutex::new(Vec::new()),
-            };
+            let shared = super::SharedApplication::new(Some(runtime), path.clone());
             let fixture = rusqlite::Connection::open(&path).unwrap();
             fixture
                 .execute_batch(
@@ -884,13 +925,12 @@ mod unix {
         fn idle_projection_wait_does_not_periodically_reload_the_store() {
             use std::sync::atomic::{AtomicUsize, Ordering};
             let directory = tempfile::tempdir().unwrap();
-            let shared = super::SharedApplication {
-                runtime: super::Mutex::new(Some(
+            let shared = super::SharedApplication::new(
+                Some(
                     nola_application_bootstrap::open(directory.path().join("idle.db")).unwrap(),
-                )),
-                database_path: directory.path().join("idle.db"),
-                projection_waiters: super::Mutex::new(Vec::new()),
-            };
+                ),
+                directory.path().join("idle.db"),
+            );
             let reads = AtomicUsize::new(0);
             let (connection, _peer) = super::UnixStream::pair().unwrap();
             let started = super::Instant::now();
@@ -916,14 +956,13 @@ mod unix {
         fn idle_runtime_effect_wait_queries_only_initially_and_at_its_deadline() {
             use std::sync::atomic::{AtomicUsize, Ordering};
             let directory = tempfile::tempdir().unwrap();
-            let shared = super::SharedApplication {
-                runtime: super::Mutex::new(Some(
+            let shared = super::SharedApplication::new(
+                Some(
                     nola_application_bootstrap::open(directory.path().join("idle-runtime-work.db"))
                         .unwrap(),
-                )),
-                database_path: directory.path().join("idle-runtime-work.db"),
-                projection_waiters: super::Mutex::new(Vec::new()),
-            };
+                ),
+                directory.path().join("idle-runtime-work.db"),
+            );
             let reads = AtomicUsize::new(0);
             let (connection, _peer) = super::UnixStream::pair().unwrap();
             let started = super::Instant::now();
@@ -953,14 +992,13 @@ mod unix {
         fn runtime_effect_wait_rechecks_at_the_durable_schedule_deadline() {
             use std::sync::atomic::{AtomicUsize, Ordering};
             let directory = tempfile::tempdir().unwrap();
-            let shared = super::SharedApplication {
-                runtime: super::Mutex::new(Some(
+            let shared = super::SharedApplication::new(
+                Some(
                     nola_application_bootstrap::open(directory.path().join("due-runtime-work.db"))
                         .unwrap(),
-                )),
-                database_path: directory.path().join("due-runtime-work.db"),
-                projection_waiters: super::Mutex::new(Vec::new()),
-            };
+                ),
+                directory.path().join("due-runtime-work.db"),
+            );
             let reads = AtomicUsize::new(0);
             let (connection, _peer) = super::UnixStream::pair().unwrap();
             let started = super::Instant::now();
@@ -1003,16 +1041,15 @@ mod unix {
         #[test]
         fn disconnected_runtime_effect_wait_releases_its_registration() {
             let directory = tempfile::tempdir().unwrap();
-            let shared = super::SharedApplication {
-                runtime: super::Mutex::new(Some(
+            let shared = super::SharedApplication::new(
+                Some(
                     nola_application_bootstrap::open(
                         directory.path().join("disconnected-runtime-work.db"),
                     )
                     .unwrap(),
-                )),
-                database_path: directory.path().join("disconnected-runtime-work.db"),
-                projection_waiters: super::Mutex::new(Vec::new()),
-            };
+                ),
+                directory.path().join("disconnected-runtime-work.db"),
+            );
             let (connection, peer) = super::UnixStream::pair().unwrap();
             drop(peer);
             let error = shared
@@ -1031,6 +1068,136 @@ mod unix {
                 .unwrap_err();
             assert!(error.contains("disconnected"));
             assert_eq!(shared.waiter_count(), 0);
+        }
+
+        #[test]
+        fn read_replica_fast_path_executes_concurrently_while_writer_lock_and_wal_transaction_are_held() {
+            use nola_protocol::{CommandEnvelope, CommandPayload, CommandReceiptOutcome};
+            use std::sync::{mpsc, Arc, Barrier};
+
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("concurrent-read-replica.db");
+            let mut runtime = nola_application_bootstrap::open(&path).unwrap();
+            runtime
+                .execute(nola_application::ApplicationCommand::PutProductSetting {
+                    key: "ui.theme".into(),
+                    value_json: "\"dark\"".into(),
+                    updated_at_ms: 100,
+                })
+                .unwrap();
+            runtime
+                .execute(nola_application::ApplicationCommand::CreateConversation {
+                    input: nola_application::CreateConversation {
+                        id: "conv-1".into(),
+                        title: "Concurrent WAL Reader".into(),
+                        settings_json: None,
+                        created_at_ms: 100,
+                        updated_at_ms: 100,
+                    },
+                })
+                .unwrap();
+            let shared = Arc::new(super::SharedApplication::new(Some(runtime), path.clone()));
+
+            let writer_ready = Arc::new(Barrier::new(2));
+            let (reader_done_tx, reader_done_rx) = mpsc::channel();
+
+            let shared_writer = Arc::clone(&shared);
+            let writer_ready_clone = Arc::clone(&writer_ready);
+            let path_writer = path.clone();
+            let writer_thread = std::thread::spawn(move || {
+                // Hold the SharedApplication single-writer Mutex AND an uncommitted
+                // SQLite WAL BEGIN IMMEDIATE write transaction simultaneously.
+                let _runtime_lock = shared_writer.lock().unwrap();
+                let wal_writer = rusqlite::Connection::open(&path_writer).unwrap();
+                wal_writer
+                    .execute_batch(
+                        "BEGIN IMMEDIATE;
+                         UPDATE product_settings SET value_json='\"uncommitted\"', revision=99
+                         WHERE key='ui.theme';",
+                    )
+                    .unwrap();
+                writer_ready_clone.wait();
+                // Remain locked until Thread 2 finishes all concurrent read frames!
+                reader_done_rx.recv().unwrap();
+                wal_writer.execute_batch("ROLLBACK").unwrap();
+            });
+
+            writer_ready.wait();
+
+            let started = super::Instant::now();
+            let (connection, _peer) = super::UnixStream::pair().unwrap();
+            let send_query = |request_id: &str, command_type: &str, arguments: serde_json::Value| {
+                let envelope = CommandEnvelope {
+                    protocol_version: nola_protocol::APPLICATION_SERVICE_PROTOCOL_VERSION,
+                    request_id: request_id.into(),
+                    client_id: "concurrent-reader".into(),
+                    expected_revision: None,
+                    command: CommandPayload {
+                        command_type: command_type.into(),
+                        arguments,
+                    },
+                };
+                super::handle_frame(
+                    &serde_json::to_vec(&envelope).unwrap(),
+                    &shared,
+                    &connection,
+                )
+            };
+
+            // 1. get_product_setting
+            let setting_receipt = send_query(
+                "read-setting",
+                "get_product_setting",
+                serde_json::json!({ "key": "ui.theme" }),
+            );
+            let CommandReceiptOutcome::Committed { result, .. } = setting_receipt.outcome else {
+                panic!("expected committed get_product_setting receipt");
+            };
+            assert_eq!(result["value_json"], "\"dark\"");
+
+            // 2. list_conversations
+            let list_receipt = send_query(
+                "read-conversations",
+                "list_conversations",
+                serde_json::json!({
+                    "query": {
+                        "project_root": null,
+                        "non_empty": false,
+                        "limit": 32,
+                        "offset": 0
+                    }
+                }),
+            );
+            let CommandReceiptOutcome::Committed { result, .. } = list_receipt.outcome else {
+                panic!("expected committed list_conversations receipt");
+            };
+            assert_eq!(result.as_array().unwrap().len(), 1);
+            assert_eq!(result[0]["id"], "conv-1");
+
+            // 3. load_conversation_projection_window_v1
+            let window_receipt = send_query(
+                "read-window",
+                "load_conversation_projection_window_v1",
+                serde_json::json!({
+                    "conversation_id": "conv-1",
+                    "before_ordinal": null,
+                    "limit": 20,
+                    "content_byte_limit": 65536
+                }),
+            );
+            let CommandReceiptOutcome::Committed { result, .. } = window_receipt.outcome else {
+                panic!("expected committed load_conversation_projection_window_v1 receipt");
+            };
+            assert_eq!(result["projection"]["conversation_id"], "conv-1");
+
+            let elapsed = started.elapsed();
+            assert!(
+                elapsed < super::Duration::from_millis(200),
+                "concurrent WAL reads took {elapsed:?}, expected < 200ms"
+            );
+
+            reader_done_tx.send(()).unwrap();
+            writer_thread.join().unwrap();
         }
     }
 
@@ -1242,9 +1409,7 @@ mod unix {
                 Ok(value) => value,
                 Err(error) => return rejected_receipt(request_id, client_id, "invalid_expert_host_operation", error, false),
             };
-            let mutating = matches!(&operation,
-                nola_application::host_expert_template_operation::HostExpertTemplateOperation::Admit { .. } |
-                nola_application::host_expert_template_operation::HostExpertTemplateOperation::PrepareEditedResend { .. });
+            let mutating = operation.mutates_state();
             let mut runtime = match application.lock() {
                 Ok(runtime) => runtime,
                 Err(_) if mutating => return CommandReceipt {
@@ -1264,7 +1429,7 @@ mod unix {
                     if reopen_required {
                         // A failed reopen leaves the owner retired. It cannot
                         // turn the original uncertain commit into a rejection.
-                        let _ = runtime.reopen();
+                        let _ = application.reopen_runtime(&mut runtime);
                     }
                     CommandReceipt { protocol_version: nola_protocol::APPLICATION_SERVICE_PROTOCOL_VERSION,
                         request_id, client_id, received_at, outcome: nola_protocol::CommandReceiptOutcome::Accepted }
@@ -1377,6 +1542,45 @@ mod unix {
         };
         let query_timing = std::env::var_os("NOLA_SERVICE_QUERY_TIMING")
             .is_some_and(|value| value == "1");
+        if command.is_read_only_query() && command.can_execute_on_read_replica() {
+            if expected_revision.is_some() {
+                return rejected_receipt(
+                    request_id,
+                    client_id,
+                    "invalid_query_revision",
+                    "projection reads use projection cursors, not expected write revisions",
+                    false,
+                );
+            }
+            if application.can_serve_read_replica() {
+                let checkout_started = std::time::Instant::now();
+                if let Ok(mut replica) = application.read_pool.checkout() {
+                    let checkout_elapsed = checkout_started.elapsed();
+                    let execute_started = std::time::Instant::now();
+                    let result = nola_application::execute_read_only_query(&mut *replica, command);
+                    if query_timing {
+                        eprintln!(
+                            "nola_query_timing command={} lock_us={} execute_us={}",
+                            command_type,
+                            checkout_elapsed.as_micros(),
+                            execute_started.elapsed().as_micros()
+                        );
+                    }
+                    return match result {
+                        Ok(result) => {
+                            committed_receipt(request_id, client_id, received_at, None, result)
+                        }
+                        Err(message) => rejected_receipt(
+                            request_id,
+                            client_id,
+                            "application_rejected",
+                            message,
+                            false,
+                        ),
+                    };
+                }
+            }
+        }
         let lock_started = std::time::Instant::now();
         let mut runtime = match application.lock() {
             Ok(application) => application,
@@ -1437,7 +1641,7 @@ mod unix {
                     committed_receipt(request_id, client_id, received_at, None, result)
                 }
                 Err(mut message) => {
-                    if let Err(reopen_error) = runtime.reopen() {
+                    if let Err(reopen_error) = application.reopen_runtime(&mut runtime) {
                         message.push_str(&format!(
                             "; reopen canonical Application owner failed: {reopen_error}"
                         ));
@@ -1502,7 +1706,7 @@ mod unix {
             Err(error) => {
                 let mut message = error.message;
                 if runtime_failure_requires_reopen(&error.code) {
-                    if let Err(reopen_error) = runtime.reopen() {
+                    if let Err(reopen_error) = application.reopen_runtime(&mut runtime) {
                         message.push_str(&format!(
                             "; reopen canonical Application owner failed: {reopen_error}"
                         ));
@@ -2071,39 +2275,64 @@ mod unix {
                 false,
             );
         };
-        let application = match application.lock() {
-            Ok(application) => application,
-            Err(_) => {
-                return rejected_receipt(
-                    request_id,
-                    client_id,
-                    "application_runtime_unavailable",
-                    "application runtime lock is poisoned",
-                    true,
-                )
-            }
+        let page_offset = match request.page.as_ref() {
+            Some(page) => match usize::try_from(page.offset) {
+                Ok(offset) => Some((offset, page.limit as usize)),
+                Err(_) => {
+                    return rejected_receipt(
+                        request_id,
+                        client_id,
+                        "invalid_projection_request",
+                        "projection page offset exceeds the platform range",
+                        false,
+                    )
+                }
+            },
+            None => None,
         };
-        let loaded_result = match request.page.as_ref() {
-            Some(page) => {
-                let offset = match usize::try_from(page.offset) {
-                    Ok(offset) => offset,
+        let loaded_result = if application.can_serve_read_replica() {
+            if let Ok(mut replica) = application.read_pool.checkout() {
+                Some(match page_offset {
+                    Some((offset, limit)) => {
+                        nola_application::conversation_projection_page_snapshot_from_store(
+                            &mut *replica,
+                            conversation_id,
+                            offset,
+                            limit,
+                        )
+                    }
+                    None => nola_application::conversation_projection_snapshot_from_store(
+                        &mut *replica,
+                        conversation_id,
+                    ),
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let loaded_result = match loaded_result {
+            Some(result) => result,
+            None => {
+                let application = match application.lock() {
+                    Ok(application) => application,
                     Err(_) => {
                         return rejected_receipt(
                             request_id,
                             client_id,
-                            "invalid_projection_request",
-                            "projection page offset exceeds the platform range",
-                            false,
+                            "application_runtime_unavailable",
+                            "application runtime lock is poisoned",
+                            true,
                         )
                     }
                 };
-                application.conversation_projection_page_snapshot(
-                    conversation_id,
-                    offset,
-                    page.limit as usize,
-                )
+                match page_offset {
+                    Some((offset, limit)) => application
+                        .conversation_projection_page_snapshot(conversation_id, offset, limit),
+                    None => application.conversation_projection_snapshot(conversation_id),
+                }
             }
-            None => application.conversation_projection_snapshot(conversation_id),
         };
         let loaded = match loaded_result {
             Ok(loaded) => loaded,
@@ -2188,19 +2417,32 @@ mod unix {
         received_at: String,
         request: ProjectionSnapshotRequest,
     ) -> CommandReceipt {
-        let application = match application.lock() {
-            Ok(application) => application,
-            Err(_) => {
-                return rejected_receipt(
-                    request_id,
-                    client_id,
-                    "application_runtime_unavailable",
-                    "application runtime lock is poisoned",
-                    true,
-                )
+        let loaded_result = if application.can_serve_read_replica() {
+            application.read_pool.checkout().ok().map(|mut replica| {
+                nola_application::conversation_list_projection_snapshot_from_store(&mut *replica)
+            })
+        } else {
+            None
+        };
+        let loaded_result = match loaded_result {
+            Some(result) => result,
+            None => {
+                let application = match application.lock() {
+                    Ok(application) => application,
+                    Err(_) => {
+                        return rejected_receipt(
+                            request_id,
+                            client_id,
+                            "application_runtime_unavailable",
+                            "application runtime lock is poisoned",
+                            true,
+                        )
+                    }
+                };
+                application.conversation_list_projection_snapshot()
             }
         };
-        let loaded = match application.conversation_list_projection_snapshot() {
+        let loaded = match loaded_result {
             Ok(loaded) => loaded,
             Err(error) => {
                 return rejected_receipt(

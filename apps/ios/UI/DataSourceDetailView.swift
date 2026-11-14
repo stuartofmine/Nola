@@ -22,6 +22,20 @@ import Contacts
 import EventKit
 import HealthKit
 
+/// A failed source must not be reported as a successful empty read.
+nonisolated enum DataSourceBatchRead {
+    static func collect<Value: Sendable>(reads: [@Sendable () async throws -> [Value]]) async throws -> [Value] {
+        try Task.checkCancellation()
+        return try await withThrowingTaskGroup(of: [Value].self) { group in
+            for read in reads { group.addTask { try await read() } }
+            var collected: [Value] = []
+            for try await values in group { collected.append(contentsOf: values) }
+            try Task.checkCancellation()
+            return collected
+        }
+    }
+}
+
 // Comment in English.
 
 struct DataSourceDetailView: View {
@@ -472,31 +486,24 @@ struct DataSourceDetailView: View {
             case .url:
                 if let fetcher = container.urlFetcher {
                     let sourcesSnapshot = fetcher.sources.filter { $0.enabled }
-                    let all: [RawEvent] = await withTaskGroup(of: [RawEvent].self) { group in
-                        for src in sourcesSnapshot {
-                            group.addTask {
-                                (try? await fetcher.fetchEvents(from: src)) ?? []
-                            }
-                        }
-
-                        var collected: [RawEvent] = []
-                        for await evs in group {
-                            collected.append(contentsOf: evs)
-                        }
-                        return collected
-                    }
+                    let all: [RawEvent] = try await DataSourceBatchRead.collect(reads: sourcesSnapshot.map { src in
+                        { try await fetcher.fetchEvents(from: src) }
+                    })
                     events = all
                 } else {
                     events = []
                 }
             }
             
+            try Task.checkCancellation()
             await MainActor.run {
                 eventCount = events.count
                 lastFetchTime = Date()
+                errorMessage = nil
             }
             
-        } catch {
+        } catch is CancellationError { return }
+        catch {
             errorMessage = L10n.format("data_source_detail.error.fetch_failed_format", error.localizedDescription)
         }
     }

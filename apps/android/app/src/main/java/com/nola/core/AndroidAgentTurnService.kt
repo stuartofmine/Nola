@@ -8,6 +8,7 @@ import com.nola.data.local.datastore.MemoryProfileDataStore
 import com.nola.data.repository.ModelRepository
 import com.nola.data.local.AndroidApplicationRuntime
 import com.nola.data.local.expertChildInstructions
+import com.nola.data.local.conversationSourceOwner
 import com.nola.llm.ModelService
 import com.nola.domain.model.ModelAttachment
 import com.nola.work.MemoryWorkerScheduler
@@ -117,32 +118,121 @@ class AndroidAgentTurnService @Inject constructor(
         val proof = candidate.getValue("parent_invocation").jsonObject
         val parentId = candidate.getValue("parent_conversation_id").jsonPrimitive.content
         require(proof.getValue("conversation_id").jsonPrimitive.content == parentId)
-        val model = recoverModel(proof)
         val descriptor = AndroidCanonicalTurnDescriptor(parentId, "",
             proof.getValue("run_id").jsonPrimitive.content, "", "", null,
             proof.getValue("assistant_message_id").jsonPrimitive.content)
         val parent = AndroidCanonicalAgentRuntime(applicationRuntime, descriptor)
+        AndroidEmbeddedChildExecutor.start(taskId, parent) { candidateConfig ->
+            require(candidateConfig.getValue("session_id").jsonPrimitive.content == candidate.getValue("child_conversation_id").jsonPrimitive.content)
+            prepareEmbeddedChild(candidateConfig, parentId)
+        }
+    }
+
+    /** The complete target configuration owns its model and generation settings.
+     * Parent invocation supplies a source identity, never a fallback model. */
+    private suspend fun prepareEmbeddedChild(candidate: JsonObject, parentId: String): AndroidPreparedChildExecutor {
+        val identity = candidate.getValue("turn_identity").jsonObject
+        val model = recoverModel(buildJsonObject {
+            put("host_invocation", identity.getValue("host_invocation"))
+            put("context_budget", candidate.getValue("context_window"))
+        })
         val parameters = model.parameters
-        val modelClient = TextAgentModelClient(model.client, parameters.enableThinking)
-        AndroidEmbeddedChildExecutor.start(taskId, parent) { config ->
-            require(config.getValue("session_id").jsonPrimitive.content == candidate.getValue("child_conversation_id").jsonPrimitive.content)
-            val session = config.getValue("session_id").jsonPrimitive.content
-            val policy = androidChildExecutionPolicy(config)
-            val refresh = { toolPlan(session, policy.resultEgressAuthorized, policy.permissionMode) }
-            val livePlan = refresh()
-            AndroidPreparedChildExecutor(livePlan.tools) { child ->
-                val coordinator = DeviceAgentCoordinator(modelClient, permissionBroker, hostExecutor, child,
-                    androidModelCapabilityProfile(model.model, parameters, model.client.supportsNativeEventStream),
-                    refreshToolPlan = refresh, embeddedMailbox = true)
-                val runtime = AgentCoreRuntimeConfig(model = model.model.id,
-                    contextWindowTokens = parameters.maxContextTokens,
-                    reservedOutputTokens = parameters.maxCompletionTokens)
-                val execute: suspend (JsonObject, AgentCoreTransitionRuntime, DeviceAgentCoordinator.RunState) -> Unit = { envelope, sink, state ->
-                    coordinator.executeEmbeddedRequest(envelope, sink, runtime, livePlan, state, parentId)
-                }
-                execute
+        val capability = frozenAndroidModelCapability(identity.getValue("model_capability").jsonObject)
+        require(capability == androidModelCapabilityProfile(model.model, parameters, model.client.supportsNativeEventStream)) {
+            "The frozen child model capability changed"
+        }
+        val session = candidate.getValue("session_id").jsonPrimitive.content
+        val policy = androidChildExecutionPolicy(candidate)
+        val refresh = { toolPlan(session, policy.resultEgressAuthorized, policy.permissionMode) }
+        val plan = refresh()
+        return AndroidPreparedChildExecutor(plan.tools) { child, _ ->
+            val coordinator = DeviceAgentCoordinator(TextAgentModelClient(model.client, parameters.enableThinking),
+                permissionBroker, hostExecutor, child, capability, refreshToolPlan = refresh, embeddedMailbox = true,
+                prepareChildExecutor = { nested -> prepareEmbeddedChild(nested, child.descriptor.conversationId) },
+                childToolPlan = { nestedSession -> toolPlan(nestedSession, policy.resultEgressAuthorized, policy.permissionMode) },
+                expertExchange = { request -> executeExpertExchange(child, request) }, delegationAllowed = false)
+            val config = AgentCoreRuntimeConfig(model = model.model.id, contextWindowTokens = parameters.maxContextTokens,
+                reservedOutputTokens = parameters.maxCompletionTokens)
+            val execute: suspend (JsonObject, AgentCoreTransitionRuntime, DeviceAgentCoordinator.RunState) -> Unit = { envelope, sink, state ->
+                coordinator.executeEmbeddedRequest(envelope, sink, config, plan, state, parentId)
+            }
+            execute
+        }
+    }
+
+    private fun localMainContext(id: String): Boolean {
+        val record = applicationRuntime.loadConversation(id) ?: return false
+        return applicationRuntime.conversationSourceOwner(id) == com.nola.data.local.ConversationSourceOwner.Local &&
+            record.settingsJson?.let { Json.parseToJsonElement(it).jsonObject["agentRoomOwner"] } !is JsonObject &&
+            applicationRuntime.loadConversationProjectionV1(id).taskChildOwner == null
+    }
+
+    private suspend fun executeExpertExchange(source: AndroidCanonicalAgentRuntime, request: JsonObject): JsonObject {
+        val factory = applicationRuntime.expertHostFactory
+        val actor = factory.peerAuthority(request)
+        val payload = request.getValue("payload").jsonObject
+        val arguments = payload.getValue("input").jsonObject
+        if (arguments.getValue("action").jsonPrimitive.content != "request") {
+            val deadline = android.os.SystemClock.elapsedRealtime() + (arguments["timeout_ms"]?.jsonPrimitive?.longOrNull ?: 30_000)
+            while (true) {
+                val observed = factory.peerTaskAction(request, actor)
+                val remaining = deadline - android.os.SystemClock.elapsedRealtime()
+                if (arguments["action"] != JsonPrimitive("wait") || observed["terminal"]?.jsonPrimitive?.boolean == true || remaining <= 0) return observed
+                delay(minOf(remaining, 250L))
             }
         }
+        val original = factory.originalPeer(request, actor)
+        val material = original ?: factory.admitPeer(buildJsonObject {
+            put("source_context_id", source.descriptor.conversationId); put("source_run_id", source.descriptor.submissionId)
+            put("call_id", payload.getValue("call_id")); put("target_participant_id", arguments.getValue("target_participant_id"))
+            put("kind", "request"); put("text", arguments.getValue("text")); put("in_reply_to", arguments["in_reply_to"] ?: JsonNull)
+        }, actor)
+        try {
+            val exchange = material.getValue("view").jsonObject.getValue("exchange_id").jsonPrimitive.content
+            val task = applicationRuntime.executeQuery(buildJsonObject { put("type", "runtime_task"); put("command", buildJsonObject { put("type", "get"); put("id", exchange) }) })
+            val candidate = if (task != JsonNull) applicationRuntime.executeQuery(buildJsonObject {
+                put("type", "load_mobile_task_child_configuration"); put("task_id", exchange)
+            }).jsonObject else capturePeerTargetConfiguration(material)
+            return factory.preparePeerTask(request, material, candidate, actor)
+        } catch (cancelled: CancellationException) {
+            withContext(NonCancellable) { runCatching { factory.abortPeerPreparation(request, material, actor) } }
+            throw cancelled
+        }
+        catch (failure: Exception) {
+            // Only Core may release a never-started reservation. An existing
+            // Task or Run stays owned by the common worker and its recovery.
+            runCatching { factory.abortPeerPreparation(request, material, actor) }
+            throw failure
+        }
+    }
+
+    private suspend fun capturePeerTargetConfiguration(material: JsonObject): JsonObject {
+        val entry = Json.decodeFromJsonElement<com.nola.data.local.AndroidExpertMessageEntry>(material.getValue("entry"))
+        val declared = entry.modelDeclaration
+        val model = modelRepository.listConfiguredModels().singleOrNull {
+            it.profileId == declared.getValue("profile_id").jsonPrimitive.content && it.profileRevision == declared.getValue("profile_revision").jsonPrimitive.long
+        } ?: error("The target expert's exact model profile is unavailable")
+        val parameters = com.nola.data.repository.readExpertConversationParameters(entry.defaults, model, declared.getValue("parameters").jsonObject)
+        val captured = captureModel(model, parameters)
+        val session = entry.participant.contextConversationId
+        val permission = AndroidAgentPermissionMode.fromWireValue(entry.defaults["permissionMode"]?.takeUnless { it == JsonNull }?.jsonPrimitive?.content)
+        val refresh = { toolPlan(session, resultEgressAuthorized = false, permissionMode = permission) }
+        val plan = refresh()
+        val descriptor = AndroidCanonicalTurnDescriptor(session, entry.displayName, entry.childSubmissionId, entry.childUserMessageId,
+            material.getValue("view").jsonObject.getValue("text").jsonPrimitive.content, null, entry.childAssistantMessageId)
+        val target = AndroidCanonicalAgentRuntime(applicationRuntime, descriptor)
+        val coordinator = DeviceAgentCoordinator(TextAgentModelClient(captured.client, parameters.enableThinking), permissionBroker, hostExecutor, target,
+            androidModelCapabilityProfile(model, parameters, captured.client.supportsNativeEventStream), refreshToolPlan = refresh,
+            prepareChildExecutor = { candidate -> prepareEmbeddedChild(candidate, session) }, expertExchange = { request -> executeExpertExchange(target, request) }, delegationAllowed = false)
+        val prompt = CoreAgentPromptComposer.compose(AndroidSystemPrompt.agentFragments(applicationContext, parameters.responseStyle, ""))
+        val configuration = coordinator.buildRuntimeConfig(session, listOf(AgentCoreMessage("system", prompt.rendered)), captured.modelFacingTools(plan.tools), plan,
+            AgentCoreRuntimeConfig(model = model.id, preparedHostInvocation = prepareInvocation(captured, parameters.enableThinking),
+                contextWindowTokens = parameters.maxContextTokens, reservedOutputTokens = parameters.maxCompletionTokens, grantedCapabilities = plan.grantedCapabilities))
+        return applicationRuntime.execute(buildJsonObject {
+            put("type", "capture_mobile_delegation_configuration"); put("config", configuration)
+            put("settings", buildJsonObject { put("project_root", "android-device"); put("independent_model_profiles", true); put("expert_leaf", true)
+                put("selected_profile", buildJsonObject { put("profile_id", declared.getValue("profile_id")); put("admitted_revision", declared.getValue("profile_revision")) }); put("agents", buildJsonObject {}) })
+        }).jsonObject
     }
 
     fun toolPlan(
@@ -201,7 +291,11 @@ class AndroidAgentTurnService @Inject constructor(
         require(expertDefinitions == null || request.turnContextComponents.none { it.kind == "prompt_template" }) {
             "Expert instructions must enter once through the authorized source manifest"
         }
-        val turnComponents = if (isEditedResend) listOf(AgentCoreContextComponent(
+        val mainSelection = request.canonicalTurn.mainExpertSelection?.let {
+            require(localMainContext(request.canonicalTurn.conversationId) && !request.recoverExistingRun && !isEditedResend)
+            AgentCoreContextComponent(kind = "main_expert_selection", id = "nola.main-expert-selection", content = it)
+        }
+        val turnComponents = listOfNotNull(mainSelection) + if (isEditedResend) listOf(AgentCoreContextComponent(
             kind = "system", id = "android:fresh-host-system-policy", content = JsonPrimitive(promptComposition.rendered),
             source = AgentCoreContextComponentSource(platform = "android", title = "Current Host policy"))) + definitionComponents
         else request.turnContextComponents + if (expertDefinitions != null) definitionComponents
@@ -221,6 +315,9 @@ class AndroidAgentTurnService @Inject constructor(
             modelCapability = model.editedResendModel?.let { frozenAndroidModelCapability(it.modelCapability) }
                 ?: androidModelCapabilityProfile(model.model, parameters, model.client.supportsNativeEventStream),
             childToolPlan = { childSession -> toolPlan(childSession, request.resultEgressAuthorized, request.toolPlan.permissionMode) },
+            prepareChildExecutor = { childConfig -> prepareEmbeddedChild(childConfig, application.descriptor.conversationId) },
+            expertExchange = { request -> executeExpertExchange(application, request) },
+            expertDelegationEnabled = localMainContext(application.descriptor.conversationId),
             captureDelegation = request.delegationEnabled && !request.recoverExistingRun,
             refreshToolPlan = { toolPlan(request.sessionId, request.resultEgressAuthorized, request.toolPlan.permissionMode) },
             prepareRecovery = { proof, config ->

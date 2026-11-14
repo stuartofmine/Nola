@@ -5,6 +5,7 @@ export function chatInitializationError(error: unknown): string {
     if (error instanceof ApiError) return error.status === 401 || error.status === 403
         ? 'chatPage.noSession' : 'chatPage.initializationService';
     if (error instanceof Error) {
+        if (error.message === 'browser_secure_connection_required') return 'chatPage.secureConnectionRequired';
         if (error.message === 'browser_recovery_storage_unavailable') return 'chatPage.recoveryStorageUnavailable';
         if (error.message === 'invalid_host_session') return 'chatPage.noSession';
         if (error.message === 'notification_host_changed') return 'chatPage.initializationHostChanged';

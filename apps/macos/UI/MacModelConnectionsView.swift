@@ -16,6 +16,7 @@ struct MacModelConnectionsView: View {
     @State private var secret = ""
     @State private var wire = "responses"
     @State private var busy = false
+    @State private var busyAccountIDs: Set<String> = []
     @State private var discovering = false
     @State private var operationTask: Task<Void, Never>?
     @State private var error: String?
@@ -96,8 +97,8 @@ struct MacModelConnectionsView: View {
                 LazyVStack(spacing: 0) {
                     ForEach(filteredConnections) { connection in
                         Button {
+                            openEditor(.connections)
                             selectedConnectionID = connection.id
-                            workspace = .connections
                         } label: {
                             connectionRow(connection)
                         }
@@ -124,16 +125,22 @@ struct MacModelConnectionsView: View {
                     Text(editorTitle(target)).font(.headline)
                     Spacer()
                     Button(String(localized: "Close", table: "ModelCenter")) {
-                        if hasModelChanges { confirmsDiscard = true } else { workspace = nil }
+                        requestEditorClose()
                     }
                         .keyboardShortcut(.cancelAction)
+                        .disabled(isEditorBusy)
+                        .accessibilityIdentifier("model-editor-close")
                 }.padding(20)
                 Divider()
                 editorContent(target)
                 editorFooter
             }
             .frame(minWidth: 460, idealWidth: 580, minHeight: 480, idealHeight: 640)
-            .interactiveDismissDisabled(hasModelChanges || busy)
+            .interactiveDismissDisabled(hasModelChanges || isEditorBusy)
+            .background(MacEditorWindowCloseGuard(
+                shouldPreventClose: { hasModelChanges || isEditorBusy },
+                onCloseAttempt: requestEditorClose
+            ))
             .confirmationDialog(String(localized: "Discard model selection changes?", table: "ModelCenter"), isPresented: $confirmsDiscard) {
                 Button(String(localized: "Discard changes", table: "ModelCenter"), role: .destructive) {
                     if let id = selectedConnectionID { enabled[id] = savedEnabled[id, default: []] }
@@ -216,7 +223,16 @@ struct MacModelConnectionsView: View {
         }
     }
 
+    private var isEditorBusy: Bool { busy || probeRunning || !busyAccountIDs.isEmpty }
+
+    private func requestEditorClose() {
+        guard !isEditorBusy else { return }
+        if hasModelChanges { confirmsDiscard = true } else { workspace = nil }
+    }
+
     private func openEditor(_ target: Workspace) {
+        error = nil
+        status = nil
         modelSearch = ""
         workspace = target
         selectedConnectionID = nil
@@ -400,7 +416,11 @@ struct MacModelConnectionsView: View {
                 ForEach(accounts.filter { $0.account.source == "nola_chatgpt" }) { account in
                     MacSiwcAccountManagementView(application: service.application, account: account, changed: reload,
                         modelsDiscovered: { id in selectedConnectionID = id; workspace = .connections },
-                        reauthorize: { siwcAccount = account; showingSiwc = true })
+                        reauthorize: { siwcAccount = account; showingSiwc = true },
+                        activityChanged: { active in
+                            if active { busyAccountIDs.insert(account.id) }
+                            else { busyAccountIDs.remove(account.id) }
+                        })
                 }
             }
             }
@@ -453,7 +473,7 @@ struct MacModelConnectionsView: View {
         guard let url = URL(string: value.trimmingCharacters(in: .whitespacesAndNewlines)),
               ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
               let host = url.host, !host.isEmpty else { return false }
-        return url.user == nil && url.password == nil && url.fragment == nil
+        return url.user == nil && url.password == nil && url.query == nil && url.fragment == nil
     }
 
     private var hostManagementSection: some View {

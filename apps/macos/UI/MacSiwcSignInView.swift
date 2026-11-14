@@ -32,6 +32,10 @@ import AppKit
         self.openBrowser = openBrowser
         self.pollInterval = pollInterval
     }
+    var requiresConfirmedDismissal: Bool {
+        running || cancelling || ["preparing", "awaiting_authorization", "authorized"].contains(flow?.phase ?? "")
+    }
+
     func begin(application: MacApplicationPort, name: String) {
         guard task == nil, bridge == nil else { return }
         let generation = generation
@@ -191,6 +195,16 @@ struct MacSiwcSignInView: View {
         }
         .padding(24).frame(width: 460)
         .tint(MacDesignColor.brand)
+        .interactiveDismissDisabled(model.requiresConfirmedDismissal)
+        .background(MacEditorWindowCloseGuard(
+            shouldPreventClose: { model.requiresConfirmedDismissal },
+            onCloseAttempt: {
+                // Match the visible Cancel action. Finishing authorization and
+                // catalog work must settle before this sheet can disappear.
+                guard model.flow?.phase != "authorized", model.flow?.phase != "committed" else { return }
+                model.cancel()
+            }
+        ))
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: model.flow?.phase)
         .onChange(of: model.connectionID) { _, id in
             guard let id else { return }

@@ -5,6 +5,24 @@ import XCTest
 @testable import Nola
 
 final class MacRemoteHostConfigurationCanonicalEndToEndTests: XCTestCase {
+    func testBlankHostDraftCannotReuseCredentialAtAnotherDestination() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("host-draft-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let application = try MacApplicationPort(databaseURL: root.appendingPathComponent("host.sqlite"))
+        let store = MacRemoteHostConfigurationStore(applicationPort: application)
+        try store.save(url: "https://old.example:5001/v1", token: "old-token", hostID: "old-host")
+        let original = try XCTUnwrap(URL(string: "https://old.example:5001/v1"))
+        XCTAssertEqual(store.tokenForDraft(url: original, enteredToken: ""), "old-token")
+        for address in ["https://new.example:5001/v1", "http://old.example:5001/v1",
+                        "https://old.example:5002/v1", "https://old.example:5001/other"] {
+            let destination = try XCTUnwrap(URL(string: address))
+            XCTAssertNil(store.tokenForDraft(url: destination, enteredToken: ""), address)
+            XCTAssertEqual(store.tokenForDraft(url: destination, enteredToken: " new-token "), "new-token")
+        }
+        XCTAssertEqual(store.load()?.baseURL, original)
+        XCTAssertEqual(store.load()?.token, "old-token")
+    }
+
     func testFailedCredentialWriteNeverCommitsConfiguration() {
         var configurationWritten = false
         XCTAssertThrowsError(try MacHostConfigurationPersistence.commit(token: "new", previousToken: "old", writeToken: { _ in

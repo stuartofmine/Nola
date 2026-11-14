@@ -21,7 +21,7 @@
 | `nola_kernel` | `nola_domain` |
 | `nola_mcp_host` | `nola_core` |
 | `nola_measurement` | 无 |
-| `nola_mobile_bindings` | `nola_application`、`nola_application_bootstrap`、`nola_core`、`nola_domain`、`nola_host_protocol`、`nola_kernel`、`nola_mcp_host`、`nola_model_runtime_host`、`nola_protocol`、`nola_runtime_driver`、`nola_update_host` |
+| `nola_mobile_bindings` | `nola_application`、`nola_application_bootstrap`、`nola_core`、`nola_domain`、`nola_host_protocol`、`nola_kernel`、`nola_mcp_host`、`nola_protocol`、`nola_runtime_driver`、`nola_update_host` |
 | `nola_model_runtime_host` | 无 |
 | `nola_plugin_host` | `nola_domain` |
 | `nola_protocol` | `nola_domain` |
@@ -31,6 +31,7 @@
 | `nola_service_client` | `nola_protocol` |
 | `nola_store` | `nola_domain`、`nola_kernel`、`nola_measurement`、`nola_store_port` |
 | `nola_store_port` | `nola_domain` |
+| `nola_update_host` | `nola_domain` |
 
 ## 所有权规则与待删除的实现耦合
 
@@ -111,4 +112,4 @@ metadata --no-deps 不解析整个第三方传递图，文档不得据此声称�
 workspace_dependency_architecture 14 passed，均 exit 0、测试阶段各 0.03s。
 这是本地历史执行，不是当前修改的通过证明或已观察的 CI 结果；没有跑整个 CLI 或五端端到端。
 
-软件更新新增 `nola_update_host -> nola_store`（只读取当前格式常量，不打开数据库），CLI 与 mobile_bindings 依赖该 Host 组件。网络、验签和安装包暂存位于 Host；没有向 Domain/Kernel/Core reducer 添加网络或文件写入依赖。详细发布合同见[更新架构](SOFTWARE_UPDATE_ARCHITECTURE.md)。
+软件更新保持 `nola_update_host -> nola_domain`（只读取 Domain 中的 Store 格式身份常量，不依赖 `nola_store` 或打开数据库），CLI 与 mobile_bindings 依赖该 Host 组件。网络、验签和安装包暂存位于 Host；没有向 Domain/Kernel/Core reducer 添加网络或文件写入依赖。详细发布合同见[更新架构](SOFTWARE_UPDATE_ARCHITECTURE.md)。

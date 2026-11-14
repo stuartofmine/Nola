@@ -87,6 +87,7 @@ pub(crate) fn prepare<
     {
         return Err("invalid wait response owner or time".into());
     }
+    crate::expert_peer_task::validate_expert_question_execution(store,&input.conversation_id,&input.run_id)?;
     let digest = input.response.digest()?;
     let saved = store
         .load_user_input_wait(&input.conversation_id, &input.response.wait_id)

@@ -100,6 +100,61 @@ struct MacEditorWindowCloseGuard: NSViewRepresentable {
 }
 
 enum MacDesignTokens {
+    /// Canonical Warm Ink & Warm Paper RGB fallbacks synchronized with shared/design-tokens/tokens.json.
+    /// Native macOS chrome continues binding semantic Asset Catalog entries through `MacDesignColor`.
+    enum Palette {
+        enum Light {
+            static let canvas: UInt32 = 0xF7F6F3
+            static let surface: UInt32 = 0xFFFFFF
+            static let surfaceSubtle: UInt32 = 0xF1F0EC
+            static let surfaceElevated: UInt32 = 0xFFFFFF
+            static let ink: UInt32 = 0x181817
+            static let inkSecondary: UInt32 = 0x5C5B57
+            static let inkMuted: UInt32 = 0x66655F
+            static let border: UInt32 = 0xE5E3DD
+            static let outline: UInt32 = 0x7A7872
+            static let accent: UInt32 = 0x181817
+            static let onAccent: UInt32 = 0xFFFFFF
+            static let accentSubtle: UInt32 = 0xEAE8E2
+            static let success: UInt32 = 0x237047
+            static let warning: UInt32 = 0x865400
+            static let danger: UInt32 = 0xAD3D34
+            static let info: UInt32 = 0x1F5F8B
+        }
+
+        enum Dark {
+            static let canvas: UInt32 = 0x131312
+            static let surface: UInt32 = 0x1B1B19
+            static let surfaceSubtle: UInt32 = 0x232320
+            static let surfaceElevated: UInt32 = 0x232320
+            static let ink: UInt32 = 0xF2F0EB
+            static let inkSecondary: UInt32 = 0xA3A09A
+            static let inkMuted: UInt32 = 0x96938D
+            static let border: UInt32 = 0x2E2D2A
+            static let outline: UInt32 = 0x827F79
+            static let accent: UInt32 = 0xF2F0EB
+            static let onAccent: UInt32 = 0x131312
+            static let accentSubtle: UInt32 = 0x292825
+            static let success: UInt32 = 0x82C99B
+            static let warning: UInt32 = 0xE9BD66
+            static let danger: UInt32 = 0xEFAAA2
+            static let info: UInt32 = 0x8AB8E6
+        }
+
+        static func fallbackColor(light: UInt32, dark: UInt32) -> Color {
+            Color(nsColor: NSColor(name: nil) { appearance in
+                let match = appearance.bestMatch(from: [.darkAqua, .vibrantDark, .aqua, .vibrantLight])
+                let rgb = (match == .darkAqua || match == .vibrantDark) ? dark : light
+                return NSColor(
+                    srgbRed: CGFloat((rgb >> 16) & 0xFF) / 255.0,
+                    green: CGFloat((rgb >> 8) & 0xFF) / 255.0,
+                    blue: CGFloat(rgb & 0xFF) / 255.0,
+                    alpha: 1.0
+                )
+            })
+        }
+    }
+
     enum Typography {
         static let inspectorBody: CGFloat = 13
         static let inspectorDetail: CGFloat = 12
@@ -234,6 +289,9 @@ enum MacDesignColor {
     static let pressed = Color("NolaControlPressed")
     static let selected = Color("NolaAccentSubtle")
     static let borderSubtle = Color("NolaDivider")
+    static let success = Color("NolaSuccess")
+    static let warning = Color("NolaWarning")
+    static let danger = Color("NolaDanger")
 }
 
 private struct MacGlobalWorkspaceChromeKey: EnvironmentKey {
@@ -723,10 +781,10 @@ struct MacInlineNotice: View {
 
         var tint: Color {
             switch self {
-            case .success: .green
+            case .success: MacDesignColor.success
             case .information: MacDesignColor.brand
-            case .warning: .orange
-            case .failure: .red
+            case .warning: MacDesignColor.warning
+            case .failure: MacDesignColor.danger
             }
         }
 
@@ -926,28 +984,32 @@ private struct MacActionButtonBody<Label: View>: View {
 
 /// The title, chevron and trailing whitespace are one accessible disclosure action.
 struct MacRowDisclosureStyle: DisclosureGroupStyle {
+    var toggleIdentifier = ""
+    var isPlain = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Button {
-                withAnimation(reduceMotion ? nil : MacDesignTokens.Motion.disclosureAnimation) {
-                    configuration.isExpanded.toggle()
-                }
-            } label: {
-                HStack(spacing: 8) {
-                    configuration.label
-                    Spacer(minLength: 8)
-                    Image(systemName: "chevron.down")
-                        .font(.caption.weight(.semibold))
-                        .rotationEffect(.degrees(configuration.isExpanded ? 180 : 0))
-                        .accessibilityHidden(true)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
+        let toggle = Button {
+            withAnimation(reduceMotion ? nil : MacDesignTokens.Motion.disclosureAnimation) {
+                configuration.isExpanded.toggle()
             }
-            .buttonStyle(MacActionButtonStyle())
+        } label: {
+            HStack(spacing: 8) {
+                configuration.label
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.down")
+                    .font(.caption.weight(.semibold))
+                    .rotationEffect(.degrees(configuration.isExpanded ? 180 : 0))
+                    .accessibilityHidden(true)
+            }
+            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+            .accessibilityIdentifier(toggleIdentifier)
             .accessibilityValue(Text(configuration.isExpanded ? "Expanded" : "Collapsed", tableName: "Chat"))
+        return VStack(alignment: .leading, spacing: 4) {
+            if isPlain { toggle.buttonStyle(MacPressFeedbackButtonStyle()) }
+            else { toggle.buttonStyle(MacActionButtonStyle()) }
             if configuration.isExpanded {
                 configuration.content.macDisclosureTransition(reduceMotion: reduceMotion)
             }

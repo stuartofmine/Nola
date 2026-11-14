@@ -5,7 +5,7 @@ import { createTextAttachmentDraftStore } from './chatTextAttachments.ts';
 import { knowledgePending, type KnowledgeDraft } from './chatKnowledge.ts';
 import { SvelteMap } from 'svelte/reactivity';
 import { createBrowserWorkspaceCompletions, createBrowserSourceRecovery } from './browserWorkspaceCompletions.ts';
-import { IndexedDBConversationDraftRepository, type ConversationDraftRepository, type ConversationDraftSubmissionTicket } from './conversationDraftRepository.ts';
+import { IndexedDBConversationDraftRepository, type ConversationDraftRepository, type ConversationDraftSubmissionTicket, type ConversationDraftRecord } from './conversationDraftRepository.ts';
 import type { PendingSourceSubmission } from './sourceSubmission.ts';
 import type { ConversationSubmissionController } from './conversationSubmissionController.ts';
 import type { RoomDraft } from './agentRooms.ts';
@@ -17,6 +17,7 @@ export const workspaceDraftsContext = Symbol('workspace-drafts');
 export function createWorkspaceDrafts(repository: ConversationDraftRepository | null = typeof indexedDB === 'undefined' ? null : new IndexedDBConversationDraftRepository()) {
     const create = (ownerHostId: string) => {
         const expertSelections = new Map<string, readonly string[]>();
+        const expertSelectionEpochs = new Map<string,string>();
         const contentTabs = new SvelteMap<string | null, ConversationContentTabs>();
         const readingPositions = new Map<string, ChatReadingPosition>();
         const completions = createBrowserWorkspaceCompletions();
@@ -24,7 +25,7 @@ export function createWorkspaceDrafts(repository: ConversationDraftRepository | 
         const loaded = new Set<string>(), deleted = new Set<string>();
         const touched = new Map<string, Set<string>>(), loading = new Map<string, Promise<void>>();
         const editRevisions = new Map<string, number>();
-        const tickets = new Map<string, {ticket: ConversationDraftSubmissionTicket; editRevision: number}>();
+        const tickets = new Map<string, {ticket: ConversationDraftSubmissionTicket; editRevision: number; draft?:ConversationDraftRecord}>();
         // Expert parent admission is not an ordinary source Run submission.
         // Keep only the original local text edit witness, never a synthetic receipt.
         const expertDrafts = new Map<string, {conversationId: string; editRevision: number; text: string}>();
@@ -126,7 +127,7 @@ export function createWorkspaceDrafts(repository: ConversationDraftRepository | 
                 const ticket = repository ? await repository.stageSubmission!(record, pending) : {
                     hostId: ownerHostId, clientId: pending.identity.client_id, conversationId: id,
                     submissionId: pending.identity.submission_id, draftRevision: editRevision, pending, committed: false};
-                tickets.set(ticket.submissionId, {ticket, editRevision});
+                tickets.set(ticket.submissionId, {ticket, editRevision, draft:structuredClone(record)});
                 return ticket;
             });
             queue = operation.then(() => {}, () => { persistenceErrors.set(id, true); });
@@ -164,6 +165,13 @@ export function createWorkspaceDrafts(repository: ConversationDraftRepository | 
             queue = operation.catch(() => { persistenceErrors.set(id, true); });
             await operation;
         },
+        restoreBlockedSubmission(submissionId:string):boolean {
+            const entry=tickets.get(submissionId),id=entry?.ticket.conversationId;
+            if(!entry?.draft||!id||invalidated||deleted.has(id)||(editRevisions.get(id)??0)!==entry.editRevision)return false;
+            const draft=entry.draft;entry.draft=undefined;
+            text.write(id,draft.text);attachments.write(id,draft.attachments);
+            return true;
+        },
         async restoreSubmissions(clientId: string) {
             const restored = await repository?.pendingSubmissions?.(ownerHostId, clientId) ?? [];
             for (const ticket of restored) tickets.set(ticket.submissionId, {ticket, editRevision: editRevisions.get(ticket.conversationId) ?? 0});
@@ -179,7 +187,7 @@ export function createWorkspaceDrafts(repository: ConversationDraftRepository | 
             deleted.add(id); loaded.delete(id); touched.delete(id);
             for (const [submissionId, ticket] of expertDrafts) if (ticket.conversationId === id) expertDrafts.delete(submissionId);
             readingPositions.delete(id);
-            expertSelections.delete(id);
+            expertSelections.delete(id); expertSelectionEpochs.delete(id);
             contentTabs.delete(id);
             if (repository && ownerHostId) enqueue(id, () => repository.delete(ownerHostId, id));
         },
@@ -187,7 +195,7 @@ export function createWorkspaceDrafts(repository: ConversationDraftRepository | 
         isDeleted(id: string) { return deleted.has(id); },
         isLoaded(id: string) { return !repository || loaded.has(id); },
         async flush() { await Promise.all(loading.values()); await queue; },
-        contentTabs, expertSelections, readingPositions,
+        contentTabs, expertSelections, expertSelectionEpochs, readingPositions,
         knowledge: new SvelteMap<string, KnowledgeDraft>(),
         rooms: new SvelteMap<string, RoomDraft>(),
         replyNotices: new SvelteMap<string, { submissionId: string; userMessageId: string; assistantMessageId: string; kind: 'notSent' | 'uncertain' }[]>(),
@@ -199,7 +207,7 @@ export function createWorkspaceDrafts(repository: ConversationDraftRepository | 
     };
     let hostId: string | null = null;
     let current = create('');
-    const clear = () => { current.readingPositions.clear(); current.expertSelections.clear(); current.contentTabs.clear(); current.rooms.clear(); for (const controller of current.controllers.values()) controller.dispose(); current.controllers.clear(); current.sources.clear(); current.completions.clear(); for (const transport of current.transports) transport.abort(); current.transports.clear(); current.text.clear(); current.objectives.clear(); current.knowledge.clear(); current.replyNotices.clear(); current.attachments.clear(); current.submissions.clear(); current.lastConversationId = null; };
+    const clear = () => { current.readingPositions.clear(); current.expertSelections.clear(); current.expertSelectionEpochs.clear(); current.contentTabs.clear(); current.rooms.clear(); for (const controller of current.controllers.values()) controller.dispose(); current.controllers.clear(); current.sources.clear(); current.completions.clear(); for (const transport of current.transports) transport.abort(); current.transports.clear(); current.text.clear(); current.objectives.clear(); current.knowledge.clear(); current.replyNotices.clear(); current.attachments.clear(); current.submissions.clear(); current.lastConversationId = null; };
     return {
         forHost(id: string) {
             if (!id.trim()) throw new Error('Missing authenticated Host');

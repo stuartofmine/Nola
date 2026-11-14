@@ -52,4 +52,6 @@
     <string name="activity_status_action_completed">操作完了</string>
     <string name="activity_status_delegated">委任済み</string>
     <string name="activity_status_queued">キュー済み</string>
+    <string name="ui_surface_pending">コンポーネントとデータを待って画面を準備しています…</string>
+    <string name="ui_surface_deleted">この画面は削除されました。</string>
 </resources>

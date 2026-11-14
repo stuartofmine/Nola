@@ -123,6 +123,7 @@ pub(super) fn execute<R: CapabilityCatalogRepositories + nola_store_port::protoc
             value_json,
             updated_at_ms,
         } => {
+            if key.starts_with(crate::expert_peer::PRIVATE_PREFIX) { return Err("expert_peer_private_setting_requires_owning_operation".into()); }
             if nola_domain::model_connection::owns_setting(&key) {
                 return Err("model connections and accounts require their owning model command".into());
             }
@@ -156,6 +157,7 @@ pub(super) fn execute<R: CapabilityCatalogRepositories + nola_store_port::protoc
             )?)
         }
         ApplicationCommand::GetProductSetting { key } => {
+            if key.starts_with(crate::expert_peer::PRIVATE_PREFIX) { return Err("expert_peer_private_setting_requires_owning_operation".into()); }
             let settings = store.product_setting_repository();
             let setting =
                 nola_store_port::product_setting::ProductSettingRepository::product_setting(
@@ -169,6 +171,8 @@ pub(super) fn execute<R: CapabilityCatalogRepositories + nola_store_port::protoc
             crate::expert_prompt_catalog::read(&store.product_setting_repository(), &actor, now_epoch_ms, request_host_id)
         }
         ApplicationCommand::DeleteProductSetting { key } => {
+            if nola_domain::remote_expert_parent::owns_setting(&key) { return Err("remote_expert_parent_source_requires_owning_receiver".into()); }
+            if key.starts_with(crate::expert_peer::PRIVATE_PREFIX) { return Err("expert_peer_private_setting_requires_owning_operation".into()); }
             if nola_domain::model_connection::owns_setting(&key) {
                 return Err("model connections and accounts require their owning model command".into());
             }

@@ -296,6 +296,7 @@ mod tests {
         };
         let frozen = crate::mobile_delegation_configuration::capture_parent(base,
             crate::mobile_delegation_configuration::MobileDelegationSettings {
+                expert_leaf: false,
                 project_root: "/fixture".into(), selected_profile: None, agents: Default::default(), independent_model_profiles: false,
             }).unwrap();
         assert!(frozen.turn_identity.delegation.is_some());

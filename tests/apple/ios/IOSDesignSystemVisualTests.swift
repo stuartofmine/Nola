@@ -64,7 +64,7 @@ import UIKit
                         }
                         NolaCard {
                             NolaSettingsLinkLabel(icon: "cpu", tint: DesignTokens.primaryColor,
-                                title: "模型账户与执行位置", detail: "查看本机和 Host 的连接。凭据保留在所属设备，不会在切换页面时复制。")
+                                title: "模型账户与执行位置")
                             NolaSettingsToggleRow(icon: "bell", tint: DesignTokens.primaryColor,
                                 title: "任务完成通知", detail: "只在任务真实结束后提示；等待授权不表示已经完成。", isOn: .constant(true))
                         }

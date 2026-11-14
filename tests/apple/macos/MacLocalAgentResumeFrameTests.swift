@@ -47,12 +47,12 @@ final class MacLocalAgentResumeFrameTests: XCTestCase {
             conversationID: "conversation", runID: "run", assistantMessageID: "run:assistant")
         XCTAssertEqual(frame.last, 0x0a, "desktop transport consumes one newline-delimited frame")
         let envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: frame) as? [String: Any])
-        XCTAssertEqual(Set(envelope.keys), ["operation", "session_id", "expected_run_id", "assistant_message_id", "configuration"])
+        XCTAssertEqual(Set(envelope.keys), ["operation", "session_id", "expected_run_id", "assistant_message_id", "configuration", "expert_template_authority"])
         XCTAssertEqual(envelope["operation"] as? String, "resume")
         XCTAssertEqual(envelope["session_id"] as? String, "conversation")
         XCTAssertEqual(envelope["expected_run_id"] as? String, "run")
         let configuration = try XCTUnwrap(envelope["configuration"] as? [String: Any])
-        for key in ["prompt", "submission_id", "user_message_id", "assistant_message_id", "context_components", "input_origin", "attachments"] {
+        for key in ["prompt", "submission_id", "user_message_id", "assistant_message_id", "context_components", "selected_experts", "expected_source_store_epoch", "expert_template_authority", "input_origin", "attachments"] {
             XCTAssertNil(configuration[key], key)
         }
         XCTAssertEqual(configuration["max_output_tokens"] as? Int, 64000)
@@ -62,6 +62,24 @@ final class MacLocalAgentResumeFrameTests: XCTestCase {
         XCTAssertEqual(configuration["host_attachments"] as? [[String: AnyHashable]], original()["attachments"] as? [[String: AnyHashable]])
         XCTAssertEqual((try JSONSerialization.jsonObject(with: source) as? [String: Any])?["prompt"] as? String,
                        "Do not submit this twice", "transformation must not mutate the owned original frame")
+    }
+
+    func testResumeSuppliesCurrentNativeAuthorityOutsideFrozenConfiguration() throws {
+        var frozen = original()
+        frozen["expert_template_authority"] = ["actor": ["kind": "forged_web_actor"], "request_host_id": "foreign"]
+        frozen["selected_experts"] = [["agent_id": "expert", "agent_revision": 1]]
+        frozen["expected_source_store_epoch"] = "old-host-store"
+        let frame = try MacLocalAgentOwnedLaunchSnapshot.resumeRequestData(original: JSONSerialization.data(withJSONObject: frozen),
+            conversationID: "conversation", runID: "run", assistantMessageID: "run:assistant")
+        let value = try XCTUnwrap(JSONSerialization.jsonObject(with: frame) as? [String: Any])
+        let authority = try XCTUnwrap(value["expert_template_authority"] as? [String: Any])
+        XCTAssertTrue(authority["request_host_id"] is NSNull)
+        let actor = try XCTUnwrap(authority["actor"] as? [String: Any])
+        XCTAssertEqual(actor["kind"] as? String, "local_user")
+        XCTAssertFalse((actor["id"] as? String ?? "").isEmpty)
+        let configuration = try XCTUnwrap(value["configuration"] as? [String: Any])
+        XCTAssertNil(configuration["expert_template_authority"]); XCTAssertNil(configuration["selected_experts"])
+        XCTAssertNil(configuration["expected_source_store_epoch"])
     }
 
     func testResumeFrameRejectsDifferentRunOrAssistant() throws {

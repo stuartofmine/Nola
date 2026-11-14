@@ -101,6 +101,13 @@ in the canonical projection.
     but it cannot manufacture a second source of truth or reconstruct bodies
     from Trace.
 
+Reference metadata may be presented in a collapsed message footer. The native
+client may merge repeated source/citation links while retaining canonical ID
+coverage and distinct page/line/range citations; this does not reorder prose or
+interactive surfaces or rewrite stored Parts. A terminal reply with an open
+Skill snapshot is shown as incomplete/cancelled, never as still executing or as
+verified success. Technical counters belong to disclosure content.
+
 ## Forbidden interfaces
 
 - Client-side `appendAssistantMessage`, `persistAssistantMessage`, or a local

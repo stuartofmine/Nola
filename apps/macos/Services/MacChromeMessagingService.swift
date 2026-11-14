@@ -313,6 +313,7 @@ nonisolated final class MacChromeMessagingService: @unchecked Sendable {
 
     private let condition = NSCondition()
     private let lifecycleCondition = NSCondition()
+    private let startupLock = NSLock()
     private let listenerQueue = DispatchQueue(
         label: "com.nola.mac.chrome.listener",
         qos: .userInitiated
@@ -363,11 +364,18 @@ nonisolated final class MacChromeMessagingService: @unchecked Sendable {
         configuration requestedConfiguration: MacChromeMessagingConfiguration =
             .loadOrCreate()
     ) throws -> MacChromeMessagingConfiguration {
+        // App warm-up and the first chat can arrive on different queues.
+        // Own the complete start transaction, including readiness and install.
+        startupLock.lock()
+        defer { startupLock.unlock() }
         lifecycleCondition.lock()
-        if let activeConfiguration, listener != nil {
+        if let activeConfiguration, listener != nil, listenerReady {
             lifecycleCondition.unlock()
             return activeConfiguration
         }
+        listener?.cancel()
+        listener = nil
+        activeConfiguration = nil
         listenerReady = false
         startupError = nil
         lifecycleCondition.unlock()
@@ -385,10 +393,14 @@ nonisolated final class MacChromeMessagingService: @unchecked Sendable {
         newListener.stateUpdateHandler = { [weak self, weak newListener] state in
             guard let self else { return }
             self.lifecycleCondition.lock()
+            guard let newListener, self.listener === newListener else {
+                self.lifecycleCondition.unlock()
+                return
+            }
             switch state {
             case .ready:
                 self.listenerReady = true
-                if let boundPort = newListener?.port?.rawValue,
+                if let boundPort = newListener.port?.rawValue,
                    requestedConfiguration.serverURL.port != Int(boundPort) {
                     self.activeConfiguration = MacChromeMessagingConfiguration(
                         serverURL: URL(string: "http://127.0.0.1:\(boundPort)")!,
@@ -399,6 +411,7 @@ nonisolated final class MacChromeMessagingService: @unchecked Sendable {
                     )
                 }
             case .failed(let error):
+                self.listenerReady = false
                 self.startupError = error.localizedDescription
             default:
                 break
@@ -420,6 +433,7 @@ nonisolated final class MacChromeMessagingService: @unchecked Sendable {
         }
         let error = startupError
         let resolvedConfiguration = activeConfiguration ?? requestedConfiguration
+        let ready = listenerReady
         lifecycleCondition.unlock()
         if let error {
             stop()
@@ -429,7 +443,7 @@ nonisolated final class MacChromeMessagingService: @unchecked Sendable {
                 userInfo: [NSLocalizedDescriptionKey: error]
             )
         }
-        guard listenerReady else {
+        guard ready else {
             stop()
             throw NSError(
                 domain: "NolaMac.ChromeBridge",

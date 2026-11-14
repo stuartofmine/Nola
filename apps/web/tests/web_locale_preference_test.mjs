@@ -88,6 +88,9 @@ test('actual workspace and login controls use the current shared locale registry
     assert.match(chat, /<WorkspaceListNavigation\s/);
     assert.match(chat, /<WorkspaceResourceNavigation\s/);
     const resources = readFileSync(new URL('../frontend/src/components/WorkspaceResourceNavigation.svelte', import.meta.url), 'utf8');
-    assert.match(resources, /\['\/activity',\s*'chatInspector\.list\.activity'\]/);
+    assert.doesNotMatch(resources, /\['\/activity',\s*'chatInspector\.list\.activity'\]/);
+    const lists = readFileSync(new URL('../frontend/src/components/WorkspaceListNavigation.svelte', import.meta.url), 'utf8');
+    assert.match(lists, /\['conversations', 'resources'\]/);
+    assert.doesNotMatch(lists, /'activity'/);
     assert.match(chat, /openManagementTab\('\/settings\?section=general'\)/);
 });

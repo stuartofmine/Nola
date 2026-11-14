@@ -190,11 +190,11 @@ fi
 # Adjust workspace/scheme if needed
 SCHEME="Nola"
 
-if [ -d "Nola.xcodeproj/project.xcworkspace" ]; then
-  WORKSPACE="Nola.xcodeproj/project.xcworkspace"
+if [ -d "apple/Nola.xcodeproj/project.xcworkspace" ]; then
+  WORKSPACE="apple/Nola.xcodeproj/project.xcworkspace"
   echo "Using workspace: $WORKSPACE"
   xcodebuild test -workspace "$WORKSPACE" -scheme "$SCHEME" -sdk "$SDK" -destination "$DEST" -parallel-testing-enabled YES -maximum-parallel-testing-workers "$PARALLEL_TEST_WORKERS" "${XCODEBUILD_TEST_ARGS[@]}"
 else
-  echo "Workspace not found; using project: Nola.xcodeproj"
-  xcodebuild test -project "Nola.xcodeproj" -scheme "$SCHEME" -sdk "$SDK" -destination "$DEST" -parallel-testing-enabled YES -maximum-parallel-testing-workers "$PARALLEL_TEST_WORKERS" "${XCODEBUILD_TEST_ARGS[@]}"
+  echo "Workspace not found; using project: apple/Nola.xcodeproj"
+  xcodebuild test -project "apple/Nola.xcodeproj" -scheme "$SCHEME" -sdk "$SDK" -destination "$DEST" -parallel-testing-enabled YES -maximum-parallel-testing-workers "$PARALLEL_TEST_WORKERS" "${XCODEBUILD_TEST_ARGS[@]}"
 fi

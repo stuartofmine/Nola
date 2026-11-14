@@ -1178,9 +1178,6 @@ struct SummaryDetailView: View {
                                 Text(L10n.notificationViewDetail)
                                     .foregroundColor(.blue)
                                 Spacer()
-                                Image(systemName: "chevron.right")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
                             }
                             .padding(12)
                             .background(

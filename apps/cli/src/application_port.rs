@@ -89,12 +89,12 @@ impl CliApplicationPort {
         request_id: &str,
         operation: nola_application::host_expert_template_operation::HostExpertTemplateOperation,
     ) -> Result<T, nola_application::host_expert_template_operation::HostExpertOperationError> {
-        use nola_application::host_expert_template_operation::{HostExpertOperationError, HostExpertTemplateOperation};
-        let mutating = matches!(&operation, HostExpertTemplateOperation::Admit { .. } | HostExpertTemplateOperation::PrepareEditedResend { .. });
+        use nola_application::host_expert_template_operation::HostExpertOperationError;
+        let mutating = operation.mutates_state();
         let value: serde_json::Value = match self {
             Self::Service(client) => client.execute_host_expert_template_operation_with_request_id(request_id, &operation)
                 .map_err(|error| {
-                    if error.requires_reconciliation() {
+                    if error.requires_reconciliation() || matches!(error,ApplicationServiceCommandError::Transport{..}) {
                         let reopen_required = matches!(&error, ApplicationServiceCommandError::OutcomeUnknown { reopen_required: true, .. });
                         HostExpertOperationError::OutcomePending { request_id: error.request_id().into(), message: error.to_string(), reopen_required }
                     } else { HostExpertOperationError::Rejected { code: "expert_host_operation_rejected".into(), message: error.to_string() } }

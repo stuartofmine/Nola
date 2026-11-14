@@ -29,7 +29,7 @@ pub(crate) fn append_items(items: &mut Vec<nola_core::agent::AgentItem>, message
     }
 }
 
-#[cfg(feature = "terminal-ui")]
+#[cfg(any(feature = "terminal-ui", test))]
 pub(crate) fn paste_key(key: &crossterm::event::KeyEvent) -> bool {
     use crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
     key.kind == KeyEventKind::Press && ((matches!(key.code, KeyCode::Char('v' | 'V'))
@@ -37,7 +37,7 @@ pub(crate) fn paste_key(key: &crossterm::event::KeyEvent) -> bool {
         || (key.code == KeyCode::Insert && key.modifiers == KeyModifiers::SHIFT))
 }
 
-#[cfg(feature = "terminal-ui")]
+#[cfg(any(feature = "terminal-ui", test))]
 pub(crate) fn paste_image() -> Result<String, String> {
     let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
     let image = if let Some(image) = clipboard.get().file_list().unwrap_or_default().into_iter()
@@ -60,7 +60,7 @@ pub(crate) fn paste_image() -> Result<String, String> {
 
 /// A standalone pasted image path is an explicit attachment gesture. Other
 /// pasted text remains text, even when it happens to mention a file path.
-#[cfg(feature = "terminal-ui")]
+#[cfg(any(feature = "terminal-ui", test))]
 pub(crate) fn paste_path(text: &str) -> Result<Option<String>, String> {
     let text = text.trim();
     let text = text.strip_prefix('\'').and_then(|s| s.strip_suffix('\''))
@@ -78,7 +78,7 @@ pub(crate) fn paste_path(text: &str) -> Result<Option<String>, String> {
     stage_png(png.into_inner()).map(Some)
 }
 
-#[cfg(feature = "terminal-ui")]
+#[cfg(any(feature = "terminal-ui", test))]
 fn read_image(path: &std::path::Path) -> Result<image::DynamicImage, String> {
     if path.metadata().map_err(|e| e.to_string())?.len() > 20 * 1024 * 1024 {
         return Err("image exceeds 20 MiB".into());
@@ -93,7 +93,7 @@ fn read_image(path: &std::path::Path) -> Result<image::DynamicImage, String> {
     reader.decode().map_err(|e| e.to_string())
 }
 
-#[cfg(feature = "terminal-ui")]
+#[cfg(any(feature = "terminal-ui", test))]
 fn stage_png(bytes: Vec<u8>) -> Result<String, String> {
     if bytes.is_empty() || bytes.len() > 20 * 1024 * 1024 { return Err("image must be 1 byte..20 MiB".into()); }
     let directory = crate::platform_paths::home_dir().ok_or("cannot locate Nola home")?
@@ -101,7 +101,7 @@ fn stage_png(bytes: Vec<u8>) -> Result<String, String> {
     stage_png_in(&directory, &bytes)
 }
 
-#[cfg(feature = "terminal-ui")]
+#[cfg(any(feature = "terminal-ui", test))]
 fn stage_png_in(directory: &std::path::Path, bytes: &[u8]) -> Result<String, String> {
     use std::io::Write;
     std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;

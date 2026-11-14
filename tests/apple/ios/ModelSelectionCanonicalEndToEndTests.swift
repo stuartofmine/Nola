@@ -135,6 +135,32 @@ struct ModelSelectionCanonicalEndToEndTests {
     }
 
     @Test
+    @MainActor
+    func modelCheckPreservesCanonicalReasoningSelectionAndSummaryCapability() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("model-check-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = try IOSApplicationRuntime(databaseURL: root.appendingPathComponent("state.db"))
+        let model = ModelInfo(id: "check-fixture", name: "Fixture", source: "api", isLocal: false,
+            baseURL: "https://fixture.invalid/v1", wireProtocol: .responses,
+            executionCapabilities: .init(toolCalls: true, reasoning: true), cloudCredential: .anonymous)
+        var parameters = ModelParameters.webAlignedCloudDefaults
+        parameters.reasoningPreference = "high"
+        let original = try profile(model, selected: true, parameters: parameters)
+        var source = try #require(JSONSerialization.jsonObject(with: Data(original.sourceJSON.utf8)) as? [String: Any])
+        source["reasoning"] = ["control": "effort", "efforts": ["low", "medium", "high"]]
+        source["reasoningSummarySupported"] = false
+        try runtime.upsertModelProfile(.init(id: original.id, displayName: original.displayName, provider: original.provider,
+            modelName: original.modelName, runtime: original.runtime,
+            sourceJSON: String(decoding: try JSONSerialization.data(withJSONObject: source), as: UTF8.self),
+            parametersJSON: original.parametersJSON, selected: true, enabled: true, revision: 0,
+            createdAtMs: original.createdAtMs, updatedAtMs: original.updatedAtMs, deletedAtMs: nil))
+        let config = try IOSModelInferenceTestRoute.cloudConfiguration(model, parameters: parameters, using: runtime)
+        #expect(config.wireProtocol == .responses)
+        #expect(config.reasoningSelection?.objectFields?["value"] == .string("high"))
+        #expect(config.reasoningSummarySupported == false)
+    }
+
+    @Test
     func cloudExecutionCapabilitiesPersistWithoutChangingParametersOrSelection() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("nola-ios-execution-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }

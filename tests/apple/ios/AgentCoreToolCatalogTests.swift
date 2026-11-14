@@ -256,6 +256,7 @@ final class AgentCoreToolCatalogTests: XCTestCase {
             "memory_search",
             "skill_invoke",
             "render_ui",
+            "delegate_expert",
         ]
         XCTAssertEqual(Set(IOSAgentHostExecutor.installedToolCapabilities.keys), expected)
 
@@ -263,7 +264,7 @@ final class AgentCoreToolCatalogTests: XCTestCase {
             for: .deviceLocal,
             isForeground: true
         )
-        XCTAssertEqual(Set((plan.enabledTools + plan.disabledTools).map(\.toolId)), expected.subtracting(["render_ui"]))
+        XCTAssertEqual(Set((plan.enabledTools + plan.disabledTools).map(\.toolId)), expected.subtracting(["render_ui", "delegate_expert"]))
         XCTAssertTrue(expected.isDisjoint(with: [
             "device_read_clipboard",
             "device_write_clipboard",

@@ -95,6 +95,13 @@ final class MacSecondaryPageCatalogCoverageTests: XCTestCase {
         )
     }
 
+    func testSharedFormRecoveryLabelsCoverEveryMacLanguage() throws {
+        try assertCatalogCoverage(
+            catalogPath: "apps/macos/Localizable.xcstrings",
+            sourcePaths: ["shared/apple/GenerativeUI/AppleUISurfaceView.swift"],
+            patterns: [#"String\(localized: \"(a2ui\.[^\"]+)\""#])
+    }
+
     func testSharedSoftwareUpdateLabelsAndDynamicStatusesHaveTranslations() throws {
         try assertCatalogCoverage(catalogPath: "apps/macos/Localizable.xcstrings",
             sourcePaths: ["shared/apple/Presentation/AppleSoftwareUpdateSection.swift"],

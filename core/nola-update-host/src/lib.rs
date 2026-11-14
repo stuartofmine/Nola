@@ -213,7 +213,7 @@ pub fn check(source: &UpdateSource, target: &str, transport: &dyn Transport) -> 
     let (manifest, release_id) = verify_feed(source, &bytes, target, now()?)?;
     if manifest.build < source.build { output.status = "ahead"; return Ok(output); }
     let item = manifest.targets.iter().find(|v| v.target == target);
-    let data_matches = manifest.store_schema == nola_store::STORE_SCHEMA_VERSION && manifest.store_epoch == nola_store::STORE_SCHEMA_EPOCH;
+    let data_matches = manifest.store_schema == nola_domain::STORE_SCHEMA_VERSION && manifest.store_epoch == nola_domain::STORE_SCHEMA_EPOCH;
     if manifest.build == source.build {
         if !data_matches || manifest.version != source.version { return Err(error("identity_conflict", "The same build number names another version")); }
         output.status = if item.is_some() { "up_to_date" } else { "unavailable" }; return Ok(output);

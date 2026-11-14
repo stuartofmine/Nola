@@ -112,6 +112,7 @@ mod outbox_payload;
 mod outbox_fixture;
 pub mod historical_part_projection;
 mod mcp_store;
+mod memory_index;
 mod memory_port;
 mod memory_store;
 mod model_store;
@@ -135,6 +136,7 @@ mod terminal_input_store;
 mod runtime_task_user_input_wait;
 mod runtime_task_permission_recovery;
 mod runtime_task_run_binding;
+mod expert_task_target;
 mod runtime_task_terminal;
 mod runtime_task_guidance;
 mod runtime_task_permission_store;
@@ -200,12 +202,12 @@ pub use protocol_journal::*;
 pub use skill_selection::SkillInstructionSelection;
 pub use transcript_search::StoredTranscriptMatch;
 
-pub const STORE_SCHEMA_EPOCH: i64 = 1;
-pub const STORE_SCHEMA_VERSION: i64 = 1;
+pub use nola_domain::{
+    STORE_APPLICATION_ID, STORE_SCHEMA_EPOCH, STORE_SCHEMA_VERSION,
+};
 mod assistant_journal;
 mod run_message_admission;
 mod committed_run_context_usage;
-const STORE_APPLICATION_ID: i64 = 0x4e4f4c41;
 
 const RUNTIME_TASK_COLUMNS: &str = "id,kind,status,title,project_root,owner_session_id,parent_task_id,parent_tool_call_id,child_session_id,agent_type,prompt,progress_summary,last_activity,result_summary,error,output_path,unread,cancel_requested,cancel_requested_at_ms,worker_id,ownership_token,lease_until_ms,heartbeat_at_ms,retry_count,retry_at_ms,last_error,input_watermark,completion_watermark,created_at_ms,started_at_ms,ended_at_ms,updated_at_ms,metadata_json";
 const PERMISSION_REQUEST_COLUMNS: &str = "request_id,task_id,child_session_id,capability,input_json,scope_rule,status,decision,custom_response,created_at_ms,resolved_at_ms,core_permission_request_id,permission_instructions_json,closure_json";

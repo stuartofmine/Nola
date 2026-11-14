@@ -61,3 +61,20 @@ nonisolated struct AppleFrozenModelCapabilityFacts: Decodable, Sendable {
     let streamToolCalls: Bool
     let directToolCapabilityIds: [String]
 }
+
+// Additive same-conversation contract; the fresh-branch command remains supported.
+nonisolated struct ApplePrepareInPlaceResend: Codable, Equatable, Sendable {
+    let operation_id: String
+    let conversation_id: String
+    let message_id: String
+    let expected_revision: Int64
+    let expected_message_revision: UInt64
+    let edited_text: String
+    let created_at_ms: Int64
+}
+nonisolated struct ApplePreparedInPlaceResend: Codable, Equatable, Sendable {
+    let input: ApplePrepareInPlaceResend
+    let run_id: String
+    let user_message_id: String
+    let experts: [AppleExpertParticipantReference]
+}

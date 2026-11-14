@@ -7,6 +7,64 @@ import XCTest
 
 @MainActor
 final class MacModelCenterEditingTests: XCTestCase {
+    func testModelSourceSwitchPreservesConnectionSearch() async throws {
+        let accessibility = try MacHostedAccessibilitySession()
+        defer { accessibility.restore() }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("model-source-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let application = try MacApplicationPort(databaseURL: directory.appendingPathComponent("test.sqlite"))
+        let navigation = MacModelCenterNavigationState(selectedTab: .api)
+        let preference = MacDefaultChatModelPresentation(store: .init(application: application))
+        let hosting = NSHostingView(rootView: MacModelCenterView(remoteHost: PersistenceTestRemoteHost(),
+            navigation: navigation, preference: preference).environment(\.accessibilityEnabled, true)
+                .environment(\.colorScheme, .light))
+        hosting.frame = NSRect(x: 0, y: 0, width: 800, height: 760)
+        let window = NSWindow(contentRect: hosting.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = hosting
+        window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil); window.contentView = nil; window.close() }
+        try await settle(hosting)
+        let search = try XCTUnwrap(elements(hosting).compactMap { $0 as? NSTextField }.first {
+            $0.placeholderString == String(localized: "Search connections", table: "ModelCenter")
+        })
+        search.selectText(nil)
+        let editor = try XCTUnwrap(search.currentEditor() as? NSTextView)
+        editor.insertText("draft connection search", replacementRange: NSRange(location: 0, length: editor.string.utf16.count))
+        window.makeFirstResponder(hosting)
+        try await settle(hosting)
+        navigation.showLocalModels()
+        try await settle(hosting)
+        navigation.showRemoteModels()
+        try await settle(hosting)
+        let restored = try XCTUnwrap(elements(hosting).compactMap { $0 as? NSTextField }.first {
+            $0.placeholderString == String(localized: "Search connections", table: "ModelCenter")
+        })
+        XCTAssertEqual(restored.stringValue, "draft connection search")
+        for width: CGFloat in [680, 1040] {
+            for scheme: ColorScheme in [.light, .dark] {
+                hosting.rootView = MacModelCenterView(remoteHost: PersistenceTestRemoteHost(),
+                    navigation: navigation, preference: preference).environment(\.accessibilityEnabled, true)
+                    .environment(\.colorScheme, scheme)
+                window.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
+                window.setContentSize(NSSize(width: width, height: 760))
+                hosting.frame = NSRect(x: 0, y: 0, width: width, height: 760)
+                try await settle(hosting)
+                let search = try XCTUnwrap(elements(hosting).compactMap { $0 as? NSTextField }.first {
+                    $0.placeholderString == String(localized: "Search connections", table: "ModelCenter")
+                })
+                XCTAssertEqual(search.stringValue, "draft connection search")
+                let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+                hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+                let image = XCTAttachment(data: try XCTUnwrap(bitmap.representation(using: .png, properties: [:])),
+                    uniformTypeIdentifier: "public.png")
+                image.name = "model-source-retained-\(Int(width))-\(scheme == .dark ? "dark" : "light")"
+                image.lifetime = .keepAlways
+                add(image)
+            }
+        }
+    }
+
     func testParameterDraftReturnsToCleanWhenRestoredToBaseline() {
         let parameters = ModelParameters.webAlignedCloudDefaults
         var draft = MacModelParameterDraft(parameters: parameters)

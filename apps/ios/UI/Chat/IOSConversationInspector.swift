@@ -171,8 +171,8 @@ struct IOSConversationInspector: View {
                         Button(String(localized: "inspector.retry", table: "ConversationInspector")) { retry += 1 }
                     }
                     status(processingState.blocksInput ? "running" : "idle")
-                    if supportsGoalControl && submitGoalControl != nil { goalControls }
-                    if let goal = facts?.goal_projection?.active {
+                    if pane == .goals && supportsGoalControl && submitGoalControl != nil { goalControls }
+                    if pane == .goals, let goal = facts?.goal_projection?.active {
                         Section {
                             Text(goal.objective).font(.headline)
                             status(goal.status)

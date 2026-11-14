@@ -18,10 +18,16 @@ struct ModelsView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    @State private var apiHasDraft = false
+    @State private var hostHasDraft = false
+    @State private var hostIsConnecting = false
+    @State private var confirmsDiscard = false
+    private var hasDraft: Bool { apiHasDraft || hostHasDraft }
     @State private var models: [ModelInfo] = []
     @State private var selectedModel: ModelInfo? = nil
     @State private var detailTarget: ModelInfo? = nil
     @State private var parameterTarget: ModelInfo? = nil
+    @State private var protocolTarget: ModelInfo? = nil
     @State private var capabilityTarget: ModelInfo? = nil
     @State private var modelTestTarget: ModelInfo? = nil
     @State private var showsConfiguredModels = false
@@ -70,7 +76,11 @@ struct ModelsView: View {
             TabView(selection: $sourceTab) {
                 apiContent.tag(0)
                 ModelDownloadView(embedded: true).environmentObject(container).tag(1)
-                WebHostConfigurationView(existingModel: hostModels.first, embedded: true) { configured in
+                WebHostConfigurationView(
+                    existingModel: hostModels.first, embedded: true,
+                    onDraftChanged: { hostHasDraft = $0 },
+                    onConnectingChanged: { hostIsConnecting = $0 }
+                ) { configured in
                     ModelSelectionManager.addModel(configured)
                     reloadModels()
                     onConfigured?(configured)
@@ -85,9 +95,25 @@ struct ModelsView: View {
         .toolbarBackground(DesignTokens.backgroundColor, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbar {
-            if ownsNavigationStack && sourceTab == 0 {
-                ToolbarItem(placement: .cancellationAction) { Button(L10n.close) { dismiss() } }
+            if ownsNavigationStack || hasDraft || hostIsConnecting {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(L10n.close) {
+                        if hasDraft { confirmsDiscard = true } else { dismiss() }
+                    }
+                    .accessibilityIdentifier("model.setup.close")
+                }
             }
+        }
+        .navigationBarBackButtonHidden(!ownsNavigationStack && (hasDraft || hostIsConnecting))
+        .interactiveDismissDisabled(hasDraft || hostIsConnecting)
+        .alert(
+            NSLocalizedString("model.setup.discard_title", value: "Discard unsaved changes?", comment: "Discard model setup title"),
+            isPresented: $confirmsDiscard
+        ) {
+            Button(NSLocalizedString("model.setup.discard", value: "Discard changes", comment: "Discard model setup"), role: .destructive) { dismiss() }
+                .accessibilityIdentifier("model.setup.discard")
+            Button(NSLocalizedString("model.setup.keep_editing", value: "Keep editing", comment: "Keep model setup draft"), role: .cancel) {}
+                .accessibilityIdentifier("model.setup.keep_editing")
         }
     }
 
@@ -108,7 +134,7 @@ struct ModelsView: View {
 
     private var apiContent: some View {
             NolaPage {
-                IOSModelSetupForm(service: IOSModelConnectionService(application: container.applicationRuntime)) { model in
+                IOSModelSetupForm(service: IOSModelConnectionService(application: container.applicationRuntime), onDraftChanged: { apiHasDraft = $0 }) { model in
                     reloadModels()
                     showsConfiguredModels = true
                     statusMessage = NSLocalizedString("model.setup.saved", value: "Saved and set as default · not tested", comment: "Configured model saved")
@@ -138,6 +164,15 @@ struct ModelsView: View {
             .sheet(item: $parameterTarget) { model in
                 NavigationStack {
                     ModelParametersView(modelID: model.id, displayName: model.name, isLocal: model.isLocal)
+                }
+            }
+            .sheet(item: $protocolTarget) { model in
+                NavigationStack {
+                    IOSModelProtocolEditor(model: model, service: IOSModelConnectionService(application: container.applicationRuntime)) { configured in
+                        container.chatManager.selectModel(configured)
+                        reloadModels()
+                        onConfigured?(configured)
+                    }
                 }
             }
             .sheet(item: $capabilityTarget) { model in
@@ -318,6 +353,7 @@ struct ModelsView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("model.row.\(model.id)")
     }
 
     private func modelDetailContent(_ model: ModelInfo) -> some View {
@@ -399,6 +435,14 @@ struct ModelsView: View {
                     .accessibilityLabel(NSLocalizedString("model.center.configure_host", value: "配置宿主机", comment: "Configure host button"))
                 } else {
                     if !model.isLocal {
+                        if model.wireProtocol == .chatCompletions || model.wireProtocol == .responses {
+                            Button { protocolTarget = model } label: {
+                                Label(NSLocalizedString("model.connections.protocol", comment: "Protocol"), systemImage: "arrow.triangle.branch")
+                                    .font(.caption.weight(.semibold))
+                                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            }.buttonStyle(.bordered)
+                                .accessibilityIdentifier("model.protocol.\(model.id)")
+                        }
                         Button {
                             capabilityTarget = model
                         } label: {
@@ -432,6 +476,7 @@ struct ModelsView: View {
                     }
                     .buttonStyle(.bordered)
                     .accessibilityLabel(NSLocalizedString("model.center.parameters", value: "参数", comment: "Parameters button"))
+                    .accessibilityIdentifier("model.parameters.\(model.id)")
                 }
             }
         }
@@ -610,11 +655,47 @@ private struct IOSModelExecutionCapabilitiesView: View {
 }
 
 
+/// Saved pairing credentials belong to the approved endpoint, never an edited destination.
+enum IOSHostConnectionDraftPolicy {
+    static func endpoint(_ raw: String) -> URL? {
+        guard let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              ["http", "https"].contains(components.scheme?.lowercased() ?? ""),
+              components.host?.isEmpty == false,
+              components.user == nil, components.password == nil,
+              components.query == nil, components.fragment == nil,
+              components.port.map({ (1...65535).contains($0) }) ?? true else { return nil }
+        return url
+    }
+
+    static func canReuseSavedToken(for url: URL, original: String?) -> Bool {
+        guard let original, let approved = endpoint(original),
+              AppleHostConnectionSetup.sameOrigin(url, approved) else { return false }
+        // Hosts currently use root origins. Preserve path identity for any
+        // previously configured routed endpoint instead of broadening trust.
+        func path(_ value: URL) -> String {
+            var result = URLComponents(url: value, resolvingAgainstBaseURL: false)?.percentEncodedPath ?? value.path
+            while result.last == "/" { result.removeLast() }
+            return result
+        }
+        return path(url) == path(approved)
+    }
+
+    static func token(entered: String, for url: URL, original: String?, loadSaved: () -> String?) -> String {
+        let entered = entered.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !entered.isEmpty { return entered }
+        guard canReuseSavedToken(for: url, original: original) else { return "" }
+        return loadSaved()?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+}
+
 struct WebHostConfigurationView: View {
     @Environment(\.dismiss) private var dismiss
 
     let existingModel: ModelInfo?
     let embedded: Bool
+    let onDraftChanged: (Bool) -> Void
+    let onConnectingChanged: (Bool) -> Void
     let onConnected: (ModelInfo) -> Void
 
     @State private var hostURL: String
@@ -629,12 +710,19 @@ struct WebHostConfigurationView: View {
     @State private var connectionTask: Task<Void, Never>?
     @State private var errorMessage: String?
 
-    init(existingModel: ModelInfo?, embedded: Bool = false, onConnected: @escaping (ModelInfo) -> Void) {
+    init(
+        existingModel: ModelInfo?, embedded: Bool = false,
+        onDraftChanged: @escaping (Bool) -> Void = { _ in },
+        onConnectingChanged: @escaping (Bool) -> Void = { _ in },
+        onConnected: @escaping (ModelInfo) -> Void
+    ) {
         self.existingModel = existingModel
         self.embedded = embedded
         self.onConnected = onConnected
+        self.onDraftChanged = onDraftChanged
+        self.onConnectingChanged = onConnectingChanged
         _hostURL = State(initialValue: existingModel?.baseURL ?? "")
-        _accessToken = State(initialValue: existingModel?.resolvedAPIKey ?? "")
+        _accessToken = State(initialValue: "")
     }
 
     var body: some View {
@@ -731,6 +819,11 @@ struct WebHostConfigurationView: View {
                 .autocorrectionDisabled()
                 .accessibilityIdentifier("model.web_host.token_field")
                 .disabled(isConnecting)
+                if let url = IOSHostConnectionDraftPolicy.endpoint(hostURL),
+                   IOSHostConnectionDraftPolicy.canReuseSavedToken(for: url, original: existingModel?.baseURL) {
+                    Text(NSLocalizedString("model.web_host.saved_token_hint", value: "Leave blank to use this host’s saved token.", comment: "Saved host token hint"))
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
 
             } header: {
                 Text(NSLocalizedString("model.web_host.connection", value: "Connection", comment: "Web Host connection section"))
@@ -769,7 +862,6 @@ struct WebHostConfigurationView: View {
         }
         .navigationTitle(embedded ? L10n.modelsTitle : NSLocalizedString("model.web_host.title", value: "Host connection", comment: "Web Host configuration title"))
         .navigationBarTitleDisplayMode(.inline)
-        .interactiveDismissDisabled(isConnecting)
         .toolbar {
             if !embedded {
                 ToolbarItem(placement: .cancellationAction) {
@@ -781,6 +873,10 @@ struct WebHostConfigurationView: View {
                 ToolbarItem(placement: .confirmationAction) { connectButton }
             }
         }
+        .onChange(of: hostURL != (existingModel?.baseURL ?? "") || !accessToken.isEmpty, initial: true) { _, value in
+            onDraftChanged(value)
+        }
+        .onChange(of: isConnecting, initial: true) { _, value in onConnectingChanged(value) }
         .onDisappear { connectionTask?.cancel() }
     }
 
@@ -807,11 +903,7 @@ struct WebHostConfigurationView: View {
         guard !isConnecting else { return }
         errorMessage = nil
         let rawURL = hostURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        let token = accessToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: rawURL),
-              let scheme = url.scheme?.lowercased(),
-              ["http", "https"].contains(scheme),
-              url.host?.isEmpty == false else {
+        guard let url = IOSHostConnectionDraftPolicy.endpoint(rawURL) else {
             errorMessage = NSLocalizedString("model.web_host.invalid_url", value: "Enter a valid HTTP or HTTPS Host URL.", comment: "Invalid Web Host URL error")
             return
         }
@@ -819,6 +911,10 @@ struct WebHostConfigurationView: View {
             errorMessage = NSLocalizedString("model.web_host.public_http_forbidden", value: "Public Web Host addresses require HTTPS. HTTP is limited to this device or a private local network.", comment: "Public HTTP Web Host error")
             return
         }
+        let token = IOSHostConnectionDraftPolicy.token(
+            entered: accessToken, for: url, original: existingModel?.baseURL,
+            loadSaved: { existingModel?.resolvedAPIKey }
+        )
         guard !token.isEmpty else {
             errorMessage = NSLocalizedString("model.web_host.missing_token", value: "Enter the access token for this host.", comment: "Missing Web Host token error")
             return
@@ -1006,13 +1102,11 @@ struct IOSModelInferenceTestView: View {
                         seed: parameters.seed
                     )
                 } else {
-                    let resolvedModel = try ModelSelectionManager.resolvedCloudModelForRun(model)
-                    let configuration = try IOSConversationRunConfiguration.directCloudProviderConfig(model: resolvedModel, parameters: parameters)
-                    stream = OpenAIProvider(config: configuration).chatStream(
-                        message: text,
-                        systemPrompt: parameters.customSystemPrompt.isEmpty ? nil : parameters.customSystemPrompt,
-                        enableThinking: parameters.showThinking
-                    )
+                    let configuration = try IOSModelInferenceTestRoute.cloudConfiguration(model, parameters: parameters,
+                        using: container.applicationRuntime)
+                    let input = try IOSModelInferenceTestRoute.cloudInput(configuration: configuration,
+                        parameters: parameters, message: text)
+                    stream = OpenAIProvider(config: configuration).generateSummaryStream(input: input)
                 }
                 for try await chunk in stream {
                     try Task.checkCancellation()
@@ -1044,6 +1138,35 @@ struct IOSModelInferenceTestView: View {
 }
 
 enum IOSModelInferenceTestRoute {
+    @MainActor
+    static func cloudConfiguration(_ model: ModelInfo, parameters: ModelParameters,
+        using runtime: IOSApplicationRuntime) throws -> OpenAIProvider.Config {
+        let resolved = try ModelSelectionManager.resolvedCloudProfileForRun(model, using: runtime, parameters: parameters)
+        var configuration = try IOSConversationRunConfiguration.directCloudProviderConfig(model: resolved.model,
+            parameters: parameters, reasoningSelection: resolved.reasoningSelection, reasoningTier: resolved.reasoningTier)
+        configuration.reasoningSummarySupported = resolved.reasoningSummarySupported
+        return configuration
+    }
+
+    /// Validate the tools/reasoning wire combination without exposing or
+    /// executing any real tool. A model test must not pass a text-only request
+    /// while the same configuration fails as soon as chat advertises tools.
+    static func cloudInput(configuration: OpenAIProvider.Config, parameters: ModelParameters, message: String) throws -> ModelInput {
+        var envelope: [String: Any] = ["system_prompt": parameters.customSystemPrompt.isEmpty ? try PromptTemplates.chatSystem : parameters.customSystemPrompt,
+            "messages": [["role": "user", "content": message]], "tools": []]
+        if configuration.executionCapabilities.toolCalls {
+            envelope["tools"] = [["type": "function", "function": ["name": "nola_connection_check",
+                "description": "Connection compatibility check. This function must never be called.",
+                "parameters": ["type": "object", "properties": [:], "additionalProperties": false] as [String: Any]] as [String: Any]]]
+            envelope["tool_choice"] = "none"
+        }
+        return ModelInput(dateRange: .init(start: "", end: ""), candidates: [], userPrefs: [
+            "prepared_core_payload": "true",
+            "prepared_core_payload_json": String(decoding: try JSONSerialization.data(withJSONObject: envelope), as: UTF8.self),
+            "enable_thinking": parameters.showThinking ? "true" : "false",
+        ])
+    }
+
     static func localRuntimeModel(_ model: ModelInfo, downloaded: Bool) -> LMModel? {
         guard model.isLocal, downloaded else { return nil }
         return MLXService.availableModels.first { $0.id == model.id || $0.name == model.id }

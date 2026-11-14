@@ -1551,6 +1551,7 @@
       }
     },
     "inspector.state.running" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -1606,8 +1607,7 @@
             "value" : "執行中"
           }
         }
-      },
-      "extractionState" : "stale"
+      }
     },
     "inspector.state.sealed" : {
       "extractionState" : "stale",
@@ -2312,6 +2312,52 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "請先開始或開啟一個對話，再查看進度或設定目標。"
+          }
+        }
+      }
+    },
+    "inspector.context_usage": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Context usage"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上下文用量"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kontextnutzung"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uso del contexto"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Utilisation du contexte"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "コンテキスト使用量"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Использование контекста"
           }
         }
       }

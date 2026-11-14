@@ -30,6 +30,7 @@ include!("web_parts/generative_ui.rs");
 include!("web_parts/conversation_browser.rs");
 include!("web_parts/assistant_defaults.rs");
 include!("web_parts/agent_rooms.rs");
+include!("web_parts/expert_tasks.rs");
 include!("web_parts/model_connections.rs");
 
 include!("web_parts/goal_worker.rs");

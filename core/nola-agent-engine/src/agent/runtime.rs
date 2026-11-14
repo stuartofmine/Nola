@@ -61,6 +61,8 @@ mod projection;
 
 #[cfg(test)]
 mod heap_ownership_tests;
+#[cfg(test)]
+mod ui_publication_tests;
 mod submission;
 mod tool_driver;
 mod delegation_workspace;

@@ -17,9 +17,6 @@
 extern "C" {
 #endif
 
-char* nola_core_generate_dedupe_key(const char* source, const char* title, const char* date_iso, const char* source_id);
-char* nola_core_parse_url_json(const unsigned char* data, size_t data_len);
-char* nola_core_process_raw_events(const unsigned char* data, size_t data_len);
 void nola_core_free_c_string(char* ptr);
 
 // Bounded in-process Kernel presenter. Does not open a database or service.
@@ -145,41 +142,6 @@ char* nola_core_intelligence_ingest(const unsigned char* input_json, size_t inpu
 char* nola_core_intelligence_recall(const unsigned char* input_json, size_t input_len);
 char* nola_core_intelligence_snapshot(void);
 bool nola_core_intelligence_clear(void);
-
-// Rules engine
-bool nola_core_rules_init(const unsigned char* config_json, size_t config_len);
-char* nola_core_rules_filter(const unsigned char* events_json, size_t events_len);
-void nola_core_rules_mark_sent(const char* dedupe);
-bool nola_core_rules_is_quiet_hours(void);
-void nola_core_rules_clear_history(void);
-// Transform model output
-char* nola_core_transform_model_output(const unsigned char* output_json, size_t output_len, const char* source_id, const char* source_type);
-// Decide actions given processed events and model output
-char* nola_core_decide_actions(const unsigned char* processed_json, size_t processed_len, const unsigned char* model_json, size_t model_len);
-// Scheduler
-char* nola_core_scheduler_schedule(const unsigned char* events_json, size_t events_len, int target_hour);
-// Model manager
-void* nola_core_model_manager_new(void);
-void nola_core_model_manager_free(void* mgr);
-char* nola_core_model_sha256(const char* path);
-bool nola_core_model_manager_download(void* mgr, const char* url, const char* dest);
-double nola_core_model_manager_progress(void* mgr, const char* url);
-bool nola_core_model_manager_cancel(void* mgr, const char* url);
-char* nola_core_model_manager_model_path(void* mgr, const char* model_id);
-bool nola_core_model_manager_is_downloaded(void* mgr, const char* model_id);
-bool nola_core_model_selection_save_models(const unsigned char* models_json, size_t models_len);
-char* nola_core_model_selection_load_models(void);
-bool nola_core_model_selection_save_last_selected(const unsigned char* json, size_t len);
-bool nola_core_model_selection_add_model(const unsigned char* model_json, size_t len);
-bool nola_core_model_selection_remove_model(const unsigned char* model_json, size_t len);
-
-bool nola_core_persistence_set(const char* key, const unsigned char* value, size_t value_len);
-char* nola_core_persistence_get(const char* key);
-bool nola_core_persistence_remove(const char* key);
-
-// Model service API
-bool nola_core_model_service_set_local_provider(const char* model_id);
-bool nola_core_model_service_set_openai_provider(const unsigned char* config_json, size_t len);
 
 // Software updates are Host operations; invoke on an IO worker.
 char *nola_core_software_update_json(const uint8_t *input, size_t length);

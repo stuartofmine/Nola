@@ -1,0 +1,63 @@
+// SPDX-License-Identifier: Apache-2.0
+// Prepared static contract verification. Does not call any Host or model.
+'use strict';
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const root = __dirname;
+const source = fs.readFileSync(path.join(root,'expert-roles.js'),'utf8');
+const sandbox = {window:{},structuredClone};
+vm.runInNewContext(source,sandbox,{filename:'expert-roles.js'});
+const fixtures=JSON.parse(JSON.stringify(sandbox.window.expertRolesModule.fixtures));
+const core=JSON.parse(fs.readFileSync(path.join(root,'../../../core/nola-application/src/expert_roles/catalog.json'),'utf8'));
+assert.deepEqual(fixtures.catalog,core,'Prototype role contents must track the central catalog');
+assert.equal(fixtures.catalog.templates.length,7);
+assert.equal(new Set(fixtures.catalog.templates.map(t=>t.id)).size,7);
+for(const role of fixtures.catalog.templates){assert.ok(role.prompt.trim());assert.ok(role.tool_pack.tools.length);assert.ok(role.skills.length);}
+assert.equal(fixtures.profiles.find(p=>p.id==='five-level').efforts.length,5);
+assert.ok(fixtures.profiles.find(p=>p.id==='max-level').efforts.includes('max'));
+assert.deepEqual(fixtures.profiles.find(p=>p.id==='unknown').efforts,[]);
+assert.ok(!/expertReasoningEffort\s*:\s*['"]none['"]/.test(source));
+assert.ok(!/\bfetch\s*\(|new\s+WebSocket|XMLHttpRequest/.test(source),'The prototype cannot request a real Host');
+const index=fs.readFileSync(path.join(root,'index.html'),'utf8');
+assert.ok(index.indexOf('expert-roles.js')<index.indexOf('src="app.js'));
+assert.doesNotMatch(index,/expert-colors\.js|modules\.js|modules\.css/,'Retired color/module files must not be loaded');
+for(const retired of ['expert-colors.js','modules.js','modules.css'])assert.ok(!fs.existsSync(path.join(root,retired)),`${retired} must be retired`);
+for(const file of ['verify_inspector_regions.cjs','verify_mobile_ui.cjs','verify_reply_presentation.cjs','verify_page_sync.cjs'])assert.ok(fs.existsSync(path.join(root,file)));
+const appSource=fs.readFileSync(path.join(root,'app.js'),'utf8');
+const mobileSource=fs.readFileSync(path.join(root,'mobile-im.js'),'utf8');
+const actionsSource=fs.readFileSync(path.join(root,'message-actions.js'),'utf8');
+const archSource=fs.readFileSync(path.join(root,'architecture.js'),'utf8');
+const navSource=fs.readFileSync(path.join(root,'sidebar-navigation.js'),'utf8');
+const topbarCss=fs.readFileSync(path.join(root,'single-topbar.css'),'utf8');
+const expertRolesCss=fs.readFileSync(path.join(root,'expert-roles.css'),'utf8');
+const scenariosJs=fs.readFileSync(path.join(root,'business-scenarios.js'),'utf8');
+assert.match(appSource,/expertRolesModule\?\.sendContext/);
+assert.match(mobileSource,/expertRolesModule\?\.sendContext/);
+for(const [name,content] of [['expert-roles.js',source],['app.js',appSource],['mobile-im.js',mobileSource],['message-actions.js',actionsSource]]){
+    assert.doesNotMatch(content,/气泡颜色|expert-config|expertColorDialog|data-expert-color|expert-bubble/,`${name} must enforce Main-Agent-only chat bubbles without expert bubble color pickers`);
+    assert.doesNotMatch(content,/branchOf|查看原会话/,`${name} must not render branch-on-edit banners`);
+}
+assert.match(appSource,/expertProcessHTML/,'Main Agent replies render inline expert process summaries');
+assert.match(appSource,/data-action="composer-effort"/,'Desktop composer exposes reasoning effort control');
+assert.match(appSource,/data-action="composer-permission"/,'Desktop composer exposes permission mode control');
+assert.doesNotMatch(appSource,/conversation-workspace/,'Duplicate sandbox pill removed from desktop composer');
+assert.match(actionsSource,/original\.messages\.splice\(/,'Edit-resend truncates in-place via splice');
+assert.doesNotMatch(actionsSource,/\.map\(role=>\(\{role,/,'Edit-resend must never emit specialist speaker roles');
+assert.doesNotMatch(mobileSource,/state\.os===['"]ios['"]\?row\(['"]person['"],['"]管理专家['"]/,'Android and iOS both expose expert management');
+assert.doesNotMatch(mobileSource,/role:\s*['"]推理['"]/,'Mobile rich-demo must speak as Nola');
+assert.doesNotMatch(archSource,/native-window-chrome/,'No fake OS traffic-light window chrome in architecture.js');
+assert.doesNotMatch(topbarCss,/native-window-chrome|\.app-topbar\s+\.app-topbar/,'No fake window chrome or duplicated .app-topbar selector');
+assert.doesNotMatch(expertRolesCss,/var\(--border\)/,'expert-roles.css must use var(--line), not undefined var(--border)');
+assert.match(navSource,/\['plans','自动任务'\]/,'Desktop resource navigation promotes automated tasks');
+assert.match(navSource,/\['会话配置','上下文预算','执行','参与者'\]/,'Inspector context group uses distinct sub-section labels');
+assert.match(scenariosJs,/<input type="text"/,'Scenarios page renders single-line fields as text inputs');
+const childSource=fs.readFileSync(path.join(root,'expert-history.js'),'utf8');
+assert.ok(!/\bfetch\s*\(|new\s+WebSocket|XMLHttpRequest/.test(childSource));
+assert.match(childSource,/child\.isCurrent\?['`]<button/);
+assert.ok(!/<textarea|composer-form/.test(childSource),'Child history is a reader, never a send composer');
+for(const file of ['app.js','sidebar-navigation.js'])assert.doesNotMatch(fs.readFileSync(path.join(root,file),'utf8'),/expertHistoryModule\?\.rows/,'Conversation lists must not contain expert trees');
+for(const file of ['architecture.js','mobile-im.js'])assert.match(fs.readFileSync(path.join(root,file),'utf8'),/expertHistoryModule\?\.rows/,'Current conversation context retains history access');
+assert.match(source,/messages:structuredClone\(old\.messages/,'Rejoining retains historical context messages');
+console.log('PASS expert role, Main-Agent-only speaker, in-place splice, and prototype IA static contracts');

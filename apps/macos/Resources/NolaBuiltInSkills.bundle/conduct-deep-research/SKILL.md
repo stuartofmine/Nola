@@ -1,6 +1,6 @@
 ---
 name: conduct-deep-research
-description: Research current or complex market, company, policy, technical, academic, product, or competitive questions using web search and authoritative sources. Use when freshness, source comparison, citations, or evidence synthesis matters; do not use for a simple known fact that needs no research trail.
+description: Conduct substantial multi-source investigations and produce a research brief, report, comparison, or evidence synthesis. Use when the requested outcome needs a research workflow and explicit verification. For a narrow current fact, release, or date lookup, use ordinary web search and fetch directly; freshness or a citation alone does not require this Skill.
 ---
 
 # Conduct Deep Research

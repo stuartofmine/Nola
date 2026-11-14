@@ -7,27 +7,6 @@ struct MacInspectorParticipant: Identifiable {
     let name: String
 }
 
-struct MacInspectorDecisionOverview: View {
-    @Bindable var model: MacWorkspaceModel
-    let select: (MacChatInspector.InspectorTab) -> Void
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            let status = model.selectedConversationDisplayStatus
-            Label(status.title, systemImage: "circle.dotted").font(.callout)
-            if status == .waitingApproval || status == .waitingInput || status == .uncertain {
-                Text("Review the pending request in this conversation before continuing.")
-                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
-            ForEach([MacChatInspector.InspectorTab.review, .artifacts, .progress, .goal]) { tab in
-                Button { select(tab) } label: {
-                    HStack { Label(tab.title, systemImage: tab.symbol); Spacer(); Image(systemName: "arrow.down").font(.caption) }
-                        .frame(minHeight: 36).contentShape(Rectangle())
-                }.buttonStyle(MacPressFeedbackButtonStyle())
-            }
-        }
-    }
-}
-
 struct MacInspectorParticipantsView: View {
     let participants: [MacInspectorParticipant]
     var body: some View {

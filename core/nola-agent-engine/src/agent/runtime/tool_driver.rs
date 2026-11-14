@@ -689,7 +689,8 @@ impl AgentRuntime {
                 tool.permission_resource = subject.as_ref().map(|subject| subject.resource.clone());
                 let permission_evaluation = subject.as_ref().map(|subject| {
                     permission_rules.evaluate_verified_resources_for_origin_with_explanation(subject, input_origin,
-                        nola_kernel::permission_contract_requires_confirmation(
+                        !crate::agent::generative_ui::is_local_publication(&capability)
+                            && nola_kernel::permission_contract_requires_confirmation(
                             &capability.input_normalization.permission_contract.for_input(&tool.arguments), tool.permission_resolution.as_ref()),
                         resolved_subject.as_ref())
                 });

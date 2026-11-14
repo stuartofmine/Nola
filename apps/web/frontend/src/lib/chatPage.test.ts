@@ -40,10 +40,10 @@ test('production Chat layout renders through its actual Svelte route bundle', as
             assert.ok(html.includes(t(language, 'chatPage.find')) === false, 'Search opens only for an active conversation');
             assert.ok(!html.includes('undefined'));
             const listHtml: string = render(ListNavigation, { props: { category: 'conversations', onchange: () => {} } }).body;
-            for (const category of ['conversations', 'activity', 'resources']) assert.ok(listHtml.includes(t(language, `chatInspector.list.${category}`)));
+            for (const category of ['conversations', 'resources']) assert.ok(listHtml.includes(t(language, `chatInspector.list.${category}`)));
             assert.equal((listHtml.match(/aria-pressed="true"/g) ?? []).length, 1);
             const resourceHtml: string = render(ResourceNavigation, { props: { selectedPath: '/models', onopen: () => {} } }).body;
-            for (const href of ['/data-sources', '/models', '/capabilities', '/data-sources?tab=memory', '/data-sources?tab=plans', '/activity']) assert.ok(resourceHtml.includes(`href="${href}"`));
+            for (const href of ['/data-sources', '/models', '/capabilities']) assert.ok(resourceHtml.includes(`href="${href}"`));
             assert.equal((resourceHtml.match(/aria-current="page"/g) ?? []).length, 1);
             const languageHtml: string = render(LanguagePreference).body;
             assert.ok(languageHtml.includes(t(language, 'shell.language')));
@@ -62,6 +62,9 @@ test('production Chat layout renders through its actual Svelte route bundle', as
             });
             const overviewHtml: string = render(Overview, { props: { conversation, generation: 0 } }).body;
             assert.ok(overviewHtml.includes(t(language, 'chatOverview.notRecorded')));
+            const compact = render(Overview, {props: {conversation, compact: true, selectedModelName: 'MODEL-SENTINEL'}}).body;
+            assert.ok(!compact.includes('class="status"') && !compact.includes('class="model"'));
+            assert.ok(compact.includes(t(language, 'chatOverview.cacheUnknown')));
             assert.ok(overviewHtml.includes(t(language, 'chatOverview.cacheUnknown')));
             const cacheProps = { conversation, cache: { input_tokens: 2000, read_tokens: 900, write_tokens: null,
                 hit_rate_bps: 4500, is_compaction: false, reported_requests: 3, unreported_requests: 2 } };

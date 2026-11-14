@@ -127,6 +127,7 @@ fn check_prepared_delegation_cold_replay(bound: bool, reject_nested_writer: bool
     let mut config: AgentCoreConfig = crate::user_input_wait_tests::config();
     config.turn_identity.host_invocation = Some(crate::run_recovery_port_tests::recovery_host_binding("fixture"));
     let mut parent=parent_snapshot().snapshot().unwrap();
+    if !bound {parent.profiles.get_mut("explore").unwrap().tools.push("delegate_expert".into());parent.read_only_tools.insert("delegate_expert".into());}
     if bound {
         if reject_nested_writer {
             // Deliberately withhold read-only evidence for this negative fixture.
@@ -150,6 +151,11 @@ fn check_prepared_delegation_cold_replay(bound: bool, reject_nested_writer: bool
         .unwrap()
         .capabilities
         .insert("spawn_agent".into(), spawn);
+    if !bound {
+        let mut inherited=config.host_catalog.as_ref().unwrap().capabilities["spawn_agent"].clone();
+        inherited.id="delegate_expert".into();inherited.exposure=nola_agent_engine::agent::host::HostCapabilityExposure::Hidden;
+        config.host_catalog.as_mut().unwrap().capabilities.insert("delegate_expert".into(),inherited);
+    }
     let submission = AgentSubmission::UserDelegation {
         agent_type: "explore".into(),
         prompt: "Inspect without edits".into(),
@@ -341,6 +347,8 @@ fn check_prepared_delegation_cold_replay(bound: bool, reject_nested_writer: bool
     assert_eq!(mobile_authority.admission.as_ref().unwrap().parent_run_id, accepted.begin.run_id);
     store.commit_write_unit_of_work().unwrap();
     let candidate = crate::mobile_delegation_configuration::child_config(&store, &first.task.id).unwrap();
+    assert!(!candidate.tools.iter().any(|tool|nola_domain::expert_task_target::schema_tool_name(tool)==Some("delegate_expert")));
+    assert!(!candidate.host_catalog.as_ref().unwrap().capabilities.contains_key("delegate_expert"),"A temporary child must not inherit Main-only expert controls, including hidden activation entries");
     assert_eq!(candidate.turn_identity.host_dependencies, Some(json!([{"id":"frozen-skill","instructions":"original revision"}])));
     let worker = nola_host_protocol::HostWorkerIdentity::Unobservable { nonce: "mobile-child-fixture".into() };
     let mobile_input = crate::mobile_delegation::AdmitMobileTaskChild {

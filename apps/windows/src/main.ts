@@ -6,6 +6,7 @@ import { DesktopStrings, stringsFor } from "./i18n";
 import { isSoftwareUpdateDownload } from "./softwareUpdate";
 import { restoreWindowGeometry, SavedWindowState } from "./windowGeometry";
 import { startupPageHtml } from "./startupPage";
+import { DARK_THEME_TOKENS, LIGHT_THEME_TOKENS } from "./themeTokens";
 
 let mainWindow: BrowserWindow | undefined;
 let tray: Tray | undefined;
@@ -169,7 +170,7 @@ function createWindow(): BrowserWindow {
         minWidth: Math.min(720, savedState.width),
         minHeight: Math.min(520, savedState.height),
         show: false,
-        backgroundColor: nativeTheme.shouldUseDarkColors ? "#000000" : "#ffffff",
+        backgroundColor: nativeTheme.shouldUseDarkColors ? DARK_THEME_TOKENS.canvas : LIGHT_THEME_TOKENS.canvas,
         autoHideMenuBar: true,
         icon: path.join(resourcesRoot(), "web", "app", "static", "nola-icon.png"),
         webPreferences: {
@@ -181,7 +182,11 @@ function createWindow(): BrowserWindow {
             partition: "persist:nola-desktop",
         },
     });
-    const syncCanvas = () => { if (!window.isDestroyed()) window.setBackgroundColor(nativeTheme.shouldUseDarkColors ? "#000000" : "#ffffff"); };
+    const syncCanvas = () => {
+        if (!window.isDestroyed()) {
+            window.setBackgroundColor(nativeTheme.shouldUseDarkColors ? DARK_THEME_TOKENS.canvas : LIGHT_THEME_TOKENS.canvas);
+        }
+    };
     nativeTheme.on("updated", syncCanvas);
     window.once("closed", () => nativeTheme.removeListener("updated", syncCanvas));
     if (savedState.maximized) window.maximize();

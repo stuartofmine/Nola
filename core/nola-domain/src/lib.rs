@@ -4,6 +4,11 @@
 //! Persistence rows and transaction execution belong to Store. Canonical content
 //! changes, identities and projections are shared business contracts owned here.
 
+pub mod store_identity;
+pub use store_identity::{
+    STORE_APPLICATION_ID, STORE_SCHEMA_EPOCH, STORE_SCHEMA_VERSION,
+};
+
 pub mod part_state;
 pub use part_state::{StepStatus, ToolPartState};
 
@@ -26,6 +31,7 @@ pub mod tool_source;
 pub mod host_control;
 pub mod agent_task_admission;
 pub mod remote_submission;
+pub mod remote_expert_parent;
 pub mod plugin;
 pub mod language_service;
 pub mod code_mode;
@@ -156,3 +162,5 @@ pub mod host_tool_plan;
 pub mod expert_message;
 
 pub mod edited_resend_context;
+
+pub mod expert_task_target;

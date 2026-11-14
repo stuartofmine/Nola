@@ -18,5 +18,7 @@ test('tabs share durable Host-scoped identity; no session-storage fallback', asy
     await assert.rejects(ensureBrowserClientId('broken'),/browser_recovery_storage_unavailable/);
     storage.setItem=()=>{throw Error('quota');};
     await assert.rejects(ensureBrowserClientId('host-a'),/browser_recovery_storage_unavailable/);
+    Object.defineProperty(globalThis,'navigator',{configurable:true,value:{}});
+    await assert.rejects(ensureBrowserClientId('host-a'),/browser_secure_connection_required/);
     assert.equal(data.get(browserIdentityKey('host-a')),a);
 });

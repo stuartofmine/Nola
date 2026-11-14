@@ -37,6 +37,18 @@ class AndroidHostInvocationTest {
             JsonObject(context + ("reserved_output_tokens" to JsonPrimitive(2048)))) }.isFailure)
     }
 
+    @Test fun workerRecoveryRetainsExactFrozenEffortInsteadOfTodaysProfileDefault() {
+        val generation = buildJsonObject {
+            put("temperature", 0.7); put("top_p", 0.9); put("max_output_tokens", 1024); put("thinking_enabled", true)
+            put("generation_options", buildJsonObject {}); put("reasoning_tier", "balanced")
+            put("reasoning_selection", buildJsonObject { put("kind", "effort"); put("value", "high") })
+        }
+        val actual = frozenAndroidParameters(buildJsonObject { put("generation", generation) }, buildJsonObject {
+            put("context_window_tokens", 32768); put("reserved_output_tokens", 1024)
+        })
+        assertEquals("high", actual.reasoningPreference); assertNull(actual.reasoningTier)
+    }
+
     @Test fun policyIdentityIgnoresMapOrderingButNotPermissionChanges() {
         val model = buildJsonObject {
             put("primary", androidNativeModelRoute("fixture")); put("generation", buildJsonObject {})

@@ -10,8 +10,17 @@ struct MacConversationCanvas: View {
     @Bindable var model: MacWorkspaceModel
     var composerFocused: FocusState<Bool>.Binding
     var showsComposer: Bool
-    @ObservedObject var expertWorkspace: MacAgentRoomWorkspace
+    var expertWorkspace: MacAgentRoomWorkspace?
     @Binding var expertSelection: Set<String>
+    private struct ExpertMentionIntent {
+        let agent: MacPersistentAgent
+        let owner: String
+        let draft: String
+        let persisted: Bool
+    }
+    @State private var pendingExpertReintroduction: ExpertMentionIntent?
+    @State private var selectingExpertID: String?
+    @State private var expertMentionFailure: (conversationID: String, message: String)?
     @State private var highlightedExpertID: String?
     @State private var dismissedExpertMention: String?
     var modelSetupRequired: Bool
@@ -30,7 +39,7 @@ struct MacConversationCanvas: View {
         showsComposer: Bool = true,
         expertSelection: Binding<Set<String>> = .constant([]),
         sendToExperts: (() -> Void)? = nil,
-        expertWorkspace: MacAgentRoomWorkspace,
+        expertWorkspace: MacAgentRoomWorkspace? = nil,
         modelSetupRequired: Bool = false,
         conversationControls: AnyView = AnyView(EmptyView()),
         modelControls: AnyView = AnyView(EmptyView()),
@@ -90,7 +99,7 @@ struct MacConversationCanvas: View {
                             .transition(reduceMotion ? .identity : .move(edge: .top).combined(with: .opacity))
                     }
                     MacExecutionReadinessBanner(location: model.executionLocation)
-                    if let association = expertWorkspace.conversationAssociation, association.conversationID == model.selectedConversationID {
+                    if let expertWorkspace, expertWorkspace.conversationAssociation?.conversationID == model.selectedConversationID {
                         MacUnifiedExpertTranscript(model: model, workspace: expertWorkspace, width: viewport.size.width, viewportStore: viewportStore)
                             .id(model.selectedConversationID)
                     } else if model.isSelectedConversationLoading {
@@ -142,7 +151,9 @@ struct MacConversationCanvas: View {
                 VStack(spacing: MacDesignTokens.Spacing.md) {
                     if hasInterruption {
                     MacConversationInterruptionSurface(maxHeight: min(320, viewport.size.height * 0.42)) {
-                    MacExpertPermissionDock(workspace: expertWorkspace, conversationID: model.selectedConversationID)
+                    if let expertWorkspace {
+                        MacExpertPermissionDock(workspace: expertWorkspace, conversationID: model.selectedConversationID)
+                    }
                     if let failure = model.localSubmissionFailure,
                        failure.conversationID == model.selectedConversationID {
                         VStack(alignment: .leading, spacing: 8) {
@@ -177,12 +188,18 @@ struct MacConversationCanvas: View {
                                 .font(.caption)
                             if let error = model.localRecoveryError {
                                 DisclosureGroup(String(localized: "Diagnostic details", table: "Chat")) {
-                                    Text(error).font(.callout.monospaced())
+                                    Text(error).font(.caption)
                                         .foregroundStyle(.secondary).textSelection(.enabled)
+                                    if let inspection = model.localRecoveryInspection, !model.isAwaitingUserInput {
+                                        Text(MacRunRecoveryPresentation.detail(inspection.observation))
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
                                 }
-                                .disclosureGroupStyle(MacRowDisclosureStyle())
+                                .font(.caption)
+                                .disclosureGroupStyle(.automatic)
                             }
-                            if let inspection = model.localRecoveryInspection, !model.isAwaitingUserInput {
+                            if model.localRecoveryError == nil,
+                               let inspection = model.localRecoveryInspection, !model.isAwaitingUserInput {
                                 Text(MacRunRecoveryPresentation.detail(inspection.observation))
                                     .font(.caption).foregroundStyle(.secondary)
                             }
@@ -362,17 +379,19 @@ struct MacConversationCanvas: View {
                         }, highlightedID: highlightedCommand ?? ComposerCommand.candidates(model.draft).first?.rawValue,
                         error: nil, select: completeCommand, accessibilityTitle: "composer.command.help", identifierPrefix: "chat.command.", showsAvatar: false)
                     }
-                    if expertMentionsVisible {
+                    if expertMentionsVisible, let expertWorkspace {
                         ExpertMentionPanel(candidates: expertMentionCandidates,
                             highlightedID: highlightedExpertID ?? expertMentionCandidates.first?.id,
-                            error: expertWorkspace.directoryError, select: selectExpertMention)
-                            .task { await expertWorkspace.refreshExpertDirectory() }
+                            error: expertMentionFailure?.conversationID == model.selectedComposerState.conversationID
+                                ? expertMentionFailure?.message : expertWorkspace.directoryError, select: selectExpertMention)
+                            .disabled(selectingExpertID != nil)
+                            .task(id: expertWorkspace.mainSourceReady) { await expertWorkspace.refreshExpertDirectory() }
 
                     }
-                    if !expertSelection.isEmpty {
+                    if !expertSelection.isEmpty, let expertWorkspace {
                         ScrollView(.horizontal) {
                             HStack {
-                                ForEach(expertWorkspace.directory.filter { expertSelection.contains($0.id) }) { agent in
+                                ForEach(expertWorkspace.selectionChips(conversationID: model.selectedConversationID, agentIDs: expertSelection)) { agent in
                                     Button { expertSelection.remove(agent.id) } label: {
                                         Label(agent.name, systemImage: "xmark.circle").padding(8)
                                     }.buttonStyle(.plain)
@@ -386,7 +405,7 @@ struct MacConversationCanvas: View {
                         state: model.selectedComposerState,
                         actions: composerActions,
                         composerFocused: composerFocused,
-                        isModelConfigured: !modelSetupRequired || !expertSelection.isEmpty,
+                        isModelConfigured: !modelSetupRequired,
                         mentionCommand: handleComposerKey,
                         localCommand: executeCommand
                     )
@@ -412,25 +431,77 @@ struct MacConversationCanvas: View {
             // Do not animate this ancestor: permission changes can coincide
             // with streamed text reflow and must not animate the transcript.
         }
+        .onChange(of: model.selectedComposerState.conversationID) { _, _ in
+            pendingExpertReintroduction = nil
+            expertMentionFailure = nil
+        }
+        .confirmationDialog(String(localized: "Use the expert’s latest configuration?"), isPresented: expertReintroductionPresented) {
+            Button("Reintroduce expert") {
+                guard let intent = pendingExpertReintroduction else { return }
+                pendingExpertReintroduction = nil
+                performExpertMention(intent, allowReintroduction: true)
+            }
+            Button("Cancel", role: .cancel) { pendingExpertReintroduction = nil }
+        } message: {
+            Text("This adds a new expert context with the latest model and template. Previous replies stay in this conversation.")
+        }
     }
 
+    private var expertReintroductionPresented: Binding<Bool> {
+        Binding(get: { pendingExpertReintroduction != nil }, set: { if !$0 { pendingExpertReintroduction = nil } })
+    }
     private var expertMentionsVisible: Bool {
         composerFocused.wrappedValue && dismissedExpertMention != model.selectedComposerState.draft &&
             ExpertMentionQuery.atEnd(of: model.selectedComposerState.draft) != nil
     }
     private var expertMentionCandidates: [ExpertMentionCandidate] {
         guard let query = ExpertMentionQuery.atEnd(of: model.selectedComposerState.draft)?.query else { return [] }
-        return expertWorkspace.directory.filter { $0.availability == "active" && !expertSelection.contains($0.id) &&
-            (query.isEmpty || $0.name.localizedCaseInsensitiveContains(query)) }
-            .map { ExpertMentionCandidate(id: $0.id, name: $0.name, detail: $0.description) }
+        let association = expertWorkspace?.conversationAssociation
+        let members = association?.conversationID == model.selectedComposerState.conversationID
+            ? association?.room.room.participants ?? [] : []
+        return (expertWorkspace?.directory ?? []).filter { agent in
+            let previous = members.first { $0.agentID == agent.id && $0.active }
+            let updatedMember = previous.map { $0.agentRevision != agent.revision } ?? false
+            return agent.availability == "active" && (!expertSelection.contains(agent.id) || updatedMember)
+                && (query.isEmpty || agent.name.localizedCaseInsensitiveContains(query))
+        }.map { ExpertMentionCandidate(id: $0.id, name: $0.name, detail: $0.description) }
     }
     private func selectExpertMention(_ id: String) {
         let draft = model.selectedComposerState.draft
-        guard expertMentionCandidates.contains(where: { $0.id == id }), let query = ExpertMentionQuery.atEnd(of: draft) else { return }
-        model.setDraft(query.removing(from: draft), conversationID: model.selectedComposerState.conversationID)
-        expertSelection.insert(id)
-        highlightedExpertID = nil
-        composerFocused.wrappedValue = true
+        guard selectingExpertID == nil, let workspace = expertWorkspace,
+              expertMentionCandidates.contains(where: { $0.id == id }),
+              let agent = workspace.directory.first(where: { $0.id == id }),
+              ExpertMentionQuery.atEnd(of: draft) != nil else { return }
+        performExpertMention(.init(agent: agent, owner: model.selectedComposerState.conversationID,
+            draft: draft, persisted: model.selectedConversation?.isPersisted == true), allowReintroduction: false)
+    }
+
+    private func performExpertMention(_ intent: ExpertMentionIntent, allowReintroduction: Bool) {
+        guard selectingExpertID == nil, let workspace = expertWorkspace,
+              model.selectedComposerState.conversationID == intent.owner,
+              let query = ExpertMentionQuery.atEnd(of: intent.draft) else { return }
+        selectingExpertID = intent.agent.id
+        expertMentionFailure = nil
+        Task { @MainActor in
+            defer { selectingExpertID = nil }
+            do {
+                try await workspace.prepareExpertMention(agentID: intent.agent.id, expectedRevision: intent.agent.revision,
+                    conversationID: intent.owner, isPersisted: intent.persisted, allowReintroduction: allowReintroduction)
+                guard model.selectedComposerState.conversationID == intent.owner else { return }
+                if model.selectedComposerState.draft == intent.draft {
+                    model.setDraft(query.removing(from: intent.draft), conversationID: intent.owner)
+                }
+                expertSelection.insert(intent.agent.id)
+                highlightedExpertID = nil
+                composerFocused.wrappedValue = true
+            } catch MacExpertMentionPreparationError.reintroductionRequired {
+                guard model.selectedComposerState.conversationID == intent.owner else { return }
+                pendingExpertReintroduction = intent
+            } catch {
+                expertMentionFailure = (intent.owner, error.localizedDescription)
+                await workspace.refreshExpertDirectory()
+            }
+        }
     }
     private var commandsVisible: Bool {
         composerFocused.wrappedValue && dismissedCommand != model.draft && ComposerCommand.query(model.draft) != nil
@@ -481,18 +552,6 @@ struct MacConversationCanvas: View {
         return true
     }
 
-    private var hasExpertInterruption: Bool {
-        guard let association = expertWorkspace.conversationAssociation,
-              association.conversationID == model.selectedConversationID else { return false }
-        return association.room.room.participants.contains { participant in
-            guard let owner = expertWorkspace.executionService?.owners[participant.contextConversationID] else { return false }
-            return owner.isRunning || owner.selectedPendingRemotePermission != nil
-                || owner.selectedPendingUserInputRequest != nil || owner.hasDeferredUserInputWaits
-                || owner.currentUnknownEffectRecovery != nil || owner.localRunRecovery != nil
-                || owner.remoteRunRecovery != nil
-        }
-    }
-
     private var hasInterruption: Bool {
         (model.localRunRecovery?.conversationID == model.selectedConversationID && model.localRunRecovery != nil)
             || (model.localSubmissionFailure?.conversationID == model.selectedConversationID && model.localSubmissionFailure != nil)
@@ -501,6 +560,5 @@ struct MacConversationCanvas: View {
             || (model.remoteRunRecovery == nil && model.remoteObservationNeedsAttention)
             || model.selectedPendingRemotePermission != nil
             || model.selectedPendingUserInputRequest != nil
-            || hasExpertInterruption
     }
 }

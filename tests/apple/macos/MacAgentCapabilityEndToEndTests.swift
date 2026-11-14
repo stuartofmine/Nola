@@ -1138,6 +1138,36 @@ final class MacAgentCapabilityEndToEndTests: XCTestCase {
         try assertCompleteReport(server, expectedStageCount: 1)
     }
 
+    func testChatSubmissionCompletesWhenBrowserBridgePortIsOccupied() async throws {
+        let workspace = try makeWorkspace("chat-browser-port-conflict")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let occupied = MacChromeMessagingService(installer: nil)
+        let configuration = try occupied.ensureStarted(configuration: .init(
+            serverURL: URL(string: "http://127.0.0.1:0")!, token: "occupied-fixture",
+            hostID: "fixture", localUserID: "test", fileURL: workspace.appendingPathComponent("occupied.json")))
+        let key = "NOLA_NATIVE_BROWSER_PORT"
+        let previous = ProcessInfo.processInfo.environment[key]
+        setenv(key, String(try XCTUnwrap(configuration.serverURL.port)), 1)
+        MacChromeMessagingService.shared.stop()
+        defer {
+            MacChromeMessagingService.shared.stop()
+            occupied.stop()
+            if let previous { setenv(key, previous, 1) } else { unsetenv(key) }
+        }
+        let server = try MacAgentCapabilityMockServer(workspace: workspace, steps: [
+            ["message_contains": ["CHAT_WITHOUT_BROWSER"], "content": "CHAT_WITHOUT_BROWSER_OK"]
+        ])
+        defer { server.stop() }
+        let events = try await runAgentHost(prompt: "CHAT_WITHOUT_BROWSER",
+            conversationID: "browser-conflict-\(UUID().uuidString)", workspace: workspace,
+            endpoint: server.endpoint, memoryEnabled: false,
+            databaseURL: workspace.appendingPathComponent("state/nola.db"))
+        XCTAssertTrue(assistantText(events).contains("CHAT_WITHOUT_BROWSER_OK"))
+        XCTAssertNil(MacChromeMessagingService.shared.configuration,
+            "The test must exercise failed browser startup, not reuse a healthy broker")
+        try assertCompleteReport(server, expectedStageCount: 1)
+    }
+
     func testReadFileExecutesWithoutPermissionAndReturnsRealContent() async throws {
         let workspace = try makeWorkspace("read-file")
         defer { try? FileManager.default.removeItem(at: workspace) }

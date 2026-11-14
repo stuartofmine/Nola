@@ -3,6 +3,7 @@
     import { api } from '../lib/api';
     import { locale, t } from '../lib/i18n';
     import { resultStatus } from '../lib/results';
+    import { activityQueryKey, sameActivityOwner } from '../lib/activityRequest';
     import { activityErrorKey } from '../lib/activityErrors';
     import { activityPath, activitySourcePath, type ActivityCursor, type ActivityEntry, type ActivityPage, type ActivityDetail, type ActivityOwner } from '../lib/activity';
     import { workspaceDialog } from '../lib/workspacePageLocation';
@@ -16,31 +17,55 @@
     let dialog = $state<HTMLDialogElement>();
     let controller: AbortController | undefined, detailController: AbortController | undefined;
     let disposed = false;
+    let pendingRefresh: ReturnType<typeof setTimeout> | undefined;
+    let snapshotQuery: string | undefined;
+    let requestedQuery: string | undefined;
+    const queryKey = () => activityQueryKey(source, needsResponse, query);
     const time = (ms: number) => new Date(ms).toLocaleString($locale);
     async function load(more = false) {
+        const key = queryKey();
+        // A click during the search debounce must never submit an old cursor
+        // with a new filter or cancel the pending replacement refresh.
+        if (more && (snapshotQuery !== key || loading)) return;
+        clearTimeout(pendingRefresh);
+        requestedQuery = key;
         controller?.abort(); const request = new AbortController(); controller = request;
         loading = true; error = '';
-        if (!more) { entries = []; cursor = null; }
+        if (snapshotQuery !== key) { entries = []; cursor = null; }
         try {
             const response = await api<ActivityPage>('/api/activity', {method: 'POST', signal: request.signal,
                 body: JSON.stringify({source: source || null, needs_response: needsResponse, query: query.trim(), cursor: more ? cursor : null, limit: 40})});
-            if (!disposed && !request.signal.aborted) { entries = more ? [...entries, ...response.entries] : response.entries; cursor = response.next_cursor; }
-        } catch (cause) { if (!disposed && !request.signal.aborted) error = activityErrorKey(cause); }
-        finally { if (!disposed && !request.signal.aborted) loading = false; }
+            if (!disposed && !request.signal.aborted && queryKey() === key) {
+                entries = more ? Array.from(new Map([...entries, ...response.entries].map(entry => [entry.run_id, entry])).values()) : response.entries;
+                cursor = response.next_cursor; snapshotQuery = key;
+            }
+        } catch (cause) { if (!disposed && !request.signal.aborted && queryKey() === key) error = activityErrorKey(cause); }
+        finally { if (!disposed && !request.signal.aborted && requestedQuery === key) loading = false; }
     }
     $effect(() => {
-        query; source; needsResponse;
-        const timer = setTimeout(() => { void untrack(() => load()); }, 200);
-        return () => { clearTimeout(timer); controller?.abort(); };
+        const key = activityQueryKey(source, needsResponse, query);
+        // Clear a different query immediately, including its pagination, while
+        // preserving the last successful snapshot for same-query refreshes.
+        untrack(() => {
+            if (snapshotQuery !== key) { entries = []; cursor = null; }
+            error = ''; loading = true;
+        });
+        pendingRefresh = setTimeout(() => { void untrack(() => load()); }, 200);
+        return () => { clearTimeout(pendingRefresh); controller?.abort(); };
     });
     async function showDetail(owner: ActivityOwner) {
         if (!full) { onopen(activityPath(owner)); return; }
         detailController?.abort(); const request = new AbortController(); detailController = request;
         selected = owner; detail = null; detailError = ''; detailLoading = true;
-        await tick(); if (!disposed && dialog && !dialog.open) dialog.showModal();
+        await tick();
+        if (disposed || request.signal.aborted) return;
+        if (dialog && !dialog.open) dialog.showModal();
         try {
             const value = await api<ActivityDetail | null>('/api/activity/detail', {method: 'POST', signal: request.signal, body: JSON.stringify(owner)});
-            if (!disposed && !request.signal.aborted) { detail = value; if (!value) detailError = 'activity.runUnavailable'; }
+            if (!disposed && !request.signal.aborted) {
+                if (value && !sameActivityOwner(owner, value.entry)) throw new Error('Activity owner mismatch');
+                detail = value; if (!value) detailError = 'activity.runUnavailable';
+            }
         } catch (cause) { if (!disposed && !request.signal.aborted) detailError = activityErrorKey(cause); }
         finally { if (!disposed && !request.signal.aborted) detailLoading = false; }
     }
@@ -53,7 +78,7 @@
     }
     onMount(() => {
         if (requestedOwner) void showDetail(requestedOwner);
-        return () => { disposed = true; controller?.abort(); detailController?.abort(); };
+        return () => { disposed = true; clearTimeout(pendingRefresh); controller?.abort(); detailController?.abort(); };
     });
 </script>
 <div class="activity-list" class:full>

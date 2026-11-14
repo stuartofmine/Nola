@@ -20,6 +20,16 @@ impl ConversationProjectionRepository for NolaStore {
         let _snapshot = crate::read_snapshot::pin(&self.connection)?;
         let exists: bool = self.connection.query_row("SELECT EXISTS(SELECT 1 FROM conversations WHERE id=?1)", [id], |row| row.get(0))?;
         if !exists { return Ok(ConversationSourceOwner::Unavailable); }
+        let marker_json:Option<String>=self.connection.query_row("SELECT value_json FROM product_settings WHERE key=?1",[nola_domain::remote_expert_parent::source_key(id)],|r|r.get(0)).optional()?;
+        let marker=marker_json.map(|raw|serde_json::from_str::<nola_domain::remote_expert_parent::RemoteExpertParentSource>(&raw)).transpose()?;
+        if let Some(marker)=&marker {marker.validate(id).map_err(|e|StoreError::Invariant(e.into()))?;}
+        let context_json:Option<String>=self.connection.query_row("SELECT value_json FROM product_settings WHERE key=?1",[nola_domain::remote_expert_parent::context_source_key(id)],|r|r.get(0)).optional()?;
+        let context=context_json.map(|raw|serde_json::from_str::<nola_domain::remote_expert_parent::RemoteExpertContextSource>(&raw)).transpose()?;
+        if let Some(context)=&context {
+            context.validate(id).map_err(|e|StoreError::Invariant(e.into()))?;
+            let parent_marker:Option<String>=self.connection.query_row("SELECT value_json FROM product_settings WHERE key=?1",[nola_domain::remote_expert_parent::source_key(&context.parent_conversation_id)],|r|r.get(0)).optional()?;
+            if marker.is_some() || parent_marker.is_none() || self.conversation_source_owner(&context.parent_conversation_id)?!=context.owner(){return Ok(ConversationSourceOwner::Unavailable);}
+        }
         let incomplete: bool = self.connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM remote_assistant_journal_sources j JOIN runs r ON r.id=j.run_id
              WHERE r.conversation_id=?1 AND NOT EXISTS(SELECT 1 FROM remote_run_sources s WHERE s.run_id=r.id AND s.source_host_id=j.source_host_id))
@@ -37,12 +47,23 @@ impl ConversationProjectionRepository for NolaStore {
              WHERE r.conversation_id=?1 AND r.kind='conversation'")?;
         let owners = query.query_map([id], |row| Ok((row.get::<_,String>(0)?,row.get::<_,Option<String>>(1)?)))?
             .collect::<Result<Vec<_>,_>>()?;
-        match owners.as_slice() {
+        let resolved = match owners.as_slice() {
             [] => Ok(ConversationSourceOwner::Local),
             [(host, Some(epoch))] if !host.trim().is_empty() && !epoch.trim().is_empty() =>
                 Ok(ConversationSourceOwner::Remote { source_host_id: host.clone(), source_store_epoch: epoch.clone() }),
             _ => Ok(ConversationSourceOwner::Unavailable),
+        };
+        if let Some(context)=context {
+            let has_local:bool=self.connection.query_row("SELECT EXISTS(SELECT 1 FROM runs r WHERE r.conversation_id=?1 AND r.kind='conversation' AND NOT EXISTS(SELECT 1 FROM remote_run_sources s WHERE s.run_id=r.id))",[id],|r|r.get(0))?;
+            return Ok(if !has_local && (owners.is_empty() || resolved?==context.owner()){context.owner()}else{ConversationSourceOwner::Unavailable});
         }
+        if let Some(marker)=marker {
+            let has_local:bool=self.connection.query_row("SELECT EXISTS(SELECT 1 FROM runs r WHERE r.conversation_id=?1 AND r.kind='conversation' AND NOT EXISTS(SELECT 1 FROM remote_run_sources s WHERE s.run_id=r.id))",[id],|r|r.get(0))?;
+            if has_local {return Ok(ConversationSourceOwner::Unavailable);}
+            let resolved=resolved?;
+            return Ok(if owners.is_empty() || resolved==marker.owner(){marker.owner()}else{ConversationSourceOwner::Unavailable});
+        }
+        resolved
     }
 
     fn conversation_execution_ownership(&self, id: &str) -> StoreResult<nola_domain::ConversationExecutionOwnership> {
@@ -119,9 +140,14 @@ impl ConversationProjectionRepository for NolaStore {
 /// It does not infer task identity from conversation names or message text.
 pub(crate) fn source_execution_ownership(connection: &crate::Connection, id: &str) -> StoreResult<nola_domain::ConversationExecutionOwnership> {
     use nola_domain::ConversationExecutionOwnership;
-    let mut statement = connection.prepare("SELECT id FROM durable_tasks WHERE kind='agent' AND child_session_id=?1 ORDER BY created_at_ms DESC,id DESC")?;
+    let mut statement = connection.prepare("SELECT id FROM durable_tasks WHERE kind='agent' AND child_session_id=?1 UNION SELECT task_id FROM runtime_task_run_bindings WHERE child_session_id=?1")?;
     let ids = statement.query_map([id], |row| row.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
+    let mut persistent_expert=false;
     for task_id in ids {
+        if crate::expert_task_target::validated_expert_task_target(connection,&task_id,id,false)?.is_some() {
+            persistent_expert=true;
+            continue;
+        }
         let Some(authority) = crate::agent_task_admission_store::authority(connection, &task_id)? else {
             return Ok(ConversationExecutionOwnership::Unavailable);
         };
@@ -133,6 +159,7 @@ pub(crate) fn source_execution_ownership(connection: &crate::Connection, id: &st
             task_id, child_conversation_id: admission.child_conversation_id,
         });
     }
+    if persistent_expert {return Ok(ConversationExecutionOwnership::User);}
     let bound: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM runtime_task_run_bindings WHERE child_session_id=?1)", [id], |row| row.get(0))?;
     Ok(if bound { ConversationExecutionOwnership::Unavailable } else { ConversationExecutionOwnership::User })
 }

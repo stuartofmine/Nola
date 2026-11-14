@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { expertDirectoryMatches, groupExpertSessions, projectExpertSubmissions, toggleExpertParticipant } from './expertConversation.ts';
-import type { PersistentAgent, RoomParticipant, RoomSubmission } from './agentRooms.ts';
+import { projectExpertSubmissions, toggleExpertParticipant } from './expertConversation.ts';
+import type { RoomParticipant, RoomSubmission } from './agentRooms.ts';
 
 const ada: RoomParticipant = { id: 'participant-ada', agent_id: 'ada', agent_revision: 1, display_name: 'Ada', context_conversation_id: 'ctx-ada', active: true, description: '' };
 const lin: RoomParticipant = { id: 'participant-lin', agent_id: 'lin', agent_revision: 1, display_name: 'Lin', context_conversation_id: 'ctx-lin', active: true, description: '' };
@@ -40,20 +40,4 @@ test('missing or malformed participant identity fails closed without losing vali
     delete legacy.input.parent_message_id;
     const projected = projectExpertSubmissions('room-1', 'conversation-1', [ada], [malformed, legacy, reply('good', ada, 3)], new Set(['user-1']));
     assert.deepEqual(projected.map(item => item.submission.input.submission_id), ['good']);
-});
-
-test('the sidebar groups ordered turns by exact context, not display name', () => {
-    const duplicateName = {...lin, display_name: ada.display_name};
-    const items = projectExpertSubmissions('room-1', 'conversation-1', [ada, duplicateName],
-        [reply('a2', ada, 3), reply('l1', duplicateName, 2), reply('a1', ada, 1)], new Set(['user-1']));
-    assert.deepEqual(groupExpertSessions(items).map(session => [
-        session.participant.context_conversation_id, session.replies.map(item => item.submission.input.submission_id),
-    ]), [['ctx-ada', ['a1', 'a2']], ['ctx-lin', ['l1']]]);
-});
-
-test('mention directory matches mixed-width names while excluding selected or inactive experts', () => {
-    const expert = (id: string, availability = 'active'): PersistentAgent =>
-        ({id, name: 'Ada 研究', availability, revision: 1, defaults: {}, description: ''});
-    assert.deepEqual(expertDirectoryMatches([expert('match'), expert('chosen'), expert('disabled', 'inactive')],
-        'ＡＤＡ', new Set(['chosen'])).map(agent => agent.id), ['match']);
 });

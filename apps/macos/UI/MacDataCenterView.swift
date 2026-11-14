@@ -92,7 +92,7 @@ struct MacDataCenterView: View {
 
     private var center: some View {
         VStack(spacing: 0) {
-            MacPageHeader(LocalizedStringKey("workspace.title"), symbol: "square.stack.3d.up", navigationAction: navigationAction) {
+            MacPageHeader(LocalizedStringKey("Data Center"), symbol: "square.stack.3d.up", navigationAction: navigationAction) {
                 Text(macDataCenterText("mac.data_center.subtitle", "Control what Nola can perceive and how conversations may use it."))
             } actions: {
                 ViewThatFits(in: .horizontal) {
@@ -175,8 +175,6 @@ struct MacDataCenterView: View {
                     } label: {
                         HStack(spacing: 5) {
                             Text(macDataCenterText("mac.data_center.view_all_sources", "View All Sources"))
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 9, weight: .semibold))
                         }
                     }
                     .buttonStyle(MacActionButtonStyle())
@@ -213,8 +211,6 @@ struct MacDataCenterView: View {
                     } label: {
                         HStack(spacing: 5) {
                             Text(macDataCenterText("mac.data_center.view_all_usage", "View All Usage"))
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 9, weight: .semibold))
                         }
                     }
                     .buttonStyle(MacActionButtonStyle())

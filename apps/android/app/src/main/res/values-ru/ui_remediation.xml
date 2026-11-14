@@ -52,4 +52,6 @@
     <string name="activity_status_action_completed">Действие выполнено</string>
     <string name="activity_status_delegated">Делегировано</string>
     <string name="activity_status_queued">В очереди</string>
+    <string name="ui_surface_pending">Подготовка интерфейса, ожидание компонентов и данных…</string>
+    <string name="ui_surface_deleted">Этот интерфейс удалён.</string>
 </resources>

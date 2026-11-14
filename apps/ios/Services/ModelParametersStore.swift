@@ -301,8 +301,8 @@ public final class ModelParametersStore: ObservableObject {
            let params = try? JSONDecoder().decode(ModelParameters.self, from: data) { return params }
         #else
         if let profile = try? applicationPort.modelProfile(id: modelID),
-           let data = profile.parametersJSON.data(using: .utf8),
-           let params = try? JSONDecoder().decode(ModelParameters.self, from: data) { return params }
+           let params = try? ModelParameters.decodeProfile(profile.parametersJSON,
+               inheriting: .defaults(isLocal: profile.runtime == "mlx")) { return params }
         #endif
         return defaultParams
     }
@@ -385,12 +385,11 @@ public final class ModelParametersStore: ObservableObject {
     }
 
     func parameterSnapshot(for modelID: String) throws -> ParameterSnapshot {
-        guard let profile = try applicationPort.modelProfile(id: modelID),
-              profile.revision >= 0,
-              let data = profile.parametersJSON.data(using: .utf8) else {
+        guard let profile = try applicationPort.modelProfile(id: modelID), profile.revision >= 0 else {
             throw IOSApplicationRuntimeError.invalidResponse
         }
-        return ParameterSnapshot(parameters: try JSONDecoder().decode(ModelParameters.self, from: data), profile: profile)
+        return ParameterSnapshot(parameters: try ModelParameters.decodeProfile(profile.parametersJSON,
+            inheriting: .defaults(isLocal: profile.runtime == "mlx")), profile: profile)
     }
 
     @discardableResult

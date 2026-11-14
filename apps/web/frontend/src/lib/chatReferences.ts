@@ -40,3 +40,17 @@ export function toolArtifacts(value: unknown): ChatReference[] {
         return reference && (reference.uri || reference.title) ? [reference] : [];
     });
 }
+
+/** Bibliographic aliases share a row; pinpoint locations retain their own row. */
+export function bibliography(parts: TimelinePart[]): {part: TimelinePart; reference: ChatReference}[] {
+    const seen = new Set<string>();
+    return parts.flatMap(part => {
+        const reference = timelineReference(part);
+        if (!reference || reference.kind === 'attachment') return [];
+        const key = JSON.stringify([reference.uri || reference.sourceId || part.id, reference.section,
+            reference.page, reference.lineStart, reference.lineEnd, reference.rangeStart, reference.rangeEnd]);
+        if (seen.has(key)) return [];
+        seen.add(key);
+        return [{part, reference}];
+    });
+}

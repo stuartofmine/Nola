@@ -58,3 +58,10 @@ test('empty input commitment is explicit and cannot stand in for a nonempty pref
     raw.input.watermark = '1';
     assert.throws(() => parseRunResult(raw, 'conversation', 'run'));
 });
+
+test('blocked context result supplies recovery guidance without relabeling transport completion',async()=>{
+    const {blockedRunGuidance}=await import('./runResult.ts');
+    assert.equal(blockedRunGuidance({kind:'blocked',reason:{code:'context.input_budget_exceeded',detail:null},blocking_fact_refs:['budget'],resolution_condition:'Reduce mandatory input'}),'rooms.contextBudgetExceeded');
+    assert.equal(blockedRunGuidance({kind:'blocked',reason:{code:'permission.required',detail:null},blocking_fact_refs:['permission'],resolution_condition:'Approve'}),'rooms.runBlocked');
+    assert.equal(blockedRunGuidance({kind:'answered',answer_part_refs:['answer']}),null);
+});

@@ -154,11 +154,11 @@ AES-GCM. Browser cookies do not provide transport encryption: use this mode only
 on a trusted private network, or place the CLI listener behind an HTTPS reverse
 proxy and set `NOLA_TRUST_HTTPS_PROXY=1` on the loopback-bound CLI process.
 
-This serves the existing Flask/Jinja Web templates and static assets from the
-Rust CLI process, then backs the Flask Web API surface with Rust handlers for
-chat, agent streaming, conversations, automations, results, settings,
-native host bridges, mobile clients, and the dashboard summary. Unknown
-`/api/*` paths return a normal `404 not_found` response.
+This serves the compiled Svelte single-entry Web UI (`app/static/ui/`) and
+shared static assets (`app/static/`) from the Rust CLI process, alongside Rust
+`/api/*` handlers for chat, agent streaming, conversations, automations,
+results, settings, native host bridges, mobile clients, and the dashboard
+summary. Unknown `/api/*` paths return a normal `404 not_found` response.
 
 ## Build
 

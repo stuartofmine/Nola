@@ -67,6 +67,71 @@ private struct MacPressFeedbackButtonBody<Label: View>: View {
     }
 }
 
+/// Keep the readable base glyphs stationary; only a soft highlight travels.
+/// The timeline is confined to this label, never the surrounding transcript.
+struct MacFlowingStatusText: View {
+    let text: Text
+    var isRunning = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some View {
+        if isRunning {
+            MacStatusTimelineText(text: text, isRunning: true,
+                isActive: scenePhase == .active, reduceMotion: reduceMotion)
+        } else {
+            // Preserve the caller's semantic color, including failures.
+            text
+        }
+    }
+}
+
+struct MacStatusTimelineText: View {
+    let text: Text
+    let isRunning: Bool
+    let isActive: Bool
+    let reduceMotion: Bool
+    @State private var isVisible = false
+
+    var body: some View {
+        let animates = isRunning && macContinuousStatusAnimationEnabled(
+            isActive: isActive, reduceMotion: reduceMotion, isVisible: isVisible)
+        TimelineView(.animation(minimumInterval: 1.0 / 60, paused: !animates)) { context in
+            MacStatusTextFrame(text: text,
+                phase: context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 2.4) / 2.4,
+                showsHighlight: animates)
+        }
+        .onAppear { isVisible = true }
+        .onDisappear { isVisible = false }
+    }
+}
+
+/// A frame is independently renderable for light/dark and motion regression tests.
+struct MacStatusTextFrame: View {
+    let text: Text
+    let phase: Double
+    let showsHighlight: Bool
+
+    var body: some View {
+        text
+            .foregroundStyle(.secondary)
+            .overlay {
+                if showsHighlight {
+                    GeometryReader { geometry in
+                        let band = min(80, max(32, geometry.size.width * 0.55))
+                        LinearGradient(colors: [.clear, .primary.opacity(0.7), .clear],
+                            startPoint: .leading, endPoint: .trailing)
+                            .frame(width: band)
+                            .offset(x: -band + (geometry.size.width + band) * phase)
+                    }
+                    .mask(text.foregroundStyle(.white))
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                }
+            }
+    }
+}
+
 struct MacBreathingStatusLight: View {
     let diameter: CGFloat
     var dotScale: CGFloat = 1
@@ -119,7 +184,7 @@ struct MacAssistantPendingProcessView: View {
 
             if let activity = activities.last {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(activity.title)
+                    MacFlowingStatusText(text: Text(activity.title), isRunning: activity.state == .running)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)

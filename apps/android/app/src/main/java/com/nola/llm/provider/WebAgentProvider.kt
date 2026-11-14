@@ -283,6 +283,39 @@ class WebAgentProvider @Inject constructor(
         }
     }
 
+    suspend fun expertMessageRequest(operation: String, input: JsonObject, configuration: Config): JsonObject {
+        require(operation in setOf("parent", "admit", "manifest") && configuration.expectedHostId.isNotBlank() && configuration.clientId.isNotBlank())
+        require(input.keys.none { it in setOf("expected_host_id", "client_id", "authority", "actor", "builtins", "context") })
+        val response = webHostApi.expertMessageCommand(configuration.hostBaseUrl, configuration.token, operation,
+            buildJsonObject { put("expected_host_id", configuration.expectedHostId); put("client_id", configuration.clientId); input.forEach { (key,value) -> put(key,value) } }, configuration.pinnedCertificateSha256)
+        require(response["host_id"]?.jsonPrimitive?.content == configuration.expectedHostId &&
+            response["client_id"]?.jsonPrimitive?.content == configuration.clientId) { "Expert message source changed" }
+        return response
+    }
+
+    suspend fun expertRoomReply(command: JsonObject, configuration: Config, expectedStoreEpoch: String?): JsonObject {
+        require(command["type"]?.jsonPrimitive?.content in setOf("directory", "role_templates", "read", "for_conversation", "ensure_for_conversation", "join", "rejoin", "configure_agent", "submission", "submissions", "child_conversations", "child_history"))
+        require(configuration.expectedHostId.isNotBlank())
+        if (expectedStoreEpoch == null) require(command["type"]?.jsonPrimitive?.content in setOf("directory", "role_templates", "read", "for_conversation", "submission", "submissions", "child_conversations", "child_history")) { "Read the source catalog before changing experts" }
+        val response = webHostApi.agentRoomCommand(configuration.hostBaseUrl, configuration.token,
+            buildJsonObject { put("expected_host_id", configuration.expectedHostId); put("command", command); expectedStoreEpoch?.let { put("expected_source_store_epoch", it) } }, configuration.pinnedCertificateSha256)
+        require(response["host_id"]?.jsonPrimitive?.content == configuration.expectedHostId) { "Expert Room Host changed" }
+        val epoch = response["source_store_epoch"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+            ?: error("The Host does not support source-bound expert operations; update or reconnect it")
+        require(expectedStoreEpoch == null || epoch == expectedStoreEpoch) { "The expert source Store changed" }
+        return response
+    }
+
+    suspend fun expertRoomCommand(command: JsonObject, configuration: Config, expectedStoreEpoch: String? = null): JsonElement =
+        expertRoomReply(command, configuration, expectedStoreEpoch).getValue("result")
+
+    /** Read only Room history through the captured, encrypted Host connection. */
+    suspend fun readExpertHistoryCommand(command: JsonObject, configuration: Config, expectedStoreEpoch: String? = null): JsonObject {
+        require(command["type"]?.jsonPrimitive?.content in setOf("child_conversations", "child_history", "for_conversation"))
+        require(configuration.expectedHostId.isNotBlank())
+        return expertRoomCommand(command, configuration, expectedStoreEpoch).jsonObject
+    }
+
     fun observationTransport(configuration: Config? = config): suspend (JsonObject) -> JsonObject {
         val captured = checkNotNull(configuration).copy()
         require(captured.expectedHostId.isNotBlank() && captured.clientId.isNotBlank())
@@ -404,8 +437,11 @@ class WebAgentProvider @Inject constructor(
         expectedConfigurationRevision: Long? = null,
         expectedParentMessageId: String? = null,
         queuedUserCommandId: String? = null,
+        selectedExperts: JsonArray? = null,
+        expertSourceEpoch: String? = null,
     ): JsonObject {
         val cfg = checkNotNull(configuration)
+        require(selectedExperts.isNullOrEmpty() || !expertSourceEpoch.isNullOrBlank()) { "Expert directory source is unavailable" }
         require(cfg.expectedHostId.isNotBlank() && cfg.clientId.isNotBlank())
         val preferredNativeAppHostId = nativeAppHostId.ifBlank { cfg.nativeAppHostId }
         val deviceBridge = if (hybridDeviceToolsEnabled) {
@@ -438,8 +474,8 @@ class WebAgentProvider @Inject constructor(
             "expected_configuration_revision" to (expectedConfigurationRevision?.let(::JsonPrimitive) ?: kotlinx.serialization.json.JsonNull),
             "expected_parent_message_id" to (expectedParentMessageId?.let(::JsonPrimitive) ?: kotlinx.serialization.json.JsonNull),
         ))
-        return if (currentUserDisplayText == null) request else JsonObject(request +
-            ("current_user_display_text" to JsonPrimitive(currentUserDisplayText)))
+        return JsonObject(request + (currentUserDisplayText?.let { mapOf("current_user_display_text" to JsonPrimitive(it)) } ?: emptyMap()) +
+            (selectedExperts?.takeIf { it.isNotEmpty() }?.let { mapOf("selected_experts" to it, "expected_source_store_epoch" to JsonPrimitive(checkNotNull(expertSourceEpoch))) } ?: emptyMap()))
     }
 
     fun streamFrozenSubmission(submission: com.nola.data.remote.api.FrozenRemoteSubmission,

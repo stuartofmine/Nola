@@ -34,6 +34,8 @@ internal fun ChatUiState.dismissingDisplayedError(expected: ChatUiState): ChatUi
     if (this === expected) copy(error = null) else this
 
 data class ChatUiState(
+    val expertContextOwner: com.nola.domain.model.AgentRoomContextOwner? = null,
+    val expertContextParentId: String? = null,
     val taskChildOwner: com.nola.domain.projection.ConversationProjectionV1.TaskChildOwner? = null,
     val rejectedQueuedUiAction: com.nola.data.remote.api.RemoteSubmissionReceipt? = null,
     val cancellingQueuedUiAction: Boolean = false,

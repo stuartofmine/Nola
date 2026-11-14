@@ -1,4 +1,8 @@
 <script lang="ts">
+    import {supportsMainExpertDelegation, ExpertRoleCatalogUnavailable} from '../lib/expertRoles';
+    import {roomCommandAtSource} from '../lib/agentRooms';
+    import {mainExpertSelections} from '../lib/mainExpertSelection';
+    import { currentExpertChildMember, type ExpertChildConversation } from '../lib/expertChildConversations';
     import { activityReturnPath } from '../lib/activity';
     let returnToActivity = $state(typeof window === 'undefined' ? null : activityReturnPath(new URL(window.location.href)));
     import PrototypeIcon from '../components/PrototypeIcon.svelte';
@@ -14,7 +18,7 @@
     import { createWorkspaceDrafts, workspaceDraftsContext } from '../lib/workspaceDrafts';
     import ChatReplyError from '../components/ChatReplyError.svelte';
     import type { WorkspaceDrafts } from '../lib/workspaceDrafts';
-    import { api } from '../lib/api';
+    import { api, ApiError } from '../lib/api';
     import { parseRunObservation } from '../lib/runObservation';
     import { editedResendLabel } from '../lib/editedResendLocale';
     import { ensureBrowserClientId } from '../lib/browserClientIdentity';
@@ -42,8 +46,10 @@
     import type { ChatReadingPosition, ChatScrollToken } from '../lib/chatScroll';
     import { createConversationDraftStore, parseChatConversation, parseChatConversations } from '../lib/chatConversations';
     import type { ChatConversation } from '../lib/chatConversations';
-    import { mentionQuery, removeMentionQuery, roomCommand, type AgentDirectory, type RoomSnapshot, type RoomSubmission } from '../lib/agentRooms';
-    import { expertDirectoryMatches, groupExpertSessions, projectExpertSubmissions, toggleExpertParticipant } from '../lib/expertConversation';
+    import {parseExpertRoles} from '../lib/expertRoles';
+    import {checkedExpertCandidate, existingExpertParticipant, rejoinedExpertParticipant, selectedExpertMembers, ExpertSelectionChanged} from '../lib/expertMentionSelection';
+    import { mentionQuery, removeMentionQuery, roomCommand, type AgentDirectory, type PersistentAgent, type RoomSnapshot, type RoomSubmission } from '../lib/agentRooms';
+    import { projectExpertSubmissions, toggleExpertParticipant } from '../lib/expertConversation';
     import ExpertConversationReply from '../components/ExpertConversationReply.svelte';
     import ExpertReplyFrame from '../components/ExpertReplyFrame.svelte';
     import ExpertManager from '../components/ExpertManager.svelte';
@@ -61,14 +67,11 @@
     import WorkspacePageTab from '../components/WorkspacePageTab.svelte';
     import WorkspaceListNavigation from '../components/WorkspaceListNavigation.svelte';
     import WorkspaceResourceNavigation from '../components/WorkspaceResourceNavigation.svelte';
-    import WorkspaceActivityList from '../components/WorkspaceActivityList.svelte';
     let navigationExpanded = $state(true);
-    let listCategory = $state<'conversations' | 'activity' | 'resources'>('conversations');
-    let activityListVisited = $state(false);
+    let listCategory = $state<'conversations' | 'resources'>('conversations');
     function setListCategory(category: typeof listCategory) {
         if (viewportWidth > 700) navigationExpanded = category === listCategory ? !navigationExpanded : true;
         listCategory = category;
-        if (category === 'activity') activityListVisited = true;
     }
 
     import { emptyContentTabs, openPdfContentTab, selectContentTab, closeContentTab, conversationTabKey, pdfTabKey, managementContentPath, openPageContentTab, updatePageContentLocation, contentTabDomId } from '../lib/conversationContentTabs';
@@ -164,7 +167,6 @@
     import { knowledgePending } from '../lib/chatKnowledge';
     import ChatActivityGoal from '../components/ChatActivityGoal.svelte';
     import ChatUserQuestions from '../components/ChatUserQuestions.svelte';
-    import ChatInspectorTools from '../components/ChatInspectorTools.svelte';
     import ChatBrowser from '../components/ChatBrowser.svelte';
     import ChatPermissionMode from '../components/ChatPermissionMode.svelte';
     import type { PermissionChoice, SessionPermissionModeState, SessionReasoningQuickState, SessionModelChoiceState } from '../lib/chatSessionSettings';
@@ -175,6 +177,7 @@
     import WorkspaceReview from './WorkspaceReview.svelte';
     import ToolbarPopover from '../components/ToolbarPopover.svelte';
     import ChatArtifacts from '../components/ChatArtifacts.svelte';
+    import { prepareInPlaceResend, type InPlaceResendCompletion } from '../lib/inPlaceResend';
     import { completeEditedResend, editedResendSourceForMessage } from '../lib/editedResend';
     import { admitExpertMessage, loadExpertManifest, completeEditedExpertResend, loadExpertIntent, saveExpertIntent, clearExpertIntent, resumePreparedExpertMessage } from '../lib/expertMessage';
     import type { AdmitExpertMessageInput, ExpertMessageManifest } from '../lib/expertMessage';
@@ -195,13 +198,13 @@
     let drafts = createConversationDraftStore();
     const scroll = new ChatScrollOwnership();
     let active = $state<ChatConversation | null>(null);
-    let inspectorTab = $state<'overview' | 'review' | 'artifacts' | 'goal' | 'progress' | 'execution' | 'participants' | 'expertSessions' | 'resources' | 'settings' | null>(null);
+    let inspectorTab = $state<'overview' | 'review' | 'artifacts' | 'goal' | 'progress' | 'execution' | 'participants' | 'resources' | 'settings' | null>(null);
     const inspectorGroups: {label: string; icon: 'progress' | 'artifacts' | 'file'; tabs: Exclude<typeof inspectorTab, null>[]}[] = [
         {label: 'task', icon: 'progress', tabs: ['overview', 'progress', 'goal']},
         {label: 'artifacts', icon: 'artifacts', tabs: ['review', 'artifacts']},
-        {label: 'context', icon: 'file', tabs: ['resources', 'execution', 'participants', 'expertSessions', 'settings']},
+        {label: 'context', icon: 'file', tabs: ['resources', 'execution', 'participants', 'settings']},
     ];
-    const inspectorActivitySections = ['progress', 'goal', 'execution'] as const;
+    const inspectorActivitySections = ['progress', 'goal'] as const;
     const inspectorLabel = $derived(t($locale, 'chatInspector.panel'));
     let expandedInspectorSections = $state<string[]>(['overview']);
     let inspectorRoot = $state<HTMLElement>();
@@ -210,7 +213,7 @@
     let timeline = $state<ChatTimeline | null>(null);
     let observedRecovery = $state('observe');
     const executionOwnership = $derived(conversationExecutionOwnership(timeline?.projection?.execution_ownership, active?.conversationId ?? ''));
-    const canInteract = $derived(executionOwnership.kind === 'user' && observedRecovery !== 'control_unconfirmed');
+    const canInteract = $derived(!active?.expertContextOwner && executionOwnership.kind === 'user' && observedRecovery !== 'control_unconfirmed');
     let enteringMessageIds = $state<Set<string>>(new Set());
     let renderedMessageIds: string[] = [];
     let timelineHydrated = false;
@@ -523,7 +526,26 @@
     let draftSelection = 0;
     let submissionController: ConversationSubmissionController | null = null;
     let expertRoom = $state<RoomSnapshot | null>(null);
+    let expertSourceEpoch=$state<string|null>(null);
+    function selectedExpertEpoch(){return active?workspaceHost?.expertSelectionEpochs.get(active.conversationId)??null:null;}
+    async function expertSourceCommand<T>(command:unknown,expectedEpoch=selectedExpertEpoch()??expertSourceEpoch):Promise<T>{
+        const current=expertScope();
+        let pinned=expectedEpoch;
+        if((command as {type?:string})?.type==='directory'){
+            let capability:Awaited<ReturnType<typeof roomCommandAtSource<unknown>>>;
+            try{capability=await roomCommandAtSource<unknown>({type:'role_templates'},pinned);}
+            catch(cause){if(cause instanceof ApiError&&cause.code==='room_source_epoch_changed')throw cause;throw new ExpertRoleCatalogUnavailable();}
+            if(!current())throw Error('Expert conversation changed');
+            if(!supportsMainExpertDelegation(capability.result))throw new ExpertRoleCatalogUnavailable();
+            pinned=capability.sourceEpoch;
+        }
+        const read=await roomCommandAtSource<T>(command,pinned);
+        if(!current())throw Error('Expert conversation changed');
+        if(selectedExperts.length&&selectedExpertEpoch()&&selectedExpertEpoch()!==read.sourceEpoch)throw Error('Expert source changed');
+        expertSourceEpoch=read.sourceEpoch;return read.result;
+    }
     let expertDirectory = $state<AgentDirectory | null>(null);
+    let expertRejoin = $state<{owner:string; agent:PersistentAgent; room:RoomSnapshot; mentionDraft?:string} | null>(null);
     let expertSubmissions = $state<RoomSubmission[]>([]);
     const expertExecutionPending = $derived(expertSubmissions.some(item => ['accepted','selected','executing'].includes(item.state)));
     let expertRetryIntent = $state<AdmitExpertMessageInput | null>(null);
@@ -533,6 +555,8 @@
     let selectedExperts = $state<string[]>([]);
     const composerUnavailable = $derived(!active || conversationWriting || selectingConversation !== null || !canInteract || selectedExperts.length > 0 && !expertRoom);
     function updateSelectedExperts(ids: readonly string[]) {
+        if(ids.length){if(!expertSourceEpoch)throw Error('Expert source is unavailable');if(active)workspaceHost?.expertSelectionEpochs.set(active.conversationId,selectedExpertEpoch()??expertSourceEpoch);}
+        else if(active)workspaceHost?.expertSelectionEpochs.delete(active.conversationId);
         selectedExperts = [...new Set(ids)];
         if (active && workspaceHost) workspaceHost.expertSelections.set(active.conversationId, [...selectedExperts]);
     }
@@ -569,11 +593,9 @@
         return true;
     }
     let mentionDismissed = $state<string | null>(null);
-    let mentionCaret = $state(0);
     let mentionIndex = $state(0);
     let mentionLoading = $state(false);
     let mentionSelecting = $state(false);
-    let mentionDirectoryError = $state(false);
     let mentionDirectoryRequest = 0, mentionSelectionRequest = 0;
     const expertManifestCache = new Map<string,ExpertMessageManifest | null>();
     function expertScope(conversationId = active?.conversationId) {
@@ -581,48 +603,40 @@
         return () => !disposed && !!conversationId && hostId===sourceHost && clientId===sourceClient && workspaceHost===workspace
             && draftSelection===selection && generation===sourceGeneration && active?.conversationId===conversationId;
     }
-    const expertMentionQuery = $derived(mentionQuery(draft, mentionCaret));
+    const expertMentionQuery = $derived(mentionQuery(draft));
     const mentionsVisible = $derived(mentionFocused && expertMentionQuery !== null && mentionDismissed !== draft);
-    const expertMentionCandidates = $derived(expertDirectoryMatches(expertDirectory?.agents ?? [], expertMentionQuery ?? '',
-        new Set(expertRoom?.room.participants.filter(member => member.active && selectedExperts.includes(member.id)).map(member => member.agent_id))));
-    function syncMentionCaret(input: HTMLTextAreaElement) {
-        const caret = input.selectionStart;
-        if (caret !== mentionCaret) { mentionCaret = caret; mentionDismissed = null; mentionIndex = 0; }
-    }
-    async function loadMentionDirectory() {
-        if (!canInteract || !active || mentionLoading) return;
+    const expertMentionCandidates = $derived((expertDirectory?.agents ?? []).filter(agent => agent.availability === 'active'
+        && !expertRoom?.room.participants.some(member => member.agent_id === agent.id && selectedExperts.includes(member.id))
+        && agent.name.toLocaleLowerCase().includes((expertMentionQuery ?? '').toLocaleLowerCase())));
+    async function loadMentionDirectory(text = draft) {
+        if (!canInteract || mentionQuery(text) === null || expertDirectory || mentionLoading || !active) return;
         const scope=expertScope(),request=++mentionDirectoryRequest;
         const current=()=>scope()&&request===mentionDirectoryRequest;
-        mentionLoading=true; mentionDirectoryError=false;
+        mentionLoading=true;
         try {
-            const directory=await roomCommand<AgentDirectory>({type:'directory'});
-            if(current())expertDirectory=directory;
-        } catch {if(current())mentionDirectoryError=true;}
+            const directory=await expertSourceCommand<AgentDirectory>({type:'directory'});
+            if(current()){expertDirectory=directory;expertError='';}
+        } catch(cause) {if(current())expertError=t($locale,cause instanceof ExpertRoleCatalogUnavailable?'rooms.expertCatalogUnavailable':'rooms.expertAddFailed');}
         finally {if(current())mentionLoading=false;}
     }
-    $effect(() => {
-        if (mentionsVisible && canInteract && active && selectingConversation === null) untrack(() => { void loadMentionDirectory(); });
-    });
     async function chooseMention(agentId: string) {
         if (!canInteract || !active || expertsLoading || mentionSelecting || !expertMentionCandidates.some(agent=>agent.id===agentId)) return;
-        const owner=active.conversationId,original=draft,caret=mentionCaret,scope=expertScope(owner),request=++mentionSelectionRequest;
+        const owner=active.conversationId,original=draft,scope=expertScope(owner),request=++mentionSelectionRequest;
         const current=()=>scope()&&request===mentionSelectionRequest&&canInteract;
         mentionSelecting=true;
         try {
             if(!expertRoom){
-                const association=await roomCommand<{conversation_id:string;room:RoomSnapshot}>({type:'ensure_for_conversation',conversation_id:owner,at_ms:Date.now()});
+                const association=await expertSourceCommand<{conversation_id:string;room:RoomSnapshot}>({type:'ensure_for_conversation',conversation_id:owner,at_ms:Date.now()});
                 if(!current())return;
                 if(association.conversation_id!==owner)throw new Error('Expert conversation changed');
                 expertRoom=association.room;
             }
-            await toggleExpert(agentId);
-            if(!current()||draft!==original||caret!==mentionCaret)return;
+            await toggleExpert(agentId, original);
+            if(!current()||draft!==original)return;
             const member=expertRoom?.room.participants.find(member=>member.agent_id===agentId&&member.active);
             if(!member||!selectedExperts.includes(member.id))return;
-            draft=removeMentionQuery(draft,caret);drafts.write(owner,draft);mentionIndex=0;
-            const nextCaret=caret-(original.length-draft.length);
-            await tick();
-            if(current()&&composer){composer.focus();composer.setSelectionRange(nextCaret,nextCaret);mentionCaret=nextCaret;}
+            draft=removeMentionQuery(draft);drafts.write(owner,draft);mentionIndex=0;
+            await tick();if(current())composer?.focus();
         } catch {if(current())expertError='Unable to prepare experts for this conversation.';}
         finally {if(scope()&&request===mentionSelectionRequest)mentionSelecting=false;}
     }
@@ -633,9 +647,6 @@
     let attributedExperts = $derived.by(() => expertRoom && timeline
         ? projectExpertSubmissions(expertRoom.room.id, active?.conversationId ?? '', expertRoom.room.participants, expertSubmissions,
             new Set(timeline.messages.filter(message => message.canonical?.role === 'user').map(message => message.id))) : []);
-    const expertSessions = $derived(groupExpertSessions(attributedExperts));
-    let expandedExpertContext = $state<string | null>(null);
-    const canShowExpertDetails = $derived(!managementContentSelected && inspectorTab !== null && expandedInspectorSections.includes('expertSessions'));
     let expertRequest = 0;
     let expertPoll: ReturnType<typeof setInterval> | null = null;
     $effect(() => {
@@ -648,17 +659,24 @@
         if (!canInteract || !active || expertsLoading) return;
         inspectorTab = 'participants';
         if (!force && expertDirectory && expertRoom) return;
+        if(force&&!selectedExperts.length)expertSourceEpoch=null;
         expertsLoading = true; expertError = '';
         const conversationId = active.conversationId, scope = expertScope(conversationId), request = ++expertRequest;
         const current = () => scope() && expertRequest === request;
         try {
-            const association = await roomCommand<{conversation_id: string; room_id: string; room: RoomSnapshot} | null>({type:'for_conversation', conversation_id:conversationId});
-            const directory = await roomCommand<AgentDirectory>({type:'directory'});
+            const association = await expertSourceCommand<{conversation_id: string; room_id: string; room: RoomSnapshot} | null>({type:'for_conversation', conversation_id:conversationId});
+            const directory = await expertSourceCommand<AgentDirectory>({type:'directory'});
             if (!current()) return;
             expertRoom = association?.room ?? null; expertDirectory = directory;
+            if (force && expertRejoin?.owner === conversationId) {
+                const agent = directory.agents.find(agent => agent.id === expertRejoin!.agent.id && agent.availability === 'active');
+                const member = association?.room.room.participants.find(member => member.agent_id === agent?.id && member.active);
+                expertRejoin = agent && association && member?.agent_revision !== agent.revision
+                    ? {...expertRejoin,agent,room:association.room} : null;
+            }
             selectedExperts = [...(workspaceHost?.expertSelections.get(conversationId) ?? [])];
             if (association) await refreshExpertSubmissions(conversationId, association.room);
-        } catch { if (current()) expertError = 'Unable to load experts for this conversation.'; }
+        } catch(cause) { if (current()) expertError=t($locale,cause instanceof ExpertRoleCatalogUnavailable?'rooms.expertCatalogUnavailable':'rooms.expertAddFailed'); }
         finally { if (current()) expertsLoading = false; }
     }
     async function refreshExpertSubmissions(conversationId = active?.conversationId, snapshot = expertRoom) {
@@ -699,35 +717,81 @@
             expertSubmissions=incoming.sort((a,b)=>a.input.at_ms-b.input.at_ms||a.input.submission_id.localeCompare(b.input.submission_id));
         } catch {if(current())expertError='Unable to refresh the complete expert history.';}
     }
-    async function toggleExpert(agentId: string) {
+    async function toggleExpert(agentId: string, mentionDraft?: string) {
         if (!canInteract || !active || !expertDirectory || expertsLoading) return;
         const currentParticipant = expertRoom?.room.participants.find(person => person.agent_id === agentId && person.active);
         if (currentParticipant && selectedExperts.includes(currentParticipant.id)) {
             updateSelectedExperts(toggleExpertParticipant(selectedExperts, currentParticipant.id));
             return;
         }
-        const agent = expertDirectory.agents.find(value => value.id === agentId && value.availability === 'active');
-        if (!agent) return;
+        const candidate = expertDirectory.agents.find(value => value.id === agentId && value.availability === 'active');
+        if (!candidate) return;
         expertsLoading = true; expertError = '';
         const owner = active.conversationId, scope = expertScope(owner), request = ++expertRequest;
         const current = () => scope() && expertRequest === request;
         try {
+            const latest = await expertSourceCommand<AgentDirectory>({type:'directory'});
+            if (!current() || !canInteract) return;
+            expertDirectory = latest;
+            const agent = checkedExpertCandidate(latest, candidate.id, candidate.revision);
             let room = expertRoom;
             if (!room) {
-                const association = await roomCommand<{conversation_id: string; room: RoomSnapshot}>({type:'ensure_for_conversation', conversation_id:owner, at_ms:Date.now()});
+                const association = await expertSourceCommand<{conversation_id: string; room: RoomSnapshot}>({type:'ensure_for_conversation', conversation_id:owner, at_ms:Date.now()});
                 if (!current() || !canInteract || association.conversation_id !== owner) return;
                 room = association.room; expertRoom = room;
             }
             if (!current() || !canInteract) return;
-            if (!room.room.participants.some(person => person.agent_id === agentId && person.active)) {
-                const joined = await roomCommand<RoomSnapshot>({type:'join', input:{room_id:room.room.id, expected_room_revision:room.revision, agent_id:agent.id, expected_agent_revision:agent.revision, at_ms:Date.now()}});
+            let member;
+            try { member = existingExpertParticipant(room, agent); }
+            catch (cause) { expertRejoin = {owner,agent,room,mentionDraft}; throw cause; }
+            if (!member) {
+                const joined = await expertSourceCommand<RoomSnapshot>({type:'join', input:{room_id:room.room.id, expected_room_revision:room.revision, agent_id:agent.id, expected_agent_revision:agent.revision, at_ms:Date.now()}});
                 if (!current() || expertRoom?.room.id !== room.room.id) return;
+                if (joined.room.id !== room.room.id) throw new ExpertSelectionChanged();
                 expertRoom = joined;
             }
-            const participant = expertRoom?.room.participants.find(person => person.agent_id === agentId && person.active);
+            const participant = expertRoom && existingExpertParticipant(expertRoom, agent);
             if (current() && canInteract && participant) updateSelectedExperts(toggleExpertParticipant(selectedExperts, participant.id));
-        } catch { if (current()) expertError = 'Could not add this expert. Refresh and try again.'; }
+        } catch (cause) { if (current()) expertError = t($locale, cause instanceof ExpertSelectionChanged ? 'rooms.expertChanged' : 'rooms.expertAddFailed'); }
         finally { if (current()) expertsLoading = false; }
+    }
+    async function rejoinExpert() {
+        const request = expertRejoin;
+        if (!request || expertsLoading || !canInteract || active?.conversationId !== request.owner) return;
+        try { parseExpertRoles(await expertSourceCommand<unknown>({type:'role_templates'})); }
+        catch { expertError = t($locale,'rooms.expertCatalogUnavailable'); return; }
+        if (expertRejoin !== request || !canInteract || active?.conversationId !== request.owner) return;
+        if (!await messageConfirmation.ask({title:t($locale,'rooms.rejoinExpert'),description:t($locale,'rooms.rejoinHint'),
+            confirmLabel:t($locale,'rooms.rejoinExpert')})) return;
+        if (expertRejoin !== request || !canInteract || active?.conversationId !== request.owner) return;
+        const scope = expertScope(request.owner);
+        expertsLoading = true; expertError = '';
+        try {
+            let joined: RoomSnapshot;
+            try {
+                joined = await expertSourceCommand<RoomSnapshot>({type:'rejoin',input:{room_id:request.room.room.id,
+                    expected_room_revision:request.room.revision,agent_id:request.agent.id,expected_agent_revision:request.agent.revision,at_ms:Date.now()}});
+            } catch (cause) {
+                // A lost response may follow a committed atomic rejoin. Reconcile
+                // the exact old/new child owners before offering another write.
+                let observed: RoomSnapshot | null = null;
+                try { observed = await expertSourceCommand<RoomSnapshot | null>({type:'read',room_id:request.room.room.id}); }
+                catch { throw cause; }
+                if (!observed) throw cause;
+                try { rejoinedExpertParticipant(request.room, observed, request.agent); }
+                catch { throw cause; }
+                joined = observed;
+            }
+            if (!scope() || expertRejoin !== request) return;
+            const member = rejoinedExpertParticipant(request.room, joined, request.agent);
+            expertRoom = joined;
+            updateSelectedExperts([...selectedExperts.filter(id => !request.room.room.participants.some(old => old.id === id && old.agent_id === request.agent.id)),member.id]);
+            if (request.mentionDraft !== undefined && draft === request.mentionDraft) {
+                draft = removeMentionQuery(draft); drafts.write(request.owner,draft);
+            }
+            expertRejoin = null;
+        } catch (cause) {if (scope()) expertError = t($locale,cause instanceof ExpertSelectionChanged ? 'rooms.expertChanged' : 'rooms.expertAddFailed');}
+        finally {if (scope()) expertsLoading = false;}
     }
     async function selectConversation(conversation: ChatConversation) {
         if (disposed || !workspaceHost || active?.conversationId === conversation.conversationId) return;
@@ -749,10 +813,9 @@
         submissionController?.detach();
         active = conversation;
         contentTabs = selectContentTab(workspaceHost.contentTabs.get(conversation.conversationId) ?? emptyContentTabs(), conversationTabKey);
-        mentionDismissed = null; mentionIndex = 0; mentionLoading = false; mentionSelecting = false; mentionDirectoryError = false; ++mentionDirectoryRequest; ++mentionSelectionRequest;
+        mentionDismissed = null; mentionIndex = 0; mentionLoading = false; mentionSelecting = false; ++mentionDirectoryRequest; ++mentionSelectionRequest;
         ++expertRequest; expertsLoading = false; expertResumeMessage = null; managingExperts = false;
-        expertRoom = null; expertDirectory = null; expertSubmissions = []; expertAdmissionPending = false;
-        expandedExpertContext = null;
+        expertRoom = null; expertSourceEpoch=null; expertDirectory = null; expertSubmissions = []; expertAdmissionPending = false;
         selectedExperts = [...(workspaceHost.expertSelections.get(conversation.conversationId) ?? [])]; expertError = '';
         expertIntentStorageError='';
         try { expertRetryIntent = loadExpertIntent(localStorage, {hostId,clientId}, conversation.conversationId); }
@@ -834,7 +897,7 @@
     async function loadAssociatedExpertHistory(conversationId: string) {
         const current = expertScope(conversationId);
         try {
-            const association = await roomCommand<{conversation_id: string; room_id: string; room: RoomSnapshot} | null>({type:'for_conversation', conversation_id:conversationId});
+            const association = await expertSourceCommand<{conversation_id: string; room_id: string; room: RoomSnapshot} | null>({type:'for_conversation', conversation_id:conversationId});
             if (!current()) return;
             if (!association || association.conversation_id !== conversationId) {
                 if (selectedExperts.length) throw new Error('expert selection unavailable');
@@ -856,7 +919,7 @@
         await loadHistory('replace');
         observeSelected();
     }
-    function send() {
+    async function send() {
         if (composerUnavailable) return;
         if (executeCommand()) return;
         if (attachmentsReading || knowledgeSavePending || busy || expertAdmissionPending || !active || (!draft.trim() && !attachments.length)) return;
@@ -864,10 +927,17 @@
         catch(cause){expertIntentStorageError=cause instanceof Error?cause.message:String(cause);return;}
         if (expertRetryIntent) { expertError = 'Retry the original pending expert message before sending a new message.'; return; }
         const selected = [...selectedExperts], conversationId = active.conversationId;
-        if (selected.length) {
-            if (attachments.length) { expertError = 'Remove attachments before sending to experts. The expert-only path currently accepts text.'; return; }
-            void sendExpertOnly(conversationId, draft, selected);
-            return;
+        let selectedReferences:ReturnType<typeof mainExpertSelections>;
+        try { selectedReferences=mainExpertSelections(expertRoom,selected); }
+        catch(cause){expertError=cause instanceof Error?cause.message:String(cause);return;}
+        if(selectedReferences.length){
+            const current=expertScope(),original=draft,originalAttachments=attachments,epoch=selectedExpertEpoch();
+            if(!epoch){expertError=t($locale,'rooms.expertCatalogUnavailable');return;}
+            expertAdmissionPending=true;
+            try{await expertSourceCommand<AgentDirectory>({type:'directory'},epoch);}
+            catch(cause){if(current())expertError=t($locale,cause instanceof ExpertRoleCatalogUnavailable?'rooms.expertCatalogUnavailable':'rooms.expertChanged');return;}
+            finally{if(current())expertAdmissionPending=false;}
+            if(!current()||draft!==original||attachments!==originalAttachments||JSON.stringify(selectedExperts)!==JSON.stringify(selected))return;
         }
         if ((!active.executionBackend || active.executionBackend === 'nola') && !active.selectedModelId) {
             inspectorTab = 'settings';
@@ -876,8 +946,9 @@
         }
         const submissionId = crypto.randomUUID();
         const text = draft;
-        void submissionController?.submit({text: draft, attachments, language: $locale, submissionId});
+        void submissionController?.submit({text: draft, attachments, language: $locale, submissionId, selectedExperts:selectedReferences,expertSourceEpoch:selectedExpertEpoch()??undefined});
     }
+    // Historical expert-only intents are reconciled unchanged; new inputs use Main.
     async function sendExpertOnly(conversationId: string, text: string, participantIds: string[]) {
         if (expertAdmissionPending || !workspaceHost || !active || active.conversationId !== conversationId || !canInteract) return;
         const sourceWorkspace = workspaceHost, sourceHost = hostId, sourceClient = clientId;
@@ -893,8 +964,7 @@
             if (!input) {
                 const room = expertRoom, selected = new Set(participantIds);
                 if (!text.trim() || !room || !selected.size || !timeline?.projection) throw new Error('Expert selection is unavailable');
-                const members = room.room.participants.filter(member => selected.has(member.id) && member.active);
-                if (members.length !== selected.size) throw new Error('The complete expert selection changed');
+                const members = selectedExpertMembers(room,[...selected]);
                 const submissionId = crypto.randomUUID();
                 input = {conversation_id:conversationId,expected_revision:timeline.projection.revision,
                     room_id:room.room.id,expected_room_revision:room.revision,submission_id:submissionId,user_message_id:`${submissionId}:user`,
@@ -969,9 +1039,10 @@
         }
         if (mentionsVisible && !composing && !event.isComposing && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
             if (event.key === 'Escape') { event.preventDefault(); mentionDismissed = draft; return; }
-            if (expertMentionCandidates.length && ['ArrowUp', 'ArrowDown', 'Enter', 'Tab'].includes(event.key)) {
+            if (['ArrowUp', 'ArrowDown', 'Enter', 'Tab'].includes(event.key)) {
                 event.preventDefault();
                 const count = expertMentionCandidates.length;
+                if (!count) return;
                 mentionIndex = Math.min(mentionIndex, count - 1);
                 if (event.key === 'Enter' || event.key === 'Tab') void chooseMention(expertMentionCandidates[mentionIndex].id);
                 else { mentionIndex = (mentionIndex + (event.key === 'ArrowUp' ? -1 : 1) + count) % count;
@@ -981,11 +1052,6 @@
         }
         if (!composerEnterSubmits(event, composing)) return;
         event.preventDefault(); send();
-    }
-    function showExpertSessions() {
-        if (managementContentSelected) updateContentTabs(selectContentTab(contentTabs, conversationTabKey));
-        if (viewportWidth <= 700) navigationPanel?.closePanel();
-        inspectorTab = 'expertSessions';
     }
     function resume() { if (canInteract) return submissionController?.resume(); }
     function stop() { if (canInteract) return submissionController?.stop(); }
@@ -1004,8 +1070,8 @@
                 captureConversationReading(); submissionController?.detach(); submissionController = null;
                 active = null; timeline = null; turn = null; contentTabs = emptyContentTabs();
                 draft = ''; attachments = []; permissionState = null; reasoningState = null;
-                mentionLoading=false;mentionSelecting=false;mentionDirectoryError=false;expandedExpertContext=null;++mentionDirectoryRequest;++mentionSelectionRequest;++expertRequest;
-                expertRoom = null; expertDirectory = null; selectedExperts = []; expertSubmissions = []; expertRetryIntent = null; expertIntentStorageError = ''; expertAdmissionPending = false;
+                mentionLoading=false;mentionSelecting=false;++mentionDirectoryRequest;++mentionSelectionRequest;++expertRequest;
+                expertRoom = null; expertSourceEpoch=null; expertDirectory = null; expertRejoin = null; selectedExperts = []; expertSubmissions = []; expertRetryIntent = null; expertIntentStorageError = ''; expertAdmissionPending = false;
                 ++expertRequest; expertsLoading = false; managingExperts = false; historicalRecoveryOwners = []; uiSurfaces = [];
                 challenge = null; reviewText = ''; pendingText = ''; pendingAttachmentNames = []; selectedMessageId = null;
                 contextUsage = null; conversationCacheReader.select(null); error = ''; notice = '';
@@ -1019,6 +1085,24 @@
             const remembered = workspaceHost.lastConversationId;
             const selected = list.find(item => item.conversationId === (requested ?? remembered)) ?? (requested ? parseChatConversation(await api(`/api/chat/conversations/${encodeURIComponent(requested)}`)) : list[0]);
             if (selected && !disposed) await selectConversation(selected);
+            const continuation=new URL(location.href).searchParams;
+            if(selected&&!disposed&&continuation.has('expert_context')){
+                const child={conversation_id:continuation.get('expert_context'),participant_id:continuation.get('expert_participant'),
+                    agent_id:continuation.get('expert_agent'),agent_revision:Number(continuation.get('expert_revision')),is_current:true,active:true} as ExpertChildConversation;
+                try {
+                    const sourceRead=await roomCommandAtSource<{room:RoomSnapshot}|null>({type:'for_conversation',conversation_id:selected.conversationId},continuation.get('expert_source_epoch'));
+                    const association=sourceRead.result;
+                    if(!disposed&&active?.conversationId===selected.conversationId&&session.hostId===hostId){
+                        const member=association&&currentExpertChildMember(association.room,child);
+                        if(!member)throw new Error('Expert context changed');
+                        expertRoom=association.room;expertSourceEpoch=sourceRead.sourceEpoch;
+                        expertDirectory=await expertSourceCommand<AgentDirectory>({type:'directory'},sourceRead.sourceEpoch);
+                        if(disposed||active?.conversationId!==selected.conversationId)return;
+                        updateSelectedExperts([...selectedExperts.filter(id=>association.room.room.participants.some(existing=>existing.id===id&&existing.active&&existing.agent_id!==member.agent_id)),member.id]);
+                    }
+                } catch { if(!disposed&&active?.conversationId===selected.conversationId)notice=t($locale,'rooms.childChanged'); }
+                if(!disposed){const url=new URL(location.href);for(const key of ['expert_context','expert_participant','expert_agent','expert_revision','expert_source_epoch'])url.searchParams.delete(key);history.replaceState(history.state,'',url);}
+            }
             if (requestedContent && !disposed) openManagementTab(requestedContent);
             else if (!disposed) observedCanSubmit = true;
         } catch (cause) { if (!disposed) {
@@ -1124,20 +1208,37 @@
             && clientId === edited.source.clientId && active?.conversationId === edited.source.conversationId
             && generation === sourceGeneration && draftSelection === selected;
         if (!sourceWorkspace || !current() || busy || expertAdmissionPending || expertExecutionPending || conversationWriting || !canInteract) throw new Error(t($locale, 'chatPage.sendFailed'));
-        const controller = (envelope: import('../lib/editedResend').EditedResendEnvelope) => preparedTargetController(envelope,sourceWorkspace,current);
-        const sourceManifest = await loadExpertManifest(edited.source);
-        if (!current()) throw new Error('Edited resend source owner changed');
-        const options = {language:$locale,isCurrent:current,controller};
-        const completion = sourceManifest ? await completeEditedExpertResend(edited,options) : await completeEditedResend(edited,options);
-        if (current()) {
-            // Expert completion owns its outer conversation, never the last child.
-            const target = parseChatConversation(await api(`/api/chat/conversations/${encodeURIComponent(completion.envelope.target.id)}`));
-            if (!current() || target.conversationId !== edited.input.target_conversation_id) return completion;
+        const envelope = await prepareInPlaceResend(edited);
+        if(!current())throw new Error('Edit owner changed before resend');
+        const p=envelope.prepared;
+        let completion:InPlaceResendCompletion;
+        if(p.experts.length){
+            const association=await roomCommand<{room_id:string;room:RoomSnapshot}|null>({type:'for_conversation',conversation_id:p.input.conversation_id});
+            if(!association||!current())throw new Error('Expert room is unavailable');
+            const manifest=await admitExpertMessage({conversation_id:p.input.conversation_id,expected_revision:envelope.target.revision,
+                room_id:association.room_id,expected_room_revision:association.room.revision,submission_id:p.run_id,
+                user_message_id:p.user_message_id,text:p.input.edited_text,selected_participants:p.experts,created_at_ms:p.input.created_at_ms},edited.source);
+            for(const entry of manifest.entries){
+                if(!current())throw new Error('Expert edit owner changed');
+                const receipt=await roomCommand<RoomSubmission|null>({type:'submission',room_id:manifest.input.room_id,submission_id:entry.child_submission_id});
+                if(!receipt||receipt.input.parent_message_id!==p.user_message_id||receipt.context_conversation_id!==entry.participant.context_conversation_id)
+                    throw new Error('Expert receipt owner changed');
+                await roomCommand<RoomSubmission>({type:'submit',input:receipt.input});
+            }
+            completion={inPlace:true,envelope};
+            if(current())await refreshExpertSubmissions();
+        }else{
+            if(!submissionController)throw new Error('Conversation controller is unavailable');
+            const receipt=await submissionController.submitInPlaceResend(envelope,$locale);
+            completion={inPlace:true,envelope,receipt};
+        }
+        if(current()){
             await conversationManager?.refresh();
-            if (current()) await selectConversation(target);
+            await submissionController?.loadHistory('replace');
         }
         return completion;
     }
+
     function conversationSettingsChanged(conversation: ChatConversation) {
         // Updating session settings must not create a new timeline owner or
         // discard the visible transcript and composer draft.
@@ -1174,6 +1275,7 @@
                 <div class="expert-choice"><label><input type="checkbox" checked={!!member && selectedExperts.includes(member.id)} disabled={expertsLoading || !canInteract} onchange={() => void toggleExpert(agent.id)} /> <span>{agent.name}</span></label><ExpertBubbleColorPicker {hostId} agentId={agent.id} name={agent.name} /></div>
             {:else}<span>{t($locale, 'rooms.noExperts')}</span>{/each}
         {/if}
+        {#if expertRejoin}<button type="button" disabled={expertsLoading} onclick={rejoinExpert}>{t($locale,'rooms.rejoinExpert')}</button>{/if}
         {#if expertError}<p role="alert">{expertError}</p><button type="button" disabled={expertsLoading} onclick={() => void openExperts(true)}>{t($locale, 'shell.retry')}</button>{/if}
         {#if selectedExperts.length}<button type="button" onclick={() => { updateSelectedExperts([]); expertError = ''; }}>{t($locale, 'chatInspector.clearExperts')}</button>{/if}
     </section>
@@ -1183,7 +1285,7 @@
         <div class="global-navigation"><a class="desktop-mark" href="/today" aria-label="Nola">n</a><WorkspaceListNavigation category={listCategory} visible={navigationExpanded} onchange={setListCategory} /><button class="sidebar-toggle panel-toggle" title={t($locale, 'shell.toggleSidebar')} aria-label={t($locale, 'shell.toggleSidebar')} aria-expanded={navigationExpanded} onclick={() => navigationExpanded = !navigationExpanded}><PrototypeIcon name="sidebar" size={18} /></button></div>
         <button class="navigation-toggle" aria-label={t($locale, contentTabs.selected === conversationTabKey ? 'shell.workspace' : 'chatPage.title')} onclick={() => contentTabs.selected === conversationTabKey ? navigateWorkspace('/conversations') : updateContentTabs(selectContentTab(contentTabs, conversationTabKey))}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 5-7 7 7 7" /></svg></button>
         <h1 class="sr-only">{selectedContentTab ? selectedContentTab.kind === 'pdf' ? selectedContentTab.resource.displayName : t($locale, selectedContentTab.titleKey) : active?.title || t($locale, 'chatPage.title')}</h1>
-        {#if viewportWidth <= 700}<div class="mobile-chat-heading"><strong>{selectedContentTab ? selectedContentTab.kind === 'pdf' ? selectedContentTab.resource.displayName : t($locale, selectedContentTab.titleKey) : active?.title || t($locale, 'chatPage.title')}</strong><small>{selectedExperts.length ? (expertRoom?.room.participants.filter(expert => selectedExperts.includes(expert.id)).map(expert => expert.display_name).join(' · ') || 'Nola') : 'Nola'}</small></div>{#if selectedContentTab}<button class="panel-toggle mobile-content-close" aria-label={t($locale, 'chatInspector.closeTab')} onclick={() => closeWorkspaceContentTab(contentTabs.selected)}>×</button>{:else}<button class="panel-toggle" aria-label={t($locale, 'chatInspector.context')} onclick={() => toggleInspector('resources')}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6m-6 4h6"/></svg></button>{/if}{:else}<ContentTabStrip ownerKey={contentWorkspaceKey} state={contentTabs} title={active?.title || t($locale, 'chatPage.title')}
+        {#if viewportWidth <= 700}<div class="mobile-chat-heading"><strong>{selectedContentTab ? selectedContentTab.kind === 'pdf' ? selectedContentTab.resource.displayName : t($locale, selectedContentTab.titleKey) : active?.title || t($locale, 'chatPage.title')}</strong><small>Nola</small></div>{#if selectedContentTab}<button class="panel-toggle mobile-content-close" aria-label={t($locale, 'chatInspector.closeTab')} onclick={() => closeWorkspaceContentTab(contentTabs.selected)}>×</button>{:else}<button class="panel-toggle" aria-label={t($locale, 'chatInspector.context')} disabled={!active} onclick={() => toggleInspector('resources')}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6m-6 4h6"/></svg></button><button class="panel-toggle" aria-label={t($locale, 'rooms.experts')} onclick={() => void openExperts()}><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="7" r="4"/><path d="M5 22v-4a7 7 0 0 1 14 0v4"/></svg></button>{/if}{:else}<ContentTabStrip ownerKey={contentWorkspaceKey} state={contentTabs} title={active?.title || t($locale, 'chatPage.title')}
             onselect={key => updateContentTabs(selectContentTab(contentTabs, key))}
             onclose={closeWorkspaceContentTab} />{/if}
         {#if active}{@render inspectorControls()}{/if}
@@ -1196,8 +1298,7 @@
                 <button type="button" onclick={() => toggleInspector('resources')}>{t($locale, 'chatInspector.context')}</button>
                 <button type="button" onclick={() => toggleInspector('execution')}>{t($locale, 'chatInspector.execution')}</button>
                 {#if canInteract}<button type="button" onclick={() => toggleInspector('settings')}>{t($locale, 'chatInspector.settings')}</button>{/if}
-                <button type="button" aria-controls="chat-details" aria-expanded={inspectorTab === 'expertSessions'} onclick={showExpertSessions}>{t($locale, 'rooms.expertSessions')}</button>
-                <button type="button" aria-expanded={inspectorTab === 'participants'} onclick={() => void openExperts()}>{t($locale, 'rooms.members')}{selectedExperts.length ? ` · ${selectedExperts.length}` : ''}</button>
+                <button type="button" aria-expanded={inspectorTab === 'participants'} onclick={() => void openExperts()}>{t($locale, 'rooms.experts')}{selectedExperts.length ? ` · ${selectedExperts.length}` : ''}</button>
         </ToolbarPopover>{/if}
     </header>
     <div class="chat-columns" class:without-navigation={viewportWidth > 700 && !navigationExpanded} class:without-conversation={!active || managementContentSelected || inspectorTab === null} style:--sidebar-width={`${widths.sidebar}px`} style:--inspector-width={`${widths.inspector}px`}>
@@ -1210,7 +1311,6 @@
             </div>
             <div class="sidebar-section" hidden={listCategory !== 'resources'}><WorkspaceResourceNavigation onopen={openManagementTab}
                 selectedPath={selectedContentTab?.kind === 'page' ? selectedContentTab.path : ''} /></div>
-            <div class="sidebar-section" hidden={listCategory !== 'activity'}>{#if activityListVisited}<WorkspaceActivityList onopen={openManagementTab} />{/if}</div>
             <footer class="workspace-footer">
                 <button class="workspace-identity" onclick={() => openManagementTab('/settings?section=general')}><span aria-hidden="true">n</span><span>{t($locale, 'shell.workspace')}<small>Nola</small></span></button>
                 <button aria-label={t($locale, 'shell.toggleAppearance')} title={t($locale, 'shell.toggleAppearance')} onclick={toggleAppearance}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 14A8 8 0 0 1 10 4a8 8 0 1 0 10 10Z"/></svg></button>
@@ -1278,7 +1378,7 @@
                         {#each messageExperts as item, index (item.submission.input.submission_id)}
                                 <article class="expert-message" data-expert-submission={item.submission.input.submission_id}>
                                     {#if item.submission.context_conversation_id && item.submission.execution_id}
-                                        <ExpertConversationReply compact active={contentTabs.selected===conversationTabKey} permissionInteractive={!(canShowExpertDetails && expandedExpertContext === item.submission.context_conversation_id)} {hostId}
+                                        <ExpertConversationReply active={contentTabs.selected===conversationTabKey} {hostId}
                                             agentId={item.participant.agent_id} name={item.participant.display_name}
                                             status={t($locale, `rooms.${item.submission.state}`)}
                                             roomId={item.submission.input.room_id} contextId={item.submission.context_conversation_id}
@@ -1352,7 +1452,7 @@
                 {#if mentionsVisible}
                     <div class="expert-mentions" id="expert-mentions" role="listbox" aria-label={t($locale, 'rooms.experts')}>
                         {#if mentionLoading}<p role="status">{t($locale, 'rooms.loading')}</p>
-                        {:else if mentionDirectoryError}<p role="alert">{t($locale, 'chatInspector.expertsUnavailable')}</p>
+                        {:else if expertError}<p role="alert">{expertError}</p>
                         {:else if !expertMentionCandidates.length}<p>{t($locale, 'rooms.noExperts')}</p>{/if}
                         {#each expertMentionCandidates as agent, index (agent.id)}
                             <button type="button" role="option" tabindex="-1" disabled={mentionSelecting || expertsLoading} id={`expert-mention-${index}`} aria-selected={index === mentionIndex}
@@ -1365,8 +1465,8 @@
                 {/if}
                 <textarea id="chat-composer" bind:this={composer} bind:value={draft} aria-controls={commandsVisible ? 'composer-commands' : mentionsVisible ? 'expert-mentions' : undefined} role="combobox" aria-autocomplete="list" aria-expanded={commandsVisible || mentionsVisible}
                     aria-activedescendant={commandsVisible && commandCandidates.length ? `composer-command-${Math.min(commandIndex, commandCandidates.length - 1)}` : mentionsVisible && expertMentionCandidates.length ? `expert-mention-${Math.min(mentionIndex, expertMentionCandidates.length - 1)}` : undefined}
-                    onfocus={event => { mentionFocused = true; syncMentionCaret(event.currentTarget); }} onblur={() => mentionFocused = false} onselect={event => syncMentionCaret(event.currentTarget)} onkeyup={event => syncMentionCaret(event.currentTarget)} onclick={event => syncMentionCaret(event.currentTarget)}
-                    oninput={event => { commandDismissed = null; commandIndex = 0; commandError = ''; mentionDismissed = null; mentionIndex = 0; if (active && !composerUnavailable) drafts.write(active.conversationId, event.currentTarget.value); syncMentionCaret(event.currentTarget); }} onkeydown={composerKeydown} oncompositionstart={() => composing = true} oncompositionend={() => composing = false} placeholder={t($locale, 'chatPage.placeholder')} disabled={composerUnavailable} aria-busy={selectingConversation !== null || conversationWriting} rows="1"></textarea>
+                    onfocus={() => { mentionFocused = true; void loadMentionDirectory(); }} onblur={() => mentionFocused = false}
+                    oninput={event => { commandDismissed = null; commandIndex = 0; commandError = ''; mentionDismissed = null; mentionIndex = 0; if (active && !composerUnavailable) drafts.write(active.conversationId, event.currentTarget.value); void loadMentionDirectory(event.currentTarget.value); }} onkeydown={composerKeydown} oncompositionstart={() => composing = true} oncompositionend={() => composing = false} placeholder={t($locale, 'chatPage.placeholder')} disabled={composerUnavailable} aria-busy={selectingConversation !== null || conversationWriting} rows="1"></textarea>
                 <div class="composer-footer">
                 {#if active}<div class="composer-attachments"><ChatTextAttachments showHelp={false} bind:this={textAttachments} draftStore={workspaceHost?.attachments} conversationId={active.conversationId} {generation} busy={busy || composerUnavailable} onattachments={(files, reading) => { attachments = [...files]; attachmentsReading = reading; }} /></div>{/if}
                 <ChatModelMenu selection={modelState} onopen={() => sessionSettings?.refreshModelCatalog()} onselect={choice => sessionSettings?.selectModel(choice)} onsettings={() => { inspectorTab = 'settings'; }} onreload={() => sessionSettings?.reloadSettings()} />
@@ -1381,9 +1481,11 @@
                     <aside class="reply-notice"><p role="status">{expertError || 'Expert delivery is pending. Retry preserves the complete original message and selection.'}</p><p>{expertRetryIntent.text}</p>
                         <button type="button" disabled={expertAdmissionPending || !canInteract} onclick={retryCompleteExpertIntent}>{t($locale,'shell.retry')}</button>
                     </aside>
-                {:else if expertError}<p role="alert">{expertError}</p>{/if}
+                {:else if expertError}<p role="alert">{expertError}</p>{#if expertRejoin}<button type="button" disabled={expertsLoading} onclick={rejoinExpert}>{t($locale,'rooms.rejoinExpert')}</button>{/if}{/if}
                 {#if knowledgeSavePending}<p role="status" class="muted">{t($locale, 'chatKnowledge.beforeSend')}</p>{/if}
-            </form>{:else if active && executionOwnership.kind === 'task_child'}
+            </form>{:else if active?.expertContextOwner}
+                <aside class="task-readonly"><p>{t($locale,'rooms.childReadOnly')}</p>{#if active.expertParentConversationId}<a href={`/chat?conversation=${encodeURIComponent(active.expertParentConversationId)}`}>{t($locale,'chatPage.taskReturnParent')}</a>{/if}</aside>
+            {:else if active && executionOwnership.kind === 'task_child'}
                 <aside class="task-readonly"><p>{t($locale, 'chatPage.taskReadOnly')}</p><a href={`/chat?conversation=${encodeURIComponent(executionOwnership.parent_conversation_id)}`}>{t($locale, 'chatPage.taskReturnParent')}</a></aside>
             {:else if active && executionOwnership.kind === 'unavailable'}<p role="status">{t($locale, 'chatPage.taskOwnershipUnavailable')}</p>{/if}
 
@@ -1408,18 +1510,8 @@
             <details class="inspector-section" data-inspector-section="overview" open={expandedInspectorSections.includes('overview')} ontoggle={event => setInspectorExpanded('overview', event.currentTarget.open)}>
                 <summary>{t($locale, 'chatInspector.overview')}</summary><div class="inspector-content">
                 <ChatDecisionOverview working={busy || expertAdmissionPending || expertSubmissions.some(item => item.state === 'executing')} needsResponse={turn?.phase === 'awaiting_permission'}
-                    onconversation={() => { updateContentTabs(selectContentTab(contentTabs, conversationTabKey)); jumpToLatest(); }} ontool={toggleInspector}>
-                    {#snippet details()}<ChatArtifacts {messages} />{/snippet}
-                </ChatDecisionOverview>
+                    onconversation={() => { updateContentTabs(selectContentTab(contentTabs, conversationTabKey)); jumpToLatest(); }} />
             </div>
-            </details>
-            <details class="inspector-section" data-inspector-section="review" open={expandedInspectorSections.includes('review')} ontoggle={event => setInspectorExpanded('review', event.currentTarget.open)}>
-                <summary>{t($locale, 'chatInspector.review')}</summary><div class="inspector-content">
-                {#if inspectorVisited.review}<WorkspaceReview conversationId={active.conversationId} {hostId} onopen={() => openManagementTab(`/workspace-review?conversation=${encodeURIComponent(active?.conversationId ?? '')}`)} />{/if}
-            </div>
-            </details>
-            <details class="inspector-section" data-inspector-section="artifacts" open={expandedInspectorSections.includes('artifacts')} ontoggle={event => setInspectorExpanded('artifacts', event.currentTarget.open)}>
-                <summary>{t($locale, 'chatInspector.artifacts')}</summary><div class="inspector-content"><ChatArtifacts {messages} /></div>
             </details>
             {#each inspectorActivitySections as section}
             <details class="inspector-section" data-inspector-section={section} open={expandedInspectorSections.includes(section)} ontoggle={event => setInspectorExpanded(section, event.currentTarget.open)}>
@@ -1430,53 +1522,36 @@
 </div>
             </details>
             {/each}
-            <details class="inspector-section" data-inspector-section="expertSessions" open={expandedInspectorSections.includes('expertSessions')} ontoggle={event => setInspectorExpanded('expertSessions', event.currentTarget.open)}>
-                <summary>{t($locale, 'rooms.expertSessions')}{expertSessions.length ? ` · ${expertSessions.length}` : ''}</summary>
-                <div class="inspector-content expert-session-list">
-                    {#if canShowExpertDetails}
-                        {#each expertSessions as session (session.participant.context_conversation_id)}
-                            {@const contextId = session.participant.context_conversation_id}
-                            {@const expanded = expandedExpertContext === contextId}
-                            <button type="button" class="expert-session-toggle" aria-expanded={expanded}
-                                onclick={() => expandedExpertContext = expanded ? null : contextId}>
-                                <span>{session.participant.display_name}</span><small>{session.replies.length}</small>
-                            </button>
-                            {#if expanded}
-                                <div class="expert-session-thread">
-                                    {#each session.replies as {submission, participant} (submission.input.submission_id)}
-                                        <Markdown source={submission.input.text} />
-                                        {#if submission.execution_id}
-                                            <ExpertConversationReply active {hostId} agentId={participant.agent_id} name={participant.display_name}
-                                                status={t($locale, `rooms.${submission.state}`)} roomId={submission.input.room_id} {contextId}
-                                                executionId={submission.execution_id} running={submission.state === 'executing'} />
-                                        {:else}
-                                            <p role="status">{t($locale, `rooms.${submission.state}`)}</p>
-                                        {/if}
-                                    {/each}
-                                </div>
-                            {/if}
-                        {:else}
-                            <p>{t($locale, 'rooms.noExpertSessions')}</p>
-                        {/each}
-                        {#if timeline?.window?.hasMore}
-                            <button type="button" onclick={() => void loadHistory('prepend')} disabled={historyLoading || busy}>{t($locale, 'chatPage.history')}</button>
-                        {/if}
-                    {/if}
-                </div>
+            <details class="inspector-section" data-inspector-section="review" open={expandedInspectorSections.includes('review')} ontoggle={event => setInspectorExpanded('review', event.currentTarget.open)}>
+                <summary>{t($locale, 'chatInspector.review')}</summary><div class="inspector-content">
+                {#if inspectorVisited.review}<WorkspaceReview conversationId={active.conversationId} {hostId} onopen={() => openManagementTab(`/workspace-review?conversation=${encodeURIComponent(active?.conversationId ?? '')}`)} />{/if}
+            </div>
             </details>
-            <details class="inspector-section" data-inspector-section="participants" open={expandedInspectorSections.includes('participants')} ontoggle={event => setInspectorExpanded('participants', event.currentTarget.open)}>
-                <summary>{t($locale, 'chatInspector.participants')}</summary><div class="inspector-content">{@render expertPicker()}</div>
+            <details class="inspector-section" data-inspector-section="artifacts" open={expandedInspectorSections.includes('artifacts')} ontoggle={event => setInspectorExpanded('artifacts', event.currentTarget.open)}>
+                <summary>{t($locale, 'chatInspector.artifacts')}</summary><div class="inspector-content"><ChatArtifacts {messages} /></div>
             </details>
+
+
             <details class="inspector-section" data-inspector-section="resources" open={expandedInspectorSections.includes('resources')} ontoggle={event => setInspectorExpanded('resources', event.currentTarget.open)}>
                 <summary>{t($locale, 'chatInspector.context')}</summary><div class="inspector-content">
-                <ChatOverview conversation={active} {selectedModelName} {busy} usage={contextUsage} cache={conversationCacheUsage} cacheFailed={conversationCacheFailed} />
+                <ChatOverview compact conversation={active} {selectedModelName} {busy} usage={contextUsage} cache={conversationCacheUsage} cacheFailed={conversationCacheFailed} />
                 {#if inspectorVisited.resources}
                     <ChatDataSources conversationId={active.conversationId} {generation} busy={busy || !canInteract} />
                     <ChatPdfResources conversationId={active.conversationId} {generation} busy={busy || !canInteract} onopen={openPdfInTab} onremove={id => updateContentTabs(closeContentTab(contentTabs, pdfTabKey(id)))} />
                     <ChatKnowledge conversationId={active.conversationId} {generation} busy={busy || !canInteract} drafts={workspaceHost?.knowledge} />
-                    <ChatBrowser {messages} conversationId={active.conversationId} {generation} />
                 {/if}
             </div>
+            </details>
+            <details class="inspector-section" data-inspector-section="execution" open={expandedInspectorSections.includes('execution')} ontoggle={event => setInspectorExpanded('execution', event.currentTarget.open)}>
+                <summary>{t($locale, 'chatInspector.execution')}</summary><div class="inspector-content">
+                {#if mountedInspectorSections.includes('execution')}
+                    <ChatActivityGoal readOnly={!canInteract} section="execution" {hostId} conversationId={active.conversationId} draftStore={workspaceHost?.objectives} {generation} {busy} oncontrol={observeSelected} refreshKey={turn?.committedRevision ?? 0} />
+                    <ChatBrowser {messages} conversationId={active.conversationId} {generation} />
+                {/if}
+                </div>
+            </details>
+            <details class="inspector-section" data-inspector-section="participants" open={expandedInspectorSections.includes('participants')} ontoggle={event => setInspectorExpanded('participants', event.currentTarget.open)}>
+                <summary>{t($locale, 'chatInspector.participants')}</summary><div class="inspector-content">{@render expertPicker()}</div>
             </details>
             <details class="inspector-section" data-inspector-section="settings" open={expandedInspectorSections.includes('settings')} ontoggle={event => setInspectorExpanded('settings', event.currentTarget.open)}>
                 <summary>{t($locale, 'chatInspector.settings')}</summary><div class="inspector-content">
@@ -1487,7 +1562,6 @@
 
             </div></section>{/if}
                 {#if canInteract}<ChatSessionSettings bind:this={sessionSettings} conversation={active} {generation} {busy} onconversation={conversationSettingsChanged} onmodelstate={state => modelState = state} onmodelname={name => selectedModelName = name} onpermissionstate={state => permissionState = state} onreasoningstate={state => reasoningState = state} />{/if}
-                <ChatInspectorTools />
             </div>
             </details>
 
@@ -1578,10 +1652,6 @@
     .response-identity { display: flex; flex: none; min-width: 0; align-items: center; gap: 7px; font-size: 14px; line-height: 20px; overflow-wrap: anywhere; }
     .response-avatar { display: grid; place-items: center; width: 19px; height: 19px; border: 1px solid var(--outline); border-radius: 50%; color: var(--content); font-size: 13px; }
     .expert-picker { display: flex; flex-direction:column; align-items:stretch; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--surface); font-size: 12px; }
-    .expert-session-list, .expert-session-thread { display: grid; gap: 10px; min-width: 0; overflow-wrap: anywhere; }
-    .expert-session-toggle { min-height: 44px; display: flex; justify-content: space-between; align-items: center; text-align: start; gap: 8px; }
-    .expert-session-toggle small, .expert-session-list > p { color: var(--muted); }
-    .expert-session-thread { border-inline-start: 1px solid var(--border); padding-inline-start: 8px; }
     .expert-picker-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; }
     .expert-picker label { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; cursor: pointer; }
     .expert-picker input { width: 16px; height: 16px; }

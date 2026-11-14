@@ -3,6 +3,17 @@ import XCTest
 @testable import Nola
 
 final class IOSApplicationCommandEffectTests: XCTestCase {
+    func testChildConversationCatalogIsObservationAndUnknownWritesRemainOrdered() {
+        XCTAssertTrue(IOSApplicationRuntime.isReadOnlyCommand(type: "read_expert_exchange_capability", arguments: [:]))
+        XCTAssertTrue(IOSApplicationRuntime.isReadOnlyCommand(type: "runtime_task", arguments: ["command": ["type": "get"]]))
+        XCTAssertFalse(IOSApplicationRuntime.isReadOnlyCommand(type: "runtime_task", arguments: ["command": ["type": "cancel"]]))
+        XCTAssertTrue(IOSApplicationRuntime.isReadOnlyCommand(type: "list_root_conversations", arguments: [:]))
+        XCTAssertTrue(IOSApplicationRuntime.isReadOnlyCommand(type: "agent_room", arguments: ["command": ["type": "peer_exchanges"]]))
+        XCTAssertTrue(IOSApplicationRuntime.isReadOnlyCommand(type: "agent_room", arguments: ["command": ["type": "child_history"]]))
+        XCTAssertTrue(IOSApplicationRuntime.isReadOnlyCommand(type: "agent_room", arguments: ["command": ["type": "child_conversations"]]))
+        XCTAssertFalse(IOSApplicationRuntime.isReadOnlyCommand(type: "agent_room", arguments: ["command": ["type": "delete_child_conversation"]]))
+    }
+
     func testCompactionPlanningIsObservationalAndCommitKeepsMutationOrdering() {
         for type in ["step_compaction_summary", "evaluate_compaction_maintenance"] {
             XCTAssertTrue(IOSApplicationRuntime.isReadOnlyCommand(type: type, arguments: [:]))
@@ -63,13 +74,13 @@ final class IOSApplicationCommandEffectTests: XCTestCase {
         for type in ["load_prepared_expert_resend", "load_expert_message_manifest", "load_edited_resend_child_instructions"] {
             XCTAssertFalse(IOSApplicationRuntime.isReadOnlyCommand(type: type, arguments: [:]), "Private expert reads cannot be forwarded as renderer commands")
         }
-        for kind in ["for_conversation", "submission", "submissions", "execution_intent"] {
+        for kind in ["role_templates", "for_conversation", "submission", "submissions", "execution_intent"] {
             XCTAssertTrue(IOSApplicationRuntime.isReadOnlyCommand(type: "agent_room", arguments: ["command": ["type": kind]]), kind)
         }
         for type in ["admit_expert_conversation_message", "prepare_edited_expert_resend", "prepare_edited_resend"] {
             XCTAssertFalse(IOSApplicationRuntime.isReadOnlyCommand(type: type, arguments: [:]), type)
         }
-        for kind in ["ensure_for_conversation", "submit", "prepare_execution", "claim_execution", "cancel_pending", "reconcile_execution"] {
+        for kind in ["rejoin", "ensure_for_conversation", "submit", "prepare_execution", "claim_execution", "cancel_pending", "reconcile_execution"] {
             XCTAssertFalse(IOSApplicationRuntime.isReadOnlyCommand(type: "agent_room", arguments: ["command": ["type": kind]]), kind)
         }
     }

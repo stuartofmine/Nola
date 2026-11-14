@@ -158,6 +158,14 @@ impl CliAgentHostDriver {
         self
     }
 
+    pub(crate) fn bound_ui_model_schema(&self) -> Option<Value> {
+        self.ui_publisher.as_ref()?;
+        let id = nola_domain::generative_ui_tool::UI_TOOL_ID;
+        let descriptor = self.catalog.resolve_available(id)?;
+        (self.tool_authorized_by_host_policy(id) && descriptor.exposure.is_model_visible())
+            .then(|| discovery_tool_schema(descriptor))
+    }
+
     pub fn code_mode_discoverable(&mut self) -> bool {
         self.refresh_current_turn_available_tool_ids();
         ["tool_search", "code_mode_exec", "code_mode_wait"].iter()

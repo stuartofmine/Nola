@@ -543,13 +543,17 @@ pub(super) fn execute<R: ConversationCommandRepositories>(
         ApplicationCommand::EncodeHostWorkerIdentity { identity } =>
             encode_application_result(identity.lease_identity()?),
         ApplicationCommand::ValidateRunRecoveryAuthority { conversation_id, expected_run_id,
-            assistant_message_id, expected_invocation_config_digest, current } =>
+            assistant_message_id, expected_invocation_config_digest, current } => {
+            crate::expert_peer_task::validate_expert_run_recovery(store,&conversation_id,&expected_run_id)?;
             encode_application_result(crate::validate_run_recovery_authority(store, conversation_id,
-                expected_run_id, assistant_message_id, expected_invocation_config_digest, current)?),
+                expected_run_id, assistant_message_id, expected_invocation_config_digest, current)?)
+        },
         ApplicationCommand::ValidateMobileRunRecoveryAuthority { conversation_id, expected_run_id,
-            assistant_message_id, expected_invocation_config_digest, current } =>
+            assistant_message_id, expected_invocation_config_digest, current } => {
+            crate::expert_peer_task::validate_expert_run_recovery(store,&conversation_id,&expected_run_id)?;
             encode_application_result(crate::run_recovery_authority::validate_mobile_run_recovery_authority(store, conversation_id,
-                expected_run_id, assistant_message_id, expected_invocation_config_digest, current)?),
+                expected_run_id, assistant_message_id, expected_invocation_config_digest, current)?)
+        },
         ApplicationCommand::LoadExactRunInvocation {
             conversation_id,
             expected_run_id,
@@ -904,6 +908,13 @@ pub(super) fn execute<R: ConversationCommandRepositories>(
                     agent_room::submissions(&store.product_setting_repository(), &room_id, limit, offset)?),
                 AgentRoomCommand::List { limit, offset } => encode_application_result(
                     agent_room::list(&store.product_setting_repository(), limit, offset)?),
+                AgentRoomCommand::ChildHistory {conversation_id,child_conversation_id,before_ordinal,limit,content_byte_limit} => encode_application_result(
+                    agent_room::child_history(store,conversation_id,child_conversation_id,before_ordinal,limit,content_byte_limit)?),
+                AgentRoomCommand::PeerExchanges {conversation_id,limit,offset} => store.with_consistent_read(|reader|
+                    encode_application_result(crate::expert_peer::list_views(reader,&conversation_id,limit,offset)?)),
+                AgentRoomCommand::ChildConversations {conversation_id,limit,offset} => encode_application_result(
+                    agent_room::child_conversations(store,conversation_id,limit,offset)?),
+                AgentRoomCommand::RoleTemplates => encode_application_result(crate::expert_roles::catalog()),
                 AgentRoomCommand::Directory => encode_application_result(
                     crate::persistent_agent::load(&store.product_setting_repository())?),
                 AgentRoomCommand::ConfigureAgent { input } => encode_application_result(
@@ -913,6 +924,7 @@ pub(super) fn execute<R: ConversationCommandRepositories>(
                 AgentRoomCommand::Read { room_id } => encode_application_result(
                     agent_room::load(&store.product_setting_repository(), &room_id)?),
                 AgentRoomCommand::Join { input } => encode_application_result(agent_room::join(store, input)?),
+                AgentRoomCommand::Rejoin { input } => encode_application_result(agent_room::rejoin(store, input)?),
                 AgentRoomCommand::Deactivate { room_id, participant_id, expected_revision, at_ms } => encode_application_result(
                     agent_room::deactivate(&mut store.product_setting_repository(), &room_id, &participant_id, expected_revision, at_ms)?),
             }
@@ -1264,6 +1276,11 @@ pub(super) fn execute<R: ConversationCommandRepositories>(
                     .load_conversation_settings(&conversation_id)
                     .map_err(|error| error.to_string())?,
             )
+        }
+        ApplicationCommand::ListRootConversations { query } => {
+            let values: Vec<ConversationSummary> = store.list_root_conversation_page(&query)
+                .map_err(|e|e.to_string())?.into_iter().map(Into::into).collect();
+            encode_application_result(values)
         }
         ApplicationCommand::ListConversations { query } => {
             let conversations: Vec<ConversationSummary> = store

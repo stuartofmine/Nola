@@ -38,6 +38,16 @@ final class MacAttachmentPasteTextView: NSTextView {
         layout.drawGlyphs(forGlyphRange: layout.glyphRange(for: hintContainer), at: textContainerOrigin)
     }
 
+    func configureComposerTypography() {
+        let inputFont = NSFont.systemFont(ofSize: 16)
+        font = inputFont
+        let naturalLineHeight = NSLayoutManager().defaultLineHeight(for: inputFont)
+        textContainerInset = NSSize(width: 0, height: max(5, (36 - naturalLineHeight) / 2))
+        let paragraph = NSMutableParagraphStyle()
+        defaultParagraphStyle = paragraph
+        typingAttributes[.paragraphStyle] = paragraph
+    }
+
     var attachmentPasteHandler: (() -> Bool)?
     var attachmentDropHandler: ((NSPasteboard) -> Bool)?
     var submitHandler: (() -> Void)?
@@ -161,7 +171,6 @@ private struct MacComposerTextEditor: NSViewRepresentable {
             width: CGFloat.greatestFiniteMagnitude,
             height: CGFloat.greatestFiniteMagnitude
         )
-        textView.textContainerInset = NSSize(width: 0, height: 5)
         textView.textContainer?.lineFragmentPadding = 0
         textView.placeholder = String(localized: "Message Nola")
         textView.textContainer?.widthTracksTextView = true
@@ -169,12 +178,7 @@ private struct MacComposerTextEditor: NSViewRepresentable {
             width: 0,
             height: CGFloat.greatestFiniteMagnitude
         )
-        textView.font = .systemFont(ofSize: 16)
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.minimumLineHeight = 26
-        paragraph.maximumLineHeight = 26
-        textView.defaultParagraphStyle = paragraph
-        textView.typingAttributes[.paragraphStyle] = paragraph
+        textView.configureComposerTypography()
         textView.string = text
         context.coordinator.conversationID = conversationID
         textView.attachmentPasteHandler = onPasteAttachments
@@ -280,6 +284,8 @@ struct MacComposerView: View {
     var mentionCommand: (String) -> Bool = { _ in false }
     var localCommand: () -> Bool = { false }
     @State private var fileImporterPresented = false
+    @State private var fileImporterConversationID: String?
+    @State private var fileImportFailure: (conversationID: String, message: String)?
     @State private var dropTargeted = false
     @State private var voiceInput = MacVoiceInputService()
     @State private var isSendHovering = false
@@ -291,6 +297,10 @@ struct MacComposerView: View {
     var body: some View {
         VStack(spacing: 8) {
             inputSurface
+            if let failure = fileImportFailure, failure.conversationID == state.conversationID {
+                MacInlineNotice(message: failure.message, kind: .failure, dismiss: { fileImportFailure = nil })
+                    .accessibilityIdentifier("chat.attachments.import-error")
+            }
             if let error = voiceInput.errorMessage {
                 Text(error)
                     .font(.caption)
@@ -330,12 +340,21 @@ struct MacComposerView: View {
             allowedContentTypes: [.item],
             allowsMultipleSelection: true
         ) { result in
-            if case .success(let urls) = result {
+            // The picker belongs to the draft that opened it, even if a
+            // keyboard/menu navigation changes the selected conversation.
+            guard let conversationID = fileImporterConversationID else { return }
+            fileImporterConversationID = nil
+            switch result {
+            case .success(let urls):
                 Task { @MainActor in
                     await Task.yield()
                     guard !Task.isCancelled else { return }
-                    actions.perform(.importFiles(conversationID: state.conversationID, urls: urls))
+                    actions.perform(.importFiles(conversationID: conversationID, urls: urls))
                 }
+            case .failure(let error):
+                let failure = error as NSError
+                guard failure.domain != NSCocoaErrorDomain || failure.code != NSUserCancelledError else { return }
+                fileImportFailure = (conversationID, error.localizedDescription)
             }
         }
         .onDrop(
@@ -476,6 +495,8 @@ struct MacComposerView: View {
     private var inputRow: some View {
         HStack(alignment: .center, spacing: 9) {
             Button {
+                fileImportFailure = nil
+                fileImporterConversationID = state.conversationID
                 fileImporterPresented = true
             } label: {
                 Image(systemName: "plus")
@@ -520,6 +541,7 @@ struct MacComposerView: View {
                 .accessibilityLabel(String(localized: "Message Nola"))
             }
             .frame(minHeight: 30, maxHeight: 132, alignment: .center)
+            .fixedSize(horizontal: false, vertical: true)
 
             Button {
                 if voiceInput.isRecording || voiceInput.isStarting {
@@ -686,8 +708,8 @@ struct MacComposerView: View {
     }
 
     private var composerStrokeColor: Color {
-        if dropTargeted { return .accentColor }
-        if composerFocused.wrappedValue { return .accentColor }
+        if dropTargeted { return MacDesignColor.brand }
+        if composerFocused.wrappedValue { return MacDesignColor.brand }
         return MacDesignColor.controlOutline
     }
 

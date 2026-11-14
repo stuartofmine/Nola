@@ -609,7 +609,7 @@ class ModelsViewModel @Inject constructor(
             try {
                 val normalizedUrl = com.nola.data.remote.api.normalizeWebHostBaseUrl(url)
                 val savedOrigin = prefs.webHostBaseUrl.first()
-                val previousIdentity = if (sameWebHostOrigin(savedOrigin, normalizedUrl)) prefs.webHostIdentity.first() else ""
+                val previousIdentity = if (sameWebHostDestination(savedOrigin, normalizedUrl)) prefs.webHostIdentity.first() else ""
                 val settings = kotlinx.coroutines.withTimeout(15_000) { webHostApi.getAgentSettings(
                         hostBaseUrl = normalizedUrl,
                         token = token.trim(),

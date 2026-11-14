@@ -19,6 +19,8 @@
 | Room participant | 某 Room 的成员实例；相同 Agent 在不同 Room 不共享私有 context | 每个 participant 独立 context Conversation + ContextOwner；公开 Room 时间线是另一个读取范围 |
 | Host / executor | 执行已提交的模型、工具和取消效果；报告可核对的物理事实 | 不自行写业务终态、不把进程退出或口头完成当 seal；凭据留在 Host 私有配置 |
 
+专家是固定角色、持久子会话的 Subagent；两者须复用 Task 的准入、执行、取消、恢复与结果回传。差别只在配置和上下文选择。专家互调不得另建执行器；现有 Room 接入向共享 Task worker 的收敛边界与未完成项见[统一执行契约](EXPERT_SUBAGENT_EXECUTION.md)。
+
 ```mermaid
 flowchart TD
     Profile[配置模板] -->|准入冻结| Run[执行尝试 Run / Turn]

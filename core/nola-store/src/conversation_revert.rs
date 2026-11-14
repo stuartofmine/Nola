@@ -11,6 +11,16 @@ const VISIBLE: &str = "COALESCE((SELECT e.visible FROM message_projection_events
     ORDER BY o.resulting_revision DESC LIMIT 1),1)=1";
 impl ConversationRevertRepository for NolaStore {
     type Error = StoreError;
+    fn prepared_in_place_resend(&self, operation_id: &str) -> StoreResult<Option<nola_domain::edited_resend::PreparedInPlaceResend>> {
+        crate::edited_resend::read(&self.connection, &format!("edited_resend/in_place/{operation_id}"))
+    }
+    fn put_prepared_in_place_resend(&mut self, prepared: &nola_domain::edited_resend::PreparedInPlaceResend) -> StoreResult<()> {
+        if !self.has_write_unit_of_work() {
+            return Err(StoreError::Conflict("in-place resend requires a transaction".into()));
+        }
+        crate::edited_resend::write_immutable(&self.connection,
+            &format!("edited_resend/in_place/{}", prepared.input.operation_id), prepared, prepared.input.created_at_ms)
+    }
     fn commit_checkpoint_projection(
         &mut self,
         input: &nola_store_port::conversation_revert::CommitCheckpointProjectionInput,

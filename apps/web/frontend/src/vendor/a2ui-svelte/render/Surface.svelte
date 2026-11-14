@@ -2,7 +2,7 @@
     import { untrack } from 'svelte';
     import { locale, t } from '../../../lib/i18n';
     import type { UiSnapshot, UiInteraction, UiActionRef, UiEdit, UiSubmissionOutcome } from '../../../lib/generativeUi';
-    import { readUiDraftState, saveUiDraftState, restoreUiAttempt, persistUiAttempt, retireUiAttempt } from '../../../lib/uiDraftSession';
+    import { readUiDraftState, saveUiDraftState, restoreUiAttempt, persistUiAttempt, retireUiAttempt, draftStateFromAttempt } from '../../../lib/uiDraftSession';
     import { uiIdentityKey, previewUiSurface, validateUiDraftPreview } from '../../../lib/generativeUi';
     import type { UiDraftPreviewInput, UiDraftPreview } from '../../../lib/generativeUi';
     import { provideProjection } from './context';
@@ -22,6 +22,8 @@
     let draftRevision = $state<number | null>(restored?.revision ?? null);
     let pending = $state(false);
     let restoring = $state(rememberEdits);
+    let restoreFailed = $state(false);
+    let restoreRetry = $state(0);
     let composing = $state(false);
     let failure = $state('');
     let draftGeneration = $state(1);
@@ -30,8 +32,8 @@
     let previewFailure = $state('');
     const hasDrafts = $derived(Object.keys(drafts).length > 0);
     const staleDraft = $derived(hasDrafts && draftRevision !== snapshot.revision);
-    const previewReady = () => !hasDrafts || validatedGeneration === draftGeneration
-        && previewSnapshot?.revision === snapshot.revision && draftRevision === snapshot.revision;
+    const previewReady = () => !readOnly && snapshot.phase === 'ready' && (!hasDrafts || validatedGeneration === draftGeneration
+        && previewSnapshot?.revision === snapshot.revision && draftRevision === snapshot.revision);
     const renderedSnapshot = () => hasDrafts && previewReady() && previewSnapshot ? previewSnapshot : snapshot;
     // Drafts remain local. Only Core evaluates checks; no action or edit is
     // committed by this cancellable projection request.
@@ -80,12 +82,26 @@
     });
     $effect(() => {
         if (!rememberEdits) return;
+        restoreRetry;
         let mounted = true;
+        restoring = true;
+        restoreFailed = false;
         void restoreUiAttempt(mountedIdentity).then(value => {
             if (!mounted) return;
-            if (value) unresolved = value;
+            if (value) {
+                const recovered = draftStateFromAttempt(value);
+                drafts = recovered.drafts;
+                draftRevision = recovered.revision;
+                unresolved = recovered.unresolved;
+            }
             restoring = false;
-        }).catch(error => { if (mounted) failure = error instanceof Error ? error.message : String(error); });
+            failure = '';
+        }).catch(error => {
+            if (mounted) {
+                restoreFailed = true;
+                failure = error instanceof Error ? error.message : String(error);
+            }
+        });
         return () => { mounted = false; };
     });
     const active = () => uiIdentityKey(snapshot.identity) === mountedIdentity;
@@ -96,6 +112,7 @@
         actionsDisabled: () => composing || !previewReady(),
         disabled,
         value: (id, binding, committed) => {
+            if (readOnly || snapshot.phase !== 'ready') return committed;
             const draft = drafts[editKey(id, binding)];
             return draft?.type === 'set' ? draft.value : committed;
         },
@@ -113,7 +130,7 @@
         const valid = Object.values(drafts).every(edit =>
             Object.hasOwn(snapshot.nodes[edit.instance_id]?.bindings ?? {}, edit.binding));
         if (!valid) {
-            previewFailure = '表单已更新，部分编辑项不再存在。你的编辑已保留，请确认后放弃编辑。';
+            previewFailure = t($locale, 'a2ui.fieldsRemoved');
             return;
         }
         // The user explicitly confirms the new revision. Keep all values;
@@ -143,9 +160,9 @@
     }
     async function submit(action: UiActionRef) {
         if (disabled() || !previewReady()) return;
-        if (composing) { failure = '请先完成当前输入法输入，再提交表单。'; return; }
+        if (composing) { failure = t($locale, 'a2ui.finishComposition'); return; }
         if (draftRevision !== null && draftRevision !== snapshot.revision) {
-            failure = '表单已更新。你的编辑已保留，请刷新并确认后重新填写。';
+            failure = t($locale, 'a2ui.staleDraft');
             return;
         }
         const edits = Object.values(drafts);
@@ -196,20 +213,21 @@
         <Node id={snapshot.root_instance_id} />
     {:else if snapshot.summary}<p>{snapshot.summary}</p>{/if}
     {#if failure}<p role="alert">{failure}</p>{/if}
-    {#if staleDraft}<p role="status">表单已更新。你的编辑已保留，请确认后重新校验。</p>{/if}
-    {#if previewFailure}<p role="alert">草稿校验未完成：{previewFailure}</p>{/if}
-    {#if previewFailure || staleDraft}
-        <button type="button" disabled={disabled() || composing} onclick={revalidateDrafts}>重新校验</button>
+    {#if !readOnly && restoreFailed}<button type="button" onclick={() => restoreRetry++}>{t($locale, 'a2ui.restoreRetry')}</button>{/if}
+    {#if !readOnly && snapshot.phase === 'ready' && staleDraft}<p role="status">{t($locale, 'a2ui.staleDraft')}</p>{/if}
+    {#if previewFailure}<p role="alert">{t($locale, 'a2ui.previewFailed', {message: previewFailure})}</p>{/if}
+    {#if !readOnly && snapshot.phase === 'ready' && (previewFailure || staleDraft)}
+        <button type="button" disabled={disabled() || composing} onclick={revalidateDrafts}>{t($locale, 'a2ui.revalidate')}</button>
     {/if}
-    {#if !unresolved && (failure || draftRevision !== null && draftRevision !== snapshot.revision)}
+    {#if !readOnly && snapshot.phase === 'ready' && !restoring && !unresolved && (failure || draftRevision !== null && draftRevision !== snapshot.revision)}
         <div class="recovery-actions">
-            <button type="button" disabled={pending} onclick={() => void refresh()}>刷新表单（保留编辑）</button>
+            <button type="button" disabled={pending} onclick={() => void refresh()}>{t($locale, 'a2ui.refresh')}</button>
             {#if Object.keys(drafts).length}
-                <button type="button" disabled={pending} onclick={discardDrafts}>放弃编辑，使用当前值</button>
+                <button type="button" disabled={pending} onclick={discardDrafts}>{t($locale, 'a2ui.discardEdits')}</button>
             {/if}
         </div>
     {/if}
-    {#if !readOnly && unresolved && (snapshot.phase === 'ready' || snapshot.phase === 'pending')}<button type="button" disabled={pending} onclick={() => { if (unresolved) void deliver(unresolved); }}>查询提交结果</button>{/if}
+    {#if !readOnly && unresolved && (snapshot.phase === 'ready' || snapshot.phase === 'pending')}<button type="button" disabled={pending} onclick={() => { if (unresolved) void deliver(unresolved); }}>{t($locale, 'a2ui.checkSubmission')}</button>{/if}
 </section>
 <style>
     .nola-generative-surface {

@@ -19,6 +19,9 @@ actor IOSChildRunHost {
     private var started = false
     private var operations: [String: Task<Void, Error>] = [:]
     private var requestedStops: Set<String> = []
+    private var operationFailure: Error?
+    private var fatalOperationFailure: Error?
+    private var unconfirmedReplies: Set<String> = []
 
     init(pump: AppleChildPump, executor: DeviceAgentCoordinator,
          conversationID: String, runID: String, coreSessionID: String, config: AgentCoreRuntimeConfig) {
@@ -37,6 +40,7 @@ actor IOSChildRunHost {
                 while !Task.isCancelled {
                     let data = try await Task.detached { try pump.poll() }.value
                     let polled = try JSONDecoder().decode(Poll.self, from: data)
+                    if let fatalOperationFailure { throw fatalOperationFailure }
                     if let identity {
                         guard identity == polled.pump_id else { throw AppleChildPump.TransportError.malformed }
                     } else { identity = polled.pump_id }
@@ -53,7 +57,8 @@ actor IOSChildRunHost {
                 pump.close()
                 for task in operations.values { task.cancel() }
                 for task in operations.values { _ = await task.result }
-                throw error
+                try await executor.stopChildPhysicalModels(conversationID: conversationID, runID: runID, coreSessionID: coreSessionID)
+                throw operationFailure ?? error
             }
         } onCancel: { pump.close() }
     }
@@ -74,23 +79,38 @@ actor IOSChildRunHost {
                             let response: AgentCoreJSONValue
                         }
                         let data = try JSONEncoder().encode(Reply(pump_id: pumpID, ticket: request.ticket, response: response))
-                        try await Task.detached { try pump.respond(data) }.value
+                        do { try await Task.detached { try pump.respond(data) }.value }
+                        catch {
+                            await self.recordUnconfirmedReply(effect)
+                            throw error
+                        }
                     }
             } catch {
                 // A requested stop still needs the executor's concrete local
                 // witness and Core CancelConfirmed ACK. Task cancellation alone
                 // never settles the effect or closes the shared mailbox.
-                if !requestedStops.contains(effect) { pump.close() }
+                if !requestedStops.contains(effect) {
+                    // The committed driver may be draining a precise Cancel
+                    // after aborting this delivery. Only the owner loop closes
+                    // the transport; one operation cannot close its siblings.
+                    operationFailure = error
+                    if !unconfirmedReplies.contains(effect) { fatalOperationFailure = error }
+                }
                 throw error
             }
         }
     }
 
+    private func recordUnconfirmedReply(_ effect: String) { unconfirmedReplies.insert(effect) }
+
     private func stopTarget(_ effect: String) async throws {
-        guard let task = operations[effect] else { return }
         requestedStops.insert(effect)
-        task.cancel()
-        _ = await task.result
+        if let task = operations[effect] {
+            task.cancel()
+            _ = await task.result
+        }
+        try await executor.stopChildPhysicalModel(effectID: effect, conversationID: conversationID,
+            runID: runID, coreSessionID: coreSessionID)
     }
 
     private func joinOperations() async throws {

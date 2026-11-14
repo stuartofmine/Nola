@@ -264,6 +264,14 @@ fn store_does_not_depend_on_application_or_runtime() {
 }
 
 #[test]
+fn update_host_does_not_depend_on_store_application_or_core() {
+    assert_excludes(
+        "core/nola-update-host/Cargo.toml",
+        &["nola_store", "nola_application", "nola_core", "rusqlite"],
+    );
+}
+
+#[test]
 fn runtime_driver_does_not_own_store_or_application() {
     assert_excludes(
         "core/nola-runtime-driver/Cargo.toml",

@@ -5,9 +5,15 @@ use crate::*;
 
 impl ApplicationCommand {
     pub fn is_read_only_query(&self) -> bool {
+        if let Self::AgentRoom {command}=self {return command.is_read_only_query();}
+        if let Self::AgentRoomAtSource {command,..}=self {return command.is_read_only_query();}
+        if let Self::ExpertPeerTaskAction { input, .. } = self {
+            return matches!(&input.request.payload, nola_agent_engine::agent::host::HostRequest::ExecuteTool { input, .. } if matches!(input.get("action").and_then(serde_json::Value::as_str), Some("directory"|"read"|"wait")));
+        }
         matches!(
             self,
-            Self::ReadUiSurface { .. }
+            Self::ExportRemoteExpertParentAdmission { .. }
+                | Self::ReadUiSurface { .. }
                 | Self::ReadUiSurfaceChanges { .. }
                 | Self::PreviewUiSurface { .. }
                 | Self::ReadUiSurfaceRevision { .. }
@@ -17,7 +23,7 @@ impl ApplicationCommand {
                 | Self::ArchiveDirectoryRevision { .. }
                 | Self::StepCompactionSummary { .. }
                 | Self::EvaluateCompactionMaintenance { .. }
-                | Self::AgentRoom { command: crate::agent_room::AgentRoomCommand::Directory | crate::agent_room::AgentRoomCommand::Read { .. } | crate::agent_room::AgentRoomCommand::List { .. } | crate::agent_room::AgentRoomCommand::Submission { .. } | crate::agent_room::AgentRoomCommand::Submissions { .. } | crate::agent_room::AgentRoomCommand::ExecutionIntent { .. } | crate::agent_room::AgentRoomCommand::ForConversation { .. } }
+                | Self::AgentRoom { command: crate::agent_room::AgentRoomCommand::Directory | crate::agent_room::AgentRoomCommand::ChildConversations { .. } | crate::agent_room::AgentRoomCommand::PeerExchanges { .. } | crate::agent_room::AgentRoomCommand::ChildHistory { .. } | crate::agent_room::AgentRoomCommand::RoleTemplates | crate::agent_room::AgentRoomCommand::Read { .. } | crate::agent_room::AgentRoomCommand::List { .. } | crate::agent_room::AgentRoomCommand::Submission { .. } | crate::agent_room::AgentRoomCommand::Submissions { .. } | crate::agent_room::AgentRoomCommand::ExecutionIntent { .. } | crate::agent_room::AgentRoomCommand::ForConversation { .. } }
                 | Self::AuxiliaryInvocation { command: nola_domain::AuxiliaryInvocationCommand::Inspect { .. } }
                 | Self::AuxiliaryInvocation { command: nola_domain::AuxiliaryInvocationCommand::InspectSource { .. } }
                 | Self::LoadAuxiliarySourceSlot { .. }
@@ -96,6 +102,7 @@ impl ApplicationCommand {
                 | Self::SearchConversationText { .. }
                 | Self::QueryCanonicalHistory { .. }
                 | Self::LoadConversationProjectionV1 { .. }
+                | Self::LoadExpertPeerForEffect{..} | Self::ReadExpertExchangeCapability | Self::DeriveExpertPeerAuthority{..} | Self::ExpertPeerDirectory { .. } | Self::PreviewExpertPeer { .. } | Self::LoadExpertPeer { .. } | Self::LoadExpertPeerForSubmission { .. }
                 | Self::PreviewExpertTemplateCapture { .. }
                 | Self::LoadPreparedExpertResend { .. }
                 | Self::LoadExpertMessageManifest { .. }
@@ -112,6 +119,7 @@ impl ApplicationCommand {
                 | Self::LoadConversationProjectionWindowUpdateV1 { .. }
                 | Self::LoadConversationTailSnapshotV1 { .. }
                 | Self::LoadConversationSettings { .. }
+                | Self::ListRootConversations { .. }
                 | Self::ListConversations { .. }
                 | Self::EffectivePermissionGrants { .. }
                 | Self::ListPermissionGrants { .. }
@@ -251,6 +259,111 @@ impl ApplicationCommand {
                             | AutomationRunCommand::List { .. }
                     }
                 }
+        )
+    }
+
+    /// Returns `true` only for Tier 1 read-only queries whose execution in
+    /// `ApplicationRuntime::execute` is strictly supervisor-independent and
+    /// upload-staging-independent, reading solely from the committed `NolaStore`.
+    ///
+    /// Commands that consult `RuntimeSupervisor` (hot active runs, deferred
+    /// streaming deltas, permission projections, cancellation delivery facts,
+    /// goal/host execution state) or `content_upload_store` return `false` and
+    /// always serialize through the writer runtime.
+    pub fn can_execute_on_read_replica(&self) -> bool {
+        if !self.is_read_only_query() {
+            return false;
+        }
+        matches!(
+            self,
+            Self::ListConversations { .. }
+                | Self::ListRootConversations { .. }
+                | Self::LoadConversation { .. }
+                | Self::LoadConversationMetadata { .. }
+                | Self::LoadConversationSettings { .. }
+                | Self::LoadConversationProjectionV1 { .. }
+                | Self::LoadConversationProjectionPageV1 { .. }
+                | Self::LoadConversationProjectionWindowV1 { .. }
+                | Self::LoadConversationProjectionWindowUpdateV1 { .. }
+                | Self::LoadConversationTailSnapshotV1 { .. }
+                | Self::LoadConversationTaskProjectionV1 { .. }
+                | Self::LoadConversationContextUsageV1 { .. }
+                | Self::LocalRunContextUsage { .. }
+                | Self::LoadConversationExportPage { .. }
+                | Self::LoadCompactionLineage { .. }
+                | Self::ReadHistoricalPart { .. }
+                | Self::ReadConversationPartDerivation { .. }
+                | Self::ReadConversationToolSources { .. }
+                | Self::ReadConversationToolSourceRange { .. }
+                | Self::ReadCodeCellObservation { .. }
+                | Self::ReadCodeCellHistoryForEffect { .. }
+                | Self::ReadConversationExportRange { .. }
+                | Self::ReadConversationTextRange { .. }
+                | Self::SearchConversationText { .. }
+                | Self::QueryCanonicalHistory { .. }
+                | Self::ReadConversationResource { .. }
+                | Self::ListConversationResources { .. }
+                | Self::ReadAssistantJournal { .. }
+                | Self::LocalAssistantJournalHead { .. }
+                | Self::LocalRunAssistantJournalHeads { .. }
+                | Self::LocalAssistantRunTerminalSeal { .. }
+                | Self::LocalRunMessageAdmissionHead { .. }
+                | Self::ReadRunMessageAdmissions { .. }
+                | Self::RunMessageAdmissionReceptionState { .. }
+                | Self::ReadLocalAssistantRunTerminalManifest { .. }
+                | Self::ReadAssistantJournalRange { .. }
+                | Self::ReadAssistantJournalParts { .. }
+                | Self::ReadAssistantJournalPartChanges { .. }
+                | Self::ReadAssistantJournalManifest { .. }
+                | Self::ReadAssistantJournalChunk { .. }
+                | Self::ReadAssistantJournalRecordChunk { .. }
+                | Self::NextAssistantJournalContent { .. }
+                | Self::AssistantJournalReceptionState { .. }
+                | Self::ReadUiSurface { .. }
+                | Self::ReadUiSurfaceChanges { .. }
+                | Self::PreviewUiSurface { .. }
+                | Self::ReadUiSurfaceRevision { .. }
+                | Self::ListUiSurfaces { .. }
+                | Self::ReadUiAuthority
+                | Self::ReadUiCapability
+                | Self::GetProductSetting { .. }
+                | Self::LoadTodayFacts { .. }
+                | Self::ActiveRun { .. }
+                | Self::CanonicalRunTerminal { .. }
+                | Self::ListOpenUserInputWaits { .. }
+                | Self::LoadUserInputWait { .. }
+                | Self::ListOwnedTaskUserInputWaits { .. }
+                | Self::EffectivePermissionGrants { .. }
+                | Self::ListPermissionGrants { .. }
+                | Self::ListReadableExpertTemplates { .. }
+                | Self::ResolveModelReasoning { .. }
+                | Self::ResolveRemoteModelProfile { .. }
+                | Self::QueryAutomationOccurrences { .. }
+                | Self::ResolveChatModel { .. }
+                | Self::ResolveEffectiveModelParameters { .. }
+                | Self::LoadAuxiliarySourceSlot { .. }
+                | Self::LoadAuxiliaryOperation { .. }
+                | Self::ListConversationAuxiliarySources { .. }
+                | Self::AuxiliaryInvocation { .. }
+                | Self::AgentRoom { .. }
+                | Self::Skill { .. }
+                | Self::Mcp { .. }
+                | Self::Plugin { .. }
+                | Self::DataSource { .. }
+                | Self::DocumentSource { .. }
+                | Self::Memory { .. }
+                | Self::Model { .. }
+                | Self::ConversationPlan { .. }
+                | Self::RuntimeTask { .. }
+                | Self::SopRun { .. }
+                | Self::WorkStepTransaction { .. }
+                | Self::PermissionRequest { .. }
+                | Self::Automation { .. }
+                | Self::ListWorkspaceCheckpoints { .. }
+                | Self::PendingSyncChanges { .. }
+                | Self::GetSyncCursor { .. }
+                | Self::ArchiveDirectoryRevision { .. }
+                | Self::ArchiveRestoreProgress { .. }
         )
     }
 }
@@ -498,5 +611,64 @@ mod tests {
             nola_protocol::CommandMetadata::wire_command_name(&lineage),
             "load_compaction_lineage"
         );
+    }
+
+    #[test]
+    fn read_replica_classification_isolates_supervisor_independent_queries() {
+        // Tier 1 supervisor-independent committed Store queries return true.
+        for command in [
+            json!({"type":"list_conversations","query":{"project_root":null,"non_empty":true,"limit":32,"offset":0}}),
+            json!({"type":"get_product_setting","key":"theme"}),
+            json!({"type":"load_conversation_projection_window_v1","conversation_id":"conv-1","before_ordinal":null,"limit":20,"content_byte_limit":65536}),
+            json!({"type":"skill","command":{"type":"list"}}),
+            json!({"type":"mcp","command":{"type":"list"}}),
+            json!({"type":"model","command":{"type":"list_profiles"}}),
+            json!({"type":"runtime_task","command":{"type":"latest_event_cursor"}}),
+        ] {
+            let decoded: ApplicationCommand = serde_json::from_value(command).unwrap();
+            assert!(decoded.is_read_only_query());
+            assert!(
+                decoded.can_execute_on_read_replica(),
+                "{} must be eligible for read-only replica execution",
+                nola_protocol::CommandMetadata::wire_command_name(&decoded)
+            );
+        }
+
+        // Supervisor-consulting, upload-consulting, and mutating commands return false.
+        for decoded in [
+            ApplicationCommand::LoadHostExecutionState {
+                conversation_id: "conv-1".into(),
+            },
+            ApplicationCommand::LoadCommittedHostRequests {
+                run_id: "run-1".into(),
+            },
+            ApplicationCommand::LoadSessionGoalProjection {
+                conversation_id: "conv-1".into(),
+            },
+            ApplicationCommand::ReadPermissionConfiguration {
+                conversation_id: "conv-1".into(),
+                source_host_id: None,
+                client_id: None,
+                unresolved_run_ids: Vec::new(),
+                source_unconfirmed: false,
+                minimum_policy_revision: None,
+            },
+            ApplicationCommand::LoadConversationPermissionProjectionV1 {
+                conversation_id: "conv-1".into(),
+                run_id: "run-1".into(),
+                scope: PermissionProjectionReadScope::CurrentRun,
+            },
+            ApplicationCommand::PutProductSetting {
+                key: "theme".into(),
+                value_json: "\"dark\"".into(),
+                updated_at_ms: 1,
+            },
+        ] {
+            assert!(
+                !decoded.can_execute_on_read_replica(),
+                "{} must NOT execute on a read-only replica",
+                nola_protocol::CommandMetadata::wire_command_name(&decoded)
+            );
+        }
     }
 }

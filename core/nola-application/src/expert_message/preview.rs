@@ -6,22 +6,26 @@ use crate::expert_template_capture::{
 };
 use nola_store_port::room_presentation::{RoomPresentationKey, RoomPresentationRepository};
 
-pub(super) struct CaptureInputs {
+pub(crate) struct CaptureInputs {
     pub parent: nola_store_port::conversation_history::StoredConversation,
     pub participants: Vec<CaptureParticipant>,
 }
-pub(super) struct CaptureParticipant {
+pub(crate) struct CaptureParticipant {
     pub preview: ExpertTemplateCapturePreviewEntry,
     pub display_name: String,
     pub description: String,
 }
-pub(super) fn resolve<S>(
-    store: &S,
-    input: &AdmitExpertConversationMessage,
-) -> Result<CaptureInputs, String>
-where
-    S: ExpertMessageRepository + ConversationProjectionRepository + RoomPresentationRepository,
-{
+pub(crate) fn resolve<S>(store: &S, input: &AdmitExpertConversationMessage) -> Result<CaptureInputs, String>
+where S: ExpertMessageRepository + ConversationProjectionRepository + RoomPresentationRepository {
+    resolve_with_parent_policy(store, input, false)
+}
+pub(crate) fn resolve_peer<S>(store: &S, input: &AdmitExpertConversationMessage) -> Result<CaptureInputs, String>
+where S: ExpertMessageRepository + ConversationProjectionRepository + RoomPresentationRepository {
+    resolve_with_parent_policy(store, input, true)
+}
+fn resolve_with_parent_policy<S>(store: &S, input: &AdmitExpertConversationMessage, peer: bool) -> Result<CaptureInputs, String>
+where S: ExpertMessageRepository + ConversationProjectionRepository + RoomPresentationRepository {
+
     if store
         .conversation_source_owner(&input.conversation_id)
         .map_err(|e| e.to_string())?
@@ -40,7 +44,7 @@ where
     {
         return Err("expert_message_requires_ordinary_parent_owner".into());
     }
-    if store
+    if !peer && store
         .active_run(&input.conversation_id)
         .map_err(|e| e.to_string())?
         .is_some()
@@ -189,14 +193,20 @@ where
             .cloned()
             .unwrap_or(serde_json::Value::Null);
         frozen["modelSelectionID"] = serde_json::Value::String(selection.clone());
+        crate::expert_roles::apply_reasoning_preference(&mut frozen, &selection)?;
+        if frozen.get("expertReasoningEffort").and_then(|value| value.as_str())
+            .is_some_and(|effort| effort != "automatic") && profile.runtime != "remote" {
+            return Err("expert_reasoning_effort_requires_declared_remote_model".into());
+        }
+        let effective_parameters = crate::effective_model_parameters::resolve_profile_parameters(
+            profile, &frozen, &selection,
+        )?;
         participants.push(CaptureParticipant {
             preview: ExpertTemplateCapturePreviewEntry {
                 participant: reference.clone(),
                 context_configuration_revision: context.configuration_revision,
                 defaults: AgentDefaults::try_from(frozen)?,
-                effective_parameters: crate::effective_model_parameters::resolve_profile_parameters(
-                    profile, &settings, &selection,
-                )?,
+                effective_parameters,
                 client_model_presentation,
                 model_declaration: ExpertModelDeclaration {
                     profile_id: profile.id.clone(),

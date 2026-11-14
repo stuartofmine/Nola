@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { confirmInPlaceCompletion, type InPlaceResendCompletion } from '../lib/inPlaceResend.ts';
     import { onDestroy, tick } from 'svelte';
     import ActionDisclosure from './ActionDisclosure.svelte';
     import ChatMessageEditDialog from './ChatMessageEditDialog.svelte';
@@ -13,7 +14,7 @@
         message: TimelineMessage; ownerKey: string; busy?: boolean; selected?: boolean; onselect?: () => void;
         onoperation?: (operation: 'branch' | 'truncate', messageId: string) => void | Promise<string | void>;
         editSource?: EditedResendSourceSnapshot;
-        oneditresend?: (draft: EditedResendDraft) => Promise<EditedResendCompletion | EditedExpertResendCompletion>;
+        oneditresend?: (draft: EditedResendDraft) => Promise<EditedResendCompletion | EditedExpertResendCompletion | InPlaceResendCompletion>;
         ownerCurrent?: () => boolean;
     } = $props();
     let editing = $state<{ownerKey:string; sourceKey:string; draft:EditedResendDraft} | null>(null);

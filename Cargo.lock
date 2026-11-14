@@ -2715,7 +2715,6 @@ dependencies = [
  "nola_host_protocol",
  "nola_kernel",
  "nola_mcp_host",
- "nola_model_runtime_host",
  "nola_protocol",
  "nola_runtime_driver",
  "nola_store",
@@ -2847,7 +2846,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.21.7",
  "hex",
- "nola_store",
+ "nola_domain",
  "reqwest",
  "ring",
  "serde",

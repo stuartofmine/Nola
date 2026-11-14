@@ -68,3 +68,11 @@ test('all seven locale catalogs have identical complete keys and placeholders', 
         for (const [key, value] of Object.entries(messages)) { assert.ok(value.trim()); assert.deepEqual(value.match(/\{[^}]+\}/g) ?? [], reference[key].match(/\{[^}]+\}/g) ?? []); }
     }
 });
+
+
+test('expert context hints remain read-only for retired contexts and never invent a parent', () => {
+    const expertContextOwner={roomId:'room',participantId:'old-member',agentId:'expert',agentRevision:null,isCurrent:false};
+    assert.deepEqual(parseChatConversation({...conversation,expertContextOwner}), {...conversation,expertContextOwner});
+    assert.deepEqual(parseChatConversation({...conversation,expertContextOwner,expertParentConversationId:'parent'}), {...conversation,expertContextOwner,expertParentConversationId:'parent'});
+    for(const invalid of [{expertParentConversationId:'parent'}, {expertContextOwner:{...expertContextOwner,agentRevision:0}}, {expertContextOwner:{...expertContextOwner,participantId:''}}, {expertContextOwner,expertParentConversationId:conversation.conversationId}]) assert.throws(()=>parseChatConversation({...conversation,...invalid}));
+});

@@ -1,9 +1,9 @@
 <script lang="ts">
     import { locale, t } from '../lib/i18n';
     import PrototypeIcon from './PrototypeIcon.svelte';
-    type WorkspaceListCategory = 'conversations' | 'activity' | 'resources';
+    type WorkspaceListCategory = 'conversations' | 'resources';
     let {category, onchange, visible = true}: {category: WorkspaceListCategory; onchange: (category: WorkspaceListCategory) => void; visible?: boolean} = $props();
-    const categories = ['conversations', 'activity', 'resources'] as const;
+    const categories = ['conversations', 'resources'] as const;
     function move(event: KeyboardEvent, index: number) {
         const next = event.key === 'Home' ? 0 : event.key === 'End' ? categories.length - 1
             : event.key === 'ArrowRight' ? (index + 1) % categories.length
@@ -17,7 +17,7 @@
     {#each categories as item, index}
         <button type="button" title={t($locale, `chatInspector.list.${item}`)} aria-label={t($locale, `chatInspector.list.${item}`)}
             aria-pressed={visible && category === item} onclick={() => onchange(item)} onkeydown={event => move(event, index)}>
-            <PrototypeIcon name={item === 'conversations' ? 'chat' : item === 'activity' ? 'clock' : 'folder'} size={18} />
+            <PrototypeIcon name={item === 'conversations' ? 'chat' : 'folder'} size={18} />
         </button>
     {/each}
 </nav>

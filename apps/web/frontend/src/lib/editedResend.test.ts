@@ -85,3 +85,19 @@ test('attachment-encoded user messages remain ineligible even with genuine paire
     const row=canonicalUserWitness(text);
     assert.equal(editedResendSourceForMessage(row,{hostId:'host',clientId:'client',conversationId:'source'}),null);
 });
+
+test('plain user text with opaque metadata stays editable only with its complete canonical body',()=>{
+    const row=canonicalUserWitness('metadata-backed text');
+    const part={kind:'historical',part_id:'source-user:body',revision:3,projection:{
+        owner:{conversation_id:'source',message_id:'source-user',part_id:'source-user:body'},canonical_revision:11,
+        canonical_kind:'text',schema:null,source:null,binding:null,status:{state:'unsupported',code:'schema_unrecognized'},fields:{},
+        canonical_text:{text:'metadata-backed text',total_utf8_bytes:20},
+    }};
+    row.canonical!.parts=[part];row.parts[0].value=part;
+    const owner={hostId:'host',clientId:'client',conversationId:'source'};
+    assert.equal(editedResendSourceForMessage(row,owner)?.originalText,'metadata-backed text');
+    part.projection.canonical_text.total_utf8_bytes=50;
+    assert.equal(editedResendSourceForMessage(row,owner),null,'A truncated preview is not an edit witness');
+    part.projection.canonical_text.total_utf8_bytes=20;part.projection.owner.message_id='foreign';
+    assert.equal(editedResendSourceForMessage(row,owner),null);
+});

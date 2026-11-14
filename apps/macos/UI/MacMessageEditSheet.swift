@@ -29,7 +29,7 @@ struct MacMessageEditSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Edit and resend").font(.headline)
-            Text("The original conversation and its draft remain unchanged. The new branch starts with this edited message.")
+            Text("This message and everything after it will be replaced. Resend continues in this conversation.")
                 .font(.callout).foregroundStyle(.secondary)
             TextEditor(text: $draft.text)
                 .font(.system(size: MacMarkdownTypography.bodySize))

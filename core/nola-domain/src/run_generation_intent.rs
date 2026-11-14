@@ -22,6 +22,10 @@ pub struct RunGenerationIntent {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunGenerationOverrides {
+    /// Optional exact choice for peers advertising expert-role catalog v1.
+    /// Absent preserves the published tier contract and serializes identically.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "present")]
+    pub reasoning_selection: Option<crate::generation::ReasoningSelection>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -80,6 +84,9 @@ impl RunGenerationIntent {
 
 impl RunGenerationOverrides {
     pub fn validate(&self) -> Result<(), String> {
+        if let Some(selection) = &self.reasoning_selection {
+            selection.validate(self.max_output_tokens.unwrap_or(16384))?;
+        }
         if self.temperature.is_some_and(|v| !(0.0..=2.0).contains(&v))
             || self.top_p.is_some_and(|v| !(0.0..=1.0).contains(&v))
             || self.max_output_tokens.is_some_and(|v| {
@@ -109,6 +116,22 @@ impl RunGenerationOverrides {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn optional_exact_reasoning_preserves_the_published_absent_wire() {
+        let old = json!({"profile_id":"model","expected_revision":1,"tier":"balanced","overrides":{}});
+        let decoded: RunGenerationIntent = serde_json::from_value(old.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), old);
+        for effort in crate::generation::REASONING_EFFORT_VALUES {
+            let exact = json!({"reasoning_selection":{"kind":"effort","value":effort}});
+            let overrides: RunGenerationOverrides = serde_json::from_value(exact.clone()).unwrap();
+            assert_eq!(overrides.to_request().unwrap(), exact);
+        }
+        for value in [json!(null), json!({"kind":"effort","value":"invented"})] {
+            let decoded = serde_json::from_value::<RunGenerationOverrides>(json!({"reasoning_selection":value}));
+            assert!(decoded.is_err() || decoded.unwrap().validate().is_err());
+        }
+    }
 
     #[test]
     fn sparse_intent_preserves_zero_false_and_nested_clear() {

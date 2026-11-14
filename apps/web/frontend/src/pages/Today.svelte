@@ -31,7 +31,7 @@
 </script>
 <svelte:head><title>{t($locale, 'chatInspector.today')} — Nola</title></svelte:head>
 <main id="page-main" tabindex="-1" class="today-page">
-    <header><div><h1>{t($locale, 'chatInspector.today')}</h1><p class="today-hint">{t($locale, 'shell.todayHint')}</p></div><button type="button" aria-label={t($locale, 'chatPage.refresh')} title={t($locale, 'chatPage.refresh')} onclick={refresh} disabled={loading}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M5 8a8 8 0 0 1 14-2l1 6M4 12l1 6a8 8 0 0 0 14-2"/></svg></button></header>
+    <header><div><h1>{t($locale, 'chatInspector.today')}</h1></div><button type="button" aria-label={t($locale, 'chatPage.refresh')} title={t($locale, 'chatPage.refresh')} onclick={refresh} disabled={loading}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M5 8a8 8 0 0 1 14-2l1 6M4 12l1 6a8 8 0 0 0 14-2"/></svg></button></header>
     {#if loading}<p role="status" class="muted">{t($locale, 'chatPage.loading')}</p>{/if}
     {#if failed}<p role="alert">{t($locale, 'shell.pageLoadFailed')}</p>{/if}
     {#if facts}
@@ -39,19 +39,19 @@
         <section><h2>{t($locale, 'chatInspector.needsResponse')}</h2>
             {#each pending as row (row.conversation_id)}<article class="pending-matter"><p class="matter-meta">{time(row.updated_at_ms)} · {t($locale, 'chatInspector.needsResponse')}</p><h3>{row.title || t($locale, 'chatConversations.untitled')}</h3>
                 <p class="matter-summary">{t($locale, 'chatInspector.responseHint')}</p>
-                <a class="matter-action" href={conversationHref(row.conversation_id)}>{t($locale, 'chatInspector.handleResponse')} <span aria-hidden="true">›</span></a>
+                <a class="matter-action" href={conversationHref(row.conversation_id)}>{t($locale, 'chatInspector.handleResponse')} </a>
                 <a class="matter-source" href={conversationHref(row.conversation_id)}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 1-8 8H5l-3 3V11a9 9 0 0 1 18 0Z"/></svg><span>{t($locale, 'chatInspector.responseSource')} · {row.title || t($locale, 'chatConversations.untitled')}</span></a>
             </article>
             {:else}{#if !facts.needs_attention}<p class="muted">{t($locale, 'chatInspector.noResponse')}</p>{/if}{/each}
             {#if facts.has_more_conversations}<a href={`/today?offset=${facts.next_conversation_offset}`}>{t($locale, 'chatInspector.moreConversations')}</a>{/if}
         </section>
         <section><h2>{t($locale, 'chatInspector.queuedInstances')}</h2>
-            {#each facts.queued_instances as row (row.occurrence_id)}<a class="fact-row" href="/scheduled-actions"><span><strong>{row.title ?? row.automation_id}</strong><small>{time(row.scheduled_for_ms)}</small></span><span aria-hidden="true">›</span></a>
+            {#each facts.queued_instances as row (row.occurrence_id)}<a class="fact-row" href="/scheduled-actions"><span><strong>{row.title ?? row.automation_id}</strong><small>{time(row.scheduled_for_ms)}</small></span></a>
             {:else}<p class="muted">{t($locale, 'chatInspector.noQueuedInstances')}</p>{/each}
             {#if facts.has_more_queued_instances}<a href="/scheduled-actions">{t($locale, 'activity.automations')}</a>{/if}
         </section>
         {#if offset === 0}<section><h2>{t($locale, 'chatConversations.recent')}</h2>
-            {#each recent as row (row.conversation_id)}<a class="fact-row" href={conversationHref(row.conversation_id)}><span><strong>{row.title || t($locale, 'chatConversations.untitled')}</strong><small>{time(row.updated_at_ms)}</small></span><span aria-hidden="true">›</span></a>
+            {#each recent as row (row.conversation_id)}<a class="fact-row" href={conversationHref(row.conversation_id)}><span><strong>{row.title || t($locale, 'chatConversations.untitled')}</strong><small>{time(row.updated_at_ms)}</small></span></a>
             {:else}<p class="muted">{t($locale, 'chatPage.choose')}</p>{/each}
         </section>{/if}
     {/if}
@@ -62,7 +62,7 @@
     .today-page { max-width: 760px; min-height: calc(100dvh - 144px); margin-inline: auto; padding: 8px 20px max(20px, env(safe-area-inset-bottom)); background: var(--canvas); }
     header { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 52px; }
     h1 { font-size: 28px; line-height:36px; margin: 0; } h2 { font-size: 16px; margin: 0 0 12px; }
-    section { margin-block: 32px; } .today-hint { font-size:15px; line-height:24px; color:var(--muted); margin-top:6px; } header button { border:0; background:transparent; width:44px; padding:10px; } header svg { width:20px; height:20px; stroke:currentColor; fill:none; stroke-width:1.5; } .muted, small { color: var(--muted); font-size: .875rem; line-height: 1.6; }
+    section { margin-block: 32px; } header button { border:0; background:transparent; width:44px; padding:10px; } header svg { width:20px; height:20px; stroke:currentColor; fill:none; stroke-width:1.5; } .muted, small { color: var(--muted); font-size: .875rem; line-height: 1.6; }
     .fact-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-block: 12px; border-bottom: 1px solid var(--border); min-height: 52px; }
     .fact-row > span { min-width: 0; } strong { font-weight: 500; overflow-wrap: anywhere; } small { display: block; margin-top: 4px; }
     a { color: inherit; text-decoration: none; } a:hover { color: var(--accent); } nav { display: flex; flex-wrap: wrap; gap: 16px; border-top: 1px solid var(--border); margin-top: 32px; } nav a { display: flex; align-items: center; min-height: 48px; }

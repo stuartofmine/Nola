@@ -43,7 +43,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Download
@@ -1066,13 +1065,6 @@ fun ModelActionTile(
                   icon = Icons.Filled.Check,
                   tint = tint
               )
-          } else {
-              Icon(
-                  Icons.Filled.ChevronRight,
-                  contentDescription = null,
-                  tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
-                  modifier = Modifier.size(18.dp)
-              )
           }
       }
   }
@@ -1188,7 +1180,7 @@ fun WebHostConfigSheet(
     onCancelConnection: () -> Unit = {}
 ) {
     var url by remember { mutableStateOf(currentUrl) }
-    var token by remember { mutableStateOf(currentToken) }
+    var token by remember { mutableStateOf("") }
     var certificateSha256 by remember { mutableStateOf(currentCertificateSha256) }
     var showDiscardDialog by remember { mutableStateOf(false) }
     var isConnecting by remember { mutableStateOf(false) }
@@ -1197,7 +1189,8 @@ fun WebHostConfigSheet(
     var importedSetup by remember { mutableStateOf<WebHostConnectionSetup?>(null) }
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     val context = androidx.compose.ui.platform.LocalContext.current
-    val dirty = url != currentUrl || token != currentToken || certificateSha256 != currentCertificateSha256
+    val dirty = url != currentUrl || token.isNotBlank() || certificateSha256 != currentCertificateSha256
+    val canUseSavedToken = currentToken.isNotBlank() && sameWebHostDestination(currentUrl, url)
     val sheetState = com.nola.ui.components.rememberGuardedEditorSheetState(isConnecting, dirty) { showDiscardDialog = true }
     val hasExistingConnection = currentUrl.isNotBlank() && currentToken.isNotBlank()
     val requestDismiss = { if (dirty) showDiscardDialog = true else onDismiss() }
@@ -1289,7 +1282,14 @@ fun WebHostConfigSheet(
                 OutlinedTextField(
                     value = url,
                     enabled = !isConnecting,
-                    onValueChange = { url = it },
+                    onValueChange = {
+                        if (!sameWebHostDestination(url, it)) {
+                            token = ""
+                            certificateSha256 = ""
+                            importedSetup = null
+                        }
+                        url = it
+                    },
                     label = { Text(stringResource(R.string.models_host_url)) },
                     placeholder = { Text(stringResource(R.string.models_web_host_url_placeholder)) },
                     modifier = Modifier.fillMaxWidth(),
@@ -1300,6 +1300,8 @@ fun WebHostConfigSheet(
                     enabled = !isConnecting,
                     onValueChange = { token = it },
                     label = { Text(stringResource(R.string.models_access_token)) },
+                    supportingText = { Text(stringResource(if (canUseSavedToken)
+                        R.string.models_host_token_keep else R.string.models_host_token_new)) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation()
@@ -1383,14 +1385,14 @@ fun WebHostConfigSheet(
                         isConnecting = true
                         val generation = ++connectionGeneration
                         val expectedIdentity = importedSetup?.takeIf { sameWebHostOrigin(it.origin, url) }?.hostId
-                        onSave(url.trim(), token.trim(), certificateSha256.trim(), expectedIdentity) { succeeded, message ->
+                        onSave(url.trim(), webHostConnectionToken(currentUrl, currentToken, url, token), certificateSha256.trim(), expectedIdentity) { succeeded, message ->
                             if (generation == connectionGeneration) {
                                 isConnecting = false
                                 if (succeeded) onDismiss() else inlineError = message
                             }
                         }
                     },
-                    enabled = !isConnecting && url.isNotBlank() && token.isNotBlank(),
+                    enabled = !isConnecting && url.isNotBlank() && (token.isNotBlank() || canUseSavedToken),
                     modifier = Modifier.weight(1f)
                 ) {
                     Text(stringResource(if (dirty) R.string.models_save_and_verify else R.string.models_verify_again))

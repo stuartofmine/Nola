@@ -269,7 +269,9 @@ impl NolaStore {
     }
 }
 
-fn memory_record_row(row: &Row<'_>) -> rusqlite::Result<StoredMemoryRecord> {
+pub(super) const MEMORY_QUALIFIED_COLUMNS: &str = "m.id,m.namespace_json,m.scope,m.kind,m.content,m.summary,m.tags_json,m.confidence,m.importance,m.sensitivity,m.retention_json,m.expires_at,m.supersedes_json,m.provenance_json,m.created_at_ms,m.updated_at_ms,m.last_used_at_ms,m.deleted_at_ms,m.owner_json";
+
+pub(super) fn memory_record_row(row: &Row<'_>) -> rusqlite::Result<StoredMemoryRecord> {
     Ok(StoredMemoryRecord {
         id: row.get(0)?,
         owner_json: row.get(18)?,
@@ -536,6 +538,7 @@ pub(super) fn replace_memory_projection(
             record.owner_json
         ],
     )?;
+    crate::memory_index::sync_memory_bm25_on_write(transaction, record, revision)?;
     Ok(())
 }
 

@@ -457,6 +457,7 @@ private struct MacWebSourceEditor: View {
     @State private var saveTask: Task<Void, Never>?
     @State private var validationError: String?
     @State private var showsDiscardConfirmation = false
+    @State private var allowsDiscardClose = false
     @FocusState private var nameFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -595,13 +596,17 @@ private struct MacWebSourceEditor: View {
         .frame(minWidth: 480, idealWidth: 560, maxWidth: 680)
         .frame(minHeight: 500, idealHeight: 560, maxHeight: 700)
         .interactiveDismissDisabled(hasUnsavedChanges || isSaving)
+        .background(MacEditorWindowCloseGuard(
+            shouldPreventClose: { (hasUnsavedChanges || isSaving) && !allowsDiscardClose },
+            onCloseAttempt: { if !isSaving { requestCancel() } }
+        ))
         .onDisappear { saveTask?.cancel() }
         .confirmationDialog(
             macWebSourcesText("mac.web_sources.discard.title", "Discard unsaved changes?"),
             isPresented: $showsDiscardConfirmation,
             titleVisibility: .visible
         ) {
-            Button(macWebSourcesText("mac.web_sources.discard", "Discard Changes"), role: .destructive, action: cancel)
+            Button(macWebSourcesText("mac.web_sources.discard", "Discard Changes"), role: .destructive) { allowsDiscardClose = true; cancel() }
             Button(macWebSourcesText("mac.web_sources.cancel", "Cancel"), role: .cancel) {}
         }
         .task {

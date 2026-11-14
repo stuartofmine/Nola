@@ -2,9 +2,23 @@
     import { replyDisclosure } from '../lib/replyDisclosure';
     import { locale, t } from '../lib/i18n';
     import type { ChatReference } from '../lib/chatReferences';
-    let { reference }: { reference: ChatReference } = $props();
+    let { reference, compact = false, number }: { reference: ChatReference; compact?: boolean; number?: number } = $props();
 </script>
 
+{#if compact}
+<section class="citation-row">
+    <span class="citation-number">[{number}]</span>
+    <div class="citation-copy">
+        {#if reference.href}<a href={reference.href} title={reference.uri} target="_blank" rel="noopener noreferrer">{reference.title || reference.uri}</a>{:else}<span>{reference.title || t($locale, 'chatPage.reference')}</span>{/if}
+        {#if reference.section || reference.page || reference.lineStart}<small>{[reference.section, reference.page && `${t($locale, 'chatPage.referencePage')} ${reference.page}`, reference.lineStart && `${reference.lineStart}–${reference.lineEnd || reference.lineStart}`].filter(Boolean).join(' · ')}</small>{/if}
+        <details class="citation-detail"><summary aria-label={t($locale, 'chatPage.details')}>ⓘ</summary>
+            <p>{reference.uri}</p>{#if reference.snippet}<p>{reference.snippet}</p>{/if}
+            {#if reference.rangeStart || reference.rangeEnd}<p>[{reference.rangeStart}, {reference.rangeEnd})</p>{/if}
+            {#if reference.uri && !reference.href}<p>{t($locale, 'chatPage.referenceUnavailable')}</p>{/if}
+        </details>
+    </div>
+</section>
+{:else}
 <section class="reference-card" data-kind={reference.kind}>
     <strong>{#if reference.href}<a href={reference.href} target="_blank" rel="noopener noreferrer">{reference.title || reference.uri}</a>
     {:else}{reference.title || t($locale, 'chatPage.reference')}{/if}</strong>
@@ -27,8 +41,19 @@
         </details>
     {/if}
 </section>
+{/if}
 
 <style>
+    .citation-row { display: flex; gap: 6px; align-items: baseline; min-height: 32px; padding-block: 3px; color: var(--muted); font-size: .8125rem; overflow-wrap: anywhere; }
+    .citation-number { font-variant-numeric: tabular-nums; flex: none; }
+    .citation-copy { min-width: 0; flex: 1; position: relative; padding-inline-end: 32px; }
+    .citation-copy > a { color: inherit; text-decoration: none; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+    .citation-copy > a:hover { color: var(--content); text-decoration: underline; }
+    .citation-copy > small { display: block; font: inherit; }
+    .citation-detail > summary { position: absolute; inset-inline-end: 0; top: -8px; min-height: 32px; min-width: 28px; justify-content: center; padding: 0; }
+    .citation-detail > summary::before { content: none; }
+    .citation-detail p { font-size: inherit; user-select: text; }
+    @media (pointer: coarse) { .citation-row, .citation-detail > summary { min-height: 44px; } }
     .reference-card { margin: 8px 0; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); min-width: 0; overflow-wrap: anywhere; }
     p { margin: 6px 0 0; }
     .hint, .uri, dl { font-size: 12px; color: var(--muted); }

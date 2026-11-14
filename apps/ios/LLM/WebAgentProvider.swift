@@ -2375,7 +2375,19 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         }
     }
 
-    private enum PairedReadEnvelope { case result, sourceProjection, goalControl }
+    func sameExpertConnection(as other: WebAgentProvider) -> Bool { config == other.config }
+
+    func expertRooms(command: AgentCoreJSONValue, expectedEpoch: String?) async throws -> AppleExpertRoomHostResponse<AgentCoreJSONValue> {
+        guard let host = config.expectedHostId else { throw IOSApplicationRuntimeError.rejected("Reconnect the conversation's Host before choosing an expert.") }
+        struct Query: Encodable { let expected_host_id: String; let expected_source_store_epoch: String?; let command: AgentCoreJSONValue }
+        let value: AppleExpertRoomHostResponse<AgentCoreJSONValue> = try await pairedReadRequest(
+            Query(expected_host_id: host, expected_source_store_epoch: expectedEpoch, command: command),
+            path: "agent-rooms", envelope: .agentRooms)
+        try value.validate(hostID: host, expectedEpoch: expectedEpoch)
+        return value
+    }
+
+    private enum PairedReadEnvelope: Equatable { case result, sourceProjection, goalControl, agentRooms }
 
     private func pairedReadRequest<Input: Encodable, Result: Decodable & Sendable>(_ input: Input, path: String, envelope responseEnvelope: PairedReadEnvelope = .result, timeout: TimeInterval = 30, responseByteLimit: Int = 512 * 1024, requestByteLimit: Int = 64 * 1024, acceptedStatusCodes: Set<Int>? = nil) async throws -> Result {
         guard let source = config.expectedHostId, MobileHostTransportPolicy.allows(config.baseURL) else {
@@ -2408,7 +2420,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
                 throw IOSApplicationRuntimeError.rejected("Journal response is not authenticated encryption")
             }
             let object = try Self.decryptMobileJSON(envelope, token: config.token)
-            guard object["source_host_id"] as? String == source else {
+            guard (object[responseEnvelope == .agentRooms ? "host_id" : "source_host_id"] as? String) == source else {
                 throw IOSApplicationRuntimeError.rejected("Journal source Host changed")
             }
             let result: Any
@@ -2416,7 +2428,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
             case .result:
                 guard let value = object["result"] else { throw IOSApplicationRuntimeError.invalidResponse }
                 result = value
-            case .sourceProjection:
+            case .sourceProjection, .agentRooms:
                 result = object
             case .goalControl:
                 var control = object
@@ -2842,6 +2854,14 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
             "timezone": TimeZone.current.identifier,
             "language": Locale.current.identifier,
         ]
+        if let selected = input.selectedExperts, !selected.isEmpty {
+            payload["expected_source_store_epoch"] = input.expertSelectionSourceEpoch
+            payload["selected_experts"] = selected.map { entry -> [String: Any] in
+                ["agent_id": entry.agentID, "agent_revision": entry.agentRevision,
+                 "participant_id": entry.participantID as Any? ?? NSNull(),
+                 "context_conversation_id": entry.contextConversationID as Any? ?? NSNull()]
+            }
+        }
         if let conversationId = input.userPrefs["host_conversation_id"]?.trimmingCharacters(in: .whitespacesAndNewlines),
            !conversationId.isEmpty {
             payload["conversationId"] = conversationId
@@ -2955,6 +2975,8 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
                 }
                 return .contextUsageUpdated(projection)
             case "error":
+                if let code = (object["reason_code"] ?? object["code"]) as? String,
+                   AppleMainExpertDispatchRejection(rawValue: code) != nil { return .error(code) }
                 let message = (object["message"] as? String)?.trimmingCharacters(
                     in: .whitespacesAndNewlines
                 )

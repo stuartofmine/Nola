@@ -253,17 +253,13 @@ impl SearchRequest {
         if query.chars().count() > 500 || query.contains('\0') {
             return Err(error("query is invalid".to_string()));
         }
-        let _requested_result_count = validate_integer_arg(
+        let result_count = validate_integer_arg(
             args,
             "limit",
             SEARCH_RESULT_COUNT as i64,
             1,
             SEARCH_RESULT_COUNT as i64,
         )? as usize;
-        // Web search is a discovery tool, not a single-result fetch. Always collect the
-        // top twenty candidates so an underspecified model call cannot collapse source
-        // diversity. The caller may still cite only the evidence it needs.
-        let result_count = SEARCH_RESULT_COUNT;
         let engine = optional_string(args, "engine", "auto")?;
         if !matches!(
             engine.as_str(),
@@ -361,7 +357,7 @@ struct PageAnalysis {
     error: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 struct SearchReport {
     status: String,
     query: String,
@@ -558,7 +554,10 @@ fn finish_search(request: &SearchRequest, attempts: Vec<ProviderAttempt>,
 /// is cropped by a later Host/Core budget. A link is never cut into a fake URL.
 fn model_source_evidence(report: &SearchReport) -> Value {
     let mut sources = Vec::new();
-    let mut ranked = report.results.iter().collect::<Vec<_>>();
+    // Candidates without usable evidence remain diagnostics, not citation support.
+    let mut ranked = report.results.iter()
+        .filter(|page| !page.evidence.is_empty() && page.evidence_score > 0)
+        .collect::<Vec<_>>();
     ranked.sort_by(|a, b| b.evidence_score.cmp(&a.evidence_score).then_with(|| a.search_rank.cmp(&b.search_rank)));
     let mut projection = json!({"type":"web_search_evidence", "query":report.query,
         "status":report.status,"searched_at":report.searched_at,"sources":[],"sources_omitted":report.results.len(),
@@ -2303,6 +2302,12 @@ fn formatted_search_report_is_self_contained_and_keeps_twenty_sources() {
     assert!(safe["structured_preview"].to_string().chars().count() <= 384);
     assert!(!safe["structured_preview"]["sources"].as_array().unwrap().is_empty());
     assert!(safe.to_string().chars().count() <= 12_000);
+    let mut without_support = report.clone();
+    without_support.results[0].evidence.clear();
+    without_support.results[0].evidence_score = 0;
+    let filtered = model_source_evidence(&without_support);
+    assert!(!filtered["sources"].as_array().unwrap().iter().any(|source| source["url"] == report.results[0].url));
+    assert!(filtered["sources_omitted"].as_u64().unwrap() >= 1);
     let mut oversized_url = report;
     oversized_url.results[0].url = format!("https://source1.example/{}", "path".repeat(5_000));
     let bounded = model_source_evidence(&oversized_url);
@@ -3459,7 +3464,7 @@ mod tests {
     }
 
     #[test]
-    fn search_request_always_collects_top_twenty_candidates() {
+    fn search_request_honors_the_requested_result_budget() {
         let mut args = Map::new();
         args.insert(
             "query".to_string(),
@@ -3467,7 +3472,11 @@ mod tests {
         );
         args.insert("limit".to_string(), Value::Number(1.into()));
         let request = SearchRequest::parse(&args).expect("parse search request");
-        assert_eq!(request.result_count, SEARCH_RESULT_COUNT);
+        assert_eq!(request.result_count, 1);
+        args.insert("limit".to_string(), Value::Number(8.into()));
+        assert_eq!(SearchRequest::parse(&args).unwrap().result_count, 8);
+        args.remove("limit");
+        assert_eq!(SearchRequest::parse(&args).unwrap().result_count, SEARCH_RESULT_COUNT);
     }
 
     #[test]

@@ -7,6 +7,7 @@ struct MacSiwcAccountManagementView: View {
     let changed: () -> Void
     var modelsDiscovered: ((String) -> Void)? = nil
     var reauthorize: (() -> Void)? = nil
+    var activityChanged: (Bool) -> Void = { _ in }
     @State private var result: MacSiwcAccountResult?
     @State private var bridge: MacSiwcAccountBridge?
     @State private var task: Task<Void, Never>?
@@ -49,6 +50,7 @@ struct MacSiwcAccountManagementView: View {
         }
         .onDisappear {
             generation = UUID(); task?.cancel(); bridge?.close(); bridge = nil
+            activityChanged(false)
         }
     }
     @ViewBuilder private var actions: some View {
@@ -63,6 +65,7 @@ struct MacSiwcAccountManagementView: View {
     private func perform(_ action: String, confirmed: Bool = false) {
         guard !busy else { return }
         busy = true; error = nil; notice = nil
+        activityChanged(true)
         let ownerGeneration = generation
         let selected = result?.account ?? account
         let revision = result?.session?.session_revision
@@ -87,7 +90,10 @@ struct MacSiwcAccountManagementView: View {
                 self.error = MacSiwcBridgeFailure.message(error)
                 bridge?.close(); bridge = nil; result = nil
             }
-            if ownerGeneration == generation { busy = false; task = nil }
+            if ownerGeneration == generation {
+                busy = false; task = nil
+                activityChanged(false)
+            }
         }
     }
 }

@@ -31,6 +31,7 @@ public extension IOSAgentHostExecutor {
         "skill_invoke": .none,
         // Executed by the Core-bound publisher in DeviceAgentCoordinator.
         "render_ui": .none,
+        "delegate_expert": .none,
         "memory_search": .none,
         "device_read_file": .filesRead,
         "device_write_file": .filesWrite,
@@ -140,17 +141,49 @@ public extension AgentCoreToolCatalog {
         for mode: AgentCoreExecutionMode,
         expectedIdentity: AgentCoreExpectedIdentity,
         isForeground: Bool,
+        allowedTools: Set<String> = [], deniedTools: Set<String> = [],
+        allowedCapabilities: Set<String> = [], deniedCapabilities: Set<String> = [],
+        resultEgressAuthorization: IOSAgentResultEgressAuthorization? = nil,
+        scopedGrants: [AgentCoreScopedGrant] = [],
+        nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1_000)
+    ) throws -> AgentCorePreparedToolPlan {
+        try prepareBoundPlan(for: mode, expectedIdentity: expectedIdentity, isForeground: isForeground,
+            allowedTools: allowedTools, deniedTools: deniedTools, allowedCapabilities: allowedCapabilities,
+            deniedCapabilities: deniedCapabilities, resultEgressAuthorization: resultEgressAuthorization,
+            scopedGrants: scopedGrants, applicationRuntime: IOSApplicationRuntime.shared, includeExpertTasks: false, nowMs: nowMs)
+    }
+
+    internal static func prepareBoundPlan(
+        for mode: AgentCoreExecutionMode,
+        expectedIdentity: AgentCoreExpectedIdentity,
+        isForeground: Bool,
         allowedTools: Set<String> = [],
         deniedTools: Set<String> = [],
         allowedCapabilities: Set<String> = [],
         deniedCapabilities: Set<String> = [],
         resultEgressAuthorization: IOSAgentResultEgressAuthorization? = nil,
         scopedGrants: [AgentCoreScopedGrant] = [],
+        applicationRuntime: IOSApplicationRuntime?,
+        includeExpertTasks: Bool = false,
         nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1_000)
     ) throws -> AgentCorePreparedToolPlan {
         let route = mode == .hostRemote ? "agent_host" : "device"
         var candidates = mode == .hostRemote ? [] : deviceTools
-        if mode != .hostRemote, let application = IOSApplicationRuntime.shared {
+        if mode != .hostRemote && includeExpertTasks {
+            guard let application = applicationRuntime ?? IOSApplicationRuntime.shared else { throw IOSApplicationRuntimeError.applicationUnavailable }
+            struct Capability: Decodable { let version: Int; let tool: AgentCoreJSONValue }
+            let raw = try application.executeAgentCommand(.object(["type": .string("read_expert_exchange_capability")]))
+            let capability = try JSONDecoder().decode(Capability.self, from: JSONEncoder().encode(raw))
+            guard capability.version == 1, functionName(in: capability.tool) == "delegate_expert" else { throw IOSApplicationRuntimeError.rejected("Unsupported expert Task capability") }
+            // The registered dispatcher only manages same-owner Task state.
+            // Its target model/tools still receive their own policy and grants.
+            // Bind the internal handler contract before the manifest digest;
+            // Domain's model-facing schema remains unchanged.
+            guard case .object(var dispatcher) = capability.tool else { throw IOSApplicationRuntimeError.invalidResponse }
+            dispatcher["x_nola"] = .object(["permission_contract": .object(["risk": .string("ordinary_read")])])
+            candidates.append(.object(dispatcher))
+        }
+        if mode != .hostRemote, let application = applicationRuntime ?? IOSApplicationRuntime.shared {
             let contract = try application.executeAgentCommand(.object(["type": .string("read_ui_capability")]))
             guard case .object(let fields) = contract, let schema = fields["model_tool"] else {
                 throw IOSApplicationRuntimeError.invalidResponse

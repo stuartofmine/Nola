@@ -71,3 +71,36 @@ internal fun AndroidPreparedEditedResend.requireIdentity() {
     java.util.UUID.fromString(runId)
     java.util.UUID.fromString(input.targetConversationId)
 }
+
+@Serializable
+data class AndroidPrepareInPlaceResend(
+    @SerialName("operation_id") val operationId: String,
+    @SerialName("conversation_id") val conversationId: String,
+    @SerialName("message_id") val messageId: String,
+    @SerialName("expected_revision") val expectedRevision: Long,
+    @SerialName("expected_message_revision") val expectedMessageRevision: Long,
+    @SerialName("edited_text") val editedText: String,
+    @SerialName("created_at_ms") val createdAtMs: Long,
+)
+@Serializable
+data class AndroidPreparedInPlaceResend(val input: AndroidPrepareInPlaceResend,
+    @SerialName("run_id") val runId: String,
+    @SerialName("user_message_id") val userMessageId: String,
+    val experts: List<AndroidExpertParticipantReference>)
+internal fun AndroidPrepareEditedResend.inPlace() = AndroidPrepareInPlaceResend(operationId, sourceConversationId,
+    sourceMessageId, expectedSourceRevision, expectedSourceMessageRevision, editedText, createdAtMs)
+internal fun AndroidApplicationRuntime.prepareInPlaceResend(input: AndroidPrepareInPlaceResend): AndroidPreparedInPlaceResend =
+    Json.decodeFromJsonElement(execute(buildJsonObject {
+        put("type", "prepare_in_place_resend"); put("input", Json.encodeToJsonElement(input))
+    }))
+
+internal fun AndroidApplicationRuntime.loadRunIdentity(runId: String): JsonObject? = try {
+    executeQuery(buildJsonObject { put("type", "load_run_identity"); put("run_id", runId) }).jsonObject
+} catch (failure: Exception) {
+    if (failure.message?.contains("run_not_found") == true) null else throw failure
+}
+
+internal fun AndroidApplicationRuntime.loadPreparedInPlaceResend(operationId: String): AndroidPreparedInPlaceResend? {
+    val result = executeQuery(buildJsonObject { put("type", "load_prepared_in_place_resend"); put("operation_id", operationId) })
+    return if (result == JsonNull) null else Json.decodeFromJsonElement<AndroidPreparedInPlaceResend>(result)
+}

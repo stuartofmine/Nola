@@ -207,6 +207,26 @@ fn direct_origin(
     }
     Ok(())
 }
+/// Reuse the exact capture-provenance validator without fabricating a user manifest.
+pub(crate) fn validate_peer_entry(fact: &ExpertTemplateCaptureFact, entry: &ExpertMessageEntry)
+    -> Result<Vec<ExpertPromptDefinition>, String> {
+    base(fact)?;
+    if fact.entries.len() != 1 { return Err("expert_peer_capture_set_changed".into()); }
+    let captured = &fact.entries[0];
+    if captured.participant_id != entry.participant.participant_id
+        || captured.context_conversation_id != entry.participant.context_conversation_id
+        || captured.context_configuration_revision != entry.context_configuration_revision
+        || captured.child_submission_id != entry.child_submission_id {
+        return Err("expert_peer_capture_entry_changed".into());
+    }
+    direct_origin(fact, captured, entry)?;
+    let expected=definitions(entry, captured)?;
+    if entry.instruction_witness.as_ref().is_some_and(|actual|!same_definitions(&expected,&actual.prompt_definitions)) {
+        return Err("expert_peer_actual_instructions_changed".into());
+    }
+    Ok(expected)
+}
+
 pub(super) fn validate<S: ExpertMessageRepository + ?Sized>(
     store: &S,
     manifest: &ExpertMessageManifest,
@@ -269,7 +289,7 @@ pub(super) fn validate<S: ExpertMessageRepository + ?Sized>(
     }
     Ok(())
 }
-pub(super) fn authorized<S: ExpertMessageRepository + ConversationProjectionRepository + ?Sized>(
+pub(crate) fn authorized<S: ExpertMessageRepository + ConversationProjectionRepository + ?Sized>(
     store: &S,
     manifest: &ExpertMessageManifest,
     authority: &HostExpertTemplateAuthority,

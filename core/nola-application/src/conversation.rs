@@ -105,11 +105,11 @@ pub fn admit_user_message<R: TranscriptWriteRepository + ?Sized>(
             already_admitted: true,
         });
     }
-    let ordinal = conversation.messages.last().map_or(Some(1), |message| message.ordinal.checked_add(1))
-        .ok_or("canonical_message_ordinal_overflow")?;
+    let (ledger_count, last_ordinal) = store.message_frontier(&conversation.id).map_err(|error| error.to_string())?;
+    let ordinal = last_ordinal.checked_add(1).ok_or("canonical_message_ordinal_overflow")?;
     let input = AppendMessagesInput {
         conversation_id: command.conversation_id.clone(),
-        expected_message_count: conversation.messages.len(),
+        expected_message_count: ledger_count,
         messages: vec![nola_store_port::transcript_write::MessageInput {
             id: command.message_id.clone(),
             run_id: None,
@@ -152,6 +152,9 @@ mod canonical_user_admission_tests {
     struct Writer { messages: Vec<MessageInput>, appends: usize }
     impl TranscriptWriteRepository for Writer {
         type Error = String;
+        fn message_frontier(&self, _: &str) -> Result<(usize, i64), Self::Error> {
+            Ok((self.messages.len(),self.messages.iter().map(|m|m.ordinal).max().unwrap_or(0)))
+        }
         fn has_active_run(&self, _: &str) -> Result<bool, Self::Error> { Ok(false) }
         fn conversation_id_for_run(&self, _: &str) -> Result<Option<String>, Self::Error> { Ok(None) }
         fn append_messages(&mut self, input: &AppendMessagesInput) -> Result<AppendMessagesResult, Self::Error> {
@@ -435,7 +438,7 @@ fn validate_settings_object(settings: &str) -> Result<(), String> {
         Ok(Value::Object(settings)) => {
             let mut configuration = serde_json::Map::new();
             for key in ["modelSelectionID", "executionHostRawValue", "executionHostBinding", "clientHostParameters", "clientModelPresentation",
-                "memoryEnabledOverride", "retrievalEnabledOverride", "isPinned", "language", "selectedPromptTemplateID", "promptResponseStyle",
+                "memoryEnabledOverride", "retrievalEnabledOverride", "isPinned", "language", "selectedPromptTemplateID", "expertReasoningEffort", "promptResponseStyle",
                 "executionBackend", "externalExecutionSessions", "persistenceEnabled", "dataSourceOverrides", "dataSourceIds", "executionPolicy",
                 "promptTemplateSelectionIsExplicit", "contextLimitOverride", "externalExecutionModelIDs", "externalExecutionModelProviderIDs"] {
                 if let Some(value) = settings.get(key).filter(|value| !value.is_null()) {
@@ -541,6 +544,7 @@ mod tests {
 
     impl TranscriptWriteRepository for ImportRepository {
         type Error = &'static str;
+        fn message_frontier(&self, _: &str) -> Result<(usize, i64), Self::Error> { Ok((0, 0)) }
         fn has_active_run(&self, _: &str) -> Result<bool, Self::Error> {
             Ok(self.active)
         }
@@ -675,6 +679,7 @@ mod edit_port_tests {
     }
     impl TranscriptWriteRepository for Facts {
         type Error = &'static str;
+        fn message_frontier(&self, _: &str) -> Result<(usize, i64), Self::Error> { Ok((0, 0)) }
         fn has_active_run(&self, _: &str) -> Result<bool, Self::Error> {
             Ok(self.active)
         }

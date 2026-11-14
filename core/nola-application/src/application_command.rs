@@ -270,6 +270,10 @@ pub enum ApplicationCommand {
     CreateConversationBranch {
         input: CreateConversationBranch,
     },
+    /// Authenticated transport receive; no assistant Run is created.
+    ReceiveRemoteExpertParentAdmission { expected_source_host_id:String, expected_source_store_epoch:String, admission:crate::remote_expert_parent::RemoteExpertParentAdmission },
+    #[serde(skip_deserializing)]
+    ExportRemoteExpertParentAdmission { conversation_id:String, message_id:String, source_host_id:String, source_store_epoch:String },
     PrepareRemoteSubmission { input: PrepareRemoteSubmissionInput },
     AbandonPreparedRemoteSubmission { identity: RemoteSubmissionIdentity },
     AdoptObservedRemoteRun { receipt: SourceSubmissionReceipt },
@@ -292,6 +296,7 @@ pub enum ApplicationCommand {
         input: nola_protocol::AdmitConversationUserMessage,
     },
     AgentRoom { command: crate::agent_room::AgentRoomCommand },
+    AgentRoomAtSource { expected_source_store_epoch: Option<String>, command: Box<crate::agent_room::AgentRoomCommand> },
     ImportConversationTranscript {
         input: ImportConversationTranscript,
     },
@@ -586,6 +591,29 @@ pub enum ApplicationCommand {
     LoadConversationProjectionV1 {
         conversation_id: String,
     },
+    ReadExpertExchangeCapability,
+    #[serde(skip_deserializing)]
+    AbortExpertPeerTaskPreparation {request:Box<nola_agent_engine::agent::host::HostRequestEnvelope>,exchange_id:String,authority:crate::expert_template_capture::HostExpertTemplateAuthority,now_ms:i64},
+    #[serde(skip_deserializing)]
+    LoadExpertPeerForEffect {request:Box<nola_agent_engine::agent::host::HostRequestEnvelope>,authority:crate::expert_template_capture::HostExpertTemplateAuthority,now_ms:i64},
+    #[serde(skip_deserializing)]
+    DeriveExpertPeerAuthority {request:Box<nola_agent_engine::agent::host::HostRequestEnvelope>,authority:Option<crate::expert_template_capture::HostExpertTemplateAuthority>,now_ms:i64},
+    #[serde(skip_deserializing)]
+    PrepareExpertPeerTask {input:Box<crate::expert_peer_task::PreparePeerTask>,now_ms:i64},
+    #[serde(skip_deserializing)]
+    ExpertPeerTaskAction {input:Box<crate::expert_peer_task::PeerTaskAction>,now_ms:i64},
+    #[serde(skip_deserializing)]
+    ExpertPeerDirectory {source_context_id:String,source_run_id:String,authority:crate::expert_template_capture::HostExpertTemplateAuthority},
+    #[serde(skip_deserializing)]
+    PreviewExpertPeer { input: crate::expert_peer::PeerExchangeInput, authority: crate::expert_template_capture::HostExpertTemplateAuthority },
+    #[serde(skip_deserializing)]
+    AdmitExpertPeer { input: crate::expert_peer::PeerExchangeInput, context: crate::expert_template_capture::HostExpertTemplateCaptureContext, captured_at_ms: i64 },
+    #[serde(skip_deserializing)]
+    LoadExpertPeerForSubmission { room_id: String, exchange_id: String, authority: crate::expert_template_capture::HostExpertTemplateAuthority },
+    #[serde(skip_deserializing)]
+    LoadExpertPeer { room_id: String, exchange_id: String, authority: crate::expert_template_capture::HostExpertTemplateAuthority },
+    #[serde(skip_deserializing)]
+    ClarifyExpertPeer { input: crate::expert_peer::PeerClarificationInput, authority: crate::expert_template_capture::HostExpertTemplateAuthority, captured_at_ms: i64 },
     #[serde(skip_deserializing)]
     PreviewExpertTemplateCapture { input: nola_domain::expert_message::AdmitExpertConversationMessage, authority: crate::expert_template_capture::HostExpertTemplateAuthority },
     /// Trusted native/server Host factory only; never renderer Application JSON.
@@ -607,7 +635,9 @@ pub enum ApplicationCommand {
     LoadExpertMessageManifest { conversation_id: String, message_id: String, authority: crate::expert_template_capture::HostExpertTemplateAuthority },
     #[serde(skip_deserializing)]
     LoadExpertChildInstructions { conversation_id: String, expected_run_id: String, authority: crate::expert_template_capture::HostExpertTemplateAuthority },
+    PrepareInPlaceResend { input: nola_domain::edited_resend::PrepareInPlaceResend },
     PrepareEditedResend { input: nola_domain::edited_resend::PrepareEditedResend },
+    LoadPreparedInPlaceResend { operation_id: String },
     LoadPreparedEditedResend { conversation_id: String },
     /// Trusted local Host transport only; never renderer Application JSON.
     #[serde(skip_deserializing)]
@@ -659,6 +689,9 @@ pub enum ApplicationCommand {
     },
     LoadConversationSettings {
         conversation_id: String,
+    },
+    ListRootConversations {
+        query: nola_store_port::conversation_query::ConversationListQuery,
     },
     ListConversations {
         query: nola_store_port::conversation_query::ConversationListQuery,
@@ -994,6 +1027,8 @@ impl ApplicationCommand {
             | Self::CreateConversationBranch { .. }
             | Self::PrepareRemoteSubmission { .. }
             | Self::AbandonPreparedRemoteSubmission { .. }
+            | Self::ReceiveRemoteExpertParentAdmission { .. }
+            | Self::ExportRemoteExpertParentAdmission { .. }
             | Self::AdoptObservedRemoteRun { .. }
             | Self::ObserveSubmissionFrontier { .. }
             | Self::ObservedSourceSubmissionReceipt { .. }
@@ -1011,6 +1046,7 @@ impl ApplicationCommand {
             | Self::CreateConversation { .. }
             | Self::AdmitConversationUserMessage { .. }
             | Self::AgentRoom { .. }
+            | Self::AgentRoomAtSource { .. }
             | Self::ImportConversationTranscript { .. }
             | Self::EditConversationMessage { .. }
             | Self::DeleteConversationMessage { .. }
@@ -1071,11 +1107,15 @@ impl ApplicationCommand {
             | Self::AdmitExpertConversationMessage { .. }
             | Self::PrepareEditedExpertResend { .. }
             | Self::ResolveEffectiveModelParameters { .. }
+            | Self::AbortExpertPeerTaskPreparation{..} | Self::LoadExpertPeerForEffect{..} | Self::ReadExpertExchangeCapability | Self::DeriveExpertPeerAuthority{..} | Self::PrepareExpertPeerTask{..} | Self::ExpertPeerTaskAction{..}
+            | Self::ExpertPeerDirectory { .. } | Self::PreviewExpertPeer { .. } | Self::AdmitExpertPeer { .. } | Self::LoadExpertPeer { .. } | Self::LoadExpertPeerForSubmission { .. } | Self::ClarifyExpertPeer { .. }
             | Self::PreviewExpertTemplateCapture { .. }
             | Self::LoadPreparedExpertResend { .. }
             | Self::LoadExpertMessageManifest { .. }
             | Self::LoadExpertChildInstructions { .. }
+            | Self::PrepareInPlaceResend { .. }
             | Self::PrepareEditedResend { .. }
+            | Self::LoadPreparedInPlaceResend { .. }
             | Self::LoadPreparedEditedResend { .. }
             | Self::LoadEditedResendHostMaterial { .. }
             | Self::AttestEditedResendHostPolicy { .. }
@@ -1091,6 +1131,7 @@ impl ApplicationCommand {
             | Self::LoadConversationProjectionWindowUpdateV1 { .. }
             | Self::LoadConversationTailSnapshotV1 { .. }
             | Self::LoadConversationSettings { .. }
+            | Self::ListRootConversations { .. }
             | Self::ListConversations { .. }
             | Self::RenameConversation { .. }
             | Self::DeleteConversation { .. } => ApplicationCommandFamily::Conversation,
@@ -1448,13 +1489,39 @@ pub fn execute_application_command<R: ApplicationCommandExecutor + ?Sized>(
     store.execute_application_command(command)
 }
 
+/// Executes a Tier 1 supervisor-independent read-only query inside a pinned
+/// consistent read snapshot so multi-statement queries observe a single atomic
+/// WAL revision without acquiring the writer runtime lock.
+pub fn execute_read_only_query<
+    R: ApplicationCommandExecutor + nola_store_port::consistent_read::ConsistentReadRepository,
+>(
+    store: &mut R,
+    command: ApplicationCommand,
+) -> Result<Value, String> {
+    if !command.is_read_only_query() || !command.can_execute_on_read_replica() {
+        return Err(format!(
+            "command {} cannot execute on a read-only Store replica",
+            nola_protocol::CommandMetadata::wire_command_name(&command)
+        ));
+    }
+    store.with_consistent_read_mut(|store| execute_application_command(store, command))
+}
+
 fn execute_application_command_from_repositories<
     R: crate::repositories::ApplicationCommandRepositories,
 >(
     store: &mut R,
     command: ApplicationCommand,
 ) -> Result<Value, String> {
+    if matches!(&command, ApplicationCommand::AbortExpertPeerTaskPreparation{..}|ApplicationCommand::LoadExpertPeerForEffect{..}
+        |ApplicationCommand::ReadExpertExchangeCapability|ApplicationCommand::DeriveExpertPeerAuthority{..}|ApplicationCommand::PrepareExpertPeerTask{..}
+        |ApplicationCommand::ExpertPeerTaskAction{..}|ApplicationCommand::ExpertPeerDirectory{..}|ApplicationCommand::PreviewExpertPeer{..}
+        |ApplicationCommand::AdmitExpertPeer{..}|ApplicationCommand::LoadExpertPeerForSubmission{..}|ApplicationCommand::LoadExpertPeer{..}|ApplicationCommand::ClarifyExpertPeer{..}) {
+        return execute_expert_peer_command(store,Box::new(command));
+    }
     let command = match command {
+        ApplicationCommand::AgentRoomAtSource {expected_source_store_epoch,command} => return encode_application_result(
+            crate::agent_room_source::execute(store,expected_source_store_epoch,*command)?),
         ApplicationCommand::ReconcileRoomRouting {room_id,submission_id,source_host_id,at_ms} => return encode_application_result(crate::agent_room::reconcile_routing(store,&room_id,&submission_id,source_host_id.as_deref(),at_ms)?),
         ApplicationCommand::ResolveEffectiveModelParameters { input } => return encode_application_result(crate::effective_model_parameters::resolve(store, &input)?),
         ApplicationCommand::ListActivity { input } => return encode_application_result(crate::activity::list(store,input)?),
@@ -1467,13 +1534,20 @@ fn execute_application_command_from_repositories<
         ApplicationCommand::AttestEditedResendHostPolicy { conversation_id, core_config, submission } => {
             return encode_application_result(crate::edited_resend::attest_fresh_policy(store,&conversation_id,&core_config,&submission)?);
         },
+        ApplicationCommand::ExportRemoteExpertParentAdmission { conversation_id,message_id,source_host_id,source_store_epoch } => return encode_application_result(crate::remote_expert_parent::export(store,conversation_id,message_id,source_host_id,source_store_epoch)?),
+        ApplicationCommand::ReceiveRemoteExpertParentAdmission { expected_source_host_id,expected_source_store_epoch,admission } => return encode_application_result(crate::remote_expert_parent::receive(store,expected_source_host_id,expected_source_store_epoch,admission)?),
         ApplicationCommand::PreviewExpertTemplateCapture { input, authority } => return encode_application_result(crate::expert_message::preview_capture(store, &input, &authority)?),
-        ApplicationCommand::AdmitExpertConversationMessage { input, context, captured_at_ms } => return encode_application_result(crate::expert_message::admit(store, input, &context, captured_at_ms)?),
-        ApplicationCommand::PrepareEditedExpertResend { input, authority, captured_at_ms } => return encode_application_result(crate::expert_message::prepare_resend(store, input, &authority, captured_at_ms)?),
+        ApplicationCommand::AdmitExpertConversationMessage { input, context, captured_at_ms } => return encode_application_result(crate::expert_message::replay_existing(store, input, &context, captured_at_ms)?),
+        ApplicationCommand::PrepareEditedExpertResend { input, authority, captured_at_ms } => return encode_application_result(crate::expert_message::replay_prepared_resend(store, input, &authority, captured_at_ms)?),
         ApplicationCommand::LoadPreparedExpertResend { conversation_id, authority } => return encode_application_result(crate::expert_message::load_prepared_authorized(store, &conversation_id, &authority)?),
         ApplicationCommand::LoadExpertMessageManifest { conversation_id, message_id, authority } => return encode_application_result(crate::expert_message::load_manifest_authorized(store, &conversation_id, &message_id, &authority)?),
         ApplicationCommand::LoadExpertChildInstructions { conversation_id, expected_run_id, authority } => return encode_application_result(crate::expert_message::load_child_instructions_authorized(store, &conversation_id, &expected_run_id, &authority)?),
+        ApplicationCommand::PrepareInPlaceResend { input } => return encode_application_result(crate::in_place_resend::prepare(store, input)?),
         ApplicationCommand::PrepareEditedResend { input } => return encode_application_result(crate::edited_resend::prepare(store, input)?),
+        ApplicationCommand::LoadPreparedInPlaceResend { operation_id } => {
+            uuid::Uuid::parse_str(&operation_id).map_err(|_| "invalid_resend_operation")?;
+            return encode_application_result(nola_store_port::conversation_revert::ConversationRevertRepository::prepared_in_place_resend(store, &operation_id).map_err(|e| e.to_string())?);
+        },
         ApplicationCommand::LoadPreparedEditedResend { conversation_id } => {
             uuid::Uuid::parse_str(&conversation_id).map_err(|_| "edited_resend_invalid_target_identity")?;
             return encode_application_result(nola_store_port::edited_resend::EditedResendRepository::prepared_edited_resend(store, &conversation_id).map_err(|e| e.to_string())?);
@@ -1650,6 +1724,8 @@ impl nola_protocol::CommandMetadata for ApplicationCommand {
             Self::ReduceAndCommitIdleSubmission { .. } => "reduce_and_commit_idle_submission",
             Self::RevertConversation { .. } => "revert_conversation",
             Self::CreateConversationBranch { .. } => "create_conversation_branch",
+            Self::ReceiveRemoteExpertParentAdmission { .. } => "receive_remote_expert_parent_admission",
+            Self::ExportRemoteExpertParentAdmission { .. } => "export_remote_expert_parent_admission",
             Self::PrepareRemoteSubmission { .. } => "prepare_remote_submission",
             Self::AbandonPreparedRemoteSubmission { .. } => "abandon_prepared_remote_submission",
             Self::AdoptObservedRemoteRun { .. } => "adopt_observed_remote_run",
@@ -1716,6 +1792,7 @@ impl nola_protocol::CommandMetadata for ApplicationCommand {
             Self::CreateConversation { .. } => "create_conversation",
             Self::AdmitConversationUserMessage { .. } => "admit_conversation_user_message",
             Self::AgentRoom { .. } => "agent_room",
+            Self::AgentRoomAtSource { .. } => "agent_room_at_source",
             Self::ImportConversationTranscript { .. } => "import_conversation_transcript",
             Self::EditConversationMessage { .. } => "edit_conversation_message",
             Self::DeleteConversationMessage { .. } => "delete_conversation_message",
@@ -1751,13 +1828,27 @@ impl nola_protocol::CommandMetadata for ApplicationCommand {
             Self::SearchConversationText { .. } => "search_conversation_text",
             Self::QueryCanonicalHistory { .. } => "query_canonical_history",
             Self::LoadConversationProjectionV1 { .. } => "load_conversation_projection_v1",
+            Self::AbortExpertPeerTaskPreparation{..} => "abort_expert_peer_task_preparation",
+            Self::LoadExpertPeerForEffect{..} => "load_expert_peer_for_effect",
+            Self::ReadExpertExchangeCapability => "read_expert_exchange_capability",
+            Self::DeriveExpertPeerAuthority{..} => "derive_expert_peer_authority",
+            Self::PrepareExpertPeerTask{..} => "prepare_expert_peer_task",
+            Self::ExpertPeerTaskAction{..} => "expert_peer_task_action",
+            Self::ExpertPeerDirectory { .. } => "expert_peer_directory",
+            Self::PreviewExpertPeer { .. } => "preview_expert_peer",
+            Self::AdmitExpertPeer { .. } => "admit_expert_peer",
+            Self::LoadExpertPeerForSubmission { .. } => "load_expert_peer_for_submission",
+            Self::LoadExpertPeer { .. } => "load_expert_peer",
+            Self::ClarifyExpertPeer { .. } => "clarify_expert_peer",
             Self::PreviewExpertTemplateCapture { .. } => "preview_expert_template_capture",
             Self::AdmitExpertConversationMessage { .. } => "admit_expert_conversation_message",
             Self::PrepareEditedExpertResend { .. } => "prepare_edited_expert_resend",
             Self::LoadPreparedExpertResend { .. } => "load_prepared_expert_resend",
             Self::LoadExpertMessageManifest { .. } => "load_expert_message_manifest",
             Self::LoadExpertChildInstructions { .. } => "load_expert_child_instructions",
+            Self::PrepareInPlaceResend { .. } => "prepare_in_place_resend",
             Self::PrepareEditedResend { .. } => "prepare_edited_resend",
+            Self::LoadPreparedInPlaceResend { .. } => "load_prepared_in_place_resend",
             Self::LoadPreparedEditedResend { .. } => "load_prepared_edited_resend",
             Self::LoadEditedResendHostMaterial { .. } => "load_edited_resend_host_material",
             Self::AttestEditedResendHostPolicy { .. } => "attest_edited_resend_host_policy",
@@ -1779,6 +1870,7 @@ impl nola_protocol::CommandMetadata for ApplicationCommand {
             }
             Self::LoadConversationTailSnapshotV1 { .. } => "load_conversation_tail_snapshot_v1",
             Self::LoadConversationSettings { .. } => "load_conversation_settings",
+            Self::ListRootConversations { .. } => "list_root_conversations",
             Self::ListConversations { .. } => "list_conversations",
             Self::RenameConversation { .. } => "rename_conversation",
             Self::DeleteConversation { .. } => "delete_conversation",
@@ -1942,5 +2034,27 @@ impl From<nola_protocol::HistoricalProjectionCommand> for ApplicationCommand {
                 maximum_output_bytes,
             },
         }
+    }
+}
+
+
+/// Keep newly introduced private expert payloads out of the broad dispatcher
+/// frame used by every existing command, including small background-thread reads.
+#[inline(never)]
+fn execute_expert_peer_command<R:crate::repositories::ApplicationCommandRepositories>(store:&mut R,command:Box<ApplicationCommand>)->Result<Value,String>{
+    match *command {
+        ApplicationCommand::AbortExpertPeerTaskPreparation{request,exchange_id,authority,now_ms} => return encode_application_result(crate::expert_peer_task::abort_preparation(store,&request,&exchange_id,&authority,now_ms)?),
+        ApplicationCommand::LoadExpertPeerForEffect{request,authority,now_ms} => return encode_application_result(crate::expert_peer::load_for_effect(store,&request,&authority,now_ms)?),
+        ApplicationCommand::ReadExpertExchangeCapability => return Ok(serde_json::json!({"version":1,"tool":nola_domain::expert_task_target::tool_schema()})),
+        ApplicationCommand::DeriveExpertPeerAuthority{request,authority,now_ms} => return encode_application_result(crate::expert_peer::derive_authority(store,&request,authority,now_ms)?),
+        ApplicationCommand::PrepareExpertPeerTask{input,now_ms} => return encode_application_result(crate::expert_peer_task::prepare(store,*input,now_ms)?),
+        ApplicationCommand::ExpertPeerTaskAction{input,now_ms} => return crate::expert_peer_task::action(store,*input,now_ms),
+        ApplicationCommand::ExpertPeerDirectory {source_context_id,source_run_id,authority} => return encode_application_result(crate::expert_peer::directory(store,&source_context_id,&source_run_id,&authority)?),
+        ApplicationCommand::PreviewExpertPeer { input, authority } => return encode_application_result(crate::expert_peer::preview(store,&input,&authority)?),
+        ApplicationCommand::AdmitExpertPeer { input, context, captured_at_ms } => return encode_application_result(crate::expert_peer::admit(store,input,&context,captured_at_ms)?),
+        ApplicationCommand::LoadExpertPeerForSubmission { room_id, exchange_id, authority } => return encode_application_result(crate::expert_peer::load_for_submission(store,&room_id,&exchange_id,&authority)?),
+        ApplicationCommand::LoadExpertPeer { room_id, exchange_id, authority } => return encode_application_result(crate::expert_peer::load(store,&room_id,&exchange_id,&authority)?),
+        ApplicationCommand::ClarifyExpertPeer { input, authority, captured_at_ms } => return encode_application_result(crate::expert_peer::clarify(store,input,&authority,captured_at_ms)?),
+        _ => Err("not_an_expert_peer_operation".into()),
     }
 }

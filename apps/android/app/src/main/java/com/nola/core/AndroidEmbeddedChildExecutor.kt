@@ -11,7 +11,7 @@ internal object AndroidEmbeddedChildExecutor {
     @Volatile var onTaskChanged: (() -> Unit)? = null
     fun isActive(taskId: String): Boolean = synchronized(active) { active[taskId]?.isActive == true }
     fun start(taskId:String,parent:AndroidCanonicalAgentRuntime,
-        prepare: (JsonObject) -> AndroidPreparedChildExecutor) {
+        prepare: suspend (JsonObject) -> AndroidPreparedChildExecutor) {
         synchronized(active) {
             if(active[taskId]?.isActive==true)return
             val job=scope.launch(start=CoroutineStart.LAZY) {
@@ -40,13 +40,20 @@ internal object AndroidEmbeddedChildExecutor {
                         put("cancellation_only", value.getValue("cancellation_only"))
                     }
                     handle=parent.startEmbeddedPump(start)
-                    val execute=prepared.bind(child)
+                    val expertTarget = (value["expert_target"] as? JsonObject)?.also { proof ->
+                        require(proof["version"]?.jsonPrimitive?.int == 1 && proof["task_id"] == JsonPrimitive(taskId) && proof["exchange_id"] == JsonPrimitive(taskId) &&
+                            proof.getValue("target").jsonObject["context_conversation_id"] == invocation["conversation_id"] && invocation["run_id"] == JsonPrimitive(taskId))
+                    }
+                    val execute=prepared.bind(child, expertTarget)
                     val state=DeviceAgentCoordinator.RunState(invocation.getValue("core_session_id").jsonPrimitive.content,
                         AndroidAgentExecutionMode.DeviceLocal.wireValue,candidate.getValue("host_catalog").jsonObject.getValue("host_id").jsonPrimitive.content)
-                    coroutineScope {
+                    supervisorScope {
+                    val requestedStops=ConcurrentHashMap.newKeySet<String>()
+                    val fatalOperation=java.util.concurrent.atomic.AtomicReference<Exception?>(null)
                     val requests=ConcurrentHashMap<String,Pair<JsonObject,Job>>()
                     try {
                     while(currentCoroutineContext().isActive) {
+                        fatalOperation.get()?.let { throw it }
                         val polled=decode(AgentCoreNative.nativeChildPumpPoll(handle,500))
                         if(polled["transport_finished"]?.jsonPrimitive?.boolean==true){
                             check(polled["error"]==null||polled["error"]==JsonNull){polled["error"].toString()}
@@ -55,12 +62,18 @@ internal object AndroidEmbeddedChildExecutor {
                         val request=polled["request"] as? JsonObject ?: continue
                         val pumpId=polled.getValue("pump_id")
                         val ticket=request.getValue("ticket")
+                        val replyUnconfirmed=java.util.concurrent.atomic.AtomicBoolean(false)
                         val sink=object:AgentCoreTransitionRuntime,AndroidCommittedChildMailbox {
                             override suspend fun commit(response:JsonObject) {
-                                val accepted=decode(AgentCoreNative.nativeChildPumpRespond(handle,buildJsonObject{
-                                    put("pump_id",pumpId);put("ticket",ticket);put("response",response)
-                                }.toString().encodeToByteArray()))
-                                check(accepted["committed"]?.jsonPrimitive?.boolean==true){"Child response commit was not confirmed"}
+                                try {
+                                    val accepted=decode(AgentCoreNative.nativeChildPumpRespond(handle,buildJsonObject{
+                                        put("pump_id",pumpId);put("ticket",ticket);put("response",response)
+                                    }.toString().encodeToByteArray()))
+                                    check(accepted["committed"]?.jsonPrimitive?.boolean==true){"Child response commit was not confirmed"}
+                                } catch(error:Exception) {
+                                    replyUnconfirmed.set(true)
+                                    throw error
+                                }
                             }
                             override suspend fun submit(submission:JsonObject):JsonObject=error("Child boundary input must use Application")
                             override suspend fun snapshot():JsonObject=error("Child state belongs to Core")
@@ -70,6 +83,7 @@ internal object AndroidEmbeddedChildExecutor {
                         val payload=envelope.getValue("payload").jsonObject
                         if(payload["type"]?.jsonPrimitive?.content=="cancel") {
                             val targetId=payload.getValue("target_effect_id").jsonPrimitive.content
+                            requestedStops.add(targetId)
                             val target=requests[targetId]
                             if(target!=null) {
                                 if(target.first.getValue("payload").jsonObject["type"]?.jsonPrimitive?.content=="execute_tool")
@@ -84,14 +98,28 @@ internal object AndroidEmbeddedChildExecutor {
                         check(requests[effect]?.second?.isActive!=true){"Core dispatched an overlapping effect ticket"}
                         state.cancellationEvidence.dispatching(envelope)
                         val job=launch(start=CoroutineStart.LAZY) {
-                            execute(envelope,sink,state)
-                            state.cancellationEvidence.returnedLocally(envelope,child.descriptor.conversationId)
+                            try {
+                                // A failed/aborted delivery is not an ACK. Keep the owner polling:
+                                // only Core can emit the exact Cancel and finish this transport.
+                                execute(envelope,sink,state)
+                                state.cancellationEvidence.returnedLocally(envelope,child.descriptor.conversationId)
+                            } catch(error:CancellationException) {
+                                throw error // Exact stop or external owner cancellation still joins cleanup.
+                            } catch(error:Exception) {
+                                if (!replyUnconfirmed.get() && effect !in requestedStops) {
+                                    // An executor/guard failure with no response is not a retired
+                                    // mailbox delivery. Stop this transport instead of heartbeating forever.
+                                    fatalOperation.compareAndSet(null,error)
+                                }
+                                android.util.Log.e("NolaChildHost",
+                                    "Child effect failed without a fabricated ACK: $taskId/$effect replyUnconfirmed=${replyUnconfirmed.get()} stopRequested=${effect in requestedStops}",error)
+                            }
                         }
                         requests[effect]=envelope to job
                         job.start()
                     }
                     } finally {
-                        // Close before coroutineScope joins physical handlers:
+                        // Close before the supervisor joins physical handlers:
                         // a cancelled coroutine may still be blocked in native
                         // respond awaiting a commit ACK. Closing releases that
                         // wait, but does not manufacture cancellation evidence.
@@ -121,6 +149,6 @@ internal interface AndroidCommittedChildMailbox { suspend fun commit(response:Js
 /** One live plan feeds both Core's observation check and the physical executor. */
 internal data class AndroidPreparedChildExecutor(
     val currentTools: List<JsonElement>,
-    val bind: (AndroidCanonicalAgentRuntime) ->
+    val bind: (AndroidCanonicalAgentRuntime, JsonObject?) ->
         (suspend (JsonObject, AgentCoreTransitionRuntime, DeviceAgentCoordinator.RunState) -> Unit),
 )

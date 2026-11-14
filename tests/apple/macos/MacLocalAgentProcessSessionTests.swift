@@ -7,13 +7,26 @@ import XCTest
 final class MacLocalAgentProcessSessionTests: XCTestCase {
     private enum InjectedWriteFailure: Error { case unavailable }
 
+    private struct DescriptorIdentity {
+        let number: Int32
+        let device: dev_t
+        let inode: ino_t
+        init(_ number: Int32) {
+            self.number = number
+            var info = stat()
+            precondition(fstat(number, &info) == 0)
+            device = info.st_dev
+            inode = info.st_ino
+        }
+    }
+
     private struct Fixture {
         let process: Process
         let input: Pipe
         let output: Pipe
         let error: Pipe
         let session: MacLocalAgentProcessSession
-        let descriptors: [Int32]
+        let descriptors: [DescriptorIdentity]
 
         init(
             registry: MacOwnedChildProcessRegistry,
@@ -28,7 +41,7 @@ final class MacLocalAgentProcessSessionTests: XCTestCase {
             output = Pipe()
             error = Pipe()
             descriptors = [input, output, error].flatMap {
-                [$0.fileHandleForReading.fileDescriptor, $0.fileHandleForWriting.fileDescriptor]
+                [DescriptorIdentity($0.fileHandleForReading.fileDescriptor), DescriptorIdentity($0.fileHandleForWriting.fileDescriptor)]
             }
             session = MacLocalAgentProcessSession(
                 process: process, inputPipe: input, outputPipe: output, errorPipe: error,
@@ -44,9 +57,17 @@ final class MacLocalAgentProcessSessionTests: XCTestCase {
 
     private func assertClosed(_ fixture: Fixture, file: StaticString = #filePath, line: UInt = #line) {
         for descriptor in fixture.descriptors {
+            var current = stat()
             errno = 0
-            XCTAssertEqual(fcntl(descriptor, F_GETFD), -1, "owned descriptor \(descriptor) is still open", file: file, line: line)
-            XCTAssertEqual(errno, EBADF, file: file, line: line)
+            if fstat(descriptor.number, &current) == -1 {
+                XCTAssertEqual(errno, EBADF, file: file, line: line)
+            } else {
+                // Foundation may close a child's unused pipe end at launch.
+                // Other test-host work can immediately recycle its number.
+                // Check the original pipe identity, not process-wide FD reuse.
+                XCTAssertFalse(current.st_dev == descriptor.device && current.st_ino == descriptor.inode,
+                    "owned pipe \(descriptor.number) is still open", file: file, line: line)
+            }
         }
     }
 

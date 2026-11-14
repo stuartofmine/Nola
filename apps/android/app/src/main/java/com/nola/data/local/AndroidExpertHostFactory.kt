@@ -8,7 +8,7 @@ import com.nola.core.AndroidSystemPrompt
 import com.nola.data.local.datastore.MemoryProfileDataStore
 import com.nola.data.local.security.SecureTokenStore
 import com.nola.data.repository.applyModelPresentation
-import com.nola.data.repository.readConversationParameters
+import com.nola.data.repository.readExpertConversationParameters
 import com.nola.data.repository.toConfiguredModelInfo
 import com.nola.domain.model.ModelInfo
 import com.nola.domain.model.ModelParameters
@@ -113,6 +113,51 @@ internal class AndroidExpertHostFactory(context: Context, private val runtime: A
         })
     }
 
+    fun peerAuthority(request: JsonObject): JsonObject = runtime.executeExpertHostQuery(buildJsonObject {
+        put("kind", "derive_peer_authority"); put("request", request); put("authority", authority())
+    }).jsonObject
+
+    fun originalPeer(request: JsonObject, actor: JsonObject): JsonObject? = runtime.executeExpertHostQuery(buildJsonObject {
+        put("kind", "load_peer_for_effect"); put("request", request); put("authority", actor)
+    }).takeUnless { it == JsonNull }?.jsonObject
+
+    fun admitPeer(input: JsonObject, actor: JsonObject): JsonObject {
+        runtime.pendingExpertHostMutation("admit_peer", input, actor)?.let { return runtime.executeExpertHostMutation(it).jsonObject }
+        val preview = Json.decodeFromJsonElement<AndroidExpertCapturePreview>(runtime.executeExpertHostQuery(buildJsonObject {
+            put("kind", "preview_peer"); put("input", input); put("authority", actor)
+        }))
+        require(preview.participants.size == 1)
+        val selections = preview.participants.map { entry ->
+            val template = entry.defaults["selectedPromptTemplateID"]?.takeUnless { it == JsonNull }
+            buildJsonObject {
+                put("context_conversation_id", entry.participant.contextConversationId); put("context_configuration_revision", entry.contextConfigurationRevision)
+                put("model_profile", buildJsonObject { put("profile_id", entry.modelDeclaration.getValue("profile_id")); put("admitted_revision", entry.modelDeclaration.getValue("profile_revision")) })
+                put("source", if (template == null) "no_template" else "explicit"); put("template_id", template ?: JsonNull)
+                put("host_user_instructions", Json.encodeToJsonElement(userDefinitions(entry.defaults, entry.modelDeclaration, entry.clientModelPresentation)))
+            }
+        }
+        return runtime.executeExpertHostMutation(buildJsonObject {
+            put("kind", "admit_peer"); put("input", input)
+            put("context", buildJsonObject { put("actor", actor.getValue("actor")); put("request_host_id", actor.getValue("request_host_id")); put("selections", JsonArray(selections)); put("builtins", JsonArray(emptyList())) })
+        }).jsonObject
+    }
+
+    fun preparePeerTask(request: JsonObject, material: JsonObject, candidate: JsonObject, actor: JsonObject): JsonObject =
+        runtime.executeExpertHostMutation(buildJsonObject {
+            put("kind", "prepare_peer_task"); put("request", request); put("exchange_id", material.getValue("view").jsonObject.getValue("exchange_id"))
+            put("target_configuration", candidate); put("target_invocation", JsonNull); put("project_root", "android-device"); put("authority", actor)
+        }).jsonObject
+
+    fun peerTaskAction(request: JsonObject, actor: JsonObject): JsonObject {
+        val operation = buildJsonObject { put("kind", "peer_task_action"); put("request", request); put("authority", actor) }
+        return if (request.getValue("payload").jsonObject.getValue("input").jsonObject["action"]?.jsonPrimitive?.content in setOf("directory", "read", "wait"))
+            runtime.executeExpertHostQuery(operation).jsonObject else runtime.executeExpertHostMutation(operation).jsonObject
+    }
+
+    fun abortPeerPreparation(request: JsonObject, material: JsonObject, actor: JsonObject): JsonObject = runtime.executeExpertHostMutation(buildJsonObject {
+        put("kind", "abort_peer_task_preparation"); put("request", request); put("exchange_id", material.getValue("view").jsonObject.getValue("exchange_id")); put("authority", actor)
+    }).jsonObject
+
     private fun decodeAdmission(input: AndroidAdmitExpertMessage, operation: JsonObject): AndroidExpertMessageManifest = try {
         Json.decodeFromJsonElement(runtime.executeExpertHostMutation(operation))
     } catch (pending: AndroidApplicationRuntime.ExpertHostPending) {
@@ -158,8 +203,7 @@ internal class AndroidExpertHostFactory(context: Context, private val runtime: A
         }
         val model = if (profile.runtime == "remote") profile.toConfiguredModelInfo() else
             ModelInfo(profile.id, profile.displayName, ModelInfo.ModelSource.Local, profileId = profile.id, profileRevision = profile.revision)
-        val parameters = readConversationParameters(settings.toString(), model)
-            ?: Json.decodeFromJsonElement(ModelParameters.serializer(), declaration.getValue("parameters"))
+        val parameters = readExpertConversationParameters(settings, model, declaration.getValue("parameters").jsonObject)
         val effectivePresentation = applyModelPresentation(parameters, presentation.takeUnless { it == JsonNull }?.jsonObject)
         val component = AndroidSystemPrompt.customInstructionComponent(effectivePresentation.customSystemPrompt) ?: return emptyList()
         val body = component.content.jsonPrimitive.content

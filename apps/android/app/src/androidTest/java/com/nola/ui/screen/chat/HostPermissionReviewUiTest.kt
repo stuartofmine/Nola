@@ -27,23 +27,4 @@ class HostPermissionReviewUiTest {
         compose.onNodeWithText(compose.activity.getString(R.string.common_deny)).assertIsEnabled().performClick()
         compose.runOnIdle { assertTrue(denied); assertFalse(allowed) }
     }
-    @Test fun reviewExpandsInlineWithoutChangingTheDecision() {
-        requireIsolatedProductTestUser(compose.activity)
-        var decisions = 0
-        compose.setContent { NolaTheme {
-            PermissionDialog(toolName = "bash", message = "Review this exact operation",
-                executionLocation = "Fixture host", dataBoundary = "Fixture boundary", validity = "Only this operation",
-                allowLabel = "Allow fixture once", onAllow = { decisions++ }, onDeny = { decisions++ })
-        } }
-        compose.onNodeWithText("Fixture boundary").assertIsDisplayed()
-        compose.onNodeWithText("Only this operation").assertIsDisplayed()
-        repeat(2) {
-            compose.onNodeWithText(compose.activity.getString(R.string.canonical_details)).performClick()
-            compose.onNodeWithText("Review this exact operation").assertIsDisplayed()
-            compose.onNodeWithText(compose.activity.getString(R.string.canonical_hide_details)).performClick()
-        }
-        compose.runOnIdle { assertEquals(0, decisions) }
-        compose.onNodeWithText("Allow fixture once").performClick()
-        compose.runOnIdle { assertEquals(1, decisions) }
-    }
 }

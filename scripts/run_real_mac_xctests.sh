@@ -126,7 +126,7 @@ trap 'exit 143' TERM
 if [[ "${NOLA_SKIP_MAC_MEMORY_BUILD:-0}" != "1" ]]; then
     printf '[real-mac-xctest] building macOS tests\n'
     xcodebuild build-for-testing \
-        -project "$ROOT/Nola.xcodeproj" \
+        -project "$ROOT/apple/Nola.xcodeproj" \
         -scheme NolaMac \
         -configuration Test \
         -destination 'platform=macOS,arch=arm64' \

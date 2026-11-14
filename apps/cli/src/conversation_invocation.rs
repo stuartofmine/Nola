@@ -104,6 +104,17 @@ fn snapshot_for_settings(settings: &Value, store: &NolaStore) -> Result<Snapshot
     Err("Conversation requires an explicit supported model or external execution policy".into())
 }
 
+/// Resolve a trusted captured expert configuration through the ordinary
+/// conversation resolver. This is read-only: no default profile, credential,
+/// conversation settings or editing baseline is created or replaced.
+pub(crate) fn apply_expert_settings(
+    config: &mut Config,
+    settings: &Value,
+    store: &NolaStore,
+) -> Result<(), String> {
+    restore(config, snapshot_for_settings(settings, store)?, store)
+}
+
 fn execution_request(policy: &nola_domain::execution_policy::ConversationExecutionPolicy) -> HostExecutionRequest {
     HostExecutionRequest { execution_backend: policy.execution_backend.clone(),
         external_execution_session_id: policy.external_execution_session_id.clone(),

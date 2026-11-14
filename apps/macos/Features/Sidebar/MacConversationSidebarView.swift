@@ -10,6 +10,7 @@ struct MacConversationSidebar: View {
     @Binding var selectedSection: MacWorkspaceSection
     let selectConversation: (String) -> Void
     let loadParticipantNames: (String) async throws -> [String]
+    var openExpertLibrary: () -> Void = {}
     @Environment(\.openWindow) private var openWindow
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isSearchHovering = false
@@ -77,7 +78,8 @@ struct MacConversationSidebar: View {
                         conversationSection(String(localized: "Pinned"), conversations: pinned)
                     }
 
-                    conversationSection(String(localized: "Recent"), conversations: recent)
+                    if pinned.isEmpty { conversationRows(recent) }
+                    else { conversationSection(String(localized: "Recent"), conversations: recent) }
                     if pinned.isEmpty && recent.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             Text(model.searchText.isEmpty
@@ -103,33 +105,21 @@ struct MacConversationSidebar: View {
             Divider()
                 .opacity(0.55)
 
-            Button {
-                selectedSection = .settings
-            } label: {
-                HStack(spacing: 9) {
-                    MacSidebarStatusIndicator(isRunning: model.isVisiblyRunning)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Nola")
-                            .font(.system(size: 12.5, weight: .semibold))
-                        Text(String(localized: "Settings"))
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Image("nola-settings").renderingMode(.template).resizable().scaledToFit().frame(width: 18, height: 18)
-                        .font(.system(size: 13.5, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 26, height: 26)
-                }
-                .padding(.horizontal, 8)
-                .frame(height: 44)
-                .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            Button(action: openExpertLibrary) {
+                Label(String(localized: "Expert Library", table: "ExpertLibrary"), systemImage: "person.2")
+                    .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(MacSidebarNavigationButtonStyle(isSelected: false))
+            .buttonStyle(MacActionButtonStyle())
+            .padding(.horizontal, 8)
+            .padding(.top, 7)
+            .accessibilityIdentifier("mac-expert-library")
+
+            MacWorkspaceSettingsRow(isSelected: selectedSection == .settings) {
+                selectedSection = .settings
+            }
             .padding(.horizontal, 8)
             .padding(.vertical, 7)
-            .help(String(localized: "Settings"))
-            .accessibilityLabel(String(localized: "Settings"))
         }
         .onChange(of: model.renamingConversationID) { _, conversationID in
             Task { @MainActor in

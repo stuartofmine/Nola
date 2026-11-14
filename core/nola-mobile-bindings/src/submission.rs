@@ -62,8 +62,8 @@ pub extern "C" fn nola_core_application_submit(
         if let Err(error) = request.validate() {
             return failure("invalid_receipt_lookup", error);
         }
-        let runtime = unsafe { &*application };
-        let mut runtime = match runtime.application.lock() {
+        let runtime_ref = unsafe { &*application };
+        let mut runtime = match runtime_ref.application.lock() {
             Ok(value) => value,
             Err(_) => {
                 return failure(
@@ -78,7 +78,9 @@ pub extern "C" fn nola_core_application_submit(
                 json!(receipt.map(|value| value.into_protocol_receipt())),
             ),
             Err(error) => {
-                if error.requires_owner_reopen() { let _ = runtime.reopen(); }
+                if error.requires_owner_reopen() {
+                    let _ = runtime_ref.application.reopen_locked(&mut runtime);
+                }
                 encode(json!({"ok": false, "error": {"code": error.code, "message": error.message, "recoverable": error.recoverable}}))
             },
         };
@@ -105,8 +107,34 @@ pub extern "C" fn nola_core_application_submit(
             "model parameter editing requires a revision precondition",
         );
     }
-    let runtime = unsafe { &*application };
-    let mut runtime = match runtime.application.lock() {
+    let runtime_ref = unsafe { &*application };
+    if command.is_read_only_query() {
+        if envelope.expected_revision.is_some() {
+            return failure(
+                "invalid_query_revision",
+                "queries cannot carry a write revision",
+            );
+        }
+        let command = match runtime_ref.application.try_execute_on_read_replica(command) {
+            Ok(Ok(result)) => return query_result(&envelope, result),
+            Ok(Err(error)) => return failure("application_rejected", error),
+            Err(command) => command,
+        };
+        let mut runtime = match runtime_ref.application.lock() {
+            Ok(value) => value,
+            Err(_) => {
+                return failure(
+                    "runtime_reopen_required",
+                    "The canonical owner is unavailable; retain the original request for reconciliation",
+                )
+            }
+        };
+        return match runtime.execute(command) {
+            Ok(result) => query_result(&envelope, result),
+            Err(error) => failure("application_rejected", error),
+        };
+    }
+    let mut runtime = match runtime_ref.application.lock() {
         Ok(value) => value,
         Err(_) => {
             return failure(
@@ -115,18 +143,6 @@ pub extern "C" fn nola_core_application_submit(
             )
         }
     };
-    if command.is_read_only_query() {
-        if envelope.expected_revision.is_some() {
-            return failure(
-                "invalid_query_revision",
-                "queries cannot carry a write revision",
-            );
-        }
-        return match runtime.execute(command) {
-            Ok(result) => query_result(&envelope, result),
-            Err(error) => failure("application_rejected", error),
-        };
-    }
     match runtime.execute_received_command(
         ExecuteReceivedCommand {
             client_id: envelope.client_id,
@@ -140,7 +156,9 @@ pub extern "C" fn nola_core_application_submit(
     ) {
         Ok(receipt) => encode(json!({"ok": true, "result": receipt.into_protocol_receipt()})),
         Err(error) => {
-            if error.requires_owner_reopen() { let _ = runtime.reopen(); }
+            if error.requires_owner_reopen() {
+                let _ = runtime_ref.application.reopen_locked(&mut runtime);
+            }
             encode(json!({"ok": false, "error": {"code": error.code, "message": error.message, "recoverable": error.recoverable}}))
         },
     }

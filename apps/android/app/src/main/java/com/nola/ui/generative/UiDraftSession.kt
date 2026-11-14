@@ -7,6 +7,7 @@ import com.nola.data.local.UiSnapshot
 import com.nola.data.local.UiSurfacePhase
 import com.nola.data.local.UiSubmission
 import com.nola.data.local.UiSurfaceIdentity
+import com.nola.data.local.UiEdit
 import kotlinx.serialization.json.JsonElement
 
 /** Process-lifetime UI editing buffers, isolated by the complete Core identity.
@@ -16,6 +17,20 @@ internal class UiDraftState {
     val generation = mutableLongStateOf(1)
     val revision = mutableStateOf<Long?>(null)
     val unresolved = mutableStateOf<UiSubmission?>(null)
+
+    fun restore(submission: UiSubmission, identity: UiSurfaceIdentity) {
+        require(submission.interaction.identity == identity) { "Pending submission belongs to another form" }
+        drafts.clear()
+        submission.interaction.edits.forEach { edit ->
+            when (edit) {
+                is UiEdit.Set -> drafts[edit.instance_id to edit.binding] = edit.value
+                is UiEdit.Delete -> Unit // This renderer only edits advertised scalar values.
+            }
+        }
+        revision.value = submission.interaction.expected_surface_revision
+        unresolved.value = submission
+        generation.longValue += 1
+    }
 
     /** Explicit user confirmation retains values; Core still validates the draft. */
     fun revalidate(snapshot: UiSnapshot, blocked: Boolean): Boolean {

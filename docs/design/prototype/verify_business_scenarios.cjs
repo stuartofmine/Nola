@@ -113,9 +113,12 @@ function contrast(a,b) {
         await page.locator('#search').fill('宿主机');assert.ok(await page.locator('a[data-scene]').count()>0);await page.locator('#search').fill('');
         report.checks.push('search no results and recovery');
         // Multiple independent inspector sections retain an edited Wiki draft.
-        await page.goto(`${base}/scenarios.html?scene=inspector&platform=mac&theme=dark`);await page.locator('[data-wiki]').waitFor();
+        await page.goto(`${base}/scenarios.html?scene=inspector&platform=mac&theme=dark`);
+        await page.locator('#device summary').filter({hasText:/^上下文预算$/}).click();
+        await page.locator('#device summary').filter({hasText:/^会话 Wiki$/}).click();
+        await page.locator('[data-wiki]').waitFor();
         await page.locator('[data-wiki]').fill('保留的 Wiki 草稿');
-        const details=page.locator('#device details').filter({has:page.locator('[data-wiki]')});await details.locator('summary').click();await details.locator('summary').click();
+        const details=page.locator('#device details').filter({has:page.locator('[data-wiki]')}).last();await details.locator(':scope>summary').click();await details.locator(':scope>summary').click();
         assert.equal(await page.locator('[data-wiki]').inputValue(),'保留的 Wiki 草稿');
         await page.locator('button[data-state="1"]').click();assert.equal(await page.locator('[data-wiki]').inputValue(),'保留的 Wiki 草稿');
         report.checks.push('independent inspector sections and retained draft');
@@ -139,7 +142,7 @@ function contrast(a,b) {
         process.exitCode=1;
     } finally {
         fs.writeFileSync(path.join(out,'receipt.json'),JSON.stringify(report,null,2));
-        fs.writeFileSync(path.join(out,'index.html'),`<!doctype html><meta charset="utf-8"><title>Nola 业务原型图册</title><style>body{font:14px system-ui;margin:24px;background:#f2f4f0;color:#202620}main{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:24px}img{width:100%;height:420px;object-fit:contain;object-position:top;background:white}a{color:inherit}h2{font-size:16px}</style><h1>Nola 业务场景图册</h1><p>合成原型，不是生产截图。${report.scenarios} 个场景，状态及验证结果见 receipt.json。</p><main>${report.screens.map(s=>`<section><h2>${catalog.scenarios.find(scene=>scene.id===s.scene)?.title || s.scene} · ${s.state} · ${s.platform} · ${s.theme}</h2><a href="${s.file}"><img loading="lazy" src="${s.file}" alt="${s.scene} ${s.state}"></a></section>`).join('')}</main>`);
+        fs.writeFileSync(path.join(out,'index.html'),`<!doctype html><meta charset="utf-8"><title>Nola 业务原型图册</title><style>body{font:14px system-ui;margin:24px;background:#f5f4f1;color:#242423}main{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:24px}img{width:100%;height:420px;object-fit:contain;object-position:top;background:white}a{color:inherit}h2{font-size:16px}</style><h1>Nola 业务场景图册</h1><p>合成原型，不是生产截图。${report.scenarios} 个场景，状态及验证结果见 receipt.json。</p><main>${report.screens.map(s=>`<section><h2>${catalog.scenarios.find(scene=>scene.id===s.scene)?.title || s.scene} · ${s.state} · ${s.platform} · ${s.theme}</h2><a href="${s.file}"><img loading="lazy" src="${s.file}" alt="${s.scene} ${s.state}"></a></section>`).join('')}</main>`);
         await browser.close();
     }
     console.log(JSON.stringify({passed:report.passed,scenarios:report.scenarios,states:report.states,platformStates:report.platformStates,transitions:report.transitions,screens:report.screens.length,failure:report.failure,output:out}));

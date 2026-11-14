@@ -5,6 +5,19 @@ import XCTest
 
 @MainActor
 final class MacWorkspaceContentTabsTests: XCTestCase {
+    func testPrimarySidebarContainsOnlyConversationsAndResources() {
+        XCTAssertEqual(MacWorkspaceSidebarArea.allCases, [.conversations, .resources])
+        XCTAssertNil(MacWorkspaceSidebarArea(rawValue: "activity"))
+    }
+
+    func testResourceNavigationUsesOneHomeForContainedFeatures() {
+        XCTAssertEqual(MacWorkspaceSection.resourceNavigationSections, [.data, .models, .extensions, .capabilities])
+        XCTAssertEqual(MacWorkspaceSection.memory.resourceNavigationOwner, .data)
+        XCTAssertEqual(MacWorkspaceSection.automations.resourceNavigationOwner, .data)
+        XCTAssertTrue(MacDataCenterSection.allCases.contains(.memory))
+        XCTAssertTrue(MacDataCenterSection.allCases.contains(.plans))
+    }
+
     func testFileIdentityDeduplicatesLineTargetsAndCloseReturnsLeft() {
         let url = URL(fileURLWithPath: "/tmp/example.swift")
         var state = MacConversationContentWorkspace()
@@ -101,7 +114,7 @@ final class MacWorkspaceContentTabsTests: XCTestCase {
 
     func testInspectorNavigationRetainsAllTools() {
         XCTAssertEqual(MacChatInspector.InspectorTab.allCases,
-                       [.overview, .review, .artifacts, .progress, .goal, .context, .execution, .participants])
+                       [.overview, .progress, .goal, .review, .artifacts, .context, .execution, .participants])
     }
 
     func testFileURIRequiresCanonicalLocalOwnershipRatherThanLocalEndpointSelection() {

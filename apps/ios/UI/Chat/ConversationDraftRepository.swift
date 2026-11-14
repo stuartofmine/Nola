@@ -27,6 +27,7 @@ nonisolated protocol ConversationDraftRepository: Sendable {
     func stageSubmission(owner: ConversationComposerDraftStore.Owner, conversationID: UUID, userMessageID: UUID,
                          configurationRevision: Int64?, draft: ConversationComposerDraftStore.Draft) throws -> ConversationDraftSubmissionTicket
     func commitSubmission(_ ticket: ConversationDraftSubmissionTicket) throws
+    func retireRejectedSubmission(_ ticket: ConversationDraftSubmissionTicket) throws
     func pendingSubmissions() throws -> [ConversationDraftSubmissionTicket]
 }
 
@@ -138,6 +139,15 @@ nonisolated final class FileConversationDraftRepository: ConversationDraftReposi
                 }
             }
             try write(encoder.encode(SubmissionRecord(ticket: ticket, committed: true)), to: url)
+        } }
+    }
+    func retireRejectedSubmission(_ ticket: ConversationDraftSubmissionTicket) throws {
+        try Self.disk.sync { try locked {
+            let url = submissionURL(ticket.userMessageID)
+            guard FileManager.default.fileExists(atPath: url.path) else { return }
+            let record = try decoder.decode(SubmissionRecord.self, from: Data(contentsOf: url))
+            guard record.ticket == ticket, !record.committed else { throw Failure.conflict }
+            try FileManager.default.removeItem(at: url)
         } }
     }
     func pendingSubmissions() throws -> [ConversationDraftSubmissionTicket] {

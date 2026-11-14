@@ -25,20 +25,27 @@ class PackageLayoutTests(unittest.TestCase):
                 'apps/windows/package.json': '{"version":"1.0.0"}',
                 'apps/windows/package-lock.json': '{"version":"1.0.0","packages":{"":{"version":"1.0.0"}}}',
                 'apps/android/app/build.gradle.kts': 'versionCode = 1\nversionName = "1.0.0"',
-                'Nola.xcodeproj/project.pbxproj': 'CURRENT_PROJECT_VERSION = 1;\nMARKETING_VERSION = 1.0.0;',
-                'apps/web/app/templates/chat.html': '<main>Fixture chat</main>',
+                'apple/Nola.xcodeproj/project.pbxproj': 'CURRENT_PROJECT_VERSION = 1;\nMARKETING_VERSION = 1.0.0;',
                 'apps/web/app/static/ui/index.js': '// Fixture UI',
                 'LICENSE': 'Fixture project license',
                 'node-license.txt': 'Fixture Node license',
                 'runtime/bin/node': 'Fixture runtime',
                 'runtime/bridge.cjs': '// Fixture bridge',
                 'runtime/owner_queue.cjs': '// Fixture queue',
+                'runtime/browser_use.cjs': '// Fixture Browser Use adapter',
+                'runtime/browser_use/worker.py': '# Fixture fixed operations',
+                'runtime/browser_use/requirements.lock': 'browser-use==1.0.2',
+                'runtime/browser_use/python/bin/python3': '# Fixture interpreter',
+                'runtime/browser_use/site-packages/browser_use/__init__.py': '# Fixture library',
                 'runtime/node_modules/playwright-core/LICENSE': 'Fixture Playwright license',
             }
             for name, value in files.items():
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(value)
+            retired_template = root / 'apps/web/app/templates/retired.html'
+            retired_template.parent.mkdir(parents=True, exist_ok=True)
+            retired_template.write_text('<main>Retired template</main>')
             for name in ['nola', 'nola-agent-host', 'nola-service']:
                 path = root / 'target/release' / name
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -52,8 +59,9 @@ class PackageLayoutTests(unittest.TestCase):
                 package.main()
             with zipfile.ZipFile(output) as archive:
                 prefix = 'Nola-cli-macos-aarch64-1.0.0/'
-                expected = ['nola', 'bin/nola', 'bin/nola-agent-host', 'bin/nola-service', 'web/app/templates/chat.html', 'web/app/static/ui/index.js', 'web/playwright_runtime/bin/node', 'web/playwright_runtime/bridge.cjs']
+                expected = ['nola', 'bin/nola', 'bin/nola-agent-host', 'bin/nola-service', 'web/app/static/ui/index.js', 'web/playwright_runtime/bin/node', 'web/playwright_runtime/bridge.cjs', 'web/playwright_runtime/browser_use/worker.py', 'web/playwright_runtime/browser_use/python/bin/python3']
                 self.assertTrue(all(prefix + name in archive.namelist() for name in expected))
+                self.assertFalse(any('app/templates/' in name for name in archive.namelist()))
                 self.assertFalse(any('/apps/' in name for name in archive.namelist()))
                 launcher = archive.read(prefix + 'nola').decode()
                 self.assertIn('$NOLA_BUNDLE_ROOT/web/playwright_runtime/bin/node', launcher)

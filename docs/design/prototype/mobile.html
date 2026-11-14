@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark"><title>Nola · 移动端预览</title>
+<style>
+:root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#292825;background:#eeede9;color-scheme:light}
+*{box-sizing:border-box}body{margin:0;padding:20px 16px 32px}header{max-width:720px;margin:0 auto 20px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}h1{margin:0;font-size:16px;font-weight:600;letter-spacing:-.02em}nav{display:flex;gap:8px;flex-wrap:wrap}label{font-size:12px;color:#6d6a64;display:flex;align-items:center;gap:5px}select{font:inherit;color:inherit;background:#fff;border:1px solid #d8d6d0;border-radius:8px;min-height:36px;padding:6px 9px}main{width:min(100%,var(--phone-width,390px));margin:auto}iframe{display:block;border:0;border-radius:28px;width:100%;height:min(900px,calc(100dvh - 112px));min-height:560px;background:#fff;box-shadow:0 0 0 1px #d4d2cc,0 16px 50px #28251c12}footer{max-width:720px;margin:18px auto 0;color:#716e67;font-size:12px;text-align:center}a{color:inherit;text-underline-offset:3px}html[data-theme=dark]{color:#eeede9;background:#242422;color-scheme:dark}html[data-theme=dark] label,html[data-theme=dark] footer{color:#b7b4ad}html[data-theme=dark] select{background:#30302d;border-color:#474740}html[data-theme=dark] iframe{background:#141413;box-shadow:0 0 0 1px #484840,0 16px 50px #0003}@media(max-width:500px){body{padding:12px 10px}header{gap:12px;margin-bottom:12px}nav{gap:6px}label{font-size:11px}select{min-height:40px}iframe{border-radius:20px;height:calc(100dvh - 140px);min-height:480px}footer{margin-top:12px}}
+</style>
+</head>
+<body>
+<header><h1>Nola · 移动端预览</h1><nav aria-label="预览控制">
+<label>平台<select id="platform"><option value="ios">iOS</option><option value="android">Android</option></select></label>
+<label>外观<select id="theme"><option value="light">浅色</option><option value="dark">深色</option></select></label>
+<label>宽度<select id="width"><option>320</option><option selected>390</option><option>430</option></select></label>
+</nav></header>
+<main><iframe id="phone" src="index.html" title="可操作的移动端原型" allow="clipboard-write"></iframe></main>
+<footer>本页仅为交互原型 · <a href="index.html">完整原型</a> · <a href="scenarios.html?platform=ios">业务场景</a></footer>
+<script>
+const phone=document.querySelector('#phone'),platform=document.querySelector('#platform'),theme=document.querySelector('#theme'),width=document.querySelector('#width');
+const parameters=new URLSearchParams(location.search);
+for(const [control,key,values] of [[platform,'platform',['ios','android']],[theme,'theme',['light','dark']],[width,'width',['320','390','430']]])if(values.includes(parameters.get(key)))control.value=parameters.get(key);
+function apply(){document.documentElement.dataset.theme=theme.value;document.documentElement.style.setProperty('--phone-width',width.value+'px');phone.contentWindow.mobileIM?.preview({os:platform.value,theme:theme.value});const url=new URL(location.href);url.searchParams.set('platform',platform.value);url.searchParams.set('theme',theme.value);url.searchParams.set('width',width.value);history.replaceState(null,'',url);}
+phone.addEventListener('load',apply);for(const control of [platform,theme,width])control.addEventListener('change',apply);
+document.documentElement.dataset.theme=theme.value;document.documentElement.style.setProperty('--phone-width',width.value+'px');
+</script>
+</body></html>

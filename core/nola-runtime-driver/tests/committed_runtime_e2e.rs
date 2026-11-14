@@ -2061,3 +2061,6 @@ fn test_driver<D: nola_host_protocol::HostDriver>(driver: D) -> nola_runtime_dri
         nonce: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed).to_string(),
     }).unwrap()
 }
+
+#[path = "parts/mailbox_cancellation.rs"]
+mod mailbox_cancellation;

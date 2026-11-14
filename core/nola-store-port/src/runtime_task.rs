@@ -402,6 +402,9 @@ pub struct CancelRuntimeTaskPermissionSuspension {
 /// No operation may commit an enclosing command receipt transaction.
 #[allow(clippy::too_many_arguments)]
 pub trait RuntimeTaskRepository {
+    /// None means no supported Core-authored persistent expert target. It never grants worker authority.
+    fn validated_expert_task_target(&self, _task_id:&str, _child:&str, _require_admitted:bool)
+        -> Result<Option<nola_domain::expert_task_target::ExpertTaskTargetV1>,Self::Error> { Ok(None) }
     fn submit_terminal_input(&mut self, input: &nola_domain::terminal_input::TerminalInputRequest,
         now_ms: i64) -> Result<nola_domain::terminal_input::TerminalInputReceipt, Self::Error>;
     /// Bounded target-side recovery candidates; never a task projection.
@@ -466,6 +469,8 @@ pub trait RuntimeTaskRepository {
         &self,
         task_id: &str,
     ) -> Result<Option<RuntimeTaskRunBinding>, Self::Error>;
+    /// Exact persisted source Run binding; absence never invents Task lineage.
+    fn runtime_task_binding_for_run(&self, _child: &str, _run: &str) -> Result<Option<RuntimeTaskRunBinding>, Self::Error> { Ok(None) }
     fn validate_runtime_task_turn_admission(
         &self,
         lease: &RuntimeTaskLeaseWitness,
@@ -680,9 +685,15 @@ pub trait TaskAuthorityReadRepository {
     fn read_runtime_task(&self, id: &str) -> Result<Option<StoredRuntimeTask>, Self::Error>;
     fn read_runtime_task_run_binding(&self, id: &str) -> Result<Option<RuntimeTaskRunBinding>, Self::Error>;
     fn read_runtime_agent_task_authority(&self, id: &str) -> Result<Option<RuntimeAgentTaskAuthority>, Self::Error>;
+    fn read_validated_expert_task_target(&self, _task_id:&str, _child:&str, _require_admitted:bool)
+        -> Result<Option<nola_domain::expert_task_target::ExpertTaskTargetV1>,Self::Error> { Ok(None) }
 }
 impl<T: RuntimeTaskRepository + ?Sized> TaskAuthorityReadRepository for T {
     type Error = <T as RuntimeTaskRepository>::Error;
+    fn read_validated_expert_task_target(&self, task_id:&str, child:&str, require_admitted:bool)
+        -> Result<Option<nola_domain::expert_task_target::ExpertTaskTargetV1>,Self::Error> {
+        self.validated_expert_task_target(task_id,child,require_admitted)
+    }
     fn read_runtime_task(&self, id: &str) -> Result<Option<StoredRuntimeTask>, Self::Error> {
         self.runtime_task(id)
     }

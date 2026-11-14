@@ -3,11 +3,11 @@
   "upstream_commit": "d0345eeb52c4c84871c82c4f9c0e43f078ac3ffc",
   "production_root": "apps/web/frontend/src/vendor/a2ui-svelte",
   "patch": "production-adaptation.patch",
-  "patch_sha256": "b4d68051dc028c70426f331c9d956e8654a8a069fe3c93041c0b62d98e44452b",
+  "patch_sha256": "53365c1cee789ec4e3ed542e0357baf31400eaadfccef7c30ca163cd00c92add",
   "files": [
     {
       "path": "ADAPTATION.md",
-      "sha256": "8e0dec2904dca354d8a3bf34ebaf87ea987814afe86c32e7d28b85235858cdbd",
+      "sha256": "7557b5dd995669f8c7ab41943eb66e74879de3137189762a3131e3fdce557bff",
       "source": null,
       "source_sha256": null
     },
@@ -175,7 +175,7 @@
     },
     {
       "path": "render/Surface.svelte",
-      "sha256": "3504540f6c25ae3b61cdd5e3ad966178ced5652877d2cf8f86b3ae3980b36d94",
+      "sha256": "c97a85584165caced34cc5777071e3fee7901b2b3eacd6ff4661f930f0abe47a",
       "source": "third_party/a2ui/svelte/src/lib/render/Surface.svelte",
       "source_sha256": "550d3542ffd8adbbb6344825ac5534106850178034555149f66b9584a6c69610"
     },

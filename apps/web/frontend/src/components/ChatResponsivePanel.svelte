@@ -1,5 +1,6 @@
 <script lang="ts">
     import { onMount, tick, type Snippet } from 'svelte';
+    import { isDialogBackdrop } from '../lib/dialogBackdrop';
     import { completesPanelSwipe, panelOutwardSign, type PanelSide, type SwipePoint } from '../lib/panelSwipe';
 
     let { label, closeLabel, breakpoint, children, expanded = null, onclose = () => {}, toolbar, side = 'end' }: {
@@ -15,6 +16,17 @@
     let dragging = $state(false);
     let dragStart: SwipePoint | undefined;
     let dragPointer: number | undefined;
+    let backdropPointer: number | undefined;
+    function backdropStart(event: PointerEvent) {
+        backdropPointer = compact && isDialogBackdrop(event.target === dialog, event.clientX, event.clientY,
+            dialog.getBoundingClientRect()) ? event.pointerId : undefined;
+    }
+    function backdropEnd(event: PointerEvent) {
+        const dismiss = backdropPointer === event.pointerId && compact && isDialogBackdrop(
+            event.target === dialog, event.clientX, event.clientY, dialog.getBoundingClientRect());
+        backdropPointer = undefined;
+        if (dismiss) closePanel();
+    }
     function startDrag(event: PointerEvent) {
         if (!compact || event.pointerType !== 'touch' || (event.target as HTMLElement).closest('button, a, input, select, textarea')) return;
         dragStart = {x: event.clientX, y: event.clientY, time: event.timeStamp};
@@ -109,6 +121,7 @@
 </script>
 
 <dialog bind:this={dialog} class:compact class:dragging class:start={side === 'start'} style:--panel-drag-x={`${dragX}px`} role={compact ? 'dialog' : 'complementary'}
+    onpointerdown={backdropStart} onpointerup={backdropEnd} onpointercancel={() => { backdropPointer = undefined; }}
     aria-label={label} oncancel={event => { event.preventDefault(); closePanel(); }}>
     {#if compact}<div class="panel-toolbar" onpointerdown={startDrag} onpointermove={moveDrag} onpointerup={finishDrag} onpointercancel={cancelDrag} role="presentation">{#if toolbar}{@render toolbar()}{:else}<strong>{label}</strong>{/if}<button bind:this={closeButton} onclick={closePanel} aria-label={closeLabel}>×</button></div>{/if}
     {@render children()}
@@ -132,6 +145,6 @@
     dialog.compact[open]::backdrop { background: rgb(0 0 0 / .4); }
     @starting-style { dialog.compact[open] { opacity: 0; transform: translateX(var(--panel-entry-x)); } dialog.compact[open]::backdrop { background: rgb(0 0 0 / 0); } }
     @media (prefers-reduced-motion: reduce) { dialog.compact, dialog.compact::backdrop { transition-duration: 0ms; } }
-    .panel-toolbar { touch-action:pan-y; user-select:none; display: flex; align-items: center; justify-content: space-between; gap: 16px; position: sticky; top: 0; padding: 8px 12px; background: var(--canvas); z-index: 1; border-bottom: 1px solid var(--border); }
+    .panel-toolbar { touch-action:pan-y; user-select:none; display: flex; align-items: center; justify-content: space-between; gap: 16px; position: sticky; top: 0; padding: max(8px, env(safe-area-inset-top)) 12px 8px; background: var(--canvas); z-index: 1; border-bottom: 1px solid var(--border); }
     .panel-toolbar button { min-width: 44px; min-height: 44px; font-size: 20px; }
 </style>

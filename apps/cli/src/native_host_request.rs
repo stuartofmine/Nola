@@ -27,6 +27,8 @@ fn decode_desktop_operation(request: Value, session: Option<&str>)
         expected_run_id: String,
         assistant_message_id: String,
         configuration: serde_json::Map<String, Value>,
+        #[serde(default)]
+        expert_template_authority: Option<nola_application::expert_template_capture::HostExpertTemplateAuthority>,
     }
     let resume: ResumeRequest = serde_json::from_value(request)
         .map_err(|error| format!("invalid desktop resume request: {error}"))?;
@@ -59,7 +61,15 @@ fn decode_desktop_operation(request: Value, session: Option<&str>)
     if resume.configuration.get("model_test_mode").is_some_and(|value| value != &Value::Bool(false)) {
         return Err("model test mode cannot resume a Run".into());
     }
-    Ok((Value::Object(resume.configuration), Some(crate::host_invocation_request::DesktopResumeIdentity {
+    let mut configuration=resume.configuration;
+    if let Some(authority)=resume.expert_template_authority {
+        authority.validate()?;
+        if authority.actor.kind!=nola_core::agent::resource_access::AgentResourcePrincipalKind::LocalUser {
+            return Err("native Main recovery requires the current local Host principal".into());
+        }
+        configuration.insert("expert_template_authority".into(),serde_json::to_value(authority).map_err(|e|e.to_string())?);
+    }
+    Ok((Value::Object(configuration), Some(crate::host_invocation_request::DesktopResumeIdentity {
         session_id: resume.session_id, expected_run_id: resume.expected_run_id,
         assistant_message_id: resume.assistant_message_id,
     })))
@@ -180,6 +190,7 @@ fn apply_desktop_host_request_with_dependencies(
         config.input.message.clear();
         config.input.host_turn_context = None;
         config.input.host_context_components.clear();
+        config.session.main_expert_selection=None;
         config.input.host_attachments.clear();
         config.session.host_submission_id = None;
         config.session.host_user_message_id = None;
@@ -248,8 +259,8 @@ fn apply_desktop_host_request_with_dependencies(
     }
     config.session.edited_resend_operation_id=edited_resend_operation_id;
     if let Some(raw) = request.get("expert_template_authority") {
-        if config.session.edited_resend_operation_id.is_none() || resume.is_some() {
-            return Err("Expert template Host identity only belongs to an edited native submit".into());
+        if config.session.session_id.is_none() || config.session.host_task_execution.is_some() {
+            return Err("Expert template Host identity requires a native Main session".into());
         }
         let authority: nola_application::expert_template_capture::HostExpertTemplateAuthority =
             serde_json::from_value(raw.clone()).map_err(|_| "invalid native Expert template Host identity")?;
@@ -596,6 +607,7 @@ fn apply_desktop_host_request_with_dependencies(
     config.session.expected_parent_message_id = expected_parent_message_id;
     config.session.host_user_message_id = user_message_id;
     config.session.host_assistant_message_id = assistant_message_id;
+    config.session.main_expert_selection = decode_main_expert_selection(&request)?;
     if let Some(api_key) = requested_api_key {
         config.model_settings.api_key = api_key.to_string();
     }
@@ -778,7 +790,20 @@ pub(crate) fn apply_siwc_profile(config:&mut HostInvocationRequest,request:&Valu
     if profile.revision!=revision || !profile.enabled || profile.deleted_at_ms.is_some() {return Err("SIWC selected profile revision changed".into());}
     let source:Value=serde_json::from_str(&profile.source_json).map_err(|_|"SIWC profile source invalid")?;
     if source["wireProtocol"]!="siwc_responses" || source["sourceKind"]!="nola_chatgpt" {return Err("Selected profile is not Nola SIWC".into());}
-    let mut resolved=crate::model_profile_resolution::resolve_remote_profile_settings(&profile,request,&Default::default(),&[])?;
+    // Resend carries an already resolved provider selection (including null).
+    // Its saved agent tier controls the tool/context budget; resolving that
+    // tier again can invent an effort on a model that never requested one.
+    // prepare_edited_resend_host_request subsequently restores and verifies
+    // the authoritative model binding from the durable Prepared record.
+    let mut profile_request = request.clone();
+    if config.session.edited_resend_operation_id.is_some() {
+        if profile_request.get("reasoning_selection").is_none() {
+            return Err("edited resend requires its frozen reasoning selection".into());
+        }
+        profile_request.as_object_mut().ok_or("SIWC request must be an object")?
+            .remove("reasoning_tier");
+    }
+    let mut resolved=crate::model_profile_resolution::resolve_remote_profile_settings(&profile,&profile_request,&Default::default(),&[])?;
     crate::model_profile_resolution::bind_siwc_profile(&mut resolved,&profile,store)?;
     if request.get("endpoint").is_some_and(|v|v.as_str().and_then(crate::model_profile_resolution::model_endpoint_identity)!=crate::model_profile_resolution::model_endpoint_identity(&resolved.endpoint))
         || request.get("model").is_some_and(|v|v.as_str()!=Some(resolved.model.as_str())) {
@@ -1184,6 +1209,22 @@ mod desktop_resume_request_tests {
     }
 
     #[test]
+    fn native_main_resume_reacquires_local_principal_outside_frozen_configuration() {
+        let mut request=frame();
+        request["expert_template_authority"]=json!({"actor":{"kind":"local_user","id":"current-native-user"},"request_host_id":"native-host"});
+        let mut config=crate::host_invocation_request::HostInvocationRequest::for_test().unwrap();
+        config.session.session_id=Some("session".into());
+        apply_desktop_host_request_with_dependencies(&mut config,&request.to_string(),|_|Ok(()),|_|Ok(Vec::new())).unwrap();
+        assert_eq!(config.runtime.expert_template_authority.unwrap().actor.id,"current-native-user");
+        assert!(config.session.desktop_resume.is_some());
+        assert!(config.session.main_expert_selection.is_none());
+        assert!(config.input.message.is_empty());
+        let authority=request.as_object_mut().unwrap().remove("expert_template_authority").unwrap();
+        request["configuration"]["expert_template_authority"]=authority;
+        assert!(decode_desktop_operation(request,Some("session")).unwrap_err().contains("forbidden field"));
+    }
+
+    #[test]
     fn resume_is_not_a_submission_and_preserves_original_configuration() {
         let mut config = crate::config::Config::from_args(
             ["run", "--host-request-stdin", "--session", "session"].into_iter().map(str::to_owned)
@@ -1207,7 +1248,7 @@ mod desktop_resume_request_tests {
     #[test]
     fn resume_rejects_input_fields_in_both_envelope_and_configuration() {
         for key in ["prompt", "submission_id", "user_message_id", "context_components",
-            "context_messages", "attachments", "input_origin", "replace_active_run"] {
+            "context_messages", "attachments", "input_origin", "replace_active_run", "selected_experts", "expected_source_store_epoch"] {
             let mut request = frame();
             request[key] = Value::Null;
             assert!(decode_desktop_operation(request, Some("session")).is_err(), "top-level {key}");
@@ -1422,5 +1463,40 @@ mod desktop_model_capability_tests {
         )
         .unwrap();
         assert_eq!(invalid.execution.max_iterations, 0);
+    }
+}
+
+/// Shared native/Web transport projection. Selection data is validated again
+/// and resolved atomically by Core; it is not a prompt or a permission grant.
+pub(crate) fn decode_main_expert_selection(request: &Value) -> Result<Option<nola_domain::expert_task_target::MainExpertSelectionContextV1>,String> {
+    let Some(selected)=request.get("selected_experts") else {return Ok(None);};
+    let selection:nola_domain::expert_task_target::MainExpertSelectionContextV1=serde_json::from_value(
+        serde_json::json!({"version":1,"selected_experts":selected,"expected_source_store_epoch":request.get("expected_source_store_epoch")})).map_err(|_|"invalid_main_expert_selection")?;
+    if selection.selected_experts.is_empty() {return Ok(None);}
+    Ok(Some(selection))
+}
+
+#[cfg(test)]
+mod main_expert_selection_transport_tests {
+    use super::*;
+    #[test]
+    fn main_selection_uses_typed_metadata_without_changing_user_text() {
+        let input=serde_json::json!({"prompt":"请帮我检查这个改动","selected_experts":[{
+            "agent_id":"reviewer","agent_revision":3,"participant_id":null,"context_conversation_id":null
+        }]});
+        let before=input.clone();
+        let selection=decode_main_expert_selection(&input).unwrap().unwrap();
+        assert_eq!(selection.version,1);
+        assert_eq!(selection.selected_experts[0].agent_id,"reviewer");
+        assert_eq!(selection.selected_experts[0].agent_revision,3);
+        assert_eq!(input,before);
+        assert!(decode_main_expert_selection(&serde_json::json!({"selected_experts":[]})).unwrap().is_none());
+    }
+    #[test]
+    fn selection_transport_rejects_unknown_fields_and_bad_revision_type() {
+        for row in [serde_json::json!({"agent_id":"x","agent_revision":"three"}),
+            serde_json::json!({"agent_id":"x","agent_revision":1,"actor":"user-supplied"})] {
+            assert!(decode_main_expert_selection(&serde_json::json!({"selected_experts":[row]})).is_err());
+        }
     }
 }

@@ -28,4 +28,14 @@ class ModelSamplingAttemptTest {
     fun missingCoreStateCannotBeAssumedPrepared() {
         modelSamplingAttempt(buildJsonObject { put("attempt_id", "a") }, 0)
     }
+    @org.junit.Test fun repeatedProviderCallIdsUseTheActualAdmittedAttemptNamespace() {
+        val event = AgentModelEvent.ToolCallDelta("tool:provider-reused", "provider-reused", "delegate_expert", "{}")
+        val first = modelToolCallDeltaPayload(event, "actual-core-attempt-a")
+        val next = modelToolCallDeltaPayload(event, "actual-core-attempt-b")
+        org.junit.Assert.assertNotEquals(first["part_id"], next["part_id"])
+        org.junit.Assert.assertEquals(first, modelToolCallDeltaPayload(event, "actual-core-attempt-a"))
+        org.junit.Assert.assertEquals(kotlinx.serialization.json.JsonPrimitive("provider-reused"), first["call_id"])
+        org.junit.Assert.assertEquals(first["call_id"], next["call_id"])
+    }
+
 }

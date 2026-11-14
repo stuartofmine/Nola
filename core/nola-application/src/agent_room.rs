@@ -16,6 +16,8 @@ mod submission;
 pub use submission::*;
 mod execution_intent;
 pub use execution_intent::*;
+mod children;
+pub use children::*;
 
 pub use nola_domain::agent_room::ROOM_KEY_PREFIX;
 use nola_domain::agent_room::{ContextOwner, CONTEXT_OWNER_FIELD};
@@ -38,6 +40,9 @@ pub struct ConversationRoomAssociation {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AgentRoomCommand {
+    ChildConversations { conversation_id: String, limit: usize, offset: usize },
+    PeerExchanges { conversation_id: String, limit: usize, offset: usize },
+    ChildHistory { conversation_id: String, child_conversation_id: String, before_ordinal: Option<i64>, limit: usize, content_byte_limit: usize },
     EnsureForConversation { conversation_id: String, at_ms: i64 },
     AttachConversation { conversation_id: String, room_id: String, at_ms: i64 },
     ForConversation { conversation_id: String },
@@ -53,6 +58,7 @@ pub enum AgentRoomCommand {
     Submissions { room_id: String, limit: usize, offset: usize },
     Submission { room_id: String, submission_id: String },
     Directory,
+    RoleTemplates,
     List { limit: usize, offset: usize },
     ConfigureAgent {
         input: crate::persistent_agent::ConfigureAgent,
@@ -67,12 +73,23 @@ pub enum AgentRoomCommand {
     Join {
         input: JoinAgent,
     },
+    Rejoin {
+        input: JoinAgent,
+    },
     Deactivate {
         room_id: String,
         participant_id: String,
         expected_revision: i64,
         at_ms: i64,
     },
+}
+
+impl AgentRoomCommand {
+    pub fn is_read_only_query(&self) -> bool {
+        matches!(self,Self::Directory|Self::ChildConversations{..}|Self::PeerExchanges{..}|Self::ChildHistory{..}
+            |Self::RoleTemplates|Self::Read{..}|Self::List{..}|Self::Submission{..}|Self::Submissions{..}
+            |Self::ExecutionIntent{..}|Self::ForConversation{..})
+    }
 }
 
 fn conversation_room_key(conversation_id: &str) -> Result<String, String> {
@@ -104,7 +121,7 @@ fn decode_link(value: &str) -> Result<ConversationRoomLinkRecord, String> {
 /// An incomplete or conflicting index fails closed; reads never repair data.
 pub fn for_conversation<S>(store: &mut S, conversation_id: &str) -> Result<Option<ConversationRoomAssociation>, String>
 where
-    S: ProductSettingRepositoryProvider + nola_store_port::conversation_query::ConversationQueryRepository,
+    S: ProductSettingRepositoryProvider + nola_store_port::conversation_query::ConversationQueryRepository + ?Sized,
 {
     if store.conversation_summary(conversation_id).map_err(|e| e.to_string())?.is_none() {
         return Err("conversation_not_found".into());
@@ -144,7 +161,7 @@ pub(crate) fn association_conversation_id(value: &nola_store_port::product_setti
 pub fn attach_conversation<S>(store: &mut S, conversation_id: String, room_id: String, at_ms: i64)
     -> Result<ConversationRoomAssociation, String>
 where
-    S: ProductSettingRepositoryProvider + nola_store_port::conversation_query::ConversationQueryRepository
+    S: ProductSettingRepositoryProvider + nola_store_port::conversation_query::ConversationQueryRepository + ?Sized
         + CommandProtocolRepositoryProvider,
 {
     store.command_protocol_repository().begin_command_mutations().map_err(|e| e.to_string())?;
@@ -165,7 +182,7 @@ where
 fn attach_conversation_inner<S>(store: &mut S, conversation_id: String, room_id: String, at_ms: i64)
     -> Result<ConversationRoomAssociation, String>
 where
-    S: ProductSettingRepositoryProvider + nola_store_port::conversation_query::ConversationQueryRepository,
+    S: ProductSettingRepositoryProvider + nola_store_port::conversation_query::ConversationQueryRepository + ?Sized,
 {
     if at_ms < 0 { return Err("invalid timestamp".into()); }
     if store.conversation_summary(&conversation_id).map_err(|e| e.to_string())?.is_none() {
@@ -195,7 +212,7 @@ where
 pub fn ensure_for_conversation<S>(store: &mut S, conversation_id: String, at_ms: i64)
     -> Result<ConversationRoomAssociation, String>
 where
-    S: ProductSettingRepositoryProvider + nola_store_port::conversation_query::ConversationQueryRepository
+    S: ProductSettingRepositoryProvider + nola_store_port::conversation_query::ConversationQueryRepository + ?Sized
         + CommandProtocolRepositoryProvider,
 {
     store.command_protocol_repository().begin_command_mutations().map_err(|e| e.to_string())?;
@@ -216,7 +233,7 @@ where
 fn ensure_for_conversation_inner<S>(store: &mut S, conversation_id: String, at_ms: i64)
     -> Result<ConversationRoomAssociation, String>
 where
-    S: ProductSettingRepositoryProvider + nola_store_port::conversation_query::ConversationQueryRepository,
+    S: ProductSettingRepositoryProvider + nola_store_port::conversation_query::ConversationQueryRepository + ?Sized,
 {
     if let Some(value) = for_conversation(store, &conversation_id)? { return Ok(value); }
     if at_ms < 0 { return Err("invalid timestamp".into()); }
@@ -322,7 +339,7 @@ pub struct JoinAgent {
 pub fn join<S>(store: &mut S, command: JoinAgent) -> Result<RoomSnapshot, String>
 where
     S: ProductSettingRepositoryProvider
-        + ConversationWriteRepositoryProvider
+        + ConversationWriteRepositoryProvider + ?Sized
         + CommandProtocolRepositoryProvider,
 {
     store
@@ -350,10 +367,17 @@ where
 
 fn join_inner<S>(store: &mut S, command: JoinAgent) -> Result<RoomSnapshot, String>
 where
-    S: ProductSettingRepositoryProvider + ConversationWriteRepositoryProvider,
+    S: ProductSettingRepositoryProvider + ConversationWriteRepositoryProvider + ?Sized,
 {
     let snapshot =
         load(&store.product_setting_repository(), &command.room_id)?.ok_or("room_not_found")?;
+    join_with_snapshot(store, command, snapshot)
+}
+
+fn join_with_snapshot<S>(store: &mut S, command: JoinAgent, snapshot: RoomSnapshot) -> Result<RoomSnapshot, String>
+where
+    S: ProductSettingRepositoryProvider + ConversationWriteRepositoryProvider + ?Sized,
+{
     if snapshot.revision != command.expected_room_revision {
         return Err("room_revision_conflict".into());
     }
@@ -406,6 +430,66 @@ where
     )
 }
 
+/// Explicitly replace a frozen participant snapshot. Old context/history stays
+/// addressable; the entire roster-replace/create sequence either commits or rolls
+/// back. This is never performed as a side effect of directory refresh.
+pub fn rejoin<S>(store: &mut S, command: JoinAgent) -> Result<RoomSnapshot, String>
+where
+    S: ProductSettingRepositoryProvider + ConversationWriteRepositoryProvider
+        + CommandProtocolRepositoryProvider
+        + nola_store_port::conversation_history::ConversationProjectionRepository
+        + nola_store_port::remote_session::RemoteSessionRepository
+        + nola_store_port::run_recovery_inspection::RunRecoveryInspectionRepository
+        + nola_store_port::conversation_query::ConversationQueryRepository
+        + nola_store_port::model::ModelRepositoryProvider,
+{
+    store.command_protocol_repository().begin_command_mutations().map_err(|e| e.to_string())?;
+    let result = (|| {
+        let snapshot = load(&store.product_setting_repository(), &command.room_id)?.ok_or("room_not_found")?;
+        if snapshot.revision != command.expected_room_revision { return Err("room_revision_conflict".into()); }
+        let current = snapshot.room.participants().iter()
+            .find(|member| member.active && member.agent_id == command.agent_id)
+            .ok_or("active_agent_participant_not_found")?;
+        if current.agent_revision == command.expected_agent_revision {
+            return Err("expert_already_uses_current_configuration".into());
+        }
+        if store.active_run(&current.context_conversation_id).map_err(|e| e.to_string())?.is_some() {
+            return Err("expert_configuration_in_use_by_active_run".into());
+        }
+        let mut offset = 0;
+        loop {
+            let pending = all_submissions(&store.product_setting_repository(), &command.room_id, 200, offset)?;
+            for submission in &pending {
+                let current = if submission.state == RoomSubmissionState::Executing {
+                    reconcile_execution(store, &command.room_id, &submission.input.submission_id, command.at_ms)?
+                } else { submission.clone() };
+                if matches!(current.state, RoomSubmissionState::Accepted | RoomSubmissionState::Selected | RoomSubmissionState::Executing) {
+                    return Err("expert_configuration_in_use_by_pending_submission".into());
+                }
+            }
+            if pending.len() < 200 { break; }
+            offset += pending.len();
+        }
+        // The published Room format permits one roster entry per Agent ID.
+        // Historical manifests and context ownership retain the old participant
+        // identity; only the current roster is replaced, never its conversation.
+        let next = AgentRoom::new(snapshot.room.id().into(), snapshot.room.title().into(),
+            snapshot.room.participants().iter().filter(|member| member.id != current.id).cloned().collect())?;
+        join_with_snapshot(store, command, RoomSnapshot { room: next, revision: snapshot.revision })
+    })();
+    match result {
+        Ok(snapshot) => {
+            store.command_protocol_repository().commit_command_mutations().map_err(|e| e.to_string())?;
+            Ok(snapshot)
+        }
+        Err(error) => {
+            store.command_protocol_repository().rollback_command_mutations()
+                .map_err(|rollback| format!("{error}; rejoin rollback failed: {rollback}"))?;
+            Err(error)
+        }
+    }
+}
+
 pub fn deactivate<R: ProductSettingRepository + ?Sized>(
     store: &mut R,
     room_id: &str,
@@ -428,7 +512,7 @@ pub fn deactivate<R: ProductSettingRepository + ?Sized>(
 /// from validated frozen defaults. Never reads today's persistent-agent directory.
 pub(crate) fn install_resend_room<S>(store: &mut S, conversation_id: String,
     room: AgentRoom, at_ms: i64) -> Result<ConversationRoomAssociation, String>
-where S: ProductSettingRepositoryProvider + nola_store_port::conversation_query::ConversationQueryRepository,
+where S: ProductSettingRepositoryProvider + nola_store_port::conversation_query::ConversationQueryRepository + ?Sized,
 {
     if load(&store.product_setting_repository(),room.id())?.is_some() {
         return Err("expert_resend_room_already_exists".into());

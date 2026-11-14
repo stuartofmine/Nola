@@ -1,0 +1,1819 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		9A6601F72EC92397002AC09C /* OpenAI in Frameworks */ = {isa = PBXBuildFile; productRef = 9A6601F62EC92397002AC09C /* OpenAI */; };
+		9AC100032EF03C1000B71A10 /* SwiftMath in Frameworks */ = {isa = PBXBuildFile; productRef = 9AC100022EF03C1000B71A10 /* SwiftMath */; };
+		9AD100032EF66E0100B71A10 /* BeautifulMermaid in Frameworks */ = {isa = PBXBuildFile; productRef = 9AD100022EF66E0100B71A10 /* BeautifulMermaid */; };
+		9AE33D412EC5189200F0BDBD /* MLX in Frameworks */ = {isa = PBXBuildFile; productRef = 9AE33D402EC5189200F0BDBD /* MLX */; };
+		9AE33D432EC5189200F0BDBD /* MLXFFT in Frameworks */ = {isa = PBXBuildFile; productRef = 9AE33D422EC5189200F0BDBD /* MLXFFT */; };
+		9AE33D452EC5189200F0BDBD /* MLXFast in Frameworks */ = {isa = PBXBuildFile; productRef = 9AE33D442EC5189200F0BDBD /* MLXFast */; };
+		9AE33D472EC5189200F0BDBD /* MLXLinalg in Frameworks */ = {isa = PBXBuildFile; productRef = 9AE33D462EC5189200F0BDBD /* MLXLinalg */; };
+		9AE33D492EC5189200F0BDBD /* MLXNN in Frameworks */ = {isa = PBXBuildFile; productRef = 9AE33D482EC5189200F0BDBD /* MLXNN */; };
+		9AE33D4B2EC5189200F0BDBD /* MLXRandom in Frameworks */ = {isa = PBXBuildFile; productRef = 9AE33D5E2EC5627500F0BDBD /* MLXRandom */; };
+		9AE33D652EC5644100F0BDBD /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = 9AE33D642EC5644100F0BDBD /* MLXLMCommon */; };
+		9AE33D6B2EC564C100F0BDBD /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = 9AE33D6A2EC564C100F0BDBD /* MLXLLM */; };
+		9AE33D6D2EC564C600F0BDBD /* MLXVLM in Frameworks */ = {isa = PBXBuildFile; productRef = 9AE33D6C2EC564C600F0BDBD /* MLXVLM */; };
+		A91000000000000000000003 /* Markdown in Frameworks */ = {isa = PBXBuildFile; productRef = A91000000000000000000002 /* Markdown */; };
+		C10000000000000000000001 /* apps/ios/LLM/LLMClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000001 /* apps/ios/LLM/LLMClient.swift */; };
+		C10000000000000000000002 /* apps/ios/LLM/OpenAIProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000002 /* apps/ios/LLM/OpenAIProvider.swift */; };
+		C10000000000000000000003 /* apps/ios/LLM/ModelTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000003 /* apps/ios/LLM/ModelTypes.swift */; };
+		C10000000000000000000004 /* apps/ios/LLM/PromptTemplates.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000004 /* apps/ios/LLM/PromptTemplates.swift */; };
+		C10000000000000000000005 /* apps/ios/LLM/LLMResponseValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000005 /* apps/ios/LLM/LLMResponseValidator.swift */; };
+		C10000000000000000000006 /* apps/ios/Services/Chat/ChatThinkingParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000006 /* apps/ios/Services/Chat/ChatThinkingParser.swift */; };
+		C10000000000000000000007 /* apps/ios/Services/ErrorHandlingExtensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000007 /* apps/ios/Services/ErrorHandlingExtensions.swift */; };
+		C10000000000000000000008 /* apps/ios/Services/KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000008 /* apps/ios/Services/KeychainHelper.swift */; };
+		C10000000000000000000009 /* apps/ios/Services/ModelParametersStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000009 /* apps/ios/Services/ModelParametersStore.swift */; };
+		C1000000000000000000000A /* apps/ios/Services/NolaError.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2000000000000000000000A /* apps/ios/Services/NolaError.swift */; };
+		C1000000000000000000000B /* apps/ios/Services/Localizable.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2000000000000000000000B /* apps/ios/Services/Localizable.swift */; };
+		C1000000000000000000000C /* apps/ios/Services/Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2000000000000000000000C /* apps/ios/Services/Logger.swift */; };
+		C1000000000000000000000D /* apps/ios/Services/LogFileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2000000000000000000000D /* apps/ios/Services/LogFileStore.swift */; };
+		C1000000000000000000000E /* apps/ios/Services/PromptTemplateService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2000000000000000000000E /* apps/ios/Services/PromptTemplateService.swift */; };
+		C1000000000000000000000F /* apps/ios/Services/PromptTemplateDefaults.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2000000000000000000000F /* apps/ios/Services/PromptTemplateDefaults.swift */; };
+		C10000000000000000000010 /* apps/ios/Services/HealthSummarySync.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000010 /* apps/ios/Services/HealthSummarySync.swift */; };
+		C10000000000000000000011 /* apps/ios/Models/AgentModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000011 /* apps/ios/Models/AgentModels.swift */; };
+		C10000000000000000000012 /* apps/ios/Services/MedicationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000012 /* apps/ios/Services/MedicationService.swift */; };
+		C10000000000000000000013 /* apps/ios/Services/ModelDownloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000013 /* apps/ios/Services/ModelDownloader.swift */; };
+		C10000000000000000000015 /* apps/ios/Services/AgentCorePromptComposer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000015 /* apps/ios/Services/AgentCorePromptComposer.swift */; };
+		D40000000000000000000001 /* BeautifulMermaid in Frameworks */ = {isa = PBXBuildFile; productRef = D40000000000000000000002 /* BeautifulMermaid */; };
+		D41000000000000000000001 /* SwiftMath in Frameworks */ = {isa = PBXBuildFile; productRef = 9AC100022EF03C1000B71A10 /* SwiftMath */; };
+		D5A000000000000000000001 /* apps/ios/Services/AgentCoreDataSourceResolution.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5A000000000000000000002 /* apps/ios/Services/AgentCoreDataSourceResolution.swift */; };
+		D5A000000000000000000003 /* apps/ios/Services/AgentCoreResourceAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5A000000000000000000004 /* apps/ios/Services/AgentCoreResourceAccess.swift */; };
+		D60000000000000000000001 /* core/tests/fixtures/long_task_trace_v1.json in Resources */ = {isa = PBXBuildFile; fileRef = D60000000000000000000002 /* core/tests/fixtures/long_task_trace_v1.json */; };
+		D60000000000000000000005 /* core/tests/fixtures/historical_unloaded_conversation_projection_v1.json in Resources */ = {isa = PBXBuildFile; fileRef = D60000000000000000000006 /* core/tests/fixtures/historical_unloaded_conversation_projection_v1.json */; };
+		D60000000000000000000007 /* core/tests/fixtures/historical_conversation_projection_v1.json in Resources */ = {isa = PBXBuildFile; fileRef = D60000000000000000000008 /* core/tests/fixtures/historical_conversation_projection_v1.json */; };
+		D61000000000000000000002 /* tests/fixtures/a2ui/form_interaction_v0_9_1.json in Resources */ = {isa = PBXBuildFile; fileRef = D61000000000000000000001 /* tests/fixtures/a2ui/form_interaction_v0_9_1.json */; };
+		D61000000000000000000003 /* tests/fixtures/a2ui/form_interaction_v0_9_1.json in Resources */ = {isa = PBXBuildFile; fileRef = D61000000000000000000001 /* tests/fixtures/a2ui/form_interaction_v0_9_1.json */; };
+		F10000000000000000000001 /* NolaCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F10000000000000000000005 /* NolaCore.framework */; };
+		F10000000000000000000002 /* NolaCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F10000000000000000000005 /* NolaCore.framework */; };
+		F2000000000000000000000C /* MLX in Frameworks */ = {isa = PBXBuildFile; productRef = 9AE33D402EC5189200F0BDBD /* MLX */; };
+		F2000000000000000000000D /* MLXNN in Frameworks */ = {isa = PBXBuildFile; productRef = 9AE33D482EC5189200F0BDBD /* MLXNN */; };
+		F2000000000000000000000E /* MLXRandom in Frameworks */ = {isa = PBXBuildFile; productRef = 9AE33D5E2EC5627500F0BDBD /* MLXRandom */; };
+		F2000000000000000000000F /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = 9AE33D642EC5644100F0BDBD /* MLXLMCommon */; };
+		F20000000000000000000010 /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = 9AE33D6A2EC564C100F0BDBD /* MLXLLM */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		9A9F769F2EBD3713004F68FB /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 9A9F76842EBD3711004F68FB /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 9A9F768B2EBD3711004F68FB;
+			remoteInfo = Nola;
+		};
+		9A9F76A92EBD3713004F68FB /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 9A9F76842EBD3711004F68FB /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 9A9F768B2EBD3711004F68FB;
+			remoteInfo = Nola;
+		};
+		D5000000000000000000000A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 9A9F76842EBD3711004F68FB /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B10000000000000000000003;
+			remoteInfo = NolaMac;
+		};
+		F10000000000000000000006 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = F10000000000000000000003 /* shared/apple-core/NolaCore.xcodeproj */;
+			proxyType = 2;
+			remoteGlobalIDString = C00000000000000000000003;
+			remoteInfo = NolaCore;
+		};
+		F10000000000000000000007 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = F10000000000000000000003 /* shared/apple-core/NolaCore.xcodeproj */;
+			proxyType = 1;
+			remoteGlobalIDString = C00000000000000000000010;
+			remoteInfo = NolaCore;
+		};
+		F10000000000000000000008 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = F10000000000000000000003 /* shared/apple-core/NolaCore.xcodeproj */;
+			proxyType = 1;
+			remoteGlobalIDString = C00000000000000000000011;
+			remoteInfo = NolaRuntime;
+		};
+		F2000000000000000000000A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 9A9F76842EBD3711004F68FB /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = F20000000000000000000003;
+			remoteInfo = NolaMLXRuntime;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		9AAF915F2EBEF397006C1B74 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		9A9F768C2EBD3711004F68FB /* Nola.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Nola.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		9A9F769E2EBD3713004F68FB /* NolaTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NolaTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		9A9F76A82EBD3713004F68FB /* NolaUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NolaUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A611CA700000000000000001 /* transport/tailcat/Tailcat.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = transport/tailcat/Tailcat.xcconfig; sourceTree = SOURCE_ROOT; };
+		B10000000000000000000001 /* Nola.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Nola.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C20000000000000000000001 /* apps/ios/LLM/LLMClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = apps/ios/LLM/LLMClient.swift; sourceTree = SOURCE_ROOT; };
+		C20000000000000000000002 /* apps/ios/LLM/OpenAIProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = apps/ios/LLM/OpenAIProvider.swift; sourceTree = SOURCE_ROOT; };
+		C20000000000000000000003 /* apps/ios/LLM/ModelTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = apps/ios/LLM/ModelTypes.swift; sourceTree = SOURCE_ROOT; };
+		C20000000000000000000004 /* apps/ios/LLM/PromptTemplates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = apps/ios/LLM/PromptTemplates.swift; sourceTree = SOURCE_ROOT; };
+		C20000000000000000000005 /* apps/ios/LLM/LLMResponseValidator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = apps/ios/LLM/LLMResponseValidator.swift; sourceTree = SOURCE_ROOT; };
+		C20000000000000000000006 /* apps/ios/Services/Chat/ChatThinkingParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = apps/ios/Services/Chat/ChatThinkingParser.swift; sourceTree = SOURCE_ROOT; };
+		C20000000000000000000007 /* apps/ios/Services/ErrorHandlingExtensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = apps/ios/Services/ErrorHandlingExtensions.swift; sourceTree = SOURCE_ROOT; };
+		C20000000000000000000008 /* apps/ios/Services/KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = apps/ios/Services/KeychainHelper.swift; sourceTree = SOURCE_ROOT; };
+		C20000000000000000000009 /* apps/ios/Services/ModelParametersStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = apps/ios/Services/ModelParametersStore.swift; sourceTree = SOURCE_ROOT; };
+		C2000000000000000000000A /* apps/ios/Services/NolaError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = apps/ios/Services/NolaError.swift; sourceTree = SOURCE_ROOT; };
+		C2000000000000000000000B /* apps/ios/Services/Localizable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = apps/ios/Services/Localizable.swift; sourceTree = SOURCE_ROOT; };
+		C2000000000000000000000C /* apps/ios/Services/Logger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = apps/ios/Services/Logger.swift; sourceTree = SOURCE_ROOT; };
+		C2000000000000000000000D /* apps/ios/Services/LogFileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = apps/ios/Services/LogFileStore.swift; sourceTree = SOURCE_ROOT; };
+		C2000000000000000000000E /* apps/ios/Services/PromptTemplateService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = apps/ios/Services/PromptTemplateService.swift; sourceTree = SOURCE_ROOT; };
+		C2000000000000000000000F /* apps/ios/Services/PromptTemplateDefaults.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = apps/ios/Services/PromptTemplateDefaults.swift; sourceTree = SOURCE_ROOT; };
+		C20000000000000000000010 /* apps/ios/Services/HealthSummarySync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = apps/ios/Services/HealthSummarySync.swift; sourceTree = SOURCE_ROOT; };
+		C20000000000000000000011 /* apps/ios/Models/AgentModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = apps/ios/Models/AgentModels.swift; sourceTree = SOURCE_ROOT; };
+		C20000000000000000000012 /* apps/ios/Services/MedicationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = apps/ios/Services/MedicationService.swift; sourceTree = SOURCE_ROOT; };
+		C20000000000000000000013 /* apps/ios/Services/ModelDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = apps/ios/Services/ModelDownloader.swift; sourceTree = SOURCE_ROOT; };
+		C20000000000000000000014 /* apps/ios/LLM/MLXService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = apps/ios/LLM/MLXService.swift; sourceTree = SOURCE_ROOT; };
+		C20000000000000000000015 /* apps/ios/Services/AgentCorePromptComposer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = apps/ios/Services/AgentCorePromptComposer.swift; sourceTree = SOURCE_ROOT; };
+		D50000000000000000000001 /* NolaMacTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NolaMacTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		D5A000000000000000000002 /* apps/ios/Services/AgentCoreDataSourceResolution.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = apps/ios/Services/AgentCoreDataSourceResolution.swift; sourceTree = SOURCE_ROOT; };
+		D5A000000000000000000004 /* apps/ios/Services/AgentCoreResourceAccess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = apps/ios/Services/AgentCoreResourceAccess.swift; sourceTree = SOURCE_ROOT; };
+		D60000000000000000000002 /* core/tests/fixtures/long_task_trace_v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = core/tests/fixtures/long_task_trace_v1.json; sourceTree = SOURCE_ROOT; };
+		D60000000000000000000006 /* core/tests/fixtures/historical_unloaded_conversation_projection_v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = core/tests/fixtures/historical_unloaded_conversation_projection_v1.json; sourceTree = SOURCE_ROOT; };
+		D60000000000000000000008 /* core/tests/fixtures/historical_conversation_projection_v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = core/tests/fixtures/historical_conversation_projection_v1.json; sourceTree = SOURCE_ROOT; };
+		D61000000000000000000001 /* tests/fixtures/a2ui/form_interaction_v0_9_1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tests/fixtures/a2ui/form_interaction_v0_9_1.json; sourceTree = SOURCE_ROOT; };
+		F10000000000000000000003 /* shared/apple-core/NolaCore.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = "shared/apple-core/NolaCore.xcodeproj"; sourceTree = SOURCE_ROOT; };
+		F20000000000000000000001 /* nola-mlx-runtime */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "nola-mlx-runtime"; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		9AE33D382EC513DB00F0BDBD /* Exceptions for "apps/ios" folder in "Nola" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 9A9F768B2EBD3711004F68FB /* Nola */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		9A9F768E2EBD3711004F68FB /* apps/ios */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				9AE33D382EC513DB00F0BDBD /* Exceptions for "apps/ios" folder in "Nola" target */,
+			);
+			path = apps/ios;
+			sourceTree = "<group>";
+		};
+		9A9F76A12EBD3713004F68FB /* tests/apple/ios */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = tests/apple/ios;
+			sourceTree = "<group>";
+		};
+		9A9F76AB2EBD3713004F68FB /* tests/apple/ios-ui */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "tests/apple/ios-ui";
+			sourceTree = "<group>";
+		};
+		B10000000000000000000002 /* apps/macos */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = apps/macos;
+			sourceTree = "<group>";
+		};
+		D50000000000000000000002 /* tests/apple/macos */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = tests/apple/macos;
+			sourceTree = "<group>";
+		};
+		F20000000000000000000002 /* shared/mlx-runtime */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "shared/mlx-runtime";
+			sourceTree = "<group>";
+		};
+		F31000000000000000000001 /* shared/apple */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = shared/apple;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		9A9F76892EBD3711004F68FB /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F10000000000000000000001 /* NolaCore.framework in Frameworks */,
+				9AE33D6B2EC564C100F0BDBD /* MLXLLM in Frameworks */,
+				9AE33D452EC5189200F0BDBD /* MLXFast in Frameworks */,
+				9AE33D472EC5189200F0BDBD /* MLXLinalg in Frameworks */,
+				9AE33D412EC5189200F0BDBD /* MLX in Frameworks */,
+				9AE33D492EC5189200F0BDBD /* MLXNN in Frameworks */,
+				9AE33D4B2EC5189200F0BDBD /* MLXRandom in Frameworks */,
+				9AE33D652EC5644100F0BDBD /* MLXLMCommon in Frameworks */,
+				9AE33D6D2EC564C600F0BDBD /* MLXVLM in Frameworks */,
+				9AC100032EF03C1000B71A10 /* SwiftMath in Frameworks */,
+				9AD100032EF66E0100B71A10 /* BeautifulMermaid in Frameworks */,
+				9A6601F72EC92397002AC09C /* OpenAI in Frameworks */,
+				9AE33D432EC5189200F0BDBD /* MLXFFT in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9A9F769B2EBD3713004F68FB /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9A9F76A52EBD3713004F68FB /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B10000000000000000000005 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A91000000000000000000003 /* Markdown in Frameworks */,
+				D41000000000000000000001 /* SwiftMath in Frameworks */,
+				F10000000000000000000002 /* NolaCore.framework in Frameworks */,
+				D40000000000000000000001 /* BeautifulMermaid in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D50000000000000000000005 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F20000000000000000000005 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F2000000000000000000000C /* MLX in Frameworks */,
+				F2000000000000000000000D /* MLXNN in Frameworks */,
+				F2000000000000000000000E /* MLXRandom in Frameworks */,
+				F2000000000000000000000F /* MLXLMCommon in Frameworks */,
+				F20000000000000000000010 /* MLXLLM in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		9A2527B33004051A00E08B64 /* Recovered References */ = {
+			isa = PBXGroup;
+			children = (
+				C20000000000000000000001 /* apps/ios/LLM/LLMClient.swift */,
+				C20000000000000000000002 /* apps/ios/LLM/OpenAIProvider.swift */,
+				C20000000000000000000003 /* apps/ios/LLM/ModelTypes.swift */,
+				C20000000000000000000004 /* apps/ios/LLM/PromptTemplates.swift */,
+				C20000000000000000000005 /* apps/ios/LLM/LLMResponseValidator.swift */,
+				C20000000000000000000006 /* apps/ios/Services/Chat/ChatThinkingParser.swift */,
+				C20000000000000000000007 /* apps/ios/Services/ErrorHandlingExtensions.swift */,
+				C20000000000000000000008 /* apps/ios/Services/KeychainHelper.swift */,
+				C20000000000000000000009 /* apps/ios/Services/ModelParametersStore.swift */,
+				C2000000000000000000000A /* apps/ios/Services/NolaError.swift */,
+				C2000000000000000000000B /* apps/ios/Services/Localizable.swift */,
+				C2000000000000000000000C /* apps/ios/Services/Logger.swift */,
+				C2000000000000000000000D /* apps/ios/Services/LogFileStore.swift */,
+				C2000000000000000000000E /* apps/ios/Services/PromptTemplateService.swift */,
+				C2000000000000000000000F /* apps/ios/Services/PromptTemplateDefaults.swift */,
+				C20000000000000000000010 /* apps/ios/Services/HealthSummarySync.swift */,
+				C20000000000000000000011 /* apps/ios/Models/AgentModels.swift */,
+				C20000000000000000000012 /* apps/ios/Services/MedicationService.swift */,
+				C20000000000000000000013 /* apps/ios/Services/ModelDownloader.swift */,
+				C20000000000000000000014 /* apps/ios/LLM/MLXService.swift */,
+				C20000000000000000000015 /* apps/ios/Services/AgentCorePromptComposer.swift */,
+				D5A000000000000000000002 /* apps/ios/Services/AgentCoreDataSourceResolution.swift */,
+				D5A000000000000000000004 /* apps/ios/Services/AgentCoreResourceAccess.swift */,
+				D60000000000000000000002 /* core/tests/fixtures/long_task_trace_v1.json */,
+				D60000000000000000000006 /* core/tests/fixtures/historical_unloaded_conversation_projection_v1.json */,
+				D60000000000000000000008 /* core/tests/fixtures/historical_conversation_projection_v1.json */,
+				D61000000000000000000001 /* tests/fixtures/a2ui/form_interaction_v0_9_1.json */,
+				A611CA700000000000000001 /* transport/tailcat/Tailcat.xcconfig */,
+			);
+			name = "Recovered References";
+			sourceTree = "<group>";
+		};
+		9A9F76832EBD3711004F68FB = {
+			isa = PBXGroup;
+			children = (
+				F31000000000000000000001 /* shared/apple */,
+				F10000000000000000000003 /* shared/apple-core/NolaCore.xcodeproj */,
+				B10000000000000000000002 /* apps/macos */,
+				F20000000000000000000002 /* shared/mlx-runtime */,
+				D50000000000000000000002 /* tests/apple/macos */,
+				9A9F768E2EBD3711004F68FB /* apps/ios */,
+				A10000032F00000100000001 /* Frameworks */,
+				9A9F76A12EBD3713004F68FB /* tests/apple/ios */,
+				9A9F76AB2EBD3713004F68FB /* tests/apple/ios-ui */,
+				9A9F768D2EBD3711004F68FB /* Products */,
+				9A2527B33004051A00E08B64 /* Recovered References */,
+			);
+			sourceTree = "<group>";
+		};
+		9A9F768D2EBD3711004F68FB /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000000001 /* Nola.app */,
+				F20000000000000000000001 /* nola-mlx-runtime */,
+				D50000000000000000000001 /* NolaMacTests.xctest */,
+				9A9F768C2EBD3711004F68FB /* Nola.app */,
+				9A9F769E2EBD3713004F68FB /* NolaTests.xctest */,
+				9A9F76A82EBD3713004F68FB /* NolaUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		A10000032F00000100000001 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = Frameworks;
+			sourceTree = "<group>";
+		};
+		F10000000000000000000004 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				F10000000000000000000005 /* NolaCore.framework */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		9A9F768B2EBD3711004F68FB /* Nola */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9A9F76B22EBD3713004F68FB /* Build configuration list for PBXNativeTarget "Nola" */;
+			buildPhases = (
+				9A9F76882EBD3711004F68FB /* Sources */,
+				9A9F76892EBD3711004F68FB /* Frameworks */,
+				9A9F768A2EBD3711004F68FB /* Resources */,
+				9AAF915F2EBEF397006C1B74 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				F10000000000000000000009 /* PBXTargetDependency */,
+				9A6601F52EC9238D002AC09C /* PBXTargetDependency */,
+				9AE33D692EC564B600F0BDBD /* PBXTargetDependency */,
+				9AE33D672EC564AF00F0BDBD /* PBXTargetDependency */,
+				9AE33D622EC5643900F0BDBD /* PBXTargetDependency */,
+				9AE33D532EC5627500F0BDBD /* PBXTargetDependency */,
+				9AE33D552EC5627500F0BDBD /* PBXTargetDependency */,
+				9AE33D572EC5627500F0BDBD /* PBXTargetDependency */,
+				9AE33D592EC5627500F0BDBD /* PBXTargetDependency */,
+				9AE33D5B2EC5627500F0BDBD /* PBXTargetDependency */,
+				9AE33D5D2EC5627500F0BDBD /* PBXTargetDependency */,
+				9AE33D5F2EC5627500F0BDBD /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				9A9F768E2EBD3711004F68FB /* apps/ios */,
+				F31000000000000000000001 /* shared/apple */,
+			);
+			name = Nola;
+			packageProductDependencies = (
+				9AE33D402EC5189200F0BDBD /* MLX */,
+				9AE33D422EC5189200F0BDBD /* MLXFFT */,
+				9AE33D442EC5189200F0BDBD /* MLXFast */,
+				9AE33D462EC5189200F0BDBD /* MLXLinalg */,
+				9AE33D482EC5189200F0BDBD /* MLXNN */,
+				9AE33D5E2EC5627500F0BDBD /* MLXRandom */,
+				9AE33D642EC5644100F0BDBD /* MLXLMCommon */,
+				9AE33D6A2EC564C100F0BDBD /* MLXLLM */,
+				9AE33D6C2EC564C600F0BDBD /* MLXVLM */,
+				9A6601F62EC92397002AC09C /* OpenAI */,
+				9AC100022EF03C1000B71A10 /* SwiftMath */,
+				9AD100022EF66E0100B71A10 /* BeautifulMermaid */,
+			);
+			productName = Nola;
+			productReference = 9A9F768C2EBD3711004F68FB /* Nola.app */;
+			productType = "com.apple.product-type.application";
+		};
+		9A9F769D2EBD3713004F68FB /* NolaTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9A9F76B52EBD3713004F68FB /* Build configuration list for PBXNativeTarget "NolaTests" */;
+			buildPhases = (
+				9A9F769A2EBD3713004F68FB /* Sources */,
+				9A9F769B2EBD3713004F68FB /* Frameworks */,
+				9A9F769C2EBD3713004F68FB /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				9A9F76A02EBD3713004F68FB /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				9A9F76A12EBD3713004F68FB /* tests/apple/ios */,
+			);
+			name = NolaTests;
+			packageProductDependencies = (
+			);
+			productName = NolaTests;
+			productReference = 9A9F769E2EBD3713004F68FB /* NolaTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		9A9F76A72EBD3713004F68FB /* NolaUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9A9F76B82EBD3713004F68FB /* Build configuration list for PBXNativeTarget "NolaUITests" */;
+			buildPhases = (
+				9A9F76A42EBD3713004F68FB /* Sources */,
+				9A9F76A52EBD3713004F68FB /* Frameworks */,
+				9A9F76A62EBD3713004F68FB /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				9A9F76AA2EBD3713004F68FB /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				9A9F76AB2EBD3713004F68FB /* tests/apple/ios-ui */,
+			);
+			name = NolaUITests;
+			packageProductDependencies = (
+			);
+			productName = NolaUITests;
+			productReference = 9A9F76A82EBD3713004F68FB /* NolaUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		B10000000000000000000003 /* NolaMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B10000000000000000000007 /* Build configuration list for PBXNativeTarget "NolaMac" */;
+			buildPhases = (
+				B10000000000000000000004 /* Sources */,
+				B10000000000000000000005 /* Frameworks */,
+				B10000000000000000000006 /* Resources */,
+				E80000000000000000000001 /* Bundle Playwright Runtime */,
+				F1000000000000000000000C /* Embed Nola Runtime Products */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				F1000000000000000000000A /* PBXTargetDependency */,
+				F1000000000000000000000B /* PBXTargetDependency */,
+				F2000000000000000000000B /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				B10000000000000000000002 /* apps/macos */,
+				F31000000000000000000001 /* shared/apple */,
+			);
+			name = NolaMac;
+			packageProductDependencies = (
+				A91000000000000000000002 /* Markdown */,
+				9AC100022EF03C1000B71A10 /* SwiftMath */,
+				D40000000000000000000002 /* BeautifulMermaid */,
+			);
+			productName = NolaMac;
+			productReference = B10000000000000000000001 /* Nola.app */;
+			productType = "com.apple.product-type.application";
+		};
+		D50000000000000000000003 /* NolaMacTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D50000000000000000000007 /* Build configuration list for PBXNativeTarget "NolaMacTests" */;
+			buildPhases = (
+				D50000000000000000000004 /* Sources */,
+				D50000000000000000000005 /* Frameworks */,
+				D50000000000000000000006 /* Resources */,
+				D70000000000000000000001 /* Bundle Repository Fixtures */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				D5000000000000000000000B /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				D50000000000000000000002 /* tests/apple/macos */,
+			);
+			name = NolaMacTests;
+			packageProductDependencies = (
+			);
+			productName = NolaMacTests;
+			productReference = D50000000000000000000001 /* NolaMacTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		F20000000000000000000003 /* NolaMLXRuntime */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F20000000000000000000006 /* Build configuration list for PBXNativeTarget "NolaMLXRuntime" */;
+			buildPhases = (
+				F20000000000000000000004 /* Sources */,
+				F20000000000000000000005 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				F20000000000000000000002 /* shared/mlx-runtime */,
+			);
+			name = NolaMLXRuntime;
+			packageProductDependencies = (
+				9AE33D402EC5189200F0BDBD /* MLX */,
+				9AE33D482EC5189200F0BDBD /* MLXNN */,
+				9AE33D5E2EC5627500F0BDBD /* MLXRandom */,
+				9AE33D642EC5644100F0BDBD /* MLXLMCommon */,
+				9AE33D6A2EC564C100F0BDBD /* MLXLLM */,
+			);
+			productName = NolaMLXRuntime;
+			productReference = F20000000000000000000001 /* nola-mlx-runtime */;
+			productType = "com.apple.product-type.tool";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		9A9F76842EBD3711004F68FB /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2600;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					9A9F768B2EBD3711004F68FB = {
+						CreatedOnToolsVersion = 26.0.1;
+					};
+					9A9F769D2EBD3713004F68FB = {
+						CreatedOnToolsVersion = 26.0.1;
+						TestTargetID = 9A9F768B2EBD3711004F68FB;
+					};
+					9A9F76A72EBD3713004F68FB = {
+						CreatedOnToolsVersion = 26.0.1;
+						TestTargetID = 9A9F768B2EBD3711004F68FB;
+					};
+					B10000000000000000000003 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+					D50000000000000000000003 = {
+						CreatedOnToolsVersion = 26.0;
+						TestTargetID = B10000000000000000000003;
+					};
+				};
+			};
+			buildConfigurationList = 9A9F76872EBD3711004F68FB /* Build configuration list for PBXProject "Nola" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+				"zh-Hans",
+				fr,
+				es,
+				ja,
+				de,
+				ru,
+				ko,
+				"zh-Hant",
+			);
+			mainGroup = 9A9F76832EBD3711004F68FB;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				A91000000000000000000001 /* XCRemoteSwiftPackageReference "swift-markdown" */,
+				9AE33D3F2EC5189200F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift" */,
+				9AE33D602EC5642E00F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift-lm" */,
+				9A6601F32EC9237D002AC09C /* XCRemoteSwiftPackageReference "OpenAI" */,
+				9AC100012EF03C1000B71A10 /* XCRemoteSwiftPackageReference "SwiftMath" */,
+				9AD100012EF66E0100B71A10 /* XCRemoteSwiftPackageReference "beautiful-mermaid-swift" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 9A9F768D2EBD3711004F68FB /* Products */;
+			projectDirPath = ..;
+			projectReferences = (
+				{
+					ProductGroup = F10000000000000000000004 /* Products */;
+					ProjectRef = F10000000000000000000003 /* shared/apple-core/NolaCore.xcodeproj */;
+				},
+			);
+			projectRoot = "";
+			targets = (
+				B10000000000000000000003 /* NolaMac */,
+				F20000000000000000000003 /* NolaMLXRuntime */,
+				D50000000000000000000003 /* NolaMacTests */,
+				9A9F768B2EBD3711004F68FB /* Nola */,
+				9A9F769D2EBD3713004F68FB /* NolaTests */,
+				9A9F76A72EBD3713004F68FB /* NolaUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXReferenceProxy section */
+		F10000000000000000000005 /* NolaCore.framework */ = {
+			isa = PBXReferenceProxy;
+			fileType = wrapper.framework;
+			path = NolaCore.framework;
+			remoteRef = F10000000000000000000006 /* PBXContainerItemProxy */;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+/* End PBXReferenceProxy section */
+
+/* Begin PBXResourcesBuildPhase section */
+		9A9F768A2EBD3711004F68FB /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9A9F769C2EBD3713004F68FB /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D61000000000000000000002 /* tests/fixtures/a2ui/form_interaction_v0_9_1.json in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9A9F76A62EBD3713004F68FB /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B10000000000000000000006 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D50000000000000000000006 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D61000000000000000000003 /* tests/fixtures/a2ui/form_interaction_v0_9_1.json in Resources */,
+				D60000000000000000000001 /* core/tests/fixtures/long_task_trace_v1.json in Resources */,
+				D60000000000000000000005 /* core/tests/fixtures/historical_unloaded_conversation_projection_v1.json in Resources */,
+				D60000000000000000000007 /* core/tests/fixtures/historical_conversation_projection_v1.json in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		D70000000000000000000001 /* Bundle Repository Fixtures */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			dependencyFile = "$(DERIVED_FILE_DIR)/repository_fixtures_inputs.d";
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/apps/macos/AutomationCenter.xcstrings",
+				"$(SRCROOT)/apps/macos/Localizable.xcstrings",
+				"$(SRCROOT)/apps/macos/ModelCenter.xcstrings",
+				"$(SRCROOT)/apps/macos/Services",
+				"$(SRCROOT)/apps/macos/UI",
+				"$(SRCROOT)/shared/apple/Presentation/AppleSoftwareUpdateSection.swift",
+				"$(SRCROOT)/shared/apple/GenerativeUI/AppleUISurfaceView.swift",
+				"$(SRCROOT)/scripts/bundle_repository_fixtures.sh",
+			);
+			name = "Bundle Repository Fixtures";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/RepositoryFixtures/.ready",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "NOLA_REPOSITORY_ROOT=\"${SRCROOT}\" NOLA_FIXTURE_OUTPUT_ROOT=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/RepositoryFixtures\" NOLA_DEPENDENCY_FILE=\"${DERIVED_FILE_DIR}/repository_fixtures_inputs.d\" \"${SRCROOT}/scripts/bundle_repository_fixtures.sh\"\n";
+		};
+		E80000000000000000000001 /* Bundle Playwright Runtime */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/apps/web/playwright_runtime/package.json",
+				"$(SRCROOT)/apps/web/playwright_runtime/package-lock.json",
+				"$(SRCROOT)/apps/web/playwright_runtime/bridge.cjs",
+				"$(SRCROOT)/apps/web/playwright_runtime/owner_queue.cjs",
+				"$(SRCROOT)/apps/web/playwright_runtime/browser_use.cjs",
+				"$(SRCROOT)/apps/web/browser_use_runtime/worker.py",
+				"$(SRCROOT)/apps/web/browser_use_runtime/requirements.in",
+				"$(SRCROOT)/apps/web/browser_use_runtime/requirements.lock",
+				"$(SRCROOT)/scripts/bundle_browser_use_runtime.sh",
+				"$(SRCROOT)/scripts/bundle_playwright_runtime.sh",
+			);
+			name = "Bundle Playwright Runtime";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/NolaPlaywrightRuntime/.ready",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${SRCROOT}/scripts/bundle_playwright_runtime.sh\"\n";
+		};
+		F1000000000000000000000C /* Embed Nola Runtime Products */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/NolaRuntime/nola-agent-host",
+				"$(SRCROOT)/scripts/embed_mac_runtime.sh",
+				"$(SRCROOT)/scripts/lib/install_mac_executable.sh",
+				"$(BUILT_PRODUCTS_DIR)/NolaRuntime/nola-service",
+				"$(BUILT_PRODUCTS_DIR)/NolaRuntime/com.gaojc.Nola.background-scheduler.plist",
+				"$(BUILT_PRODUCTS_DIR)/nola-mlx-runtime",
+				"$(BUILT_PRODUCTS_DIR)/mlx-swift_Cmlx.bundle",
+			);
+			name = "Embed Nola Runtime Products";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/MacOS/nola-agent-host",
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/MacOS/nola-agent-host.nola-staging",
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/MacOS/nola-service.nola-staging",
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/MacOS/nola-mlx-runtime.nola-staging",
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/MacOS/nola-service",
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/MacOS/nola-mlx-runtime",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/mlx-swift_Cmlx.bundle",
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Library/LaunchAgents/com.gaojc.Nola.background-scheduler.plist",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "/bin/bash \"${SRCROOT}/scripts/embed_mac_runtime.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		9A9F76882EBD3711004F68FB /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9A9F769A2EBD3713004F68FB /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9A9F76A42EBD3713004F68FB /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B10000000000000000000004 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C10000000000000000000001 /* apps/ios/LLM/LLMClient.swift in Sources */,
+				C10000000000000000000002 /* apps/ios/LLM/OpenAIProvider.swift in Sources */,
+				C10000000000000000000003 /* apps/ios/LLM/ModelTypes.swift in Sources */,
+				C10000000000000000000004 /* apps/ios/LLM/PromptTemplates.swift in Sources */,
+				C10000000000000000000005 /* apps/ios/LLM/LLMResponseValidator.swift in Sources */,
+				C10000000000000000000006 /* apps/ios/Services/Chat/ChatThinkingParser.swift in Sources */,
+				C10000000000000000000007 /* apps/ios/Services/ErrorHandlingExtensions.swift in Sources */,
+				C10000000000000000000008 /* apps/ios/Services/KeychainHelper.swift in Sources */,
+				C10000000000000000000009 /* apps/ios/Services/ModelParametersStore.swift in Sources */,
+				C1000000000000000000000A /* apps/ios/Services/NolaError.swift in Sources */,
+				C1000000000000000000000B /* apps/ios/Services/Localizable.swift in Sources */,
+				C1000000000000000000000C /* apps/ios/Services/Logger.swift in Sources */,
+				C1000000000000000000000D /* apps/ios/Services/LogFileStore.swift in Sources */,
+				C1000000000000000000000E /* apps/ios/Services/PromptTemplateService.swift in Sources */,
+				C1000000000000000000000F /* apps/ios/Services/PromptTemplateDefaults.swift in Sources */,
+				C10000000000000000000010 /* apps/ios/Services/HealthSummarySync.swift in Sources */,
+				C10000000000000000000011 /* apps/ios/Models/AgentModels.swift in Sources */,
+				C10000000000000000000012 /* apps/ios/Services/MedicationService.swift in Sources */,
+				C10000000000000000000013 /* apps/ios/Services/ModelDownloader.swift in Sources */,
+				C10000000000000000000015 /* apps/ios/Services/AgentCorePromptComposer.swift in Sources */,
+				D5A000000000000000000001 /* apps/ios/Services/AgentCoreDataSourceResolution.swift in Sources */,
+				D5A000000000000000000003 /* apps/ios/Services/AgentCoreResourceAccess.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D50000000000000000000004 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F20000000000000000000004 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		9A6601F52EC9238D002AC09C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 9A6601F42EC9238D002AC09C /* OpenAI */;
+		};
+		9A9F76A02EBD3713004F68FB /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 9A9F768B2EBD3711004F68FB /* Nola */;
+			targetProxy = 9A9F769F2EBD3713004F68FB /* PBXContainerItemProxy */;
+		};
+		9A9F76AA2EBD3713004F68FB /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 9A9F768B2EBD3711004F68FB /* Nola */;
+			targetProxy = 9A9F76A92EBD3713004F68FB /* PBXContainerItemProxy */;
+		};
+		9AE33D532EC5627500F0BDBD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 9AE33D522EC5627500F0BDBD /* MLX */;
+		};
+		9AE33D552EC5627500F0BDBD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 9AE33D542EC5627500F0BDBD /* MLXFFT */;
+		};
+		9AE33D572EC5627500F0BDBD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 9AE33D562EC5627500F0BDBD /* MLXFast */;
+		};
+		9AE33D592EC5627500F0BDBD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 9AE33D582EC5627500F0BDBD /* MLXLinalg */;
+		};
+		9AE33D5B2EC5627500F0BDBD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 9AE33D5A2EC5627500F0BDBD /* MLXNN */;
+		};
+		9AE33D5D2EC5627500F0BDBD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 9AE33D5C2EC5627500F0BDBD /* MLXOptimizers */;
+		};
+		9AE33D5F2EC5627500F0BDBD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 9AE33D5E2EC5627500F0BDBD /* MLXRandom */;
+		};
+		9AE33D622EC5643900F0BDBD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 9AE33D612EC5643900F0BDBD /* MLXLMCommon */;
+		};
+		9AE33D672EC564AF00F0BDBD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 9AE33D662EC564AF00F0BDBD /* MLXLLM */;
+		};
+		9AE33D692EC564B600F0BDBD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = 9AE33D682EC564B600F0BDBD /* MLXVLM */;
+		};
+		D5000000000000000000000B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B10000000000000000000003 /* NolaMac */;
+			targetProxy = D5000000000000000000000A /* PBXContainerItemProxy */;
+		};
+		F10000000000000000000009 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = NolaCore;
+			targetProxy = F10000000000000000000007 /* PBXContainerItemProxy */;
+		};
+		F1000000000000000000000A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = NolaCore;
+			targetProxy = F10000000000000000000007 /* PBXContainerItemProxy */;
+		};
+		F1000000000000000000000B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = NolaRuntime;
+			targetProxy = F10000000000000000000008 /* PBXContainerItemProxy */;
+		};
+		F2000000000000000000000B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = F20000000000000000000003 /* NolaMLXRuntime */;
+			targetProxy = F2000000000000000000000A /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		9A9F76B02EBD3713004F68FB /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = A611CA700000000000000001 /* transport/tailcat/Tailcat.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 65G58B4R2Q;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		9A9F76B12EBD3713004F68FB /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = A611CA700000000000000001 /* transport/tailcat/Tailcat.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 65G58B4R2Q;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		9A9F76B32EBD3713004F68FB /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = apps/ios/Nola.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 65G58B4R2Q;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = apps/ios/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gaojc.Nola;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		9A9F76B42EBD3713004F68FB /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = apps/ios/Nola.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 65G58B4R2Q;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = apps/ios/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gaojc.Nola;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		9A9F76B62EBD3713004F68FB /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 65G58B4R2Q;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gaojc.NolaTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Nola.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Nola";
+			};
+			name = Debug;
+		};
+		9A9F76B72EBD3713004F68FB /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 65G58B4R2Q;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gaojc.NolaTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Nola.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Nola";
+			};
+			name = Release;
+		};
+		9A9F76B92EBD3713004F68FB /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 65G58B4R2Q;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gaojc.NolaUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Nola;
+			};
+			name = Debug;
+		};
+		9A9F76BA2EBD3713004F68FB /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 65G58B4R2Q;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gaojc.NolaUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Nola;
+			};
+			name = Release;
+		};
+		9AFF2D203024F4E900F55A9A /* Test */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = apps/ios/Nola.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 65G58B4R2Q;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = apps/ios/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.gaojc.Nola.tests-host";
+				PRODUCT_NAME = Nola;
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Test;
+		};
+		9AFF2D213024F4E900F55A9A /* Test */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gaojc.NolaTests;
+				PRODUCT_NAME = NolaTests;
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Nola.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Nola";
+			};
+			name = Test;
+		};
+		9AFF2D223024F4E900F55A9A /* Test */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gaojc.NolaUITests;
+				PRODUCT_NAME = NolaUITests;
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Nola;
+			};
+			name = Test;
+		};
+		B10000000000000000000008 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = apps/macos/NolaMac.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 65G58B4R2Q;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Nola;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Nola controls other apps only when you run an approved automation tool.";
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Nola reads and changes calendar events only for assistant actions you approve.";
+				INFOPLIST_KEY_NSContactsUsageDescription = "Nola reads contacts only for assistant actions you approve.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Nola connects to model servers and Nola hosts on your local network when you select them.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Nola uses the microphone only when you start voice input.";
+				INFOPLIST_KEY_NSRemindersFullAccessUsageDescription = "Nola reads and changes reminders only for assistant actions you approve.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Nola converts speech to text only when you start voice input.";
+				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
+				LM_SKIP_METADATA_EXTRACTION = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 1.0.0;
+				ONLY_ACTIVE_ARCH = YES;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-framework",
+					SystemConfiguration,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.gaojc.Nola.mac;
+				PRODUCT_NAME = Nola;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		B10000000000000000000009 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = apps/macos/NolaMac.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 65G58B4R2Q;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Nola;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Nola controls other apps only when you run an approved automation tool.";
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Nola reads and changes calendar events only for assistant actions you approve.";
+				INFOPLIST_KEY_NSContactsUsageDescription = "Nola reads contacts only for assistant actions you approve.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Nola connects to model servers and Nola hosts on your local network when you select them.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Nola uses the microphone only when you start voice input.";
+				INFOPLIST_KEY_NSRemindersFullAccessUsageDescription = "Nola reads and changes reminders only for assistant actions you approve.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Nola converts speech to text only when you start voice input.";
+				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
+				LM_SKIP_METADATA_EXTRACTION = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 1.0.0;
+				ONLY_ACTIVE_ARCH = YES;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-framework",
+					SystemConfiguration,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.gaojc.Nola.mac;
+				PRODUCT_NAME = Nola;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		D50000000000000000000008 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				COMPILATION_CACHE_ENABLE_CACHING = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 65G58B4R2Q;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
+				LM_SKIP_METADATA_EXTRACTION = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gaojc.NolaMacTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_COMPILATION_MODE = singlefile;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Nola.app/Contents/MacOS/Nola";
+			};
+			name = Debug;
+		};
+		D50000000000000000000009 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 65G58B4R2Q;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
+				LM_SKIP_METADATA_EXTRACTION = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gaojc.NolaMacTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Nola.app/Contents/MacOS/Nola";
+			};
+			name = Release;
+		};
+		E50000000000000000000001 /* Test */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGN_ENTITLEMENTS = apps/macos/NolaMac.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = NO;
+				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Nola;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Nola controls other apps only when you run an approved automation tool.";
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Nola reads and changes calendar events only for assistant actions you approve.";
+				INFOPLIST_KEY_NSContactsUsageDescription = "Nola reads contacts only for assistant actions you approve.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Nola connects to model servers and Nola hosts on your local network when you select them.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Nola uses the microphone only when you start voice input.";
+				INFOPLIST_KEY_NSRemindersFullAccessUsageDescription = "Nola reads and changes reminders only for assistant actions you approve.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Nola converts speech to text only when you start voice input.";
+				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
+				LM_SKIP_METADATA_EXTRACTION = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 1.0.0;
+				ONLY_ACTIVE_ARCH = YES;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-framework",
+					SystemConfiguration,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.gaojc.Nola.mac.tests-host";
+				PRODUCT_NAME = Nola;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Test;
+		};
+		E50000000000000000000002 /* Test */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMPILATION_CACHE_ENABLE_CACHING = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
+				LM_SKIP_METADATA_EXTRACTION = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gaojc.NolaMacTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_COMPILATION_MODE = singlefile;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Nola.app/Contents/MacOS/Nola";
+			};
+			name = Test;
+		};
+		E50000000000000000000003 /* Test */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = A611CA700000000000000001 /* transport/tailcat/Tailcat.xcconfig */;
+			buildSettings = {
+				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 65G58B4R2Q;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Test;
+		};
+		F20000000000000000000007 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				PRODUCT_NAME = "nola-mlx-runtime";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		F20000000000000000000008 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				DEAD_CODE_STRIPPING = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				PRODUCT_NAME = "nola-mlx-runtime";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		F20000000000000000000009 /* Test */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = "$(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)";
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				PRODUCT_NAME = "nola-mlx-runtime";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Test;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		9A9F76872EBD3711004F68FB /* Build configuration list for PBXProject "Nola" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9A9F76B02EBD3713004F68FB /* Debug */,
+				E50000000000000000000003 /* Test */,
+				9A9F76B12EBD3713004F68FB /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		9A9F76B22EBD3713004F68FB /* Build configuration list for PBXNativeTarget "Nola" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9A9F76B32EBD3713004F68FB /* Debug */,
+				9A9F76B42EBD3713004F68FB /* Release */,
+				9AFF2D203024F4E900F55A9A /* Test */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		9A9F76B52EBD3713004F68FB /* Build configuration list for PBXNativeTarget "NolaTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9A9F76B62EBD3713004F68FB /* Debug */,
+				9A9F76B72EBD3713004F68FB /* Release */,
+				9AFF2D213024F4E900F55A9A /* Test */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		9A9F76B82EBD3713004F68FB /* Build configuration list for PBXNativeTarget "NolaUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9A9F76B92EBD3713004F68FB /* Debug */,
+				9A9F76BA2EBD3713004F68FB /* Release */,
+				9AFF2D223024F4E900F55A9A /* Test */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B10000000000000000000007 /* Build configuration list for PBXNativeTarget "NolaMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B10000000000000000000008 /* Debug */,
+				E50000000000000000000001 /* Test */,
+				B10000000000000000000009 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		D50000000000000000000007 /* Build configuration list for PBXNativeTarget "NolaMacTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D50000000000000000000008 /* Debug */,
+				E50000000000000000000002 /* Test */,
+				D50000000000000000000009 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F20000000000000000000006 /* Build configuration list for PBXNativeTarget "NolaMLXRuntime" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F20000000000000000000007 /* Debug */,
+				F20000000000000000000009 /* Test */,
+				F20000000000000000000008 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		9A6601F32EC9237D002AC09C /* XCRemoteSwiftPackageReference "OpenAI" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/MacPaw/OpenAI";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.4.7;
+			};
+		};
+		9AC100012EF03C1000B71A10 /* XCRemoteSwiftPackageReference "SwiftMath" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/mgriebling/SwiftMath.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.7.3;
+			};
+		};
+		9AD100012EF66E0100B71A10 /* XCRemoteSwiftPackageReference "beautiful-mermaid-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/lukilabs/beautiful-mermaid-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.0.4;
+			};
+		};
+		9AE33D3F2EC5189200F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/ml-explore/mlx-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.31.3;
+			};
+		};
+		9AE33D602EC5642E00F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift-lm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/ml-explore/mlx-swift-lm";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.31.3;
+			};
+		};
+		A91000000000000000000001 /* XCRemoteSwiftPackageReference "swift-markdown" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/swiftlang/swift-markdown.git";
+			requirement = {
+				kind = exactVersion;
+				version = 0.9.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		9A6601F42EC9238D002AC09C /* OpenAI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9A6601F32EC9237D002AC09C /* XCRemoteSwiftPackageReference "OpenAI" */;
+			productName = OpenAI;
+		};
+		9A6601F62EC92397002AC09C /* OpenAI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9A6601F32EC9237D002AC09C /* XCRemoteSwiftPackageReference "OpenAI" */;
+			productName = OpenAI;
+		};
+		9AC100022EF03C1000B71A10 /* SwiftMath */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AC100012EF03C1000B71A10 /* XCRemoteSwiftPackageReference "SwiftMath" */;
+			productName = SwiftMath;
+		};
+		9AD100022EF66E0100B71A10 /* BeautifulMermaid */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AD100012EF66E0100B71A10 /* XCRemoteSwiftPackageReference "beautiful-mermaid-swift" */;
+			productName = BeautifulMermaid;
+		};
+		9AE33D402EC5189200F0BDBD /* MLX */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D3F2EC5189200F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLX;
+		};
+		9AE33D422EC5189200F0BDBD /* MLXFFT */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D3F2EC5189200F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLXFFT;
+		};
+		9AE33D442EC5189200F0BDBD /* MLXFast */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D3F2EC5189200F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLXFast;
+		};
+		9AE33D462EC5189200F0BDBD /* MLXLinalg */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D3F2EC5189200F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLXLinalg;
+		};
+		9AE33D482EC5189200F0BDBD /* MLXNN */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D3F2EC5189200F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLXNN;
+		};
+		9AE33D522EC5627500F0BDBD /* MLX */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D3F2EC5189200F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLX;
+		};
+		9AE33D542EC5627500F0BDBD /* MLXFFT */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D3F2EC5189200F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLXFFT;
+		};
+		9AE33D562EC5627500F0BDBD /* MLXFast */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D3F2EC5189200F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLXFast;
+		};
+		9AE33D582EC5627500F0BDBD /* MLXLinalg */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D3F2EC5189200F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLXLinalg;
+		};
+		9AE33D5A2EC5627500F0BDBD /* MLXNN */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D3F2EC5189200F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLXNN;
+		};
+		9AE33D5C2EC5627500F0BDBD /* MLXOptimizers */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D3F2EC5189200F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLXOptimizers;
+		};
+		9AE33D5E2EC5627500F0BDBD /* MLXRandom */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D3F2EC5189200F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLXRandom;
+		};
+		9AE33D612EC5643900F0BDBD /* MLXLMCommon */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D602EC5642E00F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXLMCommon;
+		};
+		9AE33D642EC5644100F0BDBD /* MLXLMCommon */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D602EC5642E00F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXLMCommon;
+		};
+		9AE33D662EC564AF00F0BDBD /* MLXLLM */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D602EC5642E00F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXLLM;
+		};
+		9AE33D682EC564B600F0BDBD /* MLXVLM */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D602EC5642E00F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXVLM;
+		};
+		9AE33D6A2EC564C100F0BDBD /* MLXLLM */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D602EC5642E00F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXLLM;
+		};
+		9AE33D6C2EC564C600F0BDBD /* MLXVLM */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AE33D602EC5642E00F0BDBD /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXVLM;
+		};
+		A91000000000000000000002 /* Markdown */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A91000000000000000000001 /* XCRemoteSwiftPackageReference "swift-markdown" */;
+			productName = Markdown;
+		};
+		D40000000000000000000002 /* BeautifulMermaid */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9AD100012EF66E0100B71A10 /* XCRemoteSwiftPackageReference "beautiful-mermaid-swift" */;
+			productName = BeautifulMermaid;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 9A9F76842EBD3711004F68FB /* Project object */;
+}

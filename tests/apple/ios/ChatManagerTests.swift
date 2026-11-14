@@ -130,6 +130,62 @@ final class ChatManagerTests: XCTestCase {
         }
     }
 
+    func testInPlaceEditResendsWithRetainedPrefixAndNoAbandonedAnswer() async throws {
+        let (runtime, root) = try makeApplicationRuntime()
+        addTeardownBlock { try await Self.removeStreamingFixtureRoot(root) }
+        let container = ServiceContainer(applicationRuntime: runtime)
+        let manager = ChatManager(container: container, restorePersistedState: false)
+        let id = "in-place-" + UUID().uuidString
+        let model = try configuredHTTPFixture(container: container, id: id)
+        var fixtureTurn = 0
+        ChatManagerHTTPFixture.responders[id] = { _ in fixtureTurn += 1; return "fixture-answer-\(fixtureTurn)" }
+        defer { ChatManagerHTTPFixture.responders[id] = nil; ChatManagerHTTPFixture.requests[id] = nil }
+        manager.selectedModelInfo = model
+        Self.retainedManagers.append(manager)
+        _ = try await manager.processMessage("RETAINED_PREFIX_8217")
+        _ = try await manager.processMessage("ABANDONED_QUESTION_8217")
+        let owner = try XCTUnwrap(manager.currentConversationId)
+        let conversation = try XCTUnwrap(runtime.loadConversation(id: owner.uuidString))
+        let projection = try runtime.loadConversationProjectionV1(id: owner.uuidString)
+        let source = try XCTUnwrap(projection.messages.last { $0.role == .user })
+        let request = AppleMessageEditSubmission(operationID: UUID(), targetConversationID: UUID(), createdAtMs: Int64(Date().timeIntervalSince1970 * 1000),
+            sourceConversationID: owner.uuidString, sourceMessageID: source.messageID,
+            expectedSourceRevision: conversation.revision, expectedMessageRevision: source.revision, text: "REPLACEMENT_8217")
+        // Room pages and a previously opened editor retain their source owner;
+        // the main chat selection must not reroute or reject that submission.
+        manager.currentConversationId = nil
+        let admittedOwner: UUID
+        do { admittedOwner = try await manager.sendEditedMessage(request) }
+        catch {
+            let latest = try? runtime.loadConversationProjectionV1(id: owner.uuidString)
+            let diagnostic = XCTAttachment(string: "Captured: \(String(reflecting: source))\nLatest: \(String(reflecting: latest))\nError: \(error)")
+            diagnostic.name = "in-place-source-witness"; diagnostic.lifetime = .keepAlways; add(diagnostic)
+            throw error
+        }
+        XCTAssertEqual(admittedOwner, owner)
+        XCTAssertNil(manager.currentConversationId)
+        for _ in 0..<1000 where manager.executionForConversation(owner)?.processingState.blocksInput == true {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let messages = try XCTUnwrap(runtime.loadConversation(id: owner.uuidString)).messages
+        let resultDiagnostic = XCTAttachment(string: String(decoding: try JSONEncoder().encode(messages), as: UTF8.self))
+        resultDiagnostic.name = "in-place-result-messages"; resultDiagnostic.lifetime = .keepAlways; add(resultDiagnostic)
+        XCTAssertTrue(messages.contains { $0.parts.contains { $0.contentText.contains("RETAINED_PREFIX_8217") } })
+        XCTAssertFalse(messages.contains { $0.parts.contains { $0.contentText.contains("ABANDONED_QUESTION_8217") } })
+        XCTAssertTrue(messages.contains { $0.parts.contains { $0.contentText.contains("REPLACEMENT_8217") } })
+        XCTAssertFalse(messages.contains { $0.parts.contains { $0.contentText.contains("fixture-answer-2") } })
+        XCTAssertTrue(messages.contains { $0.parts.contains { $0.contentText.contains("fixture-answer-1") } })
+        let sent = String(decoding: try XCTUnwrap(ChatManagerHTTPFixture.requests[id]?.last), as: UTF8.self)
+        XCTAssertTrue(sent.contains("RETAINED_PREFIX_8217"))
+        XCTAssertTrue(sent.contains("REPLACEMENT_8217"))
+        XCTAssertFalse(sent.contains("ABANDONED_QUESTION_8217"))
+        XCTAssertFalse(sent.contains("fixture-answer-2"))
+        let count = ChatManagerHTTPFixture.requests[id]?.count
+        let retryOwner = try await manager.sendEditedMessage(request)
+        XCTAssertEqual(retryOwner, owner)
+        XCTAssertEqual(ChatManagerHTTPFixture.requests[id]?.count, count)
+    }
+
     func testSubmissionRejectsLaggingDraftSelectionBeforeCreatingOrClearingAnything() throws {
         let (runtime, root) = try makeApplicationRuntime()
         defer { try? FileManager.default.removeItem(at: root) }

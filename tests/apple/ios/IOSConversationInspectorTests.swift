@@ -108,7 +108,7 @@ final class IOSConversationInspectorTests: XCTestCase {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         for width in [CGFloat(390), CGFloat(834)] {
             for dark in [false, true] {
-                for pane in [IOSConversationInspectorPane.progress, .resources] {
+                for pane in [IOSConversationInspectorPane.progress, .goals, .resources] {
                     let content = IOSConversationInspector(pane: pane, conversationID: nil, loadProgress: { _ in .init(facts: nil, plan: nil) },
                         documents: [UserUploadedContextItem(name: "隔离设计资料 · 不调用模型", content: "Fixture document")],
                         processingState: .idle)

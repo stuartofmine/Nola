@@ -382,12 +382,23 @@ impl AgentTraceContext {
     }
 
     pub fn project_external_event(&mut self, event: &Value) -> Option<AgentTraceEvent> {
+        self.project_external_event_at(
+            event,
+            chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        )
+    }
+
+    pub fn project_external_event_at(
+        &mut self,
+        event: &Value,
+        emitted_at: impl Into<String>,
+    ) -> Option<AgentTraceEvent> {
         let event = project_external_event(
             event,
             self,
             self.next_sequence,
             format!("external_event_{}_{}", self.run_id, self.next_sequence),
-            chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            emitted_at.into(),
         );
         if event.is_some() {
             self.next_sequence = self.next_sequence.saturating_add(1);
@@ -414,35 +425,8 @@ impl AgentTraceContext {
         event
     }
 
-    /// Projects the canonical Agent event directly into the UI trace stream.
-    /// The Core cursor supplies stable identity while the trace sequence remains
-    /// local to this process/run.
-    pub fn project_agent_event(
-        &mut self,
-        event: &AgentEvent,
-        event_cursor: u64,
-    ) -> Option<AgentTraceEvent> {
-        self.project_agent_event_at(
-            event,
-            event_cursor,
-            chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-        )
-    }
-
     /// Projects control diagnostics only. Canonical Parts and their journal
     /// own all assistant and reasoning content; traces never buffer that body.
-    pub fn project_agent_events(
-        &mut self,
-        event: &AgentEvent,
-        event_cursor: u64,
-    ) -> Vec<AgentTraceEvent> {
-        self.project_agent_events_at(
-            event,
-            event_cursor,
-            chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-        )
-    }
-
     pub fn project_agent_events_at(
         &mut self,
         event: &AgentEvent,
@@ -2780,5 +2764,34 @@ mod tests {
         }));
         assert!(!encoded.contains("system prompt body"));
         assert!(sanitize_prompt_identity("not-a-digest", &[]).is_none());
+    }
+
+    #[test]
+    fn project_external_event_at_preserves_caller_timestamp_and_sequence() {
+        let mut context = AgentTraceContext::new("conversation-det", None);
+        let trace = context
+            .project_external_event_at(
+                &json!({
+                    "type": "tool_started",
+                    "call_id": "call-det",
+                    "tool_name": "read_file"
+                }),
+                "2025-01-01T00:00:00.000Z",
+            )
+            .expect("projected trace");
+        assert_eq!(trace.emitted_at, "2025-01-01T00:00:00.000Z");
+        assert_eq!(trace.sequence, 1);
+        let second = context
+            .project_external_event_at(
+                &json!({
+                    "type": "tool_completed",
+                    "call_id": "call-det",
+                    "tool_name": "read_file"
+                }),
+                "2025-01-01T00:00:01.000Z",
+            )
+            .expect("second projected trace");
+        assert_eq!(second.emitted_at, "2025-01-01T00:00:01.000Z");
+        assert_eq!(second.sequence, 2);
     }
 }

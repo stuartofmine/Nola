@@ -108,7 +108,7 @@ final class AppleUIEditingState<JSON: JournalJSONValue>: ObservableObject {
             node.bindings.keys.map { Self.key(node.instance_id, $0) }
         })
         guard Set(drafts.keys).isSubset(of: available) else {
-            failure = "表单已更新，部分编辑项不再存在。请放弃编辑后重新填写。"
+            failure = String(localized: "a2ui.fieldsRemoved", defaultValue: "Some fields are no longer available. Your edits are preserved.")
             return
         }
         draftRevision = snapshot.revision
@@ -187,15 +187,19 @@ struct AppleUISurfaceView<JSON: JournalJSONValue>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if let root = snapshot.root_instance_id { node(root).disabled(disabled) }
+            if snapshot.phase == .pending {
+                Text(String(localized: "a2ui.pending", defaultValue: "Preparing interface…"))
+            } else if snapshot.phase == .deleted {
+                Text(String(localized: "a2ui.deleted", defaultValue: "This interface was removed."))
+            } else if let root = snapshot.root_instance_id { node(root).disabled(disabled) }
             else if !snapshot.summary.isEmpty { Text(snapshot.summary) }
             if editing.pending { ProgressView().controlSize(.small) }
             if let failure = editing.failure { Label(failure, systemImage: "exclamationmark.circle").foregroundStyle(.secondary) }
-            if !editing.pending && editing.unresolved == nil && !editing.drafts.isEmpty && (editing.failure != nil || editing.draftRevision != snapshot.revision) {
-                Button("重新校验") {
+            if snapshot.phase == .ready && !editing.pending && editing.unresolved == nil && !editing.drafts.isEmpty && (editing.failure != nil || editing.draftRevision != snapshot.revision) {
+                Button(String(localized: "a2ui.revalidate", defaultValue: "Validate again")) {
                     editing.revalidate(against: snapshot)
                 }.disabled(composition.isComposing)
-                Button("放弃编辑，使用当前值") {
+                Button(String(localized: "a2ui.discardEdits", defaultValue: "Discard edits and use current values")) {
                     editing.drafts = [:]
                     editing.draftRevision = nil
                     editing.draftGeneration &+= 1
@@ -203,8 +207,8 @@ struct AppleUISurfaceView<JSON: JournalJSONValue>: View {
                     editing.failure = nil
                 }
             }
-            if let unresolved = editing.unresolved {
-                Button("查询提交结果") { Task { await deliver(unresolved) } }.disabled(editing.pending)
+            if snapshot.phase == .ready || snapshot.phase == .pending, let unresolved = editing.unresolved {
+                Button(String(localized: "a2ui.checkSubmission", defaultValue: "Check submission result")) { Task { await deliver(unresolved) } }.disabled(editing.pending)
             }
         }
         .accessibilityElement(children: .contain)
@@ -227,7 +231,7 @@ struct AppleUISurfaceView<JSON: JournalJSONValue>: View {
                 while appleUIHasMarkedText() { try await Task.sleep(for: .milliseconds(80)) }
                 try Task.checkCancellation()
                 guard editing.draftRevision == snapshot.revision, let preview else {
-                    editing.failure = "表单已更新或暂时无法校验，请重新读取后编辑。"
+                    editing.failure = String(localized: "a2ui.previewUnavailable", defaultValue: "Reload this form before editing.")
                     return
                 }
                 let result = try await preview(.init(identity: captured.identity,
@@ -243,7 +247,7 @@ struct AppleUISurfaceView<JSON: JournalJSONValue>: View {
                       result.snapshot.catalog_id == snapshot.catalog_id,
                       result.snapshot.catalog_digest == snapshot.catalog_digest else {
                     editing.preview = nil
-                    editing.failure = "表单校验结果已过期或归属不匹配，请重新编辑后重试。"
+                    editing.failure = String(localized: "a2ui.previewMismatch", defaultValue: "Review your edits and retry validation.")
                     return
                 }
                 editing.preview = result
@@ -275,7 +279,7 @@ struct AppleUISurfaceView<JSON: JournalJSONValue>: View {
 
     private func node(_ id: String) -> some View {
         AppleUINodeView(id: id, snapshot: displaySnapshot,
-            value: { node, binding, committed in editing.drafts[key(node, binding)] ?? committed },
+            value: { node, binding, committed in snapshot.phase == .ready ? editing.drafts[key(node, binding)] ?? committed : committed },
             edit: { node, binding, value in
                 guard !disabled, snapshot.nodes[node]?.bindings[binding] != nil else { return }
                 editing.draftRevision = editing.draftRevision ?? snapshot.revision
@@ -285,14 +289,14 @@ struct AppleUISurfaceView<JSON: JournalJSONValue>: View {
             }, dispatch: { action in
                 guard !disabled, !actionsDisabled else { return }
                 guard !appleUIHasMarkedText() else {
-                    editing.failure = "请先确认正在输入的文字，再提交表单。"
+                    editing.failure = String(localized: "a2ui.finishComposition", defaultValue: "Finish composing your text before submitting.")
                     return
                 }
                 let available = Set(snapshot.nodes.values.flatMap { node in
                     node.bindings.keys.map { key(node.instance_id, $0) }
                 })
                 guard Set(editing.drafts.keys).isSubset(of: available) else {
-                    editing.failure = "表单已更新，部分编辑项不再存在。请重新确认后提交。"
+                    editing.failure = String(localized: "a2ui.fieldsRemoved", defaultValue: "Review the changed fields before submitting.")
                     return
                 }
                 // Only the advertised binding names are submitted, never paths.
@@ -317,6 +321,7 @@ struct AppleUISurfaceView<JSON: JournalJSONValue>: View {
         guard !editing.pending, submission.interaction.identity == snapshot.identity else { return }
         editing.pending = true
         editing.failure = nil
+        editing.unresolved = submission
         defer { editing.pending = false }
         let outcome = await submit(submission)
         guard submission.interaction.identity == snapshot.identity else { return }
@@ -324,7 +329,7 @@ struct AppleUISurfaceView<JSON: JournalJSONValue>: View {
         case let .committed(receipt):
             guard receipt.snapshot.identity == snapshot.identity else {
                 editing.unresolved = submission
-                editing.failure = "提交结果归属不匹配，请重查。"
+                editing.failure = String(localized: "a2ui.receiptMismatch", defaultValue: "The result belongs to another form. Check again.")
                 return
             }
             editing.drafts = [:]
@@ -356,7 +361,7 @@ struct AppleUIHistoryView<JSON: JournalJSONValue>: View {
     @State private var loading = false
 
     var body: some View {
-        DisclosureGroup(String(localized: "a2ui.history.version", defaultValue: "View this form version"), isExpanded: $expanded) {
+        DisclosureGroup(String(localized: "a2ui.history.version", defaultValue: "View content"), isExpanded: $expanded) {
             if loading { ProgressView() }
             if let failure { Text(failure).foregroundStyle(.secondary) }
             if let snapshot {
@@ -402,6 +407,7 @@ struct AppleUIReferencedSurfaceView<JSON: JournalJSONValue>: View {
     @State private var retry = 0
     @State private var intentReady = false
     @State private var pending: AppleUISubmission<JSON>?
+    @State private var reconciling = false
     private struct ReadKey: Hashable { let reference: AppleUISurfaceReference; let retry: Int }
 
     var body: some View {
@@ -413,21 +419,30 @@ struct AppleUIReferencedSurfaceView<JSON: JournalJSONValue>: View {
                     self.snapshot = receipt.snapshot
                 }.id(snapshot.identity).disabled(!intentReady)
             } else { Text(summary).foregroundStyle(.secondary) }
-            if snapshot == nil, let pending, intentReady {
-                Button("查询上次表单提交结果") {
+            if snapshot?.phase != .ready && snapshot?.phase != .pending, let pending, intentReady {
+                Button(String(localized: "a2ui.checkSubmission", defaultValue: "Check submission result")) {
+                    guard !reconciling else { return }
+                    reconciling = true
                     Task {
+                        defer { reconciling = false }
                         let result = await submit(pending)
-                        if case .committed(let receipt) = result { snapshot = receipt.snapshot; self.pending = nil }
+                        if case .committed(let receipt) = result {
+                            if receipt.snapshot.identity == reference.identity {
+                                snapshot = receipt.snapshot; self.pending = nil
+                            } else {
+                                failure = String(localized: "a2ui.receiptMismatch", defaultValue: "The result belongs to another form. Check again.")
+                            }
+                        }
                         else if case .rejected(let message) = result { self.pending = nil; failure = message }
                         else if case .unknown(let message) = result { failure = message }
                     }
-                }
+                }.disabled(reconciling)
             }
             if let failure {
                 Text(failure).font(.caption).foregroundStyle(.secondary)
                 Button("重新读取表单") { retry &+= 1 }
             }
-            AppleUIHistoryView(reference: reference, load: readRevision)
+            if snapshot == nil { AppleUIHistoryView(reference: reference, load: readRevision) }
         }
         .task(id: ReadKey(reference: reference, retry: retry)) {
             intentReady = false

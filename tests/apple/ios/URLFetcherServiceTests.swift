@@ -393,6 +393,46 @@ final class URLDataSourceMetadataTests: XCTestCase {
         return fileURL
     }
 
+    func testAwaitedStaleDeleteReportsConflictAndPreservesBothProjections() async throws {
+        let (runtime, root) = try makeApplicationRuntime()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = URLFetcherService(logger: Logger(), applicationRuntime: runtime)
+        let original = try await first.saveSource(URLDataSource(
+            url: "https://delete.example.invalid/source", format: .json, name: "Original"
+        ))
+        let secondRuntime = try IOSApplicationRuntime(databaseURL: root.appendingPathComponent("nola.sqlite"))
+        let second = URLFetcherService(logger: Logger(), applicationRuntime: secondRuntime)
+        var edited = original
+        edited.name = "Keep newer version"
+        let committed = try await first.saveSource(edited)
+        do {
+            try await second.removeSourceConfirmed(id: original.id, expectedRevision: original.canonicalRevision)
+            XCTFail("Stale deletion must return an error receipt")
+        } catch {
+            XCTAssertEqual(second.sources.map(\.id), [original.id])
+            XCTAssertEqual(second.sources.first?.name, "Original", "A rejection cannot remove the local row")
+        }
+        XCTAssertEqual(try secondRuntime.listDataSources().first?.revision, committed.canonicalRevision)
+        XCTAssertEqual(try secondRuntime.listDataSources().first?.name, "Keep newer version")
+    }
+
+    func testAwaitedDeleteReceiptPublishesOnlyAfterCanonicalCommit() async throws {
+        let (runtime, root) = try makeApplicationRuntime()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fetcher = URLFetcherService(logger: Logger(), applicationRuntime: runtime)
+        let source = try await fetcher.saveSource(URLDataSource(
+            url: "https://delete.example.invalid/source", format: .json, name: "Delete me"
+        ))
+        XCTAssertEqual(fetcher.sources.map(\.id), [source.id])
+        try await fetcher.removeSourceConfirmed(id: source.id, expectedRevision: source.canonicalRevision)
+        XCTAssertTrue(fetcher.sources.isEmpty)
+        XCTAssertTrue(try runtime.listDataSources().isEmpty)
+        do {
+            try await fetcher.removeSourceConfirmed(id: source.id)
+            XCTFail("An already absent row must not return a new successful deletion receipt")
+        } catch { XCTAssertTrue(fetcher.sources.isEmpty) }
+    }
+
     func testAwaitedEditorSavePublishesCommittedProjection() async throws {
         let (runtime, root) = try makeApplicationRuntime()
         defer { try? FileManager.default.removeItem(at: root) }

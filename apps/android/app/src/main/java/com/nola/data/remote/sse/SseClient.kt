@@ -74,7 +74,7 @@ sealed class SseEvent {
         val protocolVersion: Int
     ) : SseEvent()
     data class ExternalSessionStarted(val backendId: String, val sessionId: String) : SseEvent()
-    data class Error(val message: String) : SseEvent()
+    data class Error(val message: String, val code: String? = null) : SseEvent()
 }
 
 class SseStatusException(val statusCode: Int) : IllegalStateException("SSE request failed ($statusCode)")

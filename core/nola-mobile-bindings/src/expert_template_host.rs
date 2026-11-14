@@ -54,7 +54,7 @@ pub extern "C" fn nola_core_application_expert_host_operation(
             if reopen_required {
                 // Reopen the actual shared owner, not just this thin handle.
                 // The original receipt remains uncertain until exact replay.
-                let _ = runtime.reopen();
+                let _ = application.application.reopen_locked(&mut runtime);
             }
             encode(json!({"ok":false,"error":{"code":"expert_host_outcome_pending","message":message,"outcome_pending":true,"request_id":request_id,"reopen_required":reopen_required}}))
         }

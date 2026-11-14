@@ -4,6 +4,20 @@
 use super::*;
 
 impl NolaStore {
+    pub fn list_public_room_submissions(&self,prefix:&str,limit:usize,offset:usize) -> StoreResult<Vec<StoredProductSetting>> {
+        require_id("room_submission.prefix",prefix)?;
+        if !prefix.starts_with("agent_room_submission/") || limit==0 || limit>200 || offset>i64::MAX as usize {
+            return Err(StoreError::Invariant("invalid public room submission page".into()));
+        }
+        let mut statement=self.connection.prepare(&format!("SELECT {PRODUCT_SETTING_COLUMNS} FROM product_settings s
+            WHERE substr(s.key,1,length(?1))=?1 AND NOT EXISTS(SELECT 1 FROM product_settings peer
+                WHERE peer.key='expert_peer_private/v1/exchange/'||json_extract(s.value_json,'$.input.submission_id'))
+            ORDER BY json_extract(s.value_json,'$.input.at_ms') DESC,s.key ASC LIMIT ?2 OFFSET ?3"))?;
+        let values=statement.query_map(params![prefix,limit as i64,offset as i64],product_setting_row)?
+            .collect::<Result<Vec<_>,_>>()?;
+        Ok(values)
+    }
+
     pub fn list_room_submissions(&self, prefix: &str, limit: usize, offset: usize)
         -> StoreResult<Vec<StoredProductSetting>> {
         require_id("room_submission.prefix", prefix)?;

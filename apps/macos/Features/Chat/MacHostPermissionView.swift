@@ -13,7 +13,7 @@ struct MacHostPermissionCard: View {
     let provideInstruction: @MainActor (String) async throws -> Void
     var availableHeight: CGFloat? = nil
     @State private var actionHeight: CGFloat = 72
-    @State private var showsDetails = true
+    @State private var showsDetails = false
     @State private var showsInstruction = false
     @State private var instructionComposer = MacPermissionInstructionComposer()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -68,18 +68,11 @@ struct MacHostPermissionCard: View {
     private var requestContent: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .center, spacing: 12) {
-                Group {
-                    if isResolving {
-                        ProgressView().controlSize(.small)
-                            .accessibilityIdentifier("chat.permission.resolving")
-                    } else {
-                        Image(systemName: "hand.raised.fill")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.orange)
-                    }
-                }
-                .frame(width: 28, height: 28)
-                .accessibilityHidden(true)
+                Image(systemName: "hand.raised.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.orange)
+                    .frame(width: 28, height: 28)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(
                         MacToolPresentationPolicy.displayTitle(
@@ -88,7 +81,7 @@ struct MacHostPermissionCard: View {
                         )
                     )
                         .font(.system(size: 14, weight: .semibold))
-                    Text(isResolving ? String(localized: "Working") : String(localized: "Permission required"))
+                    Text(String(localized: "Permission required"))
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                     Text(request.hostID == "local"
@@ -147,8 +140,6 @@ struct MacHostPermissionCard: View {
             }
             if showsDetails, !request.arguments.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(String(localized: "Input"))
-                        .font(.caption).foregroundStyle(.secondary)
                     ScrollView {
                         Text(MacPermissionArgumentPresentation.readable(request.arguments))
                             .font(.system(size: 12, design: .monospaced))

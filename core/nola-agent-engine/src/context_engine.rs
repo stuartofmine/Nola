@@ -166,6 +166,8 @@ pub enum ContextComponentKind {
     Document,
     /// Core-authored complete A2UI transport metadata; bounded at admission.
     UiClientData,
+    /// Core-validated user selection for main-agent expert delegation.
+    MainExpertSelection,
     Mcp,
     Attachment,
     WebRetrieval,
@@ -274,6 +276,8 @@ pub struct ContextPrepareInput {
     pub budget: ContextBudgetSpec,
     pub existing_summary: Option<String>,
     pub summary_result: Option<ContextSummaryResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evaluated_at: Option<String>,
 }
 
 impl Default for ContextPrepareInput {
@@ -288,6 +292,7 @@ impl Default for ContextPrepareInput {
             budget: ContextBudgetSpec::default(),
             existing_summary: None,
             summary_result: None,
+            evaluated_at: None,
         }
     }
 }
@@ -375,6 +380,7 @@ pub fn prepare_context_components(
         },
         existing_summary: None,
         summary_result: None,
+        evaluated_at: None,
     };
     let (sanitized, omitted) = sanitize_protected_data(&input);
     let (messages, mut component_metrics) = materialize_components(
@@ -417,7 +423,10 @@ pub fn estimate_json_value_tokens(value: &Value) -> usize {
     ascii.div_ceil(4).saturating_add(non_ascii).max(1)
 }
 
-fn protected_data_replacement(source: Option<&ContextComponentSource>) -> Option<String> {
+fn protected_source_omission_reason(
+    source: Option<&ContextComponentSource>,
+    now: Result<DateTime<Utc>, ()>,
+) -> Option<String> {
     let Some(source) = source else {
         return Some(
             "[Protected data source omitted by Core: authorization is unknown.]".to_string(),
@@ -445,6 +454,11 @@ fn protected_data_replacement(source: Option<&ContextComponentSource>) -> Option
     }
 
     let maximum_age_minutes = source.maximum_age_minutes?;
+    let Ok(now) = now else {
+        return Some(
+            "[Protected data source omitted by Core: evaluation timestamp is invalid.]".to_string(),
+        );
+    };
     let Some(observed_at) = source.observed_at.as_deref() else {
         return Some("[Protected data source omitted by Core: freshness is unknown.]".to_string());
     };
@@ -453,7 +467,7 @@ fn protected_data_replacement(source: Option<&ContextComponentSource>) -> Option
             "[Protected data source omitted by Core: freshness timestamp is invalid.]".to_string(),
         );
     };
-    let age_seconds = Utc::now()
+    let age_seconds = now
         .signed_duration_since(observed_at.with_timezone(&Utc))
         .num_seconds();
     let maximum_age_seconds = maximum_age_minutes.min(10_080).saturating_mul(60) as i64;
@@ -473,13 +487,20 @@ fn protected_data_replacement(source: Option<&ContextComponentSource>) -> Option
 }
 
 fn sanitize_protected_data(input: &ContextPrepareInput) -> (ContextPrepareInput, Vec<String>) {
+    let now = match input.evaluated_at.as_deref() {
+        Some(ts) => DateTime::parse_from_rfc3339(ts.trim())
+            .map(|parsed| parsed.with_timezone(&Utc))
+            .map_err(|_| ()),
+        None => Ok(Utc::now()),
+    };
     let mut sanitized = input.clone();
     let mut omitted = Vec::new();
     for (index, component) in sanitized.components.iter_mut().enumerate() {
         if component.kind != ContextComponentKind::PlatformData {
             continue;
         }
-        if let Some(replacement) = protected_data_replacement(component.source.as_ref()) {
+        if let Some(replacement) = protected_source_omission_reason(component.source.as_ref(), now)
+        {
             component.content = Value::String(replacement);
             omitted.push(if component.id.trim().is_empty() {
                 format!("{:?}-{index}", component.kind).to_ascii_lowercase()
@@ -536,7 +557,7 @@ fn component_policy(kind: ContextComponentKind) -> ComponentPolicy {
             droppable: false,
             truncatable: false,
         },
-        ContextComponentKind::UiClientData => ComponentPolicy {
+        ContextComponentKind::UiClientData | ContextComponentKind::MainExpertSelection => ComponentPolicy {
             priority: 1,
             max_chars: None,
             min_chars: 0,
@@ -685,6 +706,7 @@ fn component_message(component: &ContextComponent, id: &str, content: &str) -> V
         | ContextComponentKind::PersonalIntelligence
         | ContextComponentKind::Document
         | ContextComponentKind::UiClientData
+        | ContextComponentKind::MainExpertSelection
         | ContextComponentKind::Mcp
         | ContextComponentKind::Attachment
         | ContextComponentKind::WebRetrieval
@@ -1997,5 +2019,76 @@ mod tests {
         let output = prepare_context(&decoded);
         assert_eq!(output.schema_version, CONTEXT_ENGINE_SCHEMA_VERSION);
         assert_eq!(output.action, ContextPrepareAction::Ready);
+    }
+
+    #[test]
+    fn protected_data_freshness_is_deterministic_against_evaluated_at() {
+        let protected_component = ContextComponent {
+            kind: ContextComponentKind::PlatformData,
+            id: "health-heart-rate".to_string(),
+            content: json!({"bpm": 68, "marker": "HISTORICAL-FRESH-PAYLOAD"}),
+            source: Some(ContextComponentSource {
+                platform: Some(ContextPlatform::Ios),
+                authorization: Some("authorized".to_string()),
+                observed_at: Some("2025-01-01T00:00:00Z".to_string()),
+                maximum_age_minutes: Some(10),
+                ..ContextComponentSource::default()
+            }),
+        };
+
+        // 5 minutes after observed_at <= 10-minute max age -> deterministically admitted
+        // even though real wall clock is years later.
+        let admitted = prepare_context(&ContextPrepareInput {
+            platform: ContextPlatform::Ios,
+            components: vec![protected_component.clone()],
+            messages: vec![json!({"id":"u1","role":"user","content":"check vitals"})],
+            budget: budget(8_000, 6_000, 2),
+            evaluated_at: Some("2025-01-01T00:05:00Z".to_string()),
+            ..ContextPrepareInput::default()
+        });
+        let admitted_text = admitted.messages[0]["content"].as_str().unwrap();
+        assert!(admitted_text.contains("HISTORICAL-FRESH-PAYLOAD"), "{admitted_text}");
+        assert!(admitted.component_metrics.iter().any(|metric| {
+            metric.kind == ContextComponentKind::PlatformData
+                && metric.used_ids == ["health-heart-rate"]
+                && metric.dropped_ids.is_empty()
+        }));
+
+        // 15 minutes after observed_at > 10-minute max age -> deterministically omitted.
+        let expired = prepare_context(&ContextPrepareInput {
+            platform: ContextPlatform::Ios,
+            components: vec![protected_component.clone()],
+            messages: vec![json!({"id":"u1","role":"user","content":"check vitals"})],
+            budget: budget(8_000, 6_000, 2),
+            evaluated_at: Some("2025-01-01T00:15:00Z".to_string()),
+            ..ContextPrepareInput::default()
+        });
+        let expired_text = expired.messages[0]["content"].as_str().unwrap();
+        assert!(!expired_text.contains("HISTORICAL-FRESH-PAYLOAD"));
+        assert!(
+            expired_text.contains("[Protected data source omitted by Core: data is older than 10 minutes.]"),
+            "{expired_text}"
+        );
+        assert!(expired.component_metrics.iter().any(|metric| {
+            metric.kind == ContextComponentKind::PlatformData
+                && metric.dropped_ids == ["health-heart-rate"]
+                && metric.used_ids.is_empty()
+        }));
+
+        // Invalid evaluated_at omits age-bounded protected sources with explicit reason.
+        let invalid_clock = prepare_context(&ContextPrepareInput {
+            platform: ContextPlatform::Ios,
+            components: vec![protected_component],
+            messages: vec![json!({"id":"u1","role":"user","content":"check vitals"})],
+            budget: budget(8_000, 6_000, 2),
+            evaluated_at: Some("not-an-rfc3339-timestamp".to_string()),
+            ..ContextPrepareInput::default()
+        });
+        let invalid_text = invalid_clock.messages[0]["content"].as_str().unwrap();
+        assert!(!invalid_text.contains("HISTORICAL-FRESH-PAYLOAD"));
+        assert!(
+            invalid_text.contains("[Protected data source omitted by Core: evaluation timestamp is invalid.]"),
+            "{invalid_text}"
+        );
     }
 }

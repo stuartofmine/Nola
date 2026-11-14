@@ -119,10 +119,6 @@ struct ModelParametersView: View {
             Text(NSLocalizedString("model.parameters.discard.message", value: "Your model parameter changes have not been saved.", comment: "Discard model parameter changes message"))
         }
         .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button(L10n.done) { inputField = nil }
-            }
             ToolbarItem(placement: .cancellationAction) {
                 Button(L10n.done) {
                     reloadAfterDiscard = false
@@ -222,6 +218,7 @@ struct ModelParametersView: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
             TextEditor(text: $customSystemPrompt)
+                .accessibilityIdentifier("model-parameters-system-prompt")
                 .focused($inputField, equals: .systemPrompt)
                 .frame(minHeight: 100)
                 .font(.body)
@@ -279,14 +276,20 @@ struct ModelParametersView: View {
     }
 
     private var actionCard: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: DesignTokens.spacing_sm) {
-                parameterActionButtons
-            }
-            VStack(spacing: DesignTokens.spacing_sm) {
-                parameterActionButtons
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(spacing: DesignTokens.spacing_sm) {
+                    parameterActionButtons
+                    parameterKeyboardDismissButton
+                }
+            } else {
+                HStack(spacing: DesignTokens.spacing_sm) {
+                    parameterActionButtons
+                    parameterKeyboardDismissButton
+                }
             }
         }
+        .frame(maxWidth: .infinity)
         .padding(.horizontal, DesignTokens.spacing_lg)
         .padding(.vertical, DesignTokens.spacing_sm)
         .background(.regularMaterial)
@@ -296,18 +299,36 @@ struct ModelParametersView: View {
     }
 
     @ViewBuilder
+    private var parameterKeyboardDismissButton: some View {
+        if inputField != nil {
+            Button { inputField = nil } label: {
+                Image(systemName: "keyboard.chevron.compact.down")
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.bordered)
+            .accessibilityLabel(L10n.done)
+            .accessibilityIdentifier("model-parameters-dismiss-keyboard")
+        }
+    }
+
+    @ViewBuilder
     private var parameterActionButtons: some View {
         Button(action: saveParameters) {
             Text(L10n.modelParametersSave)
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.borderedProminent)
+        .tint(DesignTokens.actionColor)
+        .foregroundStyle(DesignTokens.onActionColor)
         .disabled(!hasUnsavedChanges || !hasValidParameters || editingSnapshot == nil)
         .accessibilityIdentifier("model-parameters-save")
 
         Button(action: resetToDefaults) {
             Text(L10n.modelParametersResetDefaults)
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.bordered)
         .disabled(editingSnapshot == nil)
@@ -430,7 +451,7 @@ struct ModelParametersView: View {
         params.showThinking = showThinking
         params.streamOutput = streamOutput
         params.responseStyle = responseStyle
-        params.customSystemPrompt = customSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        params.customSystemPrompt = customSystemPrompt
         saveError = nil
         do {
             guard let editingSnapshot else { throw IOSApplicationRuntimeError.invalidResponse }

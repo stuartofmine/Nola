@@ -239,11 +239,11 @@ final class IOSRealConversationLifecycleTests: XCTestCase {
         app.buttons["chat.topbar.more"].tap()
         XCTAssertTrue(app.buttons["chat.inspector.resources"].exists)
         XCTAssertTrue(app.buttons["chat.conversation.settings"].exists)
-        app.buttons["chat.experts.conversations"].tap()
+        app.buttons["Experts"].tap()
         app.buttons["Done"].tap()
         XCTAssertFalse(app.buttons["chat.controls.permission"].exists, "Saved permission state must not occupy the composer dock")
         let input = app.textViews["chat.composer.input"]
-        XCTAssertTrue(input.waitForExistence(timeout: 10)); input.tap(); input.typeText("＠Arith")
+        XCTAssertTrue(input.waitForExistence(timeout: 10)); input.tap(); input.typeText("@Arith")
         let candidate = app.buttons["chat.mention.arithmetic-qa"]
         XCTAssertTrue(candidate.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertFalse(app.buttons["chat.mention.language-qa"].exists)
@@ -258,15 +258,6 @@ final class IOSRealConversationLifecycleTests: XCTestCase {
         XCTAssertTrue(question.exists, "Admitted parent message must appear immediately, without reopening the conversation")
         XCTAssertLessThan(question.frame.minY, result.frame.minY, "The reply must follow its parent")
         capture("expert-first-message-real-reply")
-        app.buttons["chat.topbar.more"].tap()
-        app.buttons["chat.experts.conversations"].tap()
-        let expertSession = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "chat.expert.conversation.")).firstMatch
-        XCTAssertTrue(expertSession.waitForExistence(timeout: 10))
-        expertSession.tap()
-        XCTAssertTrue(app.navigationBars["Arithmetic QA"].waitForExistence(timeout: 10))
-        app.navigationBars["Arithmetic QA"].buttons.firstMatch.tap()
-        app.buttons["Done"].tap()
-        XCTAssertTrue(input.exists, "Closing expert history must leave the parent conversation selected")
         send("Write 24 numbered short facts about prime numbers, one per line. Start with TIMELINE_SECOND_BEGIN and finish with TIMELINE_SECOND_END. Do not use tools.")
         let end = app.staticTexts.matching(NSPredicate(format: "label == %@", "TIMELINE_SECOND_END")).firstMatch
         let begin = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "TIMELINE_SECOND_BEGIN")).firstMatch

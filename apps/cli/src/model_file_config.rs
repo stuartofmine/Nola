@@ -72,7 +72,12 @@ impl FileModels {
         }
         if !config.connections.iter().any(|c| c.id == config.default_model.connection
             && c.models.iter().any(|m| m.id == config.default_model.model)) {
-            return Err("default_model must refer to a declared connection and model".into());
+            let examples = config.connections.iter().flat_map(|connection| connection.models.iter()
+                .map(move |model| json!({"connection": connection.id, "model": model.id}).to_string()))
+                .take(8).collect::<Vec<_>>().join("\n  ");
+            return Err(format!(
+                "default_model must refer to a declared connection and model.\nCurrent: {}\nSet llm.default_model using connection/model IDs from llm.connections, for example:\n  {examples}\nSave the configuration, then run `nola model apply-config` again.",
+                json!({"connection": config.default_model.connection, "model": config.default_model.model})));
         }
         Ok(config)
     }
@@ -212,6 +217,18 @@ mod tests {
         assert!(selected_path_from(None, None).is_err());
     }
     fn fixture() -> Value { json!({"connections":[{"id":"a","name":"A","endpoint":"https://a.invalid/v1","protocol":"chat_completions","models":[{"id":"one","name":"One"},{"id":"two","name":"Two"}]},{"id":"b","name":"B","endpoint":"https://b.invalid/v1","protocol":"responses","models":[{"id":"one","name":"One"}]}],"default_model":{"connection":"a","model":"two"}}) }
+
+    #[test]
+    fn missing_default_explains_exact_ids_and_recovery_without_exposing_connection_secrets() {
+        let mut input = fixture();
+        input["connections"][0]["api_key_env"] = json!("PRIVATE_CREDENTIAL_VARIABLE");
+        input["default_model"] = json!({"connection":"missing","model":"model-not-declared"});
+        let error = FileModels::parse(input).err().expect("invalid default must fail");
+        assert!(error.contains(r#"{"connection":"a","model":"two"}"#));
+        assert!(error.contains("model-not-declared"));
+        assert!(error.contains("llm.default_model") && error.contains("nola model apply-config"));
+        assert!(!error.contains("PRIVATE_CREDENTIAL_VARIABLE") && !error.contains("https://a.invalid"));
+    }
     #[test] fn accepts_multiple_connections_and_same_model_names() {
         let mut value=fixture();value["openai_cache"]=json!({"enabled":true,"history_breakpoint":true});
         assert!(FileModels::parse(value.clone()).is_ok());

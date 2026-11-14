@@ -116,7 +116,9 @@
         if (busy || editorId) return;
         ++editorVersion; existing = source ? structuredClone($state.snapshot(source)) : undefined;
         // The host accepts draft.id. Keep it across failed creates to avoid duplicate sources.
-        editorId = source?.id ?? newSourceId(); draft = sourceDraft(source); baseline = JSON.stringify(draft);
+        try { editorId = source?.id ?? newSourceId(); }
+        catch (cause) { formError = cause; notice = 'data_sources.error.mutation'; return; }
+        draft = sourceDraft(source); baseline = JSON.stringify(draft);
         formError = undefined; notice = ''; await tick(); if (!disposed) dialog.showModal();
     }
     function closeNow() { dialog.close(); editorId = ''; existing = undefined; formError = undefined; ++editorVersion; }
@@ -184,9 +186,8 @@
 <div class="content management-content" class:mobile-overview={viewportWidth <= 700 && tab === 'overview'}>
     {#if viewportWidth <= 700 && tab === 'overview'}
         <nav class="information-navigation" aria-label={t($locale, 'shell.information')}>
-            {#each tabs as item}<a href={`/data-sources?tab=${item}`} onclick={event => openInformation(event, item)}><span class="information-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d={informationIcons[item]} /></svg></span><span class="information-copy"><strong>{t($locale, overviewLabel(item))}</strong><small>{t($locale, `shell.informationRow.${item}.hint`)}</small></span><span class="information-chevron" aria-hidden="true">›</span></a>{/each}
+            {#each tabs as item}<a href={`/data-sources?tab=${item}`} onclick={event => openInformation(event, item)}><span class="information-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d={informationIcons[item]} /></svg></span><span class="information-copy"><strong>{t($locale, overviewLabel(item))}</strong></span></a>{/each}
         </nav>
-        <p class="information-footer">{t($locale, 'shell.informationFooter')}</p>
     {/if}
     {#if viewportWidth > 700}<div class="data-tabs" role="tablist" aria-label={t($locale, 'data_sources.header.title')}>
         {#each tabs as item, index}<button type="button" role="tab" id={`data-tab-${item}`} aria-controls={`data-panel-${item}`} aria-selected={tab === item} tabindex={tab === item ? 0 : -1} onclick={() => selectTab(item)} onkeydown={event => tabKey(event, index)}>{t($locale, tabLabel(item))}</button>{/each}
@@ -253,14 +254,12 @@
     .information-back button { display: flex; gap: 8px; align-items: center; min-height: 44px; padding: 4px; background: transparent; border: 0; }
     .information-back span { font-size: 24px; }
     .information-navigation { display: grid; gap: 0; overflow: visible; border-top: 1px solid var(--border); }
-    .information-navigation a { display: flex; align-items: center; gap: 14px; min-height: 86px; padding: 18px 0; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; white-space: normal; }
+    .information-navigation a { display: flex; align-items: center; gap: 14px; min-height: 60px; padding: 12px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; white-space: normal; }
+    .information-navigation a:hover { background: var(--accent-subtle); }
     .information-icon { width: 36px; height: 36px; flex: 0 0 36px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 9px; }
     .information-icon svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.25; stroke-linejoin: round; stroke-linecap: round; }
     .information-copy { flex: 1; min-width: 0; display: grid; gap: 3px; }
     .information-copy strong { font-size: 17px; line-height: 24px; font-weight: 600; }
-    .information-copy small { font-size: 14px; line-height: 21px; }
-    .information-chevron { color: var(--muted); font-size: 25px; line-height: 24px; }
-    .information-footer { margin-top: 2px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; line-height: 19px; }
     @media (max-width: 700px) {
         .page-header.mobile-overview { padding: 24px 20px 22px; }
         .page-header.mobile-overview h1 { font-size: 28px; line-height: 36px; font-weight: 650; }

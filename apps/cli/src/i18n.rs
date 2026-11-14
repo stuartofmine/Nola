@@ -452,7 +452,6 @@ pub fn interaction_text() -> InteractionText {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiText {
-    InputRejectedTooLong,
     HelpSources,
     DataSourcesTitle,
     DataSourcesUsage,
@@ -635,7 +634,6 @@ fn ui_text_for(language: Language, key: UiText) -> &'static str {
         UiText::Sources => ["来源", "Sources", "Quellen", "Fuentes", "Sources", "出典", "Источники"],
         UiText::Page => ["页", "page", "Seite", "página", "page", "ページ", "страница"],
         UiText::Lines => ["行", "lines", "Zeilen", "líneas", "lignes", "行", "строки"],
-        UiText::InputRejectedTooLong => ["输入超过 4096 字节，未插入。请缩短后重新粘贴，或编辑原文再提交。", "Input exceeds 4096 bytes; nothing inserted. Shorten and paste again, or edit the draft before submitting.", "Eingabe über 4096 Bytes; nichts eingefügt. Kürzen und erneut einfügen oder Entwurf vor dem Senden bearbeiten.", "La entrada supera 4096 bytes; no se insertó nada. Acórtala y pégala de nuevo o edita el borrador antes de enviar.", "La saisie dépasse 4096 octets ; rien n’a été inséré. Raccourcissez-la puis recollez-la, ou modifiez le brouillon avant l’envoi.", "入力が4096バイトを超えたため挿入されませんでした。短くして貼り直すか、下書きを編集してから送信してください。", "Ввод превышает 4096 байт; ничего не вставлено. Сократите и вставьте снова или измените черновик перед отправкой."],
         UiText::Answer => ["回答", "Answer", "Antwort", "Respuesta", "Réponse", "回答", "Ответ"],
         UiText::Session => ["会话", "Session", "Sitzung", "Sesión", "Session", "セッション", "Сеанс"],
         UiText::SessionBusy => ["正在执行", "Running", "Wird ausgeführt", "En ejecución", "En cours", "実行中", "Выполняется"],
@@ -4374,7 +4372,6 @@ mod tests {
             Language::Ru,
         ];
         let keys = [
-            UiText::InputRejectedTooLong,
             UiText::Answer,
             UiText::SessionBusy,
             UiText::TasksUsage,

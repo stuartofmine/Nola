@@ -85,7 +85,8 @@ nonisolated struct MacFrozenLaunchDescriptor: Decodable, Sendable {
         func canonical(_ url: URL) -> String { url.standardizedFileURL.resolvingSymlinksInPath().path }
         let current = Set(([authorization.projectURL] + authorization.authorizedWorkspaceURLs).map(canonical))
         guard canonical(authorization.projectURL) == project_path,
-              authorization.permissionMode.rawValue == permission_mode,
+              let frozenMode = MacPermissionMode(rawValue: permission_mode),
+              authorization.permissionMode.permitsResuming(frozen: frozenMode),
               Set([project_path] + authorized_workspace_paths).isSubset(of: current) else {
             throw MacLocalAgentResumeError.authorizationChanged
         }
@@ -149,7 +150,7 @@ nonisolated struct MacLocalAgentOwnedLaunchSnapshot: Sendable {
               configuration["assistant_message_id"] as? String == assistantMessageID else {
             throw MacLocalAgentResumeError.invalidFrame
         }
-        for key in ["prompt", "submission_id", "user_message_id", "assistant_message_id", "expected_configuration_revision", "expected_parent_message_id", "context_components", "input_origin", "automation_execution_lease", "automation_execution_spec", "automation_artifacts"] {
+        for key in ["prompt", "submission_id", "user_message_id", "assistant_message_id", "expected_configuration_revision", "expected_parent_message_id", "context_components", "selected_experts", "expected_source_store_epoch", "expert_template_authority", "input_origin", "automation_execution_lease", "automation_execution_spec", "automation_artifacts"] {
             configuration.removeValue(forKey: key)
         }
         if let attachments = configuration.removeValue(forKey: "attachments") {
@@ -157,7 +158,8 @@ nonisolated struct MacLocalAgentOwnedLaunchSnapshot: Sendable {
         }
         var data = try JSONSerialization.data(withJSONObject: [
             "operation": "resume", "session_id": conversationID, "expected_run_id": runID,
-            "assistant_message_id": assistantMessageID, "configuration": configuration
+            "assistant_message_id": assistantMessageID, "configuration": configuration,
+            "expert_template_authority": try JSONSerialization.jsonObject(with: JSONEncoder().encode(AppleExpertTemplateAuthority.local()))
         ], options: [.sortedKeys])
         data.append(0x0a)
         return data
@@ -186,7 +188,7 @@ nonisolated struct MacLocalAgentFrozenAuthorization: Sendable {
     func validate(_ current: MacLocalAgentResumeAuthorization) throws {
         let paths = Set(([current.projectURL] + current.authorizedWorkspaceURLs).map(Self.path))
         guard Self.path(current.projectURL) == projectPath,
-              current.permissionMode == permissionMode,
+              current.permissionMode.permitsResuming(frozen: permissionMode),
               Set(originalURLs.map(Self.path)) == authorizedPaths,
               authorizedPaths.isSubset(of: paths) else {
             throw MacLocalAgentResumeError.authorizationChanged

@@ -59,6 +59,19 @@ class AndroidEditedResendContractTest {
         assertNull(AndroidSystemPrompt.customInstructionComponent("  "))
     }
 
+    @Test fun inPlaceResendKeepsTheOwnerAndUsesAnAdditiveContract() {
+        val original = prepared().input
+        val input = original.inPlace()
+        assertEquals(original.sourceConversationId, input.conversationId)
+        assertEquals(original.sourceMessageId, input.messageId)
+        assertEquals(original.operationId, input.operationId)
+        assertEquals(original.expectedSourceRevision, input.expectedRevision)
+        assertEquals(original.editedText, input.editedText)
+        val wire = Json.encodeToJsonElement(AndroidPrepareInPlaceResend.serializer(), input).jsonObject
+        assertFalse("target_conversation_id" in wire)
+        assertTrue(ApplicationCommandEffect.isObservation(buildJsonObject { put("type", "load_prepared_in_place_resend") }))
+        assertFalse(ApplicationCommandEffect.isObservation(buildJsonObject { put("type", "prepare_in_place_resend") }))
+    }
     @Test fun publicQueryBoundaryCannotAttestHostPolicy() {
         assertTrue(ApplicationCommandEffect.isObservation(buildJsonObject {
             put("type", "load_prepared_edited_resend"); put("conversation_id", "target")

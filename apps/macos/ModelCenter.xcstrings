@@ -175,12 +175,6 @@
     },
     "Account label" : {
       "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "账户名称"
-          }
-        },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
@@ -217,6 +211,71 @@
             "value" : "Название аккаунта"
           }
         },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "账户名称"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "帳戶名稱"
+          }
+        }
+      }
+    },
+    "Account name" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kontoname"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Account name"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nombre de cuenta"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nom du compte"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アカウント名"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "계정 이름"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Название аккаунта"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "账户名称"
+          }
+        },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
@@ -226,6 +285,7 @@
       }
     },
     "Account Saved" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -236,6 +296,7 @@
       }
     },
     "Account saved. No model was called and no models were enabled." : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -299,6 +360,7 @@
       }
     },
     "Add ChatGPT Authorization" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -1067,6 +1129,7 @@
       }
     },
     "Authorization Cancelled Locally" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -1078,12 +1141,6 @@
     },
     "Authorization refreshed. No model request was sent." : {
       "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "授权已刷新，未发送模型请求。"
-          }
-        },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
@@ -1120,6 +1177,12 @@
             "value" : "Авторизация обновлена. Запрос модели не отправлялся."
           }
         },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "授权已刷新，未发送模型请求。"
+          }
+        },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
@@ -1129,6 +1192,7 @@
       }
     },
     "Authorization Verified" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -1139,6 +1203,7 @@
       }
     },
     "Authorization Was Not Completed" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -1149,6 +1214,7 @@
       }
     },
     "Authorization was verified. Save it to this Mac’s account store to finish." : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -1159,6 +1225,7 @@
       }
     },
     "Authorize ChatGPT for This Mac" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -1169,6 +1236,7 @@
       }
     },
     "Authorize Nola independently for this Mac’s account store. This does not reuse Codex login or change a paired Host." : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -1623,6 +1691,7 @@
       }
     },
     "Cancel Authorization" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -1664,12 +1733,6 @@
     },
     "Cancelling Authorization…" : {
       "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在取消授权…"
-          }
-        },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
@@ -1704,6 +1767,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Отмена авторизации…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在取消授权…"
           }
         },
         "zh-Hant" : {
@@ -1803,12 +1872,130 @@
         }
       }
     },
+    "ChatGPT account connected" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ChatGPT-Konto verbunden"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ChatGPT account connected"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cuenta de ChatGPT conectada"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compte ChatGPT connecté"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ChatGPT アカウントを接続しました"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ChatGPT 계정이 연결되었습니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Аккаунт ChatGPT подключён"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ChatGPT 账户已连接"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ChatGPT 帳戶已連接"
+          }
+        }
+      }
+    },
     "ChatGPT authorization on this Mac" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "ChatGPT 账户"
+          }
+        }
+      }
+    },
+    "Check accounts" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Konten prüfen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Check accounts"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ver cuentas"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vérifier les comptes"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アカウントを確認"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "계정 확인"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверить аккаунты"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看账户"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看帳戶"
           }
         }
       }
@@ -1907,12 +2094,6 @@
     },
     "Check Status" : {
       "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "检查状态"
-          }
-        },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
@@ -1947,6 +2128,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Проверить состояние"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "检查状态"
           }
         },
         "zh-Hant" : {
@@ -2323,6 +2510,12 @@
             "value" : "モデルを選択"
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모델 선택"
+          }
+        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
@@ -2335,16 +2528,69 @@
             "value" : "选择模型"
           }
         },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選擇模型"
+          }
+        }
+      }
+    },
+    "Choose models to load the available list. You can review and enable them on the next screen." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wähle Modelle, um die Liste zu laden. Auf der nächsten Seite kannst du sie prüfen und aktivieren."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose models to load the available list. You can review and enable them on the next screen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Elige modelos para cargar la lista disponible. Podrás revisarlos y activarlos en la siguiente pantalla."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choisissez les modèles pour charger la liste disponible. Vous pourrez les examiner et les activer à l’étape suivante."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「モデルを選択」で一覧を取得し、次の画面で確認して有効にできます。"
+          }
+        },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "모델 선택"
+            "value" : "모델 선택을 눌러 목록을 불러오세요. 다음 화면에서 검토하고 활성화할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нажмите «Выбрать модели», чтобы загрузить список. На следующем экране можно проверить и включить модели."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "点击“选择模型”获取可用列表，在下一页查看并启用需要的模型。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "選擇模型"
+            "value" : "點擊「選擇模型」取得可用清單，在下一頁查看並啟用需要的模型。"
           }
         }
       }
@@ -2509,7 +2755,67 @@
         }
       }
     },
+    "Complete sign-in in your browser" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anmeldung im Browser abschließen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Complete sign-in in your browser"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Completa el inicio de sesión en tu navegador"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Terminez la connexion dans votre navigateur"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ブラウザーでログインしてください"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "브라우저에서 로그인을 완료하세요"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Завершите вход в браузере"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请在浏览器中完成登录"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請在瀏覽器中完成登入"
+          }
+        }
+      }
+    },
     "Complete the request in your browser, then return here. Closing this sheet stops Nola’s pending flow, not access already granted at the source." : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -2934,6 +3240,65 @@
         }
       }
     },
+    "Connect your ChatGPT account, then choose the models to use on this Mac." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verbinde dein ChatGPT-Konto und wähle die Modelle für diesen Mac."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connect your ChatGPT account, then choose the models to use on this Mac."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conecta tu cuenta de ChatGPT y elige los modelos para este Mac."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connectez votre compte ChatGPT, puis choisissez les modèles pour ce Mac."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ChatGPT アカウントを接続し、この Mac で使うモデルを選んでください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ChatGPT 계정을 연결한 후 이 Mac에서 사용할 모델을 선택하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключите аккаунт ChatGPT и выберите модели для этого Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "连接 ChatGPT 账户，然后选择要在这台 Mac 上使用的模型。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "連接 ChatGPT 帳戶，然後選擇要在這台 Mac 使用的模型。"
+          }
+        }
+      }
+    },
     "Connected" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -3036,6 +3401,7 @@
       }
     },
     "Continue in Browser" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -3150,6 +3516,65 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "本對話模型參數"
+          }
+        }
+      }
+    },
+    "Copy sign-in link" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anmeldelink kopieren"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copy sign-in link"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copiar enlace de acceso"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copier le lien de connexion"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ログインリンクをコピー"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "로그인 링크 복사"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скопировать ссылку для входа"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "复制登录链接"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "複製登入連結"
           }
         }
       }
@@ -3671,12 +4096,6 @@
     },
     "Directory updated. Enable models in the connection below; none were selected automatically." : {
       "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "模型列表已更新。请返回连接列表启用模型，本次未自动选择。"
-          }
-        },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
@@ -3711,6 +4130,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Список обновлён. Включите нужные модели в настройках подключения. Автоматический выбор не выполнялся."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型列表已更新。请返回连接列表启用模型，本次未自动选择。"
           }
         },
         "zh-Hant" : {
@@ -3909,6 +4334,7 @@
       }
     },
     "Discover Models · No Inference" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -3964,6 +4390,65 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "显示名称"
+          }
+        }
+      }
+    },
+    "Done" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fertig"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Done"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Listo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Terminé"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "完了"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "완료"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Готово"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "完成"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "完成"
           }
         }
       }
@@ -4845,6 +5330,7 @@
       }
     },
     "I want to authorize Nola for this Mac in my browser" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -5026,6 +5512,65 @@
         }
       }
     },
+    "Link copied" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Link kopiert"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Link copied"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enlace copiado"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lien copié"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "リンクをコピーしました"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "링크를 복사했습니다"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ссылка скопирована"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "链接已复制"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "連結已複製"
+          }
+        }
+      }
+    },
     "Load Models" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -5143,6 +5688,65 @@
         }
       }
     },
+    "Loading models…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modelle werden geladen…"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Loading models…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cargando modelos…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chargement des modèles…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "モデルを取得中…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모델 불러오는 중…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Загрузка моделей…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在获取模型…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在取得模型…"
+          }
+        }
+      }
+    },
     "Local agent runtime" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -5198,12 +5802,6 @@
     },
     "Local credentials were cleared, but remote revocation was not confirmed. Revoke Nola’s access in ChatGPT settings." : {
       "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "本机凭据已清除，远程撤销尚未确认。请在 ChatGPT 设置中撤销 Nola 的访问权限。"
-          }
-        },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
@@ -5238,6 +5836,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Локальные данные удалены, удалённый отзыв доступа не подтверждён. Отзовите доступ Nola в настройках ChatGPT."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本机凭据已清除，远程撤销尚未确认。请在 ChatGPT 设置中撤销 Nola 的访问权限。"
           }
         },
         "zh-Hant" : {
@@ -6206,7 +6810,9 @@
         }
       }
     },
-    "Model Already Added" : {},
+    "Model Already Added" : {
+
+    },
     "Model capabilities" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -7135,6 +7741,65 @@
         }
       }
     },
+    "Open browser again" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Browser erneut öffnen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open browser again"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Abrir navegador de nuevo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rouvrir le navigateur"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ブラウザーを再度開く"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "브라우저 다시 열기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть браузер ещё раз"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新打开浏览器"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新開啟瀏覽器"
+          }
+        }
+      }
+    },
     "Open Host source and API management" : {
       "localizations" : {
         "zh-Hans" : {
@@ -7308,6 +7973,7 @@
       }
     },
     "Owner: This Mac’s Nola account store" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -7612,7 +8278,9 @@
         }
       }
     },
-    "Paused until %@" : {},
+    "Paused until %@" : {
+
+    },
     "Precise" : {
       "localizations" : {
         "zh-Hans" : {
@@ -7624,11 +8292,71 @@
       }
     },
     "Preparing Authorization" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在准备授权"
+          }
+        }
+      }
+    },
+    "Preparing sign-in…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anmeldung wird vorbereitet…"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Preparing sign-in…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Preparando inicio de sesión…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Préparation de la connexion…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ログインを準備中…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "로그인 준비 중…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подготовка входа…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在准备登录…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在準備登入…"
           }
         }
       }
@@ -7676,12 +8404,6 @@
     },
     "Private authorization may remain. This action does not revoke access in ChatGPT settings." : {
       "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "授权可能仍保留；此操作不会撤销 ChatGPT 设置中的访问权限。"
-          }
-        },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
@@ -7716,6 +8438,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Авторизация может сохраниться. Это действие не отзывает доступ в ChatGPT."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "授权可能仍保留；此操作不会撤销 ChatGPT 设置中的访问权限。"
           }
         },
         "zh-Hant" : {
@@ -7787,6 +8515,7 @@
       }
     },
     "Reauthorization is required before using this account." : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -7797,6 +8526,7 @@
       }
     },
     "Reauthorize account" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -7992,12 +8722,6 @@
     },
     "Refresh Authorization" : {
       "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "刷新授权"
-          }
-        },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
@@ -8032,6 +8756,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Обновить авторизацию"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "刷新授权"
           }
         },
         "zh-Hant" : {
@@ -8297,6 +9027,65 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "重試"
+          }
+        }
+      }
+    },
+    "Return here after approving access. Nola will finish connecting automatically." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kehre nach der Freigabe zurück. Nola schließt die Verbindung automatisch ab."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Return here after approving access. Nola will finish connecting automatically."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vuelve aquí después de autorizar el acceso. Nola terminará la conexión automáticamente."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Revenez ici après avoir autorisé l’accès. Nola terminera la connexion automatiquement."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アクセスを承認したら戻ってください。Nola が自動で接続を完了します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "접근을 승인한 후 돌아오세요. Nola가 자동으로 연결을 완료합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "После разрешения доступа вернитесь сюда. Nola завершит подключение автоматически."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "授权后返回这里，Nola 会自动完成连接。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "授權後返回這裡，Nola 會自動完成連接。"
           }
         }
       }
@@ -8951,6 +9740,7 @@
       }
     },
     "Save Account on This Mac" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -9086,6 +9876,12 @@
             "value" : "アカウントを保存中…"
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "계정 저장 중…"
+          }
+        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
@@ -9096,12 +9892,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在保存账户…"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "계정 저장 중…"
           }
         },
         "zh-Hant" : {
@@ -9462,14 +10252,244 @@
         }
       }
     },
-    "Sign Out" : {
+    "Sign in again" : {
+      "extractionState" : "manual",
       "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erneut anmelden"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sign in again"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Iniciar sesión de nuevo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Se reconnecter"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "再ログイン"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다시 로그인"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Войти снова"
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "退出登录"
+            "value" : "重新登录"
           }
         },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新登入"
+          }
+        }
+      }
+    },
+    "Sign in again to use models from this account." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Melde dich erneut an, um Modelle dieses Kontos zu nutzen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sign in again to use models from this account."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Inicia sesión de nuevo para usar los modelos de esta cuenta."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reconnectez-vous pour utiliser les modèles de ce compte."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このアカウントのモデルを使うには再ログインしてください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 계정의 모델을 사용하려면 다시 로그인하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Войдите снова, чтобы использовать модели этого аккаунта."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请重新登录，以使用此账户的模型。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請重新登入，以使用此帳戶的模型。"
+          }
+        }
+      }
+    },
+    "Sign in in your browser, then choose the models you want to use in Nola." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Melde dich im Browser an und wähle dann die Modelle für Nola."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sign in in your browser, then choose the models you want to use in Nola."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Inicia sesión en tu navegador y elige los modelos que quieras usar en Nola."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connectez-vous dans votre navigateur, puis choisissez les modèles à utiliser dans Nola."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ブラウザーでログインし、Nola で使うモデルを選んでください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "브라우저에서 로그인한 후 Nola에서 사용할 모델을 선택하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Войдите в браузере, затем выберите модели для Nola."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在浏览器中登录，然后选择要在 Nola 中使用的模型。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在瀏覽器中登入，然後選擇要在 Nola 中使用的模型。"
+          }
+        }
+      }
+    },
+    "Sign in with ChatGPT" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mit ChatGPT anmelden"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sign in with ChatGPT"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Iniciar sesión con ChatGPT"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Se connecter avec ChatGPT"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ChatGPT でログイン"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ChatGPT로 로그인"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Войти через ChatGPT"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用 ChatGPT 登录"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用 ChatGPT 登入"
+          }
+        }
+      }
+    },
+    "Sign Out" : {
+      "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
@@ -9506,6 +10526,12 @@
             "value" : "Выйти"
           }
         },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "退出登录"
+          }
+        },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
@@ -9516,12 +10542,6 @@
     },
     "Sign Out of This Mac’s ChatGPT Account?" : {
       "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "退出此 Mac 的 ChatGPT 账户？"
-          }
-        },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
@@ -9556,6 +10576,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Выйти из аккаунта ChatGPT на этом Mac?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "退出此 Mac 的 ChatGPT 账户？"
           }
         },
         "zh-Hant" : {
@@ -9696,12 +10722,6 @@
     },
     "Signed in" : {
       "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已登录"
-          }
-        },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
@@ -9738,6 +10758,12 @@
             "value" : "Вход выполнен"
           }
         },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已登录"
+          }
+        },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
@@ -9748,12 +10774,6 @@
     },
     "Signed out" : {
       "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已退出"
-          }
-        },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
@@ -9790,6 +10810,12 @@
             "value" : "Выход выполнен"
           }
         },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已退出"
+          }
+        },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
@@ -9800,12 +10826,6 @@
     },
     "Signed out locally. Check the remote revocation status above." : {
       "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已在本机退出，请检查远程撤销状态。"
-          }
-        },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
@@ -9842,6 +10862,12 @@
             "value" : "Локальный выход выполнен. Проверьте выше состояние удалённого отзыва доступа."
           }
         },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已在本机退出，请检查远程撤销状态。"
+          }
+        },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
@@ -9851,6 +10877,7 @@
       }
     },
     "Signing in does not run a model, discover models or enable a subscription route. Eligibility and available models are determined by the service." : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -9949,6 +10976,7 @@
       }
     },
     "Start Authorization" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -10509,6 +11537,65 @@
         }
       }
     },
+    "The browser could not open. Try again, or copy the sign-in link into your browser." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Browser konnte nicht geöffnet werden. Versuche es erneut oder kopiere den Anmeldelink in den Browser."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The browser could not open. Try again, or copy the sign-in link into your browser."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo abrir el navegador. Inténtalo de nuevo o copia el enlace de acceso en tu navegador."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible d’ouvrir le navigateur. Réessayez ou copiez le lien de connexion dans votre navigateur."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ブラウザーを開けませんでした。再試行するか、ログインリンクをコピーして開いてください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "브라우저를 열 수 없습니다. 다시 시도하거나 로그인 링크를 복사해 브라우저에서 여세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось открыть браузер. Повторите попытку или скопируйте ссылку в браузер."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未能打开浏览器。你可以重试，或复制登录链接后在浏览器中打开。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未能開啟瀏覽器，請重試，或複製登入連結後在瀏覽器中開啟。"
+          }
+        }
+      }
+    },
     "The canonical model store is unavailable." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -10736,11 +11823,20 @@
         }
       }
     },
-    "The local model runtime is missing. Rebuild or reinstall Nola." : {},
-    "The local model runtime returned an invalid status." : {},
-    "The local model runtime stopped before it was ready." : {},
-    "The local model service exited with status %d." : {},
+    "The local model runtime is missing. Rebuild or reinstall Nola." : {
+
+    },
+    "The local model runtime returned an invalid status." : {
+
+    },
+    "The local model runtime stopped before it was ready." : {
+
+    },
+    "The local model service exited with status %d." : {
+
+    },
     "The local runtime owns this authorization. Discover and enable models explicitly; signing in does not itself verify inference." : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -11048,14 +12144,66 @@
         }
       }
     },
-    "This clears only this Nola account’s private credentials and requests remote revocation. It does not sign out Codex or another Host. Remote revocation may need confirmation in ChatGPT settings." : {
+    "This account needs permission to use your plan. Sign in again and approve access before choosing models." : {
       "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Für dieses Konto fehlt die Freigabe zur Nutzung deines Abos. Melde dich erneut an und bestätige den Zugriff, bevor du Modelle auswählst."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This account needs permission to use your plan. Sign in again and approve access before choosing models."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esta cuenta necesita permiso para usar tu plan. Vuelve a iniciar sesión y autoriza el acceso antes de elegir modelos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ce compte nécessite l’autorisation d’utiliser votre forfait. Reconnectez-vous et autorisez l’accès avant de choisir des modèles."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このアカウントにはプラン利用の許可が必要です。再度ログインしてアクセスを許可してから、モデルを選択してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 계정에는 요금제 사용 권한이 필요합니다. 다시 로그인하여 접근을 승인한 뒤 모델을 선택하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этому аккаунту нужно разрешение на использование вашего плана. Войдите снова и разрешите доступ, прежде чем выбирать модели."
+          }
+        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "仅清除此 Nola 账户的凭据并请求撤销授权，不会退出 Codex 或其他主机。请在 ChatGPT 设置中确认远程撤销状态。"
+            "value" : "此账户尚未获准使用你的套餐。请重新登录并同意授权，然后选择模型。"
           }
         },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此帳戶尚未獲准使用你的方案。請重新登入並同意授權，再選擇模型。"
+          }
+        }
+      }
+    },
+    "This clears only this Nola account’s private credentials and requests remote revocation. It does not sign out Codex or another Host. Remote revocation may need confirmation in ChatGPT settings." : {
+      "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
@@ -11092,6 +12240,12 @@
             "value" : "Удаляет данные этого аккаунта Nola и запрашивает удалённый отзыв доступа. Codex и другие Host останутся в системе. Может потребоваться проверка в настройках ChatGPT."
           }
         },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "仅清除此 Nola 账户的凭据并请求撤销授权，不会退出 Codex 或其他主机。请在 ChatGPT 设置中确认远程撤销状态。"
+          }
+        },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
@@ -11111,6 +12265,7 @@
       }
     },
     "This is Nola’s independent authorization, not your Codex login or a paired Host account. Credentials stay with this Mac’s private runtime." : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -11192,6 +12347,124 @@
         }
       }
     },
+    "This signs Nola in separately from Codex. Models are enabled only after you choose them." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nola wird unabhängig von Codex angemeldet. Modelle aktivierst du durch deine Auswahl."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This signs Nola in separately from Codex. Models are enabled only after you choose them."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nola inicia sesión por separado de Codex. Los modelos solo se activan cuando los eliges."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nola se connecte séparément de Codex. Les modèles ne sont activés qu’après votre choix."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex とは別に Nola へログインします。モデルは選択した後に有効になります。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex와 별도로 Nola에 로그인합니다. 모델은 직접 선택한 후 활성화됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вход в Nola выполняется отдельно от Codex. Модели включаются только после вашего выбора."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nola 会单独登录，不会复用 Codex 的登录。模型由你选择后启用。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nola 會單獨登入，不會沿用 Codex 的登入。模型由你選擇後啟用。"
+          }
+        }
+      }
+    },
+    "To use a ChatGPT account, sign in in your browser. Use file import for API connections." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Melde dich für ein ChatGPT-Konto im Browser an. Der Dateiimport ist für API-Verbindungen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "To use a ChatGPT account, sign in in your browser. Use file import for API connections."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Para usar una cuenta de ChatGPT, inicia sesión en el navegador. Importa archivos para conexiones API."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pour utiliser ChatGPT, connectez-vous dans le navigateur. L’import de fichiers concerne les connexions API."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ChatGPT アカウントはブラウザーでログインしてください。ファイルのインポートは API 接続用です。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ChatGPT 계정은 브라우저에서 로그인하세요. 파일 가져오기는 API 연결용입니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для ChatGPT войдите в браузере. Импорт файлов предназначен для API-подключений."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用 ChatGPT 账户时，请通过浏览器登录。文件导入用于 API 连接。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用 ChatGPT 帳戶時，請透過瀏覽器登入。檔案匯入用於 API 連接。"
+          }
+        }
+      }
+    },
     "Tool calls" : {
       "localizations" : {
         "zh-Hans" : {
@@ -11218,6 +12491,65 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Top P"
+          }
+        }
+      }
+    },
+    "Try sign-in again" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anmeldung erneut versuchen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Try sign-in again"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reintentar inicio de sesión"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Réessayer la connexion"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ログインを再試行"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "로그인 다시 시도"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Повторить вход"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新登录"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新登入"
           }
         }
       }
@@ -11359,12 +12691,6 @@
     },
     "Updating This Mac’s Account…" : {
       "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在更新账户…"
-          }
-        },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
@@ -11399,6 +12725,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Обновление аккаунта на этом Mac…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在更新账户…"
           }
         },
         "zh-Hant" : {
@@ -11630,6 +12962,7 @@
       }
     },
     "Waiting for Authorization…" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -11639,12 +12972,131 @@
         }
       }
     },
+    "Waiting for browser sign-in…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Warten auf Anmeldung im Browser…"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Waiting for browser sign-in…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esperando el inicio de sesión en el navegador…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "En attente de la connexion dans le navigateur…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ブラウザーでのログインを待機中…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "브라우저 로그인 대기 중…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ожидание входа в браузере…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "等待浏览器登录…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "等待瀏覽器登入…"
+          }
+        }
+      }
+    },
     "Waiting for Your Browser" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "等待浏览器授权"
+          }
+        }
+      }
+    },
+    "Your browser will open automatically. After you approve access, Nola saves this account on this Mac." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Browser öffnet sich automatisch. Nach deiner Freigabe speichert Nola das Konto auf diesem Mac."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your browser will open automatically. After you approve access, Nola saves this account on this Mac."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tu navegador se abrirá automáticamente. Cuando autorices el acceso, Nola guardará esta cuenta en este Mac."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Votre navigateur s’ouvrira automatiquement. Après votre autorisation, Nola enregistrera le compte sur ce Mac."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ブラウザーが自動で開きます。アクセスを承認すると、この Mac にアカウントを保存します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "브라우저가 자동으로 열립니다. 접근을 승인하면 Nola가 이 Mac에 계정을 저장합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Браузер откроется автоматически. После разрешения доступа Nola сохранит аккаунт на этом Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "浏览器将自动打开。授权成功后，Nola 会自动将账户保存到这台 Mac。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "瀏覽器將自動開啟。授權成功後，Nola 會自動將帳戶儲存到這台 Mac。"
           }
         }
       }
@@ -11703,1421 +13155,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "您的模型參數尚未儲存。"
-          }
-        }
-      }
-    },
-    "Sign in with ChatGPT" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sign in with ChatGPT"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "使用 ChatGPT 登录"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mit ChatGPT anmelden"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Iniciar sesión con ChatGPT"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Se connecter avec ChatGPT"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ChatGPT でログイン"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ChatGPT로 로그인"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Войти через ChatGPT"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "使用 ChatGPT 登入"
-          }
-        }
-      }
-    },
-    "Sign in in your browser, then choose the models you want to use in Nola." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sign in in your browser, then choose the models you want to use in Nola."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "在浏览器中登录，然后选择要在 Nola 中使用的模型。"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Melde dich im Browser an und wähle dann die Modelle für Nola."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Inicia sesión en tu navegador y elige los modelos que quieras usar en Nola."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Connectez-vous dans votre navigateur, puis choisissez les modèles à utiliser dans Nola."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ブラウザーでログインし、Nola で使うモデルを選んでください。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "브라우저에서 로그인한 후 Nola에서 사용할 모델을 선택하세요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Войдите в браузере, затем выберите модели для Nola."
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "在瀏覽器中登入，然後選擇要在 Nola 中使用的模型。"
-          }
-        }
-      }
-    },
-    "Your browser will open automatically. After you approve access, Nola saves this account on this Mac." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Your browser will open automatically. After you approve access, Nola saves this account on this Mac."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "浏览器将自动打开。授权成功后，Nola 会自动将账户保存到这台 Mac。"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Der Browser öffnet sich automatisch. Nach deiner Freigabe speichert Nola das Konto auf diesem Mac."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tu navegador se abrirá automáticamente. Cuando autorices el acceso, Nola guardará esta cuenta en este Mac."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Votre navigateur s’ouvrira automatiquement. Après votre autorisation, Nola enregistrera le compte sur ce Mac."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ブラウザーが自動で開きます。アクセスを承認すると、この Mac にアカウントを保存します。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "브라우저가 자동으로 열립니다. 접근을 승인하면 Nola가 이 Mac에 계정을 저장합니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Браузер откроется автоматически. После разрешения доступа Nola сохранит аккаунт на этом Mac."
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "瀏覽器將自動開啟。授權成功後，Nola 會自動將帳戶儲存到這台 Mac。"
-          }
-        }
-      }
-    },
-    "Account name" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Account name"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "账户名称"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Kontoname"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nombre de cuenta"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nom du compte"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "アカウント名"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "계정 이름"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Название аккаунта"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "帳戶名稱"
-          }
-        }
-      }
-    },
-    "This signs Nola in separately from Codex. Models are enabled only after you choose them." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "This signs Nola in separately from Codex. Models are enabled only after you choose them."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nola 会单独登录，不会复用 Codex 的登录。模型由你选择后启用。"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nola wird unabhängig von Codex angemeldet. Modelle aktivierst du durch deine Auswahl."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nola inicia sesión por separado de Codex. Los modelos solo se activan cuando los eliges."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nola se connecte séparément de Codex. Les modèles ne sont activés qu’après votre choix."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Codex とは別に Nola へログインします。モデルは選択した後に有効になります。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Codex와 별도로 Nola에 로그인합니다. 모델은 직접 선택한 후 활성화됩니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Вход в Nola выполняется отдельно от Codex. Модели включаются только после вашего выбора."
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nola 會單獨登入，不會沿用 Codex 的登入。模型由你選擇後啟用。"
-          }
-        }
-      }
-    },
-    "ChatGPT account connected" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ChatGPT account connected"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ChatGPT 账户已连接"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ChatGPT-Konto verbunden"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cuenta de ChatGPT conectada"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Compte ChatGPT connecté"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ChatGPT アカウントを接続しました"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ChatGPT 계정이 연결되었습니다"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Аккаунт ChatGPT подключён"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ChatGPT 帳戶已連接"
-          }
-        }
-      }
-    },
-    "Choose models to load the available list. You can review and enable them on the next screen." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Choose models to load the available list. You can review and enable them on the next screen."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "点击“选择模型”获取可用列表，在下一页查看并启用需要的模型。"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Wähle Modelle, um die Liste zu laden. Auf der nächsten Seite kannst du sie prüfen und aktivieren."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Elige modelos para cargar la lista disponible. Podrás revisarlos y activarlos en la siguiente pantalla."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Choisissez les modèles pour charger la liste disponible. Vous pourrez les examiner et les activer à l’étape suivante."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "「モデルを選択」で一覧を取得し、次の画面で確認して有効にできます。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "모델 선택을 눌러 목록을 불러오세요. 다음 화면에서 검토하고 활성화할 수 있습니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Нажмите «Выбрать модели», чтобы загрузить список. На следующем экране можно проверить и включить модели."
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "點擊「選擇模型」取得可用清單，在下一頁查看並啟用需要的模型。"
-          }
-        }
-      }
-    },
-    "Loading models…" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Loading models…"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在获取模型…"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Modelle werden geladen…"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cargando modelos…"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Chargement des modèles…"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "モデルを取得中…"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "모델 불러오는 중…"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Загрузка моделей…"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在取得模型…"
-          }
-        }
-      }
-    },
-    "Complete sign-in in your browser" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Complete sign-in in your browser"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "请在浏览器中完成登录"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Anmeldung im Browser abschließen"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Completa el inicio de sesión en tu navegador"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Terminez la connexion dans votre navigateur"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ブラウザーでログインしてください"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "브라우저에서 로그인을 완료하세요"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Завершите вход в браузере"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "請在瀏覽器中完成登入"
-          }
-        }
-      }
-    },
-    "Return here after approving access. Nola will finish connecting automatically." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Return here after approving access. Nola will finish connecting automatically."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "授权后返回这里，Nola 会自动完成连接。"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Kehre nach der Freigabe zurück. Nola schließt die Verbindung automatisch ab."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Vuelve aquí después de autorizar el acceso. Nola terminará la conexión automáticamente."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Revenez ici après avoir autorisé l’accès. Nola terminera la connexion automatiquement."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "アクセスを承認したら戻ってください。Nola が自動で接続を完了します。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "접근을 승인한 후 돌아오세요. Nola가 자동으로 연결을 완료합니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "После разрешения доступа вернитесь сюда. Nola завершит подключение автоматически."
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "授權後返回這裡，Nola 會自動完成連接。"
-          }
-        }
-      }
-    },
-    "The browser could not open. Try again, or copy the sign-in link into your browser." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The browser could not open. Try again, or copy the sign-in link into your browser."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "未能打开浏览器。你可以重试，或复制登录链接后在浏览器中打开。"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Der Browser konnte nicht geöffnet werden. Versuche es erneut oder kopiere den Anmeldelink in den Browser."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "No se pudo abrir el navegador. Inténtalo de nuevo o copia el enlace de acceso en tu navegador."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Impossible d’ouvrir le navigateur. Réessayez ou copiez le lien de connexion dans votre navigateur."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ブラウザーを開けませんでした。再試行するか、ログインリンクをコピーして開いてください。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "브라우저를 열 수 없습니다. 다시 시도하거나 로그인 링크를 복사해 브라우저에서 여세요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не удалось открыть браузер. Повторите попытку или скопируйте ссылку в браузер."
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "未能開啟瀏覽器，請重試，或複製登入連結後在瀏覽器中開啟。"
-          }
-        }
-      }
-    },
-    "Open browser again" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Open browser again"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "重新打开浏览器"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Browser erneut öffnen"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Abrir navegador de nuevo"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Rouvrir le navigateur"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ブラウザーを再度開く"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "브라우저 다시 열기"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Открыть браузер ещё раз"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "重新開啟瀏覽器"
-          }
-        }
-      }
-    },
-    "Copy sign-in link" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Copy sign-in link"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "复制登录链接"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Anmeldelink kopieren"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Copiar enlace de acceso"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Copier le lien de connexion"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ログインリンクをコピー"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "로그인 링크 복사"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Скопировать ссылку для входа"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "複製登入連結"
-          }
-        }
-      }
-    },
-    "Waiting for browser sign-in…" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Waiting for browser sign-in…"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "等待浏览器登录…"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Warten auf Anmeldung im Browser…"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Esperando el inicio de sesión en el navegador…"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "En attente de la connexion dans le navigateur…"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ブラウザーでのログインを待機中…"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "브라우저 로그인 대기 중…"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ожидание входа в браузере…"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "等待瀏覽器登入…"
-          }
-        }
-      }
-    },
-    "Preparing sign-in…" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Preparing sign-in…"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在准备登录…"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Anmeldung wird vorbereitet…"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Preparando inicio de sesión…"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Préparation de la connexion…"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ログインを準備中…"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "로그인 준비 중…"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Подготовка входа…"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在準備登入…"
-          }
-        }
-      }
-    },
-    "Try sign-in again" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Try sign-in again"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "重新登录"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Anmeldung erneut versuchen"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Reintentar inicio de sesión"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Réessayer la connexion"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ログインを再試行"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "로그인 다시 시도"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Повторить вход"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "重新登入"
-          }
-        }
-      }
-    },
-    "Check accounts" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Check accounts"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "查看账户"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Konten prüfen"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ver cuentas"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Vérifier les comptes"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "アカウントを確認"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "계정 확인"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Проверить аккаунты"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "查看帳戶"
-          }
-        }
-      }
-    },
-    "Done" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Done"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "完成"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Fertig"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Listo"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Terminé"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "完了"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "완료"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Готово"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "完成"
-          }
-        }
-      }
-    },
-    "Link copied" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Link copied"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "链接已复制"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Link kopiert"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Enlace copiado"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Lien copié"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "リンクをコピーしました"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "링크를 복사했습니다"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ссылка скопирована"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "連結已複製"
-          }
-        }
-      }
-    },
-    "Connect your ChatGPT account, then choose the models to use on this Mac." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Connect your ChatGPT account, then choose the models to use on this Mac."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "连接 ChatGPT 账户，然后选择要在这台 Mac 上使用的模型。"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Verbinde dein ChatGPT-Konto und wähle die Modelle für diesen Mac."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Conecta tu cuenta de ChatGPT y elige los modelos para este Mac."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Connectez votre compte ChatGPT, puis choisissez les modèles pour ce Mac."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ChatGPT アカウントを接続し、この Mac で使うモデルを選んでください。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ChatGPT 계정을 연결한 후 이 Mac에서 사용할 모델을 선택하세요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Подключите аккаунт ChatGPT и выберите модели для этого Mac."
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "連接 ChatGPT 帳戶，然後選擇要在這台 Mac 使用的模型。"
-          }
-        }
-      }
-    },
-    "To use a ChatGPT account, sign in in your browser. Use file import for API connections." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "To use a ChatGPT account, sign in in your browser. Use file import for API connections."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "使用 ChatGPT 账户时，请通过浏览器登录。文件导入用于 API 连接。"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Melde dich für ein ChatGPT-Konto im Browser an. Der Dateiimport ist für API-Verbindungen."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Para usar una cuenta de ChatGPT, inicia sesión en el navegador. Importa archivos para conexiones API."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Pour utiliser ChatGPT, connectez-vous dans le navigateur. L’import de fichiers concerne les connexions API."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ChatGPT アカウントはブラウザーでログインしてください。ファイルのインポートは API 接続用です。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ChatGPT 계정은 브라우저에서 로그인하세요. 파일 가져오기는 API 연결용입니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Для ChatGPT войдите в браузере. Импорт файлов предназначен для API-подключений."
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "使用 ChatGPT 帳戶時，請透過瀏覽器登入。檔案匯入用於 API 連接。"
-          }
-        }
-      }
-    },
-    "Sign in again to use models from this account." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sign in again to use models from this account."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "请重新登录，以使用此账户的模型。"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Melde dich erneut an, um Modelle dieses Kontos zu nutzen."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Inicia sesión de nuevo para usar los modelos de esta cuenta."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Reconnectez-vous pour utiliser les modèles de ce compte."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "このアカウントのモデルを使うには再ログインしてください。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "이 계정의 모델을 사용하려면 다시 로그인하세요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Войдите снова, чтобы использовать модели этого аккаунта."
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "請重新登入，以使用此帳戶的模型。"
-          }
-        }
-      }
-    },
-    "Sign in again" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sign in again"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "重新登录"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Erneut anmelden"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Iniciar sesión de nuevo"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Se reconnecter"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "再ログイン"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "다시 로그인"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Войти снова"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "重新登入"
-          }
-        }
-      }
-    },
-    "This account needs permission to use your plan. Sign in again and approve access before choosing models." : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "This account needs permission to use your plan. Sign in again and approve access before choosing models."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "此账户尚未获准使用你的套餐。请重新登录并同意授权，然后选择模型。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "此帳戶尚未獲准使用你的方案。請重新登入並同意授權，再選擇模型。"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Für dieses Konto fehlt die Freigabe zur Nutzung deines Abos. Melde dich erneut an und bestätige den Zugriff, bevor du Modelle auswählst."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Esta cuenta necesita permiso para usar tu plan. Vuelve a iniciar sesión y autoriza el acceso antes de elegir modelos."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ce compte nécessite l’autorisation d’utiliser votre forfait. Reconnectez-vous et autorisez l’accès avant de choisir des modèles."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "このアカウントにはプラン利用の許可が必要です。再度ログインしてアクセスを許可してから、モデルを選択してください。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "이 계정에는 요금제 사용 권한이 필요합니다. 다시 로그인하여 접근을 승인한 뒤 모델을 선택하세요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Этому аккаунту нужно разрешение на использование вашего плана. Войдите снова и разрешите доступ, прежде чем выбирать модели."
           }
         }
       }

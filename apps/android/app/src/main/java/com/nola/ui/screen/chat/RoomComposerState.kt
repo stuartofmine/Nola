@@ -12,9 +12,8 @@ internal data class RoomComposerState(
 )
 
 /** Only explicit @ completion opens candidates; ordinary words never select an agent. */
-private val roomMentionPattern = Regex("(?<![A-Za-z0-9._%+@＠-])[@＠]([^\\s@＠]*)$")
-internal fun roomMentionQuery(text: String): String? = roomMentionPattern.find(text)?.groupValues?.get(1)
-internal fun removeRoomMentionQuery(text: String): String = roomMentionPattern.replace(text, "")
+internal fun roomMentionQuery(text: String): String? = Regex("(?:^|\\s)@([^\\s@]*)$").find(text)?.groupValues?.get(1)
+internal fun removeRoomMentionQuery(text: String): String = text.replace(Regex("(^|\\s)@[^\\s@]*$"), "$1")
 
 /** Late polling/submit receipts cannot erase messages or regress terminal state. */
 internal fun mergeRoomSubmissions(roomId: String, current: List<RoomSubmission>, received: List<RoomSubmission>): List<RoomSubmission> {

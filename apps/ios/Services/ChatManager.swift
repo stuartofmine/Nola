@@ -39,6 +39,8 @@ import UIKit
         let preferredHostID: String
         let hybridToolsEnabled: Bool
         let hybridCapabilities: Set<String>
+        var selectedExperts: [AppleMainExpertSelectionEntry] = []
+        var expertSelectionSourceEpoch: String? = nil
     }
     private unowned let workspace: ChatManager
     private var runs: [UUID: (identity: UUID, task: Task<Void, Never>)] = [:]
@@ -107,7 +109,7 @@ import UIKit
                 result = .success(try await execution.processMessage(input.prompt,
                     displayMessage: input.displayText, userMessageMeta: input.metadata,
                     attachments: input.attachments, userMessageID: prepared.identity.visibleUserMessageID,
-                    assistantMessageID: identity, responseStyle: input.responseStyle))
+                    assistantMessageID: identity, responseStyle: input.responseStyle, selectedExperts: input.selectedExperts, expertSelectionSourceEpoch: input.expertSelectionSourceEpoch))
             } catch {
                 execution.recordSubmissionFailure(error)
                 result = .failure(error)
@@ -220,9 +222,22 @@ public final class ChatManager: ObservableObject {
 
     func beginSubmissionAttempt() { submissionFailure = nil }
 
+    nonisolated static func mainExpertRejection(_ error: Error) -> AppleMainExpertDispatchRejection? {
+        if let value = error as? AppleMainExpertDispatchRejection { return value }
+        if case .rejected(let code)? = error as? IOSApplicationRuntimeError { return .init(rawValue: code) }
+        if case .llm(.invalidInput(let code))? = error as? NolaError { return .init(rawValue: code) }
+        return nil
+    }
+
+    func confirmsUnadmittedMainSelection(_ error: Error, prepared: SendConversationTurnUseCase.Prepared) throws -> Bool {
+        guard Self.mainExpertRejection(error)?.permitsDraftRestore == true,
+              let conversation = try container.applicationRuntime.loadConversation(id: prepared.conversationID.uuidString) else { return false }
+        return !conversation.messages.contains { $0.id == prepared.identity.userMessageID && $0.role == "user" }
+    }
+
     func recordSubmissionFailure(_ error: Error) {
         guard !(error is CancellationError) else { return }
-        submissionFailure = error.localizedDescription
+        submissionFailure = Self.mainExpertRejection(error)?.localizedDescription ?? error.localizedDescription
     }
     @Published public var currentResponse: String = ""
     @Published public var thinking: String = ""
@@ -280,6 +295,38 @@ public final class ChatManager: ObservableObject {
         return provider
     }
 
+    struct ExpertRoomSource: Sendable {
+        let owner: UUID?
+        let provider: WebAgentProvider
+        let epoch: String?
+    }
+
+    func expertRoomSource(owner: UUID?) throws -> ExpertRoomSource? {
+        let provider: WebAgentProvider?
+        if let owner { provider = try uiProvider(conversationID: owner) }
+        else if getCurrentModel()?.isWebBackend == true {
+            guard let value = (effectiveLLMClient as? ModelService)?.currentProvider() as? WebAgentProvider else {
+                throw IOSApplicationRuntimeError.rejected("Reconnect the selected Host before choosing an expert.")
+            }
+            provider = value
+        } else { provider = nil }
+        guard let provider else { return nil }
+        let epoch: String?
+        if let owner {
+            epoch = try uiSourceEpoch(conversationID: owner, provider: provider)
+            if epoch == nil, let canonical = try container.applicationRuntime.loadConversation(id: owner.uuidString), !canonical.messages.isEmpty {
+                throw IOSApplicationRuntimeError.rejected("This conversation belongs to local history. Open a new Host conversation to choose its experts.")
+            }
+        } else { epoch = nil }
+        return .init(owner: owner, provider: provider, epoch: epoch)
+    }
+
+    func matchesExpertRoomSource(_ source: ExpertRoomSource) throws -> Bool {
+        guard let current = try expertRoomSource(owner: source.owner) else { return false }
+        return current.owner == source.owner && current.provider.sameExpertConnection(as: source.provider)
+            && (current.epoch == nil || current.epoch == source.epoch)
+    }
+
     /// A paired address is transport configuration; Core owns the durable source.
     private func uiSourceEpoch(conversationID: UUID, provider: WebAgentProvider) throws -> String? {
         switch try container.applicationRuntime.conversationSourceOwner(conversationID: conversationID.uuidString) {
@@ -314,13 +361,19 @@ public final class ChatManager: ObservableObject {
         }
     }
 
+    private func expertTaskTargetConfiguration(_ material: AppleExpertPeerMaterial<AgentCoreJSONValue>) async throws -> AgentCoreJSONValue {
+        try await IOSExpertTaskTargetFactory.configuration(material: material, runtime: container.applicationRuntime,
+            skills: enabledLocalSkillSnapshots(), hostExecutor: agentCoreHostExecutor)
+    }
+
     private func prepareLocalGoalHostConfiguration(owner: UUID, session: String,
         model: IOSPreparedRunModel, invocation: IOSPreparedHostInvocation) async throws -> AgentCoreJSONValue {
         let runtime = container.applicationRuntime
         let plan = try AgentCoreToolCatalog.prepareBoundPlan(for: .deviceLocal,
             expectedIdentity: .init(hostId: "ios-local", clientId: Bundle.main.bundleIdentifier ?? "nola-ios", sessionId: session),
             isForeground: UIApplication.shared.applicationState == .active,
-            scopedGrants: agentCorePermissionBroker.scopedGrants)
+            scopedGrants: agentCorePermissionBroker.scopedGrants, applicationRuntime: runtime,
+            includeExpertTasks: try IOSExpertTaskTargetFactory.isMainContext(runtime: runtime, conversationID: owner.uuidString))
         let application = IOSCanonicalAgentApplication(store: runtime,
             descriptor: .init(conversationID: owner.uuidString, conversationTitle: "",
                 identity: .init(userMessageID: UUID()), userText: "", userContentJSON: nil, contextCheckpointID: nil))
@@ -334,7 +387,11 @@ public final class ChatManager: ObservableObject {
                 conversationID: owner.uuidString, using: runtime),
             hostExecutor: agentCoreHostExecutor, toolPlan: plan, modelSupportsToolCalls: model.supportsToolCalls,
             canonicalApplication: application, preparedHostInvocation: invocation,
-            hostDependencyIdentity: IOSPreparedHostInvocation.skillIdentity(enabledLocalSkillSnapshots()))
+            hostDependencyIdentity: IOSPreparedHostInvocation.skillIdentity(enabledLocalSkillSnapshots()),
+            expertTargetConfiguration: { [weak self] material in
+                guard let self else { throw IOSApplicationRuntimeError.applicationUnavailable }
+                return try await self.expertTaskTargetConfiguration(material)
+            })
         let policy = try container.conversationStore?.getConversation(conversationId: owner)?.permissionMode ?? .cautious
         return try await coordinator.prepareHostConfiguration(sessionID: session,
             config: .init(platform: .ios, executionMode: .deviceLocal, hostId: "ios-local", model: model.modelName,
@@ -798,6 +855,7 @@ public final class ChatManager: ObservableObject {
     /// Backup of last deleted conversation for possible undo (keeps Conversation metadata and messages)
     @Published public var lastDeletedConversationBackup: (conversation: Conversation, messages: [ConversationMessage], deletedAt: Date)?
     
+    private var inPlaceExpertWorkspaces: [UUID: IOSRoomSubmissionWorkspace] = [:]
     private var editedResendJobs: [UUID: Task<Void, Never>] = [:]
     private let container: ServiceContainer
     fileprivate var submissionCommitted: (@Sendable () -> Void)?
@@ -2358,7 +2416,8 @@ public final class ChatManager: ObservableObject {
             let policy = try AgentCoreToolCatalog.prepareBoundPlan(for: .deviceLocal,
                 expectedIdentity: .init(hostId: "ios-local", clientId: Bundle.main.bundleIdentifier ?? "nola-ios", sessionId: coreSessionID),
                 isForeground: UIApplication.shared.applicationState == .active,
-                scopedGrants: agentCorePermissionBroker.scopedGrants)
+                scopedGrants: agentCorePermissionBroker.scopedGrants, applicationRuntime: runtime,
+                includeExpertTasks: try IOSExpertTaskTargetFactory.isMainContext(runtime: runtime, conversationID: parent))
             // Child authority/config remains the Core-admitted frozen candidate.
             // This small native transport config never starts a parent Run.
             let transport = AgentCoreRuntimeConfig(hostId: "ios-local", model: model.modelName,
@@ -2372,7 +2431,11 @@ public final class ChatManager: ObservableObject {
             host = IOSLocalTaskHost(store: runtime, modelClient: TextAgentModelClient(client: model.client),
                 invocation: invocation, toolPlan: policy, hostExecutor: owner.agentCoreHostExecutor, config: transport,
                 childPermissionEvents: { [weak owner] event in await owner?.applyChildPermissionEvent(event) },
-                stateChanged: { [weak self] in await self?.recoverEmbeddedChildTasks() }, dependencies: dependencies)
+                stateChanged: { [weak self] in await self?.recoverEmbeddedChildTasks() }, dependencies: dependencies,
+                expertTargetConfiguration: { [weak self] material in
+                    guard let self else { throw IOSApplicationRuntimeError.applicationUnavailable }
+                    return try await self.expertTaskTargetConfiguration(material)
+                })
             embeddedChildHosts[runID] = host
         }
         try await host.wake(.object(["task": .object(["id": .string(taskID),
@@ -2441,7 +2504,8 @@ public final class ChatManager: ObservableObject {
                 for: .deviceLocal,
                 expectedIdentity: identity,
                 isForeground: UIApplication.shared.applicationState == .active,
-                scopedGrants: agentCorePermissionBroker.scopedGrants
+                scopedGrants: agentCorePermissionBroker.scopedGrants, applicationRuntime: recoveryRuntime,
+                includeExpertTasks: try IOSExpertTaskTargetFactory.isMainContext(runtime: recoveryRuntime, conversationID: frozen.conversationID)
             )
             let frozenSkillIdentity = try application.loadFrozenSkillIdentity(frozen)
             let enabledSkills = try IOSPreparedHostInvocation.decodeSkillIdentity(frozenSkillIdentity)
@@ -2475,7 +2539,11 @@ public final class ChatManager: ObservableObject {
                         }
                     }
                 },
-                hostDependencyIdentity: frozenSkillIdentity
+                hostDependencyIdentity: frozenSkillIdentity,
+                expertTargetConfiguration: { [weak self] material in
+                guard let self else { throw IOSApplicationRuntimeError.applicationUnavailable }
+                return try await self.expertTaskTargetConfiguration(material)
+            }
             )
             beginAgentTrace(conversationId: conversationID,
                 assistantMessageID: canonicalIdentity.assistantMessageID)
@@ -2735,7 +2803,7 @@ public final class ChatManager: ObservableObject {
                 self.remoteObservationUnresolved = !observation.can_submit
                 self.observedRemoteRun = nil
                 if observation.can_submit {
-                    self.processingState = .completed
+                    self.processingState = consumer.terminalResult?.value.blockedFeedback.map(ChatProcessingState.error) ?? .completed
                     self.refreshPermissionOwnerProjection(conversationID: conversationID)
                     if let result = consumer.terminalResult,
                        result.value.kind == .answered || result.value.kind == .actionCompleted {
@@ -3578,7 +3646,9 @@ public final class ChatManager: ObservableObject {
         assistantMessageID: UUID? = nil,
         agentMode _: Bool = false,
         responseStyle: PromptResponseStyle? = nil,
-        inputOrigin: AgentCoreInputOrigin = .interactiveUser
+        inputOrigin: AgentCoreInputOrigin = .interactiveUser,
+        selectedExperts: [AppleMainExpertSelectionEntry] = [],
+        expertSelectionSourceEpoch: String? = nil
     ) async throws -> String {
         if !isConversationExecution {
             guard let conversationID = ensureCurrentConversation(),
@@ -3594,8 +3664,9 @@ public final class ChatManager: ObservableObject {
             return try await session.processMessage(message, displayMessage: displayMessage,
                 userMessageMeta: userMessageMeta, attachments: attachments,
                 userMessageID: userMessageID, assistantMessageID: assistantMessageID,
-                responseStyle: responseStyle, inputOrigin: inputOrigin)
+                responseStyle: responseStyle, inputOrigin: inputOrigin, selectedExperts: selectedExperts, expertSelectionSourceEpoch: expertSelectionSourceEpoch)
         }
+        if !selectedExperts.isEmpty { try AppleMainExpertSelectionContext(selectedExperts: selectedExperts).validate() }
         guard !messageInFlight, !processingState.blocksInput, deviceAgentCoordinator == nil else {
             throw DeviceAgentCoordinatorError.alreadyRunning
         }
@@ -4012,7 +4083,7 @@ public final class ChatManager: ObservableObject {
                     inputOrigin: inputOrigin,
                     expectedConfigurationRevision: submittedConfigurationRevision,
                     expectedParentMessageID: submittedParentMessageID,
-                    contextComponents: preparedCorePayload?.contextComponents ?? [],
+                    contextComponents: (preparedCorePayload?.contextComponents ?? []) + (try mainExpertSelectionComponents(selectedExperts, expectedSourceEpoch: expertSelectionSourceEpoch)),
                     promptComposition: preparedPromptComposition,
                     queuedUserAdmission: queuedUIInput?.admission
                 )
@@ -4100,7 +4171,8 @@ public final class ChatManager: ObservableObject {
                     dateRange: inputDateRange,
                     candidates: [],
                     userPrefs: userPrefs,
-                    attachments: attachments
+                    attachments: attachments, selectedExperts: selectedExperts.isEmpty ? nil : selectedExperts,
+                    expertSelectionSourceEpoch: expertSelectionSourceEpoch
                 )
             }
             let input = makeInput()
@@ -4573,8 +4645,8 @@ public final class ChatManager: ObservableObject {
                 }
             }
 
-            self.processingState = .completed
-            self.logger.log(.info, "ChatManager", "Message processed successfully", metadata: [
+            self.processingState = journalConsumer?.terminalResult?.value.blockedFeedback.map(ChatProcessingState.error) ?? .completed
+            self.logger.log(.info, "ChatManager", "Message processing sealed", metadata: [
                 "responseLength": String(finalClean.count)
             ])
 
@@ -4649,6 +4721,14 @@ public final class ChatManager: ObservableObject {
         return String(parsed[start...])
     }
 
+    private func mainExpertSelectionComponents(_ selected: [AppleMainExpertSelectionEntry], expectedSourceEpoch: String? = nil) throws -> [AgentCoreContextComponent] {
+        guard !selected.isEmpty else { return [] }
+        let selection = AppleMainExpertSelectionContext(selectedExperts: selected, expectedSourceStoreEpoch: expectedSourceEpoch)
+        try selection.validate()
+        return [.init(kind: .mainExpertSelection, id: "nola.main-expert-selection",
+            content: try JSONDecoder().decode(AgentCoreJSONValue.self, from: JSONEncoder().encode(selection)), source: nil)]
+    }
+
     private func runDeviceAgentTurn(
         sessionId: String?,
         input: String,
@@ -4690,7 +4770,9 @@ public final class ChatManager: ObservableObject {
             for: mode,
             expectedIdentity: identity,
             isForeground: UIApplication.shared.applicationState == .active,
-            scopedGrants: freshResendTarget == nil ? agentCorePermissionBroker.scopedGrants : []
+            scopedGrants: freshResendTarget == nil ? agentCorePermissionBroker.scopedGrants : [], applicationRuntime: container.applicationRuntime,
+            includeExpertTasks: try IOSExpertTaskTargetFactory.isMainContext(runtime: container.applicationRuntime,
+                conversationID: conversationId?.uuidString ?? session)
         )
         let applicationStore = container.applicationRuntime
         let canonicalIdentity = turnIdentity
@@ -4750,7 +4832,11 @@ public final class ChatManager: ObservableObject {
             preparedHostInvocation: preparedInvocation,
             recoveryPreparation: recoveryPreparation,
             hostDependencyIdentity: IOSPreparedHostInvocation.skillIdentity(enabledSkills),
-            freshResendTarget: freshResendTarget
+            freshResendTarget: freshResendTarget,
+            expertTargetConfiguration: { [weak self] material in
+                guard let self else { throw IOSApplicationRuntimeError.applicationUnavailable }
+                return try await self.expertTaskTargetConfiguration(material)
+            }
         )
         deviceAgentCoordinator = coordinator
         defer {
@@ -4815,6 +4901,7 @@ public final class ChatManager: ObservableObject {
             runID: recovering?.runID ?? canonicalIdentity.submissionID)
         var authoritativeFinalContent = ""
         var receivedCommittedCompletion = false
+        var canonicalBlockedFeedback: String?
         for try await event in stream {
             guard owningGeneration == activeGenerationId else { throw CancellationError() }
             switch event {
@@ -4868,6 +4955,7 @@ public final class ChatManager: ObservableObject {
                 removeLocalAgentPermission(requestId: requestId)
             case .completed(let result):
                 receivedCommittedCompletion = true
+                canonicalBlockedFeedback = result.value.blockedFeedback
                 queuedSuccessorReady = automationLease == nil && automationSpec == nil
                     && (result.value.kind == .answered || result.value.kind == .actionCompleted)
             }
@@ -4884,7 +4972,7 @@ public final class ChatManager: ObservableObject {
             currentResponse = authoritativeFinalContent
             thinkingFinished = !thinking.isEmpty
         }
-        processingState = .completed
+        processingState = canonicalBlockedFeedback.map(ChatProcessingState.error) ?? .completed
         wakeLocalGoal()
         if let conversationId {
             refreshPermissionOwnerProjection(conversationID: conversationId)
@@ -5995,25 +6083,52 @@ enum HostPermissionPresentationPolicy {
 }
 
 extension ChatManager {
-    /// Edited resend is a fresh ordinary Run, never a replay of the source owner.
-    /// Returns after durable admission; the workspace retains the normal Host job.
+    /// Rewind the existing owner; the regular execution path rebuilds current authority.
     func sendEditedMessage(_ request: AppleMessageEditSubmission) async throws -> UUID {
         guard !isConversationExecution else { return try await container.chatManager.sendEditedMessage(request) }
         let runtime = container.applicationRuntime
-        let title = String(request.text.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }
-            .map(String.init).joined().prefix(80))
-        let input = request.preparation(title: title)
-        let sourceManifest: AppleExpertMessageManifest<AgentCoreJSONValue>? = try runtime.expertHostOperation(
-            .loadManifest(conversationID: input.source_conversation_id, messageID: input.source_message_id, authority: .local()))
-        let encoded = try JSONDecoder().decode(AgentCoreJSONValue.self, from: JSONEncoder().encode(input))
-        if let sourceManifest {
-            return try await sendEditedExperts(input: input, sourceManifest: sourceManifest)
+        let input = request.inPlacePreparation()
+        guard let owner = UUID(uuidString: input.conversation_id),
+              let execution = executionForConversation(owner, prepareForSubmission: currentConversationId == owner)
+                ?? ensureExecutionForConversation(owner) else { throw IOSApplicationRuntimeError.invalidResponse }
+        do {
+            let existing = try runtime.executeAgentCommand(.object(["type": .string("load_run_identity"), "run_id": .string(input.operation_id)]))
+            if existing != .null {
+                guard case .object(let identity) = existing, identity["conversation_id"] == .string(input.conversation_id) else {
+                    throw IOSApplicationRuntimeError.invalidResponse
+                }
+                let saved = try runtime.executeAgentCommand(.object(["type": .string("load_prepared_in_place_resend"), "operation_id": .string(input.operation_id)]))
+                let prior = try JSONDecoder().decode(ApplePreparedInPlaceResend.self, from: JSONEncoder().encode(saved))
+                guard prior.input == input else { throw IOSApplicationRuntimeError.invalidResponse }
+                return owner
+            }
+        } catch {
+            guard error.localizedDescription.contains("run_not_found") else { throw error }
         }
-        let result = try runtime.executeAgentCommand(.object(["type": .string("prepare_edited_resend"), "input": encoded]))
-        let prepared = try JSONDecoder().decode(ApplePreparedEditedResend<AgentCoreJSONValue>.self,
-            from: JSONEncoder().encode(result))
+        guard execution.canBeginNewMessage, editedResendJobs[owner] == nil else { throw DeviceAgentCoordinatorError.alreadyRunning }
+        let encoded = try JSONDecoder().decode(AgentCoreJSONValue.self, from: JSONEncoder().encode(input))
+        let result = try runtime.executeAgentCommand(.object(["type": .string("prepare_in_place_resend"), "input": encoded]))
+        let prepared = try JSONDecoder().decode(ApplePreparedInPlaceResend.self, from: JSONEncoder().encode(result))
         guard prepared.input == input else { throw IOSApplicationRuntimeError.invalidResponse }
-        return try await dispatchPreparedEditedMessage(prepared)
+        let admission = AsyncThrowingStream<UUID, Error>.makeStream()
+        execution.beginSubmissionAttempt()
+        execution.prepareAgentTrace(conversationId: owner, canonicalAssistantMessageID: prepared.run_id + ":assistant")
+        execution.submissionCommitted = { admission.continuation.yield(owner); admission.continuation.finish() }
+        editedResendJobs[owner] = Task { @MainActor [self, execution] in
+            defer {
+                execution.submissionCommitted = nil; execution.roomCanonicalIdentity = nil
+                editedResendJobs[owner] = nil
+            }
+            execution.roomCanonicalIdentity = .init(queuedSubmissionID: prepared.run_id, userMessageID: prepared.user_message_id)
+            do {
+                _ = try await execution.processMessage(input.edited_text, selectedExperts: prepared.experts.map {
+                    .init(agentID: $0.agent_id, agentRevision: $0.agent_revision, participantID: $0.participant_id, contextConversationID: $0.context_conversation_id)
+                })
+                admission.continuation.finish(throwing: DeviceAgentCoordinatorError.missingTransition)
+            } catch { execution.recordSubmissionFailure(error); admission.continuation.finish(throwing: error) }
+        }
+        for try await admitted in admission.stream { return admitted }
+        throw DeviceAgentCoordinatorError.missingTransition
     }
 
     /// Explicit cold recovery reads the durable original edited intent. No new

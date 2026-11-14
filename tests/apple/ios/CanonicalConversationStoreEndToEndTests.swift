@@ -2,6 +2,21 @@ import XCTest
 @testable import Nola
 
 final class CanonicalConversationStoreEndToEndTests: XCTestCase {
+    func testDirectoryReadsMetadataAndKnowledgeWithoutRewritingConversations() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("directory-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = try IOSApplicationRuntime(databaseURL: root.appendingPathComponent("fixture.db"))
+        let older = UUID().uuidString, newer = UUID().uuidString
+        try runtime.createConversation(id: older, title: "Saved research", settingsJSON: #"{"knowledge":{"keyPointsMarkdown":"Saved insight"}}"#, createdAtMs: 1, updatedAtMs: 1)
+        try runtime.createConversation(id: newer, title: "Recent", settingsJSON: "{}", createdAtMs: 2, updatedAtMs: 2)
+        let before = try runtime.loadConversation(id: older)
+        let directory = try IOSWorkspaceReadFacts.conversationDirectory(runtime: runtime)
+        XCTAssertEqual(directory.map(\.id), [UUID(uuidString: newer)!, UUID(uuidString: older)!])
+        XCTAssertEqual(directory.last?.knowledgePoints, "Saved insight")
+        XCTAssertEqual(directory.first?.title, "Recent")
+        XCTAssertEqual(try runtime.loadConversation(id: older), before)
+    }
+
     func testDuplicateCreationRejectsWithoutAdoptingOrChangingExistingConfiguration() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("nola-create-receipt-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

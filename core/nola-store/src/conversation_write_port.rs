@@ -106,6 +106,12 @@ impl ConversationDeletionRepository for SqliteConversationWriteRepository<'_> {
 
 impl TranscriptWriteRepository for SqliteConversationWriteRepository<'_> {
     type Error = StoreError;
+    fn message_frontier(&self, conversation_id: &str) -> StoreResult<(usize, i64)> {
+        self.store.connection.query_row(
+            "SELECT COUNT(*),COALESCE(MAX(ordinal),0) FROM messages WHERE conversation_id=?1",
+            params![conversation_id], |row| Ok((row.get(0)?,row.get(1)?)),
+        ).map_err(StoreError::from)
+    }
 
     fn has_active_run(&self, conversation_id: &str) -> StoreResult<bool> {
         self.store

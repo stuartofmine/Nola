@@ -569,9 +569,7 @@ impl AgentRuntime {
                     permission_domain,
                     rationale,
                 } => {
-                    let part_id = self
-                        .latest_tool_part_id(call_id)
-                        .unwrap_or_else(|| Self::tool_part_id(turn_id, call_id));
+                    let part_id = self.planned_tool_part_id(turn_id, call_id)?;
                     let permission = ToolPermissionPart {
                         request_id: request_id.as_str().to_string(),
                         permission_domain: permission_domain.clone(),
@@ -683,9 +681,7 @@ impl AgentRuntime {
                     arguments,
                 } => {
                     self.close_empty_text_parts_before_tool(turn_id, &mut updates)?;
-                    let part_id = self
-                        .latest_tool_part_id(call_id)
-                        .unwrap_or_else(|| Self::tool_part_id(turn_id, call_id));
+                    let part_id = self.planned_tool_part_id(turn_id, call_id)?;
                     self.ensure_tool_part(
                         turn_id,
                         &part_id,
@@ -699,7 +695,7 @@ impl AgentRuntime {
                 RuntimeEvent::UserInputWaitChanged { wait } if wait.is_open() && wait.originating_call_id.is_some() => {
                     let turn_id = TurnId::from_string(wait.turn_id.clone());
                     let call_id = CallId::from_string(wait.originating_call_id.clone().expect("tool wait"));
-                    let part_id = self.latest_tool_part_id(&call_id).unwrap_or_else(|| Self::tool_part_id(&turn_id, &call_id));
+                    let part_id = self.planned_tool_part_id(&turn_id, &call_id)?;
                     let arguments = serde_json::to_value(&wait.question_set).map_err(|error| error.to_string())?;
                     self.ensure_tool_part(&turn_id, &part_id, call_id.as_str(), "request_user_input",
                         Some(&arguments), ToolPartState::WaitingForInput, &mut updates)?;
@@ -1075,14 +1071,12 @@ impl AgentRuntime {
                 updates,
             ),
             AgentItem::ToolCall {
-                id,
+                id: _,
                 call_id,
                 name,
                 arguments,
             } => {
-                let part_id = self
-                    .active_tool_part_id(call_id)
-                    .unwrap_or_else(|| bounded_tool_part_identity(format!("tool:{}", id.as_str())));
+                let part_id = self.planned_tool_part_id(turn_id, call_id)?;
                 self.ensure_tool_part(
                     turn_id,
                     &part_id,
@@ -1525,6 +1519,33 @@ impl AgentRuntime {
 
     fn tool_part_id(turn_id: &TurnId, call_id: &CallId) -> String {
         bounded_tool_part_identity(format!("tool:{}:{}", turn_id.as_str(), call_id.as_str()))
+    }
+
+    /// New calls may reuse a provider ID. Only a live Part in this exact
+    /// response segment is reusable; otherwise the accepted call item supplies
+    /// the new identity. Closed historical Parts are never reopened by ID alone.
+    fn planned_tool_part_id(&self, turn_id: &TurnId, call_id: &CallId) -> Result<String, String> {
+        let projection = &self.session.conversation.projection;
+        let message = projection.active_message_segments.get(turn_id.as_str()).cloned()
+            .unwrap_or_else(|| PartOwnership::for_turn(turn_id.as_str()).message_id);
+        if let Some(id) = projection.order.iter().rev().find_map(|id| match projection.parts.get(id) {
+            Some(AgentPart::Tool(tool)) if tool.call_id == call_id.as_str()
+                && tool.ownership.turn_id == turn_id.as_str() && tool.ownership.message_id == message
+                && !tool.state.is_terminal() => Some(id.clone()),
+            _ => None,
+        }) { return Ok(id); }
+        if let Some(item) = self.session.conversation.transcript.iter().rev().find(|item|
+            matches!(item, AgentItem::ToolCall { call_id: id, .. } if id == call_id)
+                && self.session.item_ownership.get(item.id().as_str()).is_some_and(|owner|
+                    owner.turn_id == turn_id.as_str() && owner.message_id == message))
+        {
+            return Ok(bounded_tool_part_identity(format!("tool:{}", item.id().as_str())));
+        }
+        let id = Self::tool_part_id(turn_id, call_id);
+        if projection.parts.contains_key(&id) {
+            return Err("new tool occurrence lacks its accepted transcript identity".into());
+        }
+        Ok(id)
     }
 
     fn pending_text_review(&self) -> Option<crate::agent::parts::TextReviewState> {

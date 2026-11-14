@@ -10,14 +10,172 @@ use crate::{
     ConversationCheckpoint, TraceRecord, TraceRun,
 };
 
-pub(super) fn execute<R: AgentRuntimeCommandRepositories>(
-    store: &mut R,
-    command: ApplicationCommand,
-) -> Result<Value, String> {
-    crate::task_terminal::validate_command(store, &command)?;
-    match command {
-        ApplicationCommand::StepGoal { conversation_id, source_host_id, control, start_configuration, selected_model, user_prompt, host_available } =>
-            super::goal_step::advance(store, conversation_id, source_host_id, control, start_configuration, selected_model, user_prompt, host_available.unwrap_or(true)),
+/// Dispatch only a discriminant here; payloads and result temporaries belong to
+/// their existing typed command family, never every background query's stack.
+pub(super) fn execute<R:AgentRuntimeCommandRepositories>(store:&mut R,command:ApplicationCommand)->Result<Value,String>{
+    crate::task_terminal::validate_command(store,&command)?;
+    let command=Box::new(command);
+    match command.as_ref(){
+        ApplicationCommand::BeginAssistantTurn {..}
+        | ApplicationCommand::PromoteQueuedAssistantTurn {..}
+        | ApplicationCommand::BeginQueuedUserTurn {..}
+        | ApplicationCommand::BeginTaskAssistantTurn {..}
+        | ApplicationCommand::BeginAutomationAssistantTurn {..}
+        | ApplicationCommand::BeginMaintenanceTurn {..}
+        | ApplicationCommand::RespondToConversationWait {..}
+        | ApplicationCommand::ReduceAndAcceptHostResponse {..}
+        | ApplicationCommand::ReduceAndCommitActiveSubmission {..}
+        | ApplicationCommand::ReduceAndCommitIdleSubmission {..} => execute_turn_admission(store,command),
+        ApplicationCommand::PrepareDelegatedTask {..}
+        | ApplicationCommand::CaptureMobileDelegationConfiguration {..}
+        | ApplicationCommand::LoadMobileTaskChildConfiguration {..}
+        | ApplicationCommand::PrepareMobileTaskGuidance {..}
+        | ApplicationCommand::ObserveMobileTask {..}
+        | ApplicationCommand::ApplyPendingTaskNotice {..}
+        | ApplicationCommand::PrepareMobileDelegatedTask {..}
+        | ApplicationCommand::InspectMobilePermissionRequest {..}
+        | ApplicationCommand::InspectMobileMcpRequest {..}
+        | ApplicationCommand::LoadMobileTaskWakePlan {..}
+        | ApplicationCommand::AdmitMobileTaskChild {..} => execute_mobile_delegation(store,command),
+        ApplicationCommand::ExportAgentTaskAdmission {..}
+        | ApplicationCommand::ImportHostAgentTaskAdmission {..}
+        | ApplicationCommand::ExportAgentTaskTerminalProjection {..}
+        | ApplicationCommand::ExportAgentTaskGuidanceProjection {..}
+        | ApplicationCommand::ImportHostAgentTaskGuidanceProjection {..}
+        | ApplicationCommand::ImportHostAgentTaskTerminalProjection {..}
+        | ApplicationCommand::RecoverExpiredAgentTask {..}
+        | ApplicationCommand::ClaimAgentTaskFair {..}
+        | ApplicationCommand::RuntimeTask {..}
+        | ApplicationCommand::EnqueueTaskTerminalReconciliation {..}
+        | ApplicationCommand::LoadTaskGuidanceReceipt {..}
+        | ApplicationCommand::SubmitTaskGuidance {..}
+        | ApplicationCommand::ApplyTaskGuidance {..}
+        | ApplicationCommand::InspectOwnedTaskRecovery {..} => execute_task_protocol(store,command),
+        ApplicationCommand::LoadCommittedHostRequests {..}
+        | ApplicationCommand::LoadRunDeliveryOwnership {..}
+        | ApplicationCommand::ClaimCommittedHostRequests {..}
+        | ApplicationCommand::ClaimApplicationControlRequests {..}
+        | ApplicationCommand::ImportHostTaskCancellation {..}
+        | ApplicationCommand::ExecuteTaskCancellationForEffect {..}
+        | ApplicationCommand::HeartbeatEffectDelivery {..}
+        | ApplicationCommand::LoadRuntimeEffectWorkSchedule {..}
+        | ApplicationCommand::ActiveRun {..}
+        | ApplicationCommand::RecordAgentTrace {..} => execute_effect_delivery(store,command),
+        ApplicationCommand::InspectRunProcessOwners {..}
+        | ApplicationCommand::ValidateRunProcessObservations {..}
+        | ApplicationCommand::PrepareRunEffectRecovery {..}
+        | ApplicationCommand::ResolveUnknownEffectRecovery {..}
+        | ApplicationCommand::RequestRunCancellation {..}
+        | ApplicationCommand::InspectCancellationProcessOwners {..}
+        | ApplicationCommand::ValidateCancellationProcessObservations {..}
+        | ApplicationCommand::LoadRunCancellationDeliveryFacts {..}
+        | ApplicationCommand::ClaimCancellationHostRequests {..}
+        | ApplicationCommand::RecoverObservedOrphanedRun {..}
+        | ApplicationCommand::RecoverExpiredRunDeliveries {..}
+        | ApplicationCommand::RecoverOrphanedRuns {..} => execute_run_recovery(store,command),
+        ApplicationCommand::ListOpenUserInputWaits {..}
+        | ApplicationCommand::ListOwnedTaskUserInputWaits {..}
+        | ApplicationCommand::LoadUserInputWait {..}
+        | ApplicationCommand::UpsertPermissionGrant {..}
+        | ApplicationCommand::EffectivePermissionGrants {..}
+        | ApplicationCommand::ListPermissionGrants {..}
+        | ApplicationCommand::RevokePermissionGrant {..}
+        | ApplicationCommand::PermissionRequest {..}
+        | ApplicationCommand::ApplyActivePermissionPolicy {..} => execute_permissions(store,command),
+        ApplicationCommand::StepGoal {..}
+        | ApplicationCommand::PrepareGoalControlIntent {..}
+        | ApplicationCommand::StartGoalExecution {..}
+        | ApplicationCommand::PrepareGoalExecution {..}
+        | ApplicationCommand::LoadGoalExecutionBinding {..}
+        | ApplicationCommand::ObserveAutomationExecution {..}
+        | ApplicationCommand::ListPendingAutomationExecutions {..}
+        | ApplicationCommand::ReconcileAutomationExecution {..}
+        | ApplicationCommand::ObserveAutomationWorker {..}
+        | ApplicationCommand::AckAutomationNotification {..}
+        | ApplicationCommand::QueryClaimableMemoryJobs {..}
+        | ApplicationCommand::BuildMemoryWorkerPlan {..}
+        | ApplicationCommand::Memory {..}
+        | ApplicationCommand::ConversationPlan {..}
+        | ApplicationCommand::SopRun {..} => execute_goal_and_memory(store,command),
+        ApplicationCommand::LoadHostExecutionState {..}
+        | ApplicationCommand::LoadConversationTaskProjectionV1 {..}
+        | ApplicationCommand::LoadExactRunTraceReplay {..}
+        | ApplicationCommand::TraceEventsAfter {..}
+        | ApplicationCommand::TraceRunsForConversation {..}
+        | ApplicationCommand::LatestTraceId {..}
+        | ApplicationCommand::LoadCheckpoint {..}
+        | ApplicationCommand::LoadSessionProjection {..}
+        | ApplicationCommand::LoadGoalControlObservation {..}
+        | ApplicationCommand::LoadGoalExecutionOwner {..}
+        | ApplicationCommand::LoadSessionGoalProjection {..}
+        | ApplicationCommand::FindResumableGoalSession {..}
+        | ApplicationCommand::LoadResumeSnapshot {..}
+        | ApplicationCommand::AcknowledgeResumeSnapshot {..} => execute_session_projection(store,command),
+        ApplicationCommand::EnqueueAgentCommand {..}
+        | ApplicationCommand::PeekAgentCommand {..}
+        | ApplicationCommand::ClaimNextAgentCommand {..}
+        | ApplicationCommand::LeasedAgentCommands {..}
+        | ApplicationCommand::ReleaseAgentCommandLease {..}
+        | ApplicationCommand::AcknowledgeAgentCommand {..}
+        | ApplicationCommand::WorkStepTransaction {..} => execute_agent_mailbox(store,command),
+        _ => Err("command is outside the agent runtime family".into()),
+    }
+}
+
+#[inline(never)]
+fn execute_turn_admission<R:AgentRuntimeCommandRepositories>(store:&mut R,command:Box<ApplicationCommand>)->Result<Value,String>{
+    match *command {
+        ApplicationCommand::BeginAssistantTurn { input } => {
+            let (accepted, _) = crate::assistant_turn::admit_with_core(store, input, None)?;
+            encode_application_result(accepted)
+        }
+        ApplicationCommand::PromoteQueuedAssistantTurn { input } => {
+            encode_application_result(crate::promote_queued_assistant_turn(store, input)?)
+        }
+        ApplicationCommand::BeginQueuedUserTurn { input } => {
+            encode_application_result(crate::begin_queued_user_turn(store, input)?)
+        }
+        ApplicationCommand::RespondToConversationWait { input } => {
+            encode_application_result(crate::user_input_wait::respond(store, input)?)
+        }
+        ApplicationCommand::BeginTaskAssistantTurn { lease, input } => {
+            let (accepted, _) = crate::assistant_turn::admit_with_core(store, input, Some(lease))?;
+            encode_application_result(accepted)
+        }
+        ApplicationCommand::BeginAutomationAssistantTurn { lease, input } => {
+            let (accepted, _) = crate::automation_execution::admit_with_core(store, lease, input)?;
+            encode_application_result(accepted)
+        }
+        ApplicationCommand::BeginMaintenanceTurn { input } => {
+            encode_application_result(crate::begin_maintenance_turn(store, input)?)
+        }
+        ApplicationCommand::ReduceAndAcceptHostResponse { input } => {
+            encode_application_result(crate::reduce_and_accept_host_response(store, input)?)
+        }
+        ApplicationCommand::ReduceAndCommitActiveSubmission { input } => {
+            if matches!(input.submission, crate::AgentSubmission::RespondToUserInputWait { .. }) {
+                return Err("wait responses require the dedicated conversation wait command".into());
+            }
+            if matches!(
+                input.submission,
+                nola_agent_engine::agent::AgentSubmission::ApplyTaskGuidanceInput { .. }
+            ) {
+                return Err(
+                    "guidance input requires the dedicated ApplicationRuntime transaction".into(),
+                );
+            }
+            encode_application_result(crate::reduce_and_commit_active_submission(store, input)?)
+        }
+        ApplicationCommand::ReduceAndCommitIdleSubmission { input } => {
+            encode_application_result(crate::reduce_and_commit_idle_submission(store, input)?)
+        }
+        _ => Err("command is outside the agent runtime family".into()),
+    }
+}
+
+#[inline(never)]
+fn execute_mobile_delegation<R:AgentRuntimeCommandRepositories>(store:&mut R,command:Box<ApplicationCommand>)->Result<Value,String>{
+    match *command {
         ApplicationCommand::PrepareDelegatedTask { input } => encode_application_result(crate::delegation_preparation::prepare(store,input)?),
         ApplicationCommand::CaptureMobileDelegationConfiguration { config, settings } => encode_application_result(crate::mobile_delegation_configuration::capture_parent(config,settings)?),
         ApplicationCommand::LoadMobileTaskChildConfiguration { task_id } => encode_application_result(crate::mobile_delegation_configuration::child_config(store,&task_id)?),
@@ -29,24 +187,13 @@ pub(super) fn execute<R: AgentRuntimeCommandRepositories>(
         ApplicationCommand::InspectMobileMcpRequest { request, now_ms } => crate::mobile_delegation::inspect_mcp(store, request, now_ms),
         ApplicationCommand::LoadMobileTaskWakePlan { now_ms } => encode_application_result(crate::mobile_delegation::wake_plan(store, now_ms)?),
         ApplicationCommand::AdmitMobileTaskChild { input } => encode_application_result(crate::mobile_delegation::admit(store,input)?),
-        ApplicationCommand::PrepareGoalControlIntent { input } => {
-            // This command is receipt-backed. Retries return the original
-            // prepared envelope without recomputing its Host timestamp.
-            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-                .map_err(|_| "Host clock precedes epoch")?.as_millis();
-            let now = i64::try_from(now).map_err(|_| "Host clock exceeds Goal time range")?;
-            encode_application_result(crate::goal_control_intent::prepare(input, now)?)
-        },
-        ApplicationCommand::StartGoalExecution { input } =>
-            encode_application_result(crate::goal_execution::start_goal_execution(store, input)?),
-        ApplicationCommand::PrepareGoalExecution { conversation_id, goal_id } =>
-            encode_application_result(crate::goal_execution::prepare_goal_execution(store, &conversation_id, &goal_id)?),
-        ApplicationCommand::LoadGoalExecutionBinding { conversation_id, goal_id } =>
-            encode_application_result(crate::goal_execution::load_goal_execution_binding(store, &conversation_id, &goal_id)?),
-        ApplicationCommand::LoadHostExecutionState { conversation_id } =>
-            encode_application_result(crate::host_execution_state::load(store, &conversation_id)?),
-        ApplicationCommand::LoadConversationTaskProjectionV1 { conversation_id } =>
-            crate::host_execution_state::load_task_projection(store, &conversation_id),
+        _ => Err("command is outside the agent runtime family".into()),
+    }
+}
+
+#[inline(never)]
+fn execute_task_protocol<R:AgentRuntimeCommandRepositories>(store:&mut R,command:Box<ApplicationCommand>)->Result<Value,String>{
+    match *command {
         ApplicationCommand::ExportAgentTaskAdmission { conversation_id, run_id, task_id, event_cursor } => {
             encode_application_result(crate::agent_task_admission::export(
                 store, &conversation_id, &run_id, &task_id, event_cursor,
@@ -95,160 +242,8 @@ pub(super) fn execute<R: AgentRuntimeCommandRepositories>(
         ApplicationCommand::ClaimAgentTaskFair { input } => {
             encode_application_result(crate::task_ownership::claim(store,input)?)
         }
-        ApplicationCommand::BeginAssistantTurn { input } => {
-            let (accepted, _) = crate::assistant_turn::admit_with_core(store, input, None)?;
-            encode_application_result(accepted)
-        }
-        ApplicationCommand::PromoteQueuedAssistantTurn { input } => {
-            encode_application_result(crate::promote_queued_assistant_turn(store, input)?)
-        }
-        ApplicationCommand::BeginQueuedUserTurn { input } => {
-            encode_application_result(crate::begin_queued_user_turn(store, input)?)
-        }
-        ApplicationCommand::ListOpenUserInputWaits { conversation_id, run_id } => {
-            encode_application_result(store.open_user_input_waits(&conversation_id, run_id.as_deref())
-                .map_err(|error| error.to_string())?)
-        }
-        ApplicationCommand::ListOwnedTaskUserInputWaits { owner_conversation_id, task_id } => {
-            encode_application_result(store.owned_task_user_input_waits(&owner_conversation_id, task_id.as_deref())
-                .map_err(|error| error.to_string())?)
-        }
-        ApplicationCommand::LoadUserInputWait { conversation_id, wait_id } => {
-            encode_application_result(store.load_user_input_wait(&conversation_id, &wait_id)
-                .map_err(|error| error.to_string())?)
-        }
-        ApplicationCommand::RespondToConversationWait { input } => {
-            encode_application_result(crate::user_input_wait::respond(store, input)?)
-        }
-        ApplicationCommand::BeginTaskAssistantTurn { lease, input } => {
-            let (accepted, _) = crate::assistant_turn::admit_with_core(store, input, Some(lease))?;
-            encode_application_result(accepted)
-        }
-        ApplicationCommand::BeginAutomationAssistantTurn { lease, input } => {
-            let (accepted, _) = crate::automation_execution::admit_with_core(store, lease, input)?;
-            encode_application_result(accepted)
-        }
-        ApplicationCommand::ObserveAutomationExecution { occurrence_id } =>
-            encode_application_result(store.automation_repository().observe_automation_execution(&occurrence_id).map_err(|e|e.to_string())?),
-        ApplicationCommand::ListPendingAutomationExecutions { after_occurrence_id, limit } =>
-            encode_application_result(store.automation_repository().pending_automation_executions(after_occurrence_id.as_deref(), limit).map_err(|e|e.to_string())?),
-        ApplicationCommand::ReconcileAutomationExecution { occurrence_id, reconciled_at_ms } =>
-            crate::assistant_publication_transaction::with_publication_transaction(store, |store|
-                encode_application_result(store.automation_repository().reconcile_automation_execution(&occurrence_id, reconciled_at_ms).map_err(|e|e.to_string())?)),
-        ApplicationCommand::ObserveAutomationWorker { lease, observation, observed_at_ms } =>
-            encode_application_result(store.automation_repository().observe_automation_worker(&lease, &observation, observed_at_ms).map_err(|e|e.to_string())?),
-        ApplicationCommand::AckAutomationNotification { occurrence_id, notification_id, delivered_at_ms } =>
-            encode_application_result(store.automation_repository().acknowledge_automation_notification(&occurrence_id, &notification_id, delivered_at_ms).map_err(|e|e.to_string())?),
-        ApplicationCommand::BeginMaintenanceTurn { input } => {
-            encode_application_result(crate::begin_maintenance_turn(store, input)?)
-        }
-        ApplicationCommand::QueryClaimableMemoryJobs { input } => {
-            encode_application_result(crate::query_claimable_memory_jobs(store, input)?)
-        }
-        ApplicationCommand::BuildMemoryWorkerPlan { input } => {
-            encode_application_result(crate::build_memory_worker_plan(store, input)?)
-        }
-        ApplicationCommand::LoadCommittedHostRequests { run_id } => {
-            encode_application_result(crate::load_committed_host_requests(store, &run_id)?)
-        }
-        ApplicationCommand::InspectRunProcessOwners { conversation_id, expected_run_id } => encode_application_result(store.with_consistent_read(|reader| crate::run_process_observation::inspect(reader, conversation_id, expected_run_id))?),
-        ApplicationCommand::ValidateRunProcessObservations { plan, observations } => encode_application_result(store.with_consistent_read(|reader| crate::run_process_observation::validate(reader, plan, observations))?),
-        ApplicationCommand::LoadRunDeliveryOwnership { run_id } => encode_application_result(
-            crate::effect_delivery::load_run_delivery_ownership(store, &run_id)?,
-        ),
-        ApplicationCommand::ClaimCommittedHostRequests { input } => {
-            encode_application_result(crate::claim_committed_host_requests(store, input)?)
-        }
-        ApplicationCommand::ClaimApplicationControlRequests { input } =>
-            encode_application_result(crate::task_cancellation_control::claim(store, input)?),
-        ApplicationCommand::ImportHostTaskCancellation { authorization, now_ms } =>
-            encode_application_result(crate::task_cancellation_control::import(store, authorization, now_ms)?),
-        ApplicationCommand::ExecuteTaskCancellationForEffect { request, now_ms } =>
-            encode_application_result(crate::task_cancellation_control::execute(store, &request, now_ms)?),
-        ApplicationCommand::PrepareRunEffectRecovery { input } => {
-            encode_application_result(crate::effect_delivery::prepare_run_effect_recovery(store, input)?)
-        }
-        ApplicationCommand::HeartbeatEffectDelivery { input } => {
-            encode_application_result(crate::heartbeat_effect_delivery(store, input)?)
-        }
         ApplicationCommand::InspectOwnedTaskRecovery { .. } | ApplicationCommand::ResolveOwnedTaskRecovery { .. } =>
             Err("Owned task recovery requires the ApplicationRuntime boundary".into()),
-        ApplicationCommand::ResolveUnknownEffectRecovery { input } => {
-            encode_application_result(crate::unknown_effect_recovery::resolve(store, input)?)
-        }
-        ApplicationCommand::LoadRuntimeEffectWorkSchedule { input } => {
-            encode_application_result(crate::load_runtime_effect_work_schedule(store, input)?)
-        }
-        ApplicationCommand::ActiveRun { conversation_id } => {
-            let active = store
-                .active_run(&conversation_id)
-                .map_err(|error| error.to_string())?
-                .map(ActiveRun::from);
-            encode_application_result(active)
-        }
-        ApplicationCommand::ReduceAndAcceptHostResponse { input } => {
-            encode_application_result(crate::reduce_and_accept_host_response(store, input)?)
-        }
-        ApplicationCommand::ReduceAndCommitActiveSubmission { input } => {
-            if matches!(input.submission, crate::AgentSubmission::RespondToUserInputWait { .. }) {
-                return Err("wait responses require the dedicated conversation wait command".into());
-            }
-            if matches!(
-                input.submission,
-                nola_agent_engine::agent::AgentSubmission::ApplyTaskGuidanceInput { .. }
-            ) {
-                return Err(
-                    "guidance input requires the dedicated ApplicationRuntime transaction".into(),
-                );
-            }
-            encode_application_result(crate::reduce_and_commit_active_submission(store, input)?)
-        }
-        ApplicationCommand::RequestRunCancellation { input } => {
-            encode_application_result(crate::request_run_cancellation(store, input)?)
-        }
-        ApplicationCommand::InspectCancellationProcessOwners { identity, control } =>
-            encode_application_result(crate::cancellation_process_observation::inspect_cancellation_process_owners(store, identity, control)?),
-        ApplicationCommand::ValidateCancellationProcessObservations { plan, current_process, observations } =>
-            encode_application_result(crate::cancellation_process_observation::validate_cancellation_process_observations(store, plan, current_process, observations)?),
-        ApplicationCommand::LoadRunCancellationDeliveryFacts { input } => {
-            encode_application_result(
-                crate::cancellation_delivery::load_run_cancellation_delivery_facts(store, &input)?,
-            )
-        }
-        ApplicationCommand::ClaimCancellationHostRequests { input } => encode_application_result(
-            crate::cancellation_delivery::claim_cancellation_host_requests(store, input)?,
-        ),
-        ApplicationCommand::ReduceAndCommitIdleSubmission { input } => {
-            encode_application_result(crate::reduce_and_commit_idle_submission(store, input)?)
-        }
-        ApplicationCommand::UpsertPermissionGrant { input } => {
-            encode_application_result(crate::record_permission_grant(store, input)?)
-        }
-        ApplicationCommand::EffectivePermissionGrants {
-            conversation_id,
-            host_id,
-        } => encode_application_result(crate::load_permission_rule_set(
-            store,
-            conversation_id.as_deref(),
-            host_id.as_deref(),
-        )?),
-        ApplicationCommand::ListPermissionGrants {
-            conversation_id,
-            host_id,
-        } => encode_application_result(crate::list_effective_permission_grants(
-            store,
-            conversation_id.as_deref(),
-            host_id.as_deref(),
-        )?),
-        ApplicationCommand::RevokePermissionGrant { id, revoked_at_ms } => Ok(json!(
-            crate::revoke_permission_grant(store, &id, revoked_at_ms)?
-        )),
-        ApplicationCommand::Memory { command } => {
-            crate::memory::execute_memory_command(store, command)
-        }
-        ApplicationCommand::ConversationPlan { command } => {
-            crate::conversation_plan::execute_conversation_plan_command(store, command)
-        }
         ApplicationCommand::RuntimeTask { command } => {
             crate::task_terminal::validate_terminal_mutation(store, &command)?;
             let terminal_task = match &command {
@@ -287,28 +282,6 @@ pub(super) fn execute<R: AgentRuntimeCommandRepositories>(
             }
             Ok(result)
         }
-        ApplicationCommand::SopRun { command } => {
-            crate::sop_runtime::execute_sop_run_command(store, command)
-        }
-        ApplicationCommand::PermissionRequest { command } => {
-            crate::permission::execute_permission_request_command(store, command)
-        }
-        ApplicationCommand::EnqueueAgentCommand { input } => {
-            crate::task_terminal::validate_generic_enqueue(store, &input)?;
-            let submission = serde_json::from_str::<nola_agent_engine::agent::AgentSubmission>(&input.payload_json)
-                .map_err(|error| format!("decode admitted Agent submission: {error}"))?;
-            let mut store_input: nola_store_port::agent_queue::EnqueueAgentCommandInput = input.into();
-            store_input.payload_json = serde_json::to_string(
-                &nola_agent_engine::agent::host::AgentBoundaryInput::Submission { submission }
-            ).map_err(|error| error.to_string())?;
-            Ok(json!(
-                nola_store_port::agent_queue::AgentQueueRepository::enqueue_agent_command(
-                    store,
-                    &store_input
-                )
-                .map_err(|error| error.to_string())?
-            ))
-        }
         ApplicationCommand::EnqueueTaskTerminalReconciliation {
             task_id,
             expected_receipt_id,
@@ -337,8 +310,346 @@ pub(super) fn execute<R: AgentRuntimeCommandRepositories>(
         ApplicationCommand::ApplyTaskGuidance { .. } => {
             Err("ApplyTaskGuidance requires the ApplicationRuntime hot Run boundary".into())
         }
+        _ => Err("command is outside the agent runtime family".into()),
+    }
+}
+
+#[inline(never)]
+fn execute_effect_delivery<R:AgentRuntimeCommandRepositories>(store:&mut R,command:Box<ApplicationCommand>)->Result<Value,String>{
+    match *command {
+        ApplicationCommand::LoadCommittedHostRequests { run_id } => {
+            encode_application_result(crate::load_committed_host_requests(store, &run_id)?)
+        }
+        ApplicationCommand::LoadRunDeliveryOwnership { run_id } => encode_application_result(
+            crate::effect_delivery::load_run_delivery_ownership(store, &run_id)?,
+        ),
+        ApplicationCommand::ClaimCommittedHostRequests { input } => {
+            encode_application_result(crate::claim_committed_host_requests(store, input)?)
+        }
+        ApplicationCommand::ClaimApplicationControlRequests { input } =>
+            encode_application_result(crate::task_cancellation_control::claim(store, input)?),
+        ApplicationCommand::ImportHostTaskCancellation { authorization, now_ms } =>
+            encode_application_result(crate::task_cancellation_control::import(store, authorization, now_ms)?),
+        ApplicationCommand::ExecuteTaskCancellationForEffect { request, now_ms } =>
+            encode_application_result(crate::task_cancellation_control::execute(store, &request, now_ms)?),
+        ApplicationCommand::HeartbeatEffectDelivery { input } => {
+            encode_application_result(crate::heartbeat_effect_delivery(store, input)?)
+        }
+        ApplicationCommand::LoadRuntimeEffectWorkSchedule { input } => {
+            encode_application_result(crate::load_runtime_effect_work_schedule(store, input)?)
+        }
+        ApplicationCommand::ActiveRun { conversation_id } => {
+            let active = store
+                .active_run(&conversation_id)
+                .map_err(|error| error.to_string())?
+                .map(ActiveRun::from);
+            encode_application_result(active)
+        }
+        ApplicationCommand::RecordAgentTrace { event, envelope } => {
+            Ok(json!(crate::execution_trace_journal::record(store, &event, envelope.as_ref())?))
+        }
+        _ => Err("command is outside the agent runtime family".into()),
+    }
+}
+
+#[inline(never)]
+fn execute_run_recovery<R:AgentRuntimeCommandRepositories>(store:&mut R,command:Box<ApplicationCommand>)->Result<Value,String>{
+    match *command {
+        ApplicationCommand::InspectRunProcessOwners { conversation_id, expected_run_id } => encode_application_result(store.with_consistent_read(|reader| crate::run_process_observation::inspect(reader, conversation_id, expected_run_id))?),
+        ApplicationCommand::ValidateRunProcessObservations { plan, observations } => encode_application_result(store.with_consistent_read(|reader| crate::run_process_observation::validate(reader, plan, observations))?),
+        ApplicationCommand::PrepareRunEffectRecovery { input } => {
+            encode_application_result(crate::effect_delivery::prepare_run_effect_recovery(store, input)?)
+        }
+        ApplicationCommand::ResolveUnknownEffectRecovery { input } => {
+            encode_application_result(crate::unknown_effect_recovery::resolve(store, input)?)
+        }
+        ApplicationCommand::RequestRunCancellation { input } => {
+            encode_application_result(crate::request_run_cancellation(store, input)?)
+        }
+        ApplicationCommand::InspectCancellationProcessOwners { identity, control } =>
+            encode_application_result(crate::cancellation_process_observation::inspect_cancellation_process_owners(store, identity, control)?),
+        ApplicationCommand::ValidateCancellationProcessObservations { plan, current_process, observations } =>
+            encode_application_result(crate::cancellation_process_observation::validate_cancellation_process_observations(store, plan, current_process, observations)?),
+        ApplicationCommand::LoadRunCancellationDeliveryFacts { input } => {
+            encode_application_result(
+                crate::cancellation_delivery::load_run_cancellation_delivery_facts(store, &input)?,
+            )
+        }
+        ApplicationCommand::ClaimCancellationHostRequests { input } => encode_application_result(
+            crate::cancellation_delivery::claim_cancellation_host_requests(store, input)?,
+        ),
+        ApplicationCommand::RecoverObservedOrphanedRun {
+            conversation_id,
+            expected_run_id,
+            host_invocation,
+            observed_session_lease,
+            observed_deliveries,
+            interrupted_at,
+            interrupted_at_ms,
+        } => Ok(json!(
+            crate::run_recovery::recover_observed(
+                store,
+                &conversation_id,
+                &expected_run_id,
+                &host_invocation,
+                observed_session_lease.as_ref(),
+                &observed_deliveries,
+                &interrupted_at,
+                interrupted_at_ms
+            )?
+            .changed
+        )),
+        ApplicationCommand::RecoverExpiredRunDeliveries {
+            conversation_id, expected_run_id, host_invocation, interrupted_at, interrupted_at_ms,
+        } => Ok(json!(crate::run_recovery::recover_expired(store, &conversation_id, &expected_run_id,
+            &host_invocation, &interrupted_at, interrupted_at_ms)?.changed)),
+        ApplicationCommand::RecoverOrphanedRuns {
+            conversation_id,
+            reason,
+            interrupted_at,
+            interrupted_at_ms,
+        } => Ok(json!(
+            crate::run_recovery::recover(
+                store,
+                conversation_id.as_deref(),
+                &reason,
+                &interrupted_at,
+                interrupted_at_ms
+            )?
+            .changed
+        )),
+        _ => Err("command is outside the agent runtime family".into()),
+    }
+}
+
+#[inline(never)]
+fn execute_permissions<R:AgentRuntimeCommandRepositories>(store:&mut R,command:Box<ApplicationCommand>)->Result<Value,String>{
+    match *command {
+        ApplicationCommand::ListOpenUserInputWaits { conversation_id, run_id } => {
+            encode_application_result(store.open_user_input_waits(&conversation_id, run_id.as_deref())
+                .map_err(|error| error.to_string())?)
+        }
+        ApplicationCommand::ListOwnedTaskUserInputWaits { owner_conversation_id, task_id } => {
+            encode_application_result(store.owned_task_user_input_waits(&owner_conversation_id, task_id.as_deref())
+                .map_err(|error| error.to_string())?)
+        }
+        ApplicationCommand::LoadUserInputWait { conversation_id, wait_id } => {
+            encode_application_result(store.load_user_input_wait(&conversation_id, &wait_id)
+                .map_err(|error| error.to_string())?)
+        }
+        ApplicationCommand::UpsertPermissionGrant { input } => {
+            encode_application_result(crate::record_permission_grant(store, input)?)
+        }
+        ApplicationCommand::EffectivePermissionGrants {
+            conversation_id,
+            host_id,
+        } => encode_application_result(crate::load_permission_rule_set(
+            store,
+            conversation_id.as_deref(),
+            host_id.as_deref(),
+        )?),
+        ApplicationCommand::ListPermissionGrants {
+            conversation_id,
+            host_id,
+        } => encode_application_result(crate::list_effective_permission_grants(
+            store,
+            conversation_id.as_deref(),
+            host_id.as_deref(),
+        )?),
+        ApplicationCommand::RevokePermissionGrant { id, revoked_at_ms } => Ok(json!(
+            crate::revoke_permission_grant(store, &id, revoked_at_ms)?
+        )),
+        ApplicationCommand::PermissionRequest { command } => {
+            crate::permission::execute_permission_request_command(store, command)
+        }
         ApplicationCommand::ApplyActivePermissionPolicy { .. } => {
             Err("active policy application requires the ApplicationRuntime boundary".into())
+        }
+        _ => Err("command is outside the agent runtime family".into()),
+    }
+}
+
+#[inline(never)]
+fn execute_goal_and_memory<R:AgentRuntimeCommandRepositories>(store:&mut R,command:Box<ApplicationCommand>)->Result<Value,String>{
+    match *command {
+        ApplicationCommand::StepGoal { conversation_id, source_host_id, control, start_configuration, selected_model, user_prompt, host_available } =>
+            super::goal_step::advance(store, conversation_id, source_host_id, control, start_configuration, selected_model, user_prompt, host_available.unwrap_or(true)),
+        ApplicationCommand::PrepareGoalControlIntent { input } => {
+            // This command is receipt-backed. Retries return the original
+            // prepared envelope without recomputing its Host timestamp.
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                .map_err(|_| "Host clock precedes epoch")?.as_millis();
+            let now = i64::try_from(now).map_err(|_| "Host clock exceeds Goal time range")?;
+            encode_application_result(crate::goal_control_intent::prepare(input, now)?)
+        },
+        ApplicationCommand::StartGoalExecution { input } =>
+            encode_application_result(crate::goal_execution::start_goal_execution(store, input)?),
+        ApplicationCommand::PrepareGoalExecution { conversation_id, goal_id } =>
+            encode_application_result(crate::goal_execution::prepare_goal_execution(store, &conversation_id, &goal_id)?),
+        ApplicationCommand::LoadGoalExecutionBinding { conversation_id, goal_id } =>
+            encode_application_result(crate::goal_execution::load_goal_execution_binding(store, &conversation_id, &goal_id)?),
+        ApplicationCommand::ObserveAutomationExecution { occurrence_id } =>
+            encode_application_result(store.automation_repository().observe_automation_execution(&occurrence_id).map_err(|e|e.to_string())?),
+        ApplicationCommand::ListPendingAutomationExecutions { after_occurrence_id, limit } =>
+            encode_application_result(store.automation_repository().pending_automation_executions(after_occurrence_id.as_deref(), limit).map_err(|e|e.to_string())?),
+        ApplicationCommand::ReconcileAutomationExecution { occurrence_id, reconciled_at_ms } =>
+            crate::assistant_publication_transaction::with_publication_transaction(store, |store|
+                encode_application_result(store.automation_repository().reconcile_automation_execution(&occurrence_id, reconciled_at_ms).map_err(|e|e.to_string())?)),
+        ApplicationCommand::ObserveAutomationWorker { lease, observation, observed_at_ms } =>
+            encode_application_result(store.automation_repository().observe_automation_worker(&lease, &observation, observed_at_ms).map_err(|e|e.to_string())?),
+        ApplicationCommand::AckAutomationNotification { occurrence_id, notification_id, delivered_at_ms } =>
+            encode_application_result(store.automation_repository().acknowledge_automation_notification(&occurrence_id, &notification_id, delivered_at_ms).map_err(|e|e.to_string())?),
+        ApplicationCommand::QueryClaimableMemoryJobs { input } => {
+            encode_application_result(crate::query_claimable_memory_jobs(store, input)?)
+        }
+        ApplicationCommand::BuildMemoryWorkerPlan { input } => {
+            encode_application_result(crate::build_memory_worker_plan(store, input)?)
+        }
+        ApplicationCommand::Memory { command } => {
+            crate::memory::execute_memory_command(store, command)
+        }
+        ApplicationCommand::ConversationPlan { command } => {
+            crate::conversation_plan::execute_conversation_plan_command(store, command)
+        }
+        ApplicationCommand::SopRun { command } => {
+            crate::sop_runtime::execute_sop_run_command(store, command)
+        }
+        _ => Err("command is outside the agent runtime family".into()),
+    }
+}
+
+#[inline(never)]
+fn execute_session_projection<R:AgentRuntimeCommandRepositories>(store:&mut R,command:Box<ApplicationCommand>)->Result<Value,String>{
+    match *command {
+        ApplicationCommand::LoadHostExecutionState { conversation_id } =>
+            encode_application_result(crate::host_execution_state::load(store, &conversation_id)?),
+        ApplicationCommand::LoadConversationTaskProjectionV1 { conversation_id } =>
+            crate::host_execution_state::load_task_projection(store, &conversation_id),
+        ApplicationCommand::LoadExactRunTraceReplay { conversation_id,run_id,assistant_message_id,after_sequence,through_sequence,limit } => {
+            let page = nola_store_port::trace_journal::TraceJournalRepository::exact_run_trace_replay(
+                store,&conversation_id,&run_id,&assistant_message_id,after_sequence,through_sequence,limit,
+            ).map_err(|error|error.to_string())?;
+            let mut events = Vec::with_capacity(page.records.len());
+            for record in page.records {
+                let sequence = record.sequence;
+                let event_id = record.event_id.clone();
+                let event = TraceRecord::try_from(record)?.event;
+                if event.conversation_id != conversation_id || event.run_id != run_id || event.turn_id != run_id
+                    || event.message_id.as_deref() != Some(assistant_message_id.as_str())
+                    || Some(&event.trace_id) != page.trace_id.as_ref() || event.sequence != sequence as u64
+                    || event.event_id != event_id {
+                    return Err("exact trace replay payload identity mismatch".into());
+                }
+                events.push(event);
+            }
+            Ok(json!({"trace_id":page.trace_id,"through_sequence":page.through_sequence,
+                "next_sequence":page.next_sequence,"events":events}))
+        }
+        ApplicationCommand::TraceEventsAfter { trace_id, sequence } => {
+            let records =
+                nola_store_port::trace_journal::TraceJournalRepository::trace_journal_events_after(
+                    store, &trace_id, sequence,
+                )
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .map(TraceRecord::try_from)
+                .collect::<Result<Vec<_>, _>>()?;
+            encode_application_result(records)
+        }
+        ApplicationCommand::TraceRunsForConversation { conversation_id } => {
+            let runs = nola_store_port::trace_journal::TraceJournalRepository::trace_journal_runs_for_conversation(store, &conversation_id)
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .map(TraceRun::from)
+                .collect::<Vec<_>>();
+            encode_application_result(runs)
+        }
+        ApplicationCommand::LatestTraceId { conversation_id } => encode_application_result(
+            nola_store_port::trace_journal::TraceJournalRepository::latest_trace_journal_id(
+                store,
+                &conversation_id,
+            )
+            .map_err(|error| error.to_string())?,
+        ),
+        ApplicationCommand::LoadCheckpoint { conversation_id } => {
+            let checkpoint = store.with_consistent_read(|reader|
+                crate::load_current_checkpoint(reader, &conversation_id))?
+                .map(ConversationCheckpoint::from);
+            encode_application_result(checkpoint)
+        }
+        ApplicationCommand::LoadSessionProjection { conversation_id } => {
+            encode_application_result(store.with_consistent_read(|reader|
+                crate::load_session_projection(reader, &conversation_id))?)
+        }
+        ApplicationCommand::LoadGoalControlObservation { conversation_id } => {
+            encode_application_result(store.with_consistent_read(|reader|
+                crate::load_session_projection(reader, &conversation_id))?
+                .and_then(|projection| projection.goal_projection.control_observation()))
+        }
+        ApplicationCommand::LoadGoalExecutionOwner { conversation_id, goal_id, run_id } => {
+            #[derive(serde::Serialize)]
+            struct Witness {
+                #[serde(flatten)] owner: nola_agent_engine::agent::goal::GoalExecutionOwner,
+                assistant_message_id: String,
+            }
+            let witness = store.with_consistent_read(|reader| {
+                let owner = crate::load_session_projection(reader, &conversation_id)?
+                    .and_then(|projection| projection.goal_projection.execution_owner(&run_id))
+                    .filter(|owner| owner.goal_id == goal_id);
+                owner.map(|owner| {
+                    let head = reader.local_run_message_admission_head(&conversation_id, &run_id)
+                        .map_err(|error| error.to_string())?;
+                    Ok::<_, String>(Witness { owner, assistant_message_id: head.identity.assistant_message_id })
+                }).transpose()
+            })?;
+            encode_application_result(witness)
+        }
+        ApplicationCommand::LoadSessionGoalProjection { conversation_id } => {
+            encode_application_result(store.with_consistent_read(|reader|
+                crate::load_session_projection(reader, &conversation_id))?
+                .map(|projection| projection.goal_projection))
+        }
+        ApplicationCommand::FindResumableGoalSession { project_root } => {
+            encode_application_result(store.with_consistent_read(|store| {
+                crate::resume_snapshot::find_resumable_projection(store, &project_root)
+            })?)
+        }
+        ApplicationCommand::LoadResumeSnapshot {
+            project_root,
+            host_id,
+            requested_at_ms,
+        } => encode_application_result(crate::load_resume_snapshot(
+            store,
+            &project_root,
+            host_id.as_deref(),
+            requested_at_ms,
+        )?),
+        ApplicationCommand::AcknowledgeResumeSnapshot { input } => {
+            crate::acknowledge_resume_snapshot(store, input)?;
+            Ok(Value::Null)
+        }
+        _ => Err("command is outside the agent runtime family".into()),
+    }
+}
+
+#[inline(never)]
+fn execute_agent_mailbox<R:AgentRuntimeCommandRepositories>(store:&mut R,command:Box<ApplicationCommand>)->Result<Value,String>{
+    match *command {
+        ApplicationCommand::EnqueueAgentCommand { input } => {
+            crate::task_terminal::validate_generic_enqueue(store, &input)?;
+            let submission = serde_json::from_str::<nola_agent_engine::agent::AgentSubmission>(&input.payload_json)
+                .map_err(|error| format!("decode admitted Agent submission: {error}"))?;
+            let mut store_input: nola_store_port::agent_queue::EnqueueAgentCommandInput = input.into();
+            store_input.payload_json = serde_json::to_string(
+                &nola_agent_engine::agent::host::AgentBoundaryInput::Submission { submission }
+            ).map_err(|error| error.to_string())?;
+            Ok(json!(
+                nola_store_port::agent_queue::AgentQueueRepository::enqueue_agent_command(
+                    store,
+                    &store_input
+                )
+                .map_err(|error| error.to_string())?
+            ))
         }
         ApplicationCommand::PeekAgentCommand { session_id } => {
             let command = nola_store_port::agent_queue::AgentQueueRepository::peek_agent_command(store, &session_id)
@@ -403,154 +714,8 @@ pub(super) fn execute<R: AgentRuntimeCommandRepositories>(
             )
             .map_err(|error| error.to_string())?
         )),
-        ApplicationCommand::RecordAgentTrace { event, envelope } => {
-            Ok(json!(crate::execution_trace_journal::record(store, &event, envelope.as_ref())?))
-        }
-        ApplicationCommand::LoadExactRunTraceReplay { conversation_id,run_id,assistant_message_id,after_sequence,through_sequence,limit } => {
-            let page = nola_store_port::trace_journal::TraceJournalRepository::exact_run_trace_replay(
-                store,&conversation_id,&run_id,&assistant_message_id,after_sequence,through_sequence,limit,
-            ).map_err(|error|error.to_string())?;
-            let mut events = Vec::with_capacity(page.records.len());
-            for record in page.records {
-                let sequence = record.sequence;
-                let event_id = record.event_id.clone();
-                let event = TraceRecord::try_from(record)?.event;
-                if event.conversation_id != conversation_id || event.run_id != run_id || event.turn_id != run_id
-                    || event.message_id.as_deref() != Some(assistant_message_id.as_str())
-                    || Some(&event.trace_id) != page.trace_id.as_ref() || event.sequence != sequence as u64
-                    || event.event_id != event_id {
-                    return Err("exact trace replay payload identity mismatch".into());
-                }
-                events.push(event);
-            }
-            Ok(json!({"trace_id":page.trace_id,"through_sequence":page.through_sequence,
-                "next_sequence":page.next_sequence,"events":events}))
-        }
-        ApplicationCommand::TraceEventsAfter { trace_id, sequence } => {
-            let records =
-                nola_store_port::trace_journal::TraceJournalRepository::trace_journal_events_after(
-                    store, &trace_id, sequence,
-                )
-                .map_err(|error| error.to_string())?
-                .into_iter()
-                .map(TraceRecord::try_from)
-                .collect::<Result<Vec<_>, _>>()?;
-            encode_application_result(records)
-        }
-        ApplicationCommand::TraceRunsForConversation { conversation_id } => {
-            let runs = nola_store_port::trace_journal::TraceJournalRepository::trace_journal_runs_for_conversation(store, &conversation_id)
-                .map_err(|error| error.to_string())?
-                .into_iter()
-                .map(TraceRun::from)
-                .collect::<Vec<_>>();
-            encode_application_result(runs)
-        }
-        ApplicationCommand::LatestTraceId { conversation_id } => encode_application_result(
-            nola_store_port::trace_journal::TraceJournalRepository::latest_trace_journal_id(
-                store,
-                &conversation_id,
-            )
-            .map_err(|error| error.to_string())?,
-        ),
-        ApplicationCommand::RecoverObservedOrphanedRun {
-            conversation_id,
-            expected_run_id,
-            host_invocation,
-            observed_session_lease,
-            observed_deliveries,
-            interrupted_at,
-            interrupted_at_ms,
-        } => Ok(json!(
-            crate::run_recovery::recover_observed(
-                store,
-                &conversation_id,
-                &expected_run_id,
-                &host_invocation,
-                observed_session_lease.as_ref(),
-                &observed_deliveries,
-                &interrupted_at,
-                interrupted_at_ms
-            )?
-            .changed
-        )),
-        ApplicationCommand::RecoverExpiredRunDeliveries {
-            conversation_id, expected_run_id, host_invocation, interrupted_at, interrupted_at_ms,
-        } => Ok(json!(crate::run_recovery::recover_expired(store, &conversation_id, &expected_run_id,
-            &host_invocation, &interrupted_at, interrupted_at_ms)?.changed)),
-        ApplicationCommand::RecoverOrphanedRuns {
-            conversation_id,
-            reason,
-            interrupted_at,
-            interrupted_at_ms,
-        } => Ok(json!(
-            crate::run_recovery::recover(
-                store,
-                conversation_id.as_deref(),
-                &reason,
-                &interrupted_at,
-                interrupted_at_ms
-            )?
-            .changed
-        )),
         ApplicationCommand::WorkStepTransaction { command } => {
             crate::work_step_transaction::execute_work_step_transaction_command(store, command)
-        }
-        ApplicationCommand::LoadCheckpoint { conversation_id } => {
-            let checkpoint = store.with_consistent_read(|reader|
-                crate::load_current_checkpoint(reader, &conversation_id))?
-                .map(ConversationCheckpoint::from);
-            encode_application_result(checkpoint)
-        }
-        ApplicationCommand::LoadSessionProjection { conversation_id } => {
-            encode_application_result(store.with_consistent_read(|reader|
-                crate::load_session_projection(reader, &conversation_id))?)
-        }
-        ApplicationCommand::LoadGoalControlObservation { conversation_id } => {
-            encode_application_result(store.with_consistent_read(|reader|
-                crate::load_session_projection(reader, &conversation_id))?
-                .and_then(|projection| projection.goal_projection.control_observation()))
-        }
-        ApplicationCommand::LoadGoalExecutionOwner { conversation_id, goal_id, run_id } => {
-            #[derive(serde::Serialize)]
-            struct Witness {
-                #[serde(flatten)] owner: nola_agent_engine::agent::goal::GoalExecutionOwner,
-                assistant_message_id: String,
-            }
-            let witness = store.with_consistent_read(|reader| {
-                let owner = crate::load_session_projection(reader, &conversation_id)?
-                    .and_then(|projection| projection.goal_projection.execution_owner(&run_id))
-                    .filter(|owner| owner.goal_id == goal_id);
-                owner.map(|owner| {
-                    let head = reader.local_run_message_admission_head(&conversation_id, &run_id)
-                        .map_err(|error| error.to_string())?;
-                    Ok::<_, String>(Witness { owner, assistant_message_id: head.identity.assistant_message_id })
-                }).transpose()
-            })?;
-            encode_application_result(witness)
-        }
-        ApplicationCommand::LoadSessionGoalProjection { conversation_id } => {
-            encode_application_result(store.with_consistent_read(|reader|
-                crate::load_session_projection(reader, &conversation_id))?
-                .map(|projection| projection.goal_projection))
-        }
-        ApplicationCommand::FindResumableGoalSession { project_root } => {
-            encode_application_result(store.with_consistent_read(|store| {
-                crate::resume_snapshot::find_resumable_projection(store, &project_root)
-            })?)
-        }
-        ApplicationCommand::LoadResumeSnapshot {
-            project_root,
-            host_id,
-            requested_at_ms,
-        } => encode_application_result(crate::load_resume_snapshot(
-            store,
-            &project_root,
-            host_id.as_deref(),
-            requested_at_ms,
-        )?),
-        ApplicationCommand::AcknowledgeResumeSnapshot { input } => {
-            crate::acknowledge_resume_snapshot(store, input)?;
-            Ok(Value::Null)
         }
         _ => Err("command is outside the agent runtime family".into()),
     }

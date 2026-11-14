@@ -411,7 +411,7 @@ mod effect_delivery_start_barrier_tests {
                         text: "completed successfully; child stopped".into(), display: "Done".into(),
                         error: receipt_state != Some(ExecutionState::Deferred),
                         artifacts: Vec::new(), activation: None,
-                    }, task_promotion: None, task_update: None,
+                    }, task_promotion: None, task_update: None, pending_error: None,
                 }));
             let mut capability = driver.catalog.capabilities["read_file"].clone();
             capability.id = "stop_fixture".into();
@@ -762,7 +762,7 @@ mod effect_delivery_start_barrier_tests {
                     activation: None,
                 },
                 task_promotion: None,
-                task_update: None,
+                task_update: None, pending_error: None,
             })
         });
         let unrelated = RuntimeExecutionControl::default();

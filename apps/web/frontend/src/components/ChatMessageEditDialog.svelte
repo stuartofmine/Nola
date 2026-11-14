@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { confirmInPlaceCompletion, type InPlaceResendCompletion } from '../lib/inPlaceResend.ts';
     import { workspaceUnloadScope } from '../lib/workspacePageLocation';
     const acceptsWorkspaceUnload = workspaceUnloadScope();
     import { onDestroy, tick, untrack } from 'svelte';
@@ -10,7 +11,7 @@
     import type { EditedResendDraft, EditedResendCompletion } from '../lib/editedResend.ts';
     let { initial, busy=false, ownerChanged=false, onsubmit, onclose }: {
         initial: EditedResendDraft; busy?:boolean; ownerChanged?:boolean;
-        onsubmit:(draft:EditedResendDraft)=>Promise<EditedResendCompletion | EditedExpertResendCompletion>; onclose:()=>void;
+        onsubmit:(draft:EditedResendDraft)=>Promise<EditedResendCompletion | EditedExpertResendCompletion | InPlaceResendCompletion>; onclose:()=>void;
     }=$props();
     let draft=$state<EditedResendDraft>(untrack(()=>initial)), error=$state(''), sending=$state(false);
     let editor=$state<HTMLTextAreaElement>(), dialog=$state<HTMLDialogElement>();
@@ -28,7 +29,8 @@
         sending=true;error='';
         try{
             const completed=await onsubmit(captured);
-            if('receipts' in completed)confirmEditedExpertResendCompletion(captured,completed);
+            if('inPlace' in completed)confirmInPlaceCompletion(captured,completed);
+            else if('receipts' in completed)confirmEditedExpertResendCompletion(captured,completed);
             else confirmEditedResendAdmission(captured,completed.envelope,completed.receipt);
             if(alive&&!ownerChanged)onclose();
         }catch(cause){if(alive)error=cause instanceof Error?cause.message:String(cause);}

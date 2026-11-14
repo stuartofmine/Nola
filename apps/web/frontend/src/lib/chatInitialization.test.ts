@@ -29,3 +29,8 @@ test('retry is bound to initialization reads, not submit or resume', () => {
     assert.doesNotMatch(initialize, /\.submit\(|\.resume\(|method\s*:/);
     assert.match(source, /onclick=\{\(\) => void initialize\(\)\} disabled=\{initializing\}/);
 });
+
+test('missing Web Locks explains the secure connection requirement separately from storage failure', () => {
+    assert.equal(chatInitializationError(new Error('browser_secure_connection_required')), 'chatPage.secureConnectionRequired');
+    assert.equal(chatInitializationError(new Error('browser_recovery_storage_unavailable')), 'chatPage.recoveryStorageUnavailable');
+});

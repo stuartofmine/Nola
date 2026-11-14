@@ -37,8 +37,8 @@ class RealAndroidEditedResendUiTest {
         AndroidApplicationRuntime(context).use { runtime -> createRealAnsweredSource(false, runtime, null, requireUiCard = true) }
     }
 
-    @Test fun ordinaryEditCreatesFreshAnsweredOwnerAndPreservesSource() = exercise(false)
-    @Test fun expertEditCreatesFreshAnsweredChildrenAndPreservesFrozenDefinition() = exercise(true)
+    @Test fun ordinaryEditRewindsSameOwnerAndReplacesSourceOutput() = exercise(false)
+    @Test fun expertEditRewindsExistingChildrenAndKeepsSameParent() = exercise(true)
 
     private fun exercise(expert: Boolean) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -50,7 +50,7 @@ class RealAndroidEditedResendUiTest {
             val originalManifest = if (expert) checkNotNull(runtime.expertMessageSource(source.first, source.second)) else null
             val changedCatalogRevision = if (template != null) {
                 assertRealExpertTemplateCapture(runtime, checkNotNull(originalManifest), template)
-                updateRealExpertTemplateFixture(runtime, template).also { check(it > template.catalogRevision) }
+                template.catalogRevision
             } else null
             var sourceBefore = source.third
             val conversationsBefore = runtime.listConversations().map { it.id }.toSet()
@@ -127,34 +127,28 @@ class RealAndroidEditedResendUiTest {
                             .joinToString(" ") { it.text }
                         error("The production editor explicitly rejected this resend: $message; see exact UI failure evidence")
                     }
-                    val candidates = runtime.listConversations().filter { it.id !in conversationsBefore }
-                    for (candidate in candidates) {
-                        val plan = if (expert) runtime.loadPreparedExpertResend(candidate.id) else null
-                        val ordinary = if (!expert) runtime.loadPreparedEditedResend(candidate.id) else null
-                        val input = plan?.input ?: ordinary?.input ?: continue
-                        if (input.sourceConversationId != source.first || input.sourceMessageId != source.second || input.editedText != editedText) continue
-                        check(input.targetConversationId == candidate.id && candidate.id != source.first)
-                        if (plan != null) {
-                            val original = checkNotNull(originalManifest)
-                            check(plan.entries.all { it.prepared.input.targetConversationId == it.participant.contextConversationId })
-                            check(plan.entries.map { it.original } == original.entries)
-                            if (template != null) check(plan.entries.single().original.expectedPromptDefinition?.content == template.body)
-                            check(plan.roomId != original.input.roomId)
-                            check(plan.entries.zip(original.entries).all { (new, old) -> new.participant.contextConversationId != old.participant.contextConversationId })
+                    val projection = runtime.loadConversationProjectionV1(source.first)
+                    val editedUser = projection.messages.singleOrNull { message -> message.role == ConversationProjectionV1.Role.User &&
+                        message.parts.filterIsInstance<ConversationProjectionV1.Part.Text>().singleOrNull()?.markdown == editedText }
+                    if (editedUser != null) {
+                        val manifest = if (expert) runtime.expertMessageSource(source.first, editedUser.messageId) else null
+                        val owners = if (manifest != null) {
+                            check(manifest.input.roomId == checkNotNull(originalManifest).input.roomId)
+                            check(manifest.entries.map { it.participant.contextConversationId } == originalManifest.entries.map { it.participant.contextConversationId })
+                            manifest.entries.map { Triple(it.participant.contextConversationId,it.childSubmissionId,it.childUserMessageId) }
+                        } else if (!expert) listOf(Triple(source.first,editedUser.messageId.removeSuffix(":user"),editedUser.messageId)) else emptyList()
+                        owners.forEach { (owner,run,_) -> approvePendingQaUi(runtime,owner,"$run:assistant",run) }
+                        val texts = owners.mapNotNull { (owner,run,user) -> answeredText(runtime,owner,run,user,editedText) }
+                        if (owners.isNotEmpty() && texts.size == owners.size && texts.all { marker in it }) {
+                            target=source.first; expectedAnswers=texts
                         }
-                        val prepared = plan?.entries?.map { it.prepared } ?: listOf(checkNotNull(ordinary))
-                        if (prepared.any { it.admittedRunId != it.runId }) continue
-                        prepared.forEach { turn -> approvePendingQaUi(runtime, turn.input.targetConversationId, turn.assistantMessageId, turn.runId) }
-                        val texts = prepared.mapNotNull { turn -> answeredText(runtime, turn) }
-                        if (texts.size != prepared.size || texts.any { marker !in it }) continue
-                        target = candidate.id
-                        expectedAnswers = texts
                     }
                     if (target != null) break
                     Thread.sleep(60)
                 }
                 checkNotNull(target) { "No exact real answered edited target within deadline" }
-                assertSourceUnchanged(runtime, sourceBefore)
+                check(target == source.first)
+                check(runtime.loadConversationProjectionV1(source.first).messages.none { it.messageId == source.second })
                 if (expert) check(runtime.expertMessageSource(source.first, source.second) == originalManifest)
                 val targetProjection = runtime.loadConversationProjectionV1(target!!)
                 check(targetProjection.messages.count { it.role == ConversationProjectionV1.Role.User } == 1)
@@ -175,7 +169,8 @@ class RealAndroidEditedResendUiTest {
                         .fetchSemanticsNodes().mapNotNull { it.config.getOrNull(ChatStreamingMarkdownSourceKey) }
                     expectedAnswers.all { answer -> visible.any { it == answer } }
                 }
-                assertSourceUnchanged(runtime, sourceBefore)
+                check(target == source.first)
+                check(runtime.loadConversationProjectionV1(source.first).messages.none { it.messageId == source.second })
             }
             File(context.filesDir, "real-android-${if (expert) "expert" else "ordinary"}-edit-report.json").writeText(report.toString(2))
         }
@@ -522,16 +517,16 @@ class RealAndroidEditedResendUiTest {
         return message.state == ConversationProjectionV1.MessageState.Completed
     }
 
-    private fun answeredText(runtime: AndroidApplicationRuntime, turn: AndroidPreparedEditedResend): String? {
-        val projection = runtime.loadConversationProjectionV1(turn.input.targetConversationId)
-        val message = projection.messages.singleOrNull { it.messageId == turn.assistantMessageId && it.state == ConversationProjectionV1.MessageState.Completed } ?: return null
+    private fun answeredText(runtime: AndroidApplicationRuntime, owner: String, run: String, user: String, text: String): String? {
+        val projection = runtime.loadConversationProjectionV1(owner)
+        val message = projection.messages.singleOrNull { it.messageId == "$run:assistant" && it.state == ConversationProjectionV1.MessageState.Completed } ?: return null
         val exact = runtime.executeQuery(buildJsonObject {
-            put("type", "load_exact_run_invocation"); put("conversation_id", turn.input.targetConversationId)
-            put("expected_run_id", turn.runId); put("assistant_message_id", turn.assistantMessageId)
+            put("type", "load_exact_run_invocation"); put("conversation_id", owner)
+            put("expected_run_id", run); put("assistant_message_id", "$run:assistant")
         }).jsonObject
         if (exact["status"]?.jsonPrimitive?.content != "sealed") return null
-        val descriptor = AndroidCanonicalTurnDescriptor(turn.input.targetConversationId, turn.input.title,
-            turn.runId, turn.userMessageId, turn.input.editedText, null, assistantMessageId = turn.assistantMessageId)
+        val descriptor = AndroidCanonicalTurnDescriptor(owner, "Edited",
+            run, user, text, null, assistantMessageId = "$run:assistant")
         val seal = loadAndroidCanonicalTerminalSeal(descriptor, exact.getValue("core_session_id").jsonPrimitive.content, runtime::executeQuery) ?: return null
         check(seal.result.getValue("value").jsonObject.getValue("kind").jsonPrimitive.content == "answered")
         return message.parts.filterIsInstance<ConversationProjectionV1.Part.Text>().joinToString("\n") { it.markdown }

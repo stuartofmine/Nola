@@ -868,4 +868,53 @@ fn same_named_http_model_cannot_change_original_endpoint_or_protocol() {
 
 include!("support/expert_template_capture_cases.rs");
 include!("support/expert_host_operation_cases.rs");
+include!("support/expert_roles_cases.rs");
 include!("support/expert_capture_preview_cases.rs");
+
+#[test]
+fn in_place_resend_rejects_unsettled_experts_then_rewinds_the_complete_set() {
+    use nola_application::{execute_application_command, ApplicationCommand};
+    use nola_domain::edited_resend::{PrepareInPlaceResend, PreparedInPlaceResend};
+    let (mut store, source) = setup();
+    let manifest = admit(&mut store, source.clone()).unwrap();
+    let input = PrepareInPlaceResend {
+        operation_id: uuid::Uuid::new_v4().to_string(), conversation_id: "parent".into(),
+        message_id: source.user_message_id.clone(),
+        expected_revision: store.load_conversation("parent").unwrap().unwrap().revision,
+        expected_message_revision: nola_application::load_conversation_projection_v1(&store,"parent").unwrap().messages[0].revision,
+        edited_text: "Edited expert request".into(), created_at_ms: 30,
+    };
+    let rejected = execute_application_command(&mut store, ApplicationCommand::PrepareInPlaceResend { input: input.clone() });
+    assert!(rejected.unwrap_err().contains("reserved_by_another_parent"));
+    assert_eq!(store.load_conversation("parent").unwrap().unwrap().messages[0].id, source.user_message_id);
+    for entry in &manifest.entries {
+        fixture_command(&mut store, |store| {
+            let receipt = rooms::submission(&store.product_setting_repository(), &source.room_id, &entry.child_submission_id)?.unwrap();
+            rooms::cancel_pending(&mut store.product_setting_repository(), &source.room_id, &entry.child_submission_id, receipt.revision, 20)?;
+            Ok(())
+        }).unwrap();
+        let conversation = store.load_conversation(&entry.participant.context_conversation_id).unwrap().unwrap();
+        execute_application_command(&mut store, ApplicationCommand::AdmitConversationUserMessage { input: nola_protocol::AdmitConversationUserMessage {
+            conversation_id: conversation.id.clone(), message_id: entry.child_user_message_id.clone(), text: source.text.clone(), created_at_ms:10,
+        }}).unwrap();
+    }
+    let result: PreparedInPlaceResend = serde_json::from_value(execute_application_command(&mut store,
+        ApplicationCommand::PrepareInPlaceResend { input: input.clone() }).unwrap()).unwrap();
+    assert_eq!(result.experts, source.selected_participants);
+    let parent = store.load_conversation("parent").unwrap().unwrap();
+    assert_eq!(parent.messages.len(),1);
+    assert_eq!(parent.messages[0].id,result.user_message_id);
+    assert_eq!(parent.messages[0].parts[0].content_text,input.edited_text);
+    for entry in &manifest.entries {
+        assert!(store.load_conversation(&entry.participant.context_conversation_id).unwrap().unwrap().messages.is_empty());
+    }
+    // A new expert admission reuses the prepared parent exactly, not a second copy.
+    let edited = AdmitExpertConversationMessage {
+        conversation_id:"parent".into(), expected_revision:parent.revision, room_id:source.room_id,
+        expected_room_revision:source.expected_room_revision, submission_id:input.operation_id,
+        user_message_id:result.user_message_id, text:input.edited_text, selected_participants:result.experts, created_at_ms:input.created_at_ms,
+    };
+    let admitted = admit(&mut store,edited).unwrap();
+    assert_eq!(admitted.entries.len(),2);
+    assert_eq!(store.load_conversation("parent").unwrap().unwrap().messages.len(),1);
+}

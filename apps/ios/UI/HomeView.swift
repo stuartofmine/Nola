@@ -56,9 +56,6 @@ private struct HomeHealthDashboardCard: View {
                                 : tr("health.dashboard.connected", "Connected"))
                                 .font(.caption2.weight(.semibold))
                                 .foregroundStyle(.secondary)
-                            Image(systemName: "chevron.right")
-                                .font(.caption2.weight(.bold))
-                                .foregroundStyle(.tertiary)
                         }
                     }
                 }
@@ -338,9 +335,6 @@ struct HomeView: View {
                                 .lineLimit(2)
                         }
                         Spacer(minLength: DesignTokens.spacing_sm)
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.tertiary)
                     }
                     .contentShape(Rectangle())
                     .padding(.vertical, 5)
@@ -889,9 +883,6 @@ struct CategorizedTodayView: View {
                                         .foregroundColor(.secondary)
                                 }
                                 Spacer()
-                                Image(systemName: "chevron.right")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary.opacity(0.5))
                             }
                             .padding(10)
                             .background(
@@ -996,9 +987,6 @@ struct CategorizedTodayView: View {
                 
                 Spacer()
                 
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(.secondary.opacity(0.4))
             }
             .contentShape(Rectangle())
         }
@@ -1149,9 +1137,6 @@ struct SummaryItemCard: View {
 
                 Spacer()
 
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.secondary.opacity(0.5))
             }
             .contentShape(Rectangle())
             .padding(16)
@@ -1351,9 +1336,6 @@ struct HistoryDetailView: View {
                             Text(L10n.notificationViewDetails)
                                 .foregroundColor(.blue)
                             Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
                         }
                         .padding()
                         .background(

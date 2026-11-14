@@ -63,3 +63,9 @@ export function sameResultJSON(left: unknown, right: unknown): boolean {
     const keys = Object.keys(left);
     return keys.length === Object.keys(right).length && keys.every(key => Object.hasOwn(right, key) && sameResultJSON(left[key], right[key]));
 }
+
+/** Presentation follows a verified seal's business result, never transport completion. */
+export function blockedRunGuidance(value: RunResultValue): string | null {
+    if(value.kind !== 'blocked')return null;
+    return value.reason.code === 'context.input_budget_exceeded' ? 'rooms.contextBudgetExceeded' : 'rooms.runBlocked';
+}

@@ -11,6 +11,11 @@ nonisolated struct AppleMessageEditSubmission: Sendable {
     let expectedSourceRevision: Int64
     let expectedMessageRevision: UInt64
     let text: String
+    func inPlacePreparation() -> ApplePrepareInPlaceResend {
+        ApplePrepareInPlaceResend(operation_id: operationID.uuidString.lowercased(), conversation_id: sourceConversationID,
+            message_id: sourceMessageID, expected_revision: expectedSourceRevision,
+            expected_message_revision: expectedMessageRevision, edited_text: text, created_at_ms: createdAtMs)
+    }
     func preparation(title: String) -> ApplePrepareEditedResend {
         ApplePrepareEditedResend(operation_id: operationID.uuidString.lowercased(),
             source_conversation_id: sourceConversationID, source_message_id: sourceMessageID,
@@ -54,6 +59,14 @@ nonisolated struct AppleMessageEditDraft: Sendable {
     var hasSourceWitness: Bool {
         sourceConversationID != nil && expectedSourceRevision.map { $0 > 0 } == true
             && expectedMessageRevision.map { $0 > 0 } == true && !sourceMessageID.isEmpty
+    }
+    func inPlacePreparation() -> ApplePrepareInPlaceResend? {
+        guard let sourceConversationID, let expectedSourceRevision, let expectedMessageRevision,
+              hasSourceWitness, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return ApplePrepareInPlaceResend(operation_id: operationID.uuidString.lowercased(),
+            conversation_id: sourceConversationID, message_id: sourceMessageID,
+            expected_revision: expectedSourceRevision, expected_message_revision: expectedMessageRevision,
+            edited_text: text, created_at_ms: createdAtMs)
     }
     func preparation(title: String) -> ApplePrepareEditedResend? {
         guard let sourceConversationID, let expectedSourceRevision, let expectedMessageRevision,

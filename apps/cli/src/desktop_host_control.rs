@@ -10,6 +10,7 @@ use std::sync::{Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 const MAX_CONTROL_FRAME_BYTES: usize = 64 * 1024;
+const MAX_EXPERT_CAPTURE_FRAME_BYTES: usize = 2 * 1024 * 1024;
 const MAX_BUFFERED_PERMISSION_DECISIONS: usize = 64;
 const MAX_BUFFERED_DEVICE_TOOL_RESULTS: usize = 64;
 
@@ -20,6 +21,7 @@ struct DesktopHostControlState {
     session_id: Option<String>,
     permission_decisions: HashMap<String, Value>,
     device_tool_results: HashMap<String, Value>,
+    expert_capture_requests: std::collections::BTreeSet<String>,
 }
 
 static CONTROL_STATE: OnceLock<(Mutex<DesktopHostControlState>, Condvar)> = OnceLock::new();
@@ -228,7 +230,7 @@ fn read_control_frames() {
     let stdin = io::stdin();
     let mut reader = stdin.lock();
     loop {
-        let line = match read_bounded_control_line(&mut reader, MAX_CONTROL_FRAME_BYTES) {
+        let line = match read_bounded_control_line(&mut reader, MAX_EXPERT_CAPTURE_FRAME_BYTES) {
             Ok(BoundedControlLine::Line(line)) => line,
             Ok(BoundedControlLine::Oversized) => {
                 eprintln!("[desktop-host-control] rejected an oversized control frame");
@@ -240,6 +242,10 @@ fn read_control_frames() {
             eprintln!("[desktop-host-control] rejected malformed JSON");
             continue;
         };
+        if let Err(error)=validate_control_frame_size(&frame,line.len()) {
+            eprintln!("[desktop-host-control] {error}");
+            continue;
+        }
         if let Err(error) = dispatch_control_frame(frame) {
             eprintln!("[desktop-host-control] {error}");
         }
@@ -598,4 +604,84 @@ mod tests {
         assert!(error.contains("invalid permission control frame"));
         reset_control_state();
     }
+    #[test]
+    fn native_expert_capture_response_is_bounded_to_live_nonce_and_owned_session() {
+        let _serial=TEST_LOCK.lock().unwrap(); reset_control_state();
+        {let mut state=control_state().0.lock().unwrap();state.started=true;state.session_id=Some("owned".into());}
+        let pending=super::ExpertCaptureRequestGuard::register("capture").unwrap();
+        let context=serde_json::json!({"actor":{"kind":"local_user","id":"native-user"},"request_host_id":null,
+            "selections":[],"builtins":[{"provider_id":"apple.prompt-templates","template_id":"11111111-1111-4111-8111-111111111111",
+                "content":"x".repeat(70*1024),"platform":"macos"}]});
+        let frame=serde_json::json!({"type":"device_tool_result","request_id":"capture","session_id":"owned",
+            "result":{"authorized":true,"capture_context":context}});
+        let size=serde_json::to_vec(&frame).unwrap().len();
+        assert!(size>super::MAX_CONTROL_FRAME_BYTES);
+        assert!(super::validate_control_frame_size(&frame,size).is_ok());
+        assert!(super::parse_expert_capture_response(&frame,"capture","owned").is_ok());
+        assert!(super::parse_expert_capture_response(&frame,"other","owned").is_err());
+        let mut foreign=frame.clone();foreign["session_id"]=serde_json::json!("other");
+        assert!(super::validate_control_frame_size(&foreign,size).is_err());
+        assert!(super::validate_control_frame_size(&frame,super::MAX_EXPERT_CAPTURE_FRAME_BYTES+1).is_err());
+        drop(pending);
+        assert!(super::validate_control_frame_size(&frame,size).is_err(),"Late large frames have no ordinary 64KB exemption");
+        reset_control_state();
+    }
+}
+
+/// Native-only template provider. The model never chooses this callback or
+/// supplies builtin bodies; Core revalidates the original committed Main effect.
+pub(crate) fn capture_expert_templates(
+    request: &nola_core::agent::host::HostRequestEnvelope,
+) -> Result<nola_application::expert_template_capture::HostExpertTemplateCaptureContext,String> {
+    let session=active_session_id().ok_or("native expert template provider is unavailable")?;
+    if session!=request.session_id.as_str() {return Err("native expert template request scope changed".into());}
+    let nonce=uuid::Uuid::new_v4().to_string();
+    let _pending=ExpertCaptureRequestGuard::register(&nonce)?;
+    crate::native_host_output::emit(serde_json::json!({
+        "type":"device_tool_request","request_id":nonce,"session_id":session,
+        "tool_name":"__nola_capture_expert_templates","arguments":{"request":request},
+    })).map_err(|_|"native expert template request could not be delivered")?;
+    let response=wait_for_device_tool_result(&nonce,Duration::from_secs(30))
+        .ok_or("native expert template provider disconnected or timed out")?;
+    parse_expert_capture_response(&response,&nonce,&session)
+}
+
+fn parse_expert_capture_response(response:&Value,nonce:&str,session:&str)
+    ->Result<nola_application::expert_template_capture::HostExpertTemplateCaptureContext,String> {
+    if response.get("type").and_then(Value::as_str)!=Some("device_tool_result")
+        || response.get("request_id").and_then(Value::as_str)!=Some(nonce)
+        || response.get("session_id").and_then(Value::as_str)!=Some(session)
+        || response.pointer("/result/authorized").and_then(Value::as_bool)!=Some(true) {
+        return Err("Native expert template capture was rejected; reconnect the owning Mac Host and check access to the selected template".into());
+    }
+    let context:nola_application::expert_template_capture::HostExpertTemplateCaptureContext=
+        serde_json::from_value(response["result"]["capture_context"].clone())
+            .map_err(|_|"native expert template provider returned an invalid capture")?;
+    context.validate()?;
+    Ok(context)
+}
+
+struct ExpertCaptureRequestGuard {request_id:String}
+impl ExpertCaptureRequestGuard {
+    fn register(request_id:&str)->Result<Self,String> {
+        let (lock,_)=control_state();
+        let mut state=lock.lock().map_err(|_|"native capture request registry is unavailable")?;
+        if !state.started || state.closed {return Err("native capture control channel is unavailable".into());}
+        if state.expert_capture_requests.len()>=32 {return Err("native capture request capacity reached".into());}
+        state.expert_capture_requests.insert(request_id.into());
+        Ok(Self {request_id:request_id.into()})
+    }
+}
+impl Drop for ExpertCaptureRequestGuard {
+    fn drop(&mut self) {if let Ok(mut state)=control_state().0.lock(){state.expert_capture_requests.remove(&self.request_id);}}
+}
+fn validate_control_frame_size(frame:&Value,bytes:usize)->Result<(),String> {
+    if bytes<=MAX_CONTROL_FRAME_BYTES {return Ok(());}
+    if bytes>MAX_EXPERT_CAPTURE_FRAME_BYTES {return Err("oversized native control frame".into());}
+    let state=control_state().0.lock().map_err(|_|"native capture request registry is unavailable")?;
+    if state.started && !state.closed && frame.get("type").and_then(Value::as_str)==Some("device_tool_result")
+        && frame.get("session_id").and_then(Value::as_str)==state.session_id.as_deref()
+        && frame.get("request_id").and_then(Value::as_str).is_some_and(|id|state.expert_capture_requests.contains(id)) {
+        Ok(())
+    } else {Err("ordinary native control frame exceeds 64KB".into())}
 }

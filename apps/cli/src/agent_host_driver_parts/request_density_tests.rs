@@ -55,6 +55,21 @@ mod request_density_tests {
     }
 
     #[test]
+    fn registered_ui_publisher_stays_visible_in_every_tier_without_changing_authority() {
+        let base = build_cli_host_catalog("ui-publisher");
+        assert!(!base.capabilities.contains_key("render_ui"));
+        let descriptor = nola_core::agent::generative_ui::capability_descriptor();
+        for tier in [ReasoningTier::Concise, ReasoningTier::Balanced, ReasoningTier::Detailed] {
+            let mut catalog = base.clone();
+            apply_initial_tool_tier(&mut catalog, tier);
+            assert!(!catalog.capabilities.contains_key("render_ui"));
+            catalog.capabilities.insert(descriptor.id.clone(), descriptor.clone());
+            apply_initial_tool_tier(&mut catalog, tier);
+            assert_eq!(catalog.capabilities["render_ui"], descriptor);
+        }
+    }
+
+    #[test]
     fn balanced_exposes_narrow_file_mutations_alongside_shell() {
         let base = build_cli_host_catalog("foundational-file-operations");
         let mut catalog = base.clone();

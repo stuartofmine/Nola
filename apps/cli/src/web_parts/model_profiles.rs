@@ -31,8 +31,13 @@ fn mobile_model_profile_catalog(store: &NolaStore) -> Result<Vec<Value>, String>
                 || !source["capabilities"].as_array().is_some_and(|values| values.contains(&json!("chat"))) {
                 return None;
             }
+            let reasoning=source.get("reasoning").and_then(Value::as_object).map(|declared| {
+                let fields=["control","efforts","budgets","defaultPreference","tiers"].into_iter()
+                    .filter_map(|key|declared.get(key).map(|value|(key.to_owned(),value.clone()))).collect();
+                Value::Object(fields)
+            });
             Some(Ok(json!({"profile_id":profile.id,"revision":profile.revision,
-                "display_name":profile.display_name,"model_name":profile.model_name})))
+                "display_name":profile.display_name,"model_name":profile.model_name,"reasoning":reasoning})))
         }).collect()
 }
 
@@ -111,7 +116,9 @@ fn resolve_bound_model_intent_settings(
     }
     request.as_object_mut().unwrap().extend(explicit.as_object().ok_or("intent overrides must be an object")?.clone());
     // Core resolves the physical selection; the Host supplies product intent only.
-    request["reasoning_tier"] = serde_json::to_value(intent.tier).map_err(|error| error.to_string())?;
+    if intent.overrides.reasoning_selection.is_none() {
+        request["reasoning_tier"] = serde_json::to_value(intent.tier).map_err(|error| error.to_string())?;
+    }
     resolve_remote_profile_settings(profile, &request, defaults, credentials)
 }
 
@@ -147,11 +154,13 @@ fn remote_profile_projection(profile: &nola_application::ModelProfile) -> Result
 }
 
 fn model_profiles_response() -> Response<Box<dyn Read + Send>> {
-    match NolaStore::open_default().and_then(|store| store.model_profiles()).and_then(|profiles| {
-        profiles.iter().filter(|p| p.runtime == "remote" && p.deleted_at_ms.is_none())
-            .map(remote_profile_projection).collect::<Result<Vec<_>, _>>()
+    match NolaStore::open_default().and_then(|store| {
+        let profiles = store.model_profiles()?.iter().filter(|p| p.runtime == "remote" && p.deleted_at_ms.is_none())
+            .map(remote_profile_projection).collect::<Result<Vec<_>, _>>()?;
+        let (default_chat_model_resolution, _) = mobile_default_chat_model_projection(&store)?;
+        Ok(json!({"profiles": profiles, "default_chat_model_resolution": default_chat_model_resolution}))
     }) {
-        Ok(profiles) => json_response(StatusCode(200), json!({"profiles": profiles})),
+        Ok(value) => json_response(StatusCode(200), value),
         Err(error) => json_response(StatusCode(500), json!({"error": error})),
     }
 }
@@ -1154,6 +1163,24 @@ mod model_profile_web_tests {
             parameters_json:json!({"temperature":0.7,"topP":0.9,"maxOutputTokens":64000,"maxContextLength":4000000}).to_string(),
             selected:true, enabled:true, revision:1, created_at_ms:1, updated_at_ms:1, deleted_at_ms:None,
         }
+    }
+
+    #[test]
+    fn expert_room_exact_effort_reaches_bound_runtime_without_becoming_a_tier() {
+        let mut profile = route_profile();
+        for effort in ["low", "high"] {
+            let settings = json!({"modelOverrides":{"configured:profile":{"reasoningPreference":effort}}});
+            let intent = room_generation_intent(&profile, &settings).unwrap();
+            let resolved = resolve_bound_model_intent_settings(&profile, &intent, &Value::Null,
+                &crate::runtime_config::RuntimeConfig::default(), &[]).unwrap();
+            assert_eq!(serde_json::to_value(resolved.runtime.reasoning_selection).unwrap(), json!({"kind":"effort","value":effort}));
+        }
+        assert!(room_generation_intent(&profile, &json!({"modelOverrides":{"configured:profile":{"reasoningPreference":"max"}}})).is_err());
+        profile.parameters_json = json!({"reasoningPreference":"high"}).to_string();
+        let intent = room_generation_intent(&profile, &json!({})).unwrap();
+        assert_eq!(serde_json::to_value(intent.overrides.reasoning_selection).unwrap(), json!({"kind":"effort","value":"high"}));
+        let inherited = room_generation_intent(&profile, &json!({"modelOverrides":{"configured:profile":{"reasoningPreference":"automatic"}}})).unwrap();
+        assert!(inherited.overrides.reasoning_selection.is_none());
     }
 
     #[test]

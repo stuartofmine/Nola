@@ -4,7 +4,7 @@
 
 [A2UI Runtime 与客户端投影](A2UI_RUNTIME_CONTRACT.md)：固定协议、Surface 所有权、事务/增量、动作和第三方渲染适配；现有实现已接共享 Core，实际平台动态覆盖另列。
 
-状态：现行模块职责；2026-11-08 核对当前实现入口及依赖。规范要求、静态接线与历史运行证据分别说明，不将未复测路径标记为通过。
+状态：现行模块职责；2026-11-12 补充回复过程、来源与技能的跨端投影边界，其他模块接线保留原核对范围。规范要求、静态接线与历史运行证据分别说明，不将未复测路径标记为通过。
 
 ## 设计、输入输出与生命周期
 
@@ -35,7 +35,7 @@
 
 ## 相关设计
 
-- [客户端交互与配置当前接线](CLIENT_INTERACTION_AND_CONFIGURATION.md)：原生档位、模板作用域、检查器展开、移动手势与验证边界（2026-11-08）。
+- [客户端交互与配置当前接线](CLIENT_INTERACTION_AND_CONFIGURATION.md)：原生档位、模板作用域、检查器展开、移动手势、回复活动与引用聚合、验证边界（2026-11-12）。
 
 - [CLIENT_PROJECTION_BOUNDARY](CLIENT_PROJECTION_BOUNDARY.md)
 - [CANONICAL_STREAMING_TEXT_CONTRACT](CANONICAL_STREAMING_TEXT_CONTRACT.md)

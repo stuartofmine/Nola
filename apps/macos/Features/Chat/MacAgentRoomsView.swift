@@ -15,7 +15,6 @@ struct MacRoomCanonicalMessage: View {
     @Environment(\.colorScheme) private var scheme
     @ScaledMetric(relativeTo: .caption) private var identityColumnWidth: CGFloat = 48
     var isExpert = true
-    var publicReplyOnly = false
     private var usesExpertIdentity: Bool { message.role != .user && isExpert }
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -53,8 +52,7 @@ struct MacRoomCanonicalMessage: View {
                     },
                     showsRoleAvatar: !isExpert,
                     assistantBubbleFill: isExpert ? AppleExpertAppearance.selected(appearance, agentID: senderIdentity).fill(scheme) : nil,
-                    journalPresentationOwner: message.journalReference.map { journalResidency.owner(for: $0) },
-                    publicReplyOnly: publicReplyOnly)
+                    journalPresentationOwner: message.journalReference.map { journalResidency.owner(for: $0) })
                 }
             }
         }
@@ -65,6 +63,7 @@ struct MacRoomCanonicalMessage: View {
 private struct MacRoomOwnerControls: View {
     @Bindable var model: MacWorkspaceModel
     let name: String
+    let open: () -> Void
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if model.isRunning, let context = model.selectedConversationID {
@@ -125,6 +124,7 @@ struct MacChatExpertPicker: View {
     @State private var query = ""
     @State private var colorAgent: MacPersistentAgent?
     var manage: (() -> Void)? = nil
+    var selected: ((MacPersistentAgent) -> Void)? = nil
 
     private var visibleAgents: [MacPersistentAgent] {
         agents.filter { $0.availability == "active" &&
@@ -138,7 +138,7 @@ struct MacChatExpertPicker: View {
                 Text("chat.experts.title").font(.headline)
                 Spacer()
                 if let manage {
-                    Button("Manage experts", action: manage)
+                    Button(String(localized: "Expert Library", table: "ExpertLibrary"), action: manage)
                         .buttonStyle(MacActionButtonStyle())
                         .accessibilityIdentifier("mac-experts-manage")
                 }
@@ -151,7 +151,7 @@ struct MacChatExpertPicker: View {
                 HStack {
                 Button {
                     if selection.contains(agent.id) { selection.remove(agent.id) }
-                    else { selection.insert(agent.id) }
+                    else { selection.insert(agent.id); selected?(agent) }
                 } label: {
                     HStack(spacing: 10) {
                         Text(String(agent.name.prefix(2)).uppercased())
@@ -213,7 +213,7 @@ struct MacUnifiedExpertTranscript: View {
                             },
                             participantName: row.name ?? "Nola", senderIdentity: row.agentID ?? "nola",
                             showsSender: index == 0 || transcriptRows[index - 1].context != row.context || transcriptRows[index - 1].message.role != message.role,
-                            width: min(720, width), isExpert: row.name != nil, publicReplyOnly: row.name != nil)
+                            width: min(720, width), isExpert: row.name != nil)
                             .background { MacTranscriptMessageAnchor(messageID: message.id, controller: scrollController) }
                     }
                 }
@@ -267,7 +267,7 @@ struct MacExpertPermissionDock: View {
         if let association = workspace.conversationAssociation, association.conversationID == conversationID {
             ForEach(association.room.room.participants) { participant in
                 if let owner = workspace.executionService?.owners[participant.contextConversationID] {
-                    MacRoomOwnerControls(model: owner, name: participant.displayName)
+                    MacRoomOwnerControls(model: owner, name: participant.displayName, open: {})
                 }
             }
         }
@@ -279,6 +279,8 @@ struct MacExpertPermissionDock: View {
 struct MacExpertDirectoryManagementView: View {
     @ObservedObject var workspace: MacAgentRoomWorkspace
     @Environment(\.dismiss) private var dismiss
+    @State private var builtinPreview: AppleExpertRoleTemplate?
+    @State private var hasChosenEditor = false
     @State private var selected: MacPersistentAgent?
     @State private var name = ""
     @State private var responsibilities = ""
@@ -288,14 +290,23 @@ struct MacExpertDirectoryManagementView: View {
     @State private var modelOptions: [MacChatModelOption] = []
     @State private var configurationError: String?
     @State private var showsTemplateLibrary = false
+    @State private var showsTemplateOverride = false
+    @State private var roleTemplates: [AppleExpertRoleTemplate] = []
+    @State private var supportsExpertReasoning = false
+    @State private var previewRoleID = ""
+    @State private var confirmsRoleReplacement = false
+    @State private var reasoningEfforts: [String] = []
+    @Environment(\.locale) private var locale
     @State private var showsDiscardConfirmation = false
+    @State private var allowsConfirmedClose = false
     @State private var pendingNavigation: Navigation?
     @StateObject private var templates = MacPromptLibrary.service
 
-    private enum Navigation { case select(MacPersistentAgent?), close }
+    private enum Navigation { case select(MacPersistentAgent?), preview(AppleExpertRoleTemplate), close }
 
     private var readableTemplates: [PromptTemplate] { templates.templates.filter(templates.canReadTemplate) }
     private var hasUnsavedChanges: Bool {
+        if builtinPreview != nil { return false }
         guard let original = try? AppleExpertConfigurationDraft(defaults: selected?.defaults ?? .object([:])) else { return true }
         return name != (selected?.name ?? "") || responsibilities != (selected?.description ?? "")
             || isEnabled != (selected?.availability == "active" || selected == nil) || configuration != original
@@ -304,7 +315,7 @@ struct MacExpertDirectoryManagementView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Text("Manage experts").font(.headline)
+                Text(String(localized: "Expert Library", table: "ExpertLibrary")).font(.headline)
                 Spacer()
                 Button("Done") { requestNavigation(.close) }.buttonStyle(MacActionButtonStyle()).keyboardShortcut(.cancelAction)
                     .disabled(isSaving).accessibilityIdentifier("mac-expert-done")
@@ -314,98 +325,133 @@ struct MacExpertDirectoryManagementView: View {
                     Button("Create expert") { requestNavigation(.select(nil)) }
                         .buttonStyle(MacActionButtonStyle())
                         .accessibilityIdentifier("mac-expert-create")
-                    List(workspace.directory, id: \.id) { agent in
-                        Button { requestNavigation(.select(agent)) } label: {
-                            HStack {
-                                Text(agent.name)
-                                Spacer()
-                                if agent.availability != "active" { Image(systemName: "pause.circle") }
-                            }.frame(maxWidth: .infinity, minHeight: 36).contentShape(Rectangle())
-                        }.buttonStyle(.plain)
-                            .accessibilityIdentifier("mac-expert-edit-" + agent.id)
+                    List {
+                        Section(String(localized: "Built-in experts", table: "ExpertLibrary")) {
+                            ForEach(roleTemplates) { role in
+                                Button { requestNavigation(.preview(role)) } label: {
+                                    Label(role.localizedName(locale: locale), systemImage: "person.crop.circle")
+                                        .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+                                        .contentShape(Rectangle())
+                                }.buttonStyle(.plain)
+                                    .accessibilityIdentifier("mac-expert-builtin-" + role.id)
+                                    .listRowBackground(builtinPreview?.id == role.id ? Color.primary.opacity(0.07) : Color.clear)
+                            }
+                        }
+                        Section(String(localized: "My experts", table: "ExpertLibrary")) {
+                            if workspace.directory.isEmpty {
+                                Text(String(localized: "No custom experts yet", table: "ExpertLibrary"))
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            ForEach(workspace.directory, id: \.id) { agent in
+                                Button { requestNavigation(.select(agent)) } label: {
+                                    HStack {
+                                        Text(agent.name)
+                                        Spacer()
+                                        if agent.availability != "active" { Image(systemName: "pause.circle") }
+                                    }.frame(maxWidth: .infinity, minHeight: 36).contentShape(Rectangle())
+                                }.buttonStyle(.plain)
+                                    .accessibilityIdentifier("mac-expert-edit-" + agent.id)
+                                    .listRowBackground(builtinPreview == nil && selected?.id == agent.id ? Color.primary.opacity(0.07) : Color.clear)
+                            }
+                        }
                     }
                 }.frame(minWidth: 170, idealWidth: 210, maxWidth: 260)
-                Form {
-                    TextField("Expert name", text: $name)
-                        .accessibilityIdentifier("mac-expert-name")
-                    TextField("Responsibilities and strengths", text: $responsibilities, axis: .vertical)
-                        .lineLimit(3...7).accessibilityIdentifier("mac-expert-description")
-                    Picker("Model", selection: $configuration.modelID) {
-                        Text("Use default model").tag("")
-                        ForEach(modelOptions, id: \.id) { option in
-                            Text(option.displayName).tag(option.id)
+                if let role = builtinPreview {
+                    builtinDetail(role)
+                } else {
+                    Form {
+                        TextField("Expert name", text: $name)
+                            .accessibilityIdentifier("mac-expert-name")
+                        TextField("Responsibilities and strengths", text: $responsibilities, axis: .vertical)
+                            .lineLimit(3...7).accessibilityIdentifier("mac-expert-description")
+                        Picker("Model", selection: $configuration.modelID) {
+                            Text("Use application default model").tag("")
+                            ForEach(modelOptions, id: \.id) { option in
+                                Text(option.displayName).tag(option.id)
+                            }
+                            if !configuration.modelID.isEmpty && !modelOptions.contains(where: { $0.id == configuration.modelID }) {
+                                Text("Unavailable model: \(configuration.modelID)").tag(configuration.modelID)
+                            }
+                        }.accessibilityIdentifier("mac-expert-model")
+                        .onChange(of: configuration.modelID) { _, _ in
+                            refreshReasoningEfforts()
                         }
-                        if !configuration.modelID.isEmpty && !modelOptions.contains(where: { $0.id == configuration.modelID }) {
-                            Text("Unavailable model: \(configuration.modelID)").tag(configuration.modelID)
-                        }
-                    }.accessibilityIdentifier("mac-expert-model")
-                    Picker("Prompt template", selection: $configuration.templateID) {
-                        Text("Use default template").tag("")
-                        ForEach(readableTemplates, id: \.id) { template in
-                            Text(template.name).tag(template.id.uuidString)
-                        }
-                        if !configuration.templateID.isEmpty,
-                           !readableTemplates.contains(where: { $0.id.uuidString == configuration.templateID }) {
-                            Text("Unavailable template: \(configuration.templateID)").tag(configuration.templateID)
-                        }
-                    }.accessibilityIdentifier("mac-expert-template")
-                    Button("Manage prompt templates") { showsTemplateLibrary = true }
-                        .buttonStyle(MacActionButtonStyle()).accessibilityIdentifier("mac-expert-manage-templates")
-                    Text("Unset selections inherit application defaults. Existing conversations keep their captured configuration.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    if selected != nil {
-                        Toggle("Enabled", isOn: $isEnabled)
-                            .accessibilityIdentifier("mac-expert-enabled")
-                        Text("Changes apply to future selections. Existing conversations retain their expert snapshot.")
+                        reasoningControls
+                        roleControls
+                        templateControls
+                        Text("Unset selections inherit application defaults. Existing conversations keep their captured configuration.")
                             .font(.caption).foregroundStyle(.secondary)
-                    }
-                    Button(selected == nil ? String(localized: "Create expert") : String(localized: "Save")) {
-                        isSaving = true
-                        let original = selected
-                        let editedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-                        let description = responsibilities.trimmingCharacters(in: .whitespacesAndNewlines)
-                        Task {
-                            let defaults: MacCanonicalJSONValue
-                            do {
-                                let initial = original?.defaults ?? .object([:])
-                                let previous = try AppleExpertConfigurationDraft(defaults: initial)
-                                let currentOptions = try workspace.agentModelOptions?() ?? []
-                                if configuration.modelID != previous.modelID, !configuration.modelID.isEmpty,
-                                   !currentOptions.contains(where: { $0.id == configuration.modelID }) {
-                                    throw MacApplicationPortError.rejected(String(localized: "Choose an available expert model."))
-                                }
-                                if configuration.templateID != previous.templateID, !configuration.templateID.isEmpty,
-                                   !readableTemplates.contains(where: { $0.id.uuidString == configuration.templateID }) {
-                                    throw MacApplicationPortError.rejected(String(localized: "Choose a readable prompt template."))
-                                }
-                                defaults = try configuration.applying(to: initial)
-                                configurationError = nil
-                            } catch {
-                                configurationError = error.localizedDescription
-                                isSaving = false
-                                return
-                            }
-                            if let original {
-                                await workspace.updateAgent(original, name: editedName, description: description, isEnabled: isEnabled, defaults: defaults)
-                            } else {
-                                await workspace.createAgent(name: editedName, description: description, defaults: defaults)
-                            }
-                            isSaving = false
-                            if workspace.directoryError == nil {
-                                edit(workspace.directory.first { $0.id == original?.id })
-                            }
+                        if selected != nil {
+                            Toggle("Enabled", isOn: $isEnabled)
+                                .accessibilityIdentifier("mac-expert-enabled")
+                            Text("Changes apply to future selections. Existing conversations retain their expert snapshot.")
+                                .font(.caption).foregroundStyle(.secondary)
                         }
-                    }.buttonStyle(MacActionButtonStyle())
-                        .disabled(isSaving || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        .accessibilityIdentifier("mac-expert-save")
-                    if let error = workspace.directoryError {
-                        Text(error).foregroundStyle(.red).textSelection(.enabled)
-                    }
-                    if let configurationError { Text(configurationError).foregroundStyle(.red).textSelection(.enabled) }
-                }.formStyle(.grouped).frame(minWidth: 320)
+                        Button(selected == nil ? String(localized: "Create expert") : String(localized: "Save")) {
+                            isSaving = true
+                            let original = selected
+                            let editedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                            let description = responsibilities.trimmingCharacters(in: .whitespacesAndNewlines)
+                            Task {
+                                let defaults: MacCanonicalJSONValue
+                                do {
+                                    let initial = original?.defaults ?? .object([:])
+                                    let previous = try AppleExpertConfigurationDraft(defaults: initial)
+                                    let currentOptions = try workspace.agentModelOptions?() ?? []
+                                    if configuration.modelID != previous.modelID, !configuration.modelID.isEmpty,
+                                       !currentOptions.contains(where: { $0.id == configuration.modelID }) {
+                                        throw MacApplicationPortError.rejected(String(localized: "Choose an available expert model."))
+                                    }
+                                    if configuration.templateID != previous.templateID, !configuration.templateID.isEmpty,
+                                       !readableTemplates.contains(where: { $0.id.uuidString == configuration.templateID }),
+                                       !roleTemplates.contains(where: { $0.id == configuration.templateID }) {
+                                        throw MacApplicationPortError.rejected(String(localized: "Choose a readable prompt template."))
+                                    }
+                                    if configuration.reasoningEffort != previous.reasoningEffort, !supportsExpertReasoning {
+                                        throw MacApplicationPortError.rejected(String(localized: "This Host does not support expert reasoning levels."))
+                                    }
+                                    if configuration.reasoningEffort != "automatic",
+                                       configuration.reasoningEffort != previous.reasoningEffort || configuration.modelID != previous.modelID {
+                                        let supported = try workspace.agentReasoningEfforts?(configuration.modelID) ?? []
+                                        guard supported.contains(configuration.reasoningEffort) else {
+                                            throw MacApplicationPortError.rejected(String(localized: "Choose an available expert reasoning level."))
+                                        }
+                                    }
+                                    defaults = try configuration.applying(to: initial)
+                                    configurationError = nil
+                                } catch {
+                                    configurationError = error.localizedDescription
+                                    isSaving = false
+                                    return
+                                }
+                                let savedID: String?
+                                if let original {
+                                    savedID = original.id
+                                    await workspace.updateAgent(original, name: editedName, description: description, isEnabled: isEnabled, defaults: defaults)
+                                } else {
+                                    savedID = await workspace.createAgent(name: editedName, description: description, defaults: defaults)
+                                }
+                                isSaving = false
+                                if workspace.directoryError == nil {
+                                    edit(workspace.directory.first { $0.id == savedID })
+                                }
+                            }
+                        }.buttonStyle(MacActionButtonStyle())
+                            .disabled(isSaving || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .accessibilityIdentifier("mac-expert-save")
+                        if let error = workspace.directoryError {
+                            Text(error).foregroundStyle(.red).textSelection(.enabled)
+                        }
+                        if let configurationError { Text(configurationError).foregroundStyle(.red).textSelection(.enabled) }
+                    }.formStyle(.grouped).frame(minWidth: 320)
+                }
             }.disabled(isSaving)
-        }.padding(16).frame(minWidth: 620, minHeight: 430)
+        }.padding(16).frame(minWidth: 760, idealWidth: 860, minHeight: 560, idealHeight: 640)
             .interactiveDismissDisabled(isSaving || hasUnsavedChanges)
+            .background(MacEditorWindowCloseGuard(
+                shouldPreventClose: { (isSaving || hasUnsavedChanges) && !allowsConfirmedClose },
+                onCloseAttempt: { requestNavigation(.close) }
+            ))
             .confirmationDialog(String(localized: "Discard unsaved changes?"), isPresented: $showsDiscardConfirmation) {
                 Button(String(localized: "Discard Changes"), role: .destructive) {
                     let action = pendingNavigation; pendingNavigation = nil
@@ -414,8 +460,29 @@ struct MacExpertDirectoryManagementView: View {
                 Button(String(localized: "Keep Editing"), role: .cancel) { pendingNavigation = nil }
                     .accessibilityIdentifier("mac-expert-keep-editing")
             }
-            .task { await workspace.refreshExpertDirectory(); refreshModelOptions() }
+            .confirmationDialog(String(localized: "Replace prompt template?"), isPresented: $confirmsRoleReplacement) {
+                Button("Apply role template") { applyPreviewRole() }
+                Button("Keep current template", role: .cancel) {}
+            } message: {
+                Text("The expert will use this role instead. Your custom prompt template is kept in the library.")
+            }
+            .task {
+                await workspace.refreshExpertDirectory()
+                refreshModelOptions()
+                let service = workspace.service
+                do {
+                    let catalog = try await Task.detached { try service.roleTemplates() }.value
+                    roleTemplates = catalog.templates
+                    if !hasChosenEditor && builtinPreview == nil { builtinPreview = catalog.templates.first }
+                    if roleTemplates.contains(where: { $0.id == configuration.templateID }) { previewRoleID = configuration.templateID }
+                    supportsExpertReasoning = catalog.features.reasoningEffort && catalog.features.explicitGenerationReasoning
+                }
+                catch { configurationError = error.localizedDescription }
+            }
             .onReceive(NotificationCenter.default.publisher(for: .nolaMacConfigurationDidChange)) { _ in refreshModelOptions() }
+            .onReceive(NotificationCenter.default.publisher(for: .macDefaultChatModelDidChange)) { _ in
+                if configuration.modelID.isEmpty { refreshReasoningEfforts() }
+            }
             .sheet(isPresented: $showsTemplateLibrary) {
                 VStack(alignment: .trailing, spacing: 0) {
                     Button("Done") { showsTemplateLibrary = false }.buttonStyle(MacActionButtonStyle())
@@ -425,11 +492,137 @@ struct MacExpertDirectoryManagementView: View {
             }
     }
 
+    private func builtinDetail(_ role: AppleExpertRoleTemplate) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(role.localizedName(locale: locale)).font(.title2.weight(.semibold))
+                Text(role.localizedDescription(locale: locale)).foregroundStyle(.secondary)
+                Button(String(localized: "Customize a copy", table: "ExpertLibrary")) {
+                    edit(nil)
+                    previewRoleID = role.id
+                    applyPreviewRole()
+                }.buttonStyle(MacActionButtonStyle()).accessibilityIdentifier("mac-expert-customize-builtin")
+                Text(String(localized: "Prompt", table: "ExpertLibrary")).font(.headline)
+                Text(role.prompt).textSelection(.enabled)
+                Text("Tools").font(.headline)
+                ForEach(role.toolPack.tools, id: \.self) { tool in
+                    Text(MacToolPresentationPolicy.displayTitle(for: tool)).font(.callout)
+                }
+                ForEach(role.skills) { skill in
+                    Text(skill.localizedName(locale: locale)).font(.headline)
+                    Text(skill.instructions).textSelection(.enabled)
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading).padding(20)
+        }.frame(minWidth: 320).accessibilityIdentifier("mac-expert-builtin-preview")
+    }
+
+    @ViewBuilder private var templateControls: some View {
+        if roleTemplates.contains(where: { $0.id == configuration.templateID }) && !showsTemplateOverride {
+            Button("Choose another prompt template") { showsTemplateOverride = true }
+                .buttonStyle(.link).accessibilityIdentifier("mac-expert-change-template")
+        } else {
+            Picker("Prompt template", selection: $configuration.templateID) {
+                Text("Use default template").tag("")
+                if let role = roleTemplates.first(where: { $0.id == configuration.templateID }) {
+                    Text(role.localizedName(locale: locale)).tag(role.id)
+                }
+                ForEach(readableTemplates, id: \.id) { template in
+                    Text(template.name).tag(template.id.uuidString)
+                }
+                if !configuration.templateID.isEmpty,
+                   !readableTemplates.contains(where: { $0.id.uuidString == configuration.templateID }),
+                   !roleTemplates.contains(where: { $0.id == configuration.templateID }) {
+                    Text("Unavailable template: \(configuration.templateID)").tag(configuration.templateID)
+                }
+            }.accessibilityIdentifier("mac-expert-template")
+            Button("Manage prompt templates") { showsTemplateLibrary = true }
+                .buttonStyle(MacActionButtonStyle()).accessibilityIdentifier("mac-expert-manage-templates")
+        }
+    }
+
+    private var reasoningControls: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Picker(String(localized: "reasoning.effort.title", table: "Reasoning"), selection: $configuration.reasoningEffort) {
+                Text(String(localized: "reasoning.effort.automatic", table: "Reasoning")).tag("automatic")
+                ForEach(reasoningEfforts, id: \.self) { effort in
+                    Text(String(localized: String.LocalizationValue("reasoning.effort." + effort), table: "Reasoning")).tag(effort)
+                }
+                if configuration.reasoningEffort != "automatic", !reasoningEfforts.contains(configuration.reasoningEffort) {
+                    Text("\(String(localized: "Unavailable")) · \(configuration.reasoningEffort)")
+                        .tag(configuration.reasoningEffort).disabled(true)
+                }
+            }.accessibilityIdentifier("mac-expert-reasoning-effort").disabled(!supportsExpertReasoning)
+            if reasoningEfforts.isEmpty {
+                Text("This model has no declared reasoning levels. Automatic inherits its configuration.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var roleControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Picker("Role template", selection: $previewRoleID) {
+                Text("Choose a role").tag("")
+                ForEach(roleTemplates) { role in Text(role.localizedName(locale: locale)).tag(role.id) }
+            }.accessibilityIdentifier("mac-expert-role")
+            if let role = roleTemplates.first(where: { $0.id == previewRoleID }) {
+                Text(role.localizedDescription(locale: locale)).font(.caption).foregroundStyle(.secondary)
+                DisclosureGroup("Prompt") {
+                    Text(role.prompt).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }.disclosureGroupStyle(MacRowDisclosureStyle(toggleIdentifier: "mac-expert-role-prompt", isPlain: true))
+                DisclosureGroup("Tools") {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 130), alignment: .leading)], alignment: .leading, spacing: 6) {
+                        ForEach(role.toolPack.tools, id: \.self) { tool in
+                            Text(MacToolPresentationPolicy.displayTitle(for: tool)).font(.caption)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 8).padding(.vertical, 5)
+                                .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 6))
+                                .help(tool)
+                        }
+                    }
+                    Text("Role tools guide the workflow; they do not grant permissions.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }.disclosureGroupStyle(MacRowDisclosureStyle(toggleIdentifier: "mac-expert-role-tools", isPlain: true))
+                ForEach(role.skills) { skill in
+                    DisclosureGroup(skill.localizedName(locale: locale)) {
+                        Text(skill.instructions).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    }.disclosureGroupStyle(MacRowDisclosureStyle(toggleIdentifier: "mac-expert-role-skill-" + skill.id, isPlain: true))
+                }
+                Button("Apply role template") {
+                    if !configuration.templateID.isEmpty, configuration.templateID != role.id { confirmsRoleReplacement = true }
+                    else { applyPreviewRole() }
+                }.buttonStyle(MacActionButtonStyle()).accessibilityIdentifier("mac-expert-apply-role")
+                    .disabled(configuration.templateID == role.id)
+            }
+        }
+    }
+
+    private func applyPreviewRole() {
+        guard let role = roleTemplates.first(where: { $0.id == previewRoleID }) else { return }
+        configuration.templateID = role.id
+        showsTemplateOverride = false
+        if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { name = role.localizedName(locale: locale) }
+        if responsibilities.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            responsibilities = role.localizedDescription(locale: locale)
+        }
+    }
+
+    private func refreshReasoningEfforts() {
+        do { reasoningEfforts = try workspace.agentReasoningEfforts?(configuration.modelID) ?? [] }
+        catch { reasoningEfforts = []; configurationError = error.localizedDescription }
+    }
+
     private func edit(_ agent: MacPersistentAgent?) {
+        hasChosenEditor = true
+        builtinPreview = nil
         selected = agent; name = agent?.name ?? ""; responsibilities = agent?.description ?? ""
+        showsTemplateOverride = false
         isEnabled = agent?.availability == "active" || agent == nil
         do {
             configuration = try AppleExpertConfigurationDraft(defaults: agent?.defaults ?? .object([:]))
+            previewRoleID = roleTemplates.contains(where: { $0.id == configuration.templateID }) ? configuration.templateID : ""
+            refreshReasoningEfforts()
             configurationError = nil
         } catch { configurationError = error.localizedDescription }
     }
@@ -442,66 +635,14 @@ struct MacExpertDirectoryManagementView: View {
 
     private func performNavigation(_ action: Navigation) {
         switch action {
-        case .close: dismiss()
+        case .close: allowsConfirmedClose = true; dismiss()
         case .select(let agent): edit(agent)
+        case .preview(let role): builtinPreview = role
         }
     }
 
     private func refreshModelOptions() {
-        do { modelOptions = try workspace.agentModelOptions?() ?? []; configurationError = nil }
+        do { modelOptions = try workspace.agentModelOptions?() ?? []; refreshReasoningEfforts(); configurationError = nil }
         catch { configurationError = error.localizedDescription }
-    }
-}
-
-/// Full child histories live in the inspector, never below the parent conversation.
-struct MacExpertSessionsInspector: View {
-    @ObservedObject var workspace: MacAgentRoomWorkspace
-    let conversationID: String?
-    @State private var selectedContextID: String?
-
-    var body: some View {
-        if let association = workspace.conversationAssociation,
-           association.conversationID == conversationID {
-            if let participant = association.room.room.participants.first(where: {
-                $0.contextConversationID == selectedContextID
-            }), let owner = workspace.executionService?.owners[participant.contextConversationID] {
-                VStack(alignment: .leading, spacing: 12) {
-                    Button { selectedContextID = nil } label: {
-                        Label(String(localized: "chat.expert_sessions", table: "Chat"), systemImage: "chevron.left")
-                    }.accessibilityIdentifier("chat.expert-session.back")
-                    Text(participant.displayName).font(.headline)
-                    MacRoomOwnerControls(model: owner, name: participant.displayName)
-                    ForEach(owner.selectedMessages) { message in
-                        MacRoomCanonicalMessage(model: owner, message: message,
-                            contextID: participant.contextConversationID,
-                            isCurrentOwner: {
-                                workspace.conversationAssociation?.conversationID == conversationID &&
-                                owner.selectedConversationID == participant.contextConversationID
-                            }, participantName: participant.displayName, senderIdentity: participant.agentID,
-                            showsSender: true, width: 300)
-                    }
-                }
-            } else {
-                VStack(alignment: .leading, spacing: 8) {
-                    if association.room.room.participants.isEmpty {
-                        Text("No experts in this conversation").font(.callout).foregroundStyle(.secondary)
-                    }
-                    ForEach(association.room.room.participants) { participant in
-                        Button { selectedContextID = participant.contextConversationID } label: {
-                            HStack {
-                                AppleExpertAvatar(name: participant.displayName, size: 28)
-                                Text(participant.displayName)
-                                Spacer()
-                                Image(systemName: "chevron.right").foregroundStyle(.secondary)
-                            }.frame(minHeight: 40).contentShape(Rectangle())
-                        }.buttonStyle(.plain)
-                            .disabled(workspace.executionService?.owners[participant.contextConversationID] == nil)
-                            .accessibilityIdentifier("chat.expert-session." + participant.id)
-                    }
-                }
-            }
-        } else {
-            Text("No experts in this conversation").font(.callout).foregroundStyle(.secondary)
-        }
     }
 }

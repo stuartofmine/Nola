@@ -32,7 +32,7 @@
 | [conversation-list](../scenarios.html?scene=conversation-list&platform=mac) | 对话与输入 / 会话列表、搜索与草稿 | 对话 | 3 | macOS / iOS / iPadOS / Android / Web / Windows / CLI |
 | [compose](../scenarios.html?scene=compose&platform=mac) | 对话与输入 / 普通消息与流式阅读 | 对话 → 输入 | 3 | macOS / iOS / iPadOS / Android / Web / Windows / CLI |
 | [stream-reader](../scenarios.html?scene=stream-reader&platform=mac) | 对话与输入 / 长回复、代码表格与阅读跟随 | 会话 → 长回复 | 3 | macOS / iOS / iPadOS / Android / Web / Windows |
-| [edit-resend](../scenarios.html?scene=edit-resend&platform=mac) | 对话与输入 / 编辑已发送内容与分支 | 用户消息 → 编辑重发 | 3 | macOS / iOS / iPadOS / Android / Web / Windows |
+| [edit-resend](../scenarios.html?scene=edit-resend&platform=mac) | 对话与输入 / 编辑已发送内容与原地重发 | 用户消息 → 编辑重发 | 3 | macOS / iOS / iPadOS / Android / Web / Windows |
 | [copy](../scenarios.html?scene=copy&platform=mac) | 对话与输入 / 复制成功与手动回退 | 回复下方 → 复制 | 3 | macOS / iOS / iPadOS / Android / Web / Windows |
 | [image-paste](../scenarios.html?scene=image-paste&platform=mac) | 对话与输入 / 图片、文件粘贴与导入失败 | 输入 → 添加附件 / 粘贴 | 3 | macOS / iOS / iPadOS / Android / Web / Windows / CLI |
 | [voice](../scenarios.html?scene=voice&platform=ios) | 对话与输入 / 语音输入与麦克风权限 | 输入 → 语音 | 3 | iOS / iPadOS / Android |
@@ -76,7 +76,7 @@
 | [memory](../scenarios.html?scene=memory&platform=mac) | 资料、知识与记忆 / 个人长期记忆、修正与删除 | 资料 → 长期记忆 | 4 | macOS / iOS / iPadOS / Android / Web / Windows |
 | [health](../scenarios.html?scene=health&platform=mac) | 资料、知识与记忆 / 健康数据、授权与同步 | 资料 → 健康 | 3 | macOS / iOS / iPadOS / Android |
 | [location-calendar](../scenarios.html?scene=location-calendar&platform=mac) | 资料、知识与记忆 / 位置、日历与设备来源 | 资料 → 设备来源 | 3 | macOS / iOS / iPadOS / Android |
-| [experts](../scenarios.html?scene=experts&platform=mac) | 专家、Room 与审阅 / 专家配置、身份、颜色与恢复 | 会话 → 参与者 | 4 | macOS / iOS / iPadOS / Android / Web / Windows |
+| [experts](../scenarios.html?scene=experts&platform=mac) | 专家、Room 与审阅 / 专家配置、子任务协作与只读会话 | 会话 → 参与者 | 4 | macOS / iOS / iPadOS / Android / Web / Windows |
 | [room](../scenarios.html?scene=room&platform=mac) | 专家、Room 与审阅 / Room 创建、加入、定向消息与恢复 | 专家 / Room | 4 | macOS / iOS / iPadOS / CLI |
 | [subtask](../scenarios.html?scene=subtask&platform=mac) | 专家、Room 与审阅 / 子任务、执行者与取消 | 会话 → 执行 → 子任务 | 4 | macOS / iOS / iPadOS / Android / Web / Windows / CLI |
 | [inspector](../scenarios.html?scene=inspector&platform=mac) | 专家、Room 与审阅 / 检查器全部区段与独立展开 | 桌面右栏 / 手机会话详情 | 3 | macOS / iOS / iPadOS / Android / Web / Windows |

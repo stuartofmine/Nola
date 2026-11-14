@@ -2118,7 +2118,7 @@
 "settings.data.clearing" = "データを消去中…";
 "settings.data.export_failed" = "書き出しを作成できません：%@";
 "settings.data.clear_complete" = "ローカルデータを消去しました。";
-"settings.data.clear_partial" = "大部分のデータを消去しましたが、一部の会話記録を削除できませんでした。";
+"settings.data.clear_partial" = "一部のローカルデータを削除できませんでした。残っている会話とデータソースを確認してください。";
 "settings.operation.title" = "データ管理";
 
 /* macOS 設定 */
@@ -2779,7 +2779,7 @@
 
 /* Expert picker */
 "chat.experts.title" = "エキスパート";
-"chat.experts.description" = "この会話で返信するエキスパートを選択します。選択しても返信は開始されず、権限も付与されません。";
+"chat.experts.description" = "Nola が相談する専門家を選びます。Nola が作業を調整して回答します。";
 "chat.experts.search" = "エキスパートを検索";
 "chat.experts.empty" = "利用可能なエキスパートはいません";
 "chat.experts.selected" = "選択済み";
@@ -2841,7 +2841,7 @@
 "expert.color.pink" = "ピンク";
 "chat.message.edit" = "編集して再送信";
 "chat.message.editWait" = "編集する前に現在の応答を停止するか、完了を待ってください。";
-"chat.message.editPreservesOriginal" = "再送信すると別の会話が作成されます。元のメッセージと下書きは保持されます。";
+"chat.message.editPreservesOriginal" = "このメッセージ以降を同じ会話内で置き換えて再送信します。入力中の下書きは保持されます。";
 "chat.message.saveResend" = "保存して再送信";
 "chat.message.resendUnavailable" = "元の実行設定を確認するまで、このメッセージは再送信できません。";
 
@@ -2865,11 +2865,11 @@
 "experts.save" = "保存";
 "experts.archive" = "エキスパートをアーカイブ";
 "experts.restore" = "エキスパートを復元";
-"experts.conversationModel" = "会話のモデルを使用";
+"experts.conversationModel" = "アプリの既定モデルを使用";
 
 "experts.template" = "プロンプトテンプレート";
 
-"experts.conversationTemplate" = "会話のテンプレートを使用";
+"experts.conversationTemplate" = "テンプレートを指定しない";
 
 "experts.savedModelUnavailable" = "保存済みモデル（利用不可）";
 
@@ -2885,9 +2885,9 @@
 
 "work.tools.noGoal" = "アクティブな目標はありません";
 
-"chat.experts.sourceUnavailable.title" = "この会話では専門家を利用できません";
+"chat.experts.sourceUnavailable.title" = "専門家の接続元を確認できません";
 
-"chat.experts.sourceUnavailable.detail" = "別のホストに属する会話や、出所を確認できない会話には、この端末の専門家を追加できません。ローカルの専門家の管理は引き続き利用できます。";
+"chat.experts.sourceUnavailable.detail" = "この会話の Host に再接続するか、専門家一覧を更新してください。";
 "chat.request.diagnostic_details" = "診断の詳細";
 
 "chat.step.failed" = "このステップは失敗しました";
@@ -2994,7 +2994,7 @@
 "Model request waiting" = "モデルへのリクエストが待機中";
 "Model route changed" = "モデルのルートを変更済み";
 "Request restarted" = "リクエストを再開済み";
-"a2ui.history.version" = "このバージョンのフォームを表示";
+"a2ui.history.version" = "内容を表示";
 "activity.emptyResponse" = "現在、応答が必要な項目はありません。";
 "activity.fullResultInSource" = "結果の全文は元の会話を開いて確認してください。";
 "activity.localScope" = "受信したリモートの結果を含む、このデバイスに保存された実行記録です。";
@@ -3120,5 +3120,86 @@
 "settings.navigation.general" = "一般";
 "settings.navigation.general.detail" = "外観、通知、ソフトウェアアップデート";
 
-"chat.experts.conversations" = "エキスパートとの会話";
-"chat.experts.conversations.empty" = "この会話でエキスパートをメンションすると、実行の詳細をここで確認できます。";
+// Generated UI recovery and presentation
+"a2ui.revalidate" = "再検証";
+"a2ui.discardEdits" = "編集を破棄して現在の値を使用";
+"a2ui.checkSubmission" = "送信結果を確認";
+"a2ui.finishComposition" = "送信する前にテキストの入力を確定してください。";
+"a2ui.fieldsRemoved" = "フォームが変更され、一部のフィールドが利用できなくなりました。編集内容は保持されています。破棄する前に確認してください。";
+"a2ui.receiptMismatch" = "送信結果は別のフォームのものです。もう一度確認してください。";
+"a2ui.previewUnavailable" = "フォームが変更されたか検証できません。再読み込みしてください。";
+"a2ui.previewMismatch" = "検証結果が古いか別のフォームのものです。編集を確認して再試行してください。";
+"a2ui.pending" = "コンポーネントとデータを待って画面を準備しています…";
+"a2ui.deleted" = "この画面は削除されました。";
+
+// Mobile settings groups
+"settings.group.preferences" = "環境設定";
+"settings.group.connections" = "接続と機能";
+"settings.group.security" = "セキュリティ";
+
+// Compact bibliography and live process headings.
+"chat.sources.all" = "すべての出典を表示";
+"chat.sources.fewer" = "出典を折りたたむ";
+"chat.processing" = "処理中";
+"chat.skill.deep_research" = "詳細調査";
+
+"model.protocol.guidance" = "ツールと推論を併用する場合は、サービスが対応していれば Responses を選択してください。一部の Chat Completions モデルでは推論を明示的に無効にする必要があります。";
+
+"information.recentKnowledge" = "最近の知見";
+
+"information.recentConversations" = "最近の会話";
+
+"activity.recentLoaded" = "件の最近の記録";
+
+/* Model connection draft protection */
+"model.setup.discard_title" = "保存していない変更を破棄しますか？";
+"model.setup.discard" = "変更を破棄";
+"model.setup.keep_editing" = "編集を続ける";
+"model.web_host.saved_token_hint" = "空欄の場合は、このホストの保存済みトークンを使用します。";
+
+"chat.context.import.invalid_text" = "空ではない UTF-8 テキストファイルを選択してください。上限は %d 文字（192 KB）です。";
+
+"chat.context.import.failed_count" = "%d 個のファイルを読み込めませんでした。空ではない UTF-8 テキストファイル（上限 40,000 文字、192 KB）を使用してください。";
+
+/* Expert roles and revision-aware mentions */
+"experts.reasoning.inherit" = "モデル設定を継承";
+"experts.reasoning.unknown" = "このモデルは推論レベルを宣言していないため、既定の設定を継承します。";
+"experts.role.details" = "プロンプト、ツールと Skill";
+"experts.role.tools" = "ツールパック";
+"experts.role.permissions" = "これらの機能は役割の説明です。ツールの実行には引き続き該当する権限が必要です。";
+"experts.mention.changed" = "このエキスパートは変更またはアーカイブされました。更新された一覧から選び直してください。";
+"experts.mention.rejoin_title" = "最新のエキスパート設定を使用しますか？";
+"experts.mention.rejoin_message" = "この会話では古い設定が使われています。再追加すると、以降のメッセージは最新設定を使い、以前のメッセージは保持されます。";
+"experts.mention.rejoin_action" = "最新設定で再追加";
+"experts.mention.joining" = "エキスパートを追加中…";
+
+"experts.configuration.unsupported" = "このホストは役割と推論の設定への対応を宣言していません。これらの設定を使うにはホストを更新してください。";
+
+"experts.reasoning.unavailable" = "利用不可 · %@";
+
+"experts.reasoning.selectSupported" = "このモデルが宣言した推論レベルを選ぶか、既定の設定を継承してください。";
+
+// Parent-owned expert history
+"expert.history.title" = "エキスパートの会話";
+"expert.history.expanded" = "展開済み";
+"expert.history.collapsed" = "折りたたみ済み";
+"expert.history.current" = "現在の会話";
+"expert.history.previous" = "以前の会話";
+"expert.history.empty" = "メッセージはまだありません";
+"expert.history.more" = "さらに読み込む";
+"expert.history.continue" = "メインの会話で続ける";
+"expert.history.readOnly" = "読み取り専用の履歴";
+"expert.history.unavailable" = "履歴を読み込めません";
+"expert.history.changed" = "エキスパートの会話が変更されました。更新して再試行してください。";
+"expert.history.unsupportedParent" = "この会話は iOS では続行できません。作成したクライアントで開いてください。";
+"expert.history.peerName" = "エキスパート";
+
+"experts.mainHostUpgrade" = "メインの会話から専門家を利用するには、接続した Host を更新してください。";
+
+"main.experts.requiresTools" = "ツール呼び出しに対応したメインモデルを選ぶか、選択したエキスパートを外してください。入力は保持されています。";
+
+"main.experts.enableTools" = "メインエージェントのエキスパートツールを有効にするか、選択したエキスパートを外してください。入力は保持されています。";
+
+"main.experts.sourceChanged" = "ホストのデータが変更されました。一覧を更新し、エキスパートを選び直してください。入力は保持されています。";
+
+"run.blocked.inputBudget" = "モデルの入力上限を超えています。会話や添付を短くする、ツールを減らす、またはコンテキストの大きいモデルを選んでください。";

@@ -186,12 +186,10 @@ struct ModelTestDetailViewNew: View {
                                                 Text(defaultPrompts[idx])
                                                     .font(.caption)
                                                 Spacer()
-                                                Image(systemName: "chevron.right")
-                                                    .font(.caption2)
-                                                    .opacity(0.5)
                                             }
-                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
                                             .padding(DesignTokens.spacing_sm)
+                                            .contentShape(Rectangle())
                                             .background(DesignTokens.primaryColor.opacity(0.05))
                                             .overlay(
                                                 RoundedRectangle(cornerRadius: DesignTokens.radius_sm)

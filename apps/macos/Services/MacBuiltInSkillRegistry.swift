@@ -66,6 +66,10 @@ nonisolated enum MacBuiltInSkillID: String, CaseIterable, Codable, Sendable {
     case statisticsAudit = "nature-statistics"
     case referenceVerifier = "nature-ref-verifier"
     case paperToPresentation = "nature-paper2ppt"
+    case implementCode = "implement-code"
+    case reviewCode = "review-code"
+    case testSoftware = "test-software"
+    case createVisualArt = "create-visual-art"
     case openSourceModel = "install-open-source-model"
 
     var resourceDirectory: String {
@@ -79,7 +83,7 @@ nonisolated enum MacBuiltInSkillID: String, CaseIterable, Codable, Sendable {
              .academicPolishing, .manuscriptReviewer, .reviewerResponse,
              .statisticsAudit, .referenceVerifier, .paperToPresentation:
             return rawValue
-        case .openSourceModel:
+        case .openSourceModel, .implementCode, .reviewCode, .testSoftware, .createVisualArt:
             return rawValue
         }
     }
@@ -109,6 +113,10 @@ nonisolated enum MacBuiltInSkillID: String, CaseIterable, Codable, Sendable {
         case .statisticsAudit: return String(localized: "Audit Statistical Reporting")
         case .referenceVerifier: return String(localized: "Verify Academic References")
         case .paperToPresentation: return String(localized: "Turn Papers into Presentations")
+        case .implementCode: return String(localized: "Implement code")
+        case .reviewCode: return String(localized: "Review code")
+        case .testSoftware: return String(localized: "Test software")
+        case .createVisualArt: return String(localized: "Create visual art")
         case .openSourceModel: return String(localized: "Install Open-Source Model")
         }
     }
@@ -161,6 +169,8 @@ nonisolated enum MacBuiltInSkillID: String, CaseIterable, Codable, Sendable {
             return String(localized: "Cross-check academic references and report field-level conflicts without inventing metadata.")
         case .paperToPresentation:
             return String(localized: "Transform papers into editable, evidence-linked presentations with slide-level QA.")
+        case .implementCode, .reviewCode, .testSoftware, .createVisualArt:
+            return localizedTitle
         case .openSourceModel:
             return String(localized: "Find a hardware-compatible model variant, then download, configure, and validate it safely.")
         }
@@ -191,6 +201,10 @@ nonisolated enum MacBuiltInSkillID: String, CaseIterable, Codable, Sendable {
         case .statisticsAudit: return "Audit manuscript statistics, reporting, sample units, and uncertainty"
         case .referenceVerifier: return "Verify academic references, DOI metadata, and citation consistency"
         case .paperToPresentation: return "Turn a scientific paper into an editable, source-grounded presentation"
+        case .implementCode: return "Inspect repository guidance, implement focused code changes and verify behavior with actual tools"
+        case .reviewCode: return "Review code changes for correctness, compatibility, security and missing regression coverage"
+        case .testSoftware: return "Design and execute meaningful software tests, diagnose failures and verify fixes"
+        case .createVisualArt: return "Plan and create requested visual art using available image or vector tools, then inspect the result"
         case .openSourceModel: return "Find, download, configure, and validate a hardware-compatible open-source model variant"
         }
     }
@@ -212,7 +226,7 @@ nonisolated enum MacBuiltInSkillID: String, CaseIterable, Codable, Sendable {
             return .documents
         case .excel, .dataAnalysis, .statisticsAudit:
             return .dataAnalysis
-        case .powerpoint, .figma, .paperToPresentation:
+        case .powerpoint, .figma, .paperToPresentation, .createVisualArt:
             return .designPresentations
         case .email, .meetings:
             return .communication
@@ -220,7 +234,7 @@ nonisolated enum MacBuiltInSkillID: String, CaseIterable, Codable, Sendable {
             return .planningAutomation
         case .fileOrganization:
             return .workspace
-        case .openSourceModel:
+        case .openSourceModel, .implementCode, .reviewCode, .testSoftware:
             return .workspace
         case .deepResearch, .knowledgeMemory, .academicReader, .scientificWriting,
              .academicPolishing, .manuscriptReviewer, .reviewerResponse,

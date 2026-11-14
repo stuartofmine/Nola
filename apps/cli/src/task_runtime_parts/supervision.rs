@@ -3680,8 +3680,16 @@ fn spawn_recovered_agent_task(
     let restored = NolaStore::open_default().and_then(|store| {
         let snapshot: crate::delegated_invocation::DelegatedInvocation = serde_json::from_value(metadata["delegated_invocation"].clone())
             .map_err(|_| "Delegated invocation snapshot is missing or invalid".to_string())?;
-        snapshot.restore(config, owner_session_id, &store)
+        if metadata.get("expert_target").is_some() {
+            let frozen: nola_core::agent::AgentCoreConfig=crate::application_port::CliApplicationPort::persistent_default()?.execute(
+                nola_application::ApplicationCommand::LoadMobileTaskChildConfiguration {task_id:task.id.clone()})?;
+            let child=crate::core_agent_runtime::restore_task_target_configuration(&frozen,child_session_id)?;
+            Ok((snapshot.0.profile.clone(),child))
+        } else {
+            snapshot.restore(config, owner_session_id, &store)
+        }
     });
+    let expert=metadata.get("expert_target").is_some();
     let (profile, mut child_config) = match restored {
         Ok(value) => value,
         Err(error) => {
@@ -3698,11 +3706,10 @@ fn spawn_recovered_agent_task(
         .get("requested_read_only")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let max_turns = metadata
-        .get("max_turns")
-        .and_then(Value::as_u64)
-        .map(|value| value.clamp(1, 20) as usize)
-        .or(profile.max_turns);
+    let max_turns = if expert {Some(child_config.execution.max_iterations)} else {
+        metadata.get("max_turns").and_then(Value::as_u64)
+            .map(|value| value.clamp(1,20) as usize).or(profile.max_turns)
+    };
     let cancellation = RuntimeExecutionControl::default();
     let control_id = uuid::Uuid::new_v4().to_string();
     let Ok(mut handles) = task_handles().lock() else {
@@ -3730,6 +3737,15 @@ fn spawn_recovered_agent_task(
     // unrelated project happened to start the successor supervisor. Rebuild
     // the least-privilege filesystem scope used by the original delegated
     // child so the frozen Host policy remains stable across process takeover.
+    if expert {
+        // The target's complete Host descriptor was captured before Task
+        // promotion. Keep its own tools, workspace, skills and permission scope;
+        // the sender/successor supervisor supplies no replacement defaults.
+        child_config.session.host_submission_id=Some(task.id.clone());
+        child_config.session.host_user_message_id=Some(format!("{}:user",task.id));
+        child_config.session.host_assistant_message_id=Some(format!("{}:assistant",task.id));
+        child_config.input.message.clear();
+    } else {
     if child_config.tool_settings.task_worktree.is_none() {
         child_config.tool_settings.project_root = std::path::PathBuf::from(&task.project_root);
     }
@@ -3806,6 +3822,7 @@ fn spawn_recovered_agent_task(
             ..ContextComponentSource::default()
         }),
     });
+    }
     let task_id = task.id.clone();
     let title = task.title.clone();
     let prompt = prompt.to_string();
@@ -3859,6 +3876,7 @@ fn spawn_recovered_agent_task(
 }
 
 fn isolate_delegated_child_turn(config: &mut HostInvocationRequest) {
+    config.session.main_expert_selection=None;
     // A connection generation belongs to its original Host/session. The child
     // rebinds configured launch inputs and asks Core to authorize its own connection.
     config.tool_settings.mcp_capability_catalog = None;

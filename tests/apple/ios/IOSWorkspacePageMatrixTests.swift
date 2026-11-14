@@ -5,6 +5,54 @@ import XCTest
 @testable import Nola
 
 @MainActor final class IOSWorkspacePageMatrixTests: XCTestCase {
+    func testTopLevelTabsRespectIslandSafeAreaAtNarrowWidthsAndLargeText() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ios-tab-pages-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = try IOSApplicationRuntime(databaseURL: root.appendingPathComponent("fixture.sqlite"))
+        try runtime.createConversation(id: UUID().uuidString, title: "最近的研究对话", settingsJSON: #"{"knowledge":{"keyPointsMarkdown":"保留有来源的结论，之后可以从这里继续。"}}"#, createdAtMs: 1, updatedAtMs: 1)
+        let container = ServiceContainer(applicationRuntime: runtime)
+        container.conversationStore = try LocalConversationStore(applicationRuntime: runtime)
+        container.chatManager = ChatManager(container: container, restorePersistedState: false)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        for (width, largeText): (CGFloat, Bool) in [(320, false), (390, false), (390, true)] {
+            for dark in [false, true] {
+                let controller = IOSCompactTabContainer<String>.Controller()
+                let window = UIWindow(windowScene: scene)
+                window.frame = CGRect(x: 0, y: 0, width: width, height: 844)
+                window.overrideUserInterfaceStyle = dark ? .dark : .light
+                window.rootViewController = controller; window.makeKeyAndVisible()
+                controller.additionalSafeAreaInsets.top = max(0, 62 - controller.view.safeAreaInsets.top)
+                defer { window.isHidden = true; window.rootViewController = nil; window.windowScene = nil }
+                for tab in ["chat", "information", "activity", "settings"] {
+                    let content: AnyView
+                    switch tab {
+                    case "chat": content = AnyView(NavigationStack { ChatConversationsList(search: .constant(""), onSelect: { _ in }) })
+                    case "information": content = AnyView(IOSInformationView(path: .constant([]), pendingRequests: .constant([])))
+                    case "activity": content = AnyView(NavigationStack { IOSConversationActivityView().navigationTitle(Text("information.activity")).navigationBarTitleDisplayMode(.inline) })
+                    default: content = AnyView(SettingsView())
+                    }
+                    controller.select(tab, content: AnyView(content.environmentObject(container)
+                        .environment(\.locale, Locale(identifier: "zh-Hans"))
+                        .environment(\.colorScheme, dark ? .dark : .light)
+                        .environment(\.dynamicTypeSize, largeText ? .accessibility3 : .large)), revision: 0)
+                    try await Task.sleep(for: .milliseconds(300))
+                    window.layoutIfNeeded()
+                    let child = try XCTUnwrap(controller.children.first)
+                    XCTAssertGreaterThanOrEqual(child.view.frame.minY, 61.5, tab)
+                    XCTAssertLessThanOrEqual(child.view.frame.maxX, width + 0.5, tab)
+                    let png = try XCTUnwrap(UIGraphicsImageRenderer(size: window.bounds.size).image { _ in
+                        window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+                    }.pngData())
+                    XCTAssertGreaterThan(png.count, 10_000)
+                    let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+                    attachment.name = "tab-\(tab)-\(Int(width))-\(dark ? "dark" : "light")\(largeText ? "-accessibility" : "")"
+                    attachment.lifetime = .keepAlways; add(attachment)
+                }
+                window.isHidden = true
+            }
+        }
+    }
+
     func testEveryManagementDestinationAtPhoneAndTabletWidthsInBothThemes() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("ios-pages-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true,

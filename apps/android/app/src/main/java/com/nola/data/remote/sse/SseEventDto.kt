@@ -31,6 +31,8 @@ data class SseEventDto(
     val reason: String? = null,
     @SerialName("permission_instructions") val permissionInstructions: List<com.nola.core.AgentPermissionInstruction> = emptyList(),
     val message: String? = null,
+    val code: String? = null,
+    @SerialName("reason_code") val reasonCode: String? = null,
     @SerialName("safe_review_text") val safeReviewText: String? = null,
     val nonce: String? = null,
     @SerialName("host_id") val hostId: String? = null,
@@ -118,7 +120,8 @@ data class SseEventDto(
                 conversationId = conversationId.orEmpty(),
                 cursor = cursor?.coerceAtLeast(0) ?: 0,
             )
-            "error" -> com.nola.data.remote.sse.SseEvent.Error(
+            "error", "submission_rejected" -> com.nola.data.remote.sse.SseEvent.Error(
+                code = if (type == "submission_rejected") reasonCode else code,
                 message = message ?: text ?: "Unknown error"
             )
             else -> throw IllegalArgumentException("Unsupported Agent Host event type: $type")

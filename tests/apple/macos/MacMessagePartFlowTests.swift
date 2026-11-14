@@ -19,7 +19,7 @@ final class MacMessagePartFlowTests: XCTestCase {
             permission: nil, state: state, display_key: nil, affected_resources: .inline([]), artifacts: "0",
             full_output: nil, started_at_ms: nil, finished_at_ms: nil)))
     }
-    func testOneExecutionDisclosurePreservesReasoningToolOrderAndPublicAnchors() {
+    func testProductionFlowKeepsReasoningToolSurfaceReasoningTextExactAndDistinct() {
         let surface = AppleUISurfaceIdentity(owner: .init(authority_id: "authority", conversation_id: "child",
             participant_id: "expert", context_id: "context", originating_run_id: "run", message_id: "assistant", part_id: "tool"),
             surface_id: "form", generation: 7)
@@ -27,38 +27,27 @@ final class MacMessagePartFlowTests: XCTestCase {
             part("surface", .uiSurface(.init(surface: .init(identity: surface, revision: 3), summary: "Form"))),
             reasoning("r2", state: "running"), part("answer", .text(.init(is_final: false, visibility: "public", review: nil)))]
         let flow = MacJournalPartFlow.segments(parts)
-        XCTAssertEqual(flow.map { $0.parts.map(\.part_id) }, [["r1", "tool", "r2"], ["surface"], ["answer"]])
-        XCTAssertEqual(flow.filter { $0.kind == .process }.count, 1)
-        XCTAssertEqual(Set(flow.flatMap(\.parts).map(\.part_id)), Set(parts.map(\.part_id)))
-        XCTAssertTrue(MacJournalPartFlow.hasLiveReasoning(flow[0].parts, delivery: .running))
-        XCTAssertFalse(MacJournalPartFlow.hasLiveReasoning(flow[0].parts, delivery: .completed))
-        XCTAssertEqual(MacJournalPartFlow.delivery(flow[0].parts), .running)
+        XCTAssertEqual(flow.map { $0.parts.map(\.part_id) }, [["r1", "tool"], ["surface"], ["r2"], ["answer"]])
+        XCTAssertEqual(flow.flatMap(\.parts).map(\.part_id), parts.map(\.part_id))
+        XCTAssertFalse(MacJournalPartFlow.hasLiveReasoning(flow[0].parts, delivery: .running))
+        XCTAssertTrue(MacJournalPartFlow.hasLiveReasoning(flow[2].parts, delivery: .running))
+        XCTAssertFalse(MacJournalPartFlow.hasLiveReasoning(flow[2].parts, delivery: .completed))
+        XCTAssertNil(MacJournalPartFlow.delivery(flow[0].parts))
+        XCTAssertEqual(MacJournalPartFlow.delivery(flow[2].parts), .running)
         let appended = MacJournalPartFlow.segments([parts[0], parts[1], parts[2], parts[3], tool("next-tool"), parts[4]])
-        XCTAssertEqual(appended.map(\.id), flow.map(\.id), "Appending a Tool retains the message disclosure identity")
-        XCTAssertEqual(appended[0].parts.map(\.part_id), ["r1", "tool", "r2", "next-tool"])
+        XCTAssertEqual(appended.map(\.id), flow.map(\.id), "Appending a Tool retains its contiguous process identity")
+        XCTAssertEqual(appended[2].parts.map(\.part_id), ["r2", "next-tool"])
     }
-    func testPublicHistoricalAndStepAnchorsStayOutsideSingleDisclosure() {
+    func testHistoricalTextAndEveryOtherKindAreHardBoundariesWithoutCrossPartDeduplication() {
         let parts = [reasoning("r1", state: "completed"),
             part("history", .historical(.init(schema: "message_part_view", canonical_kind: "text", canonical_revision: "4"))),
             reasoning("r2", state: "completed"),
             part("step", .step(.init(title: .inline("Step"), state: "completed"))),
             reasoning("r3", state: "running"), reasoning("r4", state: "running")]
         let flow = MacJournalPartFlow.segments(parts)
-        XCTAssertEqual(flow.map { $0.parts.map(\.part_id) }, [["r1", "r2", "r3", "r4"], ["history"], ["step"]])
-        XCTAssertEqual(Set(flow.flatMap(\.parts).map(\.part_id)), Set(parts.map(\.part_id)))
+        XCTAssertEqual(flow.map { $0.parts.map(\.part_id) }, [["r1"], ["history"], ["r2"], ["step"], ["r3", "r4"]])
+        XCTAssertEqual(flow.flatMap(\.parts).map(\.part_id), parts.map(\.part_id))
     }
-    func testExecutionAnchorAndStableIdentityAcrossAppend() {
-        let intro = part("intro", .text(.init(is_final: false, visibility: "public", review: nil)))
-        let end = part("end", .text(.init(is_final: true, visibility: "public", review: nil)))
-        let before = MacJournalPartFlow.segments([intro, reasoning("r1", state: "running"), end])
-        let after = MacJournalPartFlow.segments([intro, reasoning("r1", state: "completed"), end, tool("next")])
-        XCTAssertEqual(after.map { $0.parts.map(\.part_id) }, [["intro"], ["r1", "next"], ["end"]])
-        XCTAssertEqual(before[1].id, after[1].id)
-        XCTAssertEqual(after.filter { $0.kind == .process }.count, 1)
-        XCTAssertTrue(MacJournalPartFlow.segments([intro, end]).allSatisfy { $0.kind == .content })
-        XCTAssertTrue(MacJournalPartFlow.segments([]).isEmpty)
-    }
-
     @MainActor func testPerSegmentUserChoiceAndReadingKeepLiveDetailsVisibleAtTerminal() {
         let owner = MacJournalPresentationOwner()
         defer { owner.cancel() }
@@ -84,11 +73,14 @@ final class MacMessagePartFlowTests: XCTestCase {
         let before = [reasoning("completed", state:"completed"), tool("ok")]
         let failed = [reasoning("later", state:"failed"), tool("failed",state:"failed")]
         XCTAssertEqual(MacJournalRunStatus.attentionState("failed"),"failed")
-        XCTAssertEqual(MacJournalPartFlow.delivery(before),.completed)
+        XCTAssertNil(MacJournalPartFlow.delivery(before))
         XCTAssertFalse(MacJournalProcessProjection(before).requiresAttention)
         XCTAssertFalse(MacJournalPartFlow.hasLiveReasoning(before,delivery:.failed))
-        XCTAssertTrue(MacJournalProcessProjection(failed).requiresAttention)
-        XCTAssertEqual(MacJournalPartFlow.delivery(failed),.failed)
+        XCTAssertFalse(MacJournalProcessProjection(failed).requiresAttention)
+        XCTAssertNil(MacJournalPartFlow.delivery(failed))
+        if case .tool(let value) = failed[1].metadata {
+            XCTAssertEqual(value.state, "failed", "The concrete failed call remains truthful and inspectable")
+        } else { XCTFail("Expected failed tool") }
     }
 
     func testNonJournalCanonicalMessagePreservesTypedFlowAndIsNotAnArchiveField() throws {
@@ -110,7 +102,7 @@ final class MacMessagePartFlowTests: XCTestCase {
         XCTAssertNil(projected.journalReference)
         XCTAssertEqual(projected.canonicalPresentation?.message,canonical)
         let flow = MacCanonicalPartFlow.segments(try XCTUnwrap(projected.canonicalPresentation).message.parts)
-        XCTAssertEqual(flow.map { $0.parts.map(\.partID) }, [["r1","tool","r2"],["surface"],["text"],["error"]])
+        XCTAssertEqual(flow.map { $0.parts.map(\.partID) }, [["r1","tool"],["surface"],["r2"],["text"],["error"]])
         let encoded = try XCTUnwrap(JSONSerialization.jsonObject(with:JSONEncoder().encode(projected)) as? [String:Any])
         XCTAssertNil(encoded["canonicalPresentation"])
         let restored = try JSONDecoder().decode(MacChatMessage.self,from:JSONEncoder().encode(projected))

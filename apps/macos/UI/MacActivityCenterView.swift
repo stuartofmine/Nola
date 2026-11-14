@@ -9,11 +9,13 @@ struct MacActivityCenterView: View {
     let navigationAction: (() -> Void)?
     let automationOnly: Bool
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.macActivityApplicationClient) private var activityClient
     @State private var showsLocalSummaries = false
     init(navigationAction: (() -> Void)? = nil, automationOnly: Bool = false) {
         self.navigationAction = navigationAction; self.automationOnly = automationOnly
     }
     var body: some View {
+        let client = activityClient
         VStack(spacing: 0) {
             MacPageHeader("Activity", symbol: "waveform.path.ecg", navigationAction: navigationAction) {
                 EmptyView()
@@ -22,9 +24,9 @@ struct MacActivityCenterView: View {
             }
             NavigationStack {
                 AppleActivityView(source: automationOnly ? "automation" : "all", load: { query in
-                    try await Task.detached { try MacApplicationPort.shared.listActivity(query) }.value
+                    try await Task.detached { try client.listActivity(query) }.value
                 }, detail: { entry in
-                    try await Task.detached { try MacApplicationPort.shared.activityDetail(entry) }.value
+                    try await Task.detached { try client.activityDetail(entry) }.value
                 }, openSource: { source in openWindow(value: source) })
             }
         }

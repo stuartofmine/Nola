@@ -46,6 +46,7 @@ data class AndroidCanonicalTurnDescriptor(
     val expectedParentMessageId: String? = null,
     val queuedUserAdmission: AndroidQueuedUserAdmission? = null,
     val editedResendOperationId: String? = null,
+    val mainExpertSelection: JsonObject? = null,
 )
 
 /** Construct the current Core admission while keeping the durable action in Core. */
@@ -74,6 +75,20 @@ internal fun encodeQueuedUserTurnAdmission(
             put("turn_context_components", submission.getValue("turn_context_components"))
         })
     }
+}
+
+/** A bounded canonical history window provides the complete typed journal owner. */
+internal fun loadAndroidHistoryTerminal(identity: JsonObject, execute: (JsonObject) -> kotlinx.serialization.json.JsonElement): AndroidCanonicalRunTerminalSeal? {
+    val conversation=identity.getValue("conversation_id").jsonPrimitive.content
+    val run=identity.getValue("run_id").jsonPrimitive.content
+    val assistant=identity.getValue("assistant_message_id").jsonPrimitive.content
+    require(listOf(conversation,run,assistant,identity.getValue("source_store_epoch").jsonPrimitive.content).all { it.isNotBlank() })
+    val raw=execute(buildJsonObject {put("type","local_assistant_run_terminal_seal");put("conversation_id",conversation);put("run_id",run)})
+    if(raw==JsonNull)return null
+    val seal=raw.jsonObject
+    require(seal["identity"]==identity) { "Historical terminal source changed" }
+    return loadAndroidCanonicalTerminalSeal(AndroidCanonicalTurnDescriptor(conversation,"",run,"","",null,assistant),
+        seal.getValue("core_session_id").jsonPrimitive.content) {raw}
 }
 
 /** A decoded source Store seal, not a client completion flag or trace projection. */

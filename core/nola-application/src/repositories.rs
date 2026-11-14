@@ -67,13 +67,24 @@ impl<T: ?Sized> AssistantPublicationRepositories for T where
 
 /// New turn admission validates frozen Goal execution and selected model authority.
 pub trait AssistantAdmissionRepositories: AssistantPublicationRepositories
-    + nola_store_port::goal_execution::GoalExecutionRepository + ModelRepositoryProvider {}
+    + nola_store_port::goal_execution::GoalExecutionRepository + ModelRepositoryProvider
+    + nola_store_port::product_setting::ProductSettingRepositoryProvider
+    + nola_store_port::conversation_profile::ConversationWriteRepositoryProvider
+    + nola_store_port::conversation_query::ConversationQueryRepository
+    + nola_store_port::conversation_history::ConversationProjectionRepository
+    + nola_store_port::room_presentation::RoomPresentationRepository {}
 impl<T: ?Sized> AssistantAdmissionRepositories for T where T: AssistantPublicationRepositories
-    + nola_store_port::goal_execution::GoalExecutionRepository + ModelRepositoryProvider {}
+    + nola_store_port::goal_execution::GoalExecutionRepository + ModelRepositoryProvider
+    + nola_store_port::product_setting::ProductSettingRepositoryProvider
+    + nola_store_port::conversation_profile::ConversationWriteRepositoryProvider
+    + nola_store_port::conversation_query::ConversationQueryRepository
+    + nola_store_port::conversation_history::ConversationProjectionRepository
+    + nola_store_port::room_presentation::RoomPresentationRepository {}
 
 /// Canonical conversation, archive, transcript, and projection commands.
 pub trait ConversationCommandRepositories:
-    ConversationWriteRepositoryProvider
+    nola_store_port::room_presentation::RoomPresentationRepository
+    + ConversationWriteRepositoryProvider
     + nola_store_port::runtime_task::RuntimeTaskRepository
     + ModelRepositoryProvider
     + nola_store_port::expert_message::ExpertMessageRepository
@@ -103,7 +114,8 @@ pub trait ConversationCommandRepositories:
 }
 
 impl<T: ?Sized> ConversationCommandRepositories for T where
-    T: ConversationWriteRepositoryProvider
+    T: nola_store_port::room_presentation::RoomPresentationRepository
+        + ConversationWriteRepositoryProvider
         + nola_store_port::runtime_task::RuntimeTaskRepository
         + ModelRepositoryProvider
         + nola_store_port::expert_message::ExpertMessageRepository

@@ -2148,7 +2148,7 @@
 "settings.data.clearing" = "Effacement des données…";
 "settings.data.export_failed" = "Impossible de créer l’export : %@";
 "settings.data.clear_complete" = "Les données locales ont été effacées.";
-"settings.data.clear_partial" = "La plupart des données ont été effacées, mais certaines conversations n’ont pas pu être supprimées.";
+"settings.data.clear_partial" = "Certaines données locales n’ont pas pu être supprimées. Vérifiez les conversations et sources de données restantes.";
 "settings.operation.title" = "Gestion des données";
 
 /* Réglages macOS */
@@ -2811,7 +2811,7 @@
 
 /* Expert picker */
 "chat.experts.title" = "Experts";
-"chat.experts.description" = "Choisissez qui répond dans cette conversation. La sélection ne lance aucune réponse et n’accorde aucune autorisation.";
+"chat.experts.description" = "Choisissez les experts que Nola pourra consulter. Nola coordonne leur travail et vous répond.";
 "chat.experts.search" = "Rechercher des experts";
 "chat.experts.empty" = "Aucun expert disponible";
 "chat.experts.selected" = "Sélectionné";
@@ -2873,7 +2873,7 @@
 "expert.color.pink" = "Rose";
 "chat.message.edit" = "Modifier et renvoyer";
 "chat.message.editWait" = "Arrêtez ou attendez la réponse en cours avant de modifier.";
-"chat.message.editPreservesOriginal" = "Le renvoi crée une conversation distincte. L’original et le brouillon sont conservés.";
+"chat.message.editPreservesOriginal" = "Ce message et tout ce qui suit seront remplacés dans la même conversation. Votre brouillon sera conservé.";
 "chat.message.saveResend" = "Enregistrer et renvoyer";
 "chat.message.resendUnavailable" = "Le renvoi est indisponible avant confirmation de la configuration d’exécution originale.";
 
@@ -2897,11 +2897,11 @@
 "experts.save" = "Enregistrer";
 "experts.archive" = "Archiver l’expert";
 "experts.restore" = "Restaurer l’expert";
-"experts.conversationModel" = "Utiliser le modèle de la conversation";
+"experts.conversationModel" = "Suivre le modèle par défaut de l’app";
 
 "experts.template" = "Modèle d’instructions";
 
-"experts.conversationTemplate" = "Utiliser le modèle de la conversation";
+"experts.conversationTemplate" = "Aucun modèle explicite";
 
 "experts.savedModelUnavailable" = "Modèle enregistré (indisponible)";
 
@@ -2917,9 +2917,9 @@
 
 "work.tools.noGoal" = "Aucun objectif actif";
 
-"chat.experts.sourceUnavailable.title" = "Experts indisponibles ici";
+"chat.experts.sourceUnavailable.title" = "Source des experts indisponible";
 
-"chat.experts.sourceUnavailable.detail" = "Les experts locaux ne peuvent pas rejoindre une conversation appartenant à un autre hôte ou dont la source est invérifiable. Vous pouvez toujours gérer les experts locaux.";
+"chat.experts.sourceUnavailable.detail" = "Reconnectez le Host de cette conversation ou actualisez son répertoire d’experts.";
 "chat.request.diagnostic_details" = "Détails du diagnostic";
 
 "chat.step.failed" = "Cette étape a échoué";
@@ -3039,7 +3039,7 @@
 "Model request waiting" = "Requête au modèle en attente";
 "Model route changed" = "Routage du modèle modifié";
 "Request restarted" = "Requête redémarrée";
-"a2ui.history.version" = "Voir cette version du formulaire";
+"a2ui.history.version" = "Voir le contenu";
 "activity.emptyResponse" = "Aucune réponse n’est nécessaire pour le moment.";
 "activity.fullResultInSource" = "Ouvrez la conversation d’origine pour consulter le résultat complet.";
 "activity.localScope" = "Exécutions conservées sur cet appareil, y compris les résultats distants reçus.";
@@ -3165,5 +3165,86 @@
 "settings.navigation.general" = "Général";
 "settings.navigation.general.detail" = "Apparence, notifications et mises à jour";
 
-"chat.experts.conversations" = "Conversations avec les experts";
-"chat.experts.conversations.empty" = "Mentionnez un expert dans cette conversation pour voir ici les détails de son exécution.";
+// Generated UI recovery and presentation
+"a2ui.revalidate" = "Valider à nouveau";
+"a2ui.discardEdits" = "Abandonner les modifications et utiliser les valeurs actuelles";
+"a2ui.checkSubmission" = "Vérifier le résultat de l’envoi";
+"a2ui.finishComposition" = "Terminez la saisie du texte avant l’envoi.";
+"a2ui.fieldsRemoved" = "Le formulaire a changé et certains champs ne sont plus disponibles. Vos modifications sont conservées ; vérifiez-les avant de les abandonner.";
+"a2ui.receiptMismatch" = "Le résultat de l’envoi appartient à un autre formulaire. Vérifiez à nouveau.";
+"a2ui.previewUnavailable" = "Le formulaire a changé ou ne peut pas être validé. Rechargez-le.";
+"a2ui.previewMismatch" = "Le résultat est périmé ou appartient à un autre formulaire. Vérifiez vos modifications et réessayez.";
+"a2ui.pending" = "Préparation de l’interface, en attente des composants et données…";
+"a2ui.deleted" = "Cette interface a été supprimée.";
+
+// Mobile settings groups
+"settings.group.preferences" = "Préférences";
+"settings.group.connections" = "Connexions et fonctionnalités";
+"settings.group.security" = "Sécurité";
+
+// Compact bibliography and live process headings.
+"chat.sources.all" = "Afficher toutes les sources";
+"chat.sources.fewer" = "Réduire les sources";
+"chat.processing" = "Traitement en cours";
+"chat.skill.deep_research" = "Recherche approfondie";
+
+"model.protocol.guidance" = "Pour utiliser les outils avec le raisonnement, choisis Responses si ton service le permet. Certains modèles Chat Completions exigent de désactiver explicitement le raisonnement.";
+
+"information.recentKnowledge" = "Connaissances récentes";
+
+"information.recentConversations" = "Conversations récentes";
+
+"activity.recentLoaded" = "entrées récentes";
+
+/* Model connection draft protection */
+"model.setup.discard_title" = "Abandonner les modifications non enregistrées ?";
+"model.setup.discard" = "Abandonner les modifications";
+"model.setup.keep_editing" = "Continuer la modification";
+"model.web_host.saved_token_hint" = "Laissez ce champ vide pour utiliser le jeton enregistré de cet hôte.";
+
+"chat.context.import.invalid_text" = "Choisissez un fichier texte UTF-8 non vide de %d caractères maximum (192 Ko).";
+
+"chat.context.import.failed_count" = "%d fichiers n’ont pas pu être importés. Utilisez des fichiers texte UTF-8 non vides de 40 000 caractères maximum (192 Ko).";
+
+/* Expert roles and revision-aware mentions */
+"experts.reasoning.inherit" = "Hériter du réglage du modèle";
+"experts.reasoning.unknown" = "Ce modèle ne déclare aucun niveau de raisonnement. Son réglage par défaut est conservé.";
+"experts.role.details" = "Prompt, outils et Skills";
+"experts.role.tools" = "Ensemble d’outils";
+"experts.role.permissions" = "Ces capacités décrivent le rôle. L’exécution des outils exige toujours les autorisations applicables.";
+"experts.mention.changed" = "Cet expert a été modifié ou archivé. Sélectionnez-le à nouveau dans le répertoire actualisé.";
+"experts.mention.rejoin_title" = "Utiliser la dernière configuration de l’expert ?";
+"experts.mention.rejoin_message" = "Cette conversation utilise une ancienne configuration de cet expert. Le réintroduire applique la dernière configuration aux futurs messages et conserve les précédents.";
+"experts.mention.rejoin_action" = "Réintroduire avec la dernière configuration";
+"experts.mention.joining" = "Ajout de l’expert…";
+
+"experts.configuration.unsupported" = "Cet hôte ne déclare pas la prise en charge des rôles et du raisonnement. Mettez-le à jour pour utiliser ces options.";
+
+"experts.reasoning.unavailable" = "Indisponible · %@";
+
+"experts.reasoning.selectSupported" = "Choisissez un niveau déclaré par ce modèle ou héritez de son réglage par défaut.";
+
+// Parent-owned expert history
+"expert.history.title" = "Conversations des experts";
+"expert.history.expanded" = "Développé";
+"expert.history.collapsed" = "Réduit";
+"expert.history.current" = "Conversation actuelle";
+"expert.history.previous" = "Conversation précédente";
+"expert.history.empty" = "Aucun message";
+"expert.history.more" = "Charger plus";
+"expert.history.continue" = "Continuer dans la conversation principale";
+"expert.history.readOnly" = "Historique en lecture seule";
+"expert.history.unavailable" = "Historique indisponible";
+"expert.history.changed" = "La conversation de l’expert a changé. Actualisez et réessayez.";
+"expert.history.unsupportedParent" = "Cette conversation ne peut pas être poursuivie sur iOS. Ouvrez-la dans le client où elle a été créée.";
+"expert.history.peerName" = "Expert";
+
+"experts.mainHostUpgrade" = "Mettez à jour le Host connecté pour utiliser les experts depuis la conversation principale.";
+
+"main.experts.requiresTools" = "Choisissez un modèle principal prenant en charge les outils ou retirez les experts sélectionnés. Votre message est conservé.";
+
+"main.experts.enableTools" = "Activez les outils experts de l’agent principal ou retirez les experts sélectionnés. Votre message est conservé.";
+
+"main.experts.sourceChanged" = "Les données de l’hôte ont changé. Actualisez son annuaire et sélectionnez à nouveau les experts. Votre message est conservé.";
+
+"run.blocked.inputBudget" = "Cette demande dépasse le budget d’entrée du modèle. Réduisez la conversation, les pièces jointes ou les outils activés, ou choisissez un modèle avec une fenêtre de contexte plus grande.";

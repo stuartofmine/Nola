@@ -34,7 +34,7 @@ extension IOSApplicationRuntimeError: LocalizedError {
         case .invalidResponse:
             return "The Nola Application runtime returned an invalid response."
         case .rejected(let detail):
-            return "The Nola Application command was rejected: \(detail)"
+            return AppleMainExpertDispatchRejection(rawValue: detail)?.localizedDescription ?? "The Nola Application command was rejected: \(detail)"
         case .revisionConflict(let scope, let expected, let actual):
             return String(format: String(localized: "The operation conflicted with a newer revision of %@ (%llu expected, %llu current)."), scope, expected, actual)
         }
@@ -793,7 +793,13 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
     private var handle: OpaquePointer?
     #endif
 
-    init(databaseURL: URL) throws {
+    private let expertHostAcknowledgementObserver: (@Sendable (Data, Data) throws -> Void)?
+    private let childPumpObserver: (@Sendable (AppleChildPump) -> Void)?
+
+    init(databaseURL: URL, expertHostAcknowledgementObserver: (@Sendable (Data, Data) throws -> Void)? = nil,
+         childPumpObserver: (@Sendable (AppleChildPump) -> Void)? = nil) throws {
+        self.expertHostAcknowledgementObserver = expertHostAcknowledgementObserver
+        self.childPumpObserver = childPumpObserver
         self.databaseURL = databaseURL.standardizedFileURL
         pendingCommandJournal = ApplePendingCommandJournal(databaseURL: databaseURL, namespace: .application, validateOwners: IOSPendingCommandOwner.validateJournalOwners)
         expertHostJournal = ApplePendingCommandJournal(databaseURL: databaseURL, namespace: .expertHost, validateOwners: AppleExpertHostIntentScope.validateJournalOwners)
@@ -1403,6 +1409,31 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
         return nil
     }
 
+    /// Reconcile the original durable admission intent even when Core already
+    /// exposes its material. Existence alone is never a commit acknowledgement.
+    func reconcilePendingExpertPeerAdmission(_ input: AppleExpertPeerInput, authority: AppleExpertTemplateAuthority) throws -> AppleExpertPeerMaterial<AgentCoreJSONValue>? {
+        let transaction = try expertHostJournal.beginTransaction()
+        let pending: [String: [String: Any]]
+        do { pending = try transaction.load(); transaction.close() }
+        catch { transaction.close(); throw error }
+        let expectedAuthority = try JSONSerialization.jsonObject(with: JSONEncoder().encode(authority))
+        for (id, envelope) in pending {
+            guard envelope["request_id"] as? String == id,
+                  envelope["client_id"] as? String == "native-expert-host",
+                  (envelope["protocol_version"] as? NSNumber)?.isEqual(to: NSNumber(value: Self.expectedServiceProtocol)) == true else {
+                throw IOSApplicationRuntimeError.invalidResponse
+            }
+            let operation = try AppleExpertHostIntentScope.operation(in: envelope)
+            guard operation["kind"] as? String == "admit_peer" else { continue }
+            let saved = try JSONDecoder().decode(AppleExpertPeerInput.self,
+                from: JSONSerialization.data(withJSONObject: operation["input"] ?? NSNull()))
+            guard saved == input,
+                  NSDictionary(dictionary: try AppleExpertHostIntentScope.authority(operation)).isEqual(expectedAuthority) else { continue }
+            return try executeExpertHostOperation(operation, isReadOnly: false)
+        }
+        return nil
+    }
+
     private func executeExpertHostOperation<Result: Decodable>(_ original: [String: Any], isReadOnly: Bool) throws -> Result {
         #if canImport(NolaCore)
         lock.lock()
@@ -1455,12 +1486,17 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
             if !ok, failure?["outcome_pending"] as? Bool != false { throw IOSApplicationRuntimeError.outcomePending(requestID) }
             let decoded: Result? = ok ? try JSONDecoder().decode(Result.self,
                 from: JSONSerialization.data(withJSONObject: reply["result"] ?? NSNull(), options: [.fragmentsAllowed])) : nil
+            if ok, let expertHostAcknowledgementObserver {
+                try expertHostAcknowledgementObserver(
+                    JSONSerialization.data(withJSONObject: actual, options: [.sortedKeys]),
+                    JSONSerialization.data(withJSONObject: reply, options: [.sortedKeys]))
+            }
             if ok, !isReadOnly {
-                guard let input = actual["input"] else { throw IOSApplicationRuntimeError.invalidResponse }
-                let inputData = try JSONSerialization.data(withJSONObject: input)
                 let resultData = try JSONSerialization.data(withJSONObject: reply["result"] ?? NSNull())
                 switch actual["kind"] as? String {
                 case "admit":
+                    guard let input = actual["input"] else { throw IOSApplicationRuntimeError.invalidResponse }
+                    let inputData = try JSONSerialization.data(withJSONObject: input)
                     let expected = try JSONDecoder().decode(AppleAdmitExpertConversationMessage.self, from: inputData)
                     let manifest = try JSONDecoder().decode(AppleExpertMessageManifest<AgentCoreJSONValue>.self, from: resultData)
                     guard manifest.version == 1, manifest.input == expected,
@@ -1469,13 +1505,15 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
                         throw IOSApplicationRuntimeError.invalidResponse
                     }
                 case "prepare_edited_resend":
+                    guard let input = actual["input"] else { throw IOSApplicationRuntimeError.invalidResponse }
+                    let inputData = try JSONSerialization.data(withJSONObject: input)
                     let expected = try JSONDecoder().decode(ApplePrepareEditedResend.self, from: inputData)
                     let prepared = try JSONDecoder().decode(ApplePreparedExpertResend<AgentCoreJSONValue>.self, from: resultData)
                     guard prepared.input == expected, !prepared.entries.isEmpty,
                           Set(prepared.entries.map { $0.prepared.run_id }).count == prepared.entries.count else {
                         throw IOSApplicationRuntimeError.invalidResponse
                     }
-                default: throw IOSApplicationRuntimeError.invalidResponse
+                default: try IOSExpertHostMutationValidation.validate(resultData, operation: actual)
                 }
             }
             if transaction != nil {
@@ -1899,6 +1937,14 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
     }
 
     func listConversations() throws -> [IOSCanonicalConversationSummary] {
+        try listConversationDirectory(commandType: "list_conversations")
+    }
+
+    func listRootConversations() throws -> [IOSCanonicalConversationSummary] {
+        try listConversationDirectory(commandType: "list_root_conversations")
+    }
+
+    private func listConversationDirectory(commandType: String) throws -> [IOSCanonicalConversationSummary] {
         struct Query: Encodable {
             let project_root: String? = nil
             let non_empty = false
@@ -1906,12 +1952,12 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
             let offset: Int
         }
         struct Command: Encodable {
-            let type = "list_conversations"
+            let type: String
             let query: Query
         }
         var result: [IOSCanonicalConversationSummary] = []
         while true {
-            let page: [IOSCanonicalConversationSummary] = try execute(Command(query: Query(offset: result.count)))
+            let page: [IOSCanonicalConversationSummary] = try execute(Command(type: commandType, query: Query(offset: result.count)))
             result.append(contentsOf: page)
             if page.count < 1024 { return result }
         }
@@ -2055,18 +2101,22 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
     func startChildPump(_ input: AgentCoreJSONValue) throws -> AppleChildPump {
         #if canImport(NolaCore)
         let data = try JSONEncoder().encode(input)
-        lock.lock()
-        defer { lock.unlock() }
-        guard let handle else { throw IOSApplicationRuntimeError.applicationUnavailable }
-        var error: UnsafeMutablePointer<CChar>?
-        let pump = data.withUnsafeBytes { bytes in
-            nola_core_child_pump_start(handle, bytes.bindMemory(to: UInt8.self).baseAddress, bytes.count, &error)
-        }
-        defer { if let error { nola_core_free_c_string(error) } }
-        guard let pump else {
-            throw IOSApplicationRuntimeError.rejected(error.map { String(cString: $0) } ?? "Child admission is unconfirmed")
-        }
-        return AppleChildPump(admittedHandle: pump)
+        let transport: AppleChildPump = try {
+            lock.lock()
+            defer { lock.unlock() }
+            guard let handle else { throw IOSApplicationRuntimeError.applicationUnavailable }
+            var error: UnsafeMutablePointer<CChar>?
+            let pump = data.withUnsafeBytes { bytes in
+                nola_core_child_pump_start(handle, bytes.bindMemory(to: UInt8.self).baseAddress, bytes.count, &error)
+            }
+            defer { if let error { nola_core_free_c_string(error) } }
+            guard let pump else {
+                throw IOSApplicationRuntimeError.rejected(error.map { String(cString: $0) } ?? "Child admission is unconfirmed")
+            }
+            return AppleChildPump(admittedHandle: pump)
+        }()
+        childPumpObserver?(transport)
+        return transport
         #else
         throw IOSApplicationRuntimeError.applicationUnavailable
         #endif

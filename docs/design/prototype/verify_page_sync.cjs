@@ -15,7 +15,7 @@ const out=process.env.PROTOTYPE_OUT||require('../../../apps/web/playwright_runti
   const page=await context.newPage();page.setDefaultTimeout(8000);
   await context.route('**/*',r=>new URL(r.request().url()).origin===base?r.continue():(report.externalRequests.push(r.request().url()),r.abort()));
   await page.addInitScript(theme=>localStorage.setItem('nola-prototype-theme',theme),scheme);
-  page.on('pageerror',e=>report.errors.push({width,scheme,os,message:e.message}));
+  page.on('pageerror',e=>report.errors.push({width,scheme,os,message:e.message,stack:e.stack}));
   await page.goto(base);
   const click=action=>page.locator(`[data-action="${action}"]:visible`).last().click();
   async function shot(name){
@@ -29,7 +29,7 @@ const out=process.env.PROTOTYPE_OUT||require('../../../apps/web/playwright_runti
   if(os==='android'){await page.locator('.im-preview-tools>summary').click();await click('im:platform');}
   await shot('settings');
   if(width<=700){
-   assert.equal(await page.locator('.im-screen > .im-group > .im-setting-row').count(),os==='android'?4:5);
+   assert.equal(await page.locator('.im-screen > .im-group > .im-setting-row').count(),5);
    for(const removed of ['im:nav:im-appearance','im:nav:im-updates','im:nav:memory','im:nav:plans','im:nav:data'])assert.equal(await page.locator(`[data-action="${removed}"]:visible`).count(),0);
   }else assert.equal(await page.locator('[data-action^="ex-settings:"]:visible').count(),6);
   if(width>700){
@@ -104,22 +104,25 @@ const out=process.env.PROTOTYPE_OUT||require('../../../apps/web/playwright_runti
    await page.goto(base);
    const tab=await page.locator('.studio-center').getAttribute('data-tabkey');
    assert.equal(await page.locator('#work-tool').count(),0,'inspector has no page selector');
-   for(const name of ['进度','目标','上下文'])await click('dk-section:'+name);
-   for(const name of ['工作概览','进度','目标','上下文'])assert.equal(await page.locator(`[data-action="dk-section:${name}"]`).getAttribute('aria-expanded'),'true');
+   for(const [label,area,names] of [['任务','task',['工作概览','进度','目标']],['产物','artifacts',['审阅','产物']],['上下文','context',['会话配置','上下文预算','执行','参与者']]]){
+    if(await page.locator(`[data-action="sn-group:${label}"]`).getAttribute('aria-pressed')!=='true')await click('sn-group:'+label);
+    assert.equal(await page.locator(`[data-inspector-area="${area}"]`).count(),1);
+    for(const name of names)if(await page.locator(`[data-action="dk-section:${name}"]`).getAttribute('aria-expanded')!=='true')await click('dk-section:'+name);
+    assert.equal(await page.locator('[data-inspector-section]').count(),names.length);
+   }
    await page.locator('.inspector-knowledge summary').filter({hasText:/^Wiki$/}).click();
    await page.getByLabel('Wiki草稿',{exact:true}).fill('保留未保存的 Wiki 演示草稿');
-   await click('dk-section:上下文');await click('dk-section:上下文');
+   await click('dk-section:上下文预算');await click('dk-section:上下文预算');
    assert.equal(await page.getByLabel('Wiki草稿',{exact:true}).inputValue(),'保留未保存的 Wiki 演示草稿');
    assert.equal(await page.locator('.studio-center').getAttribute('data-tabkey'),tab,'inspector never navigates the main content');
    await shot('inspector-expanded');
-   for(const name of ['工作概览','进度','目标'])await click('dk-section:'+name);
    await page.getByLabel('Wiki草稿',{exact:true}).scrollIntoViewIfNeeded();await shot('inspector-context');
   }
   report.cases.push({width,scheme,os,passed:true});await context.close();
  }
  // Separate negative clipboard and edit-resend sequence; all messages remain synthetic.
  const context=await browser.newContext({viewport:{width:390,height:844},colorScheme:'dark',reducedMotion:'reduce'});
- const page=await context.newPage();page.setDefaultTimeout(8000);page.on('pageerror',e=>report.errors.push({flow:'message-actions',message:e.message}));
+ const page=await context.newPage();page.setDefaultTimeout(8000);page.on('pageerror',e=>report.errors.push({flow:'message-actions',message:e.message,stack:e.stack}));
  await page.addInitScript(()=>{localStorage.setItem('nola-prototype-theme','dark');Object.defineProperty(navigator,'clipboard',{value:{writeText:()=>Promise.reject(new Error('fixture clipboard denied'))}});});
  await page.goto(base);await page.getByRole('button',{name:/周末，去山里走走/}).click();
  const composer=page.locator('#compose');await composer.fill('验证原型编辑的发送配置');await page.locator('[data-action="im:send"]').click();
@@ -128,14 +131,14 @@ const out=process.env.PROTOTYPE_OUT||require('../../../apps/web/playwright_runti
  await page.getByRole('button',{name:/Claude · 深入/}).click();await page.locator('[data-action="im:model-default"]').click();
  for(const action of ['im:back:models','im:back:im-details','im:back:chat'])await page.locator(`[data-action="${action}"]`).click();
  const edit=page.getByRole('button',{name:'编辑并重发',exact:true}).last();await edit.click();
- assert.ok((await page.getByRole('dialog').innerText()).includes('Qwen · 日常'),'edit retains send-time model after current model changes');
+ assert.ok((await page.getByRole('dialog').innerText()).includes('Claude · 深入'),'edit uses current conversation model');
  await page.getByRole('button',{name:'取消',exact:true}).click();assert.equal(await composer.inputValue(),'未发送草稿应保留');
- await edit.click();await page.getByLabel('消息内容',{exact:true}).fill('修改后的独立分支');await page.getByRole('button',{name:'保存并重发送',exact:true}).click();
- await page.getByRole('button',{name:'查看原会话',exact:true}).waitFor();await page.screenshot({path:out+'/edited-branch.png'});
- await page.getByRole('button',{name:'查看原会话',exact:true}).click();assert.equal(await composer.inputValue(),'未发送草稿应保留');
+ await edit.click();await page.getByLabel('消息内容',{exact:true}).fill('修改后在原会话重发');await page.getByRole('button',{name:'保存并重发送',exact:true}).click();
+ await page.getByText('修改后在原会话重发',{exact:true}).first().waitFor();await page.screenshot({path:out+'/edited-rewind.png'});
+ assert.equal(await page.getByRole('button',{name:'查看原会话',exact:true}).count(),0);assert.equal(await composer.inputValue(),'未发送草稿应保留');
  const copy=page.getByRole('button',{name:'复制消息',exact:true}).first();await copy.hover();assert.equal(await copy.evaluate(e=>getComputedStyle(e).backgroundColor),'rgba(0, 0, 0, 0)');
  await copy.click();await page.getByRole('heading',{name:'手动复制消息',exact:true}).waitFor();await page.screenshot({path:out+'/clipboard-denied.png'});
- report.cases.push({flow:'edit-cancel-branch-original-draft-frozen-model-and-clipboard-denied',passed:true});await context.close();
+ report.cases.push({flow:'edit-cancel-rewind-same-owner-draft-current-model-and-clipboard-denied',passed:true});await context.close();
  assert.deepEqual(report.errors,[]);assert.deepEqual(report.externalRequests,[]);
  console.log(`PASS ${report.cases.length} flows, ${report.screens.length+2} captures; no external requests`);
  }finally{fs.writeFileSync(out+'/verification.json',JSON.stringify(report,null,2));await browser.close();}

@@ -48,13 +48,15 @@ if [[ ! -d "$CACHE/node_modules/playwright-core" ]]; then
 fi
 cp "$SOURCE/bridge.cjs" "$CACHE/bridge.cjs"
 cp "$SOURCE/owner_queue.cjs" "$CACHE/owner_queue.cjs"
+cp "$SOURCE/browser_use.cjs" "$CACHE/browser_use.cjs"
 rm -rf "$DESTINATION"
 mkdir -p "$DESTINATION"
-cp -R "$CACHE/bridge.cjs" "$CACHE/owner_queue.cjs" "$CACHE/package.json" "$CACHE/package-lock.json" "$CACHE/node_modules" "$DESTINATION/"
+cp -R "$CACHE/bridge.cjs" "$CACHE/owner_queue.cjs" "$CACHE/browser_use.cjs" "$CACHE/package.json" "$CACHE/package-lock.json" "$CACHE/node_modules" "$DESTINATION/"
 mkdir -p "$DESTINATION/bin"
 cp "$NODE_BIN" "$DESTINATION/bin/node"
 chmod 755 "$DESTINATION/bin/node"
 if [[ "${CODE_SIGNING_ALLOWED:-NO}" == "YES" ]]; then
   /usr/bin/codesign --force --sign - --timestamp=none "$DESTINATION/bin/node"
 fi
+"$(dirname "$0")/bundle_browser_use_runtime.sh" "$DESTINATION/browser_use"
 touch "$DESTINATION/.ready"

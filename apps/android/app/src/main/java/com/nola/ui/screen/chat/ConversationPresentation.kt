@@ -12,6 +12,8 @@ import com.nola.domain.model.ProcessingState
 internal fun ChatUiState.newConversationPresentation(defaultPermission: AndroidAgentPermissionMode): ChatUiState = copy(
     conversationId = null,
     taskChildOwner = null,
+    expertContextOwner = null,
+    expertContextParentId = null,
     configurationRevision = 0,
     executionHostBinding = null,
     messages = emptyList(),

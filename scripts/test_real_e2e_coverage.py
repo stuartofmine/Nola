@@ -71,27 +71,28 @@ def test_failed_scenario_contributes_no_verified_lane():
     assert coverage["platforms"]["web"]["verified"] == []
 
 
-def test_real_backend_http_service_satisfies_full_backend_lanes():
-    backend = _scenario(
-        "backend-http", "backend", layer="system", realModel=False,
+def test_host_http_service_cannot_claim_the_web_product_ui_lane():
+    host = _scenario(
+        "host-http", "web", layer="system", realModel=False,
         execution={
             "runtime": "http-service", "realProvider": False,
             "realUI": False, "semanticJudge": False,
         },
         _contract={"requiredObservationKinds": ["http_transcript", "persistence_store"]},
     )
-    backend["evidence"]["modules"] = ["auth", "chat", "database", "http"]
-    coverage = audit_coverage([backend], suite="full", passed_scenario_ids={"backend-http"})
-    assert coverage["platforms"]["backend"]["complete"] is True
+    host["evidence"]["modules"] = ["auth", "chat", "database", "http"]
+    coverage = audit_coverage([host], suite="full", passed_scenario_ids={"host-http"})
+    assert coverage["platforms"]["web"]["complete"] is False
+    assert "product-ui" in coverage["platforms"]["web"]["missing"]
 
 
-def test_smoke_requires_backend_and_platform_modules():
+def test_smoke_requires_current_platform_modules():
     scenarios = [
         _scenario("web-ui", "web", execution={"runtime": "browser"}),
     ]
     scenarios[0]["evidence"]["modules"] = ["agent", "core", "provider", "ui"]
     coverage = audit_coverage(scenarios, suite="smoke", passed_scenario_ids={"web-ui"})
-    assert coverage["platforms"]["backend"]["complete"] is False
+    assert "backend" not in coverage["platforms"]
     assert "skills" in coverage["platforms"]["web"]["missingModules"]
     assert "tools" in coverage["platforms"]["web"]["missingModules"]
 

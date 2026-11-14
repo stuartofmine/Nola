@@ -289,7 +289,7 @@ Conversation-specific model override, style, context limit, attachments, retriev
 
 ## 13. Target and build design
 
-Add a new macOS application target named `NolaMac` to `Nola.xcodeproj`.
+Add a new macOS application target named `NolaMac` to `apple/Nola.xcodeproj`.
 
 - Product name: `Nola`.
 - Bundle identifier: `com.gaojc.Nola.mac`.

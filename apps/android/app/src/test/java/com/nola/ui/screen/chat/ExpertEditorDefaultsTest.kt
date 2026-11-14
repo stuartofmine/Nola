@@ -43,4 +43,16 @@ class ExpertEditorDefaultsTest {
         assertEquals(original.getValue("modelOverrides").jsonObject["configured:a"], profiles["configured:a"])
         assertEquals(generated.getValue("modelOverrides").jsonObject["configured:b"], profiles["configured:b"])
     }
+    @Test fun effortIsExactAndAutomaticRemovesOnlyItsOverride() {
+        val original = value("""{"expertReasoningEffort":"high","modelOverrides":{"configured:a":{"temperature":0.21}},"selectedPromptTemplateID":"template"}""")
+        val inherited = mergeExpertEditorDefaults(original, false, null, false, null, reasoningEffort = "automatic")
+        assertFalse(inherited.containsKey("expertReasoningEffort"))
+        assertEquals(original.filterKeys { it != "expertReasoningEffort" }, inherited)
+        val maximum = mergeExpertEditorDefaults(original, false, null, false, null, reasoningEffort = "max")
+        assertEquals(JsonPrimitive("max"), maximum["expertReasoningEffort"])
+        assertEquals(original["modelOverrides"], maximum["modelOverrides"])
+        assertThrows(IllegalArgumentException::class.java) {
+            mergeExpertEditorDefaults(original, false, null, false, null, reasoningEffort = "balanced")
+        }
+    }
 }

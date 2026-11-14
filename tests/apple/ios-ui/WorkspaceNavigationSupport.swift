@@ -72,11 +72,8 @@ extension XCUIApplication {
                 XCTFail("Unsupported explicitly requested test protocol")
                 return
             }
-            let advanced = buttons["Advanced settings"]
-            for _ in 0..<4 where !advanced.isHittable { swipeUp() }
-            recordModelSetupStage("advanced.open")
-            advanced.tap()
-            let menu = buttons.matching(NSPredicate(format: "label CONTAINS %@", "Chat Completions")).firstMatch
+            let menu = buttons["model.setup.protocol"]
+            for _ in 0..<4 where !menu.isHittable { swipeUp() }
             XCTAssertTrue(menu.waitForExistence(timeout: 5))
             menu.tap()
             buttons[label].tap()

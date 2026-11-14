@@ -463,6 +463,27 @@ final class MacCanonicalConversationRepository {
         }.map(\.option)
     }
 
+    /// Effort controls come only from the selected profile's declared contract.
+    /// Inheritance resolves the actual default profile without touching credentials.
+    @MainActor func agentReasoningEfforts(modelSelectionID: String) throws -> [String] {
+        let catalog = try MacChatModelCatalog.load(application: store)
+        let entry: MacChatModelCatalog.Entry?
+        if modelSelectionID.isEmpty {
+            let resolution = try MacDefaultChatModelStore(application: store).resolve(candidates: catalog.candidates)
+            if case .resolved(let id, _) = resolution { entry = catalog.entries.first { $0.candidate.profileID == id } }
+            else { entry = nil }
+        } else { entry = catalog.entries.first { $0.option.id == modelSelectionID } }
+        guard let entry, entry.candidate.availability == .available, !entry.option.isLocal,
+              let profile = try store.listModelProfiles().first(where: { $0.id == entry.candidate.profileID }),
+              let data = profile.sourceJSON.data(using: .utf8),
+              let fields = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let declaration = fields["reasoning"], JSONSerialization.isValidJSONObject(declaration) else { return [] }
+        let configuration = try JSONDecoder().decode(MacReasoningConfiguration.self,
+            from: JSONSerialization.data(withJSONObject: declaration))
+        guard configuration.control == .effort else { return [] }
+        return configuration.options.filter { ["none", "minimal", "low", "medium", "high", "xhigh", "max"].contains($0) }
+    }
+
     @MainActor func makeRoomExecutionOwner(contextID: String,
         localRuntime: any MacLocalAgentRuntime, remoteHost: any MacRemoteAgentRunning) -> MacWorkspaceModel {
         MacWorkspaceModel(initialConversationID: contextID, canonicalRepository: self,
@@ -1516,7 +1537,8 @@ final class MacCanonicalConversationRepository {
         String(decoding: try encoder.encode(message), as: UTF8.self)
     }
 
-    nonisolated static func projectMessages(_ window: MacCanonicalConversationWindow, databaseURL: URL? = nil) throws -> [MacChatMessage] {
+    nonisolated static func projectMessages(_ window: MacCanonicalConversationWindow, databaseURL: URL? = nil,
+        sourceOwner: AppleConversationSourceOwner? = nil) throws -> [MacChatMessage] {
         let deferredIDs = Set(window.deferredTextParts.map(\.messageID))
         // A journal-owned row intentionally has no inline body. Validate its
         // owner before applying inline visibility rules, not after discarding it.
@@ -1537,7 +1559,7 @@ final class MacCanonicalConversationRepository {
             // Presentation residency only; source/Host access remains checked
             // by the original operation port when a reader/action is used.
             let source = MacCanonicalPresentationSource(databaseURL: databaseURL,
-                sourceOwner: try MacApplicationPort(databaseURL: databaseURL)
+                sourceOwner: try sourceOwner ?? MacApplicationPort(databaseURL: databaseURL)
                     .conversationSourceOwner(conversationID: window.projection.conversationID))
             for index in messages.indices { messages[index].canonicalPresentation?.source = source }
             var seen = Set<UUID>()

@@ -1800,6 +1800,58 @@ mod versioned_validation_tests {
     }
 
     #[test]
+    fn verified_worktree_metadata_leaves_only_integrated_file_validation_debt() {
+        let mut state = AgentEngineeringLoopState::default();
+        state.skill_validation_required = true;
+        let child = "file:///tmp/child/";
+        let project = "file:///tmp/project/";
+        let add = "file:///tmp/project/add.py";
+        let tests = "file:///tmp/project/test_add.py";
+        let mut created = receipt(&[(child, Some("head-1"))], &[(child, "head-1")]);
+        created.effects[0].operation = "git.worktree.create".into();
+        apply(&mut state, &created, HostCapabilityEffect::MutateAndValidate, false, true);
+        assert!(!state.validation_required, "Verified worktree identity is not code validation debt");
+        assert!(state.pending_validation_versions.is_empty());
+        let mut integrated = receipt(
+            &[(project, Some("patch-1")), (add, Some("sha256:add")), (tests, Some("sha256:test"))],
+            &[(project, "patch-1")]);
+        integrated.effects[0].operation = "git.worktree.integrate".into();
+        integrated.effects[1].operation = "create".into();
+        integrated.effects[2].operation = "create".into();
+        apply(&mut state, &integrated, HostCapabilityEffect::MutateAndValidate, false, true);
+        assert!(state.validation_required);
+        assert_eq!(state.pending_validation_versions,
+            [("/tmp/project/add.py".into(), Some("sha256:add".into())),
+             ("/tmp/project/test_add.py".into(), Some("sha256:test".into()))].into());
+        let mut checked = receipt(&[], &[(add, "sha256:add"), (tests, "sha256:test")]);
+        for check in &mut checked.checks { check.kind = ExecutionCheckKind::ProcessExit; }
+        apply(&mut state, &checked, HostCapabilityEffect::Validate, false, true);
+        assert!(!state.validation_required);
+        assert!(state.pending_validation_versions.is_empty());
+        assert!(state.pending_validation_resources.is_empty());
+    }
+
+    #[test]
+    fn worktree_receipt_missing_stale_failed_or_unknown_checks_cannot_close_debt() {
+        let resource = "file:///tmp/worktree/";
+        for (checks, succeeded) in [(vec![], true), (vec![(resource, "old")], true),
+            (vec![(resource, "head")], false)] {
+            let mut state = AgentEngineeringLoopState::default();
+            let evidence = receipt(&[(resource, Some("head"))], &checks);
+            apply(&mut state, &evidence, HostCapabilityEffect::MutateAndValidate, false, succeeded);
+            assert!(state.validation_required);
+            assert_eq!(state.pending_validation_versions.get("/tmp/worktree/"), Some(&Some("head".into())));
+        }
+        let mut state = AgentEngineeringLoopState::default();
+        // Existing unknown-scope debt must survive this operation's exact checks.
+        state.unscoped_mutation_count = 1;
+        apply(&mut state, &receipt(&[(resource, Some("head"))], &[(resource, "head")]),
+            HostCapabilityEffect::MutateAndValidate, false, true);
+        assert!(state.validation_required);
+        assert_eq!(state.unscoped_mutation_count, 1);
+    }
+
+    #[test]
     fn combined_receipt_closes_only_its_own_version() {
         let mut state = AgentEngineeringLoopState::default();
         apply(

@@ -8,11 +8,14 @@ extension IOSApplicationRuntime {
         switch type {
         case "agent_room":
             let kind = (arguments["command"] as? [String: Any])?["type"] as? String
-            return ["directory", "read", "list", "for_conversation", "submission", "submissions", "execution_intent"].contains(kind ?? "")
+            return ["child_history", "peer_exchanges", "child_conversations", "role_templates", "directory", "read", "list", "for_conversation", "submission", "submissions", "execution_intent"].contains(kind ?? "")
+        case "runtime_task":
+            let kind = (arguments["command"] as? [String: Any])?["type"] as? String
+            return ["get", "list_all", "read_owned_cancellation"].contains(kind ?? "")
         case "auxiliary_invocation":
             let kind = (arguments["command"] as? [String: Any])?["type"] as? String
             return kind == "inspect" || kind == "inspect_source"
-        case "read_ui_authority", "read_ui_capability", "read_ui_surface", "read_ui_surface_revision", "read_ui_surface_changes", "list_ui_surfaces", "command_receipt", "load_run_identity", "load_conversation", "list_conversations", "load_conversation_settings",
+        case "read_expert_exchange_capability", "read_ui_authority", "read_ui_capability", "read_ui_surface", "read_ui_surface_revision", "read_ui_surface_changes", "list_ui_surfaces", "command_receipt", "load_run_identity", "load_conversation", "list_conversations", "list_root_conversations", "load_conversation_settings",
              "load_committed_host_requests", "load_runtime_effect_work_schedule", "load_host_execution_state",
              "load_session_projection", "load_goal_control_observation", "validate_mobile_run_recovery_authority",
              "query_claimable_memory_jobs", "build_memory_worker_plan", "read_remote_submission_intent", "read_admitted_remote_run_identity", "read_remote_submission_request",
@@ -23,7 +26,7 @@ extension IOSApplicationRuntime {
              "load_conversation_source_owner", "load_conversation_projection_window_v1", "load_conversation_projection_window_update_v1",
              "load_conversation_tail_snapshot_v1", "load_conversation_context_usage_v1",
              "load_conversation_permission_projection_v1", "load_conversation_task_projection_v1",
-             "load_prepared_edited_resend", "load_today_facts", "list_recoverable_runs", "list_open_user_input_waits", "list_owned_task_user_input_waits",
+             "load_prepared_in_place_resend", "load_prepared_edited_resend", "load_today_facts", "list_recoverable_runs", "list_open_user_input_waits", "list_owned_task_user_input_waits",
              "inspect_run_recovery", "validate_run_recovery_authority", "encode_host_worker_identity", "inspect_cancellation_process_owners", "validate_cancellation_process_observations", "inspect_run_process_owners", "validate_run_process_observations", "read_permission_configuration", "inspect_owned_task_recovery", "inspect_unknown_effect_recovery", "load_exact_run_invocation", "load_exact_run_trace_replay",
              "canonical_run_terminal", "active_run", "local_assistant_run_terminal_seal",
              "local_assistant_journal_head", "local_run_assistant_journal_heads", "local_run_context_usage",

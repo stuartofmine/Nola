@@ -41,8 +41,7 @@ struct MacInspectorDataSourcesView: View {
                 Button {
                     openWindow(id: "data-center")
                 } label: {
-                    Label(String(localized: "Manage", table: "Chat"), systemImage: "arrow.up.right")
-                        .labelStyle(.titleAndIcon)
+                    Text(String(localized: "Manage", table: "Chat"))
                         .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .medium))
                 }
                 .buttonStyle(MacPressFeedbackButtonStyle())
@@ -100,10 +99,7 @@ struct MacInspectorDataSourcesView: View {
                 in: RoundedRectangle(cornerRadius: 10, style: .continuous)
             )
 
-            Text(String(localized: "Changes here apply only to this conversation. Global access and validation live in Data Center.", table: "Chat"))
-                .font(.system(size: MacDesignTokens.Typography.inspectorCaption))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+
         }
         .task(id: key) {
             loadedKey = nil

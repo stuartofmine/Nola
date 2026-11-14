@@ -803,6 +803,8 @@ struct MacSettingsView: View {
     @State private var launchAtLogin = MacLaunchAtLoginService.isEnabled
     @State private var hostURL = ""
     @State private var hostToken = ""
+    @State private var savedHostURL: URL?
+    @State private var hasSavedHostToken = false
     @State private var hostExpectedID = ""
     @State private var importedHostOrigin: URL?
     @State private var hostConnectionState = MacRemoteHostConnectionState.initial
@@ -839,7 +841,8 @@ struct MacSettingsView: View {
         if !MacProcessRuntimePolicy.usesEphemeralCredentials {
             let host = MacRemoteHostConfigurationStore.shared.displayValues()
             _hostURL = State(initialValue: host.url)
-            _hostToken = State(initialValue: host.token)
+            _savedHostURL = State(initialValue: URL(string: host.url))
+            _hasSavedHostToken = State(initialValue: !host.token.isEmpty)
             _hostExpectedID = State(initialValue: host.hostID)
         }
         skipsAutomaticHostVerification = snapshotHostState != nil
@@ -1032,8 +1035,6 @@ struct MacSettingsView: View {
                                 .frame(width: 20, height: 20).foregroundStyle(.secondary)
                             Text(category.title)
                             Spacer(minLength: 8)
-                            Image("nola-chevron").renderingMode(.template).resizable().scaledToFit()
-                                .frame(width: 14, height: 14).foregroundStyle(.secondary)
                         }.frame(maxWidth: .infinity, minHeight: 64, alignment: .leading).contentShape(Rectangle())
                     }
                     .buttonStyle(MacPressFeedbackButtonStyle(contentInsets: EdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 12)))
@@ -1134,9 +1135,10 @@ struct MacSettingsView: View {
     }
 
     private var canVerifyHostDraft: Bool {
-        guard !hostToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              let url = URL(string: hostURL.trimmingCharacters(in: .whitespacesAndNewlines)),
-              ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
+        guard let url = URL(string: hostURL.trimmingCharacters(in: .whitespacesAndNewlines)),
+              ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+              !hostToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || (hasSavedHostToken && savedHostURL == url) else {
             return false
         }
         return true
@@ -1456,20 +1458,20 @@ struct MacSettingsView: View {
     }
 
     private func expectedHostIdentity(for url: URL) -> String? {
-        if let saved = MacRemoteHostConfigurationStore.shared.load(), let savedIdentity = saved.expectedHostID,
-           AppleHostConnectionSetup.sameOrigin(saved.baseURL, url) { return savedIdentity }
         if let importedHostOrigin, AppleHostConnectionSetup.sameOrigin(importedHostOrigin, url) {
             return hostExpectedID
         }
+        if let saved = MacRemoteHostConfigurationStore.shared.load(), let savedIdentity = saved.expectedHostID,
+           saved.baseURL == url { return savedIdentity }
         return nil
     }
 
     private func saveAndVerifyHostConnection() async {
         let normalizedURL = hostURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalizedToken = hostToken.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: normalizedURL),
               ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
-              !normalizedToken.isEmpty else {
+              let normalizedToken = MacRemoteHostConfigurationStore.shared.tokenForDraft(
+                url: url, enteredToken: hostToken) else {
             hostConnectionState = .failed(
                 macSettingsText("mac.settings.host.invalid", "Enter a valid Host URL and access token.")
             )
@@ -1493,7 +1495,9 @@ struct MacSettingsView: View {
                 hostID: report.hostID
             )
             hostURL = normalizedURL
-            hostToken = normalizedToken
+            hostToken = ""
+            savedHostURL = url
+            hasSavedHostToken = true
             hostExpectedID = report.hostID
             withAnimation(.easeOut(duration: 0.18)) {
                 hostConnectionState = .connected(report)
@@ -1514,6 +1518,8 @@ struct MacSettingsView: View {
         }
         hostURL = ""
         hostToken = ""
+        savedHostURL = nil
+        hasSavedHostToken = false
         hostExpectedID = ""
         importedHostOrigin = nil
         withAnimation(.easeOut(duration: 0.18)) {
@@ -1724,24 +1730,38 @@ struct MacSettingsView: View {
                 VStack(alignment: .leading, spacing: 7) {
                     Text(macSettingsText("mac.settings.host.url", "Connected host URL"))
                         .font(.callout.weight(.semibold))
-                    TextField(macSettingsText("mac.settings.host.url", "Connected host URL"), text: $hostURL, prompt: Text("https://studio-mac.local:5001"))
+                    TextField(macSettingsText("mac.settings.host.url", "Connected host URL"), text: Binding(get: { hostURL }, set: { value in
+                        guard value != hostURL else { return }
+                        hostToken = ""
+                        hostExpectedID = ""
+                        importedHostOrigin = nil
+                        hostURL = value
+                        markHostConfigurationEdited()
+                    }), prompt: Text("https://studio-mac.local:5001"))
+                        .labelsHidden()
+                        .accessibilityLabel(macSettingsText("mac.settings.host.url", "Connected host URL"))
                         .textContentType(.URL)
                         .textFieldStyle(.roundedBorder)
                         .multilineTextAlignment(.leading)
                         .frame(maxWidth: .infinity)
                         .controlSize(.large)
-                        .onChange(of: hostURL) { _, _ in markHostConfigurationEdited() }
                 }
                 VStack(alignment: .leading, spacing: 7) {
                     Text(macSettingsText("mac.settings.host.token", "Access token"))
                         .font(.callout.weight(.semibold))
-                    SecureField(macSettingsText("mac.settings.host.token", "Access token"), text: $hostToken)
+                    SecureField(macSettingsText("mac.settings.host.token", "Access token"), text: Binding(get: { hostToken }, set: { value in
+                            hostToken = value
+                            markHostConfigurationEdited()
+                        }),
+                        prompt: Text(hasSavedHostToken && URL(string: hostURL.trimmingCharacters(in: .whitespacesAndNewlines)) == savedHostURL
+                            ? "••••••••" : macSettingsText("mac.settings.host.token", "Access token")))
+                        .labelsHidden()
+                        .accessibilityLabel(macSettingsText("mac.settings.host.token", "Access token"))
                         .textContentType(.password)
                         .textFieldStyle(.roundedBorder)
                         .multilineTextAlignment(.leading)
                         .frame(maxWidth: .infinity)
                         .controlSize(.large)
-                        .onChange(of: hostToken) { _, _ in markHostConfigurationEdited() }
                 }
                 Label(
                     macSettingsText("mac.settings.host.security", "The access token is stored in Keychain and is sent only to this host."),
@@ -1788,9 +1808,6 @@ struct MacSettingsView: View {
 
         case .data:
             Section(macSettingsText("mac.settings.section.data_sources", "Data Sources")) {
-                Text(macSettingsText("mac.settings.data.detail", "Review live authorization and freshness for contacts, calendars, reminders, notifications, and iPhone health sync."))
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
                 LazyVGrid(
                     columns: [GridItem(.adaptive(minimum: 220), spacing: 12)],
                     alignment: .leading,
@@ -1798,13 +1815,11 @@ struct MacSettingsView: View {
                 ) {
                     MacSettingsDestinationCard(
                         title: macSettingsText("mac.settings.data.open_center", "Open Data Center"),
-                        detail: macSettingsText("mac.settings.workspace.data.detail", "Manage default and conversation-level data sources."),
                         symbol: "square.stack.3d.up",
                         tint: .cyan
                     ) { openWindow(id: "data-center") }
                     MacSettingsDestinationCard(
                         title: macSettingsText("mac.settings.data.management", "Data Management"),
-                        detail: macSettingsText("mac.settings.data.management.detail", "Review local storage, exports, and deletion controls."),
                         symbol: "externaldrive",
                         tint: .orange
                     ) { openWindow(id: "data-management") }
@@ -2145,7 +2160,6 @@ private struct MacSettingsSidebarRow: View {
 
 private struct MacSettingsDestinationCard: View {
     let title: String
-    let detail: String
     let symbol: String
     let tint: Color
     let action: () -> Void
@@ -2154,33 +2168,21 @@ private struct MacSettingsDestinationCard: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .center, spacing: 12) {
                 Image(systemName: symbol)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(tint)
                     .frame(width: 30, height: 30)
                     .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                    Text(detail)
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-                    .padding(.top, 3)
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(12)
-            .frame(maxWidth: .infinity, minHeight: 74, alignment: .topLeading)
+            .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
             .background(
                 isHovered ? MacDesignColor.hover : Color.primary.opacity(0.025),
                 in: RoundedRectangle(cornerRadius: 11)

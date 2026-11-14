@@ -3,8 +3,6 @@
     let {onopen, selectedPath = ''}: {onopen: (path: string) => void; selectedPath?: string} = $props();
     const entries = [
         ['/data-sources', 'shell.nav.data'], ['/models', 'shell.nav.models'], ['/capabilities', 'shell.nav.capabilities'],
-        ['/data-sources?tab=memory', 'data_sources.tab.memory'], ['/data-sources?tab=plans', 'data_sources.tab.plans'],
-        ['/activity', 'chatInspector.list.activity'],
     ];
     const selectedEntry = $derived.by(() => {
         if (!selectedPath) return '';

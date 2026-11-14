@@ -38,6 +38,15 @@ fn requires_initialization(connection: &Connection) -> StoreResult<bool> {
     Ok(true)
 }
 
+pub(super) fn verify_read_only_schema(connection: &Connection) -> StoreResult<()> {
+    if requires_initialization(connection)? {
+        return Err(StoreError::Invariant(
+            "canonical Store is not initialized".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 impl NolaStore {
     pub(super) fn initialize_schema(&mut self) -> StoreResult<()> {
         if !requires_initialization(&self.connection)? {
@@ -89,6 +98,7 @@ fn create_current_schema(connection: &Connection) -> StoreResult<()> {
         include_str!("execution_evidence_schema.sql"),
         include_str!("run_requirement_schema.sql"),
         include_str!("run_input_frontier.sql"),
+        include_str!("memory_index_schema.sql"),
     ] {
         connection.execute_batch(ddl)?;
     }

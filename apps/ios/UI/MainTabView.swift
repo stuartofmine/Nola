@@ -40,7 +40,8 @@ struct MainTabView: View {
     var body: some View {
         Group {
             if horizontalSizeClass == .compact {
-                IOSCompactTabContainer(selection: selectedTabBinding.wrappedValue) { tab in
+                IOSCompactTabContainer(selection: selectedTabBinding.wrappedValue,
+                    contentRevision: "\(colorScheme)-\(dynamicTypeSize)-\(locale.identifier)-\(layoutDirection)") { tab in
                     AnyView(tabContent(tab)
                         .environmentObject(container)
                         .environment(\.colorScheme, colorScheme)
@@ -137,13 +138,6 @@ struct MainTabView: View {
                 IOSConversationActivityView()
                     .navigationTitle(String(localized: "information.activity"))
                     .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            NavigationLink { ScheduledActionsView(embedded: true) } label: {
-                                Image("nola-calendar").renderingMode(.template)
-                            }.accessibilityLabel(Text("workspace.plans"))
-                        }
-                    }
             }
         case .information:
             IOSInformationView(path: $informationPath, pendingRequests: $informationRequests)
@@ -160,7 +154,7 @@ struct MainTabView: View {
                         Image(tab.icon).renderingMode(.template).resizable().scaledToFit().frame(width: 20, height: 20)
                         Text(tab.title).font(.caption2)
                     }
-                    .foregroundStyle(selectedTabBinding.wrappedValue == tab ? DesignTokens.actionColor : Color.secondary)
+                    .foregroundStyle(selectedTabBinding.wrappedValue == tab ? DesignTokens.actionColor : DesignTokens.secondaryContentColor)
                     .frame(minWidth: 64, minHeight: 52)
                     .background(selectedTabBinding.wrappedValue == tab ? DesignTokens.elevatedColor : .clear,
                                 in: RoundedRectangle(cornerRadius: 12))
@@ -267,23 +261,33 @@ struct ChatNavigationView: View {
     @State private var path: [UUID] = []
     @State private var readingPositions = ChatReadingPositions()
     @State private var search = ""
+    @State private var expertContinuation: IOSExpertHistoryContinuation?
 
     var body: some View {
         NavigationStack(path: $path) {
-            ChatConversationsList(search: $search) { id in
+            ChatConversationsList(search: $search, onSelect: { id in
+                expertContinuation = nil
                 if container.chatManager.currentConversationId != id {
                     container.chatManager.currentConversationId = id
                 }
                 if path.last != id { path.append(id) }
-            }
+            }, onContinueExpert: { request in
+                expertContinuation = request
+                container.chatManager.currentConversationId = request.parentID
+                path = [request.parentID]
+            })
             .navigationDestination(for: UUID.self) { id in
-                ChatView(readingPositions: readingPositions).id(id)
+                ChatView(readingPositions: readingPositions, expertHistoryContinuation: expertContinuation).id(id)
                     .toolbar(.hidden, for: .tabBar)
             }
         }
-        .onChange(of: path, initial: true) { _, value in detailPresented = !value.isEmpty }
+        .onChange(of: path, initial: true) { _, value in
+            detailPresented = !value.isEmpty
+            if value.isEmpty { expertContinuation = nil }
+        }
         .onChange(of: requestedConversationID, initial: true) { _, id in
             guard let id else { return }
+            expertContinuation = nil
             container.chatManager.currentConversationId = id
             path = [id]
             requestedConversationID = nil

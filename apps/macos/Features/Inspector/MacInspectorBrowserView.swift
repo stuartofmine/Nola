@@ -13,6 +13,7 @@ struct MacInspectorBrowserView: View {
 
     var body: some View {
         browserContent
+            .accessibilityIdentifier("mac-inspector-browser")
             .sheet(isPresented: $showsExpandedBrowser) {
                 if let browser = model.selectedConversationBrowserSnapshot,
                    let previewURL = browser.previewURL,
@@ -43,8 +44,6 @@ struct MacInspectorBrowserView: View {
                             in: RoundedRectangle(cornerRadius: 8, style: .continuous)
                         )
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(String(localized: "Playwright", table: "Chat"))
-                            .font(.system(size: MacDesignTokens.Typography.inspectorBody, weight: .semibold))
                         Text(String(localized: "One persistent browser session is shared by this conversation.", table: "Chat"))
                             .font(.system(size: MacDesignTokens.Typography.inspectorCaption))
                             .foregroundStyle(.secondary)

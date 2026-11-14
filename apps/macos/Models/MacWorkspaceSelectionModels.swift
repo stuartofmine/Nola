@@ -120,6 +120,12 @@ enum MacWorkspaceSection: String, CaseIterable, Identifiable {
     case automations
     case settings
 
+    /// Memory and automations live in Data Center; Activity has its own rail.
+    static let resourceNavigationSections: [Self] = [.data, .models, .extensions, .capabilities]
+    var resourceNavigationOwner: Self {
+        switch self { case .memory, .automations: .data; default: self }
+    }
+
     var id: String { rawValue }
 
     static func initialSection(environment: [String: String] = ProcessInfo.processInfo.environment) -> Self {
@@ -129,7 +135,7 @@ enum MacWorkspaceSection: String, CaseIterable, Identifiable {
     var title: LocalizedStringKey {
         switch self {
         case .chat: return "Chat"
-        case .data: return LocalizedStringKey("workspace.title")
+        case .data: return "Data Center"
         case .models: return "Models"
         case .extensions: return "Skills and MCP"
         case .capabilities: return "System Access"

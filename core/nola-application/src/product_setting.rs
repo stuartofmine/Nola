@@ -33,6 +33,8 @@ pub(crate) fn put_checked<
     expected_revision: Option<i64>,
     updated_at_ms: i64,
 ) -> Result<ProductSetting, String> {
+    if nola_domain::remote_expert_parent::owns_setting(key) { return Err("remote_expert_parent_source_requires_owning_receiver".into()); }
+    if key.starts_with(crate::expert_peer::PRIVATE_PREFIX) { return Err("expert_peer_private_setting_requires_owning_operation".into()); }
     if nola_domain::model_connection::owns_setting(key) {
         return Err("model connections and accounts require their owning model command".into());
     }

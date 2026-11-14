@@ -63,11 +63,11 @@ struct MacMessageView: View {
     let isSearchMatch: Bool
     let onSendTaskGuidance: (String, String) -> Void
     let onRequestTaskCancellation: (String) -> Void
+    var userDisplayName: String? = nil
     var showsAnimatedStatusLight = true
     var showsRoleAvatar = true
     var assistantBubbleFill: Color? = nil
     var journalPresentationOwner: MacJournalPresentationOwner?
-    var publicReplyOnly = false
     @State private var copied = false
     @State private var copyTask: Task<Void, Never>?
     @State private var copyFeedbackTask: Task<Void, Never>?
@@ -92,6 +92,7 @@ struct MacMessageView: View {
     }
     @State private var attachmentOpenError: String?
     @Environment(\.macMessageEditAction) private var editMessage
+    @Environment(\.macTranscriptReadOnly) private var transcriptReadOnly
     @Environment(\.openURL) private var openURL
     @Environment(\.uiSurfaceContext) private var messageSourceContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -170,7 +171,7 @@ struct MacMessageView: View {
                         guard journalPresentationOwner == nil else { return }
                         journalReferenceCoverage.adopt(identity: identity,
                             sourceIDs: sourceIDs, citationIDs: citationIDs, attachmentIDs: attachmentIDs)
-                    }, presentationOwner: journalPresentationOwner, publicReplyOnly: publicReplyOnly)
+                    }, presentationOwner: journalPresentationOwner)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else if let canonical = message.canonicalPresentation {
                 MacCanonicalPartFlowView(conversationID: conversationID, canonical: canonical.message,
@@ -178,7 +179,7 @@ struct MacMessageView: View {
                     isStreaming: isStreaming,
                     guidance: message.presentation?.renderedTaskGuidance ?? [:],
                     onSendGuidance: onSendTaskGuidance, onRequestCancellation: onRequestTaskCancellation,
-                    onOpenAttachment: { openAttachments([$0]) }, publicReplyOnly: publicReplyOnly)
+                    onOpenAttachment: { openAttachments([$0]) })
                     .id(MacCanonicalReadingOwner(conversationID: conversationID, messageID: canonical.message.messageID, source: canonical.source))
             } else if assistantOutputIsComplete,
                !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -194,7 +195,8 @@ struct MacMessageView: View {
                     // Transport can finish before queued semantic
                     // phrases have finished arriving at the view.
                     animateNewNodes: !presentation.isComplete,
-                    contentIsFinal: presentation.isComplete
+                    contentIsFinal: presentation.isComplete,
+                    mutableNodeID: presentation.mutableTextNode?.id
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else if !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -214,7 +216,7 @@ struct MacMessageView: View {
                 MacAssistantSourcesView(sources: sources)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            if !publicReplyOnly, message.canonicalPresentation == nil, let references = message.presentation?.renderedCompactionReferences,
+            if message.canonicalPresentation == nil, let references = message.presentation?.renderedCompactionReferences,
                !references.isEmpty {
                 MacAssistantCompactionReferencesView(
                     conversationID: conversationID,
@@ -230,6 +232,27 @@ struct MacMessageView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private var uncoveredTraceItems: [MacAssistantTrace] {
+        (message.presentation?.traceItems ?? []).filter { trace in
+            guard let identity = message.journalReference?.cursor.identity,
+                  let partID = trace.externalID else { return true }
+            return !journalActivityCoverage.contains(identity: identity, partID: partID)
+        }
+    }
+    private var uncoveredTaskHandles: [MacCoreTaskHandle] {
+        (message.presentation?.renderedTaskHandles ?? []).filter { task in
+            guard let identity = message.journalReference?.cursor.identity else { return true }
+            return !journalActivityCoverage.containsTask(identity: identity, taskID: task.id)
+        }
+    }
+    private var accessibleAuthor: String {
+        switch message.role {
+        case .user: userDisplayName ?? String(localized: "You")
+        case .assistant: "Nola"
+        case .system: String(localized: "System")
+        }
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             if message.role == .user {
@@ -237,7 +260,7 @@ struct MacMessageView: View {
             } else if showsRoleAvatar && message.role != .assistant {
                 Group {
                     if showsInlinePendingIndicator {
-                        MacBreathingStatusLight(diameter: 18, dotScale: 4)
+                        MacBreathingStatusLight(diameter: 18)
                     } else {
                         Image(systemName: message.role == .assistant ? "sparkles" : "info.circle")
                             .font(.system(size: 12, weight: .semibold))
@@ -253,23 +276,16 @@ struct MacMessageView: View {
                         if showsRoleAvatar && assistantBubbleFill == nil { AppleConversationSignature() }
                         // Retire only exact Parts successfully adopted by the
                         // committed reader, not all traces of a broad kind.
-                        let traces = (message.presentation?.traceItems ?? []).filter {
-                            guard let identity = message.journalReference?.cursor.identity,
-                                  let partID = $0.externalID else { return true }
-                            return !journalActivityCoverage.contains(identity: identity, partID: partID)
-                        }
-                        let tasks = (message.presentation?.renderedTaskHandles ?? []).filter { task in
-                            guard let identity = message.journalReference?.cursor.identity else { return true }
-                            return !journalActivityCoverage.containsTask(identity: identity, taskID: task.id)
-                        }
+                        let traces = uncoveredTraceItems
+                        let tasks = uncoveredTaskHandles
                         if isStreaming, !hasAssistantResponse, traces.isEmpty {
-                            Text("Nola is processing")
+                            MacFlowingStatusText(text: Text("Nola is processing"))
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
                                 .frame(height: 28, alignment: .center)
                                 .accessibilityIdentifier("chat.assistant.processing")
                         }
-                        if !publicReplyOnly, message.journalReference == nil && message.canonicalPresentation == nil && !tasks.isEmpty {
+                        if message.journalReference == nil && message.canonicalPresentation == nil && !tasks.isEmpty {
                             MacAssistantTaskList(
                                 tasks: tasks,
                                 guidance: message.presentation?.renderedTaskGuidance ?? [:],
@@ -278,13 +294,13 @@ struct MacMessageView: View {
                             )
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        if !publicReplyOnly, message.journalReference == nil && message.canonicalPresentation == nil && !traces.isEmpty {
+                        if message.journalReference == nil && message.canonicalPresentation == nil && !traces.isEmpty {
                             MacAssistantTraceView(
                                 traces: traces,
                                 isStreaming: isStreaming
                             )
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        } else if !publicReplyOnly, message.journalReference == nil && message.canonicalPresentation == nil && (isStreaming || !liveActivities.isEmpty)
+                        } else if message.journalReference == nil && message.canonicalPresentation == nil && (isStreaming || !liveActivities.isEmpty)
                                     && !showsInlinePendingIndicator {
                             MacAssistantPendingProcessView(
                                 activities: liveActivities,
@@ -311,7 +327,7 @@ struct MacMessageView: View {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(assistantFailureTitle)
                                         .font(.system(size: 12.5, weight: .semibold))
-                                    if !publicReplyOnly, let assistantFailureDetail, !assistantFailureDetail.isEmpty {
+                                    if let assistantFailureDetail, !assistantFailureDetail.isEmpty {
                                         Text(assistantFailureDetail)
                                             .font(.caption)
                                             .foregroundStyle(.secondary)
@@ -376,7 +392,7 @@ struct MacMessageView: View {
                     }
                 }
 
-                if !publicReplyOnly, message.canonicalPresentation == nil, let details = message.historicalDetails, !details.isEmpty {
+                if message.canonicalPresentation == nil, let details = message.historicalDetails, !details.isEmpty {
                     MacHistoricalPartDetailsButton(selections: details)
                 }
 
@@ -453,7 +469,7 @@ struct MacMessageView: View {
                             .buttonStyle(MacMessageActionButtonStyle())
                             .help(copied ? String(localized: "Copied") : String(localized: "Copy"))
                             .accessibilityLabel(copied ? String(localized: "Copied") : String(localized: "Copy"))
-                            if message.role == .user {
+                            if message.role == .user && !transcriptReadOnly {
                                 Button { editMessage.open(conversationID, message) } label: {
                                     Image(systemName: "square.and.pencil").frame(width: 32, height: 32).contentShape(Rectangle())
                                 }.buttonStyle(MacMessageActionButtonStyle()).disabled(!editMessage.enabled)
@@ -519,13 +535,7 @@ struct MacMessageView: View {
         )) {
             Button("OK", role: .cancel) { copyError = nil }
         } message: { Text(verbatim: copyError ?? "") }
-        .accessibilityLabel(
-            message.role == .user
-                ? String(localized: "You")
-                : message.role == .assistant
-                    ? "Nola"
-                    : String(localized: "System")
-        )
+        .accessibilityLabel(accessibleAuthor)
         .accessibilityValue(message.text)
         .accessibilityAction(named: "Copy") {
             if message.role != .assistant || assistantOutputIsComplete { copyMessage() }
@@ -779,6 +789,7 @@ private struct MacAssistantTaskCard: View {
     let guidance: MacCoreTaskGuidanceQueue?
     let onSendGuidance: (String) -> Void
     let onRequestCancellation: () -> Void
+    @Environment(\.macTranscriptReadOnly) private var readOnly
     @State private var isExpanded = false
     @State private var guidanceDraft = ""
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -859,7 +870,7 @@ private struct MacAssistantTaskCard: View {
                                 .textSelection(.enabled)
                         }
                     }
-                    if model.isActive, task.kind == .agent {
+                    if !readOnly, model.isActive, task.kind == .agent {
                         HStack(spacing: 7) {
                             TextField(
                                 String(localized: "Guide this task", table: "Chat"),
@@ -882,7 +893,7 @@ private struct MacAssistantTaskCard: View {
                         .frame(height: 30)
                         .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     }
-                    if model.isActive {
+                    if !readOnly, model.isActive {
                         Button(role: .destructive, action: onRequestCancellation) {
                             Label(String(localized: "Cancel task", table: "Chat"), systemImage: "stop.circle")
                                 .font(.system(size: 11, weight: .medium))
@@ -1223,30 +1234,22 @@ private struct MacCanonicalPartFlowView: View {
     let onSendGuidance: (String, String) -> Void
     let onRequestCancellation: (String) -> Void
     let onOpenAttachment: (URL) -> Void
-    var publicReplyOnly = false
     @Environment(\.uiSurfaceContext) private var uiContext
     @State private var presentationOwner = MacJournalPresentationOwner()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            ForEach(MacCanonicalPartFlow.segments(publicReplyOnly ? canonical.parts.filter { part in
-                switch part {
-                case .text, .source, .citation, .attachment, .uiSurface: return true
-                default: return false
-                }
-            } : canonical.parts)) { segment in
+            ForEach(MacCanonicalPartFlow.segments(canonical.parts)) { segment in
                 if segment.kind == .process {
                     let states = MacCanonicalPartFlow.states(segment.parts)
                     MacJournalProcessView(partIDs: segment.parts.map(\.partID),
                         delivery: MacCanonicalPartFlow.delivery(states),
-                        requiresAttention: states.contains(.failed) || states.contains(.waitingForPermission) || states.contains(.waitingForInput),
+                        requiresAttention: states.contains(.waitingForPermission) || states.contains(.waitingForInput),
                         toolCount: segment.parts.filter { if case .tool = $0 { true } else { false } }.count,
                         attentionState: states.contains(.waitingForPermission) ? "waiting_for_permission"
-                            : states.contains(.waitingForInput) ? "waiting_for_input" : states.contains(.failed) ? "failed" : nil,
-                        hasLiveReasoning: isStreaming && segment.parts.contains {
-                            if case .reasoning(let value) = $0 { value.state == .running } else { false }
-                        }, reasoningOnly: !segment.parts.contains { if case .tool = $0 { true } else { false } },
-                        settledStatus: MacCanonicalPartFlow.delivery(states) == nil ? "sealed" : nil) {
+                            : states.contains(.waitingForInput) ? "waiting_for_input" : nil,
+                        reasoningOnly: !segment.parts.contains { if case .tool = $0 { true } else { false } },
+                        currentActivityTitle: isStreaming ? MacCanonicalPartFlow.currentActivityTitle(segment.parts) : nil) {
                             ForEach(segment.parts, id: \.partID) { part in partView(part) }
                         }
                 } else {
@@ -1339,36 +1342,31 @@ private struct MacCanonicalPartFlowView: View {
 
 nonisolated enum MacCanonicalPartFlow {
     static func segments(_ parts: [MacCanonicalConversationProjectionV1.Part]) -> [AppleMessagePartFlowSegment<MacCanonicalConversationProjectionV1.Part>] {
-        MacSingleExecutionFlow.segments(parts, id: \.partID) { part in
-            switch part { case .reasoning, .tool: true; default: false }
+        AppleMessagePartFlow.segments(parts, id: \.partID) { part in
+            switch part { case .reasoning: .reasoning; case .tool: .tool; default: .content }
         }
     }
     static func states(_ parts: [MacCanonicalConversationProjectionV1.Part]) -> [MacCanonicalConversationProjectionV1.ActivityState] {
         parts.compactMap { part in switch part { case .reasoning(let value): value.state; case .tool(let value): value.state; default: nil } }
     }
+    static func currentActivityTitle(_ parts: [MacCanonicalConversationProjectionV1.Part]) -> String? {
+        let current = parts.last { part in
+            switch part {
+            case .tool(let tool): [.running, .pending].contains(tool.state)
+            case .reasoning(let reasoning): reasoning.state == .running
+            default: false
+            }
+        }
+        switch current {
+        case .tool(let tool) where [.running, .pending].contains(tool.state):
+            return tool.title.isEmpty ? String(localized: "Activity") : tool.title
+        case .reasoning(let reasoning) where reasoning.state == .running:
+            return String(localized: "Thinking")
+        default: return nil
+        }
+    }
     static func delivery(_ states: [MacCanonicalConversationProjectionV1.ActivityState]) -> MacChatMessage.DeliveryState? {
         if states.contains(where: { ![.completed,.sealed,.failed,.cancelled].contains($0) }) { return .running }
-        if states.contains(.failed) { return .failed }
-        if states.contains(.cancelled) { return .cancelled }
-        if states.contains(.sealed) { return nil }
-        return .completed
-    }
-}
-
-/// UI-only partition: one disclosure at the first execution anchor, preserving
-/// canonical execution order and keeping public content and cards outside.
-nonisolated enum MacSingleExecutionFlow {
-    static func segments<Part>(_ parts: [Part], id: (Part) -> String,
-                               isExecution: (Part) -> Bool) -> [AppleMessagePartFlowSegment<Part>] {
-        let execution = parts.filter(isExecution)
-        var insertedExecution = false
-        return parts.compactMap { part in
-            if isExecution(part) {
-                guard !insertedExecution else { return nil }
-                insertedExecution = true
-                return .init(id: "message:execution", kind: .process, parts: execution)
-            }
-            return .init(id: "part:" + id(part), kind: .content, parts: [part])
-        }
+        return nil
     }
 }

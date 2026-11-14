@@ -82,6 +82,38 @@ import Observation
         }
     }
 
+    var historyDatabaseURL: URL { repository.databaseURL }
+
+    private func historyTarget(childID: String, source: AppleConversationSourceOwner) throws -> MacRemoteSubmissionTarget? {
+        guard try repository.conversationSourceOwner(conversationID: childID) == source else { throw MacApplicationPortError.invalidResponse }
+        switch source {
+        case .local: return nil
+        case .unavailable: throw MacApplicationPortError.invalidResponse
+        case .remote(let hostID, let epoch):
+            let target = try remoteHost.captureSubmissionTarget()
+            guard target.configuration.expectedHostID == hostID else { throw MacApplicationPortError.invalidResponse }
+            return MacRemoteSubmissionTarget(configuration: target.configuration, clientID: target.clientID, expectedSourceStoreEpoch: epoch)
+        }
+    }
+    func readHistoryUIChanges(childID: String, source: AppleConversationSourceOwner,
+        identity: AppleUISurfaceIdentity, baseRevision: UInt64?) async throws -> AppleUISurfaceUpdate<MacCanonicalJSONValue> {
+        guard identity.owner.conversation_id == childID else { throw MacApplicationPortError.invalidResponse }
+        if let target = try historyTarget(childID: childID, source: source) {
+            return try await remoteHost.readUISurfaceChanges(identity: identity, baseRevision: baseRevision, target: target)
+        }
+        let database = repository.databaseURL
+        return try await Task.detached { try MacApplicationPort(databaseURL: database).readUISurfaceChanges(identity: identity, baseRevision: baseRevision) }.value
+    }
+    func readHistoryUIRevision(childID: String, source: AppleConversationSourceOwner,
+        reference: AppleUISurfaceReference) async throws -> AppleUISnapshot<MacCanonicalJSONValue>? {
+        guard reference.identity.owner.conversation_id == childID else { throw MacApplicationPortError.invalidResponse }
+        if let target = try historyTarget(childID: childID, source: source) {
+            return try await remoteHost.readUISurfaceRevision(reference, target: target)
+        }
+        let database = repository.databaseURL
+        return try await Task.detached { try MacApplicationPort(databaseURL: database).readUISurfaceRevision(identity: reference.identity, revision: reference.revision) }.value
+    }
+
     @discardableResult func observe(contextID: String) -> MacWorkspaceModel {
         if let existing = owners[contextID] { return existing }
         let owner = repository.makeRoomExecutionOwner(contextID: contextID,

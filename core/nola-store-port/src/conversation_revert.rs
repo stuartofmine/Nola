@@ -10,6 +10,10 @@ pub struct ConversationRevertBoundary {
 
 pub trait ConversationRevertRepository {
     type Error: std::fmt::Display;
+    fn prepared_in_place_resend(&self, operation_id: &str)
+        -> Result<Option<nola_domain::edited_resend::PreparedInPlaceResend>, Self::Error>;
+    fn put_prepared_in_place_resend(&mut self, prepared: &nola_domain::edited_resend::PreparedInPlaceResend)
+        -> Result<(), Self::Error>;
     /// Same-connection atomic checkpoint/visibility CAS; nested in outer receipt savepoint.
     fn commit_checkpoint_projection(
         &mut self,

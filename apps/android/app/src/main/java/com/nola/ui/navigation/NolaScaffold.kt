@@ -118,6 +118,7 @@ fun NolaScaffold(modifier: Modifier = Modifier) {
     }
 
     val navigateToTab: (NolaTab) -> Unit = { tab ->
+        val reselected = tab == selectedTab
         navController.navigate(tab.route) {
             popUpTo(navController.graph.startDestinationId) {
                 saveState = true
@@ -125,8 +126,9 @@ fun NolaScaffold(modifier: Modifier = Modifier) {
             launchSingleTop = true
             restoreState = true
         }
-        // A tab selects its root; restored shared subpages must not become another tab.
-        navController.popBackStack(tab.route, inclusive = false)
+        // Preserve restored editors when switching tabs. Only reselecting the
+        // current tab returns to its root.
+        if (reselected) navController.popBackStack(tab.route, inclusive = false)
     }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {

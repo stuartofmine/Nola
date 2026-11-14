@@ -3,6 +3,7 @@
 公开文档维护长期有效的验收方法、范围与限制。任务流水和历史原始记录保留本地，不作为仓库链接或发布依赖。
 
 - [当前已验证范围与缺口](VALIDATION_SCOPE.md)：真实 Host 链路与合成原型分别记账。
+- [客户端交互验收](UI_INTERACTION_ACCEPTANCE.md)：正常、失败、恢复流程以及多平台界面状态的判定标准。
 - [测试架构](../architecture/模块/15-观测与验收/TESTING_ARCHITECTURE.md)、[真实模型验收方法](../architecture/模块/15-观测与验收/REAL_E2E_TESTING.md)。
 - [测量合同](../architecture/模块/15-观测与验收/MEASUREMENT.md)、[隐私发布检查](../architecture/模块/15-观测与验收/privacy-release-checklist.md)。
 - [原型状态回放范围](../design/prototype/docs/VALIDATION.md)、[原型场景清单](../design/prototype/docs/BUSINESS-SCENARIOS.md)。

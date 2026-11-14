@@ -27,7 +27,7 @@ def prepare(root, version, build, dry_run=False):
     if count != 1 or names != 1:
         raise ValueError('Android version declarations are ambiguous')
     edits[path] = text
-    path = root / 'Nola.xcodeproj/project.pbxproj'; text = path.read_text()
+    path = root / 'apple/Nola.xcodeproj/project.pbxproj'; text = path.read_text()
     text, builds = re.subn(r'CURRENT_PROJECT_VERSION = \d+;', f'CURRENT_PROJECT_VERSION = {build};', text)
     text, names = re.subn(r'MARKETING_VERSION = [^;]+;', f'MARKETING_VERSION = {version};', text)
     if not builds or not names:
@@ -49,7 +49,7 @@ def validate_identity(root):
     text = (root / 'apps/android/app/build.gradle.kts').read_text()
     if re.findall(r'versionCode = (\d+)', text) != [str(build)] or re.findall(r'versionName = "([^\"]+)"', text) != [version]:
         raise ValueError('Android release identity differs')
-    text = (root / 'Nola.xcodeproj/project.pbxproj').read_text()
+    text = (root / 'apple/Nola.xcodeproj/project.pbxproj').read_text()
     versions = re.findall(r'MARKETING_VERSION = ([^;]+);', text)
     builds = re.findall(r'CURRENT_PROJECT_VERSION = (\d+);', text)
     if not versions or set(versions) != {version} or not builds or set(builds) != {str(build)}:

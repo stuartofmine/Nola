@@ -77,8 +77,7 @@ struct MacInspectorKnowledgeView: View {
             DisclosureGroup(String(localized: "Knowledge Points", table: "Chat"), isExpanded: Binding(
                 get: { navigation.expandedKnowledge.contains(.points) },
                 set: { expanded in
-                    if expanded { navigation.expandedKnowledge.insert(.points) }
-                    else { navigation.expandedKnowledge.remove(.points) }
+                    navigation.setKnowledgeExpanded(.points, expanded)
                 }
             )) {
                 VStack(alignment: .leading, spacing: 8) {
@@ -101,8 +100,7 @@ struct MacInspectorKnowledgeView: View {
             DisclosureGroup(String(localized: "Conversation Wiki", table: "Chat"), isExpanded: Binding(
                 get: { navigation.expandedKnowledge.contains(.wiki) },
                 set: { expanded in
-                    if expanded { navigation.expandedKnowledge.insert(.wiki) }
-                    else { navigation.expandedKnowledge.remove(.wiki) }
+                    navigation.setKnowledgeExpanded(.wiki, expanded)
                 }
             )) {
                 VStack(alignment: .leading, spacing: 8) {
@@ -125,8 +123,7 @@ struct MacInspectorKnowledgeView: View {
             DisclosureGroup(String(localized: "Conversation Recall", table: "Chat"), isExpanded: Binding(
                 get: { navigation.expandedKnowledge.contains(.recall) },
                 set: { expanded in
-                    if expanded { navigation.expandedKnowledge.insert(.recall) }
-                    else { navigation.expandedKnowledge.remove(.recall) }
+                    navigation.setKnowledgeExpanded(.recall, expanded)
                 }
             )) {
                 VStack(alignment: .leading, spacing: 8) {
@@ -149,9 +146,13 @@ struct MacInspectorKnowledgeView: View {
                             } label: {
                                 Image(systemName: "xmark.circle.fill")
                                     .foregroundStyle(.tertiary)
+                                    .frame(width: 28, height: 28)
+                                    .contentShape(Rectangle())
                             }
-                            .buttonStyle(MacPressFeedbackButtonStyle(contentInsets: .init(top: 2, leading: 2, bottom: 2, trailing: 2)))
+                            .buttonStyle(MacPressFeedbackButtonStyle(contentInsets: .init()))
                             .accessibilityLabel(String(localized: "Clear"))
+                            .help(String(localized: "Clear"))
+                            .accessibilityIdentifier("inspector-recall-clear")
                         }
                     }
                     .padding(.horizontal, 10)
@@ -196,7 +197,7 @@ struct MacInspectorKnowledgeView: View {
             }
             .id("knowledge-recall")
         }
-        .disclosureGroupStyle(MacRowDisclosureStyle())
+        .disclosureGroupStyle(MacRowDisclosureStyle(isPlain: true))
     }
 
     @ViewBuilder

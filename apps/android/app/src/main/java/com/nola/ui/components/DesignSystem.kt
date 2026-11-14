@@ -77,7 +77,7 @@ import com.nola.ui.theme.nolaSurface
 // ============================================================
 
 object NolaColors {
-    val chatBackground: Color @Composable get() = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color(0xFF101713) else Color(0xFFEDF1EE)
+    val chatBackground: Color @Composable get() = MaterialTheme.colorScheme.background
     val primary: Color @Composable get() = MaterialTheme.colorScheme.primary
     val primaryLight: Color @Composable get() = MaterialTheme.colorScheme.primaryContainer
     val accent: Color @Composable get() = MaterialTheme.colorScheme.primary

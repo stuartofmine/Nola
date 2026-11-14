@@ -7,6 +7,7 @@ const INITIAL_MODEL_TOOL_IDS: &[&str] = &[
     "SOP",
     "tool_search",
     "request_user_input",
+    "render_ui",
     // Foundational local operations must not depend on successful discovery.
     // Visibility does not grant permission; Core still evaluates each call.
     "read_file",
@@ -30,6 +31,7 @@ const INITIAL_MODEL_TOOL_IDS: &[&str] = &[
     "failure_context",
     "memory_search",
     "conversation_recall",
+    "delegate_expert",
 ];
 
 fn initial_tool_exposure(name: &str) -> HostCapabilityExposure {
@@ -44,7 +46,7 @@ fn initial_tool_exposure_for_tier(
     // Product metadata only: never inspect the user's wording or infer grants.
     let visible = match tier {
         ReasoningTier::Concise => ["tool_search", "request_user_input", "Skill",
-            "read_file", "workspace_access", "workspace_status"].contains(&name),
+            "read_file", "workspace_access", "workspace_status", "render_ui", "delegate_expert"].contains(&name),
         ReasoningTier::Balanced => INITIAL_MODEL_TOOL_IDS.contains(&name),
         ReasoningTier::Detailed => INITIAL_MODEL_TOOL_IDS.contains(&name)
             || ["list_dir", "grep", "glob", "read_many_files", "edit_file",

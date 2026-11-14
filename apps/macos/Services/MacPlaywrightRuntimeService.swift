@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// File Overview: Locates the Playwright runtime bundled with Nola Mac and exports its Host contract.
+// File Overview: Locates the bundled Browser Use execution and Playwright observation runtime and exports its Host contract.
 
 import Foundation
 import AppKit
@@ -52,7 +52,13 @@ actor MacPlaywrightRuntimeService {
         let nodeURL = runtimeRoot?.appendingPathComponent("bin/node")
         let bridgeURL = runtimeRoot?.appendingPathComponent("bridge.cjs")
         let ownerQueueURL = runtimeRoot?.appendingPathComponent("owner_queue.cjs")
-        let available = nodeURL.map { FileManager.default.isExecutableFile(atPath: $0.path) } == true
+        let executionFiles = ["browser_use.cjs", "browser_use/worker.py", "browser_use/requirements.lock",
+                              "browser_use/site-packages/browser_use/__init__.py"]
+        let browserUseAvailable = runtimeRoot.map { root in
+            executionFiles.allSatisfy { FileManager.default.fileExists(atPath: root.appendingPathComponent($0).path) }
+                && FileManager.default.isExecutableFile(atPath: root.appendingPathComponent("browser_use/python/bin/python3").path)
+        } == true
+        let available = browserUseAvailable && nodeURL.map { FileManager.default.isExecutableFile(atPath: $0.path) } == true
             && bridgeURL.map { FileManager.default.fileExists(atPath: $0.path) } == true
             && ownerQueueURL.map { FileManager.default.fileExists(atPath: $0.path) } == true
         let stateRoot = MacAppEnvironment.shared.supportRoot

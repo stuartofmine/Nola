@@ -52,9 +52,10 @@ through the served application. Old template tests do not verify Svelte behavior
 ```text
 web/
 ├── frontend/               # Svelte pages, components, typed API projections and tests
-├── app/templates/          # Retired templates; not a workspace runtime entrypoint
-├── app/static/ui/          # Generated Vite shell and assets (not committed)
-├── app/static/             # Shared assets and legacy assets pending dependency audit
+├── app/static/ui/          # Generated Vite single-entry shell and assets (not committed)
+├── app/static/             # Shared runtime assets (icons, Mermaid bundle, SSE frame decoder)
+├── app/locales/            # Shared localization catalog
+├── tests/                  # Web localization, Playwright helper and real-host integration tests
 ├── native_browser/         # Chrome extension + native messaging host
 └── native_app/             # Desktop/computer-use native host
 ```

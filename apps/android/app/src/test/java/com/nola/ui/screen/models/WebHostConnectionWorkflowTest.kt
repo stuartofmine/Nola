@@ -80,4 +80,12 @@ class WebHostConnectionWorkflowTest {
         } }.exceptionOrNull()
         assertEquals(WebHostVerificationFailure.UnsupportedProtocol, (malformed as WebHostVerificationException).failure)
     }
+    @Test fun savedCredentialsAreNeverForwardedToAnotherDestination() {
+        val saved = "saved-fixture-token"
+        assertEquals(saved, webHostConnectionToken("https://Studio.local", saved, "https://studio.local:443/api/mobile", ""))
+        for (destination in listOf("https://other.local", "http://studio.local", "https://studio.local:444", "https://studio.local/other")) {
+            assertEquals("", webHostConnectionToken("https://studio.local", saved, destination, ""))
+            assertEquals("new-fixture-token", webHostConnectionToken("https://studio.local", saved, destination, " new-fixture-token "))
+        }
+    }
 }

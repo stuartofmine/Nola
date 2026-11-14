@@ -267,9 +267,13 @@ struct MacChatWorkspaceView: View {
     private let remoteHost: any MacRemoteAgentRunning
     private let inspectorDependencies: MacInspectorDependencies
     private let previewRepository: MacCanonicalConversationRepository
+    @Environment(\.macActivityApplicationClient) private var activityClient
     @StateObject private var modelOwner: MacWorkspaceModelOwner
     @StateObject private var roomWorkspace: MacAgentRoomWorkspace
+    @State private var returningExpertChild: (parentID: String, agentID: String)?
+    @State private var expertChildPresentation: MacExpertChildPresentation?
     @State private var showsExpertManagement = false
+    @State private var opensLibraryAfterPicker = false
     @State private var showsAgentRooms = false
     @State private var messageEditSession: MacMessageEditSession?
     @State private var messageEditError: String?
@@ -322,7 +326,6 @@ struct MacChatWorkspaceView: View {
     @State private var sidebarArea = MacWorkspaceSidebarArea.conversations
     @State private var resourceSearch = ""
     @State private var settingsDestination: String?
-    @State private var showsActivitySummaries = false
     @State private var detailScrollPositions = MacDetailScrollPositions()
     @State private var contentWorkspaces: [String: MacConversationContentWorkspace] = [:]
     @FocusState private var focusedContentTab: String?
@@ -416,6 +419,7 @@ struct MacChatWorkspaceView: View {
         let roomWorkspace = MacAgentRoomWorkspace(
             service: canonicalRepository.makeAgentRoomService(),
             executeOwner: { try await roomExecution.execute($0, intent: $1) })
+        roomWorkspace.requiresMainSource = true
         roomWorkspace.prepareOwner = { try await roomExecution.prepare($0) }
         roomWorkspace.recoverOwner = { receipt, _ in
             guard let context = receipt.contextConversationID else { throw MacEditedResendError.sourceUnavailable }
@@ -424,6 +428,7 @@ struct MacChatWorkspaceView: View {
         roomWorkspace.cancelPreparedOwner = { try await roomExecution.cancelPrepared($0) }
         roomWorkspace.executionService = roomExecution
         roomWorkspace.agentModelOptions = { try canonicalRepository.agentModelOptions() }
+        roomWorkspace.agentReasoningEfforts = { try canonicalRepository.agentReasoningEfforts(modelSelectionID: $0) }
         let roomRouting = canonicalRepository.makeRoomRoutingService()
         roomWorkspace.routeSubmission = { try await roomRouting.route($0, room: $1) }
         _roomWorkspace = StateObject(wrappedValue: roomWorkspace)
@@ -569,6 +574,13 @@ struct MacChatWorkspaceView: View {
         // loaded by MacWorkspaceModel.selectedConversationID's observer;
         // keying this task by the same ID duplicated recovery/storage work.
         .task {
+            roomWorkspace.mainCommand = { [weak model] owner, command in
+                guard let model else { throw CancellationError() }
+                return try await model.expertRoomCommand(owner: owner, command: command)
+            }
+            roomWorkspace.mainIsRemote = { [weak model] in model?.executionHost == .remote }
+            roomWorkspace.mainSourceEpoch = { [weak model] owner in model?.mainExpertSelectionSourceEpoch(owner) }
+            roomWorkspace.mainSourceIdentity = { [weak model] owner in model?.mainExpertSourceIdentity(owner) }
             await Task.yield()
             guard !Task.isCancelled else { return }
             await model.loadSelectedConversationIfNeeded()
@@ -621,14 +633,22 @@ struct MacChatWorkspaceView: View {
                 await roomWorkspace.restoreConversation(id)
                 if !Task.isCancelled {
                     expertSelection = Set(roomWorkspace.pendingExpertIDs)
+                    if let returningExpertChild, returningExpertChild.parentID == id {
+                        expertSelection.insert(returningExpertChild.agentID)
+                    }
                     if model.draft.isEmpty, let text = roomWorkspace.pendingAdmissionText {
                         model.setDraft(text, conversationID: id)
                     }
                 }
             }
         }
-        .onChange(of: model.selectedConversationID) { _, _ in
-            expertSelection = []
+        .onChange(of: model.selectedConversationID) { _, selectedID in
+            if let returningExpertChild, returningExpertChild.parentID == selectedID {
+                expertSelection = [returningExpertChild.agentID]
+            } else {
+                returningExpertChild = nil
+                expertSelection = []
+            }
             activeOverlay = nil
             codeReference = nil
             if model.selectedConversation?.isPersisted == false {
@@ -652,16 +672,34 @@ struct MacChatWorkspaceView: View {
                 openConversationWindow: openSelectedConversationWindow
             )
         )
-        .sheet(isPresented: $showsAgentRooms) {
+        .sheet(item: $expertChildPresentation) { presentation in
+            MacExpertChildHistoryView(presentation: presentation, execution: roomWorkspace.executionService) {
+                guard presentation.sourceID == ObjectIdentifier(roomWorkspace.service) else {
+                    throw MacApplicationPortError.serviceUnavailable
+                }
+                try await roomWorkspace.selectCurrentChild(presentation.child, parentID: presentation.parentID)
+                guard expertChildPresentation?.id == presentation.id else { throw CancellationError() }
+                returningExpertChild = (presentation.parentID, presentation.child.agentID)
+                navigationActions.selectConversation(presentation.parentID)
+                guard model.selectedConversationID == presentation.parentID else { throw CancellationError() }
+                expertSelection.insert(presentation.child.agentID)
+                composerFocused = true
+            }
+        }
+        .sheet(isPresented: $showsExpertManagement) {
+            MacExpertDirectoryManagementView(workspace: roomWorkspace)
+        }
+        .sheet(isPresented: $showsAgentRooms, onDismiss: {
+            if opensLibraryAfterPicker { opensLibraryAfterPicker = false; showsExpertManagement = true }
+        }) {
             VStack {
                 MacChatExpertPicker(agents: roomWorkspace.directory, selection: $expertSelection,
-                    manage: { showsExpertManagement = true })
+                    manage: model.executionHost == .remote ? nil : { opensLibraryAfterPicker = true; showsAgentRooms = false }, selected: { agent in
+                        if let owner = model.selectedConversationID { roomWorkspace.recordMainExpertSelection(agent, conversationID: owner) }
+                    })
                 if let error = roomWorkspace.directoryError { Text(error).foregroundStyle(.red).padding() }
             }.frame(minWidth: 420, minHeight: 400)
-                .task { await roomWorkspace.refreshExpertDirectory() }
-                .sheet(isPresented: $showsExpertManagement) {
-                    MacExpertDirectoryManagementView(workspace: roomWorkspace)
-                }
+                .task(id: roomWorkspace.mainSourceReady) { await roomWorkspace.refreshExpertDirectory() }
         }
         .sheet(isPresented: $showsCommandPalette, onDismiss: {
             let action = pendingPaletteNavigation
@@ -711,12 +749,27 @@ struct MacChatWorkspaceView: View {
                 close: { activeOverlay = nil; showsInspector = false; codeReference = nil },
                 showsHeaderNavigation: false,
                 participants: inspectorParticipants,
-                expertSessions: AnyView(MacExpertSessionsInspector(workspace: roomWorkspace,
-                    conversationID: model.selectedConversationID).id(model.selectedConversationID)),
+                expertHistory: AnyView(expertHistory),
                 canReadLocalFiles: canReadLocalConversationFiles,
                 inspectFile: openCodeReference,
                 openReview: { openContent(.review($0)) }
             )
+        }
+    }
+
+    @ViewBuilder
+    private var expertHistory: some View {
+        if let conversation = model.selectedConversation {
+            MacExpertChildrenDisclosure(parentID: conversation.id, refreshRevision: conversation.updatedAt,
+                roomRevision: roomWorkspace.conversationAssociation?.room.revision,
+                load: { parent, offset in
+                    let service = roomWorkspace.service
+                    return try await MacConversationReadTask.run { try service.childConversations(conversationID: parent, offset: offset) }
+                }, open: { child in
+                    expertChildPresentation = .init(parentID: conversation.id, child: child,
+                        sourceID: ObjectIdentifier(roomWorkspace.service))
+                })
+                .id(conversation.id + ":" + String(describing: ObjectIdentifier(roomWorkspace.service)))
         }
     }
 
@@ -916,11 +969,9 @@ struct MacChatWorkspaceView: View {
                         Task {
                             do {
                                 let owner = try model.prepareExpertConversation()
-                                let admittedText = await roomWorkspace.sendExperts(conversationID: owner, text: text, agentIDs: experts)
-                                if let admittedText {
-                                    if model.draft == admittedText { model.setDraft("", conversationID: owner) }
-                                    model.reloadPersistentData()
-                                }
+                                let selected = try await roomWorkspace.mainExpertSelection(conversationID: owner, agentIDs: experts)
+                                guard model.selectedConversationID == owner, model.draft == text else { return }
+                                model.send(selectedExperts: selected, expertSelectionSourceEpoch: try roomWorkspace.capturedMainSourceEpoch(owner: owner, agentIDs: experts))
                             } catch { roomWorkspace.directoryError = error.localizedDescription }
                         }
                     },
@@ -951,8 +1002,9 @@ struct MacChatWorkspaceView: View {
         case .review(let url):
             MacWorkspaceReviewView(route: .init(path: url.path), embedsInWorkspace: true)
         case .activity(let entry):
+            let client = activityClient
             AppleActivityDetailView(entry: entry, load: { target in
-                try await Task.detached { try MacApplicationPort.shared.activityDetail(target) }.value
+                try await Task.detached { try client.activityDetail(target) }.value
             }, openSource: openActivitySource, embedded: true)
         }
     }
@@ -1013,10 +1065,16 @@ struct MacChatWorkspaceView: View {
                     }
                     .macToolbarIcon(isActive: sidebarArea == area && (layoutMode == .compactOverlay
                         ? activeOverlay == .sidebar : columnVisibility != .detailOnly))
-                    .help(area == .activity ? String(localized: "workspace.activity.help") : area.title).accessibilityLabel(area.title)
+                    .help(area.title).accessibilityLabel(area.title)
                     .accessibilityIdentifier("workspace.area.\(area.rawValue)")
                 }
                 Spacer(minLength: 0)
+                Button(action: navigationActions.newConversation) {
+                    Image("nola-edit").renderingMode(.template).resizable().scaledToFit()
+                        .frame(width: 18, height: 18).frame(width: 36, height: 36)
+                }.macToolbarIcon().help(String(localized: "New Conversation"))
+                    .accessibilityLabel(String(localized: "New Conversation"))
+                    .accessibilityIdentifier("workspace.newConversation")
                 Button(action: toggleSidebar) {
                     Image("nola-sidebar").renderingMode(.template).resizable().scaledToFit()
                         .frame(width: 18, height: 18).frame(width: 36, height: 36)
@@ -1029,13 +1087,8 @@ struct MacChatWorkspaceView: View {
             .padding(.leading, 12)
             .padding(.trailing, 8)
             .frame(width: columnVisibility == .detailOnly || layoutMode == .compactOverlay
-                ? 176 : CGFloat(storedSidebarWidth), alignment: .leading)
+                ? 220 : CGFloat(storedSidebarWidth), alignment: .leading)
             contentTabStrip
-            Button(action: navigationActions.newConversation) {
-                Image("nola-plus").renderingMode(.template).resizable().scaledToFit().frame(width: 16, height: 16).frame(width: 36, height: 36)
-            }.macToolbarIcon().help(String(localized: "New Conversation"))
-                .accessibilityLabel(String(localized: "New Conversation"))
-                .accessibilityIdentifier("workspace.newConversation")
             Button { model.isTranscriptSearchVisible.toggle() } label: {
                 Image("nola-search").renderingMode(.template).resizable().scaledToFit()
                     .frame(width: 18, height: 18).frame(width: 36, height: 36)
@@ -1128,61 +1181,11 @@ struct MacChatWorkspaceView: View {
                         try service.forConversation(id)?.room.room.participants
                             .filter(\.active).map(\.displayName) ?? []
                     }.value
-                })
-        case .activity:
-            VStack(spacing: 0) {
-                AppleActivityView(load: { query in
-                    try await Task.detached { try MacApplicationPort.shared.listActivity(query) }.value
-                }, detail: { entry in
-                    try await Task.detached { try MacApplicationPort.shared.activityDetail(entry) }.value
-                }, openSource: openActivitySource,
-                    openDetail: { openContent(.activity($0)) })
-                Button("activity.localSummaries") { showsActivitySummaries = true }.padding(10)
-                workspaceSettingsEntry
-            }
-            .sheet(isPresented: $showsActivitySummaries) { MacLocalActivitySummariesPanel() }
+                }, openExpertLibrary: { showsExpertManagement = true })
         case .resources:
-            VStack(alignment: .leading, spacing: 0) {
-                TextField(String(localized: "Search"), text: $resourceSearch).textFieldStyle(.roundedBorder)
-                    .padding(.bottom, 12)
-                ForEach(MacWorkspaceSection.allCases.filter { $0 != .chat && $0 != .settings }) { section in
-                    if resourceSearch.isEmpty || String(localized: String.LocalizationValue(section.titleKey)).localizedCaseInsensitiveContains(resourceSearch) {
-                        Button { openContent(.section(section)) } label: {
-                            Text(section.title).frame(maxWidth: .infinity, alignment: .leading).frame(minHeight: 40)
-                                .padding(.horizontal, 8).contentShape(Rectangle())
-                        }.buttonStyle(MacSidebarNavigationButtonStyle(isSelected: selectedSection == section))
-                            .help(section.title)
-                        Divider()
-                    }
-                }
-                resourceNavigationLink(String(localized: "Activity")) { sidebarArea = .activity }
-                Spacer()
-                workspaceSettingsEntry
-            }.padding(16)
-        }
-    }
-
-    private var workspaceSettingsEntry: some View {
-        VStack(spacing: 0) {
-            Divider()
-            Button { openContent(.section(.settings)) } label: {
-                Label { Text(String(localized: "Settings")) } icon: {
-                    Image("nola-settings").renderingMode(.template).resizable().scaledToFit().frame(width: 18, height: 18)
-                }.padding(.horizontal, 8).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
-            }.buttonStyle(MacSidebarNavigationButtonStyle(isSelected: selectedSection == .settings))
-                .help(String(localized: "Settings"))
-        }
-    }
-
-    @ViewBuilder
-    private func resourceNavigationLink(_ title: String, action: @escaping () -> Void) -> some View {
-        if resourceSearch.isEmpty || title.localizedCaseInsensitiveContains(resourceSearch) {
-            Button(action: action) {
-                Text(verbatim: title).frame(maxWidth: .infinity, alignment: .leading).frame(minHeight: 40)
-                    .padding(.horizontal, 8).contentShape(Rectangle())
-            }.buttonStyle(.plain)
-                .help(title)
-            Divider()
+            MacWorkspaceResourceNavigation(search: $resourceSearch, selection: selectedSection) { section in
+                openContent(.section(section))
+            }
         }
     }
 

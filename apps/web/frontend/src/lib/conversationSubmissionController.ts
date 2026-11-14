@@ -1,3 +1,6 @@
+import {blockedRunGuidance} from './runResult.ts';
+import {mainExpertSelectionError} from './mainExpertSelection.ts';
+import type { InPlaceResendEnvelope } from './inPlaceResend.ts';
 import { refreshStreamPermissions } from './streamPermissionRefresh.ts';
 import { queuedUiDispatch } from './queuedUiDispatch.ts';
 import type { QueuedUiHead } from './queuedUiDispatch.ts';
@@ -23,6 +26,7 @@ import { SourceSubmissionStorage, createSourceSubmission, sourceIdentity, accept
     exactSubmissionCancel, settledSourceSubmission, parseObservedSourceReceipt, admittedReceiptCancel, parseSourceReceipt } from './sourceSubmission.ts';
 import type { PendingSourceSubmission, SourceSubmissionReceipt } from './sourceSubmission.ts';
 import { dispatchSourceSubmission, SourceSubmissionNotDispatchedError, journalEventQueue } from './sourceSubmissionDispatch.ts';
+import type {MainExpertSelection} from './mainExpertSelection.ts';
 import { freezeHostToolPlan } from './hostToolPlan.ts';
 import { chatEventStream as transportStream } from './chatTransport.ts';
 import { attachmentModelContent } from './chatTextAttachments.ts';
@@ -43,7 +47,7 @@ export function observedGoalResumeRoute(owner: GoalExecutionOwner | null, contro
     return 'refresh';
 }
 
-export interface SubmissionInput { text: string; attachments: ChatTextAttachment[]; language: string; submissionId?: string }
+export interface SubmissionInput { text: string; attachments: ChatTextAttachment[]; language: string; submissionId?: string; selectedExperts?:MainExpertSelection[]; expertSourceEpoch?:string }
 export interface ConversationSubmissionSnapshot {
     timeline: ChatTimeline | null; turn: ChatTurn | null; challenge: unknown; reviewText: string;
     pendingSubmission: PendingSourceSubmission | null; observedCanSubmit: boolean; observedRecovery: string;
@@ -63,6 +67,7 @@ export interface ConversationSubmissionController {
     attach(listener: (snapshot: ConversationSubmissionSnapshot) => void, presentation?: ConversationPresentation): void;
     detach(): void; dispose(): void;
     initialize(): Promise<void>; loadHistory(mode: 'replace' | 'prepend'): Promise<void>;
+    submitInPlaceResend(envelope: InPlaceResendEnvelope, language:string): Promise<SourceSubmissionReceipt>;
     submitPreparedEditedResend(envelope: EditedResendEnvelope, language: string): Promise<SourceSubmissionReceipt>;
     submit(input: SubmissionInput): Promise<void>; submitQueued(commandId: string): Promise<void>; resume(): Promise<void>; stop(): Promise<void>;
     cancelQueued(): Promise<void>; checkQueued(): Promise<void>;
@@ -103,7 +108,7 @@ export function createConversationSubmissionController(options: {
     const dispatchControllers = new Set<AbortController>();
     const editedRuns = new Set<string>();
     const editedAdmissions = new Map<string, {resolve:(receipt:SourceSubmissionReceipt)=>void; reject:(cause:unknown)=>void}>();
-    const isEditedPending = (value: PendingSourceSubmission | null) => !!value && value.request.edited_resend_operation_id === value.identity.submission_id;
+    const isEditedPending = (value: PendingSourceSubmission | null) => !!value && (value.request.edited_resend_operation_id === value.identity.submission_id || value.request.in_place_resend_operation_id === value.identity.submission_id);
     const isEditedTurn = () => !!state.turn && (editedRuns.has(state.turn.identity.submissionId) || isEditedPending(state.pendingSubmission));
     function editedReceipt(value: PendingSourceSubmission) {
         if (!isEditedPending(value) || !value.receipt) return;
@@ -277,7 +282,7 @@ export function createConversationSubmissionController(options: {
             state.pendingText = ''; state.pendingAttachmentNames = []; state.challenge = null;
             submissionStorage().clear(state.pendingSubmission); state.pendingSubmission = null;
             replyNotice(state.turn, receipt.phase === 'rejected' ? 'notSent' : null);
-            state.error = '';
+            state.error = mainExpertSelectionError(receipt.rejection_code) ?? (state.error === 'rooms.mainRequiresTools' ? state.error : '');
         }
     }
     async function reconcileSubmission(signal: AbortSignal): Promise<boolean> {
@@ -438,7 +443,8 @@ export function createConversationSubmissionController(options: {
         if (initializationPrepared) initialized = true;
         state.timeline = rendered.state; state.turn = accepted.state;
         terminalWitness = evidence;
-        state.error = '';
+        state.error = blockedRunGuidance(evidence.seal.result.value) ?? '';
+        if(evidence.seal.result.value.kind === 'blocked' && evidence.seal.result.value.reason.code === 'context.input_budget_exceeded')workspaceHost.restoreBlockedSubmission?.(state.turn.identity.submissionId);
         if (!observedTaskReadOnly) {
             replyNotice(state.turn, null);
             browserNotifications.completed(evidence, identity, t(get(locale), 'settings.notifications.completedTitle'), t(get(locale), 'settings.notifications.completedBody'));
@@ -569,6 +575,10 @@ export function createConversationSubmissionController(options: {
     }
     async function applyEvent(value: Record<string, unknown>, identity: ChatTurnOwner) {
         if (!sameActive(identity) || !state.timeline || !state.turn || state.turn.owner.conversationId !== identity.conversationId || state.turn.owner.generation !== identity.generation) return;
+        if (value.type === 'error' || value.type === 'submission_rejected') {
+            const guidance = mainExpertSelectionError(value.type === 'submission_rejected' ? value.reason_code : value.code);
+            if (guidance) state.error = guidance;
+        }
         if (value.type === 'submission_receipt') {
             if (state.pendingSubmission) await acceptSubmission(value.receipt);
             else if (observedReceipt) observedReceipt = parseSourceReceipt(value.receipt, observedReceipt.identity, observedReceipt.request_digest);
@@ -664,25 +674,27 @@ export function createConversationSubmissionController(options: {
             if (streamController === controller) { streamController = null; if (sameActive(identity)) observeSelected(); }
         }
     }
-    async function submit(input: SubmissionInput, queuedCommandId?: string, edited?: EditedResendEnvelope) {
-        if (disposed || !initialized) { if (edited) throw new Error('Edited resend controller is not ready'); return; }
+    async function submit(input: SubmissionInput, queuedCommandId?: string, edited?: EditedResendEnvelope, inPlace?: InPlaceResendEnvelope) {
+        const detached = !!edited || !!inPlace;
+        if (disposed || !initialized) { if (detached) throw new Error('Edited resend controller is not ready'); return; }
+        if(input.selectedExperts?.length && (!input.expertSourceEpoch?.trim())) { state.error='chatPage.sendFailed'; return; }
         const text = input.text;
         const attachments = input.attachments;
         const language = input.language;
         const identity = turnOwner();
         if (!identity || !state.timeline || !state.observedCanSubmit || state.turn && !canReleaseChatTurn(state.turn) || (!text.trim() && !attachments.length)) {
-            if (edited) throw new Error('Edited resend target is busy or unavailable'); return;
+            if (detached) throw new Error('Edited resend target is busy or unavailable'); return;
         }
         // Recheck the owned draft synchronously for keyboard/programmatic submit,
         // including the debounce interval before a write has even started.
-        if (!edited && knowledgePending(workspaceHost?.knowledge.get(identity.conversationId))) return;
+        if (!detached && knowledgePending(workspaceHost?.knowledge.get(identity.conversationId))) return;
         const captured = attachments.map(item => ({ ...item }));
         let modelContent: string;
         try { modelContent = attachmentModelContent(text, captured, identity.conversationId); }
-        catch (cause) { state.error = 'chatPage.sendFailed'; if (edited) throw cause; return; }
+        catch (cause) { state.error = 'chatPage.sendFailed'; if (detached) throw cause; return; }
         const submissionId = queuedCommandId ?? input.submissionId ?? crypto.randomUUID();
         stopWitnessRead(); terminalWitness = null;
-        if (!queuedCommandId && !edited) workspaceHost?.submissions.set(identity.conversationId, {submissionId, text, attachmentIds: captured.map(item => item.id)});
+        if (!queuedCommandId && !detached) workspaceHost?.submissions.set(identity.conversationId, {submissionId, text, attachmentIds: captured.map(item => item.id)});
         stopObservation();
         const turnIdentity = edited ? {submissionId:edited.prepared.run_id,userMessageId:edited.prepared.user_message_id,
             assistantMessageId:edited.prepared.assistant_message_id} : chatTurnIdentity(submissionId);
@@ -702,15 +714,17 @@ export function createConversationSubmissionController(options: {
             expected_configuration_revision: edited ? edited.target.configuration_revision : active.configurationRevision,
             expected_parent_message_id: edited ? null : state.timeline.submissionParentMessageId,
             ...(edited ? {edited_resend_operation_id:edited.prepared.input.operation_id} : {}),
+            ...(inPlace ? {in_place_resend_operation_id:inPlace.prepared.input.operation_id} : {}),
             ...(queuedCommandId ? {queued_user_command_id: queuedCommandId} : {}),
+            ...(input.selectedExperts?.length ? {selected_experts:structuredClone(input.selectedExperts),expected_source_store_epoch:input.expertSourceEpoch} : {}),
         };
         try {
             const frozenRequest = await freezeHostToolPlan(request, api);
             if (!sameActive(identity) || state.turn?.identity.submissionId !== submissionId) {
-                if (edited) throw new Error('Edited resend target owner changed'); return;
+                if (detached) throw new Error('Edited resend target owner changed'); return;
             }
             state.pendingSubmission = createSourceSubmission(sourceIdentity(identity, state.turn.identity), frozenRequest);
-            if (!edited) await workspaceHost.stageSubmission(state.pendingSubmission);
+            if (!detached) await workspaceHost.stageSubmission(state.pendingSubmission);
             submissionStorage().save(state.pendingSubmission);
             state.observedCanSubmit = false;
             const captured = state.pendingSubmission;
@@ -728,9 +742,9 @@ export function createConversationSubmissionController(options: {
             void dispatchSourceSubmission(captured, {
                 storage: submissionStorage(), signal: transport.signal,
                 onReceipt: async value => {
-                    if (!edited) await workspaceHost.updateSubmission(value);
+                    if (!detached) await workspaceHost.updateSubmission(value);
                     editedReceipt(value);
-                    if (!edited && value.receipt?.phase === 'admitted') await workspaceHost.retireSubmission(value.identity.submission_id);
+                    if (!detached && value.receipt?.phase === 'admitted') await workspaceHost.retireSubmission(value.identity.submission_id);
                     if (value.receipt?.phase !== 'admitted') return;
                     const admitted = reduceChatTurn(submittedTurn, { type: 'run_bound', owner: identity,
                         runId: value.receipt.admission!.identity.run_id }).state;
@@ -740,7 +754,7 @@ export function createConversationSubmissionController(options: {
                     operation: 'prepare', identity: value.identity, request: value.request }) }),
                 stream: (body, signal) => chatEventStream('/api/chat/agent/v2/stream', {method: 'POST', signal, body: JSON.stringify(body)}),
                 bound: async value => {
-                    if (!edited) await workspaceHost.updateSubmission(value);
+                    if (!detached) await workspaceHost.updateSubmission(value);
                     void sourceRecovery.watch(value);
                     if (!sameActive(identity) || state.pendingSubmission?.identity.submission_id !== captured.identity.submission_id || !state.turn) return;
                     state.pendingSubmission = value;
@@ -749,13 +763,13 @@ export function createConversationSubmissionController(options: {
                 event: event => submittedJournal.push(event),
             }).then(async () => {
                 await submittedJournal.flush();
-                if (edited && editedAdmissions.has(submissionId)) failEdited(submissionId, new Error('Edited resend admission is unconfirmed; observe the same operation before retrying'));
+                if (detached && editedAdmissions.has(submissionId)) failEdited(submissionId, new Error('Edited resend admission is unconfirmed; observe the same operation before retrying'));
                 if (sameActive(identity) && state.turn?.identity.submissionId === captured.identity.submission_id && !canReleaseChatTurn(state.turn)) {
                     state.turn = reduceChatTurn(state.turn, {type: 'transport_interrupted', owner: identity, reason: 'eof'}).state;
                     replyNotice(state.turn, 'uncertain');
                 }
             }).catch(async cause => {
-                if (edited) failEdited(submissionId, cause);
+                if (detached) failEdited(submissionId, cause);
                 if (cause instanceof SourceSubmissionNotDispatchedError) {
                     replyNotice(submittedTurn, 'notSent', submittedWorkspace);
                     try { await releaseUnsent(submittedTurn); } catch { if (sameActive(identity)) state.error = 'chatPage.draftStorageFailed'; }
@@ -770,7 +784,7 @@ export function createConversationSubmissionController(options: {
                     if (sameActive(identity) && state.turn?.identity.submissionId === captured.identity.submission_id) observeSelected();
                 });
         } catch (cause) {
-            if (edited) failEdited(submissionId, cause);
+            if (detached) failEdited(submissionId, cause);
             // No dispatcher exists yet: local preparation/storage failure cannot have sent a Run.
             if (state.turn?.identity.submissionId === submissionId && !state.turn.runId) {
                 const snapshot = state.turn;
@@ -779,6 +793,36 @@ export function createConversationSubmissionController(options: {
                 try { await releaseUnsent(snapshot); } catch { state.error = 'chatPage.draftStorageFailed'; }
             }
         }
+    }
+    async function submitInPlaceResend(envelope:InPlaceResendEnvelope, language:string):Promise<SourceSubmissionReceipt> {
+        const p=envelope.prepared;
+        if(envelope.host_id!==hostId||envelope.client_id!==clientId||p.input.conversation_id!==identity.conversationId||p.experts.length)
+            throw new Error('In-place resend controller owner mismatch');
+        editedRuns.add(p.run_id);
+        await initialize();
+        if(state.pendingSubmission && state.pendingSubmission.identity.submission_id!==p.run_id) {
+            if(!state.turn||!canReleaseChatTurn(state.turn))throw new Error('Another submission remains unresolved');
+            state.pendingSubmission=null;
+        }
+        if(state.pendingSubmission?.identity.submission_id===p.run_id){
+            await reconcileSubmission(new AbortController().signal);
+            const pending=state.pendingSubmission;
+            if(pending?.receipt?.phase==='admitted')return pending.receipt;
+            if(pending?.sent||pending?.request_digest)throw new Error('Original resend admission remains unconfirmed');
+        }
+        const observedRaw=await api('/api/chat/agent/v2/observe',{method:'POST',body:JSON.stringify({operation:'discover',
+            conversation_id:identity.conversationId,expected_host_id:hostId,client_id:clientId})});
+        const observed=parseRunObservation(observedRaw,identity);
+        if(observed?.run_id===p.run_id) return parseObservedSourceReceipt(observed.submission_receipt,identity,p.run_id,`${p.run_id}:assistant`);
+        if(observed && observed.recovery!=='terminal')throw new Error('Another Run is active');
+        await loadHistory('replace');
+        state.turn=null;state.observedCanSubmit=true;
+        return new Promise<SourceSubmissionReceipt>((resolve,reject)=>{
+            if(editedAdmissions.has(p.run_id)){reject(new Error('Resend admission remains pending'));return;}
+            editedAdmissions.set(p.run_id,{resolve,reject});
+            void submit({text:p.input.edited_text,attachments:[],language,submissionId:p.run_id},undefined,undefined,envelope)
+                .catch(cause=>failEdited(p.run_id,cause));
+        });
     }
     async function submitPreparedEditedResend(envelope: EditedResendEnvelope, language: string): Promise<SourceSubmissionReceipt> {
         const prepared=envelope.prepared;
@@ -922,7 +966,7 @@ export function createConversationSubmissionController(options: {
         },
         detach() { stopWitnessRead(); listener = null; presentation = null; stopObservation(); stopQueuedWake(); },
         dispose() { stopWitnessRead(); for (const [run] of editedAdmissions) failEdited(run, new Error('Edited resend controller disposed')); disposed = true; stopQueuedWake(); listener = null; presentation = null; stopObservation(); streamController?.abort(); historyController?.abort(); for (const transport of dispatchControllers) transport.abort(); dispatchControllers.clear(); },
-        initialize, loadHistory, submit, submitPreparedEditedResend, cancelQueued, checkQueued,
+        initialize, loadHistory, submit, submitInPlaceResend, submitPreparedEditedResend, cancelQueued, checkQueued,
         submitQueued: async _commandId => { await wakeQueuedAction(); },
         resume, stop, observe: observeSelected,
         setForeground(value) { foreground = value; if (value) { observeSelected(); void wakeQueuedAction(); } else { stopWitnessRead(); stopObservation(); stopQueuedWake(); } },

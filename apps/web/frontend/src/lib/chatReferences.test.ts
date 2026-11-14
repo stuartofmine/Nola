@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'vite';
-import { chatReference, timelineReference, toolArtifacts } from './chatReferences.ts';
+import { chatReference, timelineReference, toolArtifacts, bibliography } from './chatReferences.ts';
 import { journalPart } from './journalTimeline.fixture.ts';
 
 const identity = {source_store_epoch: 'epoch', conversation_id: 'conversation', run_id: 'run', assistant_message_id: 'assistant'};
@@ -42,5 +42,27 @@ test('reference UI renders canonical and journal facts in every locale without a
             assert.ok(!local.includes('href=')); assert.ok(!local.includes('<script>unsafe'));
             assert.ok(local.includes(t(language, 'chatPage.referenceUnavailable')));
         }
+    } finally { await server.close(); }
+});
+
+test('bibliography collapses aliases but retains pinpoint ranges and all 31 sources', () => {
+    const parts = Array.from({length: 31}, (_, index) => ({source: 'canonical' as const, id: `s${index}`, value: {...value, kind: 'source', uri: `https://example.org/${index}`, source_id: `s${index}`, part_id: `s${index}`, range_start: undefined, range_end: undefined}}));
+    const alias = {...parts[0], id: 'alias', value: {...parts[0].value, kind: 'citation'}};
+    const pinpoint = {...alias, id: 'pinpoint', value: {...alias.value, location: {page: 2}}};
+    assert.equal(bibliography([...parts, alias, pinpoint]).length, 32);
+    assert.equal(bibliography(parts).length, 31);
+});
+
+test('compact source footer starts with three citations, no per-source card borders or raw IDs', async () => {
+    const server = await createServer({server: {middlewareMode: true, ws: false}, appType: 'custom'});
+    try {
+        const {default: Component} = await server.ssrLoadModule('/src/components/ChatReferenceFooter.svelte');
+        const {render} = await server.ssrLoadModule('svelte/server');
+        const parts = Array.from({length: 31}, (_, index) => ({source: 'canonical', id: `s${index}`, value: {...value, uri: `https://example.org/${index}`, source_id: `hidden-source-${index}`}}));
+        const html = render(Component, {props: {parts}}).body;
+        assert.equal((html.match(/class="citation-row(?:\s[^"]*)?"/g) || []).length, 3);
+        assert.ok(html.includes('aria-expanded="false"'));
+        assert.ok(!html.includes('reference-card'));
+        assert.ok(!html.includes('hidden-source-'));
     } finally { await server.close(); }
 });

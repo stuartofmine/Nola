@@ -16,16 +16,18 @@ test('production list, resources and language controls render their current loca
         const {locale, localePreference, supportedLocales: languages, t} = await server.ssrLoadModule('/src/lib/i18n.ts');
         for (const language of languages) {
             localePreference.set('system'); locale.set(language);
-            for (const selected of ['conversations', 'activity', 'resources']) {
+            for (const selected of ['conversations', 'resources']) {
                 const list = render(ListNavigation, {props: {category: selected, onchange: () => {}}}).body;
                 assert.equal((list.match(/aria-pressed="true"/g) ?? []).length, 1);
-                assert.equal((list.match(/<button /g) ?? []).length, 3);
-                for (const category of ['conversations', 'activity', 'resources']) assert.ok(list.includes(t(language, `chatInspector.list.${category}`)));
+                assert.equal((list.match(/<button /g) ?? []).length, 2);
+                for (const category of ['conversations', 'resources']) assert.ok(list.includes(t(language, `chatInspector.list.${category}`)));
             }
-            const resources = render(ResourceNavigation, {props: {selectedPath: '/activity', onopen: () => {}}}).body;
-            for (const key of ['shell.nav.models', 'data_sources.tab.memory', 'data_sources.tab.plans', 'chatInspector.list.activity']) assert.ok(resources.includes(t(language, key)));
+            const resources = render(ResourceNavigation, {props: {selectedPath: '/data-sources?tab=memory', onopen: () => {}}}).body;
+            for (const key of ['shell.nav.data', 'shell.nav.models', 'shell.nav.capabilities']) assert.ok(resources.includes(t(language, key).replaceAll('&', '&amp;')));
             assert.equal((resources.match(/aria-current="page"/g) ?? []).length, 1);
-            assert.match(resources, /href="\/activity" aria-current="page"/);
+            assert.match(resources, /href="\/data-sources" aria-current="page"/);
+            assert.equal((resources.match(/<a /g) ?? []).length, 3);
+            assert.ok(!resources.includes('href="/activity"'));
             assert.doesNotMatch(resources, /conversation-manager|new-conversation/);
             const preferences = render(LanguagePreference).body;
             assert.ok(preferences.includes(t(language, 'shell.language')));

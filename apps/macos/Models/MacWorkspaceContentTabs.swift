@@ -3,19 +3,17 @@
 import Foundation
 
 enum MacWorkspaceSidebarArea: String, CaseIterable, Identifiable {
-    case conversations, activity, resources
+    case conversations, resources
     var id: String { rawValue }
     var title: String {
         switch self {
         case .conversations: String(localized: "Conversations")
-        case .activity: String(localized: "Activity")
         case .resources: String(localized: "composer.command.resources")
         }
     }
     var iconAsset: String {
         switch self {
         case .conversations: "nola-chat"
-        case .activity: "nola-clock"
         case .resources: "nola-folder"
         }
     }
@@ -49,7 +47,7 @@ extension MacWorkspaceSection {
     var titleKey: String {
         switch self {
         case .chat: "Chat"
-        case .data: "workspace.title"
+        case .data: "Data Center"
         case .models: "Models"
         case .extensions: "Skills and MCP"
         case .capabilities: "System Access"

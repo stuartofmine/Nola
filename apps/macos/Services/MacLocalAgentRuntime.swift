@@ -723,6 +723,7 @@ nonisolated struct MacHostSubmissionDecision: Decodable, Equatable, Sendable {
     let assistant_message_id: String
     let code: String?
     let message: String?
+    var reason_code: String? = nil
 
     static func decode(_ line: String, conversationID: String, runID: String,
                        assistantMessageID: String) throws -> Self? {
@@ -1528,12 +1529,20 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
             .appendingPathComponent("Chrome", isDirectory: true)
             .appendingPathComponent("native_browser_host.json")
         let chromePort = MacChromeMessagingConfiguration.runtimePort()
-        let chromeConfiguration = try resumeSnapshot == nil ? MacChromeMessagingService.shared.ensureStarted(
-            configuration: .loadOrCreate(
-                fileURL: chromeConfigurationURL,
-                port: chromePort
-            )
-        ) : nil
+        let chromeConfiguration: MacChromeMessagingConfiguration?
+        if resumeSnapshot == nil {
+            do {
+                chromeConfiguration = try MacChromeMessagingService.shared.ensureStarted(
+                    configuration: .loadOrCreate(fileURL: chromeConfigurationURL, port: chromePort))
+            } catch {
+                // Browser transport is an optional capability, not chat
+                // admission. Its own tool call must report unavailability.
+                chromeConfiguration = nil
+                await Logger.shared.log("Browser bridge unavailable; continuing conversation",
+                    level: .warn, category: "MacChromeBridge",
+                    metadata: ["error": error.localizedDescription])
+            }
+        } else { chromeConfiguration = nil }
         let chromeReadyAt = ContinuousClock.now
         guard let receipt = toolPlan.receiptBase64 else {
             throw MacLocalAgentRuntimeError.launchFailed(
@@ -1580,6 +1589,13 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
         if let chromeConfiguration {
             chromeConfiguration.apply(to: &environment)
             MacPlaywrightRuntimeService.shared.apply(to: &environment, broker: chromeConfiguration)
+        } else if resumeSnapshot == nil {
+            for key in ["NOLA_NATIVE_BROWSER_SERVER_URL", "NOLA_NATIVE_BROWSER_TOKEN",
+                        "NOLA_NATIVE_BROWSER_LOCAL_USER_ID", "NOLA_NATIVE_BROWSER_HOST_ID",
+                        "NOLA_PLAYWRIGHT_RPC_URL", "NOLA_PLAYWRIGHT_RPC_TOKEN"] {
+                environment.removeValue(forKey: key)
+            }
+            environment["NOLA_PLAYWRIGHT_AVAILABLE"] = "0"
         }
         let browserRuntimeReadyAt = ContinuousClock.now
         if resumeSnapshot == nil {
@@ -1610,8 +1626,8 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
                 "enabled_skill_ids": request.activeSkillDescriptors.map { $0.id.rawValue },
                 "enabled_external_skill_paths": request.activeExternalSkillDirectories.map(\.path),
                 "native_computer_enabled": true,
-                "native_browser_enabled": true,
-                "managed_browser_enabled": true,
+                "native_browser_enabled": chromeConfiguration != nil,
+                "managed_browser_enabled": chromeConfiguration != nil,
             ]
             let capabilityData = try JSONSerialization.data(
                 withJSONObject: capabilityManifest,
@@ -1744,14 +1760,43 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
                             throw MacLocalAgentRuntimeError.protocolViolation("Host rejected an already admitted submission.")
                         }
                         throw MacLocalAgentRuntimeError.submissionRejected(
-                            code: decision.code!, message: decision.message!)
+                            code: decision.code!, message: AppleMainExpertDispatchRejection(rawValue: decision.reason_code ?? "")?.localizedDescription ?? decision.message!)
                     }
                     continue
                 }
                 if let bridgeRequest = Self.decodeComputerBridgeRequest(line),
                    bridgeRequest.sessionID == request.conversationID {
                     let response: Data
-                    if bridgeRequest.toolName == "__nola_resolve_goal_model_channel" {
+                    if bridgeRequest.toolName == "__nola_capture_expert_templates" {
+                        do {
+                            guard let port = request.applicationPort,
+                                  let active = try port.activeRunIdentity(conversationID: request.conversationID),
+                                  let original = bridgeRequest.arguments["request"] else { throw MacLocalAgentResumeError.invalidFrame }
+                            let matchingGoal = try request.goalExecutionID.map { goal in
+                                try port.goalExecutionAssistantIdentity(conversationID: request.conversationID,
+                                    goalID: goal, runID: active.runID) == active.assistantMessageID
+                            } == true
+                            guard (active.runID == request.submissionID && active.assistantMessageID == request.assistantMessageID) || matchingGoal else {
+                                throw MacLocalAgentResumeError.invalidFrame
+                            }
+                            let data = try JSONSerialization.data(withJSONObject: original)
+                            guard data.count <= 2 * 1024 * 1024 else { throw MacLocalAgentResumeError.invalidFrame }
+                            let originalRequest = try JSONDecoder().decode(MacCanonicalJSONValue.self, from: data)
+                            let context = try await MainActor.run {
+                                try MacExpertInstructionProducer.captureMainRequest(originalRequest,
+                                    conversationID: request.conversationID, runID: active.runID, using: port)
+                            }
+                            let encodedResponse = try JSONSerialization.data(withJSONObject: ["type": "device_tool_result",
+                                "request_id": bridgeRequest.id, "session_id": request.conversationID,
+                                "result": ["authorized": true, "capture_context": try JSONSerialization.jsonObject(with: JSONEncoder().encode(context))]])
+                            guard encodedResponse.count <= 2 * 1024 * 1024 else { throw MacLocalAgentResumeError.invalidFrame }
+                            response = encodedResponse
+                        } catch {
+                            response = try JSONSerialization.data(withJSONObject: ["type": "device_tool_result",
+                                "request_id": bridgeRequest.id, "session_id": request.conversationID,
+                                "result": ["authorized": false, "error": error.localizedDescription]])
+                        }
+                    } else if bridgeRequest.toolName == "__nola_resolve_goal_model_channel" {
                         do {
                             guard let goalID = request.goalExecutionID,
                                   bridgeRequest.arguments["goal_id"] as? String == goalID,
@@ -2241,17 +2286,7 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
         // Mac's canonical run command loads history itself. Share the same
         // captured-current-turn rule as iOS without injecting duplicate history.
         let turnInput = ConversationTurnInput(currentUserText: request.prompt, historySource: .coreManaged)
-        var contextComponents: [[String: Any]] = try request.contextComponents.map { component in
-            let data = try JSONEncoder().encode(component)
-            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                throw NSError(
-                    domain: "NolaMac.LocalAgentRequest",
-                    code: 1,
-                    userInfo: [NSLocalizedDescriptionKey: "Context component did not encode as an object"]
-                )
-            }
-            return object
-        }
+        var contextComponents = try MacRemoteContextPayload.encode(request.contextComponents)
         if request.automationAdmission == nil && request.editedResendOperationID == nil { contextComponents.append([
             "kind": "platform_data",
             "id": "nola-mac-active-workspace",
@@ -2295,6 +2330,9 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
                 ]
             },
         ]
+        payload["selected_experts"] = try MacRemoteContextPayload.selectedExperts(request.contextComponents)
+        if let epoch = try MacRemoteContextPayload.selectionEpoch(request.contextComponents) { payload["expected_source_store_epoch"] = epoch }
+        if usesNolaModel { payload["expert_template_authority"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(AppleExpertTemplateAuthority.local())) }
         if let reasoningTier = request.reasoningTier {
             payload["reasoning_tier"] = reasoningTier
         }
@@ -2403,7 +2441,7 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
         let rulesData = try JSONEncoder().encode(rules.rules)
         payload["permission_rules"] = try JSONSerialization.jsonObject(with: rulesData)
         if let operation = request.editedResendOperationID, let frozen = request.editedResendModel {
-            guard request.submissionID == operation, request.contextComponents.isEmpty,
+            guard request.submissionID == operation, request.contextComponents.allSatisfy({ $0.kind == "main_expert_selection" }),
                   request.attachmentURLs.isEmpty, request.externalSessionID == nil,
                   request.permissionMode == .cautious,
                   case .object(let generation) = frozen.generation,
@@ -2974,6 +3012,11 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
 
     @inline(never)
     private static func decodeTraceEvent(object: [String: Any], conversationID: String, type: String) -> MacLocalAgentEvent? {
+        if type == "error", let code = (object["reason_code"] ?? object["code"]) as? String,
+           let rejection = AppleMainExpertDispatchRejection(rawValue: code) {
+            return protocolFailure(rejection.localizedDescription, conversationID: conversationID,
+                eventID: optionalString(in: object, keys: ["event_id", "eventId", "id"]))
+        }
         guard let trace = MacAgentTraceEnvelope.decode(object["trace"]) else {
             let keys = object.keys.sorted().joined(separator: ",")
             let diagnostic = type == "error"

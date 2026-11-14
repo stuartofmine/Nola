@@ -2261,7 +2261,7 @@
 "settings.data.clearing" = "正在清除数据…";
 "settings.data.export_failed" = "无法创建导出文件：%@";
 "settings.data.clear_complete" = "本地数据已清除。";
-"settings.data.clear_partial" = "大部分本地数据已清除，但部分对话记录无法删除。";
+"settings.data.clear_partial" = "部分本地数据无法删除，请检查剩余的对话和数据源。";
 "settings.operation.title" = "数据管理";
 
 /* macOS 设置 */
@@ -2905,7 +2905,7 @@
 
 /* Expert picker */
 "chat.experts.title" = "专家";
-"chat.experts.description" = "选择在此对话中回复的专家。选择不会启动回复，也不会授予权限。";
+"chat.experts.description" = "选择希望 Nola 咨询的专家。Nola 统一安排任务并回复你。";
 "chat.experts.search" = "搜索专家";
 "chat.experts.empty" = "暂无可用专家";
 "chat.experts.selected" = "已选择";
@@ -2946,7 +2946,7 @@
 
 "chat.run.unresolved" = "上一项任务尚未结束，或停止结果尚未确认。请先恢复或处理该任务，再发送新消息。你的草稿已保留。";
 
-"a2ui.history.version" = "查看此记录的表单版本";
+"a2ui.history.version" = "查看内容";
 
 "Delegated" = "已委派";
 
@@ -2974,7 +2974,7 @@
 "expert.color.pink" = "粉";
 "chat.message.edit" = "编辑重发";
 "chat.message.editWait" = "请先停止或等待当前回复完成。";
-"chat.message.editPreservesOriginal" = "重发将创建独立会话，原消息与当前输入草稿保持不变。";
+"chat.message.editPreservesOriginal" = "此消息及其后的内容将被替换，并在当前会话中重新发送。输入框草稿会保留。";
 "chat.message.saveResend" = "保存并重发";
 "chat.message.resendUnavailable" = "此消息暂不能重发，需要先确认原始执行配置。";
 
@@ -2998,11 +2998,11 @@
 "experts.save" = "保存";
 "experts.archive" = "归档专家";
 "experts.restore" = "恢复专家";
-"experts.conversationModel" = "使用会话模型";
+"experts.conversationModel" = "跟随应用默认模型";
 
 "experts.template" = "提示模板";
 
-"experts.conversationTemplate" = "使用会话模板";
+"experts.conversationTemplate" = "未指定模板";
 
 "experts.savedModelUnavailable" = "已保存模型（当前不可用）";
 
@@ -3018,9 +3018,9 @@
 
 "work.tools.noGoal" = "暂无活动目标";
 
-"chat.experts.sourceUnavailable.title" = "此会话暂不支持本机专家";
+"chat.experts.sourceUnavailable.title" = "暂时无法确认专家来源";
 
-"chat.experts.sourceUnavailable.detail" = "此会话属于其他主机，或暂时无法确认其来源，不能添加本机专家。你仍可管理本机专家。";
+"chat.experts.sourceUnavailable.detail" = "请重新连接此会话的 Host，或刷新其专家目录。";
 
 // Shared Apple model request presentation.
 "Model request pending" = "模型请求待处理";
@@ -3287,5 +3287,86 @@
 
 "model.web_host.paste_setup" = "粘贴连接信息";
 
-"chat.experts.conversations" = "专家会话";
-"chat.experts.conversations.empty" = "在当前会话中 @ 专家后，可在这里查看执行详情。";
+// Generated UI recovery and presentation
+"a2ui.revalidate" = "重新校验";
+"a2ui.discardEdits" = "放弃编辑，使用当前值";
+"a2ui.checkSubmission" = "查询提交结果";
+"a2ui.finishComposition" = "请先完成当前输入法输入，再提交表单。";
+"a2ui.fieldsRemoved" = "表单已更新，部分编辑项不再存在。你的编辑已保留，请确认后放弃编辑。";
+"a2ui.receiptMismatch" = "提交结果归属不匹配，请重查。";
+"a2ui.previewUnavailable" = "表单已更新或暂时无法校验，请重新读取后编辑。";
+"a2ui.previewMismatch" = "表单校验结果已过期或归属不匹配，请重新编辑后重试。";
+"a2ui.pending" = "界面正在准备，等待组件与数据…";
+"a2ui.deleted" = "此界面已移除。";
+
+// Mobile settings groups
+"settings.group.preferences" = "偏好";
+"settings.group.connections" = "连接与能力";
+"settings.group.security" = "安全";
+
+// Compact bibliography and live process headings.
+"chat.sources.all" = "展开全部来源";
+"chat.sources.fewer" = "收起来源";
+"chat.processing" = "正在处理中";
+"chat.skill.deep_research" = "深度研究";
+
+"model.protocol.guidance" = "使用工具和推理时，请选择服务支持的 Responses 协议。部分 Chat Completions 模型要求明确关闭推理。";
+
+"information.recentKnowledge" = "最近沉淀";
+
+"information.recentConversations" = "最近对话";
+
+"activity.recentLoaded" = "条近期记录";
+
+/* Model connection draft protection */
+"model.setup.discard_title" = "放弃未保存的更改？";
+"model.setup.discard" = "放弃更改";
+"model.setup.keep_editing" = "继续编辑";
+"model.web_host.saved_token_hint" = "留空以使用此宿主机已保存的令牌。";
+
+"chat.context.import.invalid_text" = "请选择非空的 UTF-8 文本文件，最多 %d 个字符（192 KB）。";
+
+"chat.context.import.failed_count" = "%d 个文件未能导入。请使用非空的 UTF-8 文本文件，最多 40,000 个字符（192 KB）。";
+
+/* Expert roles and revision-aware mentions */
+"experts.reasoning.inherit" = "继承模型设置";
+"experts.reasoning.unknown" = "当前模型未声明推理档位，将继承模型的默认设置。";
+"experts.role.details" = "提示词、工具与 Skill";
+"experts.role.tools" = "工具包";
+"experts.role.permissions" = "这些能力用于说明角色。实际执行工具时仍须遵循相应权限。";
+"experts.mention.changed" = "该专家的配置已更改或已归档，请从更新后的列表重新选择。";
+"experts.mention.rejoin_title" = "使用专家的最新配置？";
+"experts.mention.rejoin_message" = "此会话中的该专家使用旧配置。重新引入后，后续消息使用最新配置，之前的消息仍会保留。";
+"experts.mention.rejoin_action" = "以最新配置重新引入";
+"experts.mention.joining" = "正在引入专家…";
+
+"experts.configuration.unsupported" = "此宿主机未声明支持角色与推理配置，请更新宿主机后使用这些选项。";
+
+"experts.reasoning.unavailable" = "不可用 · %@";
+
+"experts.reasoning.selectSupported" = "请选择此模型声明的推理档位，或继承模型的默认设置。";
+
+// Parent-owned expert history
+"expert.history.title" = "专家子会话";
+"expert.history.expanded" = "已展开";
+"expert.history.collapsed" = "已收起";
+"expert.history.current" = "当前子会话";
+"expert.history.previous" = "旧版子会话";
+"expert.history.empty" = "暂无消息";
+"expert.history.more" = "加载更多";
+"expert.history.continue" = "返回主会话继续";
+"expert.history.readOnly" = "只读历史记录";
+"expert.history.unavailable" = "无法读取历史";
+"expert.history.changed" = "专家子会话已变更，请刷新后重试。";
+"expert.history.unsupportedParent" = "此会话暂不支持在 iOS 中继续，请在创建它的客户端中打开。";
+"expert.history.peerName" = "专家";
+
+"experts.mainHostUpgrade" = "请更新所连接的 Host，以便由主 Agent 调度专家。";
+
+"main.experts.requiresTools" = "请选择支持工具调用的主模型，或移除已选专家。你的输入已保留。";
+
+"main.experts.enableTools" = "请为主 Agent 启用专家工具，或移除已选专家。你的输入已保留。";
+
+"main.experts.sourceChanged" = "宿主机数据已变化。请刷新专家目录并重新选择专家。你的输入已保留。";
+
+"run.blocked.inputBudget" = "请求超出了模型的输入预算。请缩短对话或附件、减少启用的工具，或选择上下文窗口更大的模型。";

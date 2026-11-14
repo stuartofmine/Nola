@@ -5,20 +5,55 @@
 //! deterministic lifecycle: dedupe, reinforcement, conflict handling, recall,
 //! bounded retention, and strategy scoring.
 
-use crate::persistence::{
-    config_file_exists, read_config_file, remove_config_file, write_config_file,
-};
 use chrono::{DateTime, Utc};
+use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::ffi::CString;
 use std::os::raw::c_char;
+use std::path::PathBuf;
 use std::ptr;
 use std::sync::{LazyLock, Mutex};
 use uuid::Uuid;
 
+fn get_config_base() -> Option<PathBuf> {
+    if let Some(dirs) = ProjectDirs::from("com", "nola", "Nola") {
+        Some(dirs.config_dir().to_path_buf())
+    } else {
+        std::env::var("HOME").ok().map(PathBuf::from)
+    }
+}
+
+fn write_config_file(filename: &str, content: &str) -> Result<(), String> {
+    let base = get_config_base().ok_or_else(|| "no base dir".to_string())?;
+    let config_dir = base.join("nola");
+    std::fs::create_dir_all(&config_dir).map_err(|error| error.to_string())?;
+    std::fs::write(config_dir.join(filename), content).map_err(|error| error.to_string())
+}
+
+fn read_config_file(filename: &str) -> Result<String, String> {
+    let base = get_config_base().ok_or_else(|| "no base dir".to_string())?;
+    std::fs::read_to_string(base.join("nola").join(filename)).map_err(|error| error.to_string())
+}
+
+fn config_file_exists(filename: &str) -> Result<bool, String> {
+    let base = get_config_base().ok_or_else(|| "no base dir".to_string())?;
+    Ok(base.join("nola").join(filename).is_file())
+}
+
+fn remove_config_file(filename: &str) -> Result<(), String> {
+    let base = get_config_base().ok_or_else(|| "no base dir".to_string())?;
+    let path = base.join("nola").join(filename);
+    if !path.exists() {
+        return Ok(());
+    }
+    std::fs::remove_file(path).map_err(|error| error.to_string())
+}
+
 const STATE_FILE: &str = "personal_intelligence.json";
+const PRODUCT_SETTING_KEY: &str = "personal_intelligence.state";
+const PI_MEMORY_PREFIX: &str = "pi_";
 const SCHEMA_VERSION: u32 = 1;
 /// Version of the native intelligence request/response contract, not the Agent
 /// reducer or Application command protocol. Persistence schema is independent.
@@ -351,12 +386,13 @@ fn merge_unique(target: &mut Vec<String>, additions: impl IntoIterator<Item = St
     }
 }
 
-fn load_state() -> Result<IntelligenceState, String> {
-    if !config_file_exists(STATE_FILE)? {
-        return Ok(IntelligenceState::default());
-    }
-    let raw = read_config_file(STATE_FILE)?;
-    let state: IntelligenceState = serde_json::from_str(&raw)
+fn default_legacy_state_path() -> Result<PathBuf, String> {
+    let base = get_config_base().ok_or_else(|| "no base dir".to_string())?;
+    Ok(base.join("nola").join(STATE_FILE))
+}
+
+fn parse_state_json(raw: &str) -> Result<IntelligenceState, String> {
+    let state: IntelligenceState = serde_json::from_str(raw)
         .map_err(|error| format!("invalid personal intelligence state: {error}"))?;
     if state.schema_version != SCHEMA_VERSION {
         return Err(format!(
@@ -367,9 +403,379 @@ fn load_state() -> Result<IntelligenceState, String> {
     Ok(state)
 }
 
+fn load_state_from_file(path: &std::path::Path) -> Result<Option<IntelligenceState>, String> {
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let raw = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+    parse_state_json(&raw).map(Some)
+}
+
+fn load_state() -> Result<IntelligenceState, String> {
+    if !config_file_exists(STATE_FILE)? {
+        return Ok(IntelligenceState::default());
+    }
+    let raw = read_config_file(STATE_FILE)?;
+    parse_state_json(&raw)
+}
+
 fn save_state(state: &IntelligenceState) -> Result<(), String> {
     let raw = serde_json::to_string(state).map_err(|error| error.to_string())?;
     write_config_file(STATE_FILE, &raw)
+}
+
+fn pi_canonical_id(id: &str) -> String {
+    if id.starts_with(PI_MEMORY_PREFIX) {
+        id.to_string()
+    } else {
+        format!("{PI_MEMORY_PREFIX}{id}")
+    }
+}
+
+fn to_canonical_kind(kind: &MemoryKind) -> nola_core::agent::MemoryKind {
+    match kind {
+        MemoryKind::Episodic => nola_core::agent::MemoryKind::Other,
+        MemoryKind::Semantic => nola_core::agent::MemoryKind::Preference,
+        MemoryKind::Procedural => nola_core::agent::MemoryKind::Decision,
+    }
+}
+
+fn from_canonical_kind(kind: nola_core::agent::MemoryKind, tags: &[String]) -> MemoryKind {
+    for tag in tags {
+        match tag.as_str() {
+            "pi_kind:episodic" => return MemoryKind::Episodic,
+            "pi_kind:semantic" => return MemoryKind::Semantic,
+            "pi_kind:procedural" => return MemoryKind::Procedural,
+            _ => {}
+        }
+    }
+    match kind {
+        nola_core::agent::MemoryKind::Other => MemoryKind::Episodic,
+        nola_core::agent::MemoryKind::Decision | nola_core::agent::MemoryKind::Feedback => {
+            MemoryKind::Procedural
+        }
+        nola_core::agent::MemoryKind::Preference
+        | nola_core::agent::MemoryKind::Identity
+        | nola_core::agent::MemoryKind::Project
+        | nola_core::agent::MemoryKind::Reference => MemoryKind::Semantic,
+    }
+}
+
+fn save_store_state(
+    app: &crate::EmbeddedApplication,
+    state: &IntelligenceState,
+) -> Result<(), String> {
+    let value_json = serde_json::to_string(state).map_err(|error| error.to_string())?;
+    let updated_at_ms = Utc::now().timestamp_millis();
+    app.execute_command(nola_application::ApplicationCommand::PutProductSetting {
+        key: PRODUCT_SETTING_KEY.to_string(),
+        value_json,
+        updated_at_ms,
+    })?;
+    Ok(())
+}
+
+fn sync_state_memories_to_store(
+    app: &crate::EmbeddedApplication,
+    state: &IntelligenceState,
+) -> Result<(), String> {
+    let existing_value = app.execute_command(nola_application::ApplicationCommand::Memory {
+        command: nola_application::MemoryCommand::List { limit: 2_000 },
+    })?;
+    let existing: Vec<nola_application::MemoryRecord> =
+        serde_json::from_value(existing_value).map_err(|error| error.to_string())?;
+    let max_existing_ms = existing
+        .iter()
+        .map(|record| record.updated_at_ms)
+        .max()
+        .unwrap_or(0);
+    let proposed_at_ms = Utc::now().timestamp_millis().max(max_existing_ms + 1);
+
+    let active_pi_ids: HashSet<String> = state
+        .memories
+        .iter()
+        .filter(|memory| memory.status == MemoryStatus::Active)
+        .map(|memory| pi_canonical_id(&memory.id))
+        .collect();
+
+    for record in &existing {
+        if record.record.id.starts_with(PI_MEMORY_PREFIX)
+            && !active_pi_ids.contains(&record.record.id)
+        {
+            app.execute_command(nola_application::ApplicationCommand::Memory {
+                command: nola_application::MemoryCommand::Delete {
+                    id: record.record.id.clone(),
+                    deleted_at_ms: proposed_at_ms,
+                },
+            })?;
+        }
+    }
+
+    for memory in state
+        .memories
+        .iter()
+        .filter(|memory| memory.status == MemoryStatus::Active)
+    {
+        let canonical_id = pi_canonical_id(&memory.id);
+        let mut tags = memory.tags.clone();
+        if !memory.semantic_key.is_empty() && !tags.contains(&memory.semantic_key) {
+            tags.push(memory.semantic_key.clone());
+        }
+        let kind_tag = match memory.kind {
+            MemoryKind::Episodic => "pi_kind:episodic",
+            MemoryKind::Semantic => "pi_kind:semantic",
+            MemoryKind::Procedural => "pi_kind:procedural",
+        };
+        if !tags.iter().any(|tag| tag == kind_tag) {
+            tags.push(kind_tag.to_string());
+        }
+        let observed_at = DateTime::parse_from_rfc3339(&memory.last_verified_at)
+            .ok()
+            .map(|_| memory.last_verified_at.clone());
+        let candidate = nola_application::MemoryCandidate {
+            record: nola_core::agent::MemoryRecord {
+                id: canonical_id,
+                owner: nola_domain::memory_owner::MemoryOwner::local_profile(),
+                namespace: nola_core::agent::MemoryNamespace::Personal,
+                scope: nola_core::agent::MemoryScope::Global,
+                kind: to_canonical_kind(&memory.kind),
+                content: memory.statement.clone(),
+                summary: None,
+                tags,
+                confidence: clamp_unit(memory.confidence) as f32,
+                importance: 0.75,
+                sensitivity: Some("normal".to_string()),
+                retention: nola_core::agent::MemoryRetention::UntilSuperseded,
+                supersedes: memory
+                    .supersedes
+                    .iter()
+                    .map(|superseded| pi_canonical_id(superseded))
+                    .collect(),
+                provenance: nola_core::agent::MemoryProvenance {
+                    kind: nola_core::agent::MemoryProvenanceKind::Imported,
+                    source: "personal_intelligence".to_string(),
+                    observed_at,
+                    ..Default::default()
+                },
+            },
+            quality: None,
+            proposed_at_ms,
+        };
+        app.execute_command(nola_application::ApplicationCommand::Memory {
+            command: nola_application::MemoryCommand::Commit {
+                input: candidate,
+                intent: nola_application::MemoryCommitIntent::Imported,
+            },
+        })?;
+    }
+    Ok(())
+}
+
+fn load_or_import_store_state(
+    app: &crate::EmbeddedApplication,
+    legacy_path: Option<&std::path::Path>,
+) -> Result<IntelligenceState, String> {
+    let setting_value =
+        app.execute_command(nola_application::ApplicationCommand::GetProductSetting {
+            key: PRODUCT_SETTING_KEY.to_string(),
+        })?;
+    if !setting_value.is_null() {
+        let setting: nola_application::ProductSetting =
+            serde_json::from_value(setting_value).map_err(|error| error.to_string())?;
+        return parse_state_json(&setting.value_json);
+    }
+    if let Some(path) = legacy_path {
+        if let Some(legacy_state) = load_state_from_file(path)? {
+            // One-time non-destructive migration: import into NolaStore while
+            // preserving personal_intelligence.json untouched on disk.
+            save_store_state(app, &legacy_state)?;
+            sync_state_memories_to_store(app, &legacy_state)?;
+            return Ok(legacy_state);
+        }
+    }
+    Ok(IntelligenceState::default())
+}
+
+fn load_canonical_extra_memories(
+    app: &crate::EmbeddedApplication,
+    state: &IntelligenceState,
+    input: &RecallInput,
+) -> Result<Vec<MemoryRecord>, String> {
+    if input.source.is_some() {
+        return Ok(Vec::new());
+    }
+    let known_pi_ids: HashSet<String> = state
+        .memories
+        .iter()
+        .map(|memory| pi_canonical_id(&memory.id))
+        .collect();
+    let active_statements: HashSet<String> = state
+        .memories
+        .iter()
+        .filter(|memory| memory.status == MemoryStatus::Active)
+        .map(|memory| normalized_text(&memory.statement))
+        .collect();
+
+    let recalled_value = app.execute_command(nola_application::ApplicationCommand::Memory {
+        command: nola_application::MemoryCommand::Recall {
+            input: nola_application::MemoryRecallQuery {
+                binding: nola_domain::memory_owner::MemoryExecutionBinding::local_profile(),
+                namespace: nola_core::agent::MemoryNamespace::Personal,
+                scope: nola_core::agent::MemoryScope::Global,
+                query: (!input.query.trim().is_empty()).then(|| input.query.clone()),
+                kind: None,
+                now_iso: now_iso(),
+                limit: 50,
+            },
+        },
+    })?;
+    let recalled: Vec<nola_application::MemoryRecord> =
+        serde_json::from_value(recalled_value).map_err(|error| error.to_string())?;
+
+    let listed_value = app.execute_command(nola_application::ApplicationCommand::Memory {
+        command: nola_application::MemoryCommand::List { limit: 2_000 },
+    })?;
+    let listed: Vec<nola_application::MemoryRecord> =
+        serde_json::from_value(listed_value).map_err(|error| error.to_string())?;
+
+    let local_owner = nola_domain::memory_owner::MemoryOwner::local_profile();
+    let personal_global: Vec<nola_application::MemoryRecord> = listed
+        .into_iter()
+        .filter(|record| {
+            record.deleted_at_ms.is_none()
+                && record.record.owner == local_owner
+                && record.record.namespace == nola_core::agent::MemoryNamespace::Personal
+                && record.record.scope == nola_core::agent::MemoryScope::Global
+        })
+        .collect();
+    let superseded_ids: HashSet<String> = personal_global
+        .iter()
+        .flat_map(|record| record.record.supersedes.iter().cloned())
+        .collect();
+
+    let mut seen_ids = HashSet::new();
+    let mut extras = Vec::new();
+    for record in recalled.into_iter().chain(personal_global.into_iter()) {
+        let id = record.record.id.clone();
+        if !seen_ids.insert(id.clone()) {
+            continue;
+        }
+        if id.starts_with(PI_MEMORY_PREFIX)
+            || known_pi_ids.contains(&id)
+            || superseded_ids.contains(&id)
+        {
+            continue;
+        }
+        if active_statements.contains(&normalized_text(&record.record.content)) {
+            continue;
+        }
+        let verified_iso = record
+            .record
+            .provenance
+            .observed_at
+            .clone()
+            .unwrap_or_else(|| {
+                DateTime::from_timestamp_millis(record.updated_at_ms)
+                    .map(|timestamp| timestamp.to_rfc3339())
+                    .unwrap_or_else(now_iso)
+            });
+        let created_iso = DateTime::from_timestamp_millis(record.created_at_ms)
+            .map(|timestamp| timestamp.to_rfc3339())
+            .unwrap_or_else(|| verified_iso.clone());
+        let last_used_at = record
+            .last_used_at_ms
+            .and_then(DateTime::from_timestamp_millis)
+            .map(|timestamp| timestamp.to_rfc3339());
+        let tags: Vec<String> = record
+            .record
+            .tags
+            .iter()
+            .filter(|tag| !tag.starts_with("pi_kind:"))
+            .cloned()
+            .collect();
+        extras.push(MemoryRecord {
+            id: id.clone(),
+            semantic_key: format!("canonical:{id}"),
+            kind: from_canonical_kind(record.record.kind, &record.record.tags),
+            statement: record.record.content,
+            confidence: clamp_unit(f64::from(record.record.confidence)),
+            first_seen_at: created_iso,
+            last_verified_at: verified_iso,
+            last_used_at,
+            use_count: 0,
+            source_event_ids: Vec::new(),
+            tags,
+            status: MemoryStatus::Active,
+            supersedes: record.record.supersedes.first().cloned(),
+            conflicting_statements: Vec::new(),
+        });
+    }
+    Ok(extras)
+}
+
+pub(crate) fn ingest_with_application(
+    app: &crate::EmbeddedApplication,
+    legacy_path: Option<&std::path::Path>,
+    input: IntelligenceIngestInput,
+) -> Result<IntelligenceIngestResponse, String> {
+    let mut state = load_or_import_store_state(app, legacy_path)?;
+    let response = ingest_into_state(&mut state, input);
+    save_store_state(app, &state)?;
+    sync_state_memories_to_store(app, &state)?;
+    Ok(response)
+}
+
+pub(crate) fn recall_with_application(
+    app: &crate::EmbeddedApplication,
+    legacy_path: Option<&std::path::Path>,
+    input: RecallInput,
+) -> Result<RecallResponse, String> {
+    let mut state = load_or_import_store_state(app, legacy_path)?;
+    let canonical_extras = load_canonical_extra_memories(app, &state, &input)?;
+    let (response, mutated) =
+        recall_from_state_with_canonical(&mut state, &canonical_extras, input);
+    if mutated {
+        save_store_state(app, &state)?;
+    }
+    Ok(response)
+}
+
+pub(crate) fn snapshot_with_application(
+    app: &crate::EmbeddedApplication,
+    legacy_path: Option<&std::path::Path>,
+) -> Result<IntelligenceState, String> {
+    load_or_import_store_state(app, legacy_path)
+}
+
+pub(crate) fn clear_with_application(
+    app: &crate::EmbeddedApplication,
+    legacy_path: Option<&std::path::Path>,
+) -> Result<(), String> {
+    app.execute_command(nola_application::ApplicationCommand::DeleteProductSetting {
+        key: PRODUCT_SETTING_KEY.to_string(),
+    })?;
+    let listed_value = app.execute_command(nola_application::ApplicationCommand::Memory {
+        command: nola_application::MemoryCommand::List { limit: 2_000 },
+    })?;
+    let listed: Vec<nola_application::MemoryRecord> =
+        serde_json::from_value(listed_value).map_err(|error| error.to_string())?;
+    let deleted_at_ms = Utc::now().timestamp_millis();
+    for record in listed {
+        if record.record.id.starts_with(PI_MEMORY_PREFIX) {
+            app.execute_command(nola_application::ApplicationCommand::Memory {
+                command: nola_application::MemoryCommand::Delete {
+                    id: record.record.id,
+                    deleted_at_ms,
+                },
+            })?;
+        }
+    }
+    if let Some(path) = legacy_path {
+        if path.exists() {
+            std::fs::remove_file(path).map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(())
 }
 
 fn summarize(state: &IntelligenceState) -> StateSummary {
@@ -834,6 +1240,14 @@ fn recency_score(timestamp: &str) -> f64 {
 }
 
 fn recall_from_state(state: &mut IntelligenceState, input: RecallInput) -> RecallResponse {
+    recall_from_state_with_canonical(state, &[], input).0
+}
+
+fn recall_from_state_with_canonical(
+    state: &mut IntelligenceState,
+    canonical_extras: &[MemoryRecord],
+    input: RecallInput,
+) -> (RecallResponse, bool) {
     let query_terms = terms(&input.query);
     let limit = input.limit.unwrap_or(8).max(1).min(32);
     let minimum_score = input.minimum_score.unwrap_or(0.18).max(0.0).min(1.0);
@@ -842,7 +1256,16 @@ fn recall_from_state(state: &mut IntelligenceState, input: RecallInput) -> Recal
         .iter()
         .map(|event| (event.id.clone(), event.clone()))
         .collect();
-    let memory_term_sets = state.memories.iter().map(memory_terms).collect::<Vec<_>>();
+    let state_len = state.memories.len();
+    let combined_memories: Vec<&MemoryRecord> = state
+        .memories
+        .iter()
+        .chain(canonical_extras.iter())
+        .collect();
+    let memory_term_sets = combined_memories
+        .iter()
+        .map(|memory| memory_terms(memory))
+        .collect::<Vec<_>>();
     let mut document_frequency = HashMap::new();
     for term_set in &memory_term_sets {
         for term in term_set {
@@ -850,19 +1273,19 @@ fn recall_from_state(state: &mut IntelligenceState, input: RecallInput) -> Recal
         }
     }
     let document_count = memory_term_sets.len().max(1);
-    let scored: Vec<(usize, f64, f64)> = state
-        .memories
+    let scored: Vec<(usize, f64, f64)> = combined_memories
         .iter()
         .enumerate()
         .filter(|(_, memory)| memory.status == MemoryStatus::Active)
         .filter(|(_, memory)| input.kinds.is_empty() || input.kinds.contains(&memory.kind))
-        .filter(|(_, memory)| {
+        .filter(|(index, memory)| {
             input.source.as_ref().map_or(true, |source| {
-                memory.source_event_ids.iter().any(|id| {
-                    event_by_id
-                        .get(id)
-                        .map_or(false, |event| event.source == *source)
-                })
+                *index < state_len
+                    && memory.source_event_ids.iter().any(|id| {
+                        event_by_id
+                            .get(id)
+                            .map_or(false, |event| event.source == *source)
+                    })
             })
         })
         .map(|(index, memory)| {
@@ -893,11 +1316,17 @@ fn recall_from_state(state: &mut IntelligenceState, input: RecallInput) -> Recal
     let scored = diversify_scored(scored, &memory_term_sets, limit);
 
     let now = now_iso();
+    let mut mutated = false;
     let mut recalled = Vec::new();
     for (index, score, relevance) in scored {
-        state.memories[index].use_count += 1;
-        state.memories[index].last_used_at = Some(now.clone());
-        let memory = state.memories[index].clone();
+        let memory = if index < state_len {
+            state.memories[index].use_count += 1;
+            state.memories[index].last_used_at = Some(now.clone());
+            mutated = true;
+            state.memories[index].clone()
+        } else {
+            canonical_extras[index - state_len].clone()
+        };
         let evidence = memory
             .source_event_ids
             .iter()
@@ -919,7 +1348,9 @@ fn recall_from_state(state: &mut IntelligenceState, input: RecallInput) -> Recal
             evidence,
         });
     }
-    state.updated_at = now;
+    if mutated {
+        state.updated_at = now;
+    }
     let mut context_lines = Vec::new();
     let mut context_chars = 0usize;
     for item in &recalled {
@@ -942,12 +1373,15 @@ fn recall_from_state(state: &mut IntelligenceState, input: RecallInput) -> Recal
         context_lines.push(line);
     }
     let context = context_lines.join("\n");
-    RecallResponse {
-        ok: true,
-        query: input.query,
-        memories: recalled,
-        context,
-    }
+    (
+        RecallResponse {
+            ok: true,
+            query: input.query,
+            memories: recalled,
+            context,
+        },
+        mutated,
+    )
 }
 
 fn json_pointer<T: Serialize>(value: &T) -> *mut c_char {
@@ -986,6 +1420,13 @@ pub extern "C" fn nola_core_intelligence_ingest(
         Ok(guard) => guard,
         Err(_) => return error_pointer("intelligence state lock is poisoned"),
     };
+    if let Some(app) = crate::active_embedded_application() {
+        let legacy_path = default_legacy_state_path().ok();
+        return match ingest_with_application(&app, legacy_path.as_deref(), input) {
+            Ok(response) => json_pointer(&response),
+            Err(error) => error_pointer(error),
+        };
+    }
     let mut state = match load_state() {
         Ok(state) => state,
         Err(error) => return error_pointer(error),
@@ -1010,6 +1451,13 @@ pub extern "C" fn nola_core_intelligence_recall(
         Ok(guard) => guard,
         Err(_) => return error_pointer("intelligence state lock is poisoned"),
     };
+    if let Some(app) = crate::active_embedded_application() {
+        let legacy_path = default_legacy_state_path().ok();
+        return match recall_with_application(&app, legacy_path.as_deref(), input) {
+            Ok(response) => json_pointer(&response),
+            Err(error) => error_pointer(error),
+        };
+    }
     let mut state = match load_state() {
         Ok(state) => state,
         Err(error) => return error_pointer(error),
@@ -1027,6 +1475,13 @@ pub extern "C" fn nola_core_intelligence_snapshot() -> *mut c_char {
         Ok(guard) => guard,
         Err(_) => return error_pointer("intelligence state lock is poisoned"),
     };
+    if let Some(app) = crate::active_embedded_application() {
+        let legacy_path = default_legacy_state_path().ok();
+        return match snapshot_with_application(&app, legacy_path.as_deref()) {
+            Ok(state) => json_pointer(&state),
+            Err(error) => error_pointer(error),
+        };
+    }
     match load_state() {
         Ok(state) => json_pointer(&state),
         Err(error) => error_pointer(error),
@@ -1039,6 +1494,10 @@ pub extern "C" fn nola_core_intelligence_clear() -> bool {
         Ok(guard) => guard,
         Err(_) => return false,
     };
+    if let Some(app) = crate::active_embedded_application() {
+        let legacy_path = default_legacy_state_path().ok();
+        return clear_with_application(&app, legacy_path.as_deref()).is_ok();
+    }
     remove_config_file(STATE_FILE).is_ok()
 }
 
@@ -1286,5 +1745,352 @@ mod tests {
         assert_eq!(state.strategies[0].attempts, 2);
         assert_eq!(state.strategies[0].successes, 2);
         assert!(state.strategies[0].score > 0.7);
+    }
+
+    struct TestAppHandle(*mut crate::NolaCoreApplication);
+    impl Drop for TestAppHandle {
+        fn drop(&mut self) {
+            crate::nola_core_application_free(self.0);
+        }
+    }
+
+    fn open_test_app(path: &std::path::Path) -> TestAppHandle {
+        let raw = path.to_string_lossy().into_owned();
+        let ptr = crate::nola_core_application_open(raw.as_ptr(), raw.len());
+        assert!(!ptr.is_null());
+        TestAppHandle(ptr)
+    }
+
+    #[test]
+    fn ingest_persists_canonical_state_and_bm25_searchable_memory_records_in_nola_store() {
+        let directory = tempfile::tempdir().unwrap();
+        let db_path = directory.path().join("pi-ingest.sqlite");
+        let handle = open_test_app(&db_path);
+        let app = unsafe { &*handle.0 }.application.as_ref();
+
+        let ingest_res = ingest_with_application(
+            app,
+            None,
+            IntelligenceIngestInput {
+                memory_candidates: vec![candidate(
+                    "preference.editor",
+                    "User prefers Neovim with LSP inlay hints enabled",
+                    0.88,
+                )],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(ingest_res.ok);
+        assert_eq!(ingest_res.summary.active_memory_count, 1);
+
+        // Verify product_settings["personal_intelligence.state"] holds canonical JSON.
+        let setting_val = app
+            .execute_command(nola_application::ApplicationCommand::GetProductSetting {
+                key: PRODUCT_SETTING_KEY.to_string(),
+            })
+            .unwrap();
+        assert!(!setting_val.is_null());
+        let setting: nola_application::ProductSetting = serde_json::from_value(setting_val).unwrap();
+        let stored_state: IntelligenceState = serde_json::from_str(&setting.value_json).unwrap();
+        assert_eq!(stored_state.memories.len(), 1);
+        let pi_id = format!("pi_{}", stored_state.memories[0].id);
+
+        // Verify synced pi_<id> row is recallable via canonical MemoryCommand::Recall (FTS5 BM25).
+        let recalled_val = app
+            .execute_command(nola_application::ApplicationCommand::Memory {
+                command: nola_application::MemoryCommand::Recall {
+                    input: nola_application::MemoryRecallQuery {
+                        binding: nola_domain::memory_owner::MemoryExecutionBinding::local_profile(),
+                        namespace: nola_core::agent::MemoryNamespace::Personal,
+                        scope: nola_core::agent::MemoryScope::Global,
+                        query: Some("Neovim inlay hints".into()),
+                        kind: None,
+                        now_iso: now_iso(),
+                        limit: 10,
+                    },
+                },
+            })
+            .unwrap();
+        let recalled: Vec<nola_application::MemoryRecord> =
+            serde_json::from_value(recalled_val).unwrap();
+        assert_eq!(recalled.len(), 1);
+        assert_eq!(recalled[0].record.id, pi_id);
+
+        // Superseding soft-deletes the old pi_<id> row and commits the new one.
+        ingest_with_application(
+            app,
+            None,
+            IntelligenceIngestInput {
+                memory_candidates: vec![candidate(
+                    "preference.editor",
+                    "User switched to Helix editor for Rust projects",
+                    0.95,
+                )],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let listed_val = app
+            .execute_command(nola_application::ApplicationCommand::Memory {
+                command: nola_application::MemoryCommand::List { limit: 50 },
+            })
+            .unwrap();
+        let listed: Vec<nola_application::MemoryRecord> =
+            serde_json::from_value(listed_val).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_ne!(listed[0].record.id, pi_id);
+        assert!(listed[0].record.content.contains("Helix editor"));
+    }
+
+    #[test]
+    fn canonical_personal_global_memory_is_recallable_without_duplicating_synced_records() {
+        let directory = tempfile::tempdir().unwrap();
+        let db_path = directory.path().join("pi-bidirectional.sqlite");
+        let handle = open_test_app(&db_path);
+        let app = unsafe { &*handle.0 }.application.as_ref();
+
+        // 1. Write a canonical (local_profile, Personal, Global) memory directly in NolaStore.
+        app.execute_command(nola_application::ApplicationCommand::Memory {
+            command: nola_application::MemoryCommand::Commit {
+                input: nola_application::MemoryCandidate {
+                    record: nola_core::agent::MemoryRecord {
+                        id: "agent_mem_coffee".into(),
+                        owner: nola_domain::memory_owner::MemoryOwner::local_profile(),
+                        namespace: nola_core::agent::MemoryNamespace::Personal,
+                        scope: nola_core::agent::MemoryScope::Global,
+                        kind: nola_core::agent::MemoryKind::Preference,
+                        content: "Always brew Ethiopian pour-over coffee at 93 Celsius".into(),
+                        summary: None,
+                        tags: vec!["coffee".into()],
+                        confidence: 0.91,
+                        importance: 0.8,
+                        sensitivity: Some("normal".into()),
+                        retention: nola_core::agent::MemoryRetention::UntilSuperseded,
+                        supersedes: Vec::new(),
+                        provenance: nola_core::agent::MemoryProvenance {
+                            kind: nola_core::agent::MemoryProvenanceKind::ExplicitUser,
+                            source: "chat".into(),
+                            observed_at: Some("2026-09-01T00:00:00Z".into()),
+                            ..Default::default()
+                        },
+                    },
+                    quality: None,
+                    proposed_at_ms: 1_000,
+                },
+                intent: nola_application::MemoryCommitIntent::ExplicitUser,
+            },
+        })
+        .unwrap();
+
+        // 2. Also ingest a PersonalIntelligence memory so both sources exist simultaneously.
+        ingest_with_application(
+            app,
+            None,
+            IntelligenceIngestInput {
+                memory_candidates: vec![candidate(
+                    "morning.routine",
+                    "Checks Ethiopian coffee bean inventory on Mondays",
+                    0.85,
+                )],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let response = recall_with_application(
+            app,
+            None,
+            RecallInput {
+                query: "Ethiopian coffee".into(),
+                limit: Some(10),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            response.memories.len(),
+            2,
+            "expected 1 canonical + 1 PI memory without pi_<id> duplication"
+        );
+        assert!(response
+            .memories
+            .iter()
+            .any(|item| item.memory.id == "agent_mem_coffee"));
+        assert!(response
+            .memories
+            .iter()
+            .any(|item| item.memory.semantic_key == "morningroutine"));
+    }
+
+    #[test]
+    fn legacy_personal_intelligence_json_is_non_destructively_migrated_on_first_access() {
+        let directory = tempfile::tempdir().unwrap();
+        let db_path = directory.path().join("pi-migration.sqlite");
+        let legacy_path = directory.path().join("personal_intelligence.json");
+
+        let mut legacy_state = IntelligenceState::default();
+        ingest_into_state(
+            &mut legacy_state,
+            IntelligenceIngestInput {
+                memory_candidates: vec![candidate(
+                    "travel.seat",
+                    "Prefers aisle seats on flights over three hours",
+                    0.9,
+                )],
+                ..Default::default()
+            },
+        );
+        let original_bytes = serde_json::to_vec_pretty(&legacy_state).unwrap();
+        std::fs::write(&legacy_path, &original_bytes).unwrap();
+
+        let handle = open_test_app(&db_path);
+        let app = unsafe { &*handle.0 }.application.as_ref();
+
+        // First access imports into NolaStore while preserving personal_intelligence.json untouched.
+        let snapshot = snapshot_with_application(app, Some(&legacy_path)).unwrap();
+        assert_eq!(snapshot.memories.len(), 1);
+        assert_eq!(
+            std::fs::read(&legacy_path).unwrap(),
+            original_bytes,
+            "legacy personal_intelligence.json must remain untouched on disk after non-destructive import"
+        );
+
+        let recalled = recall_with_application(
+            app,
+            Some(&legacy_path),
+            RecallInput {
+                query: "aisle seats flights".into(),
+                limit: Some(5),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(recalled.memories.len(), 1);
+        assert_eq!(recalled.memories[0].memory.semantic_key, "travelseat");
+        assert_eq!(std::fs::read(&legacy_path).unwrap(), original_bytes);
+    }
+
+    #[test]
+    fn clear_resets_store_state_soft_deletes_pi_memories_and_removes_legacy_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let db_path = directory.path().join("pi-clear.sqlite");
+        let legacy_path = directory.path().join("personal_intelligence.json");
+        std::fs::write(
+            &legacy_path,
+            serde_json::to_vec(&IntelligenceState::default()).unwrap(),
+        )
+        .unwrap();
+
+        let handle = open_test_app(&db_path);
+        let app = unsafe { &*handle.0 }.application.as_ref();
+
+        ingest_with_application(
+            app,
+            Some(&legacy_path),
+            IntelligenceIngestInput {
+                memory_candidates: vec![candidate(
+                    "temp.fact",
+                    "Temporary personal intelligence preference to clear",
+                    0.86,
+                )],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        clear_with_application(app, Some(&legacy_path)).unwrap();
+
+        assert!(!legacy_path.exists());
+        let setting_val = app
+            .execute_command(nola_application::ApplicationCommand::GetProductSetting {
+                key: PRODUCT_SETTING_KEY.to_string(),
+            })
+            .unwrap();
+        assert!(setting_val.is_null());
+
+        let listed_val = app
+            .execute_command(nola_application::ApplicationCommand::Memory {
+                command: nola_application::MemoryCommand::List { limit: 50 },
+            })
+            .unwrap();
+        let listed: Vec<nola_application::MemoryRecord> =
+            serde_json::from_value(listed_val).unwrap();
+        assert!(listed.is_empty());
+    }
+
+    #[test]
+    fn c_abi_routes_through_active_embedded_application_store() {
+        assert_eq!(nola_core_intelligence_abi_version(), 1);
+
+        let directory = tempfile::tempdir().unwrap();
+        let db_path = directory.path().join("pi-c-abi.sqlite");
+        let handle = open_test_app(&db_path);
+        let app_arc = &(unsafe { &*handle.0 }).application;
+        assert!(crate::active_embedded_application().is_some());
+        crate::set_test_pinned_application(Some(app_arc));
+        struct PinReset;
+        impl Drop for PinReset {
+            fn drop(&mut self) {
+                crate::set_test_pinned_application(None);
+            }
+        }
+        let _pin_reset = PinReset;
+        let app = app_arc.as_ref();
+        // Pre-seed empty canonical state so the isolated test DB never inspects host config files.
+        save_store_state(app, &IntelligenceState::default()).unwrap();
+
+        let ingest_payload = serde_json::to_vec(&IntelligenceIngestInput {
+            memory_candidates: vec![candidate(
+                "c_abi.preference",
+                "Prefers Rust workspace Cargo tests with --lib",
+                0.92,
+            )],
+            ..Default::default()
+        })
+        .unwrap();
+        let ingest_ptr =
+            nola_core_intelligence_ingest(ingest_payload.as_ptr(), ingest_payload.len());
+        assert!(!ingest_ptr.is_null());
+        let ingest_json: Value = serde_json::from_str(
+            unsafe { std::ffi::CStr::from_ptr(ingest_ptr) }
+                .to_str()
+                .unwrap(),
+        )
+        .unwrap();
+        nola_core::nola_core_free_c_string(ingest_ptr);
+        assert_eq!(ingest_json["ok"], true);
+
+        let recall_payload = serde_json::to_vec(&RecallInput {
+            query: "Cargo tests --lib".into(),
+            limit: Some(5),
+            ..Default::default()
+        })
+        .unwrap();
+        let recall_ptr =
+            nola_core_intelligence_recall(recall_payload.as_ptr(), recall_payload.len());
+        assert!(!recall_ptr.is_null());
+        let recall_res: RecallResponse = serde_json::from_str(
+            unsafe { std::ffi::CStr::from_ptr(recall_ptr) }
+                .to_str()
+                .unwrap(),
+        )
+        .unwrap();
+        nola_core::nola_core_free_c_string(recall_ptr);
+        assert!(recall_res.ok);
+        assert_eq!(recall_res.memories.len(), 1);
+        assert_eq!(recall_res.memories[0].memory.semantic_key, "cabipreference");
+
+        let snap_ptr = nola_core_intelligence_snapshot();
+        assert!(!snap_ptr.is_null());
+        let snap: IntelligenceState = serde_json::from_str(
+            unsafe { std::ffi::CStr::from_ptr(snap_ptr) }
+                .to_str()
+                .unwrap(),
+        )
+        .unwrap();
+        nola_core::nola_core_free_c_string(snap_ptr);
+        assert_eq!(snap.schema_version, 1);
+        assert_eq!(snap.memories.len(), 1);
     }
 }

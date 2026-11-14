@@ -8,4 +8,14 @@ pub trait ConsistentReadRepository {
         &mut self,
         reader: impl FnOnce(&Self) -> Result<T, String>,
     ) -> Result<T, String>;
+
+    fn with_consistent_read_mut<T>(
+        &mut self,
+        reader: impl FnOnce(&mut Self) -> Result<T, String>,
+    ) -> Result<T, String>
+    where
+        Self: Sized,
+    {
+        reader(self)
+    }
 }

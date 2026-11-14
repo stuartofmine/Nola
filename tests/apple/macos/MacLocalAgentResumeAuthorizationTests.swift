@@ -41,8 +41,31 @@ final class MacLocalAgentResumeAuthorizationTests: XCTestCase {
             authorizedWorkspaceURLs: [project, original], permissionMode: .cautious)))
         XCTAssertNoThrow(try frozen.validate(.init(projectURL: project,
             authorizedWorkspaceURLs: [original], permissionMode: .cautious)))
-        XCTAssertThrowsError(try frozen.validate(.init(projectURL: project,
+        XCTAssertNoThrow(try frozen.validate(.init(projectURL: project,
             authorizedWorkspaceURLs: [original], permissionMode: .allowAll)))
+    }
+
+    func testModeForNextMessageDoesNotWidenFrozenRunOrIgnoreRevocation() throws {
+        let project = URL(fileURLWithPath: "/fixture/project")
+        func descriptor(_ mode: String) -> MacFrozenLaunchDescriptor {
+            MacFrozenLaunchDescriptor(version: 1, input_origin: "interactive_user",
+            project_path: project.path, authorized_workspace_paths: [], allowed_directory_arguments: [],
+            skill_directory_arguments: [], active_skill_ids: [], model_profile_id: nil,
+            model_profile_revision: nil, fallback_profile_ids: [], permission_mode: mode,
+            memory_enabled: true, context_window_tokens: nil, max_iterations: 0,
+            model_capabilities: [:], vision_input: false, permission_rules: [], host_attachments: [])
+        }
+        let cautious = descriptor("cautious")
+        XCTAssertThrowsError(try descriptor("allow_all").validate(.init(projectURL: project, authorizedWorkspaceURLs: [], permissionMode: .cautious)))
+        XCTAssertThrowsError(try descriptor("unsupported").validate(.init(projectURL: project, authorizedWorkspaceURLs: [], permissionMode: .allowAll)))
+        try cautious.validate(.init(projectURL: project, authorizedWorkspaceURLs: [], permissionMode: .allowAll))
+        XCTAssertEqual(cautious.permission_mode, "cautious", "Recovery must execute with the original mode")
+        let full = MacLocalAgentFrozenAuthorization(projectURL: project,
+            authorizedWorkspaceURLs: [], permissionMode: .allowAll)
+        XCTAssertThrowsError(try full.validate(.init(projectURL: project,
+            authorizedWorkspaceURLs: [], permissionMode: .cautious)))
+        XCTAssertThrowsError(try cautious.validate(.init(projectURL: project.appendingPathComponent("other"),
+            authorizedWorkspaceURLs: [project], permissionMode: .allowAll)))
     }
 
     func testRetargetedOriginalSymlinkCannotReuseFrozenLaunchArguments() throws {

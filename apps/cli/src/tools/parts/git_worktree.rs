@@ -627,6 +627,13 @@ mod git_worktree_tests {
             let made = git_worktree_create(json!({"root":root,"destination":child,"expected_head":info["head"],
                 "expected_common_directory":info["common_directory"]}).as_object().unwrap(),&ctx);
             assert!(!made.error,"{}",made.text);
+            let created_receipt = made.execution.as_ref().unwrap();
+            created_receipt.validate().unwrap();
+            assert_eq!(created_receipt.effects.len(), 1);
+            let created_effect = &created_receipt.effects[0];
+            assert!(created_receipt.checks.iter().any(|check| check.passed
+                && check.resource_uri == created_effect.resource_uri
+                && Some(&check.version) == created_effect.after_version.as_ref()));
             let selection = made.data.unwrap()["task_worktree_selection"].clone();
             fs::write(child.join("code.txt"),"reviewed implementation\n").unwrap();
             fs::write(child.join("new.txt"),"reviewed new file\n").unwrap();
@@ -644,7 +651,18 @@ mod git_worktree_tests {
             fs::write(root.join("code.txt"),"base\n").unwrap();
             let applied = git_worktree_integrate(args.as_object().unwrap(),&ctx);
             assert!(!applied.error,"{}",applied.text);
-            let effects = &applied.execution.as_ref().unwrap().effects;
+            let integration_receipt = applied.execution.as_ref().unwrap();
+            integration_receipt.validate().unwrap();
+            let effects = &integration_receipt.effects;
+            let metadata = &effects[0];
+            assert_eq!(metadata.operation, "git.worktree.integrate");
+            assert!(integration_receipt.checks.iter().any(|check| check.passed
+                && check.resource_uri == metadata.resource_uri
+                && Some(&check.version) == metadata.after_version.as_ref()));
+            // Applying the reviewed patch proves metadata postconditions, not
+            // runtime correctness of the integrated file content.
+            assert!(effects[1..].iter().all(|effect| integration_receipt.checks.iter()
+                .all(|check| check.resource_uri != effect.resource_uri)));
             for (name, operation, before) in [("code.txt","write",Some("base\n")),("new.txt","create",None),
                 ("remove.txt","delete",Some("removed\n")),("rename original.txt","delete",Some("renamed\n")),("renamed final.txt","create",None)] {
                 let effect = effects.iter().find(|effect| effect.resource_uri == url::Url::from_file_path(root.join(name)).unwrap().to_string()).unwrap();

@@ -16,18 +16,30 @@ enum MacPromptLibrary {
     }()
 
     static func defaultTemplateID() throws -> UUID? {
-        guard let setting = try MacApplicationPort.shared.productSetting(key: MacProductSettingKeys.defaultPromptTemplate) else { return nil }
-        guard let id = UUID(uuidString: setting.valueJSON) else { throw PromptTemplateReadError.unavailable }
-        _ = try service.requireReadableTemplate(id: id)
+        try defaultTemplateID(using: .shared)
+    }
+
+    static func defaultTemplateID(using store: MacApplicationPort) throws -> UUID? {
+        guard let setting = try store.productSetting(key: MacProductSettingKeys.defaultPromptTemplate) else { return nil }
+        guard let raw = try? JSONDecoder().decode(String.self, from: Data(setting.valueJSON.utf8)),
+              let id = UUID(uuidString: raw) else { throw PromptTemplateReadError.unavailable }
+        let scoped = PromptTemplateService(logger: .shared, persistence: MacPromptTemplatePersistence(store: store))
+        _ = try scoped.requireReadableTemplate(id: id)
         return id
     }
 
     static func setDefaultTemplateID(_ id: UUID?) throws {
+        try setDefaultTemplateID(id, using: .shared)
+    }
+
+    static func setDefaultTemplateID(_ id: UUID?, using store: MacApplicationPort) throws {
         if let id {
-            _ = try service.requireReadableTemplate(id: id)
-            _ = try MacApplicationPort.shared.putProductSetting(key: MacProductSettingKeys.defaultPromptTemplate,
-                valueJSON: id.uuidString, updatedAtMs: Int64(Date().timeIntervalSince1970 * 1000))
-        } else { try MacApplicationPort.shared.deleteProductSetting(key: MacProductSettingKeys.defaultPromptTemplate) }
+            let scoped = PromptTemplateService(logger: .shared, persistence: MacPromptTemplatePersistence(store: store))
+            _ = try scoped.requireReadableTemplate(id: id)
+            _ = try store.putProductSetting(key: MacProductSettingKeys.defaultPromptTemplate,
+                valueJSON: String(decoding: try JSONEncoder().encode(id.uuidString), as: UTF8.self),
+                updatedAtMs: Int64(Date().timeIntervalSince1970 * 1000))
+        } else { try store.deleteProductSetting(key: MacProductSettingKeys.defaultPromptTemplate) }
     }
 
 }

@@ -152,7 +152,7 @@
     .mobile-brand-bar { display: none; }
     .workspace-content:has(:global(.information-back), :global(.settings-back)) .mobile-brand-bar { display:none; }
     @media(max-width:700px) {
-        .mobile-brand-bar { display:flex; align-items:center; justify-content:space-between; padding:20px 20px 12px; min-height:80px; }
+        .mobile-brand-bar { display:flex; align-items:center; justify-content:space-between; padding:calc(20px + env(safe-area-inset-top)) 20px 12px; min-height:80px; }
         .mobile-brand-bar a { display:flex; align-items:center; gap:14px; color:var(--content); }
         .mobile-brand-bar strong { font-size:22px; font-weight:600; letter-spacing:-.5px; }
         .nola-mark { font: bold 34px Georgia,serif; }

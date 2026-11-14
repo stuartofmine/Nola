@@ -215,7 +215,6 @@ struct PersonalIntelligenceDashboardView: View {
                     capabilityGatewayCopy
                     Spacer(minLength: 8)
                     capabilityGatewaySummary
-                    capabilityGatewayChevron
                 }
 
                 VStack(alignment: .leading, spacing: 13) {
@@ -223,7 +222,6 @@ struct PersonalIntelligenceDashboardView: View {
                         capabilityGatewayIcon
                         capabilityGatewayCopy
                         Spacer(minLength: 4)
-                        capabilityGatewayChevron
                     }
                     capabilityGatewaySummary
                 }
@@ -255,10 +253,7 @@ struct PersonalIntelligenceDashboardView: View {
             Text(piText("personal.capabilities.title", "Skills & MCP"))
                 .font(.headline)
                 .foregroundStyle(.primary)
-            Text(piText("personal.capabilities.gateway.detail", "Manage reusable workflows and external tool connections."))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+
         }
         .layoutPriority(1)
     }
@@ -280,12 +275,7 @@ struct PersonalIntelligenceDashboardView: View {
         }
     }
 
-    private var capabilityGatewayChevron: some View {
-        Image(systemName: "chevron.right")
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.tertiary)
-            .frame(width: 20, height: 44)
-    }
+
 
     private func metricCard(_ title: String, value: Int, suffix: String = "", icon: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -683,6 +673,7 @@ struct PersonalCapabilitiesLibraryView: View {
                         .tag(PersonalCapabilityKind.mcp)
                 }
                 .pickerStyle(.segmented)
+                .accessibilityIdentifier("intelligence.capabilities.kind")
 
                 if horizontalSizeClass == .compact {
                     VStack(spacing: 10) {
@@ -707,8 +698,13 @@ struct PersonalCapabilitiesLibraryView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(piText("personal.capabilities.load_failed", "Could not load capabilities. Previous results are retained; reload before editing."))
                             .foregroundStyle(.red)
-                        Button(piText("personal.capabilities.retry", "Retry")) { reload() }
-                            .accessibilityIdentifier("intelligence.capabilities.retry")
+                        Button { reload() } label: {
+                            Text(piText("personal.capabilities.retry", "Retry"))
+                                .font(.subheadline.weight(.medium))
+                                .frame(minHeight: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .accessibilityIdentifier("intelligence.capabilities.retry")
                     }
                 }
                 if libraryLoaded {
@@ -724,13 +720,21 @@ struct PersonalCapabilitiesLibraryView: View {
                         showSkillImporter = true
                     } label: {
                         Label(piText("chat.context.skills.upload_file", "Import Skill file"), systemImage: "square.and.arrow.down")
+                            .font(.subheadline.weight(.medium))
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .contentShape(Rectangle())
                     }
                     .accessibilityIdentifier("intelligence.capabilities.importSkill")
                     .disabled(!libraryLoaded || libraryReadFailed)
 
                     if let onUseSkill {
                         ForEach(profile.uploadedSkills.filter(\.enabled)) { skill in
-                            Button(skill.name) { onUseSkill(skill.name) }
+                            Button { onUseSkill(skill.name) } label: {
+                                Text(skill.name)
+                                    .font(.subheadline.weight(.medium))
+                                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                    .contentShape(Rectangle())
+                            }
                         }
                     }
                     ForEach(hostSkills) { skill in
@@ -743,7 +747,12 @@ struct PersonalCapabilitiesLibraryView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             if let onUseSkill, skill.enabled {
-                                Button(skill.name) { onUseSkill(skill.name) }
+                                Button { onUseSkill(skill.name) } label: {
+                                    Text(skill.name)
+                                        .font(.subheadline.weight(.medium))
+                                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                        .contentShape(Rectangle())
+                                }
                             }
                         }
                         .disclosureGroupStyle(NolaRowDisclosureStyle())
@@ -766,22 +775,14 @@ struct PersonalCapabilitiesLibraryView: View {
         .fileImporter(isPresented: $showSkillImporter, allowedContentTypes: [.data]) { result in
             do {
                 let url = try result.get()
-                let scoped = url.startAccessingSecurityScopedResource()
-                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                let handle = try FileHandle(forReadingFrom: url)
-                defer { try? handle.close() }
-                let data = try handle.read(upToCount: 192_001) ?? Data()
-                guard data.count <= 192_000,
-                      let text = String(data: data, encoding: .utf8),
-                      !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                      text.count <= 48_000 else {
-                    throw IOSApplicationRuntimeError.rejected(piText("personal.capabilities.invalid_import", "Choose a nonempty UTF-8 Skill file containing at most 48,000 characters."))
-                }
+                let text = try IOSContextFileImportPolicy.readText(from: url, maximumCharacters: 48_000)
                 errorMessage = nil
                 skillEditorSnapshot = nil
                 mcpEditorSnapshot = nil
                 editor = .skill(nil, UserUploadedContextItem(name: url.lastPathComponent, content: text))
-            } catch { errorMessage = error.localizedDescription }
+            } catch {
+                if !IOSContextFileImportPolicy.isCancellation(error) { errorMessage = error.localizedDescription }
+            }
         }
         .sheet(item: $editor, onDismiss: { errorMessage = nil; skillEditorSnapshot = nil; mcpEditorSnapshot = nil }) { item in
             PersonalCapabilityEditorView(item: item, errorMessage: errorMessage) { name, detail, primary in
@@ -832,8 +833,9 @@ struct PersonalCapabilitiesLibraryView: View {
                     : piText("personal.capabilities.add_mcp", "Add MCP"),
                 systemImage: "plus"
             )
-            .font(.system(size: 14, weight: .semibold))
-            .frame(maxWidth: .infinity)
+            .font(.subheadline.weight(.semibold))
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.borderedProminent)
         .tint(DesignTokens.actionColor)
@@ -1134,6 +1136,7 @@ private struct PersonalCapabilityCard: View {
                     .foregroundStyle(DesignTokens.actionColor)
                 }
                 .buttonStyle(NolaActionButtonStyle())
+                .accessibilityIdentifier("\(identifier).edit")
                 Spacer()
                 Menu {
                     Button(role: .destructive, action: onDelete) {
@@ -1239,7 +1242,9 @@ private struct PersonalCapabilityEditorView: View {
                     } else {
                         TextField("https://example.com/mcp", text: $primary)
                             .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
                             .keyboardType(.URL)
+                            .accessibilityIdentifier("intelligence.capabilities.editor.endpoint")
                         if !primary.isEmpty && !endpointIsValid {
                             Text(piText("personal.capabilities.invalid_endpoint", "Enter a valid HTTP or HTTPS endpoint."))
                                 .font(.caption)
@@ -1262,6 +1267,7 @@ private struct PersonalCapabilityEditorView: View {
                     Button(piText("personal.capabilities.cancel", "Cancel")) {
                         if isDirty { showDiscardConfirmation = true } else { dismiss() }
                     }
+                    .accessibilityIdentifier("intelligence.capabilities.editor.cancel")
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(piText("personal.capabilities.save", "Save")) {

@@ -88,6 +88,9 @@ pub fn validate_patch(raw: &str) -> Result<(), String> {
     }
     for (key, value) in object {
         let valid = match key.as_str() {
+            "expertReasoningEffort" => value.is_null() || value.as_str().is_some_and(|effort| {
+                effort == "automatic" || crate::generation::REASONING_EFFORT_VALUES.contains(&effort)
+            }),
             "language" | "selectedPromptTemplateID" | "promptResponseStyle" => value.is_null() || value.as_str().is_some_and(|value| value.len() <= 512),
             "executionBackend" => value.as_str().is_some_and(|value| crate::execution_backend::ExecutionBackendKind::ALL.iter().any(|kind| kind.id() == value)),
             "persistenceEnabled" | "promptTemplateSelectionIsExplicit" => value.is_boolean(),
@@ -101,6 +104,7 @@ pub fn validate_patch(raw: &str) -> Result<(), String> {
     }
     if object
         .keys()
+        .filter(|key| key.as_str() != "expertReasoningEffort")
         .any(|key| !matches!(key.as_str(), "modelSelectionID" | "executionHostRawValue" | "executionHostBinding" | "clientHostParameters" | "modelOverrides" | "clientModelPresentation" | "permissionProfile" | "isPinned" | "memoryEnabledOverride" | "retrievalEnabledOverride" | "knowledge" | "language" | "selectedPromptTemplateID" | "promptResponseStyle" | "executionBackend" | "externalExecutionSessions" | "persistenceEnabled" | "dataSourceOverrides" | "dataSourceIds" | "executionPolicy" | "promptTemplateSelectionIsExplicit" | "contextLimitOverride" | "externalExecutionModelIDs" | "externalExecutionModelProviderIDs"))
     {
         return Err("unsupported conversation configuration field".into());

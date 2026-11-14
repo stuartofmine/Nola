@@ -8,6 +8,17 @@ export interface UiDraftState {
     revision: number | null;
     unresolved: UiPendingAttempt | null;
 }
+
+/** Recover the exact unacknowledged edits as well as the request identity.
+ * A later rejection must not erase values that survived a cold page reload. */
+export function draftStateFromAttempt(attempt: UiPendingAttempt): UiDraftState {
+    return {
+        drafts: Object.fromEntries(attempt.input.edits.map(edit =>
+            [JSON.stringify([edit.instance_id, edit.binding]), structuredClone(edit)])),
+        revision: attempt.input.expected_surface_revision,
+        unresolved: structuredClone(attempt),
+    };
+}
 /** Tab-lifetime presentation state only. Core remains the committed authority.
  * Full authority identities isolate Hosts, participants and generations. Values
  * are not written to disk or supplied to a model outside the normal submission. */

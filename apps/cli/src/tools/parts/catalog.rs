@@ -711,6 +711,12 @@ fn specs_with_skills(skills: &SkillRuntimeContext) -> Vec<ToolSpec<'static>> {
             }),
         },
         ToolSpec {
+            name: "delegate_expert",
+            description: nola_domain::expert_task_target::EXPERT_EXCHANGE_DESCRIPTION,
+            read_only: false,
+            parameters: nola_domain::expert_task_target::tool_schema()["function"]["parameters"].clone(),
+        },
+        ToolSpec {
             name: "nola_orchestrate",
             description: "Create/update a requested recurring, scheduled, monitored, or event-driven Nola automation from a Skill in the current Host catalog, a trigger, and authorized data sources. Requires explicit confirmation; claim creation only after success.",
             read_only: false,
@@ -1718,7 +1724,7 @@ fn specs_with_skills(skills: &SkillRuntimeContext) -> Vec<ToolSpec<'static>> {
         },
         ToolSpec {
             name: "read_task",
-            description: "Read one task's current state, recent activity, result summary, error, and child session reference. Marks a completed task as read without printing raw internal tool output.",
+            description: "Read one task's canonical current state, recent activity, result summary, error, child session reference and exact task_worktree_selection when bound. Recover that witnessed selection here after context compaction before git_worktree_integrate; never reconstruct directory identities or search summaries for authority. Marks a completed task as read without printing raw internal tool output.",
             read_only: true,
             parameters: json!({
                 "type": "object",
@@ -1731,7 +1737,7 @@ fn specs_with_skills(skills: &SkillRuntimeContext) -> Vec<ToolSpec<'static>> {
         },
         ToolSpec {
             name: "wait_task",
-            description: "Wait once for a task to finish or for a bounded timeout. This is event-driven inside the runtime; prefer it over repeated status polling when the result blocks progress. Cancelling the wait does not stop the task.",
+            description: "Wait once for a task to finish or for a bounded timeout. This is event-driven inside the runtime; prefer it over repeated status polling when the result blocks progress. Returns the canonical task snapshot, including exact task_worktree_selection when bound. Recover a lost selection with read_task. Cancelling the wait does not stop the task.",
             read_only: true,
             parameters: json!({
                 "type": "object",
@@ -2252,7 +2258,7 @@ fn specs_with_skills(skills: &SkillRuntimeContext) -> Vec<ToolSpec<'static>> {
         },
         ToolSpec {
             name: "browser_type_text",
-            description: "Enter text into a target from the latest browser_snapshot. Managed sessions use ref and revision; attached Chrome uses an exact selector.",
+            description: "Fill a control from the latest browser_snapshot. Managed sessions use ref and revision; native single-select controls accept an exact enabled option value or a unique label and never submit the form. clear/delay_ms apply to text editing. Attached Chrome uses an exact selector for text input.",
             read_only: false,
             parameters: json!({"type":"object","properties":{"target":{"type":"string","enum":["managed","attached"],"default":"managed"},"ref":{"type":"string","minLength":1},"revision":{"type":"integer","minimum":1},"selector":{"type":"string","minLength":1},"text":{"type":"string"},"clear":{"type":"boolean","default":true},"delay_ms":{"type":"integer","minimum":0,"maximum":1000,"default":20},"screenshot":{"type":"boolean","default":false}},"required":["text"],
                 "anyOf":[

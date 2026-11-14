@@ -128,7 +128,7 @@ class ConversationRepositoryImpl @Inject constructor(
         }
 
     override suspend fun getAllConversations(): List<Conversation> = applicationRuntime
-        .listConversations()
+        .listRootConversations()
         .mapNotNull { item -> applicationRuntime.loadConversation(item.id)?.let { it.toDomain(resolveModel(it.settings().modelSelectionID, it.settings().executionHostBinding)) } }
 
     private suspend fun resolveModel(identity: String?, binding: com.nola.domain.model.ExecutionHostBinding? = null): ModelInfo? {

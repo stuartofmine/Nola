@@ -100,7 +100,7 @@ impl NolaStore {
         let fields = settings.as_object_mut().ok_or_else(|| {
             StoreError::Invariant("conversation settings must be an object".into())
         })?;
-        for key in ["language", "selectedPromptTemplateID", "promptResponseStyle", "executionBackend", "persistenceEnabled", "dataSourceIds", "executionPolicy", "promptTemplateSelectionIsExplicit", "contextLimitOverride"] {
+        for key in ["language", "selectedPromptTemplateID", "expertReasoningEffort", "promptResponseStyle", "executionBackend", "persistenceEnabled", "dataSourceIds", "executionPolicy", "promptTemplateSelectionIsExplicit", "contextLimitOverride"] {
             if let Some(value) = patch.get(key) {
                 if value.is_null() { fields.remove(key); } else { fields.insert(key.into(), value.clone()); }
             }

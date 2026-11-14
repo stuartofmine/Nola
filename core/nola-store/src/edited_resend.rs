@@ -15,7 +15,7 @@ pub(crate) fn key(kind: &str, identity: impl Serialize) -> StoreResult<String> {
         Sha256::digest(serde_json::to_vec(&identity)?)
     ))
 }
-fn read<T: DeserializeOwned>(connection: &Connection, key: &str) -> StoreResult<Option<T>> {
+pub(crate) fn read<T: DeserializeOwned>(connection: &Connection, key: &str) -> StoreResult<Option<T>> {
     let raw: Option<String> = connection
         .query_row(
             "SELECT value_json FROM product_settings WHERE key=?1",
@@ -26,7 +26,7 @@ fn read<T: DeserializeOwned>(connection: &Connection, key: &str) -> StoreResult<
     raw.map(|raw| serde_json::from_str(&raw).map_err(StoreError::from))
         .transpose()
 }
-fn write_immutable(
+pub(crate) fn write_immutable(
     connection: &Connection,
     key: &str,
     value: &impl Serialize,

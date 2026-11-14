@@ -2952,7 +2952,8 @@ pub fn tool_effect_declaration_with_read_only(
         // These adapters verify the committed canonical record and return
         // version-bound checks. Core consumes those checks, never the tool's
         // prose, to discharge only the matching mutation obligation.
-        "git_commit" | "memory_save" | "nola_orchestrate" => HostCapabilityEffect::MutateAndValidate,
+        "git_commit" | "git_worktree_create" | "git_worktree_integrate"
+        | "memory_save" | "nola_orchestrate" => HostCapabilityEffect::MutateAndValidate,
         "code_diagnostics"
         | "verification_review"
         | "diff_review"
@@ -2972,6 +2973,8 @@ pub fn tool_effect_declaration_with_read_only(
         | "request_user_input"
         | "workspace_access"
         | "spawn_agent"
+        | "delegate_expert"
+        | "expert_exchange"
         | "send_agent_message"
         => HostCapabilityEffect::Execute,
         _ if read_only => HostCapabilityEffect::Investigate,
@@ -2989,7 +2992,7 @@ pub fn tool_transaction_boundary(
     use nola_core::agent::host::HostCapabilityTransactionBoundary;
 
     match name {
-        "memory_save" | "nola_orchestrate" | "workspace_access" | "git_worktree_create" | "git_worktree_integrate" => HostCapabilityTransactionBoundary::HostState,
+        "memory_save" | "nola_orchestrate" | "delegate_expert" | "expert_exchange" | "workspace_access" | "git_worktree_create" | "git_worktree_integrate" => HostCapabilityTransactionBoundary::HostState,
         _ => HostCapabilityTransactionBoundary::Workspace,
     }
 }

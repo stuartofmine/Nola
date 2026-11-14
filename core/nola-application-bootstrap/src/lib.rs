@@ -5,7 +5,11 @@
 
 /// Concrete runtime selected only by the Service composition boundary.
 pub type ApplicationRuntime = nola_application::ApplicationRuntime<nola_store::NolaStore>;
+mod read_pool;
 mod runtime_owner;
+pub use read_pool::{
+    PooledReadStore, ReadStorePool, DEFAULT_READ_POOL_MAX_CONCURRENT, DEFAULT_READ_POOL_MAX_IDLE,
+};
 pub use runtime_owner::{acquire_owned_runtime, RuntimeOwnerGuard};
 /// Names a fresh development database without exposing the persistence
 /// adapter itself to thin clients. Incrementing the Store epoch therefore

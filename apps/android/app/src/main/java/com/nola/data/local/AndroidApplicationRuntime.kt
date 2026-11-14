@@ -183,19 +183,19 @@ class AndroidApplicationRuntime(
     }
 
     private fun expertHostAuthority(operation: JsonObject): JsonElement? =
-        if (operation["kind"] == JsonPrimitive("admit")) operation.getValue("context").jsonObject.let { capture ->
+        if (operation["kind"] in setOf(JsonPrimitive("admit"), JsonPrimitive("admit_peer"))) operation.getValue("context").jsonObject.let { capture ->
             buildJsonObject { put("actor", capture.getValue("actor")); put("request_host_id", capture.getValue("request_host_id")) }
         } else operation["authority"]
 
     internal fun pendingExpertHostMutation(kind: String, input: JsonElement, authority: JsonObject): JsonObject? = synchronized(lock) {
-        require(kind in setOf("admit", "prepare_edited_resend"))
+        require(kind in setOf("admit", "admit_peer", "prepare_edited_resend"))
         pendingExpertHostOperations(authority).filter {
             it.operation["kind"] == JsonPrimitive(kind) && it.operation["input"] == input
         }.also { require(it.size <= 1) { "The original Host intent is not unique" } }.singleOrNull()?.operation
     }
 
     internal fun executeExpertHostMutation(operation: JsonObject): JsonElement = synchronized(lock) {
-        require(operation["kind"]?.jsonPrimitive?.content in setOf("admit", "prepare_edited_resend"))
+        require(operation["kind"]?.jsonPrimitive?.content in setOf("admit", "prepare_edited_resend", "admit_peer", "prepare_peer_task", "abort_peer_task_preparation", "peer_task_action"))
         check(handle != 0L) { "Application is closed" }
         var activeRequest: JsonObject? = null
         try {
@@ -204,7 +204,7 @@ class AndroidApplicationRuntime(
                 // have durably prepared this same business intent meanwhile.
                 val authority = checkNotNull(expertHostAuthority(operation)).jsonObject
                 val actualOperation = pendingExpertHostOperations(authority).filter {
-                    it.operation["kind"] == operation["kind"] && it.operation["input"] == operation["input"]
+                    it.operation["kind"] == operation["kind"] && expertHostIntentIdentity(it.operation) == expertHostIntentIdentity(operation)
                 }.also { require(it.size <= 1) { "The original Host intent is not unique" } }.singleOrNull()?.operation ?: operation
                 val request = expertHostJournal.prepare(buildJsonObject {
                     put("type", "native_expert_host_operation"); put("operation", actualOperation)
@@ -226,6 +226,7 @@ class AndroidApplicationRuntime(
                             require(Json.encodeToJsonElement(prepared.input) == actualOperation["input"] && prepared.entries.isNotEmpty())
                             prepared.entries.forEach { it.prepared.requireIdentity() }
                         }
+                        "admit_peer", "prepare_peer_task", "peer_task_action", "abort_peer_task_preparation" -> validateExpertPeerHostReceipt(actualOperation, result)
                         else -> error("Unknown private mutation")
                     }
                 }, definitiveMutation = true)
@@ -238,7 +239,8 @@ class AndroidApplicationRuntime(
 
     internal fun executeExpertHostQuery(operation: JsonObject): JsonElement = synchronized(lock) {
         require(operation["kind"]?.jsonPrimitive?.content in
-            setOf("load_manifest", "load_prepared_resend", "load_child_instructions", "readable_templates", "preview_capture"))
+            setOf("load_manifest", "load_prepared_resend", "load_child_instructions", "readable_templates", "preview_capture", "derive_peer_authority", "peer_directory", "preview_peer", "load_peer", "load_peer_for_effect", "load_peer_for_submission", "peer_task_action"))
+        if (operation["kind"] == JsonPrimitive("peer_task_action")) require(operation.getValue("request").jsonObject.getValue("payload").jsonObject.getValue("input").jsonObject["action"]?.jsonPrimitive?.content in setOf("directory", "read", "wait"))
         check(handle != 0L) { "Application is closed" }
         val requestId = UUID.randomUUID().toString()
         val wire = buildJsonObject { put("request_id", requestId); put("operation", operation) }
@@ -261,7 +263,7 @@ class AndroidApplicationRuntime(
         val code = error.getValue("code").jsonPrimitive.content
         val message = error.getValue("message").jsonPrimitive.content
         if (definitiveMutation) throw ExpertHostRejected(code, message)
-        throw RejectedMutation("$code: $message")
+        throw RejectedMutation("$code: $message", code)
     }
 
     private fun transportEnvelope(command: JsonObject): JsonObject = buildJsonObject {
@@ -274,7 +276,7 @@ class AndroidApplicationRuntime(
         })
     }
 
-    class RejectedMutation(message: String) : IllegalStateException(message)
+    class RejectedMutation(message: String, val code: String? = null) : IllegalStateException(message)
 
     class PendingMutation(val requestId: String) : IllegalStateException("Command outcome pending: $requestId")
 
@@ -422,7 +424,10 @@ class AndroidApplicationRuntime(
 
     private fun terminalResult(receipt: JsonObject): JsonElement = when (receipt.getValue("status").jsonPrimitive.content) {
         "committed" -> receipt.getValue("result")
-        "rejected" -> throw RejectedMutation(receipt.getValue("error").jsonObject["message"]?.jsonPrimitive?.content ?: "Command rejected")
+        "rejected" -> {
+            val failure = receipt.getValue("error").jsonObject
+            throw RejectedMutation(failure["message"]?.jsonPrimitive?.content ?: "Command rejected", failure["code"]?.jsonPrimitive?.content)
+        }
         "conflict" -> {
             val conflict = receipt.getValue("conflict").jsonObject
             throw RevisionConflict(conflict.getValue("scope_id").jsonPrimitive.content,
@@ -1286,11 +1291,15 @@ class AndroidApplicationRuntime(
         }),
     )
 
-    fun listConversations(): List<CanonicalConversationSummary> {
+    fun listConversations(): List<CanonicalConversationSummary> = listConversationSummaries("list_conversations")
+
+    fun listRootConversations(): List<CanonicalConversationSummary> = listConversationSummaries("list_root_conversations")
+
+    private fun listConversationSummaries(commandType: String): List<CanonicalConversationSummary> {
         val result = mutableListOf<CanonicalConversationSummary>()
         while (true) {
             val page = execute(buildJsonObject {
-                put("type", "list_conversations")
+                put("type", commandType)
                 put("query", buildJsonObject {
                     put("project_root", JsonNull)
                     put("non_empty", false)

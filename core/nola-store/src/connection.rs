@@ -224,6 +224,7 @@ pub struct NolaStore {
     pub(super) connection: Connection,
     pub(super) read_checkpoint_cache: std::cell::RefCell<Option<(i64, u64, nola_store_port::run_effect::StoredCheckpoint)>>,
     pub(super) archive_worker: Option<std::sync::Arc<crate::work_archive_worker::Worker>>,
+    read_only: bool,
     /// A failed settlement permanently fences this connection until reopen.
     write_poison: Option<String>,
     /// Private evidence of transitions actually applied in the current outer UoW.
@@ -313,13 +314,48 @@ impl NolaStore {
         Self::open_archive_mode(path.as_ref(), true)
     }
 
+    /// Opens a read-only WAL snapshot handle without schema DDL, pragma writes,
+    /// housekeeping mutations, or background archive workers.
+    pub fn open_read_only(path: impl AsRef<Path>) -> StoreResult<Self> {
+        let path = path.as_ref();
+        if path == Path::new(":memory:") {
+            return Err(StoreError::Invariant(
+                "read-only Store snapshot requires a file-backed WAL database".to_string(),
+            ));
+        }
+        let connection = Connection::open_with_flags(
+            path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+                | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        connection.busy_timeout(Duration::from_secs(5))?;
+        crate::runtime_task_claim_store::register_workspace_admission(&connection)?;
+        connection.pragma_update(None, "query_only", true)?;
+        crate::schema_store::verify_read_only_schema(&connection)?;
+        Ok(Self {
+            connection,
+            read_checkpoint_cache: Default::default(),
+            archive_worker: None,
+            read_only: true,
+            write_poison: None,
+            applied_ui_surface_stamps: Default::default(),
+            applied_transition_stamps: Default::default(),
+            applied_admission_stamps: Default::default(),
+            applied_idle_checkpoint_stamps: Default::default(),
+            pending_measurements: Vec::new(),
+        })
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
+    }
 
     pub(super) fn open_archive_mode(path: &Path, background: bool) -> StoreResult<Self> {
         let connection = Connection::open(path)?;
         connection.busy_timeout(Duration::from_secs(5))?;
         crate::runtime_task_claim_store::register_workspace_admission(&connection)?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
-        let mut store = Self { connection, read_checkpoint_cache: Default::default(), archive_worker:None, write_poison: None, applied_ui_surface_stamps: Default::default(), applied_transition_stamps: Default::default(), applied_admission_stamps: Default::default(), applied_idle_checkpoint_stamps: Default::default(), pending_measurements: Vec::new() };
+        let mut store = Self { connection, read_checkpoint_cache: Default::default(), archive_worker:None, read_only: false, write_poison: None, applied_ui_surface_stamps: Default::default(), applied_transition_stamps: Default::default(), applied_admission_stamps: Default::default(), applied_idle_checkpoint_stamps: Default::default(), pending_measurements: Vec::new() };
         // Reject foreign or incompatible databases before changing persistent
         // journal settings. A failed open must preserve their original bytes.
         store.initialize_schema()?;
@@ -474,6 +510,11 @@ impl NolaStore {
     }
 
     fn ensure_writable(&self) -> StoreResult<()> {
+        if self.read_only {
+            return Err(StoreError::Invariant(
+                "read-only Store snapshot cannot start a write transaction".to_string(),
+            ));
+        }
         match &self.write_poison {
             Some(reason) => Err(StoreError::Invariant(format!(
                 "Store writes are poisoned; reopen required: {reason}"
@@ -611,5 +652,165 @@ impl NolaStore {
                 Err(error)
             }
         }
+    }
+
+    /// Mutable-receiver variant of [`Self::with_consistent_read`] so wire-level
+    /// read-only command dispatchers (`&mut R`) share one pinned WAL snapshot.
+    pub fn with_consistent_read_mut<T>(
+        &mut self,
+        reader: impl FnOnce(&mut Self) -> Result<T, String>,
+    ) -> Result<T, String> {
+        self.connection
+            .execute_batch("SAVEPOINT nola_consistent_read_mut")
+            .map_err(|error| format!("begin consistent Store read failed: {error}"))?;
+        let result = self
+            .connection
+            .query_row("SELECT COUNT(*) FROM sqlite_master", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .map_err(|error| format!("pin consistent Store read failed: {error}"))
+            .and_then(|_| reader(self));
+        match result {
+            Ok(value) => {
+                self.connection
+                    .execute_batch("RELEASE SAVEPOINT nola_consistent_read_mut")
+                    .map_err(|error| format!("finish consistent Store read failed: {error}"))?;
+                Ok(value)
+            }
+            Err(error) => {
+                let _ = self.connection.execute_batch(
+                    "ROLLBACK TO SAVEPOINT nola_consistent_read_mut; \
+                     RELEASE SAVEPOINT nola_consistent_read_mut",
+                );
+                Err(error)
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod read_only_tests {
+    use super::*;
+    use nola_store_port::memory::MemoryReadRepository;
+
+    #[test]
+    fn open_read_only_rejects_in_memory_and_uninitialized_files_without_mutation() {
+        let err = NolaStore::open_read_only(":memory:").unwrap_err();
+        assert!(matches!(err, StoreError::Invariant(_)));
+
+        let directory = tempfile::tempdir().unwrap();
+        let empty_path = directory.path().join("empty.sqlite");
+        std::fs::write(&empty_path, b"").unwrap();
+        let err = NolaStore::open_read_only(&empty_path).unwrap_err();
+        assert!(matches!(err, StoreError::Invariant(_)));
+        assert_eq!(std::fs::read(&empty_path).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn read_only_snapshot_reads_concurrently_under_writer_lock_and_fences_writes() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("wal_replica.sqlite");
+        let mut writer = NolaStore::open(&path).unwrap();
+        nola_store_port::product_setting::ProductSettingRepository::put_product_setting(
+            &mut writer.product_setting_repository(),
+            "theme",
+            "\"dark\"",
+            100,
+        )
+        .unwrap();
+        writer
+            .upsert_memory_record(&crate::StoredMemoryRecord {
+                id: "mem_1".into(),
+                owner_json: r#"{"kind":"profile","profile_id":"local"}"#.into(),
+                namespace_json: r#"{"kind":"personal"}"#.into(),
+                scope: "global".into(),
+                kind: "preference".into(),
+                content: "Configure PostgreSQL connection pooler timeout to 15 seconds.".into(),
+                summary: None,
+                tags_json: r#"["postgres_pool"]"#.into(),
+                confidence: 0.9,
+                importance: 0.8,
+                sensitivity: Some("normal".into()),
+                retention_json: r#"{"mode":"until_superseded"}"#.into(),
+                expires_at: None,
+                supersedes_json: "[]".into(),
+                provenance_json: r#"{"kind":"explicit_user","source":"test","session_id":null,"turn_id":null,"item_ids":[],"observed_at":null}"#.into(),
+                created_at_ms: 100,
+                updated_at_ms: 100,
+                last_used_at_ms: None,
+                deleted_at_ms: None,
+            })
+            .unwrap();
+        writer
+            .connection
+            .execute_batch(
+                "INSERT INTO conversations(id,title,revision,created_at_ms,updated_at_ms)
+                 VALUES('conv-1','Title',1,100,100);
+                 INSERT INTO messages VALUES('msg-1','conv-1',NULL,'user','completed',1,100,100);
+                 INSERT INTO message_parts(id,message_id,kind,ordinal,state,content_text,created_at_ms,updated_at_ms)
+                 VALUES('part-1','msg-1','text',1,'completed','read_only_transcript_needle_42',100,100);",
+            )
+            .unwrap();
+        crate::canonical_text_disclosure::flush(&writer.connection).unwrap();
+
+        let mut reader = NolaStore::open_read_only(&path).unwrap();
+        assert!(reader.is_read_only());
+
+        let write_err = reader.begin_write_unit_of_work().unwrap_err();
+        assert_eq!(
+            write_err.to_string(),
+            "Store invariant failed: read-only Store snapshot cannot start a write transaction"
+        );
+
+        // Hold an uncommitted BEGIN IMMEDIATE write transaction on the writer.
+        writer.begin_write_unit_of_work().unwrap();
+        writer
+            .connection
+            .execute(
+                "UPDATE product_settings SET value_json='\"light\"', revision=2 WHERE key='theme'",
+                [],
+            )
+            .unwrap();
+
+        // Reader observes committed WAL snapshot without blocking on writer lock,
+        // including nested consistent reads, transcript search without FTS DDL,
+        // and BM25 memory recall without FTS backfill writes.
+        let observed = reader
+            .with_consistent_read_mut(|store| {
+                store.with_consistent_read_mut(|inner| {
+                    let setting = nola_store_port::product_setting::ProductSettingRepository::product_setting(
+                        &inner.product_setting_repository(),
+                        "theme",
+                    )
+                    .map_err(|e| e.to_string())?
+                    .unwrap();
+                    assert_eq!(setting.value_json, "\"dark\"");
+
+                    let hits = inner
+                        .search_transcript_text("conv-1", "read_only_transcript_needle_42", 5)
+                        .map_err(|e| e.to_string())?;
+                    assert_eq!(hits.len(), 1);
+                    assert_eq!(hits[0].part_id, "part-1");
+
+                    let recalled = MemoryReadRepository::recall_memory_records(
+                        inner,
+                        r#"{"kind":"profile","profile_id":"local"}"#,
+                        r#"{"kind":"personal"}"#,
+                        "global",
+                        Some("PostgreSQL timeout postgres_pool"),
+                        None,
+                        "2026-10-01T00:00:00Z",
+                        10,
+                    )
+                    .map_err(|e| e.to_string())?;
+                    assert_eq!(recalled.len(), 1);
+                    assert_eq!(recalled[0].id, "mem_1");
+                    Ok(setting.revision)
+                })
+            })
+            .unwrap();
+        assert_eq!(observed, 1);
+
+        writer.rollback_write_unit_of_work().unwrap();
     }
 }

@@ -75,6 +75,17 @@ nonisolated struct AppleExpertCaptureContext<JSON: JournalJSONValue>: Encodable,
 }
 
 nonisolated enum AppleExpertHostOperation<JSON: JournalJSONValue>: Encodable, Sendable {
+    case derivePeerAuthority(request: JSON, authority: AppleExpertTemplateAuthority?)
+    case preparePeerTask(request: JSON, exchangeID: String, targetConfiguration: JSON, targetInvocation: JSON?, projectRoot: String, authority: AppleExpertTemplateAuthority)
+    case abortPeerTaskPreparation(request: JSON, exchangeID: String, authority: AppleExpertTemplateAuthority)
+    case loadPeerForEffect(request: JSON, authority: AppleExpertTemplateAuthority)
+    case peerTaskAction(request: JSON, authority: AppleExpertTemplateAuthority)
+    case peerDirectory(sourceContextID: String, sourceRunID: String, authority: AppleExpertTemplateAuthority)
+    case previewPeer(input: AppleExpertPeerInput, authority: AppleExpertTemplateAuthority)
+    case admitPeer(input: AppleExpertPeerInput, context: AppleExpertCaptureContext<JSON>)
+    case loadPeerForSubmission(roomID: String, exchangeID: String, authority: AppleExpertTemplateAuthority)
+    case loadPeer(roomID: String, exchangeID: String, authority: AppleExpertTemplateAuthority)
+    case clarifyPeer(input: AppleExpertPeerClarificationInput, authority: AppleExpertTemplateAuthority)
     case preview(input: AppleAdmitExpertConversationMessage, authority: AppleExpertTemplateAuthority)
     case admit(input: AppleAdmitExpertConversationMessage, context: AppleExpertCaptureContext<JSON>)
     case prepareResend(input: ApplePrepareEditedResend, authority: AppleExpertTemplateAuthority)
@@ -84,14 +95,62 @@ nonisolated enum AppleExpertHostOperation<JSON: JournalJSONValue>: Encodable, Se
     case readableTemplates(authority: AppleExpertTemplateAuthority)
 
     var isReadOnly: Bool {
-        switch self { case .admit, .prepareResend: false; default: true }
+        switch self {
+        case .admit, .prepareResend, .admitPeer, .clarifyPeer, .preparePeerTask, .abortPeerTaskPreparation: return false
+        case .peerTaskAction(let request, _):
+            guard let data = try? JSONEncoder().encode(request),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let payload = object["payload"] as? [String: Any], let input = payload["input"] as? [String: Any],
+                  let action = input["action"] as? String else { return false }
+            return ["directory", "read", "wait"].contains(action)
+        default: return true
+        }
     }
     private enum CodingKeys: String, CodingKey {
         case kind, input, context, authority, conversation_id, message_id, expected_run_id
+        case room_id, exchange_id, source_context_id, source_run_id, call_id, text
+        case request, target_configuration, target_invocation, project_root
     }
     func encode(to encoder: Encoder) throws {
         var values = encoder.container(keyedBy: CodingKeys.self)
         switch self {
+        case .derivePeerAuthority(let request, let authority):
+            try values.encode("derive_peer_authority", forKey: .kind); try values.encode(request, forKey: .request)
+            try values.encodeIfPresent(authority, forKey: .authority)
+        case .preparePeerTask(let request, let exchangeID, let targetConfiguration, let targetInvocation, let projectRoot, let authority):
+            try values.encode("prepare_peer_task", forKey: .kind); try values.encode(request, forKey: .request)
+            try values.encode(exchangeID, forKey: .exchange_id); try values.encode(targetConfiguration, forKey: .target_configuration)
+            try values.encodeIfPresent(targetInvocation, forKey: .target_invocation); try values.encode(projectRoot, forKey: .project_root)
+            try values.encode(authority, forKey: .authority)
+        case .abortPeerTaskPreparation(let request, let exchangeID, let authority):
+            try values.encode("abort_peer_task_preparation", forKey: .kind); try values.encode(request, forKey: .request)
+            try values.encode(exchangeID, forKey: .exchange_id); try values.encode(authority, forKey: .authority)
+        case .loadPeerForEffect(let request, let authority):
+            try values.encode("load_peer_for_effect", forKey: .kind); try values.encode(request, forKey: .request)
+            try values.encode(authority, forKey: .authority)
+        case .peerTaskAction(let request, let authority):
+            try values.encode("peer_task_action", forKey: .kind); try values.encode(request, forKey: .request)
+            try values.encode(authority, forKey: .authority)
+        case .peerDirectory(let sourceContextID, let sourceRunID, let authority):
+            try values.encode("peer_directory", forKey: .kind); try values.encode(sourceContextID, forKey: .source_context_id)
+            try values.encode(sourceRunID, forKey: .source_run_id); try values.encode(authority, forKey: .authority)
+        case .previewPeer(let input, let authority):
+            try values.encode("preview_peer", forKey: .kind); try values.encode(input, forKey: .input)
+            try values.encode(authority, forKey: .authority)
+        case .admitPeer(let input, let context):
+            try values.encode("admit_peer", forKey: .kind); try values.encode(input, forKey: .input)
+            try values.encode(context, forKey: .context)
+        case .loadPeerForSubmission(let roomID, let exchangeID, let authority):
+            try values.encode("load_peer_for_submission", forKey: .kind); try values.encode(roomID, forKey: .room_id)
+            try values.encode(exchangeID, forKey: .exchange_id); try values.encode(authority, forKey: .authority)
+        case .loadPeer(let roomID, let exchangeID, let authority):
+            try values.encode("load_peer", forKey: .kind); try values.encode(roomID, forKey: .room_id)
+            try values.encode(exchangeID, forKey: .exchange_id); try values.encode(authority, forKey: .authority)
+        case .clarifyPeer(let input, let authority):
+            try values.encode("clarify_peer", forKey: .kind); try values.encode(input.sourceContextID, forKey: .source_context_id)
+            try values.encode(input.sourceRunID, forKey: .source_run_id); try values.encode(input.callID, forKey: .call_id)
+            try values.encode(input.exchangeID, forKey: .exchange_id); try values.encode(input.text, forKey: .text)
+            try values.encode(authority, forKey: .authority)
         case .preview(let input, let authority):
             try values.encode("preview_capture", forKey: .kind)
             try values.encode(input, forKey: .input); try values.encode(authority, forKey: .authority)
@@ -133,8 +192,16 @@ nonisolated enum AppleExpertHostIntentScope {
         return ["actor": actor, "request_host_id": context["request_host_id"] ?? NSNull()]
     }
     static func stableIdentity(_ operation: [String: Any]) throws -> Data {
-        try JSONSerialization.data(withJSONObject: ["kind": operation["kind"] ?? NSNull(),
-            "input": operation["input"] ?? NSNull(), "authority": try authority(operation)], options: [.sortedKeys])
+        let input: Any
+        if operation["kind"] as? String == "prepare_peer_task" {
+            // Capture/config manifests are frozen execution context. Retain
+            // the first journaled operation for the same source business call.
+            input = ["request": operation["request"] ?? NSNull(), "exchange_id": operation["exchange_id"] ?? NSNull(),
+                     "project_root": operation["project_root"] ?? NSNull()]
+        } else if let nested = operation["input"] { input = nested }
+        else { input = operation.filter { !["kind", "authority", "context"].contains($0.key) } }
+        return try JSONSerialization.data(withJSONObject: ["kind": operation["kind"] ?? NSNull(),
+            "input": input, "authority": try authority(operation)], options: [.sortedKeys])
     }
     static func owners(_ operation: [String: Any]) -> Set<String>? {
         guard let input = operation["input"] as? [String: Any] else { return nil }

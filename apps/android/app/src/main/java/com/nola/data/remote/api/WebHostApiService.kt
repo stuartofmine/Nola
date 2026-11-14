@@ -8,6 +8,9 @@ import java.util.TimeZone
 import kotlinx.serialization.json.JsonObject
 
 interface WebHostApiService {
+    suspend fun expertMessageCommand(hostBaseUrl: String, token: String, operation: String, request: JsonObject,
+        pinnedCertificateSha256: String = ""): JsonObject { error("Host-owned expert messages are unavailable") }
+
     suspend fun auxiliaryCommand(hostBaseUrl: String, token: String, action: String, request: JsonObject,
         pinnedCertificateSha256: String = ""): JsonObject {
         error("Auxiliary transport is unavailable")

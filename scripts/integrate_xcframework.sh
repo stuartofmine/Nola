@@ -26,7 +26,7 @@ cp -R "$XCFRAMEWORK" "$DEST_FRAMEWORK_DIR/"
 echo "Copied nola_core.xcframework to $DEST_FRAMEWORK_DIR"
 
 echo "Add the xcframework to your Xcode project:"
-echo "  - Open Nola.xcodeproj and drag $DEST_FRAMEWORK_DIR/nola_core.xcframework into Frameworks (or to the project root)."
+echo "  - Open apple/Nola.xcodeproj and drag $DEST_FRAMEWORK_DIR/nola_core.xcframework into Frameworks (or to the project root)."
 echo "  - The project links nola_core.xcframework as a static framework; keep Embed set to 'Do Not Embed'."
 echo "  - The bundled module.modulemap exposes the Swift module as NolaCore."
 

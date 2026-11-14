@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | 当前发布身份、渠道、HTTPS feed、公钥 | 随程序构建的 `release/update-source.json` | 发布构建固定；公钥不是凭据，私钥不进入仓库或客户端 |
 | 发布版本、有效期、平台包、说明、Store 格式 | 签名的 feed | 验证签名后解析，不执行说明中的 Markdown/HTML/命令 |
-| 已安装 Store 格式 | 当前 `nola_store::STORE_SCHEMA_VERSION` / `STORE_SCHEMA_EPOCH` 常量 | 不以远程声明覆盖，不探测或改写用户数据 |
+| 已安装 Store 格式 | 当前 `nola_domain::STORE_SCHEMA_VERSION` / `STORE_SCHEMA_EPOCH` 常量（`nola_store` 重导出） | 不以远程声明覆盖，不探测或改写用户数据 |
 | 检查中、错误、选中发布、下载反馈 | 对应客户端的页面/操作代次 | 导航取消不触发安装，旧异步反馈不覆盖新操作 |
 | 下载暂存与完整文件 | Host 私有缓存或 CLI 显式指定的目录 | 校验完成前不出现正式文件；不覆盖已有文件 |
 | 安装、系统权限、程序替换 | 操作系统/商店与用户 | 用户明确发起，不自动停止任务或重启 Host |

@@ -97,3 +97,12 @@ test('notification destinations require an authenticated matching host and encod
 test('notification scope and permission states are localized', () => {
     for (const language of supportedLocales) for (const key of ['scope', 'enable', 'default', 'granted', 'denied', 'unsupported', 'deniedHint', 'failed', 'test', 'testTitle', 'testBody', 'completedTitle', 'completedBody']) assert.notEqual(t(language, `settings.notifications.${key}`), `settings.notifications.${key}`);
 });
+
+test('a verified blocked terminal never sends a completion-success notification',async()=>{
+    const owner={hostId:'host',clientId:'client',conversationId:'conversation',generation:1};
+    const turn=createChatTurn(owner,'submission'),f=terminalFixture(turn);
+    Object.assign(f.seal.result,{value:{kind:'blocked',reason:{code:'context.input_budget_exceeded',detail:null},blocking_fact_refs:['budget'],resolution_condition:'Increase context'}});
+    const evidence=await readTerminal(turn,f.reader,f.transport,()=>{},()=>true);
+    const {controller,state}=fixture();await controller.setEnabled(true);
+    assert.equal(controller.completed(evidence,owner,'Complete','Finished'),false);assert.deepEqual(state.messages,[]);
+});

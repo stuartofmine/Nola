@@ -15,6 +15,7 @@ pub(crate) use process_control::{ShellChild as OwnedShellChild, stop_borrowed_pr
 
 include!("task_runtime_parts/execution.rs");
 include!("task_runtime_parts/supervision.rs");
+include!("task_runtime_parts/expert_tasks.rs");
 include!("task_runtime_parts/remote_permission.rs");
 
 #[cfg(test)]

@@ -389,7 +389,7 @@ nonisolated enum MacCoreToolPolicy {
         "notebook_read", "project_overview", "propose_agent_plan", "read_file", "read_many_files",
         "read_symbol", "read_task", "related_files", "rename_symbol", "replace_in_files", "replace_symbol_body",
         "repo_map", "request_user_input", "send_agent_message", "set_thinking_mode", "Skill", "skill_skip", "skill_update",
-        "SOP", "sop_run_update", "spawn_agent", "stop_task", "symbol_search", "system_time",
+        "SOP", "sop_run_update", "spawn_agent", "delegate_expert", "stop_task", "symbol_search", "system_time",
         "test_context", "tool_output_find", "tool_output_list", "tool_output_read", "tool_output_search",
         "tool_search", "update_agent_todos", "validation_plan", "verification_review", "wait_task", "workspace_checkpoint",
         "workspace_access", "workspace_status", "workspace_symbols", "write_file",

@@ -12,8 +12,9 @@ internal fun mergeExpertEditorDefaults(
     changeTemplate: Boolean,
     selectedTemplateId: String?,
     initializeModelParameters: Boolean = false,
+    reasoningEffort: String? = null,
 ): JsonObject {
-    if (!changeModel && !changeTemplate) return original
+    if (!changeModel && !changeTemplate && reasoningEffort == null) return original
     val fields = original.toMutableMap()
     if (changeModel) {
         if (selectedModel == null) fields.remove("modelSelectionID") else {
@@ -31,6 +32,11 @@ internal fun mergeExpertEditorDefaults(
     if (changeTemplate) {
         if (selectedTemplateId == null) fields.remove("selectedPromptTemplateID")
         else { require(selectedTemplateId.isNotBlank()); fields["selectedPromptTemplateID"] = JsonPrimitive(selectedTemplateId) }
+    }
+    if (reasoningEffort != null) {
+        require(reasoningEffort in listOf("automatic", "none", "minimal", "low", "medium", "high", "xhigh", "max"))
+        if (reasoningEffort == "automatic") fields.remove("expertReasoningEffort")
+        else fields["expertReasoningEffort"] = JsonPrimitive(reasoningEffort)
     }
     return JsonObject(fields)
 }

@@ -7,6 +7,143 @@ import Combine
 
 @MainActor
 final class MacPublicPartSemanticParityTests: XCTestCase {
+    func testReadOnlyCardCanReconcileOriginalSubmissionWithoutDuplicateDispatch() async throws {
+        let accessibility = try MacHostedAccessibilitySession()
+        defer { accessibility.restore() }
+        let original = MacA2UIRenderFixture(nodeCount: 4).snapshot
+        let nodes = original.nodes.mapValues { node in
+            AppleUINode(instance_id: node.instance_id, component_id: node.component_id,
+                component: node.component, props: node.props, slots: node.slots, bindings: [:], actions: [:],
+                validation_errors: node.validation_errors)
+        }
+        let closed = AppleUISnapshot(identity: original.identity, revision: 2, catalog_id: original.catalog_id,
+            catalog_digest: original.catalog_digest, phase: .readOnly, root_instance_id: original.root_instance_id,
+            nodes: nodes, summary: original.summary)
+        let pending = AppleUISubmission<MacCanonicalJSONValue>(interaction: .init(identity: original.identity,
+            expected_surface_revision: 1, edits: [], action: nil), submission_id: "original-request", submitted_at_ms: 123)
+        var submissions: [String] = []
+        let host = NSHostingView(rootView: AppleUIReferencedSurfaceView(reference: .init(identity: original.identity, revision: 1),
+            summary: "Form", readChanges: { _, _ in .snapshot(closed) },
+            preview: { _ in throw NSError(domain: "Fixture", code: 1) }, readRevision: { _ in nil },
+            pendingSubmission: { _ in pending }, submit: { input in
+                submissions.append(input.submission_id)
+                try? await Task.sleep(for: .milliseconds(120))
+                return .unknown("Waiting for the original receipt")
+            }))
+        host.frame = NSRect(x: 0, y: 0, width: 500, height: 400)
+        let window = NSWindow(contentRect: host.bounds, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil); window.contentView = nil; window.close() }
+        try await Task.sleep(for: .milliseconds(100))
+        host.layoutSubtreeIfNeeded()
+        func buttons(_ object: AnyObject) -> [AnyObject] {
+            let own = (object.accessibilityRole?() ?? nil)?.rawValue == "AXButton" ? [object] : []
+            return own + ((object.accessibilityChildren?() ?? nil) ?? []).flatMap { buttons($0 as AnyObject) }
+        }
+        let actions = buttons(host)
+        XCTAssertEqual(actions.count, 1, "Closed content still needs its pending receipt recovery action")
+        let action = try XCTUnwrap(actions.first)
+        _ = action.accessibilityPerformPress?()
+        _ = action.accessibilityPerformPress?()
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(submissions, ["original-request"])
+    }
+
+    func testReadOnlyTransitionShowsCommittedValuesAndRetainsUnsentDraftForReopening() async throws {
+        let fixture = MacA2UIRenderFixture(nodeCount: 4)
+        let original = fixture.snapshot
+        let host = NSHostingView(rootView: MacA2UIRenderProbe(fixture: fixture))
+        host.frame = NSRect(x: 0, y: 0, width: 500, height: 300)
+        let window = NSWindow(contentRect: host.bounds, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil); window.contentView = nil; window.close() }
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(60))
+        func input(_ view: NSView) -> NSTextField? {
+            if let field = view as? NSTextField, field.placeholderString == "IME probe" { return field }
+            return view.subviews.lazy.compactMap { input($0) }.first
+        }
+        let field = try XCTUnwrap(input(host))
+        field.selectText(nil)
+        let editor = try XCTUnwrap(field.currentEditor() as? NSTextView)
+        editor.insertText("本地未提交", replacementRange: NSRange(location: 0, length: editor.string.utf16.count))
+        window.makeFirstResponder(nil)
+        try await Task.sleep(for: .milliseconds(80))
+        func snapshot(_ phase: AppleUISurfacePhase, revision: UInt64) -> AppleUISnapshot<MacCanonicalJSONValue> {
+            .init(identity: original.identity, revision: revision, catalog_id: original.catalog_id,
+                catalog_digest: original.catalog_digest, phase: phase, root_instance_id: original.root_instance_id,
+                nodes: original.nodes, summary: original.summary)
+        }
+        fixture.snapshot = snapshot(.readOnly, revision: 2)
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertEqual(try XCTUnwrap(input(host)).stringValue, "", "Read-only content must show committed values")
+        fixture.snapshot = snapshot(.ready, revision: 3)
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertEqual(try XCTUnwrap(input(host)).stringValue, "本地未提交", "Changing phase must not discard an unsent draft")
+    }
+
+    func testPendingAndRemovedFormsHideRetainedControls() async throws {
+        let accessibility = try MacHostedAccessibilitySession()
+        defer { accessibility.restore() }
+        let fixture = MacA2UIRenderFixture(nodeCount: 4).snapshot
+        for phase in [AppleUISurfacePhase.pending, .deleted] {
+            let snapshot = AppleUISnapshot(identity: fixture.identity, revision: fixture.revision,
+                catalog_id: fixture.catalog_id, catalog_digest: fixture.catalog_digest, phase: phase,
+                root_instance_id: fixture.root_instance_id, nodes: fixture.nodes, summary: fixture.summary)
+            let host = NSHostingView(rootView: AppleUISurfaceView(snapshot: snapshot,
+                submit: { _ in XCTFail("Inactive form must not submit"); return .rejected("Fixture") }, accepted: { _ in }))
+            host.frame = NSRect(x: 0, y: 0, width: 360, height: 300)
+            let window = NSWindow(contentRect: host.bounds, styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = host
+            window.makeKeyAndOrderFront(nil)
+            defer { window.orderOut(nil); window.contentView = nil; window.close() }
+            host.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(60))
+            func roles(_ object: AnyObject) -> [String] {
+                let role = (object.accessibilityRole?() ?? nil)?.rawValue ?? ""
+                return [role] + ((object.accessibilityChildren?() ?? nil) ?? []).flatMap { roles($0 as AnyObject) }
+            }
+            let rendered = roles(host)
+            XCTAssertFalse(rendered.contains("AXTextField"), "\(phase) must not show a retained input")
+            XCTAssertTrue(rendered.contains("AXStaticText"), "\(phase) needs an explicit visible status")
+        }
+    }
+
+    func testReadySurfaceDoesNotAppendDuplicateHistoryDisclosure() async throws {
+        let accessibility = try MacHostedAccessibilitySession()
+        defer { accessibility.restore() }
+        let fixture = MacA2UIRenderFixture(nodeCount: 4)
+        let snapshot = fixture.snapshot
+        var reads = 0
+        let reference = AppleUISurfaceReference(identity: snapshot.identity, revision: snapshot.revision)
+        let host = NSHostingView(rootView: AppleUIReferencedSurfaceView<MacCanonicalJSONValue>(
+            reference: reference, summary: "fixture", readChanges: { _, _ in reads += 1; return .snapshot(snapshot) },
+            preview: { _ in throw NSError(domain: "Fixture", code: 1) },
+            readRevision: { _ in XCTFail("Live content must not request a duplicate historical copy"); return nil },
+            pendingSubmission: { _ in nil }, submit: { _ in .rejected("Fixture only") }))
+        host.frame = NSRect(x: 0, y: 0, width: 500, height: 400)
+        let window = NSWindow(contentRect: host.bounds, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil); window.contentView = nil; window.close() }
+        let deadline = ContinuousClock.now + .seconds(2)
+        while reads == 0 && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(60))
+        XCTAssertGreaterThan(reads, 0)
+        func hasDisclosure(_ object: AnyObject) -> Bool {
+            if (object.accessibilityRole?() ?? nil)?.rawValue == "AXDisclosureTriangle" { return true }
+            return ((object.accessibilityChildren?() ?? nil) ?? []).contains { hasDisclosure($0 as AnyObject) }
+        }
+        XCTAssertFalse(hasDisclosure(host), "A ready card must appear once without a version disclosure")
+    }
+
     func testEmptyDateAcceptanceMatchesVisibleConstrainedSelection() {
         let today = Date(timeIntervalSince1970: 1_000)
         let future = Date(timeIntervalSince1970: 2_000)

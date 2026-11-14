@@ -108,7 +108,7 @@ terminal Turns, and the fixture's rejected late-response probe.
 The iOS production decoder/reducer gate also reads the committed fixture directly:
 
 ```bash
-xcodebuild test -project Nola.xcodeproj -scheme Nola \
+xcodebuild test -project apple/Nola.xcodeproj -scheme Nola \
   -destination 'platform=iOS Simulator,name=<available simulator name>' \
   -only-testing:NolaTests/AgentCoreCanonicalPartLifecycleTests
 ```
@@ -151,7 +151,7 @@ The iOS and Android tests use the production Core bridge/coordinator and persist
 journal. They are contract/integration evidence, not substitutes for device UI E2E:
 
 ```bash
-xcodebuild test -project Nola.xcodeproj -scheme Nola \
+xcodebuild test -project apple/Nola.xcodeproj -scheme Nola \
   -destination 'platform=iOS Simulator,name=<available simulator name>' \
   -only-testing:NolaTests/AgentCoreDeviceExactlyOnceTests
 

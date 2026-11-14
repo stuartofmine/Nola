@@ -124,7 +124,7 @@ struct ChatBubble: View {
     @State private var toolReaderActivation = UUID()
     @State private var toolReaderPartIDs: Set<String> = []
 
-    private var expertHorizontalPadding: CGFloat { compactExpertReply ? 12 : 13 }
+    private var expertHorizontalPadding: CGFloat { assistantBubbleFill == nil ? 0 : (compactExpertReply ? 12 : 13) }
     private func expertTextWidth(_ text: String) -> CGFloat? {
         guard assistantBubbleFill != nil, let available = expertReplyAvailableWidth else { return nil }
         let maximum = max(24, available - expertHorizontalPadding * 2)
@@ -142,19 +142,20 @@ struct ChatBubble: View {
             if message.role == .user {
                 userMessage
             } else {
-                HStack(alignment: .top, spacing: 7) {
+                VStack(alignment: .leading, spacing: 10) {
                     if assistantBubbleFill == nil {
-                        VStack(spacing: 4) {
-                            Text(verbatim: "n").font(.system(size: 14, design: .serif)).italic()
-                                .frame(width: 30, height: 30).background(DesignTokens.surfaceColor, in: Circle())
-                            Text(verbatim: "Nola").font(.system(size: 10))
-                        }.foregroundStyle(.secondary).frame(width: 32).accessibilityHidden(true)
-                    }
-                    VStack(alignment: .leading, spacing: 6) {
-                        assistantMessage
-                        if message.canonicalParts.isEmpty && !displayedSourceReferences.isEmpty {
-                            assistantSourceReferences.transition(.opacity)
+                        HStack(spacing: 6) {
+                            Text(verbatim: "n").font(.system(size: 12, design: .serif)).italic()
+                                .frame(width: 18, height: 18)
+                                .overlay(Circle().stroke(DesignTokens.borderColor, lineWidth: 0.5))
+                            Text(verbatim: "Nola").font(.caption)
                         }
+                        .foregroundStyle(DesignTokens.secondaryContentColor)
+                        .accessibilityHidden(true)
+                    }
+                    assistantMessage
+                    if !displayedSourceReferences.isEmpty {
+                        assistantSourceReferences.transition(.opacity)
                     }
                 }
 
@@ -241,78 +242,65 @@ struct ChatBubble: View {
     }
 
     private var displayedSourceReferences: [ChatSourceReference] {
+        if !message.canonicalParts.isEmpty { return IOSConversationProjectionPresenter.sourceReferences(from: message.canonicalParts) }
         let persisted = ChatSourceReference.decodeFromConversationMeta(message.metadata)
         if message.canonicalEventSequence != nil || !message.sourceReferences.isEmpty { return message.sourceReferences }
         return isLatestAssistant && !liveSourceReferences.isEmpty ? liveSourceReferences : persisted
     }
 
+    @State private var showsAllSources = false
+    @State private var sourceDetails: ChatSourceReference?
+
     private var assistantSourceReferences: some View { sourceReferenceCards(displayedSourceReferences) }
 
     private func sourceReferenceCards(_ references: [ChatSourceReference]) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(NSLocalizedString("chat.sources.title", value: "Sources", comment: "Assistant response sources title"))
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-
-            ForEach(references) { reference in
-                Button {
-                    if let fileURL = reference.fileURL {
-                        previewAttachment = ChatAttachmentPreviewItem(url: fileURL)
-                    } else if let webURL = reference.webURL {
-                        UIApplication.shared.open(webURL, options: [:])
-                    }
-                } label: {
-                    HStack(alignment: .top, spacing: 9) {
-                        Image(systemName: reference.fileURL == nil ? "safari" : "doc.text")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(DesignTokens.primaryColor)
-                            .frame(width: 22, height: 22)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(reference.displayTitle)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.primary)
-                                .lineLimit(2)
-                            let details = [reference.displayDomain, reference.location?.displayText, reference.mimeType,
-                                           reference.rangeStart.map { "\($0)–\(reference.rangeEnd ?? $0) B" }]
-                                .compactMap { $0 }
-                                .filter { !$0.isEmpty }
-                            if !details.isEmpty {
-                                Text(details.joined(separator: " · "))
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(2)
+        let unique = ChatSourceReference.bibliography(references)
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 5) {
+                Text(NSLocalizedString("chat.sources.title", value: "Sources", comment: "Bibliography"))
+                Text(unique.count, format: .number)
+            }.font(.caption).foregroundStyle(DesignTokens.secondaryContentColor)
+            ForEach(Array(unique.prefix(showsAllSources ? unique.count : 3).enumerated()), id: \.element.id) { index, reference in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Button {
+                        if let fileURL = reference.fileURL { previewAttachment = ChatAttachmentPreviewItem(url: fileURL) }
+                        else if let webURL = reference.webURL { UIApplication.shared.open(webURL, options: [:]) }
+                    } label: {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(verbatim: "[\(index + 1)]").monospacedDigit()
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(reference.displayTitle).lineLimit(2)
+                                if let location = reference.location?.displayText, !location.isEmpty { Text(location) }
                             }
-                            if let memoryUsage = reference.memoryUsage,
-                               !memoryUsage.displayMetadata.isEmpty {
-                                Text(memoryUsage.displayMetadata.joined(separator: " · "))
-                                    .font(.caption2)
-                                    .foregroundStyle(.tertiary)
-                                    .lineLimit(2)
-                            }
-                        }
-                        Spacer(minLength: 6)
-                        Image(systemName: reference.canOpen ? "arrow.up.right.square" : "exclamationmark.circle")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: 520, alignment: .leading)
-                    .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 11, style: .continuous)
-                            .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
-                    }
+                        }.font(.caption).foregroundStyle(DesignTokens.secondaryContentColor)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+                    }.buttonStyle(.plain).disabled(!reference.canOpen)
+                    Button { sourceDetails = reference } label: {
+                        Image(systemName: "info.circle").frame(width: 44, height: 44)
+                    }.buttonStyle(.plain).foregroundStyle(DesignTokens.secondaryContentColor)
+                        .accessibilityLabel(Text("chat.request.diagnostic_details"))
                 }
-                .buttonStyle(NolaActionButtonStyle())
-                .disabled(!reference.canOpen)
-                .accessibilityLabel(String(
-                    format: NSLocalizedString("chat.source.open_format", value: "Open source %@", comment: "Open an assistant response source"),
-                    reference.displayTitle
-                ))
+            }
+            if unique.count > 3 {
+                Button { showsAllSources.toggle() } label: {
+                    Text(showsAllSources ? "chat.sources.fewer" : "chat.sources.all")
+                        .font(.caption).foregroundStyle(DesignTokens.secondaryContentColor).frame(minHeight: 44)
+                }.buttonStyle(.plain).accessibilityIdentifier("chat.sources.toggle")
             }
         }
         .padding(.leading, 2)
+        .onChange(of: message.id) { _, _ in showsAllSources = false; sourceDetails = nil }
+        .sheet(item: $sourceDetails) { reference in
+            NavigationStack {
+                Form {
+                    Text(reference.displayTitle)
+                    Text(reference.uri).font(.caption).textSelection(.enabled)
+                    if let location = reference.location?.displayText { Text(location).font(.caption) }
+                    if let memory = reference.memoryUsage { Text(memory.displayMetadata.joined(separator: " · ")).font(.caption) }
+                    if let start = reference.rangeStart { Text(verbatim: "[\(start), \(reference.rangeEnd ?? start))").font(.caption) }
+                }.toolbar { ToolbarItem(placement: .confirmationAction) { Button("common.done") { sourceDetails = nil } } }
+            }.presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
+        }
     }
 
     private var userMessage: some View {
@@ -332,11 +320,10 @@ struct ChatBubble: View {
                         .multilineTextAlignment(.leading)
                         .textSelection(.enabled)
                         .frame(maxWidth: 640, alignment: .leading)
-                        .padding(.horizontal, 13)
-                        .padding(.vertical, 9)
+                        .padding(.horizontal, 15)
+                        .padding(.vertical, 12)
                         .background(
-                            UnevenRoundedRectangle(topLeadingRadius: 14, bottomLeadingRadius: 14,
-                                bottomTrailingRadius: 14, topTrailingRadius: 5)
+                            RoundedRectangle(cornerRadius: 20, style: .continuous)
                                 .fill(DesignTokens.accentSubtleColor)
                         )
                         .opacity(message.includeInContext ? 1 : 0.82)
@@ -456,14 +443,10 @@ struct ChatBubble: View {
 
     private func processExpansion(_ parts: [IOSConversationProjectionV1.Part], live: Bool) -> Binding<Bool> {
         let keys = parts.map { readingKey($0.partID) }
-        let owner = readingKey("execution-process")
         return Binding(get: {
-            processReading[owner] ?? ChatExecutionProcessPolicy.segmentExpanded(choices: keys.compactMap { processReading[$0] },
+            ChatExecutionProcessPolicy.segmentExpanded(choices: keys.compactMap { processReading[$0] },
                 liveReasoning: !ChatExecutionProcessPolicy.liveReasoning(parts, live: live).isEmpty)
-        }, set: { value in
-            processReading[owner] = value
-            for key in keys { processReading[key] = value }
-        })
+        }, set: { value in for key in keys { processReading[key] = value } })
     }
 
     private func toolExpansion(_ partID: String, technical: Bool) -> Binding<Bool> {
@@ -636,7 +619,7 @@ struct ChatBubble: View {
                     .padding(.bottom, 9)
                     .background {
                         UnevenRoundedRectangle(topLeadingRadius: 5, bottomLeadingRadius: 14,
-                                bottomTrailingRadius: 14, topTrailingRadius: 14).fill(assistantBubbleFill ?? DesignTokens.surfaceColor)
+                                bottomTrailingRadius: 14, topTrailingRadius: 14).fill(assistantBubbleFill ?? Color.clear)
                     }
                     .accessibilityIdentifier("chat.assistant.answer")
             }
@@ -670,11 +653,7 @@ struct ChatBubble: View {
                     .font(.caption.weight(.medium)).foregroundStyle(.secondary)
                 if !content.isEmpty { Text(content).font(.callout).textSelection(.enabled) }
             }.accessibilityIdentifier("journal-detail-" + id)
-        case .source(let value):
-            sourceReferenceCards([ChatSourceReference(id: value.sourceID, sourceID: value.sourceID,
-                title: value.title, uri: value.uri, mimeType: value.mimeType, memoryUsage: value.evidence?.usage)])
-        case .citation(let value):
-            sourceReferenceCards(IOSConversationProjectionPresenter.sourceReferences(from: message.canonicalParts).filter { $0.citationID == value.citationID })
+        case .source, .citation: EmptyView() // Render once in the bibliography footer.
         case .taskControl(let value):
             if taskProjection(value.taskID) != nil { taskPresentation(value.taskID) }
             else { Label(String(localized: "chat.task.details_unavailable"), systemImage: "exclamationmark.circle").font(.caption).foregroundStyle(.secondary) }
@@ -692,19 +671,9 @@ struct ChatBubble: View {
                     }.font(.caption2).textSelection(.enabled)
                 }
             }
-        case .skill(_, _, _, _, let name, let mode, let state, let turns, let tools, let millis, let result, let failure):
-            VStack(alignment: .leading, spacing: 4) {
-                Label(name, systemImage: "wand.and.stars")
-                Text(ChatExecutionProcessPolicy.activityTitle(state)).font(.caption).foregroundStyle(.secondary)
-                DisclosureGroup("chat.request.diagnostic_details") {
-                    LabeledContent("chat.part.diagnostic.mode", value: mode)
-                    LabeledContent("chat.part.diagnostic.model_turns", value: String(turns))
-                    LabeledContent("chat.part.diagnostic.tool_calls", value: String(tools))
-                    LabeledContent("chat.part.diagnostic.elapsed_ms", value: String(millis))
-                    if let result, !result.isEmpty { LabeledContent("chat.part.diagnostic.result_reference", value: result) }
-                    if let failure, !failure.isEmpty { LabeledContent("chat.part.diagnostic.failure", value: failure) }
-                }.font(.caption2).textSelection(.enabled)
-            }
+        case .skill(_, _, _, let skillID, let name, _, let state, let turns, let tools, let millis, _, let failure):
+            IOSSkillSummary(skillID: skillID, name: name, state: state, live: isStreaming || isRetrieving,
+                turns: turns, tools: tools, millis: millis, failure: failure)
         case .error(_, _, let code, let displayKey, let recoverable):
             Label(ChatExecutionProcessPolicy.errorTitle(displayKey: displayKey), systemImage: "exclamationmark.circle")
                 .foregroundStyle(DesignTokens.dangerColor)
@@ -757,15 +726,19 @@ struct ChatBubble: View {
                 }
                 let thinkingText = message.thinking.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !message.canonicalParts.isEmpty {
-                    ForEach(ChatExecutionProcessPolicy.segments(message.canonicalParts)) { segment in
+                    let segments = ChatExecutionProcessPolicy.segments(message.canonicalParts.filter { part in
+                        switch part { case .source, .citation: false; default: true }
+                    })
+                    let latestProcessID = segments.last(where: { $0.kind == .process })?.id
+                    ForEach(segments) { segment in
                         if segment.kind == .process {
                             ChatCanonicalExecutionProcess(parts: segment.parts,
                                 events: message.hostToolEvents, activities: message.traceActivities,
-                                isLive: runtime.isActive,
+                                isLive: runtime.isActive && segment.id == latestProcessID,
                                 expanded: processExpansion(segment.parts, live: runtime.isActive),
                                 toolExpanded: { toolExpansion($0, technical: false) },
                                 technicalExpanded: { toolExpansion($0, technical: true) },
-                                reader: toolReader, historicalContent: canonicalContent)
+                                reader: toolReader)
                         } else {
                             ForEach(segment.parts, id: \.partID) { part in
                                 canonicalContent(part)
@@ -778,26 +751,47 @@ struct ChatBubble: View {
                         .font(.caption).buttonStyle(.borderless).frame(minHeight: 44)
                     if !isStreaming { answerContextFooter }
                 }
-                if message.canonicalParts.isEmpty,
-                   !thinkingText.isEmpty || !message.hostToolEvents.isEmpty {
-                    ChatLegacyExecutionProcess(text: thinkingText,
-                        events: ChatExecutionProcessPolicy.legacyEvents(message.hostToolEvents),
-                        activities: message.traceActivities,
-                        isLive: runtime.isActive && !message.thinkingFinished,
-                        expanded: Binding(get: {
-                            processReading[readingKey("execution-process")] ??
-                                (runtime.isActive && !message.thinkingFinished && !thinkingText.isEmpty)
-                        }, set: { processReading[readingKey("execution-process")] = $0 }))
+                if message.canonicalParts.isEmpty && runtime.showsThinking {
+                    ChatThinkingProcessView(
+                        text: thinkingText,
+                        isFinished: !runtime.isActive || message.thinkingFinished,
+                        isRetrieving: runtime.isRetrieving
+                    )
+                    .padding(.bottom, 4)
                 }
 
-                // Approval remains actionable regardless of disclosure state.
-                if let pendingHostPermissionRequest {
+                if message.canonicalParts.isEmpty && runtime.hasTools {
+                    HostToolEventsView(
+                        events: message.liveHostToolEvents,
+                        activities: message.traceActivities,
+                        canonicalTools: message.canonicalTools,
+                        pendingPermissionRequest: pendingHostPermissionRequest,
+                        onPermissionDecision: onHostPermissionDecision,
+                        expandedByDefault: false
+                    )
+                    .padding(.bottom, 4)
+                }
+
+                if (!message.canonicalParts.isEmpty || !runtime.hasTools), let pendingHostPermissionRequest {
                     HostPermissionDecisionCard(request: pendingHostPermissionRequest, onPermissionDecision: onHostPermissionDecision)
+                }
+
+                let historicalTools = isStreaming ? message.failedHistoricalToolEvents : message.hostToolEvents
+                if message.canonicalParts.isEmpty && !historicalTools.isEmpty {
+                    HostToolEventsView(
+                        events: historicalTools,
+                        activities: message.traceActivities,
+                        canonicalTools: message.canonicalTools,
+                        pendingPermissionRequest: nil,
+                        onPermissionDecision: onHostPermissionDecision,
+                        expandedByDefault: false
+                    )
+                    .padding(.bottom, 4)
                 }
 
                 if message.canonicalParts.isEmpty { taskPresentation(nil) }
 
-                if runtime.showsWaiting || (runtime.isRetrieving && !runtime.hasThinking && !runtime.hasTools && !runtime.hasContent && !runtime.showsPhase) {
+                if runtime.showsWaiting {
                     HStack(spacing: 9) {
                         ChatThinkingStatusIcon(isFinished: false)
                         Text(NSLocalizedString(
@@ -838,7 +832,7 @@ struct ChatBubble: View {
                         .padding(.bottom, 9)
                         .background {
                             UnevenRoundedRectangle(topLeadingRadius: 5, bottomLeadingRadius: 14,
-                                    bottomTrailingRadius: 14, topTrailingRadius: 14).fill(assistantBubbleFill ?? DesignTokens.surfaceColor)
+                                    bottomTrailingRadius: 14, topTrailingRadius: 14).fill(assistantBubbleFill ?? Color.clear)
                         }
                         .accessibilityElement(children: .contain)
                         .accessibilityIdentifier("chat.assistant.answer")
@@ -1022,8 +1016,8 @@ struct ChatBubble: View {
     }
 
     private func copyMessageToPasteboard() {
-        let text = copyableText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        let text = copyableText
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         UIPasteboard.general.string = text
         guard UIPasteboard.general.string == text else { showManualCopy = true; return }
         UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -1400,13 +1394,14 @@ private struct ChatMarkdownInlineText: View {
 
     private func attributedText(for value: String) -> AttributedString {
         let normalized = ChatMarkdownDisplayNormalizer.preservingSoftLineBreaks(in: value)
-        return (try? AttributedString(
+        let parsed = (try? AttributedString(
             markdown: normalized,
             options: AttributedString.MarkdownParsingOptions(
                 interpretedSyntax: .inlineOnlyPreservingWhitespace,
                 failurePolicy: .returnPartiallyParsedIfPossible
             )
         )) ?? AttributedString(value)
+        return AppleInlineReferenceStyle.applying(to: parsed, color: DesignTokens.secondaryContentColor)
     }
 }
 
@@ -2544,6 +2539,12 @@ nonisolated struct IOSMessagePartReadingKey: Hashable {
 }
 
 enum ChatExecutionProcessPolicy {
+    static func heading(live: Bool, currentTitle: String?, containsTools: Bool) -> String {
+        if live { return currentTitle?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+            ?? NSLocalizedString("chat.processing", value: "Processing", comment: "Run remains active between steps") }
+        return containsTools ? NSLocalizedString("chat.execution_process", value: "Execution process", comment: "Ordered reasoning and tools") : L10n.chatThinkingProcess
+    }
+
     static func isTerminal(_ state: IOSConversationProjectionV1.ActivityState) -> Bool {
         switch state { case .completed, .sealed, .cancelled, .failed: true; default: false }
     }
@@ -2584,77 +2585,30 @@ enum ChatExecutionProcessPolicy {
         }
     }
 
-    /// One message-owned process anchored at its first visible execution Part.
-    /// Prose and cards retain their relative order outside the disclosure.
     static func segments(_ parts: [IOSConversationProjectionV1.Part]) -> [AppleMessagePartFlowSegment<IOSConversationProjectionV1.Part>] {
-        let execution = parts.filter(isVisibleExecution)
-        var inserted = false
-        var result: [AppleMessagePartFlowSegment<IOSConversationProjectionV1.Part>] = []
-        for part in parts {
-            if isExecution(part) {
-                if !inserted, isVisibleExecution(part) {
-                    result.append(.init(id: "execution-process", kind: .process, parts: execution))
-                    inserted = true
-                }
-            } else {
-                result.append(.init(id: "part:" + part.partID, kind: .content, parts: [part]))
-            }
-        }
-        return result
-    }
-
-    static func isExecution(_ part: IOSConversationProjectionV1.Part) -> Bool {
-        switch part {
-        case .tool, .reasoning: return true
-        case .historical(_, _, let history):
-            return history.canonicalKind == "tool" || history.canonicalKind == "reasoning"
-        default: return false
-        }
-    }
-
-    static func isVisibleExecution(_ part: IOSConversationProjectionV1.Part) -> Bool {
-        switch part {
-        case .tool: return true
-        case .reasoning(let value):
-            return !(value.summary ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .historical(_, _, let history):
-            // Preserve explicit detail reads without moving interactive surfaces.
-            return isExecution(part) && (IOSHistoricalPartRequest(history) != nil ||
-                !(history.timelineText ?? "").isEmpty || !(history.status.reason ?? "").isEmpty)
-        default: return false
-        }
-    }
-
-    /// Legacy snapshots lack interleaved Parts: keep first-call order and the
-    /// latest receipt per call instead of repeating live and historical groups.
-    static func legacyEvents(_ events: [HostAgentToolEvent]) -> [HostAgentToolEvent] {
-        var order: [String] = []
-        var latest: [String: HostAgentToolEvent] = [:]
-        for event in events {
-            if latest[event.id] == nil { order.append(event.id) }
-            latest[event.id] = event
-        }
-        return order.compactMap { latest[$0] }
+        AppleMessagePartFlow.segments(parts, id: { $0.partID }, kind: {
+            switch $0 { case .reasoning: .reasoning; case .tool: .tool; default: .content }
+        })
     }
 
     static func segmentExpanded(choices: [Bool], liveReasoning: Bool) -> Bool {
-        AppleMessagePartFlow.isExpanded(choices: choices, defaultExpanded: liveReasoning)
+        AppleMessagePartFlow.isExpanded(choices: choices, defaultExpanded: false)
     }
 
     static func liveReasoning(_ parts: [IOSConversationProjectionV1.Part], live: Bool) -> [IOSConversationProjectionV1.Part] {
         guard live else { return [] }
-        // Only the currently running reasoning defaults open. Explicit reader
-        // choices remain owned by the message even when segments regroup.
+        // Identify live reasoning for activity presentation. Disclosure choices
+        // remain owned by the message even when segments regroup.
         return parts.filter {
             guard case .reasoning(let reasoning) = $0 else { return false }
-            return reasoning.state == .running && isVisibleExecution($0)
+            return reasoning.state == .running && !(reasoning.summary ?? "").isEmpty
         }
     }
 
 
 }
 
-private struct ChatCanonicalExecutionProcess<HistoricalContent: View>: View {
+private struct ChatCanonicalExecutionProcess: View {
     let parts: [IOSConversationProjectionV1.Part]
     let events: [HostAgentToolEvent]
     let activities: [AgentTraceActivity]
@@ -2664,7 +2618,27 @@ private struct ChatCanonicalExecutionProcess<HistoricalContent: View>: View {
     let technicalExpanded: (String) -> Binding<Bool>
     let reader: (String) -> Binding<HostToolTextSnapshot?>
 
-    let historicalContent: (IOSConversationProjectionV1.Part) -> HistoricalContent
+    private var containsTools: Bool {
+        parts.contains { if case .tool = $0 { true } else { false } }
+    }
+
+    private var currentTitle: String? {
+        guard isLive else { return nil }
+        let current = parts.last { part in
+            switch part {
+            case .tool(let tool): [.running, .pending].contains(tool.state)
+            case .reasoning(let reasoning): reasoning.state == .running
+            default: false
+            }
+        }
+        switch current {
+        case .tool(let tool) where [.running, .pending].contains(tool.state):
+            return tool.title.isEmpty ? nil : tool.title
+        case .reasoning(let reasoning) where reasoning.state == .running:
+            return L10n.chatThinkingShort
+        default: return nil
+        }
+    }
 
     var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
@@ -2688,14 +2662,14 @@ private struct ChatCanonicalExecutionProcess<HistoricalContent: View>: View {
                                 technicalReadingExpansion: technicalExpanded(part.partID),
                                 readingSelection: reader(part.partID))
                         }
-                    case .historical: historicalContent(part)
                     default: EmptyView()
                     }
                 }
             }.padding(.top, 8)
         } label: {
-            Label(NSLocalizedString("chat.execution_process", value: "Execution process", comment: "Ordered reasoning and tools"),
-                systemImage: "list.bullet")
+            Label(ChatExecutionProcessPolicy.heading(live: isLive, currentTitle: currentTitle, containsTools: containsTools),
+                systemImage: containsTools ? "list.bullet" : "sparkles")
+                .lineLimit(1)
                 .font(.callout.weight(.medium)).foregroundStyle(.secondary)
                 .frame(minHeight: 44, alignment: .leading)
                 .accessibilityIdentifier("chat.execution.process.toggle")
@@ -2706,36 +2680,120 @@ private struct ChatCanonicalExecutionProcess<HistoricalContent: View>: View {
     }
 }
 
-private struct ChatLegacyExecutionProcess: View {
-    let text: String
+private struct HostToolEventsView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let events: [HostAgentToolEvent]
     let activities: [AgentTraceActivity]
-    let isLive: Bool
-    @Binding var expanded: Bool
+    let canonicalTools: [IOSConversationProjectionV1.ToolPart]
+    let pendingPermissionRequest: HostAgentPermissionRequest?
+    let onPermissionDecision: (String, HostAgentPermissionDecision) -> Void
+    @State private var expanded: Bool
+
+    init(
+        events: [HostAgentToolEvent],
+        activities: [AgentTraceActivity],
+        canonicalTools: [IOSConversationProjectionV1.ToolPart] = [],
+        pendingPermissionRequest: HostAgentPermissionRequest?,
+        onPermissionDecision: @escaping (String, HostAgentPermissionDecision) -> Void,
+        expandedByDefault: Bool
+    ) {
+        self.events = events
+        self.activities = activities
+        self.canonicalTools = canonicalTools
+        self.pendingPermissionRequest = pendingPermissionRequest
+        self.onPermissionDecision = onPermissionDecision
+        _expanded = State(initialValue: expandedByDefault)
+    }
+
+    private var visibleCanonicalTools: [IOSConversationProjectionV1.ToolPart] {
+        canonicalTools.filter { tool in events.contains { $0.id == tool.toolCallID } }
+    }
+
+    private var activityStatus: String {
+        let permissionRequired = events.filter { $0.status == .permissionRequired }.count
+        let running = events.filter { event in
+            event.status == .running && canonicalTools.first(where: { $0.toolCallID == event.id }).map { $0.state == .running } != false
+        }.count
+        let failed = events.filter { $0.status == .failed }.count
+        let cancelled = events.filter { $0.status == .cancelled }.count
+        if permissionRequired > 0 {
+            return NSLocalizedString(
+                "chat.host_tool.status.permission_required",
+                value: "Confirmation required",
+                comment: "Tool permission confirmation status"
+            )
+        }
+        if visibleCanonicalTools.contains(where: { $0.state == .waitingForInput }) {
+            return NSLocalizedString("chat.host_tool.status.waiting_input", value: "Input required", comment: "Tool waits for user input")
+        }
+        if running > 0 {
+            return String(format: NSLocalizedString("chat.tool_activity.running_format", value: "%d running", comment: "Running tool count"), running)
+        }
+        if visibleCanonicalTools.contains(where: { $0.state == .pending }) {
+            return NSLocalizedString("chat.host_tool.status.pending", value: "Pending", comment: "Tool is queued")
+        }
+        if failed > 0 {
+            return String(format: NSLocalizedString("chat.tool_activity.failed_format", value: "%d failed", comment: "Failed tool count"), failed)
+        }
+        if cancelled > 0 {
+            return String(format: NSLocalizedString("chat.tool_activity.cancelled_format", value: "%d cancelled", comment: "Cancelled tool count"), cancelled)
+        }
+        let sealed = visibleCanonicalTools.filter { $0.state == .sealed }.count
+        if sealed == events.count && sealed > 0 {
+            return NSLocalizedString("chat.host_tool.status.sealed", value: "Sealed", comment: "Activity is sealed, not necessarily successful")
+        }
+        return String(format: NSLocalizedString("chat.tool_activity.completed_format", value: "%d completed", comment: "Completed tool count"), events.count - sealed)
+    }
+
+    private var activityTint: Color {
+        if events.contains(where: { $0.status == .permissionRequired }) { return .orange }
+        if events.contains(where: { $0.status == .running }) { return DesignTokens.primaryColor }
+        if events.contains(where: { $0.status == .failed }) { return DesignTokens.dangerColor }
+        if events.contains(where: { $0.status == .cancelled }) { return .secondary }
+        return DesignTokens.successColor
+    }
 
     var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
-            VStack(alignment: .leading, spacing: 12) {
-                if !text.isEmpty {
-                    ChatSmoothStreamingMarkdownView(content: text, isStreaming: isLive)
-                        .foregroundStyle(.secondary).textSelection(.enabled)
-                        .accessibilityIdentifier("chat.assistant.thinking")
-                }
+            VStack(alignment: .leading, spacing: 8) {
                 ForEach(events) { event in
-                    HostToolEventCard(event: event,
-                        activity: activities.first { $0.spanId == event.id })
+                    HostToolEventCard(
+                        event: event,
+                        activity: activities.first(where: { $0.spanId == event.id }),
+                        canonicalTool: canonicalTools.first { $0.toolCallID == event.id }
+                    )
+                    .nolaDisclosureTransition(reduceMotion: reduceMotion)
                 }
-            }.padding(.top, 8)
+            }
+            .padding(.top, 8)
         } label: {
-            Label(NSLocalizedString("chat.execution_process", value: "Execution process", comment: "Ordered reasoning and tools"),
-                systemImage: "list.bullet")
-                .font(.callout.weight(.medium)).foregroundStyle(.secondary)
-                .frame(minHeight: 44, alignment: .leading)
-                .accessibilityIdentifier("chat.execution.process.toggle")
+            HStack(spacing: 8) {
+                    Image(systemName: "wrench.and.screwdriver")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(DesignTokens.primaryColor)
+                    Text(NSLocalizedString("chat.tool_activity", value: "Tool activity", comment: "Tool activity group title"))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Spacer(minLength: 0)
+                    Text(activityStatus)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(activityTint)
+            }
+            .padding(.horizontal, 4)
+            .padding(.vertical, 6)
+            .accessibilityValue(activityStatus)
+            .accessibilityIdentifier("chat.assistant.tools.toggle")
         }
         .disclosureGroupStyle(NolaRowDisclosureStyle())
+        .animation(reduceMotion ? nil : DesignTokens.disclosureAnimation, value: expanded)
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("chat.execution.process")
+        .accessibilityIdentifier("chat.assistant.tools")
+
+        // A current challenge stays actionable even when the tool group is
+        // collapsed. Historical tool metadata is never approval authority.
+        if let pendingPermissionRequest {
+            HostPermissionDecisionCard(request: pendingPermissionRequest, onPermissionDecision: onPermissionDecision)
+        }
     }
 }
 
@@ -2945,6 +3003,10 @@ private struct HostToolEventCard: View {
             let origin = tool.origin
             Text([origin.kind, origin.providerTitle, origin.providerId, origin.namespace].compactMap { $0 }.joined(separator: " · "))
                 .font(.caption2).foregroundStyle(.secondary)
+            if let preview = tool.outputPreview, tool.output != nil {
+                toolTextBlock(title: NSLocalizedString("chat.host_tool.preview", value: "Preview", comment: "Independent tool preview"),
+                              text: preview, identifier: "chat.assistant.tool.preview.\(event.id)")
+            }
             if let permission = tool.permission {
                 Text([permission.permissionDomain, permission.decision, permission.rationale].compactMap { $0 }.joined(separator: " · "))
                     .font(.caption2).foregroundStyle(.secondary)
@@ -2959,10 +3021,9 @@ private struct HostToolEventCard: View {
 
     var body: some View {
         DisclosureGroup(isExpanded: readingExpansion ?? $expanded) {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
                 if let summary = canonicalTool?.summary, !event.containsSensitiveData {
                     Text(summary).font(.caption).textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 if let tool = canonicalTool, !event.containsSensitiveData {
                     ForEach(Array(tool.artifacts.enumerated()), id: \.offset) { _, artifact in
@@ -3055,24 +3116,6 @@ private struct HostToolEventCard: View {
                     )
                 }
 
-                if !event.containsSensitiveData {
-                    if let tool = canonicalTool, let preview = tool.outputPreview,
-                       tool.output != nil, preview != details.result {
-                        toolTextBlock(
-                            title: NSLocalizedString("chat.host_tool.preview", value: "Preview", comment: "Independent tool preview"),
-                            text: preview,
-                            identifier: "chat.assistant.tool.preview.\(event.id)"
-                        )
-                    }
-                    if !details.result.isEmpty {
-                        toolTextBlock(
-                            title: NSLocalizedString("chat.host_tool.result", value: "结果", comment: "Host tool result title"),
-                            text: details.result,
-                            identifier: "chat.assistant.tool.result.\(event.id)"
-                        )
-                    }
-                }
-
                 DisclosureGroup(isExpanded: technicalReadingExpansion ?? $technicalExpanded) {
                     if technicalReadingExpansion?.wrappedValue ?? technicalExpanded {
                         canonicalDetails
@@ -3083,6 +3126,13 @@ private struct HostToolEventCard: View {
                                 identifier: "chat.assistant.tool.arguments.\(event.id)"
                             )
                         }
+                        if !event.containsSensitiveData, !details.result.isEmpty {
+                            toolTextBlock(
+                                title: NSLocalizedString("chat.host_tool.result", value: "结果", comment: "Host tool result title"),
+                                text: details.result,
+                                identifier: "chat.assistant.tool.result.\(event.id)"
+                            )
+                        }
                     }
                 } label: {
                     Text(NSLocalizedString("scheduled.run_detail.technical.title", value: "Technical details", comment: "Technical details"))
@@ -3091,22 +3141,19 @@ private struct HostToolEventCard: View {
                 }
                 .disclosureGroupStyle(NolaRowDisclosureStyle())
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, 12)
+            .padding(.top, 8)
         } label: {
             HStack(alignment: .top, spacing: 8) {
                 if event.status == .running && (canonicalTool == nil || canonicalTool?.state == .running) && !reduceMotion {
                     ProgressView()
                         .scaleEffect(0.58)
-                        .frame(width: 16, height: 16)
                 } else {
                     Image(systemName: event.status == .permissionRequired ? "exclamationmark.shield" : iconName)
                         .font(.caption.weight(.semibold))
                         .foregroundColor(tint)
-                        .frame(width: 16, height: 16)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    HStack(alignment: .top, spacing: 6) {
+                    HStack(spacing: 6) {
                         Text(displayName)
                             .font(.caption.weight(.semibold))
                         Text(statusText)
@@ -3149,7 +3196,7 @@ private struct HostToolEventCard: View {
         text: String,
         identifier: String
     ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(title)
                 .font(.caption2.weight(.semibold))
                 .foregroundColor(.secondary)
@@ -3162,10 +3209,9 @@ private struct HostToolEventCard: View {
                 .frame(minHeight: 44)
                 .accessibilityIdentifier(identifier + ".reader")
             }
-            Text(ChatToolTextPresentation.preview(text))
-                .font(.caption.monospaced())
-                .foregroundColor(.primary)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(preview(text))
+                .font(.caption2.monospaced())
+                .foregroundColor(.secondary)
                 .textSelection(.enabled)
         }
         .padding(8)
@@ -3176,6 +3222,10 @@ private struct HostToolEventCard: View {
         )
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(identifier)
+    }
+
+    private func preview(_ text: String) -> String {
+        preview(text, limit: ChatToolTextPresentation.previewLimit)
     }
 
     private func preview(_ text: String, limit: Int) -> String {
@@ -3231,17 +3281,7 @@ private struct HostToolTextReader: View {
 
 enum ChatToolTextPresentation {
     static let previewLimit = 1200
-    static let previewLineLimit = 16
-
-    static func needsReader(_ text: String) -> Bool {
-        text.count > previewLimit || text.split(separator: "\n", omittingEmptySubsequences: false).count > previewLineLimit
-    }
-
-    static func preview(_ text: String) -> String {
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
-        let excerpt = String(lines.prefix(previewLineLimit).joined(separator: "\n").prefix(previewLimit))
-        return needsReader(text) ? excerpt + "\n…" : text
-    }
+    static func needsReader(_ text: String) -> Bool { text.count > previewLimit }
 }
 
 private struct SubmittingHostPermissionRequestKey: EnvironmentKey {
@@ -3388,7 +3428,7 @@ struct HostPermissionDecisionCard: View {
                         .fontWeight(.medium)
                 }
             } else {
-                HStack(alignment: .top, spacing: 8) {
+                HStack(spacing: 8) {
                     Image(systemName: icon)
                         .frame(width: 14)
                         .foregroundColor(.secondary)
@@ -3401,7 +3441,6 @@ struct HostPermissionDecisionCard: View {
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
         .font(.caption2)
     }
 
@@ -3711,6 +3750,92 @@ enum ChatThinkingDisclosurePolicy {
     }
 }
 
+private struct ChatThinkingProcessView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let text: String
+    let isFinished: Bool
+    let isRetrieving: Bool
+    @State private var isExpanded: Bool
+    @State private var userChangedExpansion = false
+
+    init(text: String, isFinished: Bool, isRetrieving: Bool) {
+        self.text = text
+        self.isFinished = isFinished
+        self.isRetrieving = isRetrieving
+        _isExpanded = State(initialValue: ChatThinkingDisclosurePolicy.initialExpanded(isFinished: isFinished))
+    }
+
+    private var title: String {
+        if isFinished {
+            return L10n.chatThinkingProcess
+        }
+        return L10n.chatThinkingShort
+    }
+
+    var body: some View {
+        DisclosureGroup(isExpanded: Binding(
+            get: { isExpanded },
+            set: { isExpanded = $0; userChangedExpansion = true }
+        )) {
+            if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .scaleEffect(0.65)
+                    Text(L10n.chatAIThinking)
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.top, 6)
+            } else {
+                Text(text)
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+                    .textSelection(.enabled)
+                    .padding(.top, 6)
+                    .transaction { transaction in
+                        // Streaming reasoning should grow in place. It must not
+                        // inherit the timeline's insertion/scroll animations.
+                        transaction.animation = nil
+                    }
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 7) {
+                    ChatThinkingStatusIcon(isFinished: isFinished)
+                    Text(title)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundColor(.secondary)
+                    Spacer(minLength: 0)
+                }
+
+
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .disclosureGroupStyle(NolaRowDisclosureStyle())
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous)
+                .fill(isExpanded ? DesignTokens.rowFillColor : .clear)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous)
+                .stroke(isExpanded ? DesignTokens.borderColor : .clear, lineWidth: 1)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("chat.assistant.thinking")
+        .animation(reduceMotion ? nil : DesignTokens.disclosureAnimation, value: isExpanded)
+        .onChange(of: isFinished) { _, finished in
+            // Completion updates the status, not the user's reading position.
+            // Previously finished messages still initialize collapsed.
+            isExpanded = ChatThinkingDisclosurePolicy.expandedAfterStatusChange(
+                current: isExpanded, isFinished: finished, userChangedExpansion: userChangedExpansion)
+        }
+    }
+}
+
 private struct ChatThinkingStatusIcon: View {
     let isFinished: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -3730,6 +3855,44 @@ private struct ChatThinkingStatusIcon: View {
                     .frame(width: 8, height: 8)
                     .frame(width: 16, height: 16)
             }
+        }
+    }
+}
+
+private struct IOSSkillSummary: View {
+    let skillID: String
+    let name: String
+    let state: IOSConversationProjectionV1.ActivityState
+    let live: Bool
+    let turns: UInt32
+    let tools: UInt32
+    let millis: UInt64
+    let failure: String?
+    @State private var showsDetails = false
+    private var title: String {
+        if skillID == "conduct-deep-research", name.isEmpty || name == skillID {
+            return NSLocalizedString("chat.skill.deep_research", value: "Deep research", comment: "Built-in skill")
+        }
+        return name.isEmpty ? skillID : name
+    }
+    var body: some View {
+        HStack(spacing: 6) {
+            Label(title, systemImage: "wand.and.stars").font(.callout.weight(.medium))
+            Spacer(minLength: 4)
+            Text(state == .running && !live ? NSLocalizedString("activity.status.incomplete", value: "Incomplete", comment: "Skill has no terminal result") : ChatExecutionProcessPolicy.activityTitle(state))
+                .font(.caption).foregroundStyle(DesignTokens.secondaryContentColor)
+            Button { showsDetails = true } label: {
+                Image(systemName: "info.circle").frame(width: 44, height: 44)
+            }.buttonStyle(.plain).foregroundStyle(DesignTokens.secondaryContentColor).accessibilityLabel(Text("chat.request.diagnostic_details"))
+        }.sheet(isPresented: $showsDetails) {
+            NavigationStack {
+                Form {
+                    LabeledContent("chat.part.diagnostic.model_turns", value: String(turns))
+                    LabeledContent("chat.part.diagnostic.tool_calls", value: String(tools))
+                    Text(Duration.seconds(Double(millis) / 1000).formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated)))
+                    if let failure, !failure.isEmpty { Text(failure).foregroundStyle(DesignTokens.secondaryContentColor) }
+                }.navigationTitle(title).toolbar { ToolbarItem(placement: .confirmationAction) { Button("common.done") { showsDetails = false } } }
+            }.presentationDetents([.medium]).presentationDragIndicator(.visible)
         }
     }
 }

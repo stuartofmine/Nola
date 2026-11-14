@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
-//! SQLite memory repository adapter. SQL pattern syntax stays here.
+//! SQLite memory repository adapter. SQL pattern syntax and BM25 fusion stay here.
 use crate::{NolaStore, StoreError};
 use nola_store_port::memory::{
     MemoryReadRepository, MemoryRepository, StoredMemoryRecord, StoredMemoryUsageStats,
 };
 use std::collections::{BTreeMap, BTreeSet};
-
-const MAX_RECALL_QUERY_TERMS: usize = 12;
 
 fn escaped_like_pattern(value: &str) -> String {
     format!(
@@ -18,30 +16,10 @@ fn escaped_like_pattern(value: &str) -> String {
     )
 }
 
-/// Produce a small, language-neutral lexical fallback when an exact phrase
-/// does not occur in a stored memory. Whitespace-delimited text uses words;
-/// unsegmented Unicode text uses overlapping character pairs so CJK and other
-/// scripts do not require a language-specific dictionary.
-fn recall_query_terms(query: &str) -> Vec<String> {
-    let mut terms = query
-        .split(|character: char| !character.is_alphanumeric())
-        .filter(|term| term.chars().count() >= 2)
-        .map(|term| term.to_lowercase())
-        .collect::<Vec<_>>();
-    if terms.len() == 1 && terms[0].chars().count() >= 4 && !terms[0].is_ascii() {
-        let characters = terms[0].chars().collect::<Vec<_>>();
-        terms = characters
-            .windows(2)
-            .map(|pair| pair.iter().collect::<String>().to_lowercase())
-            .collect();
-    }
-    let mut seen = BTreeSet::new();
-    terms.retain(|term| seen.insert(term.clone()));
-    // Prefer more discriminative terms when a long natural-language question
-    // exceeds the bounded query budget. Equal-length terms retain source order.
-    terms.sort_by_key(|term| std::cmp::Reverse(term.chars().count()));
-    terms.truncate(MAX_RECALL_QUERY_TERMS);
-    terms
+struct RankedMemoryCandidate {
+    record: StoredMemoryRecord,
+    exact_match: bool,
+    bm25_score: f64,
 }
 
 impl MemoryReadRepository for NolaStore {
@@ -92,47 +70,69 @@ impl MemoryReadRepository for NolaStore {
             limit,
         )?;
         let maximum_candidates = limit.clamp(1, 50).saturating_mul(4).min(200);
-        let terms = normalized_query.map(recall_query_terms).unwrap_or_default();
-        let exact_score = terms.len().saturating_add(1);
-        let mut ranked = BTreeMap::<String, (StoredMemoryRecord, usize, bool)>::new();
-        for record in exact_records {
-            ranked.insert(record.id.clone(), (record, exact_score, true));
-        }
-        for term in &terms {
-            let pattern = escaped_like_pattern(term);
-            for record in self.search_memory_records(
+        let bm25_candidates = match normalized_query {
+            Some(query_text) => self.ranked_memory_candidates(
                 owner_json,
                 namespace_json,
                 scope,
-                Some(&pattern),
+                query_text,
                 kind,
                 now_iso,
-                limit.clamp(1, 50),
-            )? {
-                let entry = ranked
-                    .entry(record.id.clone())
-                    .or_insert((record, 0, false));
-                entry.1 = entry.1.saturating_add(1);
+                maximum_candidates,
+            )?,
+            None => Vec::new(),
+        };
+
+        let mut ranked = BTreeMap::<String, RankedMemoryCandidate>::new();
+        for record in exact_records {
+            ranked.insert(
+                record.id.clone(),
+                RankedMemoryCandidate {
+                    record,
+                    exact_match: true,
+                    bm25_score: 0.0,
+                },
+            );
+        }
+        for (record, raw_score) in bm25_candidates {
+            let bm25_score = if raw_score.is_finite() {
+                raw_score
+            } else {
+                0.0
+            };
+            if let Some(existing) = ranked.get_mut(&record.id) {
+                existing.bm25_score = existing.bm25_score.min(bm25_score);
+            } else {
+                ranked.insert(
+                    record.id.clone(),
+                    RankedMemoryCandidate {
+                        record,
+                        exact_match: false,
+                        bm25_score,
+                    },
+                );
             }
         }
+
         let mut ranked = ranked.into_values().collect::<Vec<_>>();
         ranked.sort_by(|left, right| {
             right
-                .2
-                .cmp(&left.2)
-                .then_with(|| right.1.cmp(&left.1))
-                .then_with(|| right.0.importance.total_cmp(&left.0.importance))
-                .then_with(|| right.0.confidence.total_cmp(&left.0.confidence))
-                .then_with(|| right.0.updated_at_ms.cmp(&left.0.updated_at_ms))
-                .then_with(|| right.0.id.cmp(&left.0.id))
+                .exact_match
+                .cmp(&left.exact_match)
+                .then_with(|| left.bm25_score.total_cmp(&right.bm25_score))
+                .then_with(|| right.record.importance.total_cmp(&left.record.importance))
+                .then_with(|| right.record.confidence.total_cmp(&left.record.confidence))
+                .then_with(|| right.record.updated_at_ms.cmp(&left.record.updated_at_ms))
+                .then_with(|| right.record.id.cmp(&left.record.id))
         });
+
         let mut records = ranked
             .into_iter()
             .take(maximum_candidates)
-            .map(|(record, _, _)| record)
+            .map(|candidate| candidate.record)
             .collect::<Vec<_>>();
-        // Literal retrieval can find an older statement without finding its
-        // differently-worded correction. Complete only the successor chain of
+        // Literal and BM25 retrieval can find an older statement without finding
+        // its differently-worded correction. Complete only the successor chain of
         // this bounded result so Core can apply canonical supersession policy.
         let mut seen = records
             .iter()

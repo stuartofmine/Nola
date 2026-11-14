@@ -132,9 +132,11 @@ nonisolated public struct ModelInput: Codable, Hashable {
     /// OpenAI-compatible providers without file APIs can use it.
     public let attachments: [Attachment]
     public let providerContinuationJSON: String?
+    public let selectedExperts: [AppleMainExpertSelectionEntry]?
+    public let expertSelectionSourceEpoch: String?
 
     private enum CodingKeys: String, CodingKey {
-        case dateRange, candidates, userPrefs, attachments, providerContinuationJSON
+        case dateRange, candidates, userPrefs, attachments, providerContinuationJSON, selectedExperts, expertSelectionSourceEpoch
     }
 
     public init(
@@ -142,13 +144,17 @@ nonisolated public struct ModelInput: Codable, Hashable {
         candidates: [Candidate],
         userPrefs: [String: String],
         attachments: [Attachment] = [],
-        providerContinuationJSON: String? = nil
+        providerContinuationJSON: String? = nil,
+        selectedExperts: [AppleMainExpertSelectionEntry]? = nil,
+        expertSelectionSourceEpoch: String? = nil
     ) {
         self.dateRange = dateRange
         self.candidates = candidates
         self.userPrefs = userPrefs
         self.attachments = attachments
         self.providerContinuationJSON = providerContinuationJSON
+        self.selectedExperts = selectedExperts
+        self.expertSelectionSourceEpoch = expertSelectionSourceEpoch
     }
 
     public init(from decoder: Decoder) throws {
@@ -158,5 +164,7 @@ nonisolated public struct ModelInput: Codable, Hashable {
         self.userPrefs = try container.decode([String: String].self, forKey: .userPrefs)
         self.attachments = try container.decodeIfPresent([Attachment].self, forKey: .attachments) ?? []
         self.providerContinuationJSON = try container.decodeIfPresent(String.self, forKey: .providerContinuationJSON)
+        self.selectedExperts = try container.decodeIfPresent([AppleMainExpertSelectionEntry].self, forKey: .selectedExperts)
+        self.expertSelectionSourceEpoch = try container.decodeIfPresent(String.self, forKey: .expertSelectionSourceEpoch)
     }
 }

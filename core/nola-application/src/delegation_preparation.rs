@@ -68,7 +68,9 @@ pub fn capture_delegated_invocation<R: ModelRepositoryProvider>(
         // The shared resolver owns tier-to-provider mapping. Passing both its
         // resolved selection and the original tier is an ambiguous request.
         let mut request = intent.overrides.to_request()?;
-        request["reasoning_tier"] = json!(intent.tier);
+        if intent.overrides.reasoning_selection.is_none() {
+            request["reasoning_tier"] = json!(intent.tier);
+        }
         let selected_model = crate::model_profile_resolution::resolve_remote_profile(
             &selected,
             &request,
@@ -248,6 +250,7 @@ pub(crate) fn prepare<R: crate::repositories::AgentRuntimeCommandRepositories>(
     }
     let (run_id, conversation_id, _) =
         crate::started_host_effect::validate(store, &request, "execute_tool", now_ms)?;
+    if store.read_room_context_owner(&conversation_id).map_err(|e|e.to_string())?.is_some() {return Err("experts_cannot_spawn_agents".into());}
     let frozen = store
         .load_run_invocation_config(&run_id)
         .map_err(|e| e.to_string())?

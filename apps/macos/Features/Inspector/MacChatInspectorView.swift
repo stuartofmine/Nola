@@ -9,8 +9,14 @@ import SwiftUI
 @MainActor
 final class MacInspectorNavigationState: ObservableObject {
     @Published var selectedTab: MacChatInspector.InspectorTab {
-        didSet { expandedSections.insert(selectedTab); revealedKnowledge = nil; revealRevision &+= 1 }
+        didSet {
+            revealedKnowledge = nil
+            guard !isUpdatingDisclosure else { return }
+            expandedSections.insert(selectedTab)
+            revealRevision &+= 1
+        }
     }
+    private var isUpdatingDisclosure = false
     @Published private(set) var revealRevision = 0
     @Published private(set) var revealedKnowledge: MacInspectorKnowledgePane?
     var revealID: String { revealedKnowledge.map { "knowledge-" + $0.rawValue } ?? selectedTab.rawValue }
@@ -23,8 +29,31 @@ final class MacInspectorNavigationState: ObservableObject {
         }
     }
     let goalDrafts = MacInspectorGoalDraftStore()
-    @Published var expandedKnowledge: Set<MacInspectorKnowledgePane> = [.points]
+    @Published var expandedKnowledge: Set<MacInspectorKnowledgePane> = []
     @Published var expandedSections: Set<MacChatInspector.InspectorTab> = [.overview]
+
+    /// Pointer disclosure stays in place; only explicit navigation requests scroll.
+    func setExpanded(_ section: MacChatInspector.InspectorTab, _ expanded: Bool) {
+        if expanded {
+            expandedSections.insert(section)
+            isUpdatingDisclosure = true
+            selectedTab = section
+            isUpdatingDisclosure = false
+        } else {
+            expandedSections.remove(section)
+        }
+    }
+
+    func setKnowledgeExpanded(_ pane: MacInspectorKnowledgePane, _ expanded: Bool) {
+        if expanded {
+            expandedKnowledge.insert(pane)
+            isUpdatingDisclosure = true
+            selectedTab = .context
+            isUpdatingDisclosure = false
+        } else {
+            expandedKnowledge.remove(pane)
+        }
+    }
 
     func select(_ tab: MacChatInspector.InspectorTab, isVisible: Bool) -> Bool {
         let remainsVisible = !isVisible || selectedTab != tab || !expandedSections.contains(tab)
@@ -38,7 +67,7 @@ final class MacInspectorNavigationState: ObservableObject {
         let pane = MacInspectorKnowledgePane(rawValue: rawValue)
         selectedTab = pane == nil ? (MacChatInspector.InspectorTab(rawValue: rawValue) ?? .overview) : .context
         knowledgePane = pane ?? .points
-        expandedKnowledge.insert(knowledgePane)
+        if let pane { expandedKnowledge.insert(pane) }
         expandedSections.insert(selectedTab)
         revealedKnowledge = pane
     }
@@ -46,8 +75,15 @@ final class MacInspectorNavigationState: ObservableObject {
 
 struct MacChatInspector: View {
     enum InspectorTab: String, CaseIterable, Identifiable {
-        case overview, review, artifacts, progress, goal, context, execution, participants
+        case overview, progress, goal, review, artifacts, context, execution, participants
         var id: String { rawValue }
+        var area: InspectorArea {
+            switch self {
+            case .overview, .progress, .goal: .task
+            case .review, .artifacts: .artifacts
+            case .context, .execution, .participants: .context
+            }
+        }
         var title: String {
             switch self {
             case .overview: String(localized: "Overview")
@@ -56,8 +92,8 @@ struct MacChatInspector: View {
             case .progress: String(localized: "inspector.progress", table: "ConversationInspector")
             case .goal: String(localized: "Goal")
             case .context: String(localized: "Context")
-            case .execution: String(localized: "Execution")
-            case .participants: String(localized: "chat.expert_sessions", table: "Chat")
+            case .execution: String(localized: "inspector.section.execution", table: "ConversationInspector")
+            case .participants: String(localized: "Participants")
             }
         }
         var iconAsset: String {
@@ -82,12 +118,26 @@ struct MacChatInspector: View {
         }
     }
 
+    enum InspectorArea: String, CaseIterable, Identifiable {
+        case task, artifacts, context
+        var id: String { rawValue }
+        var title: String {
+            switch self { case .task: String(localized: "Task"); case .artifacts: String(localized: "Artifacts"); case .context: String(localized: "Context") }
+        }
+        var icon: String {
+            switch self { case .task: "nola-progress"; case .artifacts: "nola-artifacts"; case .context: "nola-file" }
+        }
+        var sections: [InspectorTab] {
+            switch self { case .task: [.overview, .progress, .goal]; case .artifacts: [.review, .artifacts]; case .context: [.context, .execution, .participants] }
+        }
+    }
+
     @Bindable var model: MacWorkspaceModel
     let hostDisplayName: String
     private let close: (() -> Void)?
     private let showsHeaderNavigation: Bool
+    private let expertHistory: AnyView
     private let participants: [MacInspectorParticipant]
-    private let expertSessions: AnyView?
     private let canReadLocalFiles: Bool
     private let inspectFile: (MacCodeReference) -> Void
     private let openReview: (URL) -> Void
@@ -113,7 +163,7 @@ struct MacChatInspector: View {
         close: (() -> Void)? = nil,
         showsHeaderNavigation: Bool = false,
         participants: [MacInspectorParticipant] = [],
-        expertSessions: AnyView? = nil,
+        expertHistory: AnyView = AnyView(EmptyView()),
         canReadLocalFiles: Bool = false,
         inspectFile: @escaping (MacCodeReference) -> Void = { _ in },
         openReview: @escaping (URL) -> Void = { _ in }
@@ -122,8 +172,8 @@ struct MacChatInspector: View {
         self.hostDisplayName = hostDisplayName
         self.close = close
         self.showsHeaderNavigation = showsHeaderNavigation
+        self.expertHistory = expertHistory
         self.participants = participants
-        self.expertSessions = expertSessions
         self.canReadLocalFiles = canReadLocalFiles
         self.inspectFile = inspectFile
         self.openReview = openReview
@@ -141,20 +191,48 @@ struct MacChatInspector: View {
             inspectorHeader
                 .padding(.horizontal, 12)
                 .frame(height: 44)
+                .fixedSize(horizontal: false, vertical: true)
+                .layoutPriority(1)
                 .overlay(alignment: .bottom) {
                     Rectangle()
                         .fill(MacDesignColor.borderSubtle)
                         .frame(height: 0.5)
                 }
+            // Separate retained reading surfaces preserve scroll and editor
+            // drafts. Only the selected area is visible and interactive.
+            ZStack(alignment: .top) {
+                ForEach(InspectorArea.allCases) { area in
+                    inspectorRegion(area)
+                        .opacity(selectedTab.area == area ? 1 : 0)
+                        .allowsHitTesting(selectedTab.area == area)
+                        .disabled(selectedTab.area != area)
+                        .accessibilityHidden(selectedTab.area != area)
+                }
+            }
+            .frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
+            .clipped()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(MacDesignColor.inspector.ignoresSafeArea())
+        .onReceive(
+            NotificationCenter.default.publisher(for: .macChromeBridgeStatusDidChange)
+                .receive(on: RunLoop.main)
+        ) { _ in chrome.refresh() }
+        .onReceive(
+            NotificationCenter.default.publisher(for: .macChromeSetupAssistanceRequested)
+                .receive(on: RunLoop.main)
+        ) { _ in chrome.refresh(); selectedTab = .execution }
+    }
+
+    private func inspectorRegion(_ area: InspectorArea) -> some View {
             ScrollViewReader { reader in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
-                        ForEach(InspectorTab.allCases) { section in
+                        ForEach(area.sections) { section in
                             DisclosureGroup(isExpanded: Binding(
                                 get: { navigation.expandedSections.contains(section) },
                                 set: { expanded in
-                                    if expanded { navigation.expandedSections.insert(section) }
-                                    else { navigation.expandedSections.remove(section) }
+                                    navigation.setExpanded(section, expanded)
                                 }
                             )) {
                                 inspectorContent(section)
@@ -164,9 +242,8 @@ struct MacChatInspector: View {
                                     .font(.system(size: 13, weight: .semibold))
                                     .frame(minHeight: 32, alignment: .leading)
                             }
-                            .disclosureGroupStyle(MacRowDisclosureStyle())
+                            .disclosureGroupStyle(MacRowDisclosureStyle(toggleIdentifier: "mac-inspector-section-" + section.rawValue, isPlain: true))
                             .id(section.rawValue)
-                            .accessibilityIdentifier("mac-inspector-section-" + section.rawValue)
                             .padding(.horizontal, 4)
                             Divider().opacity(0.5)
                         }
@@ -176,51 +253,33 @@ struct MacChatInspector: View {
                 .task(id: navigation.revealRevision) {
                     // Wait for newly expanded content to enter the layout tree.
                     await Task.yield()
-                    guard !Task.isCancelled else { return }
+                    guard !Task.isCancelled, selectedTab.area == area else { return }
                     withAnimation(reduceMotion ? nil : .smooth(duration: 0.24)) {
                         reader.scrollTo(navigation.revealID, anchor: .top)
                     }
                 }
-                .animation(reduceMotion ? nil : .smooth(duration: 0.22), value: navigation.expandedSections)
             }
-        }
-        .background(MacDesignColor.inspector.ignoresSafeArea())
-        .onReceive(
-            NotificationCenter.default.publisher(for: .macChromeBridgeStatusDidChange)
-                .receive(on: RunLoop.main)
-        ) { _ in
-            chrome.refresh()
-        }
-        .onReceive(
-            NotificationCenter.default.publisher(for: .macChromeSetupAssistanceRequested)
-                .receive(on: RunLoop.main)
-        ) { _ in
-            chrome.refresh()
-            selectedTab = .context
-        }
-
+            .accessibilityIdentifier("mac-inspector-region-" + area.rawValue)
     }
 
     @ViewBuilder
     func inspectorContent(_ section: InspectorTab) -> some View {
         switch section {
-        case .overview: MacInspectorDecisionOverview(model: model, select: { selectedTab = $0 })
+        case .overview: MacInspectorOverviewHeader(model: model, hostDisplayName: hostDisplayName)
         case .review: MacInspectorReviewView(model: model, openReview: openReview)
         case .artifacts: MacInspectorArtifactsView(model: model, canReadLocalFiles: canReadLocalFiles, inspectFile: inspectFile)
         case .progress: MacInspectorProgressView(model: model, mode: .progress)
         case .goal: MacInspectorProgressView(model: model, mode: .goal, draftStore: navigation.goalDrafts)
         case .execution:
             MacInspectorProgressView(model: model, mode: .execution)
-            MacInspectorActivityView(model: model, chromeSnapshot: chrome.snapshot)
+            MacInspectorBrowserView(model: model, chrome: chrome)
         case .participants:
-            if let expertSessions { expertSessions }
-            else { MacInspectorParticipantsView(participants: participants) }
+            MacInspectorParticipantsView(participants: participants)
+            expertHistory
         case .context:
             MacInspectorWorkingContextView(model: model)
-            MacInspectorOverviewHeader(model: model, hostDisplayName: hostDisplayName)
             MacInspectorContextSummaryView(model: model)
             MacInspectorKnowledgeView(model: model, navigation: navigation)
-            MacInspectorBrowserView(model: model, chrome: chrome)
             MacInspectorDataSourcesView(model: model, dataRegistry: dataRegistry,
                 platformData: platformData, webSources: webSources)
         }
@@ -228,8 +287,9 @@ struct MacChatInspector: View {
 
     private var inspectorHeader: some View {
         HStack(spacing: 8) {
-            Text(String(localized: "Conversation"))
+            Text(selectedTab.area.title)
                 .font(.system(size: 13, weight: .semibold))
+                .accessibilityIdentifier("mac-inspector-area-title")
             Spacer()
             if showsHeaderNavigation {
                 MacConversationInspectorButtons(selection: selectedTab, isVisible: true) { tab in

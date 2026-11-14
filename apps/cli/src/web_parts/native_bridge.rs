@@ -379,6 +379,13 @@ fn mobile_agent_settings_response(request: &Request) -> Response<Box<dyn Read + 
     let Some(token) = mobile_bearer_token(request) else {
         return json_response(StatusCode(401), json!({"error": "unauthorized"}));
     };
+    let read_epoch=|| -> Result<String,String> {
+        crate::application_port::CliApplicationPort::persistent_default()?.execute(nola_application::ApplicationCommand::ReadUiAuthority)
+    };
+    let source_store_epoch=match read_epoch() {
+        Ok(epoch)=>epoch,
+        Err(_)=>return mobile_encrypted_json_response(StatusCode(503),json!({"code":"source_unavailable"}),&token),
+    };
     let (model_profiles, default_chat_model_resolution, default_chat_model_revision) = match NolaStore::open_default()
         .and_then(|store| {
             let profiles = mobile_model_profile_catalog(&store)?;
@@ -405,6 +412,9 @@ fn mobile_agent_settings_response(request: &Request) -> Response<Box<dyn Read + 
         Ok(settings) => settings,
         Err(error) => return json_response(StatusCode(500), json!({"error":error})),
     };
+    if read_epoch().ok().as_ref()!=Some(&source_store_epoch) {
+        return mobile_encrypted_json_response(StatusCode(409),json!({"code":"room_source_epoch_changed"}),&token);
+    }
     {
         // This status-only projection does not request any Skill capability.
         let computer_tools = crate::tools::tool_schemas_with_skills(
@@ -423,6 +433,7 @@ fn mobile_agent_settings_response(request: &Request) -> Response<Box<dyn Read + 
         mobile_encrypted_json_response(
             StatusCode(200),
             json!({
+                "source_store_epoch": source_store_epoch,
                 "skills": builtin_skills::merged_catalog(
                     &settings.builtin_skill_overrides,
                     &settings.uploaded_skills,
@@ -2522,6 +2533,9 @@ fn chat_agent_stream_response_body_with_room_retry(
         Ok(None)=>return json_response(StatusCode(409),json!({"code":"source_admission_pending","error":"The original source admission remains owned; observe its exact receipt."})),
         Err(_)=>return json_response(StatusCode(409),json!({"code":"source_admission_unknown","error":"Source admission ownership is unavailable; no request was dispatched."})),
     };
+    if let Err(error) = validate_web_in_place_resend(&body) {
+        return json_response(StatusCode(409),json!({"code":"in_place_resend_rejected","error":error}));
+    }
     let edited_prepared=match web_prepared_edited_resend(&body) {
         Ok(value)=>value,
         Err(error)=>return json_response(StatusCode(409),json!({"code":"edited_resend_rejected","error":error})),
@@ -2944,23 +2958,12 @@ fn chat_agent_stream_response_body_with_room_retry(
             _ => None,
         })
         .unwrap_or_default();
-    if should_persist_trace && edited_prepared.is_none() {
-        let visible_user_text = body
-            .get("current_user_display_text")
-            .and_then(Value::as_str)
-            .unwrap_or(external_prompt.as_str());
-        if let Err(error) =
-            adopt_first_message_conversation_title(&host_session_id, visible_user_text)
-        {
-            return json_response(
-                StatusCode(500),
-                json!({
-                    "error": error,
-                    "code": "conversation_metadata_commit_failed"
-                }),
-            );
-        }
-    }
+    // Keep presentation intent until an exact canonical source receipt proves
+    // admission. Preflight success, transport success, and model success do not.
+    let first_message_title_text = (should_persist_trace && edited_prepared.is_none()).then(|| {
+        body.get("current_user_display_text").and_then(Value::as_str)
+            .unwrap_or(external_prompt.as_str()).to_owned()
+    });
 
     let mut agent_config = config.clone();
     if execution_backend != "nola" { agent_config.runtime.memory_enabled = external_memory; }
@@ -2994,6 +2997,10 @@ fn chat_agent_stream_response_body_with_room_retry(
     agent_config.expected_parent_message_id = expected_parent_message_id;
     agent_config.host_user_message_id = user_message_id;
     agent_config.host_assistant_message_id = assistant_message_id;
+    agent_config.main_expert_selection = match crate::native_host_request::decode_main_expert_selection(&body) {
+        Ok(value)=>value,
+        Err(error)=>return json_response(StatusCode(400),json!({"code":"invalid_main_expert_selection","error":error})),
+    };
     agent_config.execution_backend = execution_backend;
     agent_config.external_execution_session_id = trimmed_string_field(&body, "external_session_id");
     agent_config.external_execution_model = trimmed_string_field(&body, "execution_model");
@@ -3212,6 +3219,10 @@ fn chat_agent_stream_response_body_with_room_retry(
         let usage_conversation_id = host_session_id.clone();
         let event_source_host_id = host_id.clone();
         let event_receipt = Arc::clone(&receipt_fence);
+        let admitted_title_text=first_message_title_text.clone();
+        let admitted_title_identity=dispatch.identity.clone();
+        let admitted_title_digest=dispatch.digest.clone();
+        let mut title_adoption_attempted=false;
         let mut journal_notifications = None;
         let mut emitter = crate::native_runtime_output::NativeRuntimeOutput::with_event_sink(move |mut event| {
             if event_receipt
@@ -3219,6 +3230,15 @@ fn chat_agent_stream_response_body_with_room_retry(
                 .is_err()
             {
                 return;
+            }
+            if !title_adoption_attempted {
+                title_adoption_attempted=true;
+                if let Some(text)=admitted_title_text.as_deref() {
+                    // The receipt fence above observes a committed canonical
+                    // admission, so a long-running response gets its title now.
+                    // The post-pump check below also covers early provider errors.
+                    let _=adopt_first_message_conversation_title_after_admission(&admitted_title_identity,&admitted_title_digest,text);
+                }
             }
             if let Some(owner) = &observation_owner {
                 let _ = bind_observed_worker(owner);
@@ -3294,6 +3314,7 @@ fn chat_agent_stream_response_body_with_room_retry(
         }));
         let dispatch_started = std::time::Instant::now();
         let run_result = agent_config.host_invocation_request().and_then(|mut request| {
+            request.runtime.expert_template_authority=Some(expert_host_authority());
             if let Some(operation)=&edited_operation {
                 request.session.edited_resend_operation_id=Some(operation.clone());
                 request.runtime.expert_template_authority=Some(expert_host_authority());
@@ -3317,6 +3338,17 @@ fn chat_agent_stream_response_body_with_room_retry(
                     ContextPlatform::Web, Vec::new(), execution_cancellation, &mut emitter)
             }
         });
+        if let Some(visible_text)=first_message_title_text.as_deref() {
+            if let Err(error)=adopt_first_message_conversation_title_after_admission(&dispatch.identity,&dispatch.digest,visible_text) {
+                // The Run may already be admitted and fail at the provider.
+                // Title metadata must neither turn that admission into failure
+                // nor be written from an unconfirmed source request.
+                llm::log_local_debug_payload("mobile_title_adoption_deferred",&json!({
+                    "conversation_id":dispatch.identity.conversation_id,
+                    "error":crate::session::redact_sensitive_text(&error),
+                }));
+            }
+        }
         // Keep the exact dispatch owner and outcome before transport settlement.
         // This is diagnostic evidence, never proof of a canonical terminal.
         llm::log_local_debug_payload("mobile_host_dispatch_returned", &json!({
@@ -3339,7 +3371,7 @@ fn chat_agent_stream_response_body_with_room_retry(
                     "type": "error",
                     "message": err,
                     "error": err,
-                    "code": "agent_core_failed"
+                    "code": crate::native_runtime_output::main_expert_admission_error_code(&err).unwrap_or("agent_core_failed")
                 }),
                 mobile_crypto_token.as_deref(),
             ));

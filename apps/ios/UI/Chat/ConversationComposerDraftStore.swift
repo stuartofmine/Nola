@@ -132,12 +132,14 @@ struct ConversationComposerDraftStore {
     nonisolated struct Submission: Sendable {
         let ticket: ConversationDraftSubmissionTicket?
         let repository: (any ConversationDraftRepository)?
+        let originalDraft: Draft
         func committed() throws { if let ticket { try repository?.commitSubmission(ticket) } }
     }
 
     mutating func prepareSubmission(to conversationID: UUID, identity: IOSCanonicalAgentTurnIdentity,
                                     configurationRevision: Int64?) throws -> Submission {
         try validateForSubmission()
+        let originalDraft = current
         let ticket = try repository?.stageSubmission(owner: selected, conversationID: conversationID,
             userMessageID: identity.visibleUserMessageID, configurationRevision: configurationRevision, draft: current)
         drafts[selected] = nil
@@ -145,7 +147,24 @@ struct ConversationComposerDraftStore {
         selected = .conversation(conversationID)
         drafts[selected] = Draft()
         persist(selected)
-        return Submission(ticket: ticket, repository: repository)
+        return Submission(ticket: ticket, repository: repository, originalDraft: originalDraft)
+    }
+
+    /// Call only after a closed pre-admission rejection and canonical absence.
+    /// A newer draft is never replaced, including edits from another scene.
+    mutating func restoreRejectedSubmission(_ submission: Submission, conversationID: UUID) throws -> Bool {
+        let owner = Owner.conversation(conversationID)
+        let current = drafts[owner]
+        if let current, !current.text.isEmpty || !current.attachments.isEmpty { return false }
+        let stored = try repository?.load(owner)
+        if let stored, !stored.text.isEmpty || !stored.attachments.isEmpty { return false }
+        var draft = submission.originalDraft
+        draft.configuration = current?.configuration ?? stored?.configuration ?? draft.configuration
+        draft.restored = true
+        try repository?.save(draft, owner: owner)
+        drafts[owner] = draft
+        if let ticket = submission.ticket { try submission.repository?.retireRejectedSubmission(ticket) }
+        return true
     }
 
     @discardableResult

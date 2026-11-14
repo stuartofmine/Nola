@@ -20,7 +20,7 @@ nonisolated enum MacApplicationPortError: LocalizedError, Equatable {
         case .invalidResponse:
             String(localized: "The Nola application service returned an invalid response.")
         case let .rejected(message):
-            message
+            AppleMainExpertDispatchRejection(rawValue: message)?.localizedDescription ?? message
         }
     }
 }
@@ -4412,6 +4412,11 @@ nonisolated final class MacApplicationPort:
         let response = try serviceClient.execute(
             commandData: JSONEncoder().encode(AppleUISubmitCommand(input: input)), requestID: requestID)
         return try JSONDecoder().decode(AppleUIInteractionReceipt<MacCanonicalJSONValue>.self, from: response)
+    }
+
+    func prepareInPlaceResend(_ input: ApplePrepareInPlaceResend) throws -> ApplePreparedInPlaceResend {
+        struct Command: Encodable { let type = "prepare_in_place_resend"; let input: ApplePrepareInPlaceResend }
+        return try execute(Command(input: input))
     }
 
     func prepareEditedResend(_ input: ApplePrepareEditedResend) throws -> ApplePreparedEditedResend<MacCanonicalJSONValue> {

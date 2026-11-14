@@ -38,6 +38,19 @@ internal fun readConversationParameters(stored: String?, model: ModelInfo): Mode
     return readParameterFields(fields, root["clientModelPresentation"]?.jsonObject?.get(key)?.jsonObject)
 }
 
+/** Core's expert defaults can contain sparse overrides (for example an exact effort).
+ * Resolve those over the exact admitted profile, rather than discarding the entire
+ * override when it lacks unrelated numeric controls. */
+internal fun readExpertConversationParameters(settings: JsonObject, model: ModelInfo, declared: JsonObject): ModelParameters {
+    val key = conversationParameterKey(model)
+    val overrides = (settings["modelOverrides"] as? JsonObject)?.get(key) as? JsonObject ?: JsonObject(emptyMap())
+    val defaults = Json { encodeDefaults = true }.encodeToJsonElement(ModelParameters.serializer(), ModelParameters()).jsonObject
+    val fields = JsonObject(defaults + declared + overrides)
+    val presentation=JsonObject(declared.filterKeys { it in setOf("customSystemPrompt","responseStyle","showThinking","enableRetrieval","streamOutput") } +
+        ((settings["clientModelPresentation"] as? JsonObject)?.get(key) as? JsonObject).orEmpty())
+    return checkNotNull(readParameterFields(fields, presentation))
+}
+
 internal fun readHostParameters(stored: String?): ModelParameters? {
     val root = stored?.let { Json.parseToJsonElement(it).jsonObject } ?: return null
     return readParameterFields(root["clientHostParameters"] as? JsonObject ?: return null,

@@ -204,6 +204,32 @@ private nonisolated final class GuidedSiwcFixture: MacSiwcAccountTransport, @unc
         }
         XCTFail("Sign-in did not settle")
     }
+    func testSignInDismissalWaitsForCancellationAcknowledgement() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = try MacApplicationPort(databaseURL: root.appendingPathComponent("fixture.sqlite"))
+        let transport = GuidedSiwcFixture()
+        let model = MacSiwcSignInModel(account: nil, openBrowser: { _ in true },
+            pollInterval: .seconds(30), makeBridge: { _ in transport })
+        XCTAssertFalse(model.requiresConfirmedDismissal)
+        model.begin(application: app, name: "Fixture")
+        XCTAssertTrue(model.requiresConfirmedDismissal)
+        for _ in 0..<100 {
+            if model.flow?.phase == "awaiting_authorization" { break }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        XCTAssertEqual(model.flow?.phase, "awaiting_authorization")
+        XCTAssertTrue(model.requiresConfirmedDismissal)
+        model.cancel()
+        XCTAssertTrue(model.requiresConfirmedDismissal, "Closing must wait for the private bridge acknowledgement")
+        try await waitUntilIdle(model)
+        XCTAssertTrue(model.cancellationConfirmed)
+        XCTAssertFalse(model.requiresConfirmedDismissal)
+        XCTAssertEqual(transport.calls().filter { $0 == "cancel" }.count, 1)
+        XCTAssertFalse(transport.calls().contains("finish"))
+        model.close()
+    }
+
     func testGuidedSignInOpensBrowserOnceSavesOnceAndLoadsModelsOnExplicitChoice() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

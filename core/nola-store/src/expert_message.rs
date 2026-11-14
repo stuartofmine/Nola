@@ -489,7 +489,7 @@ pub(crate) fn record_child_send(
         &key("child", (&input.conversation_id, &input.run_id))?,
     )?
     else {
-        return Ok(());
+        return peer_send::record_peer_send(connection,input);
     };
     let source_key = key("source", (&conversation, &message))?;
     let mut manifest: ExpertMessageManifest = read(connection, &source_key)?
@@ -508,6 +508,18 @@ pub(crate) fn record_child_send(
         })?;
     let expected_instructions = &captured_instructions[entry_index];
     let entry = &mut manifest.entries[entry_index];
+    let (witness,instructions,config)=validate_consumed_entry(connection,input,entry,expected_instructions,&manifest.input.text,true)?;
+    bind_consumed_receipt(connection,input,entry,&manifest.input.room_id,
+        Some((&manifest.input.conversation_id,&manifest.input.user_message_id)),&config)?;
+    entry.model_witness = Some(witness);
+    entry.instruction_witness = Some(instructions);
+    connection.execute("UPDATE product_settings SET value_json=?2,revision=revision+1,updated_at_ms=?3 WHERE key=?1",params![source_key,serde_json::to_string(&manifest)?,input.created_at_ms])?;
+    Ok(())
+}
+
+fn validate_consumed_entry(connection:&Connection,input:&BeginTurnInput,entry:&ExpertMessageEntry,
+    expected_instructions:&[ExpertPromptDefinition],expected_text:&str,allow_resend:bool)
+    -> StoreResult<(MessageSendWitness,ExpertInstructionWitness,serde_json::Value)> {
     let protected_resend: Option<nola_domain::edited_resend::PreparedEditedResend> = read(
         connection,
         &format!(
@@ -515,12 +527,12 @@ pub(crate) fn record_child_send(
             Sha256::digest(serde_json::to_vec(&input.conversation_id)?)
         ),
     )?;
-    let fresh_resend = protected_resend
+    let fresh_resend = allow_resend && protected_resend
         .as_ref()
         .is_some_and(|p| p.run_id == input.run_id && p.user_message_id == input.user_message_id);
     if input.user_message_id != entry.child_user_message_id
         || input.assistant_message_id != entry.child_assistant_message_id
-        || input.user_text != manifest.input.text
+        || input.user_text != expected_text
         || input.user_part_kind != "text"
         || input.user_content_json.is_some()
         || !input.additional_user_parts.is_empty()
@@ -704,11 +716,16 @@ pub(crate) fn record_child_send(
             "expert_message_child_witness_conflict".into(),
         ));
     }
+    Ok((witness,instructions,config))
+}
+
+fn bind_consumed_receipt(connection:&Connection,input:&BeginTurnInput,entry:&ExpertMessageEntry,
+    room_id:&str,expected_parent:Option<(&str,&str)>,config:&serde_json::Value)->StoreResult<()> {
     // Real Begin admission is the shared execution ownership boundary, including
     // trusted Host adapters which enter through the ordinary prepared factory.
     let receipt_key = format!(
         "agent_room_submission/{}/{}",
-        manifest.input.room_id, input.run_id
+        room_id, input.run_id
     );
     let raw: Option<String> = connection
         .query_row(
@@ -722,7 +739,7 @@ pub(crate) fn record_child_send(
             StoreError::Invariant("expert_message_actual_receipt_missing".into())
         })?)?;
     if receipt.pointer("/input/room_id").and_then(|v| v.as_str())
-        != Some(manifest.input.room_id.as_str())
+        != Some(room_id)
         || receipt
             .pointer("/input/submission_id")
             .and_then(|v| v.as_str())
@@ -738,11 +755,11 @@ pub(crate) fn record_child_send(
         || receipt
             .pointer("/input/conversation_id")
             .and_then(|v| v.as_str())
-            != Some(manifest.input.conversation_id.as_str())
+            != expected_parent.map(|value|value.0)
         || receipt
             .pointer("/input/parent_message_id")
             .and_then(|v| v.as_str())
-            != Some(manifest.input.user_message_id.as_str())
+            != expected_parent.map(|value|value.1)
         || receipt
             .get("context_conversation_id")
             .and_then(|v| v.as_str())
@@ -765,7 +782,7 @@ pub(crate) fn record_child_send(
             "SELECT value_json FROM product_settings WHERE key=?1",
             [format!(
                 "agent_room_execution/{}/{}",
-                manifest.input.room_id, input.run_id
+                room_id, input.run_id
             )],
             |r| r.get(0),
         )
@@ -893,9 +910,6 @@ pub(crate) fn record_child_send(
         receipt["revision"] = serde_json::json!(revision);
         connection.execute("UPDATE product_settings SET value_json=?2,revision=revision+1,updated_at_ms=?3 WHERE key=?1",params![receipt_key,serde_json::to_string(&receipt)?,input.created_at_ms])?;
     }
-    entry.model_witness = Some(witness);
-    entry.instruction_witness = Some(instructions);
-    connection.execute("UPDATE product_settings SET value_json=?2,revision=revision+1,updated_at_ms=?3 WHERE key=?1",params![source_key,serde_json::to_string(&manifest)?,input.created_at_ms])?;
     Ok(())
 }
 
@@ -1019,3 +1033,5 @@ pub(crate) fn validate_prepared_instructions(
     }
     Ok(())
 }
+
+mod peer_send;

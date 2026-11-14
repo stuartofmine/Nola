@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
-# Real product UI: cancel/edit/resend, branch follow-up, cold restore and long streaming.
+# Real product UI: cancel/edit/resend, same-conversation follow-up, cold restore and long streaming.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/scripts/lib/xcode_test_device_guard.sh"

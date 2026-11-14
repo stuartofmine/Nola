@@ -122,9 +122,9 @@ pub(crate) fn reconcile_bound_supervised_tasks(owner_scope_id: Option<&str>, pro
 }
 
 fn supervisor_config_binding_key(config: &HostInvocationRequest) -> String {
-    config.session.permission_scope_id
+    config.session.session_id
         .as_deref()
-        .or(config.session.session_id.as_deref())
+        .or(config.session.permission_scope_id.as_deref())
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| format!("scope:{value}"))
@@ -188,6 +188,9 @@ mod supervisor_binding_registry_tests {
 pub const fn runtime_tool_ids() -> &'static [&'static str] {
     &[
         "spawn_agent",
+        "delegate_expert",
+        // Replay only: never advertised to new model invocations.
+        "expert_exchange",
         "list_tasks",
         "read_task",
         "wait_task",
@@ -2722,6 +2725,7 @@ pub fn execute_runtime_task_tool(
     context: &ToolContext,
 ) -> Option<RuntimeToolResult> {
     match name {
+        "delegate_expert" | "expert_exchange" => Some(execute_expert_task_tool(config, request, context)),
         "spawn_agent" => Some(spawn_agent(config, request, owner_session_id, call_id, args)),
         "list_tasks" => Some(RuntimeToolResult::completed(list_tasks(config))),
         "read_task" => Some(RuntimeToolResult::completed(read_task(
@@ -3098,7 +3102,7 @@ fn spawn_agent(
                 ..nola_core::agent::TaskLineage::default()
             },
         }),
-        task_update: None,
+        task_update: None, pending_error: None,
     }
 }
 

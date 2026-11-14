@@ -332,6 +332,7 @@ pub(crate) fn builtin_permission_contract(name: &str, read_only: bool) -> Permis
         // This only creates a child Task owned by the current conversation.
         // Its model profile, owner binding and every child tool are admitted
         // independently; this is not authority to execute the child's work.
+        "delegate_expert" | "expert_exchange" => PermissionOperationContract {risk:PermissionOperationRisk::OrdinaryRead, ..Default::default()},
         "spawn_agent" => PermissionOperationContract {risk:PermissionOperationRisk::NewFile, ..Default::default()},
         // These fixed-schema retrieval adapters do not accept an arbitrary
         // HTTP method, request body, upload or external-message operation.
@@ -339,7 +340,7 @@ pub(crate) fn builtin_permission_contract(name: &str, read_only: bool) -> Permis
         "web_search" | "web_fetch" => PermissionOperationContract {risk:PermissionOperationRisk::OrdinaryRead, ..Default::default()},
         // Controls declare state or ask the owner; neither grants authority to
         // execute a subsequent external operation.
-        "request_user_input" | "goal_complete" => PermissionOperationContract {risk:PermissionOperationRisk::OrdinaryRead, ..Default::default()},
+        "request_user_input" | "goal_complete" | "skill_update" | "skill_skip" | "sop_run_update" => PermissionOperationContract {risk:PermissionOperationRisk::OrdinaryRead, ..Default::default()},
         _ => {
             let domain = nola_core::agent::tool_permission_domain(name);
             let sensitive = domain.as_deref().is_some_and(|domain| matches!(domain,
@@ -1028,6 +1029,33 @@ mod tests {
         assert_eq!(builtin_permission_contract("delete_file", false).risk, PermissionOperationRisk::Delete);
         assert_eq!(builtin_permission_contract("browser_start", false).risk, PermissionOperationRisk::Unknown);
     }
+    #[test]
+    fn internal_skill_progress_keeps_its_transaction_without_prompting_for_external_access() {
+        use nola_core::agent::permissions::{PermissionRuleSet,PermissionSubject};
+        use nola_core::agent::protocol::AgentInputOrigin;
+        for name in ["skill_update", "skill_skip", "sop_run_update"] {
+            let contract = builtin_permission_contract(name, false);
+            assert_eq!(contract.risk, PermissionOperationRisk::OrdinaryRead);
+            assert!(!contract.risk.requires_confirmation());
+            assert!(contract.resource_plan.is_none());
+            let subject = PermissionSubject { capability: name.into(), resource: "current-skill".into() };
+            let rules = PermissionRuleSet::default().with_profile(nola_domain::PermissionProfile::Cautious);
+            assert_eq!(rules.evaluate_resolved_for_origin_with_explanation(
+                &subject, AgentInputOrigin::InteractiveUser, false).decision, nola_domain::PermissionPolicyDecision::Allow);
+        }
+        for decision in [nola_domain::PermissionPolicyDecision::Ask, nola_domain::PermissionPolicyDecision::Deny] {
+            let mut rules = PermissionRuleSet::default().with_profile(nola_domain::PermissionProfile::Cautious);
+            rules.rules.push(nola_core::agent::permissions::PermissionRule {
+                capability_pattern: "skill_update".into(), resource_pattern: "*".into(),
+                decision, source: nola_core::agent::permissions::PermissionRuleSource::UserGlobal,
+            });
+            let subject = PermissionSubject { capability: "skill_update".into(), resource: "current-skill".into() };
+            assert_eq!(rules.evaluate_resolved_for_origin_with_explanation(&subject, AgentInputOrigin::InteractiveUser, false).decision, decision);
+        }
+        assert!(builtin_permission_contract("unknown_mutation", false).risk.requires_confirmation());
+        assert!(builtin_permission_contract("delete_file", false).risk.requires_confirmation());
+    }
+
     #[test]
     fn fixed_http_retrieval_contracts_are_not_upload_or_message_tools() {
         for capability in ["web_fetch", "web_search"] {

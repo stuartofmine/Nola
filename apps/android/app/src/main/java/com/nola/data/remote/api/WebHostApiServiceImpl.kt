@@ -27,6 +27,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlinx.serialization.json.decodeFromJsonElement
 import java.net.URI
 import java.security.MessageDigest
@@ -46,6 +49,14 @@ class WebHostApiServiceImpl @Inject constructor(
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
+    }
+
+    override suspend fun expertMessageCommand(hostBaseUrl: String, token: String, operation: String, request: JsonObject,
+        pinnedCertificateSha256: String): JsonObject {
+        require(operation in setOf("parent", "admit", "manifest"))
+        return postEncryptedWebHostRequest(httpClientFactory.controlClientFor(hostBaseUrl, pinnedCertificateSha256),
+            webHostMobileUrl(hostBaseUrl, "chat/expert-messages/$operation"), token, request,
+            maximumRequestBytes = 4 * 1024 * 1024, maximumResponseBytes = 8 * 1024 * 1024)
     }
 
     override suspend fun goalControl(hostBaseUrl: String, token: String, request: JsonObject,
@@ -331,12 +342,20 @@ class WebHostApiServiceImpl @Inject constructor(
     }
 }
 
-class WebHostStatusException(val statusCode: Int, val errorCode: String? = null) :
+class WebHostStatusException(val statusCode: Int, val errorCode: String? = null, val expertRejection: JsonObject? = null) :
     IllegalStateException("Web Host request failed ($statusCode)" + (errorCode?.let { ": $it" } ?: ""))
 
 internal fun boundedWebHostErrorCode(error: JsonObject): String? =
     (error["code"] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content
         ?.takeIf { it.matches(Regex("[a-z][a-z0-9_]{0,95}")) }
+
+/** Only bounded source identities are retained; arbitrary Host error text is never journaled. */
+internal fun boundedExpertRejection(value: JsonObject): JsonObject? {
+    if (value["code"] != JsonPrimitive("expert_admission_rejected") || value["definitive_rejection"] != JsonPrimitive(true)) return null
+    val fields = listOf("host_id", "client_id", "conversation_id", "submission_id", "user_message_id")
+    if (fields.any { key -> (value[key] as? JsonPrimitive)?.let { !it.isString || it.content.isBlank() || it.content.length > 512 || it.content.any(Char::isISOControl) } != false }) return null
+    return buildJsonObject { put("code", "expert_admission_rejected"); put("definitive_rejection", true); fields.forEach { put(it, value.getValue(it)) } }
+}
 
 /** Shared production control transport; a 4xx is never a successful absence. */
 internal suspend fun postEncryptedWebHostRequest(client: HttpClient, url: String, token: String,
@@ -353,15 +372,18 @@ internal suspend fun postEncryptedWebHostRequest(client: HttpClient, url: String
     }.execute { response ->
         if (response.status.value !in 200..299) {
             // Only an authenticated, bounded protocol code is exposed; never log arbitrary Host text.
+            var expertRejection: JsonObject? = null
             val code = try {
                 val errorBytes = response.bodyAsChannel().readRemaining(16_385).readBytes()
                 require(errorBytes.size <= 16_384)
                 val errorEnvelope = Json.decodeFromString<EncryptedEnvelope>(errorBytes.decodeToString(throwOnInvalidSequence = true))
-                boundedWebHostErrorCode(MobileCrypto.decryptJsonObject(errorEnvelope, token))
+                val error = MobileCrypto.decryptJsonObject(errorEnvelope, token)
+                expertRejection = boundedExpertRejection(error)
+                boundedWebHostErrorCode(error)
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (_: Exception) { null }
-            throw WebHostStatusException(response.status.value, code)
+            throw WebHostStatusException(response.status.value, code, expertRejection)
         }
         // Read at most one byte beyond the wire budget, including chunked responses.
         // Streaming execute also closes the response when validation throws.

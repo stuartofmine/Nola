@@ -4,6 +4,9 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.AlertDialog
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -41,8 +44,6 @@ import androidx.compose.ui.unit.dp
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import com.nola.R
-import com.nola.ui.components.formattedToolDetail
-import com.nola.ui.components.toolDetailExcerpt
 import com.nola.ui.components.ThinkingBody
 import com.nola.ui.components.thinkingExpandedAfterStatusChange
 import com.nola.ui.components.ThinkingBodyVisibleCharactersKey
@@ -67,35 +68,39 @@ internal fun CanonicalActivityCards(
     onReadText: (CanonicalPartTextSnapshot) -> Unit,
     thinkingEnabled: Boolean = true,
 ) {
-    // All message activities retain their relative canonical order in one disclosure.
-    require(parts.all(::isExecutionActivity))
+    // Callers pass a contiguous canonical segment. Keep steps in that order.
+    require(parts.all { it is ConversationProjectionV1.Part.Reasoning || it is ConversationProjectionV1.Part.Tool })
     val activity = parts
-    val visible = visibleExecutionActivities(activity, isLive, thinkingEnabled)
+    val placeholderId = visibleReasoningPlaceholderId(activity, isLive)
+    val visible = activity.filter { it !is ConversationProjectionV1.Part.Reasoning ||
+        (thinkingEnabled && (!it.summary.isNullOrBlank() || it.partId == placeholderId)) }
     if (visible.isEmpty()) return
-    val attention = activity.any { it is ConversationProjectionV1.Part.Tool && it.state in setOf(
-        ConversationProjectionV1.ActivityState.Failed, ConversationProjectionV1.ActivityState.WaitingForPermission,
-        ConversationProjectionV1.ActivityState.WaitingForInput) }
-    val activeReasoning = visible.any { it is ConversationProjectionV1.Part.Reasoning && !reasoningIsFinished(it.state, isLive) }
-    var automaticallyExpanded by remember(activity.first().partId) { mutableStateOf(attention || activeReasoning) }
-    LaunchedEffect(attention, activeReasoning) {
-        automaticallyExpanded = thinkingExpandedAfterStatusChange(
-            automaticallyExpanded, finished = !(attention || activeReasoning), userChangedExpansion = false)
-    }
-    val expanded = choices.expandedFor(activity) ?: automaticallyExpanded
+    // The live preview never opens earlier calls, including recovered failures.
+    val expanded = choices.expandedFor(activity) ?: false
     val reduceMotion = rememberReduceMotionEnabled()
     val singleReasoning = visible.singleOrNull() as? ConversationProjectionV1.Part.Reasoning
-    val heading = if (singleReasoning == null) R.string.chat_execution_process else when {
+    val heading = if (isLive) R.string.chat_processing else if (singleReasoning == null) R.string.chat_execution_process else when {
         reasoningIsFinished(singleReasoning.state, isLive) -> R.string.thinking_process
         singleReasoning.summary.isNullOrBlank() -> R.string.chat_processing
         else -> R.string.chat_thinking
     }
-    Column(Modifier.fillMaxWidth().testTag("assistant.execution.disclosure")
+    val current = currentExecutionActivity(activity, isLive)
+    val currentTitle = when (current) {
+        is ConversationProjectionV1.Part.Tool -> current.title.takeIf {
+            current.state in setOf(ConversationProjectionV1.ActivityState.Running, ConversationProjectionV1.ActivityState.Pending)
+        }
+        is ConversationProjectionV1.Part.Reasoning -> if (current.state == ConversationProjectionV1.ActivityState.Running)
+            stringResource(R.string.chat_thinking) else null
+        else -> null
+    }
+    Column(Modifier.fillMaxWidth()
         .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f), RoundedCornerShape(12.dp))
         .padding(horizontal = 12.dp)) {
         TextButton(onClick = { onChoicesChanged(choices.expanded(activity, !expanded)) },
             colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant),
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-            Text(stringResource(heading), modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
+            Text(executionProcessHeading(isLive, currentTitle, stringResource(R.string.chat_processing), stringResource(heading)), modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelLarge,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
             NolaDisclosureChevron(expanded, reduceMotion)
         }
         AnimatedVisibility(visible = expanded, enter = nolaDisclosureEnter(reduceMotion), exit = nolaDisclosureExit(reduceMotion)) {
@@ -109,10 +114,6 @@ internal fun CanonicalActivityCards(
                             })
                         is ConversationProjectionV1.Part.Tool -> CanonicalActivityRow(part, details = part.partId in choices.detailsPartIds,
                             onDetailsChanged = { onChoicesChanged(choices.details(activity, part.partId, it)) }, onReadText = onReadText)
-                        is ConversationProjectionV1.Part.Historical -> {
-                            if (part.projection.canonicalKind == "reasoning") ThinkingBody(part.projection.decodedText.orEmpty())
-                            else part.projection.timelineText?.takeIf { it.isNotBlank() }?.let { Text(it) }
-                        }
                         else -> Unit
                     }
                 } }
@@ -152,11 +153,6 @@ private fun CanonicalActivityRow(part: ConversationProjectionV1.Part.Tool, detai
         }
         facts.summary?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         facts.artifacts.forEach { ArtifactCard(it) }
-        // Output is a task result, not technical metadata. Retain the reader action for long output.
-        facts.preview?.takeIf { it.isNotBlank() }?.let {
-            Fact(part.partId, CanonicalPartReadField.ToolPreview, onReadText,
-                stringResource(R.string.chat_host_tool_result), it, code = true)
-        }
         TextButton(onClick = { onDetailsChanged(!details) }) {
             Text(stringResource(if (details) R.string.canonical_hide_details else R.string.canonical_details))
         }
@@ -169,6 +165,7 @@ private fun CanonicalActivityRow(part: ConversationProjectionV1.Part.Tool, detai
                 }
                 Fact(part.partId, CanonicalPartReadField.ToolInput, onReadText, stringResource(R.string.canonical_input), facts.input.toString(), code = true)
                 facts.result?.let { Fact(part.partId, CanonicalPartReadField.ToolResult, onReadText, stringResource(R.string.canonical_result), it.toString(), code = true) }
+                facts.preview?.let { Fact(part.partId, CanonicalPartReadField.ToolPreview, onReadText, stringResource(R.string.canonical_preview), it, code = true) }
                 Fact(part.partId, CanonicalPartReadField.ToolOrigin, onReadText, stringResource(R.string.canonical_origin), listOfNotNull(facts.origin.kind, facts.origin.providerId, facts.origin.providerTitle, facts.origin.namespace).joinToString(" · "))
                 facts.permission?.let { Fact(part.partId, CanonicalPartReadField.ToolPermissionIdentity, onReadText, stringResource(R.string.canonical_permission_record), it.requestId) }
                 facts.startedAtMs?.let { Fact(part.partId, CanonicalPartReadField.ToolStarted, onReadText, stringResource(R.string.canonical_started), it.toString()) }
@@ -183,52 +180,39 @@ private fun CanonicalActivityRow(part: ConversationProjectionV1.Part.Tool, detai
 
 @Composable
 internal fun CanonicalSourceCards(parts: List<ConversationProjectionV1.Part>, onReadText: (CanonicalPartTextSnapshot) -> Unit) {
-    val reduceMotion = rememberReduceMotionEnabled()
     val context = LocalContext.current
-    parts.forEach { part ->
-        key(part.partId) {
-            val facts = part.sourceCardFacts()
-            if (facts != null) {
+    val references = canonicalBibliography(parts)
+    var expanded by remember(parts.firstOrNull()?.partId) { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (references.isNotEmpty()) Text("${stringResource(R.string.chat_sources_title)} ${references.size}",
+            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        references.take(if (expanded) references.size else 3).forEachIndexed { index, (part, facts) ->
+            key(part.partId) {
                 var details by remember(part.partId) { mutableStateOf(false) }
-                PartCard {
-                    Text(facts.title, Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(enabled = isExternalAnswerSource(facts.uri), role = androidx.compose.ui.semantics.Role.Button) {
-                        openAnswerSource(context, AnswerSource(id = facts.identity, sourceId = facts.sourceId, title = facts.title, uri = facts.uri, mimeType = facts.mimeType))
-                    }, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                    Text(listOfNotNull(facts.mimeType, facts.location?.section, facts.location?.page?.let { "p. $it" },
-                        facts.location?.lineStart?.let { "L$it–${facts.location?.lineEnd ?: it}" },
-                        facts.location?.lineEnd?.takeIf { facts.location?.lineStart == null }?.let { "…–L$it" }).joinToString(" · "),
-                        style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    facts.snippet?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                    TextButton(onClick = { details = !details }) {
-                        Text(stringResource(if (details) R.string.canonical_hide_details else R.string.canonical_details))
-                    }
-                    AnimatedVisibility(visible = details, enter = nolaDisclosureEnter(reduceMotion), exit = nolaDisclosureExit(reduceMotion)) {
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Fact(part.partId, CanonicalPartReadField.SourceIdentity, onReadText, stringResource(R.string.canonical_identity), listOf(facts.identity, facts.partId, facts.sourceId).joinToString(" · "))
-                            Fact(part.partId, CanonicalPartReadField.SourceUri, onReadText, stringResource(R.string.canonical_uri), facts.uri)
-                            facts.range?.let { Text("[${it.start}, ${it.end})", style = MaterialTheme.typography.labelSmall) }
-                            facts.originToolCallId?.let { Fact(part.partId, CanonicalPartReadField.SourceOrigin, onReadText, stringResource(R.string.canonical_origin), it) }
-                            facts.location?.let { location ->
-                                if (location.page == null && location.lineStart == null && location.lineEnd == null && location.section == null) {
-                                    Text(stringResource(R.string.canonical_empty_location), style = MaterialTheme.typography.labelSmall)
-                                }
-                            }
-                            facts.evidence?.usage?.let { evidence ->
-                                Fact(part.partId, CanonicalPartReadField.SourceEvidence, onReadText, stringResource(R.string.canonical_evidence), listOfNotNull(evidence.recordId, evidence.componentId,
-                                    evidence.scope, evidence.namespace?.kind, evidence.namespace?.name, evidence.provenanceKind,
-                                    evidence.source, evidence.title, evidence.observedAt, evidence.sourceRole, evidence.eventTime,
-                                    evidence.rangeStart, evidence.rangeEnd, "×${evidence.usageCount}", evidence.lastUsedAtEpochMs?.toString()).joinToString(" · "))
-                                if (evidence.requiresCurrentStateVerification) Text(stringResource(R.string.canonical_requires_verification), style = MaterialTheme.typography.labelSmall)
-                                if (evidence.truncated) Text(stringResource(R.string.canonical_evidence_truncated), style = MaterialTheme.typography.labelSmall)
-                                if (evidence.supersedes.isNotEmpty()) Fact(part.partId, CanonicalPartReadField.SourceSupersedes, onReadText, stringResource(R.string.canonical_supersedes), evidence.supersedes.joinToString(" · "))
-                            }
-                        }
-                    }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("[${index + 1}] ${facts.title}", Modifier.weight(1f).heightIn(min = 48.dp)
+                        .clickable(enabled = isExternalAnswerSource(facts.uri), role = androidx.compose.ui.semantics.Role.Button) {
+                            openAnswerSource(context, AnswerSource(id = facts.identity, sourceId = facts.sourceId, title = facts.title, uri = facts.uri, mimeType = facts.mimeType))
+                        }.padding(vertical = 10.dp), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    IconButton(onClick = { details = true }) { Icon(Icons.Filled.Info, stringResource(R.string.canonical_details), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
+                if (details) AlertDialog(onDismissRequest = { details = false }, title = { Text(facts.title) },
+                    text = { SelectionContainer { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(facts.uri, style = MaterialTheme.typography.bodySmall)
+                        facts.location?.let { Text(listOfNotNull(it.section, it.page?.let { "p. $it" }, it.lineStart?.let { start -> "L$start–${it.lineEnd ?: start}" }).joinToString(" · ")) }
+                        facts.snippet?.let { Text(it) }
+                        facts.range?.let { Text("[${it.start}, ${it.end})") }
+                        facts.evidence?.usage?.let { Text(listOfNotNull(it.title, it.source, it.observedAt).joinToString(" · ")) }
+                    } } },
+                    confirmButton = { TextButton(onClick = { details = false }) { Text(stringResource(R.string.common_done)) } })
             }
-            if (part is ConversationProjectionV1.Part.Attachment) {
-                PartCard { ArtifactCard(PartArtifact(part.uri, part.name, part.mimeType, part.operation)) }
-            }
+        }
+        if (references.size > 3) TextButton(onClick = { expanded = !expanded }, modifier = Modifier.testTag("chat.sources.toggle")) {
+            Text(stringResource(if (expanded) R.string.chat_sources_fewer else R.string.chat_sources_all), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        parts.filterIsInstance<ConversationProjectionV1.Part.Attachment>().forEach { part ->
+            key(part.partId) { PartCard { ArtifactCard(PartArtifact(part.uri, part.name, part.mimeType, part.operation)) } }
         }
     }
 }
@@ -281,23 +265,14 @@ private fun PartCard(content: @Composable () -> Unit) {
 @Composable
 private fun Fact(partId: String, field: CanonicalPartReadField, onReadText: (CanonicalPartTextSnapshot) -> Unit,
     label: String, value: String, code: Boolean = false) {
-    val display = remember(value, code) { if (code) formattedToolDetail(value) else value }
-    val excerpt = remember(display) { toolDetailExcerpt(display) }
-    Column(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(label, style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        SelectionContainer {
-            Text(excerpt.text,
-                modifier = Modifier.fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.32f), RoundedCornerShape(8.dp))
-                    .padding(10.dp),
-                style = MaterialTheme.typography.bodySmall,
-                fontFamily = if (code) FontFamily.Monospace else null)
+    Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    if (value.length > 2000) {
+        TextButton(onClick = { onReadText(CanonicalPartTextSnapshot(partId, field, label, value, code)) }) {
+            Text(stringResource(R.string.canonical_reader_open))
         }
-        if (excerpt.truncated) {
-            TextButton(onClick = { onReadText(CanonicalPartTextSnapshot(partId, field, label, value, code)) }) {
-                Text(stringResource(R.string.canonical_reader_open))
-            }
-        }
+    }
+    SelectionContainer {
+        Text(if (value.length > 2000) value.take(2000) + "…" else value,
+            style = MaterialTheme.typography.bodySmall, fontFamily = if (code) FontFamily.Monospace else null)
     }
 }

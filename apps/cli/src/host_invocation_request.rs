@@ -119,6 +119,9 @@ pub struct HostSessionRequest {
     /// Explicit command submission, never inferred from prompt text.
     #[serde(skip)]
     pub user_delegation: Option<nola_core::agent::AgentSubmission>,
+    /// Admission-only user selection; Core resolves exact experts in the Main Run.
+    #[serde(skip)]
+    pub main_expert_selection: Option<nola_domain::expert_task_target::MainExpertSelectionContextV1>,
     pub supports_reviewed_text_parts: bool,
     pub session_id: Option<String>,
     pub permission_scope_id: Option<String>,

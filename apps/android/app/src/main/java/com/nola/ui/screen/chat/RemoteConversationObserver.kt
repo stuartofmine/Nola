@@ -29,7 +29,7 @@ internal class RemoteConversationObserver {
         resume: suspend (RemoteRunKey) -> Unit,
         pause: suspend (Long) -> Unit = { delay(it) },
         reconcileSubmission: suspend () -> Boolean = { true },
-        admittedKey: () -> RemoteRunKey? = { null }) {
+        admittedKey: () -> RemoteRunKey? = { null }, stopAtTerminal: Boolean = false) {
         if (context == contextId && job?.isActive == true && runningCurrent?.invoke() == true) return
         stop()
         if (context != contextId) {
@@ -55,6 +55,7 @@ internal class RemoteConversationObserver {
                     ensureActive(); if (!current()) break
                     onObservation(observation, terminalCommitted)
                     if (observation.recovery == RemoteRunRecovery.Terminal && terminalCommitted) {
+                        if (stopAtTerminal) break
                         key = null; resumeAuthority = null
                         if (observation.canSubmit) break
                         // This Run is durably closed, but the conversation may

@@ -162,7 +162,7 @@ printf '[real-mobile] preparing iOS provider path on simulator %s\n' "$IOS_DEVIC
 start_provider_probe ios
 if [[ "${NOLA_SKIP_IOS_BUILD:-0}" != "1" ]]; then
     xcodebuild build-for-testing \
-        -project "$ROOT/Nola.xcodeproj" \
+        -project "$ROOT/apple/Nola.xcodeproj" \
         -scheme Nola \
         -destination "platform=iOS Simulator,id=$IOS_DEVICE_ID" \
         -derivedDataPath "$DERIVED_DATA" \

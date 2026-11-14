@@ -908,6 +908,9 @@ fn route_request(
             return auxiliary_mobile_response(request, config, "prepare");
         }
         (&Method::Post, "/api/mobile/agent-rooms") => return mobile_agent_room_response(request, config),
+        (&Method::Post, "/api/mobile/chat/expert-messages/admit") => return mobile_expert_admit_response(request, config),
+        (&Method::Post, "/api/mobile/chat/expert-messages/parent") => return mobile_expert_parent_response(request),
+        (&Method::Post, "/api/mobile/chat/expert-messages/manifest") => return mobile_expert_manifest_response(request),
         (&Method::Post, "/api/mobile/auxiliary/invoke") => {
             return auxiliary_mobile_response(request, config, "invoke");
         }
@@ -1018,6 +1021,7 @@ fn route_request(
         }
         (&Method::Post,"/api/chat/expert-messages/admit") => { return expert_admit_response(request); }
         (&Method::Post,"/api/chat/edited-expert-resend/prepare") => { return expert_resend_prepare_response(request); }
+        (&Method::Post,"/api/chat/in-place-resend/prepare") => { return in_place_resend_prepare_response(request); }
         (&Method::Post,"/api/chat/edited-resend/prepare") => {
             return edited_resend_prepare_response(request);
         }
@@ -2168,9 +2172,65 @@ fn create_task_response(request: &mut Request) -> Response<Box<dyn Read + Send>>
 
 fn read_conversation_response(conversation_id: &str) -> Response<Box<dyn Read + Send>> {
     match NolaStore::open_default().and_then(|store| store.get_web_conversation(conversation_id)) {
-        Ok(Some(conversation)) => json_response(StatusCode(200), conversation),
+        Ok(Some(mut conversation)) => {
+            match append_expert_context_hint(conversation_id, &mut conversation) {
+                Ok(())=>json_response(StatusCode(200),conversation),
+                Err(_)=>json_response(StatusCode(503),json!({"code":"conversation_owner_unavailable","error":"Cannot confirm conversation ownership"})),
+            }
+        },
         Ok(None) => json_response(StatusCode(404), json!({"error": "conversation not found"})),
         Err(error) => json_response(StatusCode(500), conversation_inventory_failure(&error)),
+    }
+}
+
+/// Read-only navigation metadata comes from the protected ContextOwner. Even
+/// an unavailable/retired Room must never turn its child into an ordinary chat.
+fn append_expert_context_hint(conversation_id: &str, conversation: &mut Value) -> Result<(),String> {
+    let mut app=crate::application_port::CliApplicationPort::persistent_default()?;
+    append_expert_context_hint_from_application(&mut app,conversation_id,conversation)
+}
+
+fn append_expert_context_hint_from_application(app: &mut crate::application_port::CliApplicationPort, conversation_id: &str, conversation: &mut Value) -> Result<(),String> {
+    use nola_application::{ApplicationCommand,agent_room::{AgentRoomCommand,ConversationRoomAssociation}};
+    let Some(raw)=app.load_conversation_settings(conversation_id)? else {return Ok(());};
+    let settings:Value=serde_json::from_str(&raw).map_err(|_|"invalid conversation settings")?;
+    let Some(raw_owner)=settings.get(nola_domain::agent_room::CONTEXT_OWNER_FIELD) else {return Ok(());};
+    let owner:nola_domain::agent_room::ContextOwner=serde_json::from_value(raw_owner.clone()).map_err(|_|"invalid expert owner")?;
+    conversation["expertContextOwner"]=json!({"roomId":owner.room_id,"participantId":owner.participant_id,"agentId":owner.agent_id,"agentRevision":null,"isCurrent":false});
+    let reverse:Value=app.execute(ApplicationCommand::GetProductSetting {key:format!("{}{}",nola_application::agent_room::ROOM_CONVERSATION_KEY_PREFIX,owner.room_id)})?;
+    if let Some(raw)=reverse.get("value_json").and_then(Value::as_str) {
+        let link:Value=serde_json::from_str(raw).map_err(|_|"invalid expert parent association")?;
+        if let Some(parent)=link.get("conversation_id").and_then(Value::as_str) {
+            let association:Option<ConversationRoomAssociation>=app.execute(ApplicationCommand::AgentRoom {command:AgentRoomCommand::ForConversation {conversation_id:parent.into()}})?;
+            if let Some(association)=association.filter(|item|item.room_id==owner.room_id) {
+                conversation["expertParentConversationId"]=json!(association.conversation_id);
+                if let Some(member)=association.room.room.participants().iter().find(|member|member.id==owner.participant_id && member.agent_id==owner.agent_id && member.context_conversation_id==conversation_id) {
+                    conversation["expertContextOwner"]["agentRevision"]=json!(member.agent_revision);
+                    conversation["expertContextOwner"]["isCurrent"]=json!(member.active);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod expert_context_route_tests {
+    use super::*;
+    #[test]
+    fn retired_expert_without_current_room_is_still_a_readonly_child() {
+        let directory=tempfile::tempdir().unwrap();
+        let mut app=crate::application_port::CliApplicationPort::persistent(&directory.path().join("context.sqlite")).unwrap();
+        app.create_conversation(nola_application::CreateConversation {
+            id:"expert-child".into(),title:"Retired".into(),created_at_ms:1,updated_at_ms:1,
+            settings_json:Some(json!({"agentRoomOwner":{"room_id":"retired-room","participant_id":"retired-member","agent_id":"expert"}}).to_string()),
+        }).unwrap();
+        let mut value=json!({"conversationId":"expert-child"});
+        append_expert_context_hint_from_application(&mut app,"expert-child",&mut value).unwrap();
+        assert_eq!(value["expertContextOwner"]["participantId"],"retired-member");
+        assert_eq!(value["expertContextOwner"]["isCurrent"],false);
+        assert!(value["expertContextOwner"]["agentRevision"].is_null());
+        assert!(value.get("expertParentConversationId").is_none());
     }
 }
 
@@ -3050,6 +3110,7 @@ fn context_report_response(
             existing_summary: non_empty_string(conversation.session_memory.trim())
                 .map(ToOwned::to_owned),
             summary_result: None,
+            evaluated_at: None,
         });
         let core_component_messages = core_prepared
             .messages

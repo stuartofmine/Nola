@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // Mechanical extraction: runtime implementation in the original module scope.
 
+// CLI names for the same parent Task controls include list/stop aliases.
+pub(crate) fn expert_leaf_driver_control(id:&str)->bool {
+    nola_domain::expert_task_target::expert_leaf_control(id) || matches!(id,"list_tasks"|"stop_task")
+}
+
 #[cfg(all(test, unix))]
 mod plugin_driver_tests {
     use super::*;
@@ -284,6 +289,8 @@ impl CliAgentHostDriver {
             runtime_tool_handler: Box::new(|_, _, _, _, _| None),
             runtime_tool_ids: HashSet::new(),
             configured_tool_allowlist: None,
+            expert_leaf: false,
+            main_expert_dispatch_available: true,
             mcp_extension_policy: None,
             turn_policy: HostTurnPolicy::default(),
             current_turn_project_overview_file_count: None,
@@ -341,6 +348,7 @@ impl CliAgentHostDriver {
             self.capability_catalog.builtin_tools.insert("spawn_agent".into());
         }
         self.execution_settings = Some(config);
+        self.enforce_expert_leaf();
     }
 
     pub fn catalog(&self) -> &HostCapabilityCatalog {
@@ -368,6 +376,10 @@ impl CliAgentHostDriver {
         if catalog.host_id != self.catalog.host_id {
             return Err("committed Host catalog belongs to a different Host".to_string());
         }
+        if (!self.main_expert_dispatch_available && catalog.capabilities.contains_key("delegate_expert"))
+            || self.expert_leaf && catalog.capabilities.keys().any(|id|expert_leaf_driver_control(id)) {
+            return Err("committed_expert_catalog_contains_parent_scheduling_controls".into());
+        }
         let mut candidate = self.catalog.clone();
         candidate.revision = catalog.revision;
         candidate.availability_epoch = catalog.availability_epoch;
@@ -384,6 +396,7 @@ impl CliAgentHostDriver {
 
     pub fn with_capability_catalog(mut self, catalog: CapabilityCatalog) -> Self {
         self.capability_catalog = catalog;
+        self.enforce_expert_leaf();
         self
     }
 
@@ -641,6 +654,7 @@ impl CliAgentHostDriver {
         self.catalog.revision = self.catalog.revision.max(catalog.revision);
         self.capability_catalog.revision = self.capability_catalog.revision.max(catalog.revision);
         self.capability_catalog.mcp = catalog;
+        self.enforce_expert_leaf();
     }
 
     fn refresh_mcp_capability_catalog(&mut self) -> Result<CapabilityCatalog, String> {
@@ -888,7 +902,38 @@ impl CliAgentHostDriver {
 
     pub fn with_runtime_tool_ids(mut self, ids: impl IntoIterator<Item = String>) -> Self {
         self.runtime_tool_ids = ids.into_iter().collect();
+        self.enforce_expert_leaf();
         self
+    }
+
+    /// Scheduling belongs to Main. Unlike an authorization allowlist this
+    /// physically removes unavailable controls from every discoverable surface.
+    pub(crate) fn with_expert_leaf(mut self, enabled: bool) -> Self {
+        self.expert_leaf |= enabled;
+        self.enforce_expert_leaf();
+        self
+    }
+
+    pub(crate) fn with_main_expert_dispatch(mut self, enabled: bool) -> Self {
+        self.main_expert_dispatch_available &= enabled;
+        self.enforce_expert_leaf();
+        self
+    }
+
+    fn enforce_expert_leaf(&mut self) {
+        if !self.main_expert_dispatch_available {
+            self.catalog.capabilities.remove("delegate_expert");
+            self.capability_catalog.builtin_tools.remove("delegate_expert");
+            self.runtime_tool_ids.remove("delegate_expert");
+            self.current_turn_available_tool_ids.remove("delegate_expert");
+            if let Some(allowed)=&mut self.configured_tool_allowlist {allowed.remove("delegate_expert");}
+        }
+        if !self.expert_leaf {return;}
+        self.catalog.capabilities.retain(|id,_|!expert_leaf_driver_control(id));
+        self.capability_catalog.builtin_tools.retain(|id|!expert_leaf_driver_control(id));
+        self.runtime_tool_ids.retain(|id|!expert_leaf_driver_control(id));
+        self.current_turn_available_tool_ids.retain(|id|!expert_leaf_driver_control(id));
+        if let Some(allowed)=&mut self.configured_tool_allowlist {allowed.retain(|id|!expert_leaf_driver_control(id));}
     }
 
     pub fn with_tool_allowlist(mut self, ids: Option<impl IntoIterator<Item = String>>) -> Self {
@@ -931,6 +976,7 @@ impl CliAgentHostDriver {
                 .map(|item| item.trim().to_ascii_lowercase())
                 .collect()
         });
+        self.enforce_expert_leaf();
         // An explicit allowlist is already a user-selected, bounded model
         // surface. Promote those entries directly so constrained hosts do not
         // need an unavailable discovery tool to reach the only tools they were
@@ -3147,12 +3193,16 @@ impl CliAgentHostDriver {
                 )?;
                 return Ok(());
             };
+            if let Some(error) = runtime_result.pending_error.take() {
+                return Err(error);
+            }
             runtime_result.outcome =
                 finish_tool_work_step_transaction(runtime_transaction, runtime_result.outcome);
             let RuntimeToolResult {
                 outcome,
                 task_promotion,
                 task_update,
+                pending_error: _,
             } = runtime_result;
             if let Some(update) = task_update {
                 Self::emit(
@@ -3985,5 +4035,76 @@ impl CliAgentHostDriver {
             break;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod expert_leaf_catalog_tests {
+    use super::*;
+    use super::effect_delivery_start_barrier_tests::{test_context,test_llm};
+
+    #[test]
+    fn expert_leaf_prunes_actual_catalog_discovery_and_runtime_before_policy_capture(){
+        let root=tempfile::tempdir().unwrap();
+        let baseline=CliAgentHostDriver::new("leaf-host",test_llm("http://127.0.0.1:1/v1".into()),test_context(root.path()));
+        assert!(baseline.catalog.capabilities.contains_key("delegate_expert"));
+        assert!(baseline.catalog.capabilities.contains_key("spawn_agent"));
+        let inherited=baseline.capability_catalog.clone();
+        let mut driver=baseline.with_expert_leaf(true)
+            .with_runtime_tool_ids(["delegate_expert","expert_exchange","spawn_agent","read_task","wait_task","stop_task","list_tasks","send_agent_message","request_user_input","read_file"].into_iter().map(str::to_owned))
+            .with_tool_allowlist(Some(vec!["read_file".to_owned(),"delegate_expert".to_owned()]))
+            .with_capability_catalog(inherited);
+        // A later execution-settings refresh used to reinsert spawn in the
+        // discovery catalog when leaving a native model route.
+        let mut config=crate::config::Config::for_test().unwrap().host_invocation_request().unwrap();
+        let mut native=config.host_execution_settings();native.native_model_route=true;driver.set_execution_settings(native);
+        config.runtime.native_model_route=None;driver.set_execution_settings(config.host_execution_settings());
+        driver.refresh_current_turn_available_tool_ids();
+        for id in ["delegate_expert","expert_exchange","spawn_agent","read_task","wait_task","stop_task","list_tasks","send_agent_message","request_user_input"] {
+            assert!(!driver.catalog.capabilities.contains_key(id),"actual catalog leaked {id}");
+            assert!(!driver.capability_catalog.builtin_tools.contains(id),"capability catalog leaked {id}");
+            assert!(!driver.runtime_tool_ids.contains(id),"runtime surface leaked {id}");
+            assert!(!driver.current_turn_available_tool_ids.contains(id));
+        }
+        assert!(driver.catalog.capabilities.contains_key("model.stream"));
+        assert!(driver.catalog.capabilities.contains_key("read_file"));
+        assert!(driver.current_turn_discovery_tool_schemas().iter().all(|schema|
+            !nola_domain::expert_task_target::schema_tool_name(schema).is_some_and(expert_leaf_driver_control)));
+        let original=driver.catalog.clone();driver.restore_catalog_fence(&original,std::iter::empty()).unwrap();
+        let mut poisoned=original;let mut descriptor=poisoned.capabilities["read_file"].clone();descriptor.id="delegate_expert".into();
+        poisoned.capabilities.insert("delegate_expert".into(),descriptor);
+        assert!(driver.prepare_committed_catalog(poisoned).unwrap_err().contains("parent_scheduling_controls"),"A committed frozen catalog is refused, never silently rewritten");
+    }
+    #[test]
+    fn main_without_actual_expert_schema_cannot_discover_or_activate_dispatch(){
+        let root=tempfile::tempdir().unwrap();
+        let base=CliAgentHostDriver::new("no-dispatch-host",test_llm("http://127.0.0.1:1/v1".into()),test_context(root.path()));
+        let full=base.capability_catalog.clone();
+        let mut driver=base.with_main_expert_dispatch(false)
+            .with_capability_catalog(full)
+            .with_runtime_tool_ids(["delegate_expert".to_owned(),"expert_exchange".to_owned(),"read_file".to_owned()])
+            .with_tool_allowlist(Some(vec!["delegate_expert".to_owned(),"read_file".to_owned()]));
+        driver.refresh_current_turn_available_tool_ids();
+        assert!(!driver.catalog.capabilities.contains_key("delegate_expert"));
+        assert!(!driver.capability_catalog.builtin_tools.contains("delegate_expert"));
+        assert!(!driver.runtime_tool_ids.contains("delegate_expert"));
+        assert!(!driver.current_turn_available_tool_ids.contains("delegate_expert"));
+        assert!(driver.current_turn_discovery_tool_schemas().iter().all(|tool|nola_domain::expert_task_target::schema_tool_name(tool)!=Some("delegate_expert")));
+        // A hidden old alias is retained only as an execution-recovery handler.
+        assert!(driver.runtime_tool_ids.contains("expert_exchange"));
+        assert!(!driver.catalog.capabilities.contains_key("expert_exchange"));
+        assert!(driver.catalog.capabilities.contains_key("read_file"));
+    }
+    #[test]
+    fn ordinary_main_and_goal_driver_keeps_its_existing_scheduling_catalog(){
+        let root=tempfile::tempdir().unwrap();
+        let mut driver=CliAgentHostDriver::new("main-host",test_llm("http://127.0.0.1:1/v1".into()),test_context(root.path()))
+            .with_expert_leaf(false).with_tool_allowlist(Some(vec!["read_file".to_owned()]));
+        driver.refresh_current_turn_available_tool_ids();
+        assert!(driver.catalog.capabilities.contains_key("delegate_expert"));
+        assert!(driver.catalog.capabilities.contains_key("spawn_agent"));
+        assert!(driver.catalog.capabilities.contains_key("request_user_input"));
+        assert!(driver.capability_catalog.builtin_tools.contains("request_user_input"));
+        assert!(driver.capability_catalog.builtin_tools.contains("delegate_expert"));
     }
 }

@@ -128,8 +128,8 @@ mod conversation_recall;
 mod transcript_export;
 pub use application_command::{
     GoalSelectedModel,
-    execute_application_command, ApplicationCommand, ApplicationCommandExecutor,
-    PermissionProjectionReadScope,
+    execute_application_command, execute_read_only_query, ApplicationCommand,
+    ApplicationCommandExecutor, PermissionProjectionReadScope,
 };
 pub use assistant_turn::{begin_assistant_turn, promote_queued_assistant_turn, AcceptedAssistantTurn,
     BeginAssistantTurn, PromoteQueuedAssistantTurn, BeginQueuedUserTurn, begin_queued_user_turn};
@@ -148,6 +148,9 @@ pub use run_cancellation::{
 };
 mod projection_feed;
 pub use projection_feed::{
+    conversation_list_projection_snapshot_from_store,
+    conversation_projection_page_snapshot_from_store,
+    conversation_projection_snapshot_from_store,
     ApplicationConversationListProjectionEvent, ApplicationConversationListProjectionSnapshot,
     ApplicationConversationListProjectionSuffix, ApplicationConversationProjectionSnapshot,
     ApplicationProjectionEvent, ApplicationProjectionScope, ApplicationProjectionSuffix,
@@ -1347,6 +1350,14 @@ fn reduce_and_commit_active_submission_in_transaction<R: RunEffectRepository + r
             decision_time_ms(command.committed_at_ms)?,
         )
         .map_err(|error| format!("reduce active Core submission failed: {error}"))?;
+    // Reject a candidate opening an expert-owned human question before writes,
+    // including permission decisions delivered through the active submission path.
+    if transition.event_envelopes.iter().any(|event| matches!(&event.event,
+        AgentEvent::UserInputWaitChanged { wait } if wait.is_open())) {
+        crate::expert_peer_task::validate_expert_question_execution(
+            store, &command.conversation_id, &command.run_id,
+        )?;
+    }
     let checkpoint_reason = transition.durability.as_ref()
         .map_or(CheckpointReason::Manual, |intent| intent.checkpoint_reason);
     let checkpoint = core.checkpoint_view(checkpoint_reason);
@@ -1912,6 +1923,25 @@ fn durable_conversation_items<
                         });
                     },
                     _ => {}
+                }
+            }
+            // A user's canonical content_text is independent of auxiliary JSON.
+            // Restore only disclosed text as User history, never metadata as a
+            // structured Part, tool call, system instruction or permission grant.
+            if message_items.len() == before && message.role == "user"
+                && semantic.canonical_kind == "text" && semantic.schema.is_none() {
+                if let Some(preview) = &semantic.canonical_text {
+                    message_items.push(AgentItem::Message {
+                        id: ItemId::from_string(context_item_id(&conversation.id, &message.id, Some(&part.id), "part")),
+                        role: AgentRole::User, content: preview.text.clone(),
+                    });
+                    if preview.text.len() as u64 != preview.total_utf8_bytes {
+                        message_items.push(AgentItem::Message {
+                            id: ItemId::from_string(context_item_id(&conversation.id, &message.id, Some(&part.id), "text-selection-notice")),
+                            role: AgentRole::System,
+                            content: format!("Historical user text in message {}, Part {} is an excerpt ({} of {} UTF-8 bytes); the complete original remains available through conversation recall.",message.id,part.id,preview.text.len(),preview.total_utf8_bytes),
+                        });
+                    }
                 }
             }
             if message_items.len() == before {
@@ -2704,6 +2734,16 @@ pub(crate) fn reduce_and_accept_host_response_with_core<
                 stored_checkpoint.as_ref().expect("cold reduction loaded its checkpoint"))?
         }
     };
+    // A cancelling Core consumes late provider completion only as stop evidence;
+    // it cannot execute new question content. Keep that physical-stop path usable.
+    if matches!(&command.response.payload, HostResponse::ModelCompleted { .. })
+        && !matches!(core.turn_status(), nola_domain::AgentTurnStatus::Cancelling
+            | nola_domain::AgentTurnStatus::Cancelled)
+    {
+        crate::expert_peer_task::validate_expert_question_execution(
+            store, &command.conversation_id, &command.run_id,
+        )?;
+    }
     // A different Application owner may have committed cancellation since
     // this worker last observed its stream. The retired target is no longer
     // bindable in Core. ACK only this exact retired response, before normal
@@ -2881,6 +2921,13 @@ pub(crate) fn reduce_and_accept_host_response_with_core<
                 "reduce Host response failed: {error}; effect_id={response_effect_id}; response={response_kind}; sequence={response_sequence}"
             )
         })?;
+    // Candidate reduction is pure. Refuse a newly opened human question from
+    // an obsolete expert policy before any event, checkpoint or part is saved.
+    // This also covers permission responses, not just raw provider call shapes.
+    if transition.event_envelopes.iter().any(|event|matches!(&event.event,
+        AgentEvent::UserInputWaitChanged{wait} if wait.is_open())) {
+        crate::expert_peer_task::validate_expert_question_execution(store,&command.conversation_id,&command.run_id)?;
+    }
     let checkpoint_reason = transition
         .durability
         .as_ref()
@@ -4146,6 +4193,7 @@ use nola_protocol::ImportConversationTranscript;
 pub mod conversation;
 pub mod persistent_agent;
 pub mod agent_room;
+pub mod agent_room_source;
 pub mod conversation_configuration;
 pub mod conversation_projection;
 pub mod conversation_read;
@@ -4249,6 +4297,7 @@ mod document_repository_tests;
 
 mod canonical_branch;
 pub mod edited_resend;
+mod in_place_resend;
 
 pub mod archive_restore;
 pub use archive_restore::stage_archive_manifest;
@@ -4289,10 +4338,16 @@ mod delegation_preparation_tests;
 pub mod mobile_delegation_configuration;
 
 pub mod expert_message;
+pub mod expert_peer;
+pub mod expert_peer_task;
+pub mod remote_expert_parent;
 pub mod expert_prompt_catalog;
+pub mod expert_roles;
 pub mod expert_template_capture;
 pub mod host_expert_template_operation;
 
 pub mod run_process_observation;
 
 pub mod effective_model_parameters;
+
+mod main_expert_selection;

@@ -5,27 +5,35 @@ use super::*;
 
 impl NolaStore {
     pub fn list_conversations(&self) -> StoreResult<Vec<ConversationSummary>> {
-        self.conversation_summaries(None, None)
+        self.conversation_summaries(None, None, false)
     }
 
     pub fn list_conversation_page(&self, query: &nola_store_port::conversation_query::ConversationListQuery) -> StoreResult<Vec<ConversationSummary>> {
         if query.limit == 0 || query.limit > 1024 || query.offset > i64::MAX as usize {
             return Err(StoreError::Invariant("invalid conversation page bounds".into()));
         }
-        self.conversation_summaries(query.conversation_id.as_deref(), Some(query))
+        self.conversation_summaries(query.conversation_id.as_deref(), Some(query), false)
+    }
+
+    pub fn list_root_conversation_page(&self, query: &nola_store_port::conversation_query::ConversationListQuery) -> StoreResult<Vec<ConversationSummary>> {
+        if query.limit == 0 || query.limit > 1024 || query.offset > i64::MAX as usize {
+            return Err(StoreError::Invariant("invalid conversation page bounds".into()));
+        }
+        self.conversation_summaries(query.conversation_id.as_deref(), Some(query), true)
     }
 
     pub fn conversation_summary(
         &self,
         conversation_id: &str,
     ) -> StoreResult<Option<ConversationSummary>> {
-        Ok(self.conversation_summaries(Some(conversation_id), None)?.pop())
+        Ok(self.conversation_summaries(Some(conversation_id), None, false)?.pop())
     }
 
     fn conversation_summaries(
         &self,
         conversation_id: Option<&str>,
         page: Option<&nola_store_port::conversation_query::ConversationListQuery>,
+        roots_only: bool,
     ) -> StoreResult<Vec<ConversationSummary>> {
         let _snapshot = read_snapshot::pin(&self.connection)?;
         let mut statement = self.connection.prepare(&format!(
@@ -48,12 +56,17 @@ impl NolaStore {
              WHERE (?1 IS NULL OR c.id = ?1)
                AND (?2 IS NULL OR json_extract(settings.settings_json, '$.project_root') = ?2)
                AND (?3 = 0 OR EXISTS(SELECT 1 FROM messages present WHERE present.conversation_id = c.id))
+               AND (?6=0 OR (json_type(settings.settings_json,'$.agentRoomOwner') IS NULL
+                    AND NOT EXISTS(SELECT 1 FROM durable_tasks t WHERE t.kind='agent' AND t.child_session_id=c.id)
+                    AND NOT EXISTS(SELECT 1 FROM runtime_task_run_bindings b WHERE b.child_session_id=c.id)
+                    AND NOT EXISTS(SELECT 1 FROM remote_conversation_execution_owners o JOIN runs r ON r.id=o.run_id
+                        WHERE r.conversation_id=c.id AND json_extract(o.ownership_json,'$.kind')='task_child')))
              ORDER BY c.updated_at_ms DESC, c.revision DESC, c.rowid DESC, c.id ASC
              LIMIT ?4 OFFSET ?5",
         ))?;
         let rows = statement.query_map(rusqlite::params![conversation_id,
             page.and_then(|p| p.project_root.as_deref()), page.is_some_and(|p| p.non_empty),
-            page.map(|p| p.limit as i64).unwrap_or(-1), page.map(|p| p.offset as i64).unwrap_or(0)], |row| {
+            page.map(|p| p.limit as i64).unwrap_or(-1), page.map(|p| p.offset as i64).unwrap_or(0), roots_only], |row| {
             Ok(ConversationSummary {
                 id: row.get(0)?,
                 title: row.get(1)?,

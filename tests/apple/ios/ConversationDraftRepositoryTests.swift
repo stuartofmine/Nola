@@ -2,6 +2,43 @@ import XCTest
 @testable import Nola
 
 final class ConversationDraftRepositoryTests: XCTestCase {
+    func testClosedPreAdmissionRejectionRestoresOnlyOriginalOwnerAndRetiresReceipt() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = FileConversationDraftRepository(root: root)
+        var drafts = ConversationComposerDraftStore(repository: repository)
+        drafts.current.text = "原始问题 @专家"
+        let owner = UUID(), other = UUID()
+        let submission = try drafts.prepareSubmission(to: owner,
+            identity: IOSCanonicalAgentTurnIdentity(userMessageID: UUID()), configurationRevision: nil)
+        drafts.select(other); drafts.current.text = "new work"
+        XCTAssertTrue(try drafts.restoreRejectedSubmission(submission, conversationID: owner))
+        XCTAssertEqual(drafts.selected, .conversation(other))
+        XCTAssertEqual(drafts.current.text, "new work")
+        XCTAssertTrue(try repository.pendingSubmissions().isEmpty)
+        drafts.select(owner)
+        XCTAssertEqual(drafts.current.text, "原始问题 @专家")
+        XCTAssertTrue(drafts.current.restored)
+    }
+
+    func testRejectedSubmissionNeverOverwritesNewInputOrRetiresCommittedReceipt() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = FileConversationDraftRepository(root: root)
+        var drafts = ConversationComposerDraftStore(repository: repository)
+        drafts.current.text = "original"
+        let owner = UUID()
+        let submission = try drafts.prepareSubmission(to: owner,
+            identity: IOSCanonicalAgentTurnIdentity(userMessageID: UUID()), configurationRevision: nil)
+        drafts.current.text = "newer draft"
+        XCTAssertFalse(try drafts.restoreRejectedSubmission(submission, conversationID: owner))
+        XCTAssertEqual(drafts.current.text, "newer draft")
+        XCTAssertEqual(try repository.pendingSubmissions().count, 1)
+        try submission.committed()
+        XCTAssertThrowsError(try repository.retireRejectedSubmission(XCTUnwrap(submission.ticket)))
+        XCTAssertEqual(try repository.load(.conversation(owner))?.text, "newer draft")
+    }
+
     func testRemoteSamplingRoundTripsWithoutLocalDefaults() throws {
         var parameters = ModelParameters.webAlignedCloudDefaults
         let saved = try ConversationParameterSnapshot.updating(nil, modelKey: "remote", parameters: parameters)

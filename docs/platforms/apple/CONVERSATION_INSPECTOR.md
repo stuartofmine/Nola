@@ -2,7 +2,7 @@
 
 # Apple 会话检查面板
 
-核对：2026-11-08，本地工作树。共同语义见[会话检查器](../../design/shared/CONVERSATION_INSPECTOR.md)，布局规范不能从旧原型切页行为反推。
+核对：2026-11-11，本地工作树。共同语义见[会话检查器](../../design/shared/CONVERSATION_INSPECTOR.md)，布局规范不能从旧原型切页行为反推。
 
 ## macOS
 
@@ -12,9 +12,13 @@
 
 提示词模板入口已从检查器上下文区移入 `MacConversationModelSettingsView`，与会话模型编辑器的保存/取消共用草稿周期；模板库仍是独立管理入口。模板选择仍写会话配置，不因入口移动而变成全局模型默认值。
 
+概览只展示当前状态、Host 和工作目录操作；上下文展示记忆/检索、用量与会话资料；浏览器位于执行区，工具管理由左侧全局入口负责。计划待办、目标控制、执行任务各有唯一展示区。请求编号等诊断在用量详细信息中原地展开。
+
+左侧 `MacWorkspaceResourceNavigation` 复用统一设置行，只列数据中心、模型、Skill/MCP 和系统访问。长期记忆、自动任务由数据中心承载；原有路由和命令保留，搜索可直达其独立内容标签，父入口选中状态仍正确。
+
 ## iOS
 
-手机以原生导航和面板适配，不照搬桌面三栏。`IOSConversationInspector` 的资源详情使用原地 DisclosureGroup。`ChatMoreSettingsSheet` 的模型区提供提示词模板选择，成功提交后才更新当前选择；上下文面板不再重复放置模板控件。
+手机以原生导航和面板适配，不照搬桌面三栏。`IOSConversationInspector` 的资源详情使用原地 DisclosureGroup；目标控制、要求和工作记录仅在目标面板，进度面板保留计划与执行任务，避免两处复制同一目标。`ChatMoreSettingsSheet` 的模型区提供提示词模板选择，成功提交后才更新当前选择；上下文面板不再重复放置模板控件。
 
 紧凑聊天标题隐藏系统导航栏时，`ChatNavigationGestureBridge` 恢复 UINavigationController 的原生边缘返回。只在聊天可见且可返回时接管 delegate；交互返回进行中不能提前禁用 recognizer，完成离开后恢复原 delegate/启用状态，取消返回保持当前聊天与草稿。根页面和已呈现模态不能被当作可返回聊天。
 

@@ -77,13 +77,25 @@ data class RoomExecutionClaim(val submission: RoomSubmission, @SerialName("dispa
 
 /** Canonical Application transport only: no Room/SharedPreferences shadow database. */
 class AgentRoomRepository(private val execute: (JsonObject) -> JsonElement) {
+    internal var remoteHostId: String? = null
+    internal var observedSourceEpoch: String? = null
+    internal fun confirmRemoteSource(host: String, epoch: String) {
+        require(host.isNotBlank() && epoch.isNotBlank() && (remoteHostId == null || remoteHostId == host) && (observedSourceEpoch == null || observedSourceEpoch == epoch))
+        remoteHostId = host; observedSourceEpoch = epoch
+    }
     constructor(runtime: AndroidApplicationRuntime) : this({ runtime.execute(it) })
 
-    private inline fun <reified T> command(body: JsonObject): T = Json.decodeFromJsonElement(
+    private inline fun <reified T> command(body: JsonObject, decoder: Json = Json): T = decoder.decodeFromJsonElement(
         execute(buildJsonObject { put("type", "agent_room"); put("command", body) })
     )
 
+    fun childConversations(conversationId: String, offset: Int = 0, limit: Int = 40): ExpertChildConversationPage = command<ExpertChildConversationPage>(buildJsonObject {
+        put("type", "child_conversations"); put("conversation_id", conversationId); put("offset", offset); put("limit", limit)
+    }).validated(conversationId, offset)
+
     fun directory(): AgentDirectory = command(buildJsonObject { put("type", "directory") })
+
+    fun roleTemplates(): ExpertRoleCatalog = command<ExpertRoleCatalog>(buildJsonObject { put("type", "role_templates") }, Json { ignoreUnknownKeys = true }).validated()
 
     fun ensureForConversation(conversationId: String, atMs: Long = System.currentTimeMillis()): ConversationRoomAssociation =
         command(buildJsonObject {
@@ -159,16 +171,25 @@ class AgentRoomRepository(private val execute: (JsonObject) -> JsonElement) {
         })
     })
 
+    fun rejoin(agent: PersistentAgent, room: AgentRoomSnapshot): AgentRoomSnapshot = command(buildJsonObject {
+        put("type", "rejoin")
+        put("input", buildJsonObject {
+            put("room_id", room.room.id); put("expected_room_revision", room.revision)
+            put("agent_id", agent.id); put("expected_agent_revision", agent.revision)
+            put("at_ms", System.currentTimeMillis())
+        })
+    })
+
     fun deactivate(participantId: String, room: AgentRoomSnapshot): AgentRoomSnapshot = command(buildJsonObject {
         put("type", "deactivate"); put("room_id", room.room.id)
         put("participant_id", participantId); put("expected_revision", room.revision)
         put("at_ms", System.currentTimeMillis())
     })
 
-    fun createAgent(name: String, defaults: JsonObject, directory: AgentDirectory, description: String): AgentDirectory = command(buildJsonObject {
+    fun createAgent(name: String, defaults: JsonObject, directory: AgentDirectory, description: String, id: String = UUID.randomUUID().toString()): AgentDirectory = command(buildJsonObject {
         put("type", "configure_agent")
         put("input", buildJsonObject {
-            put("id", UUID.randomUUID().toString()); put("name", name)
+            put("id", id); put("name", name)
             put("description", description)
             put("expected_directory_revision", directory.revision?.let(::JsonPrimitive) ?: JsonNull)
             put("expected_agent_revision", JsonNull); put("defaults", defaults)

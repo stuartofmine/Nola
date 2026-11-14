@@ -83,6 +83,10 @@ internal fun frozenAndroidParameters(binding: JsonObject, context: JsonObject): 
         maxCompletionTokens = output,
         maxContextTokens = context.getValue("context_window_tokens").jsonPrimitive.int,
         enableThinking = generation.getValue("thinking_enabled").jsonPrimitive.boolean,
+        reasoningPreference = (generation["reasoning_selection"] as? JsonObject)?.takeIf { it["kind"] == JsonPrimitive("effort") }
+            ?.get("value")?.jsonPrimitive?.content,
+        reasoningTier = (generation["reasoning_selection"] as? JsonObject)?.takeIf { it["kind"] == JsonPrimitive("budget") }
+            ?.let { generation["reasoning_tier"]?.jsonPrimitive?.content },
     )
 }
 

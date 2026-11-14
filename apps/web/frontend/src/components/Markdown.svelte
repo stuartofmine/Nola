@@ -2,7 +2,8 @@
     import { untrack, setContext, tick, onDestroy } from 'svelte';
     import { STREAMING_TEXT_SELECTION, captureTextSelection } from '../lib/streamingText';
     import StreamingText from './StreamingText.svelte';
-    import { parseMarkdown } from '../lib/markdown';
+    import MermaidDiagram from './MermaidDiagram.svelte';
+    import { StreamingMarkdownCache } from '../lib/markdown';
     import type { InlineNode, MarkdownBlock } from '../lib/markdown';
     import { locale, t } from '../lib/i18n';
     let { source, streaming = false, initialText = '' }: { source: string; streaming?: boolean; initialText?: string } = $props();
@@ -24,42 +25,19 @@
         if (streaming || wasStreaming) preserveSelection();
         wasStreaming = streaming;
     });
-    const content = $derived(parseMarkdown(source));
-    function indexText(blocks: MarkdownBlock[]) {
-        const offsets = new Map<object, number>();
-        let text = '';
-        function inlines(nodes: InlineNode[]) {
-            for (const node of nodes) {
-                offsets.set(node, text.length);
-                if (node.kind === 'text' || node.kind === 'code') text += node.text;
-                else if ('children' in node) inlines(node.children);
-            }
-        }
-        function visit(nodes: MarkdownBlock[]) {
-            for (const node of nodes) {
-                offsets.set(node, text.length);
-                if (node.kind === 'code') text += node.text;
-                else if (node.kind === 'paragraph' || node.kind === 'heading') inlines(node.children);
-                else if (node.kind === 'quote') visit(node.children);
-                else if (node.kind === 'list') for (const item of node.items) visit(item.children);
-                else if (node.kind === 'table') {
-                    for (const cell of node.header) inlines(cell);
-                    for (const row of node.rows) for (const cell of row) inlines(cell);
-                }
-            }
-        }
-        visit(blocks);
-        return { text, offsets };
-    }
-    const indexed = $derived(streaming ? indexText(content) : null);
-    let previous = untrack(() => streaming ? indexText(parseMarkdown(initialText)).text : '');
+    const cache = new StreamingMarkdownCache();
+    let previous = untrack(() => streaming && initialText ? cache.update(initialText).text : '');
     let visiblePrefix = $state(untrack(() => previous.length));
+    const snapshot = $derived(cache.update(source));
+    const content = $derived(snapshot.blocks);
     $effect.pre(() => {
-        const next = indexed?.text ?? '';
+        const next = streaming ? snapshot.text : '';
         visiblePrefix = streaming && next.startsWith(previous) ? previous.length : next.length;
         previous = next;
     });
-    function prefix(node: object) { return visiblePrefix - (indexed?.offsets.get(node) ?? 0); }
+    function prefix(node: object, length: number) {
+        return Math.max(0, Math.min(length, visiblePrefix - snapshot.offsetOf(node)));
+    }
     let copyNotice = $state('');
     let copyGeneration = 0;
     let copyTimer: ReturnType<typeof setTimeout> | undefined;
@@ -85,14 +63,14 @@
 
 {#snippet inlines(nodes: InlineNode[])}
     {#each nodes as node}
-        {#if node.kind === 'text'}{#if streaming || hasStreamed}<StreamingText text={node.text} {streaming} visiblePrefix={prefix(node)} />{:else}{node.text}{/if}
-        {:else if node.kind === 'code'}<code>{#if streaming || hasStreamed}<StreamingText text={node.text} {streaming} visiblePrefix={prefix(node)} />{:else}{node.text}{/if}</code>
+        {#if node.kind === 'text'}{#if streaming || hasStreamed}<StreamingText text={node.text} {streaming} visiblePrefix={prefix(node, node.text.length)} />{:else}{node.text}{/if}
+        {:else if node.kind === 'code'}<code>{#if streaming || hasStreamed}<StreamingText text={node.text} {streaming} visiblePrefix={prefix(node, node.text.length)} />{:else}{node.text}{/if}</code>
         {:else if node.kind === 'strong'}<strong>{@render inlines(node.children)}</strong>
         {:else if node.kind === 'em'}<em>{@render inlines(node.children)}</em>
         {:else if node.kind === 'del'}<del>{@render inlines(node.children)}</del>
         {:else if node.kind === 'br'}<br />
         {:else if node.kind === 'link'}
-            {#if node.href}<a href={node.href} title={node.title} target="_blank" rel="noopener noreferrer">{@render inlines(node.children)}</a>
+            {#if node.href}<a class:inline-reference={/^https?:/i.test(node.href)} href={node.href} title={node.title} target="_blank" rel="noopener noreferrer">{@render inlines(node.children)}</a>
             {:else}{@render inlines(node.children)}{/if}
         {:else if node.kind === 'image'}
             {#if node.href}<a href={node.href} target="_blank" rel="noopener noreferrer">{t($locale, 'shell.markdown.image', { label: node.text || t($locale, 'shell.markdown.view_image') })}</a>
@@ -108,10 +86,14 @@
         {:else if node.kind === 'hr'}<hr />
         {:else if node.kind === 'quote'}<blockquote>{@render renderBlocks(node.children)}</blockquote>
         {:else if node.kind === 'code'}
+            {#if node.language?.toLowerCase() === 'mermaid' && !streaming}
+                <MermaidDiagram source={node.text} />
+            {:else}
             <div class="code-block"><div class="code-header"><span>{node.language || t($locale, 'shell.markdown.code')}</span><button type="button" onclick={() => copy(node.text)}>{t($locale, 'shell.markdown.copy')}</button></div>
                 <!-- svelte-ignore a11y_no_noninteractive_tabindex (Keyboard users need to focus this overflow region to scroll code.) -->
-                <pre tabindex="0" role="region" aria-label={t($locale, 'shell.markdown.code')}><code>{#if streaming || hasStreamed}<StreamingText text={node.text} {streaming} visiblePrefix={prefix(node)} />{:else}{node.text}{/if}</code></pre>
+                <pre tabindex="0" role="region" aria-label={t($locale, 'shell.markdown.code')}><code>{#if streaming || hasStreamed}<StreamingText text={node.text} {streaming} visiblePrefix={prefix(node, node.text.length)} />{:else}{node.text}{/if}</code></pre>
             </div>
+            {/if}
         {:else if node.kind === 'list'}
             <svelte:element this={node.ordered ? 'ol' : 'ul'} start={node.ordered ? node.start : undefined}>
                 {#each node.items as item}<li class:task={item.checked !== undefined}>
@@ -150,6 +132,9 @@
     .code-header button { padding: 3px 8px; min-height: max(32px, var(--control-hit-size)); min-width: 44px; }
     pre { margin: 0; padding: 12px; overflow: auto; max-height: 480px; white-space: pre; line-height: 1.5; tab-size: 4; }
     .markdown pre code { padding: 0; background: none; border-radius: 0; }
+    .markdown :global(a.inline-reference) { color: var(--muted); font-size: .8125rem; font-weight: 400; text-decoration: none; text-underline-offset: .15em; }
+    .markdown :global(a.inline-reference:hover), .markdown :global(a.inline-reference:focus-visible) { color: var(--content); text-decoration: underline; }
+    .markdown :global(a.inline-reference strong) { font-weight: 400; }
     .table-scroll { overflow-x: auto; margin: 1em 0; border: 1px solid var(--border); border-radius: 8px; }
     table { border-collapse: collapse; min-width: 100%; font-size: .95em; }
     th, td { padding: 8px 12px; border-bottom: 1px solid var(--border); min-width: 100px; vertical-align: top; }

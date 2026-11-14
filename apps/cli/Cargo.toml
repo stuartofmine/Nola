@@ -84,6 +84,9 @@ tempfile = "3"
 nola_store_port = { path = "../../core/nola-store-port" }
 
 [dev-dependencies]
+# The test harness compiles terminal adapters even in native-host-only builds.
+arboard = "3.6"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 nola_mcp_host = { path = "../../core/nola-mcp-host", features = ["test-support"] }
 nola_agent_engine = { path = "../../core/nola-agent-engine" }
 crossterm = { version = "0.29", features = ["use-dev-tty"] }

@@ -123,9 +123,9 @@ cd apps/android && JAVA_HOME="$(/usr/libexec/java_home -v 17)" \
 cd apps/android && JAVA_HOME="$(/usr/libexec/java_home -v 17)" \
   ./gradlew connectedDebugAndroidTest
 xcrun simctl list devices available
-xcodebuild test -project Nola.xcodeproj -scheme Nola \
+xcodebuild test -project apple/Nola.xcodeproj -scheme Nola \
   -destination 'platform=iOS Simulator,name=<available simulator name>'
-xcodebuild test -project Nola.xcodeproj -scheme NolaMac \
+xcodebuild test -project apple/Nola.xcodeproj -scheme NolaMac \
   -destination 'platform=macOS'
 python -m pytest -q \
   web/tests/test_agent_host_full_e2e.py \

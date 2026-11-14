@@ -289,3 +289,100 @@ impl<R: nola_store_port::assistant_journal::AssistantJournalRepository> Applicat
         self.store.local_assistant_journal_head(identity).map_err(|error| error.to_string())
     }
 }
+
+pub fn conversation_list_projection_snapshot_from_store<R>(
+    store: &mut R,
+) -> Result<ApplicationConversationListProjectionSnapshot, String>
+where
+    R: ConversationQueryRepository
+        + ProjectionJournalRepository
+        + nola_store_port::consistent_read::ConsistentReadRepository,
+{
+    store.with_consistent_read(|store| {
+        let conversations = store
+            .list_conversations()
+            .map_err(|error| format!("load conversation list projection failed: {error}"))?
+            .into_iter()
+            .map(ConversationSummary::from)
+            .collect();
+        let scope = ProjectionScopeKey {
+            scope_type: "conversations".to_string(),
+            scope_id: String::new(),
+        };
+        let current_sequence = store
+            .projection_cursor(&scope)
+            .map_err(|error| format!("load conversation list projection cursor failed: {error}"))?
+            .map(|cursor| cursor.current_sequence)
+            .unwrap_or(0);
+        Ok(ApplicationConversationListProjectionSnapshot {
+            conversations,
+            current_sequence,
+        })
+    })
+}
+
+pub fn conversation_projection_snapshot_from_store<R>(
+    store: &mut R,
+    conversation_id: &str,
+) -> Result<ApplicationConversationProjectionSnapshot, String>
+where
+    R: ConversationProjectionRepository
+        + ProjectionJournalRepository
+        + nola_store_port::consistent_read::ConsistentReadRepository,
+{
+    store.with_consistent_read(|store| {
+        let projection = match crate::load_conversation_projection_v1(store, conversation_id) {
+            Ok(projection) => Some(projection),
+            Err(crate::ConversationProjectionContractError::MissingConversation(_)) => None,
+            Err(error) => {
+                return Err(format!(
+                    "load canonical projection before command failed: {error}"
+                ))
+            }
+        };
+        let scope = ProjectionScopeKey {
+            scope_type: "conversation".to_string(),
+            scope_id: conversation_id.to_string(),
+        };
+        let current_sequence = store
+            .projection_cursor(&scope)
+            .map_err(|error| format!("load projection cursor failed: {error}"))?
+            .map(|cursor| cursor.current_sequence)
+            .unwrap_or(0);
+        Ok(ApplicationConversationProjectionSnapshot {
+            projection,
+            current_sequence,
+        })
+    })
+}
+
+pub fn conversation_projection_page_snapshot_from_store<R>(
+    store: &mut R,
+    conversation_id: &str,
+    offset: usize,
+    limit: usize,
+) -> Result<ApplicationConversationProjectionSnapshot, String>
+where
+    R: ConversationProjectionRepository
+        + ProjectionJournalRepository
+        + nola_store_port::consistent_read::ConsistentReadRepository,
+{
+    store.with_consistent_read(|store| {
+        let projection =
+            crate::load_conversation_projection_page_v1(store, conversation_id, offset, limit)
+                .map_err(|error| format!("load conversation projection page failed: {error}"))?;
+        let scope = ProjectionScopeKey {
+            scope_type: "conversation".to_string(),
+            scope_id: conversation_id.to_string(),
+        };
+        let current_sequence = store
+            .projection_cursor(&scope)
+            .map_err(|error| format!("load projection page cursor failed: {error}"))?
+            .map(|cursor| cursor.current_sequence)
+            .unwrap_or(0);
+        Ok(ApplicationConversationProjectionSnapshot {
+            projection: Some(projection),
+            current_sequence,
+        })
+    })
+}

@@ -6,10 +6,12 @@ import Foundation
 nonisolated struct AppleExpertConfigurationDraft: Equatable, Sendable {
     var modelID: String
     var templateID: String
+    var reasoningEffort: String
 
-    init(modelID: String? = nil, templateID: String? = nil) {
+    init(modelID: String? = nil, templateID: String? = nil, reasoningEffort: String? = nil) {
         self.modelID = modelID ?? ""
         self.templateID = templateID ?? ""
+        self.reasoningEffort = reasoningEffort ?? "automatic"
     }
 
     func applying<JSON>(to original: [String: JSON], originalSelection: Self,
@@ -21,6 +23,10 @@ nonisolated struct AppleExpertConfigurationDraft: Equatable, Sendable {
         ] where selected != previous {
             if selected.isEmpty { fields.removeValue(forKey: key) }
             else { fields[key] = makeString(selected) }
+        }
+        if reasoningEffort != originalSelection.reasoningEffort {
+            if reasoningEffort == "automatic" { fields.removeValue(forKey: "expertReasoningEffort") }
+            else { fields["expertReasoningEffort"] = makeString(reasoningEffort) }
         }
         return fields
     }

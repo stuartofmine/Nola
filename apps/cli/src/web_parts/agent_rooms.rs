@@ -20,6 +20,22 @@ fn expert_prompt_templates_response() -> Response<Box<dyn Read + Send>> {
 
 fn agent_room_response(request: &mut Request, config: &Config) -> Response<Box<dyn Read + Send>> {
     let body = match read_json_value(request) { Ok(value) => value, Err(response) => return response };
+    if body.get("command").is_some() {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct ScopedRoomCommand {command:Value,expected_source_store_epoch:Option<String>}
+        let result=serde_json::from_value::<ScopedRoomCommand>(body).map_err(|_|"invalid scoped room command".to_owned())
+            .and_then(|input|execute_public_room_command_at_source(input.command,config,input.expected_source_store_epoch));
+        return match result {
+            Ok(reply)=>{
+                let status=if reply.source_matches {StatusCode(200)} else {StatusCode(409)};
+                let mut value=serde_json::to_value(reply).unwrap_or(Value::Null);
+                if status==StatusCode(409) {value["code"]=json!("room_source_epoch_changed");}
+                json_response(status,value)
+            },
+            Err(_)=>json_response(StatusCode(409),json!({"code":"room_command_unconfirmed"})),
+        };
+    }
     match execute_public_room_command(body, config) {
         Ok(value) => json_response(StatusCode(200), value),
         Err(_) => json_response(StatusCode(409), json!({"code":"room_command_unconfirmed",
@@ -29,7 +45,7 @@ fn agent_room_response(request: &mut Request, config: &Config) -> Response<Box<d
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct MobileRoomCommand { expected_host_id: String, command: Value }
+struct MobileRoomCommand { expected_host_id: String, #[serde(default)] expected_source_store_epoch: Option<String>, command: Value }
 
 fn mobile_agent_room_response(request: &mut Request, config: &Config) -> Response<Box<dyn Read + Send>> {
     let Some(token) = mobile_bearer_token(request) else { return json_response(StatusCode(401), json!({"error":"unauthorized"})); };
@@ -37,10 +53,15 @@ fn mobile_agent_room_response(request: &mut Request, config: &Config) -> Respons
     let result = (|| -> Result<Value, String> {
         let input: MobileRoomCommand = serde_json::from_value(body).map_err(|_| "invalid mobile room command")?;
         if input.expected_host_id != host_identity() { return Err("room Host identity changed".into()); }
-        execute_public_room_command(input.command, config).map(|result| json!({"host_id":host_identity(),"result":result}))
+        execute_public_room_command_at_source(input.command, config, input.expected_source_store_epoch).map(|reply| json!({"host_id":host_identity(),"source_store_epoch":reply.source_store_epoch,"source_matches":reply.source_matches,"result":reply.result}))
     })();
     match result {
-        Ok(value) => mobile_encrypted_json_response(StatusCode(200), value, &token),
+        Ok(mut value) => {
+            let status=if value["source_matches"]==false {
+                value["code"]=json!("room_source_epoch_changed"); StatusCode(409)
+            } else { StatusCode(200) };
+            mobile_encrypted_json_response(status, value, &token)
+        },
         Err(_) => mobile_encrypted_json_response(StatusCode(409), json!({"code":"room_command_unconfirmed", "error":"Room command could not be confirmed"}), &token),
     }
 }
@@ -49,8 +70,8 @@ fn public_room_command(body: Value) -> Result<nola_application::agent_room::Agen
     let command: nola_application::agent_room::AgentRoomCommand = serde_json::from_value(body).map_err(|_| "invalid room command")?;
     use nola_application::agent_room::AgentRoomCommand;
     if !matches!(&command, AgentRoomCommand::ForConversation { .. } | AgentRoomCommand::EnsureForConversation { .. }
-        | AgentRoomCommand::AttachConversation { .. } | AgentRoomCommand::Directory | AgentRoomCommand::List { .. } | AgentRoomCommand::Read { .. }
-        | AgentRoomCommand::ConfigureAgent { .. } | AgentRoomCommand::Create { .. } | AgentRoomCommand::Join { .. }
+        | AgentRoomCommand::AttachConversation { .. } | AgentRoomCommand::ChildConversations { .. } | AgentRoomCommand::ChildHistory { .. } | AgentRoomCommand::Directory | AgentRoomCommand::RoleTemplates | AgentRoomCommand::List { .. } | AgentRoomCommand::Read { .. }
+        | AgentRoomCommand::ConfigureAgent { .. } | AgentRoomCommand::Create { .. } | AgentRoomCommand::Join { .. } | AgentRoomCommand::Rejoin { .. }
         | AgentRoomCommand::Deactivate { .. } | AgentRoomCommand::Submit { .. } | AgentRoomCommand::Submission { .. } | AgentRoomCommand::Submissions { .. } | AgentRoomCommand::CancelPending { .. }) {
         return Err("room command is owned by the Host".into());
     }
@@ -58,6 +79,12 @@ fn public_room_command(body: Value) -> Result<nola_application::agent_room::Agen
 }
 
 fn execute_public_room_command(body: Value, config: &Config) -> Result<Value, String> {
+    let reply=execute_public_room_command_at_source(body, config, None)?;
+    if !reply.source_matches { return Err("room source changed".into()); }
+    Ok(reply.result)
+}
+
+fn execute_public_room_command_at_source(body: Value, config: &Config, expected_source_store_epoch: Option<String>) -> Result<nola_application::agent_room_source::AgentRoomSourceReply, String> {
     use nola_application::agent_room::AgentRoomCommand;
     let command = public_room_command(body)?;
     let submission = matches!(&command, AgentRoomCommand::Submit { .. });
@@ -65,17 +92,28 @@ fn execute_public_room_command(body: Value, config: &Config) -> Result<Value, St
     let exact_observation = matches!(&command, AgentRoomCommand::Submission { .. });
     let cancellation = match &command { AgentRoomCommand::CancelPending { room_id, submission_id, .. } => Some(format!("{room_id}/{submission_id}")), _ => None };
     let result = crate::application_port::CliApplicationPort::persistent_default()
-        .and_then(|mut application| application.execute::<Value>(
-            nola_application::ApplicationCommand::AgentRoom { command }));
-    result.and_then(|mut value| {
+        .and_then(|mut application| application.execute::<nola_application::agent_room_source::AgentRoomSourceReply>(
+            nola_application::ApplicationCommand::AgentRoomAtSource { expected_source_store_epoch, command: Box::new(command) }));
+    result.and_then(|mut reply| {
+            if !reply.source_matches { return Ok(reply); }
+            let value=&mut reply.result;
+            let epoch=reply.source_store_epoch.clone();
             if observations || exact_observation {
                 let mut observe = |command| crate::application_port::CliApplicationPort::persistent_default()
-                    .and_then(|mut app| app.execute::<Value>(command));
+                    .and_then(|mut app| match command {
+                        nola_application::ApplicationCommand::AgentRoom {command} => {
+                            let reply: nola_application::agent_room_source::AgentRoomSourceReply=app.execute(
+                                nola_application::ApplicationCommand::AgentRoomAtSource {expected_source_store_epoch:Some(epoch.clone()),command:Box::new(command)})?;
+                            if !reply.source_matches { return Err("room source changed during observation".into()); }
+                            Ok(reply.result)
+                        },
+                        command => app.execute::<Value>(command),
+                    });
                 if observations {
                     if let Some(values) = value.as_array_mut() {
                         for value in values { reconcile_observed_room_receipt(value, &mut observe)?; }
                     }
-                } else { reconcile_observed_room_receipt(&mut value, &mut observe)?; }
+                } else { reconcile_observed_room_receipt(value, &mut observe)?; }
             }
             if observations {
                 if let Some(values) = value.as_array() { for value in values {
@@ -92,7 +130,7 @@ fn execute_public_room_command(body: Value, config: &Config) -> Result<Value, St
                     start_room_dispatch(config.clone(), accepted);
                 }
             }
-            Ok(value)
+            Ok(reply)
     })
 }
 
@@ -124,6 +162,31 @@ fn reconcile_observed_room_receipt(
 #[cfg(test)]
 mod room_http_contract_tests {
     use super::*;
+    #[test]
+    fn room_source_guard_rejects_stale_writes_without_changing_rooms() {
+        use nola_application::{ApplicationCommand,agent_room::{AgentRoomCommand as Room},agent_room_source::AgentRoomSourceReply};
+        let directory=tempfile::tempdir().unwrap();
+        let mut app=crate::application_port::CliApplicationPort::persistent(&directory.path().join("epoch.sqlite")).unwrap();
+        let epoch:String=app.execute(ApplicationCommand::ReadUiAuthority).unwrap();
+        let read=||ApplicationCommand::AgentRoomAtSource {expected_source_store_epoch:None,command:Box::new(Room::List {limit:20,offset:0})};
+        let before:AgentRoomSourceReply=app.execute(read()).unwrap();
+        assert!(before.source_matches); assert_eq!(before.source_store_epoch,epoch);
+        let denied:AgentRoomSourceReply=app.execute(ApplicationCommand::AgentRoomAtSource {
+            expected_source_store_epoch:Some("retired-source".into()),
+            command:Box::new(Room::Create {title:"Must not exist".into(),at_ms:1}),
+        }).unwrap();
+        assert!(!denied.source_matches); assert!(denied.result.is_null());
+        let after:AgentRoomSourceReply=app.execute(read()).unwrap();
+        assert_eq!(after.result,before.result);
+        let accepted:AgentRoomSourceReply=app.execute(ApplicationCommand::AgentRoomAtSource {
+            expected_source_store_epoch:Some(epoch.clone()),
+            command:Box::new(Room::Create {title:"Owned source".into(),at_ms:2}),
+        }).unwrap();
+        assert!(accepted.source_matches); assert_eq!(accepted.source_store_epoch,epoch);
+        let after:AgentRoomSourceReply=app.execute(read()).unwrap();
+        assert_eq!(after.result.as_array().unwrap().len(),1);
+    }
+
     #[test]
     fn exact_receipt_read_materializes_actual_store_seal_without_redispatch() {
         use nola_application::{agent_room as rooms, persistent_agent as agents, ApplicationCommand, BeginAssistantTurn};
@@ -372,6 +435,34 @@ fn room_reasoning_tier(preference: &Value) -> Result<nola_domain::reasoning_tier
     serde_json::from_value(preference.clone()).map_err(|_|"invalid room reasoning preference".into())
 }
 
+fn room_generation_intent(profile: &nola_application::ModelProfile, configuration: &Value)
+    -> Result<nola_application::RunGenerationIntent, String> {
+    let source: Value = serde_json::from_str(&profile.source_json).map_err(|_| "invalid room model source")?;
+    let overrides = &configuration["modelOverrides"][format!("configured:{}", profile.id)];
+    let mut preferences = overrides.as_object().cloned().unwrap_or_default();
+    let parameters: Value = serde_json::from_str(&profile.parameters_json).map_err(|_| "invalid room model parameters")?;
+    for key in ["reasoningPreference", "reasoningTier"] {
+        if preferences.get(key).is_none_or(Value::is_null) {
+            if let Some(value) = parameters.get(key).filter(|value| !value.is_null()) { preferences.insert(key.into(), value.clone()); }
+        }
+    }
+    let mut request = nola_application::model_profile_resolution::session_override_request(
+        &Value::Object(preferences), &source["reasoning"], source["wireProtocol"].as_str().ok_or("room model protocol missing")?)?;
+    let execution = nola_application::ModelExecutionCapabilities::from_source(&source)?;
+    if request.get("sampling_override").is_none() {
+        request["sampling_override"] = json!(execution.sampling_parameters && !execution.sampling_requires_no_reasoning);
+    }
+    let tier = room_reasoning_tier(request.get("reasoning_tier").unwrap_or(&Value::Null))?;
+    let fields = request.as_object().ok_or("invalid room generation request")?.iter()
+        .filter(|(key, value)| ["temperature", "top_p", "max_output_tokens", "max_context_tokens", "sampling_override", "generation_options", "reasoning_selection"].contains(&key.as_str())
+            && !(key.as_str() == "reasoning_selection" && value.is_null()))
+        .map(|(key, value)| (key.clone(), value.clone())).collect();
+    let intent = nola_application::RunGenerationIntent { profile_id: profile.id.clone(), expected_revision: profile.revision,
+        tier, overrides: serde_json::from_value(Value::Object(fields)).map_err(|_| "invalid room generation intent")? };
+    intent.validate()?;
+    Ok(intent)
+}
+
 fn room_debug_failure(config:&Config, message:&str) {
     if !config.debug_mode {return;}
     let redacted=crate::session::redact_sensitive_text(message);
@@ -443,13 +534,12 @@ fn execute_selected_room(config: &Config, mut selected: nola_application::agent_
             let parent_id = messages.last().and_then(web_core_message_id);
             let execution_id = reserved.as_ref().map(|entry|entry.child_submission_id.clone())
                 .unwrap_or_else(||uuid::Uuid::new_v4().to_string());
-            let tier = room_reasoning_tier(&frozen_settings["modelOverrides"][format!("configured:{}",profile.id)]["reasoningPreference"])?;
+            let model_intent = room_generation_intent(&profile, &frozen_settings)?;
             let mut body = json!({"expected_host_id":host_identity(),"client_id":client_id,"conversationId":context_id,
                 "submission_id":execution_id,"user_message_id":format!("{execution_id}:user"),"assistant_message_id":format!("{execution_id}:assistant"),
                 "expected_configuration_revision":configuration_revision,"expected_parent_message_id":parent_id,
                 "execution_backend":"nola","tool_plan_ref":tool_plan.reference,
-                "model_intent":{"profile_id":profile.id,"expected_revision":profile.revision,
-                    "tier":tier,"overrides":{}},
+                "model_intent":model_intent,
                 "messages":[{"role":"user","content":selected.input.text}]});
             body["request_digest"] = json!(nola_domain::remote_submission::submission_request_digest(&body)?);
             let intent = RoomExecutionIntent { execution_id, envelope:RoomExecutionEnvelope::Host {

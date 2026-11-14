@@ -143,6 +143,7 @@ _run_xcodebuild() {
     # shellcheck disable=SC2086
     NOLA_TEST_MODE=1 xcodebuild \
         "$BUILD_ACTION" \
+        -project "$SCRIPT_DIR/apple/Nola.xcodeproj" \
         -scheme "$SCHEME" \
         $SKIP_FLAGS \
         -destination "$DESTINATION" \

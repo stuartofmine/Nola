@@ -36,4 +36,18 @@ class ConversationComposerDraftsTest {
         assertEquals("new a edit", drafts.forConversation("a").text.value)
         assertEquals("b draft", drafts.forConversation("b").text.value)
     }
+    @Test fun blockedBeforeModelRestoresOriginalDraftButNeverOverwritesNewEdits() = runBlocking {
+        val drafts=ConversationComposerDrafts()
+        drafts.forConversation("a").text.value="Original input"
+        val ticket=drafts.prepareSubmission(drafts.captureSubmission(drafts.ownerKey("a")))
+        assertTrue(drafts.submitted(ticket))
+        assertTrue(drafts.restoreBlockedSubmission(ticket,"a"))
+        assertEquals("Original input",drafts.forConversation("a").text.value)
+        assertFalse(drafts.restoreBlockedSubmission(ticket,"a"))
+        drafts.forConversation("b").text.value="Submitted"
+        val other=drafts.prepareSubmission(drafts.captureSubmission(drafts.ownerKey("b")))
+        assertTrue(drafts.submitted(other));drafts.forConversation("b").text.value="Newer draft"
+        assertFalse(drafts.restoreBlockedSubmission(other,"b"))
+        assertEquals("Newer draft",drafts.forConversation("b").text.value)
+    }
 }

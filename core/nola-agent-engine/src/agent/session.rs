@@ -522,13 +522,22 @@ impl AgentThreadState {
     fn item_owner_for_turn(&self,item:&AgentItem,turn_id:&TurnId)->AgentItemOwnership {
         // Results stay with their original call even if guidance opened a new
         // response segment while the tool was running.
+        let current_message = self.conversation.projection.active_message_segments
+            .get(turn_id.as_str()).cloned().unwrap_or_else(|| format!("{}:assistant",turn_id.as_str()));
         let tool_message = match item {
-            AgentItem::ToolCall {call_id,..} | AgentItem::ToolResult {call_id,..} =>
-                self.conversation.projection.parts.values().find_map(|part| match part {
-                    super::parts::AgentPart::Tool(tool) if tool.call_id == call_id.as_str()
-                        && tool.ownership.turn_id == turn_id.as_str() => Some(tool.ownership.message_id.clone()),
-                    _ => None,
-                }),
+            AgentItem::ToolCall {call_id,..} | AgentItem::ToolResult {call_id,..} => {
+                let call = matches!(item, AgentItem::ToolCall { .. });
+                let mut completed_owner = None;
+                let mut active_owner = None;
+                for id in self.conversation.projection.order.iter().rev() {
+                    let Some(super::parts::AgentPart::Tool(tool)) = self.conversation.projection.parts.get(id) else { continue };
+                    if tool.call_id != call_id.as_str() || tool.ownership.turn_id != turn_id.as_str()
+                        || (call && tool.ownership.message_id != current_message) { continue; }
+                    if !tool.state.is_terminal() { active_owner = Some(tool.ownership.message_id.clone()); break; }
+                    if !call && completed_owner.is_none() { completed_owner = Some(tool.ownership.message_id.clone()); }
+                }
+                active_owner.or(completed_owner)
+            },
             _ => None,
         };
         AgentItemOwnership {
@@ -941,6 +950,34 @@ mod tests {
                 runtime_snapshot: Default::default(),
             },
         )));
+    }
+
+    #[test]
+    fn tool_result_keeps_running_call_owner_across_guidance_but_new_call_uses_new_segment() {
+        use crate::agent::parts::{AgentPart, PartOwnership, ToolPart, ToolPartState};
+        let mut state = AgentThreadState::new(SessionId::from_string("session".into()), configuration());
+        let turn = TurnId::from_string("turn".into());
+        let make_part = |id: &str, message: &str, status| AgentPart::Tool(ToolPart {
+            execution_source: Default::default(), id: id.into(), ownership: PartOwnership {
+                turn_id: turn.as_str().into(), message_id: message.into(),
+            }, call_id: "same-call".into(), capability_id: "read_file".into(), title: "Read".into(),
+            summary: None, origin: Default::default(), state: status, input: serde_json::json!({}),
+            raw_input: String::new(), permission: None, output_preview: None, structured_output: None,
+            full_output_ref: None, artifacts: vec![], started_at_ms: Some(1), finished_at_ms: None,
+        });
+        // Lexicographic Part order deliberately disagrees with occurrence order.
+        state.conversation.projection.order = vec!["z-older".into(), "a-running".into()];
+        state.conversation.projection.parts.insert("z-older".into(), make_part("z-older", "older-message", ToolPartState::Completed));
+        state.conversation.projection.parts.insert("a-running".into(), make_part("a-running", "original-message", ToolPartState::Running));
+        state.conversation.projection.active_message_segments.insert(turn.as_str().into(), "guidance-message".into());
+        let result = result_view("result-item", "same-call", false, serde_json::json!({"ok": true}));
+        assert_eq!(state.item_owner_for_turn(&result, &turn).message_id, "original-message");
+        let call = AgentItem::ToolCall { id: ItemId::from_string("fresh-call-item".into()),
+            call_id: CallId::from_string("same-call".into()), name: "read_file".into(), arguments: serde_json::json!({}) };
+        assert_eq!(state.item_owner_for_turn(&call, &turn).message_id, "guidance-message");
+        let Some(AgentPart::Tool(part)) = state.conversation.projection.parts.get_mut("a-running") else { unreachable!() };
+        part.state = ToolPartState::Completed;
+        assert_eq!(state.item_owner_for_turn(&result, &turn).message_id, "original-message", "settled result lookup retains the last exact occurrence for replay");
     }
 
     fn result_view(id:&str,call:&str,error:bool,output:serde_json::Value)->AgentItem {

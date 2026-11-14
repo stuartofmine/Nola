@@ -10,6 +10,8 @@ Nola combines conversations, model connections, local workspaces, tool execution
 
 The CLI can expose its local Host through an authenticated HTTP service for the Web client and remote clients.
 
+Native and Web expert settings provide seven starting roles: code writing, code review, testing, personal assistance, visual art, presentations and academic writing. Each includes instructions, a suggested tool pack and associated Skills. Experts have their own model-declared reasoning effort; use `@` in graphical conversation composers to select an expert. Existing conversations retain their joined configuration until an explicit update. A single main agent interacts with the user and delegates to experts through the shared subagent Task runtime. Experts keep their own model, tools and persistent child history and do not recursively delegate. See the [expert interaction design](docs/design/shared/MULTI_AGENT_NAVIGATION.md).
+
 ## Downloads
 
 The 1.0.0 development preview provides a complete **macOS Apple Silicon CLI** bundle. Keep its CLI, Agent Host, service, Web assets and browser runtime together. It is not Apple Developer ID notarized. Other platform installers have not been published; their source is included.

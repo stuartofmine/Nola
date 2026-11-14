@@ -5,7 +5,7 @@ export type MessagePresentation = {id: string; kind: 'text'; text: string}
     | {id: string; kind: 'tools'; parts: TimelinePart[]}
     | {id: string; kind: 'part'; part: TimelinePart};
 
-export type MessageFlowPresentation = MessagePresentation | {id: string; kind: 'process'; parts: TimelinePart[]; rounds: TimelinePart[][]};
+export type MessageFlowPresentation = MessagePresentation | {id: string; kind: 'process'; parts: TimelinePart[]};
 
 /** Partition by typed provenance, never by generated prose or localized titles. */
 export function isExecutionPart(part: TimelinePart): boolean {
@@ -18,8 +18,8 @@ export function isExecutionPresentation(group: MessagePresentation): group is Ex
     return group.kind === 'tools' || group.kind === 'part' && isExecutionPart(group.part);
 }
 
-/** Only the current Core activity can open itself. Earlier completed rounds
- * remain available at their original anchors without reopening on a new delta. */
+/** Identify live reasoning for compact activity feedback. This never implies
+ * opening history; earlier rounds remain inspectable at their original anchors. */
 export function liveReasoningParts(parts: TimelinePart[]): TimelinePart[] {
     return parts.filter(part => part.value.kind === 'reasoning'
         && ['pending', 'running'].includes(String(part.value.state)));
@@ -36,26 +36,16 @@ export function executionProcessExpanded(choice: boolean | null, initiallyExpand
     return choice ?? initiallyExpanded;
 }
 
-/** One disclosure at the first visible activity; other Parts stay outside.
- * Keep round boundaries so completed-tool groups never bridge public content. */
-export function messageFlowPresentation(parts: TimelinePart[], live = false): MessageFlowPresentation[] {
+/** Structural renderer segments, never a rewritten transcript. A Surface,
+ * withheld/empty text, or another public part is a real process boundary. */
+export function messageFlowPresentation(parts: TimelinePart[]): MessageFlowPresentation[] {
     const result: MessageFlowPresentation[] = [];
-    const process: Extract<MessageFlowPresentation, {kind: 'process'}> = {
-        id: 'execution-process', kind: 'process', parts: [], rounds: [],
-    };
     for (let index = 0; index < parts.length;) {
-        if (isExecutionPart(parts[index])) {
-            const round: TimelinePart[] = [];
-            do {
-                const activity = parts[index++];
-                if (activity.value.kind === 'tool' || timelinePartText(activity, 'reasoning').trim()
-                    || live && liveReasoningParts([activity]).length) round.push(activity);
-            } while (index < parts.length && isExecutionPart(parts[index]));
-            if (round.length) {
-                if (!process.parts.length) result.push(process);
-                process.parts.push(...round);
-                process.rounds.push(round);
-            }
+        const part = parts[index];
+        if (isExecutionPart(part)) {
+            const segment: TimelinePart[] = [];
+            do { segment.push(parts[index++]); } while (index < parts.length && isExecutionPart(parts[index]));
+            result.push({id: part.id, kind: 'process', parts: segment});
         } else {
             const segment: TimelinePart[] = [];
             do { segment.push(parts[index++]); } while (index < parts.length && !isExecutionPart(parts[index]));

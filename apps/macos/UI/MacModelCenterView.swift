@@ -135,6 +135,7 @@ final class MacModelCenterNavigationState: ObservableObject {
 }
 
 struct MacModelCenterView: View {
+    @State private var visitedSources: Set<MacModelCenterNavigationState.Tab>
     @StateObject private var navigation: MacModelCenterNavigationState
     @StateObject private var remoteDraft: MacRemoteModelEditingState
     @StateObject private var localEditing: MacLocalModelEditingState
@@ -155,6 +156,7 @@ struct MacModelCenterView: View {
         _ = remoteHost
         self.navigationAction = navigationAction
         _navigation = StateObject(wrappedValue: navigation)
+        _visitedSources = State(initialValue: [navigation.selectedTab])
         _remoteDraft = StateObject(wrappedValue: remoteDraft ?? MacRemoteModelEditingState())
         _localEditing = StateObject(wrappedValue: localEditing ?? MacLocalModelEditingState())
     }
@@ -202,12 +204,26 @@ struct MacModelCenterView: View {
 
             Divider().opacity(0.55)
 
-            if navigation.selectedTab == .local {
-                MacLocalModelManagerView(showsHeader: false, downloader: downloader, preference: preference,
-                                         editingState: localEditing)
-            } else {
-                MacModelConnectionsView(service: MacModelConnectionService(application: preference.store.application))
+            // Keep visited sources mounted: switching sources must preserve search,
+            // connection drafts and selection, while hidden sources cannot receive input.
+            ZStack {
+                if visitedSources.contains(.local) {
+                    MacLocalModelManagerView(showsHeader: false, downloader: downloader, preference: preference,
+                                             editingState: localEditing)
+                        .opacity(navigation.selectedTab == .local ? 1 : 0)
+                        .allowsHitTesting(navigation.selectedTab == .local)
+                        .accessibilityHidden(navigation.selectedTab != .local)
+                        .disabled(navigation.selectedTab != .local)
+                }
+                if visitedSources.contains(.api) {
+                    MacModelConnectionsView(service: MacModelConnectionService(application: preference.store.application))
+                        .opacity(navigation.selectedTab == .api ? 1 : 0)
+                        .allowsHitTesting(navigation.selectedTab == .api)
+                        .accessibilityHidden(navigation.selectedTab != .api)
+                        .disabled(navigation.selectedTab != .api)
+                }
             }
+            .onChange(of: navigation.selectedTab) { _, source in visitedSources.insert(source) }
         }
         .background(MacDesignColor.canvas)
         .tint(MacDesignColor.brand)

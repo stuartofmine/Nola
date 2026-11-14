@@ -169,23 +169,16 @@ struct ChatMoreSettingsSheet: View {
                                 .foregroundStyle(.secondary)
                             ProgressView(value: Double(contextUsage.percentage), total: 100)
                                 .tint(contextUsage.percentage >= autoCompactTriggerPercent ? DesignTokens.warningColor : DesignTokens.primaryColor)
-                        } else {
-                            Text(tr("chat.more_settings.scope.current.hint", "Files, context window, and this conversation's memory", comment: "Current conversation context hint"))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
                         }
                     }
                     Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.tertiary)
                 }
+                .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                .contentShape(Rectangle())
             }
             .accessibilityIdentifier("chat.more_settings.context")
         } header: {
             Text(tr("chat.more_settings.conversation.header", "This conversation", comment: "Current conversation section header"))
-        } footer: {
-            Text(tr("chat.more_settings.conversation.footer", "These choices affect the current conversation. Model defaults below apply whenever this model is used.", comment: "Current conversation section footer"))
         }
     }
 

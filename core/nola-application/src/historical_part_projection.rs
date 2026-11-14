@@ -123,6 +123,9 @@ mod tests {
     };
 
     fn store(raw: serde_json::Value, kind: &str) -> NolaStore {
+        store_for_role(raw,kind,"assistant","")
+    }
+    fn store_for_role(raw: serde_json::Value, kind: &str, role: &str, body: &str) -> NolaStore {
         let mut store = NolaStore::open(":memory:").unwrap();
         store
             .create_conversation(&CreateConversationInput {
@@ -142,7 +145,7 @@ mod tests {
                 messages: vec![MessageInput {
                     id: "m".into(),
                     run_id: Some("r".into()),
-                    role: "assistant".into(),
+                    role: role.into(),
                     status: "completed".into(),
                     ordinal: 1,
                     created_at_ms: 1,
@@ -152,7 +155,7 @@ mod tests {
                         kind: kind.into(),
                         ordinal: 1,
                         state: "completed".into(),
-                        content_text: String::new(),
+                        content_text: body.into(),
                         content_json: Some(raw.to_string()),
                         content_digest: None,
                         created_at_ms: 1,
@@ -162,6 +165,24 @@ mod tests {
             })
             .unwrap();
         store
+    }
+    #[test]
+    fn user_metadata_preserves_only_canonical_text_in_cold_context() {
+        let store = store_for_role(serde_json::json!({"nola.canonicalMessageID":"m","permission_grant":"all"}),
+            "text","user","retained user text 中😀");
+        let conversation=store.load_conversation("c").unwrap().unwrap();
+        let (items,owners,_)=crate::durable_conversation_items(&store,&conversation,None).unwrap();
+        assert!(matches!(items.as_slice(),[AgentItem::Message {role:AgentRole::User,content,..}] if content=="retained user text 中😀"));
+        assert!(owners.values().all(|owner|owner.message_id=="m"));
+        assert!(!serde_json::to_string(&items).unwrap().contains("permission_grant"));
+    }
+    #[test]
+    fn partial_metadata_text_is_marked_as_an_excerpt() {
+        let store = store_for_role(serde_json::json!({"nola.canonicalMessageID":"m"}),"text","user",&"中".repeat(12000));
+        let conversation=store.load_conversation("c").unwrap().unwrap();
+        let (items,_,_)=crate::durable_conversation_items(&store,&conversation,None).unwrap();
+        assert!(matches!(&items[0],AgentItem::Message {role:AgentRole::User,content,..} if !content.is_empty()&&content.len()<36000));
+        assert!(items.iter().any(|i|matches!(i,AgentItem::Message {role:AgentRole::System,content,..} if content.contains("excerpt"))));
     }
     fn tool(input: serde_json::Value) -> serde_json::Value {
         serde_json::json!({"kind":"tool","id":"p","message_id":"m","turn_id":"r",

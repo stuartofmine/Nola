@@ -114,6 +114,28 @@ fn responses_body_for_route(
             }
         }
     }
+    // Without retained provider response items (for example SIWC with no
+    // reasoning continuity), history contains Core-scoped call IDs. Those
+    // can exceed Responses' 64-character wire limit. Give only those calls
+    // bounded request-local aliases, keeping both sides paired and avoiding
+    // existing IDs. Canonical IDs and opaque provider replay stay untouched.
+    let mut wire_call_ids = replayed_call_ids.clone();
+    let mut reserved_ids = provider_call_ids.iter().map(|id| (*id).to_string())
+        .collect::<std::collections::HashSet<_>>();
+    let history_call_ids = messages.iter()
+        .filter_map(|message| message["tool_calls"].as_array())
+        .flatten().filter_map(|call| call["id"].as_str()).collect::<Vec<_>>();
+    reserved_ids.extend(history_call_ids.iter().filter(|id| id.len() <= 64).map(|id| (*id).to_string()));
+    let mut alias_sequence = 0_u64;
+    for id in history_call_ids {
+        if id.len() <= 64 || wire_call_ids.contains_key(id) { continue; }
+        let alias = loop {
+            alias_sequence += 1;
+            let candidate = format!("nola_call_{alias_sequence}");
+            if reserved_ids.insert(candidate.clone()) { break candidate; }
+        };
+        wire_call_ids.insert(id.to_string(), alias);
+    }
     let history_breakpoint = cfg.openai_prompt_cache && !siwc
         && cfg.openai_prompt_cache_history_breakpoint_endpoints.as_ref().map_or(
             cfg.openai_prompt_cache_history_breakpoint,
@@ -135,7 +157,7 @@ fn responses_body_for_route(
         let role = message["role"].as_str().unwrap_or("user");
         if role == "tool" {
             let call_id = message["tool_call_id"].as_str().unwrap_or_default();
-            let provider_id = replayed_call_ids
+            let provider_id = wire_call_ids
                 .get(call_id)
                 .map(String::as_str)
                 .unwrap_or(call_id);
@@ -174,14 +196,16 @@ fn responses_body_for_route(
                 {
                     continue;
                 }
+                let call_id = call["id"].as_str().ok_or("missing tool call ID")?;
+                let wire_id = wire_call_ids.get(call_id).map(String::as_str).unwrap_or(call_id);
                 if siwc {
                     input.push(siwc_tools::encode_history_call(
-                        call["id"].as_str().ok_or("missing tool call ID")?,
+                        wire_id,
                         call["function"]["name"].as_str().ok_or("missing tool name")?,
                         call["function"]["arguments"].as_str().ok_or("missing tool arguments")?,
                     )?);
                 } else {
-                    input.push(json!({"type":"function_call", "call_id":call["id"], "name":call["function"]["name"], "arguments":call["function"]["arguments"]}));
+                    input.push(json!({"type":"function_call", "call_id":wire_id, "name":call["function"]["name"], "arguments":call["function"]["arguments"]}));
                 }
             }
         }
@@ -1417,6 +1441,36 @@ mod responses_contract_tests {
         assert_eq!(body["input"][1]["call_id"], "call_2");
         assert_eq!(body["input"][2]["call_id"], "call_1");
         assert_eq!(body["input"][3]["call_id"], "call_2");
+    }
+
+    #[test]
+    fn scoped_history_call_ids_fit_wire_limit_without_collisions_or_canonical_mutation() {
+        let cfg = config("http://localhost/v1".into());
+        let first = format!("{}::call_reused", "a".repeat(72));
+        let second = format!("{}::call_reused", "b".repeat(72));
+        let messages = vec![
+            json!({"role":"assistant","content":"","tool_calls":[
+                {"id":"nola_call_1","function":{"name":"read","arguments":"{}"}},
+                {"id":first,"function":{"name":"read","arguments":"{}"}},
+                {"id":second,"function":{"name":"read","arguments":"{}"}}
+            ]}),
+            json!({"role":"tool","tool_call_id":"nola_call_1","content":"short"}),
+            json!({"role":"tool","tool_call_id":first,"content":"first"}),
+            json!({"role":"tool","tool_call_id":second,"content":"second"}),
+        ];
+        let canonical = messages.clone();
+        for body in [responses_body(&cfg, &messages, &[], "auto").unwrap(),
+            siwc_responses_body(&cfg, &messages, &[], "auto").unwrap()] {
+            let input = body["input"].as_array().unwrap();
+            let calls = input.iter().filter(|item| item["type"] == "function_call")
+                .map(|item| item["call_id"].as_str().unwrap()).collect::<Vec<_>>();
+            let results = input.iter().filter(|item| item["type"] == "function_call_output")
+                .map(|item| item["call_id"].as_str().unwrap()).collect::<Vec<_>>();
+            assert_eq!(calls, results);
+            assert_eq!(calls, vec!["nola_call_1", "nola_call_2", "nola_call_3"]);
+            assert!(calls.iter().all(|id| id.len() <= 64));
+        }
+        assert_eq!(messages, canonical);
     }
 
     #[test]

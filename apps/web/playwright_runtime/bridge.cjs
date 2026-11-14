@@ -12,6 +12,7 @@ const readline = require('node:readline');
 const http = require('node:http');
 const { chromium } = require('playwright-core');
 const { OwnerOperationQueue } = require('./owner_queue.cjs');
+const { BrowserUseExecutor } = require('./browser_use.cjs');
 
 const sessions = new Map();
 const ownerOperations = new OwnerOperationQueue();
@@ -83,6 +84,8 @@ function sessionSummary(session) {
     session_id: session.id,
     generation: session.generation,
     target: 'managed',
+    engine: 'browser-use',
+    engine_version: '1.0.2',
     running: true,
     persistent: session.persistent,
     headless: session.headless,
@@ -143,7 +146,7 @@ async function evictIdleSessions(exceptID = null, reservesSlot = false) {
     const idle = now - session.lastUsedAt >= idleSessionMilliseconds;
     if (!overLimit && !idle) continue;
     session.closing = true;
-    try { await session.context.close(); }
+    try { await session.executor?.close(); await session.context.close(); }
     catch (error) { session.closing = false; throw error; }
     sessions.delete(session.id);
     if (!idle && sessions.size < maximumLiveSessions) break;
@@ -248,17 +251,17 @@ const previewReady = new Promise((resolve, reject) => {
         if (sessions.get(sessionID) !== session || session.closing) throw new Error('browser owner changed');
         const page = activePage(session);
         if (payload.kind === 'click') {
-          await page.mouse.click(Number(payload.x), Number(payload.y));
+          await session.executor.perform(page, 'pointer', {x:Number(payload.x), y:Number(payload.y)});
         } else if (payload.kind === 'wheel') {
-          await page.mouse.wheel(Number(payload.delta_x || 0), Number(payload.delta_y || 0));
+          await session.executor.perform(page, 'wheel', {delta_x:Number(payload.delta_x || 0), delta_y:Number(payload.delta_y || 0)});
         } else if (payload.kind === 'key') {
-          const modifiers = [payload.meta&&'Meta',payload.control&&'Control',payload.alt&&'Alt',payload.shift&&'Shift'].filter(Boolean);
+          const modifiers = (payload.alt ? 1 : 0) | (payload.control ? 2 : 0) | (payload.meta ? 4 : 0) | (payload.shift ? 8 : 0);
           const key = String(payload.key || '');
-          if (key.length === 1 && modifiers.length === 0) await page.keyboard.insertText(key);
-          else await page.keyboard.press([...modifiers, key].filter(Boolean).join('+'));
+          if (key.length === 1 && modifiers === 0) await session.executor.perform(page, 'text', {text:key});
+          else await session.executor.perform(page, 'key', {key,modifiers});
         } else if (payload.kind === 'text') {
           const text = String(payload.text || '');
-          if (text) await page.keyboard.insertText(text);
+          if (text) await session.executor.perform(page, 'text', {text});
         }
         clearReferences(session);
         session.revision += 1;
@@ -339,13 +342,18 @@ async function freeLoopbackPort() {
   return port;
 }
 
-async function createSession({ id, context, browser = null, persistent, headless, profileRoot }) {
+async function createSession({ id, context, browser = null, persistent, headless, profileRoot, debuggingPort = null }) {
   const pages = context.pages();
   const selected = restoredActivePage(context, profileRoot)
     || (pages.length === 1 && pages[0].url() === 'about:blank' ? pages[0] : null)
     || (pages.length === 0 ? await context.newPage() : null);
+  let executor = null;
+  if (debuggingPort !== null) {
+    try { executor = await BrowserUseExecutor.attach(`http://127.0.0.1:${debuggingPort}`, context); }
+    catch (error) { await context.close().catch(() => {}); throw error; }
+  }
   const session = {
-    id, context, browser, persistent, headless, profileRoot,
+    id, context, browser, persistent, headless, profileRoot, executor,
     generation: crypto.randomUUID(), closing: false,
     activePage: selected, refs: new Map(), revision: 0,
     console: [], network: [], lastUsedAt: Date.now(), previewFrame: null, previewCapture: null,
@@ -371,6 +379,7 @@ async function createSession({ id, context, browser = null, persistent, headless
   });
   for (const page of context.pages()) observePage(page);
   context.on('close', () => {
+    session.executor?.close().catch(() => {});
     if (sessions.get(id) === session) sessions.delete(id);
     try { fs.unlinkSync(runtimeFile(profileRoot)); } catch {}
     try { fs.unlinkSync(activePageFile(profileRoot)); } catch {}
@@ -400,7 +409,7 @@ async function reconnectSession(id, profileRoot, headless) {
   if (!context) return null;
   // Invalid current-format selection is not a failed connection. Propagate it
   // rather than deleting runtime metadata and launching over the same profile.
-  return createSession({ id, context, browser, persistent: true, headless, profileRoot });
+  return createSession({ id, context, browser, persistent: true, headless, profileRoot, debuggingPort: runtime.port });
 }
 
 async function launchSession(args) {
@@ -445,7 +454,7 @@ async function launchSession(args) {
     nonce: crypto.randomUUID(),
     pid: process.pid,
   }), { mode: 0o600 });
-  const session = await createSession({ id, context, persistent, headless, profileRoot });
+  const session = await createSession({ id, context, persistent, headless, profileRoot, debuggingPort });
   return sessionSummary(session);
   } finally { startingSessions.delete(id); }
 }
@@ -477,14 +486,27 @@ async function snapshot(session, args) {
   // Retain the exact sampled DOM nodes, not nth() locators that silently
   // resolve a different node after a re-render or same-URL navigation.
   const sampled = await page.evaluateHandle(limits => {
-    const nodes = document.querySelectorAll('a,button,input,textarea,select,[role],[contenteditable="true"],[tabindex]');
+    // Native top-layer ordering is not DOM ordering (a portaled confirmation
+    // can occur earlier in the document than the editor it covers).
+    let modal = document.activeElement?.closest('dialog:modal') || null;
+    if (!modal) {
+      for (const candidate of document.querySelectorAll('dialog:modal')) {
+        const rect = candidate.getBoundingClientRect();
+        const x = Math.max(0, Math.min(innerWidth - 1, rect.left + rect.width / 2));
+        const y = Math.max(0, Math.min(innerHeight - 1, rect.top + rect.height / 2));
+        const hit = document.elementFromPoint(x, y)?.closest('dialog:modal');
+        if (hit) { modal = hit; break; }
+      }
+    }
+    const scope = modal || document;
+    const nodes = scope.querySelectorAll('a,button,input,textarea,select,summary,[role],[contenteditable="true"],[tabindex]');
     const selected = [];
     const scanCount = Math.min(nodes.length, limits.scan);
     for (let index = 0; index < scanCount && selected.length < limits.results; index += 1) {
       const element = nodes[index];
       const rect = element.getBoundingClientRect();
       const style = window.getComputedStyle(element);
-      if (rect.width <= 0 || rect.height <= 0 || style.visibility === 'hidden' || style.display === 'none') continue;
+      if (rect.width <= 0 || rect.height <= 0 || style.visibility === 'hidden' || style.display === 'none' || element.closest('[inert]')) continue;
       selected.push(element);
     }
     return selected;
@@ -493,9 +515,17 @@ async function snapshot(session, args) {
   try {
     const candidates = await sampled.evaluate(nodes => nodes.map(element => {
       const role = element.getAttribute('role') || ({
-        A: 'link', BUTTON: 'button', INPUT: 'textbox', TEXTAREA: 'textbox', SELECT: 'combobox',
+        A: 'link', BUTTON: 'button', SUMMARY: 'button', INPUT: 'textbox', TEXTAREA: 'textbox', SELECT: 'combobox',
       }[element.tagName] || element.tagName.toLowerCase());
-      const name = element.getAttribute('aria-label')
+      const labelledBy = (element.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean)
+        .map(id => element.ownerDocument.getElementById(id)?.textContent || '').join(' ');
+      const labels = Array.from(element.labels || []).map(label => {
+        const copy = label.cloneNode(true);
+        // The text of a wrapping select label must not include every option.
+        for (const control of copy.querySelectorAll('input,textarea,select,button')) control.remove();
+        return copy.textContent || '';
+      }).join(' ');
+      const name = labelledBy || element.getAttribute('aria-label') || labels
         || element.getAttribute('title')
         || element.getAttribute('placeholder')
         || element.innerText
@@ -506,6 +536,9 @@ async function snapshot(session, args) {
         name: String(name).replace(/\s+/g, ' ').trim().slice(0, 240),
         disabled: element.matches(':disabled,[aria-disabled="true"]'),
         checked: element.matches(':checked,[aria-checked="true"]'),
+        ...(element instanceof HTMLSelectElement ? {options:Array.from(element.options).map(option => ({
+          value:option.value,label:option.label,disabled:element.matches(':disabled') || option.disabled || !!option.closest('optgroup:disabled'),
+        }))} : {}),
       };
     }));
     const handles = await sampled.getProperties();
@@ -629,7 +662,7 @@ async function handleOwned(request) {
   if (action === 'stop') {
     const id = cleanSessionID(args.session_id);
     const session = sessions.get(id);
-    if (session) await session.context.close();
+    if (session) { await session.executor?.close(); await session.context.close(); }
     sessions.delete(id);
     return { ok: true, target: 'managed', session_id: id, running: false };
   }
@@ -642,26 +675,25 @@ async function handleOwned(request) {
     return actThenObserve(session, args, 'navigate', async () => {
       const destination = args.new_page === true ? await session.context.newPage() : page;
       session.activePage = destination;
-      await destination.goto(String(args.url), { waitUntil: 'commit', timeout: args.timeout_ms || 30000 });
+      await session.executor.perform(destination, 'navigate', {url:String(args.url), timeout_ms:args.timeout_ms});
       saveActivePage(session);
     });
   }
   if (action === 'click') {
     const element = referencedElement(session, args);
     return actThenObserve(session, { ...args, screenshot: args.screenshot !== false }, 'click',
-      () => element.click({ timeout: args.timeout_ms || 15000 }));
+      () => session.executor.perform(activePage(session), 'click', {timeout_ms:args.timeout_ms}, element));
   }
   if (action === 'type_text') {
     const element = referencedElement(session, args);
     return actThenObserve(session, { ...args, screenshot: args.screenshot === true }, 'type_text', async () => {
-      if (args.clear !== false) await element.fill(String(args.text || ''), { timeout: args.timeout_ms || 15000 });
-      else await element.type(String(args.text || ''), { delay: args.delay_ms || 20, timeout: args.timeout_ms || 15000 });
+      await session.executor.perform(activePage(session), 'type_text', {text:String(args.text || ''), clear:args.clear !== false, delay_ms:args.delay_ms, timeout_ms:args.timeout_ms}, element);
     });
   }
   if (action === 'press_key') {
-    const locator = args.ref ? referencedElement(session, args) : activePage(session).locator('body');
+    const element = args.ref ? referencedElement(session, args) : null;
     return actThenObserve(session, args, 'press_key',
-      () => locator.press(String(args.key), { timeout: args.timeout_ms || 15000 }));
+      () => session.executor.perform(activePage(session), 'key', {key:String(args.key), timeout_ms:args.timeout_ms}, element));
   }
   if (action === 'tabs' || action === 'list_pages') {
     return {
@@ -702,6 +734,7 @@ async function shutdown() {
     try { fs.unlinkSync(controlFile); } catch {}
   }
   for (const session of sessions.values()) {
+    await session.executor?.close().catch(() => {});
     await session.context.close().catch(() => {});
   }
   process.exit(0);

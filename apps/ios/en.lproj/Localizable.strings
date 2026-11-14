@@ -2280,7 +2280,7 @@
 "settings.data.clearing" = "Clearing data…";
 "settings.data.export_failed" = "Could not create the export: %@";
 "settings.data.clear_complete" = "Local data was cleared.";
-"settings.data.clear_partial" = "Most local data was cleared, but some conversation records could not be removed.";
+"settings.data.clear_partial" = "Some local data could not be removed. Review the remaining conversations and data sources.";
 "settings.operation.title" = "Data management";
 
 /* macOS Settings */
@@ -2914,7 +2914,7 @@
 
 /* Expert picker */
 "chat.experts.title" = "Experts";
-"chat.experts.description" = "Choose who replies in this conversation. Selection does not start a reply or grant permissions.";
+"chat.experts.description" = "Choose experts for Nola to consult. Nola coordinates their work and replies to you.";
 "chat.experts.search" = "Search experts";
 "chat.experts.empty" = "No available experts";
 "chat.experts.selected" = "Selected";
@@ -2954,7 +2954,7 @@
 
 "chat.run.unresolved" = "The previous task has not finished or its stop has not been confirmed. Resume or reconcile that task before sending again. Your draft has been kept.";
 
-"a2ui.history.version" = "View this form version";
+"a2ui.history.version" = "View content";
 
 "Delegated" = "Delegated";
 
@@ -2982,7 +2982,7 @@
 "expert.color.pink" = "Pink";
 "chat.message.edit" = "Edit and resend";
 "chat.message.editWait" = "Stop or wait for the current reply before editing.";
-"chat.message.editPreservesOriginal" = "Resending creates a separate conversation. The original message and your current draft remain unchanged.";
+"chat.message.editPreservesOriginal" = "This message and everything after it will be replaced in the same conversation. Your input draft is kept.";
 "chat.message.saveResend" = "Save and resend";
 "chat.message.resendUnavailable" = "Resending is unavailable for this message. Its original execution configuration must be confirmed first.";
 
@@ -3006,11 +3006,11 @@
 "experts.save" = "Save";
 "experts.archive" = "Archive expert";
 "experts.restore" = "Restore expert";
-"experts.conversationModel" = "Use conversation model";
+"experts.conversationModel" = "Follow app default model";
 
 "experts.template" = "Prompt template";
 
-"experts.conversationTemplate" = "Use conversation template";
+"experts.conversationTemplate" = "No explicit template";
 
 "experts.savedModelUnavailable" = "Saved model (unavailable)";
 
@@ -3026,9 +3026,9 @@
 
 "work.tools.noGoal" = "No active goal";
 
-"chat.experts.sourceUnavailable.title" = "Experts unavailable in this conversation";
+"chat.experts.sourceUnavailable.title" = "Expert source unavailable";
 
-"chat.experts.sourceUnavailable.detail" = "Experts on this device cannot join a conversation owned by another Host, or one whose source cannot be verified. You can still manage local experts.";
+"chat.experts.sourceUnavailable.detail" = "Reconnect this conversation’s Host or refresh its expert directory.";
 
 // Shared Apple model request presentation.
 "Model request pending" = "Model request pending";
@@ -3297,5 +3297,86 @@
 
 "model.web_host.paste_setup" = "Paste Connection Setup";
 
-"chat.experts.conversations" = "Expert conversations";
-"chat.experts.conversations.empty" = "Mention an expert in this conversation to view their execution details here.";
+// Generated UI recovery and presentation
+"a2ui.revalidate" = "Validate again";
+"a2ui.discardEdits" = "Discard edits and use current values";
+"a2ui.checkSubmission" = "Check submission result";
+"a2ui.finishComposition" = "Finish composing your text before submitting.";
+"a2ui.fieldsRemoved" = "The form changed and some fields are no longer available. Your edits are preserved; review before discarding them.";
+"a2ui.receiptMismatch" = "The submission result belongs to another form. Check again.";
+"a2ui.previewUnavailable" = "The form changed or validation is unavailable. Reload it before editing.";
+"a2ui.previewMismatch" = "The validation result is stale or belongs to another form. Review your edits and retry.";
+"a2ui.pending" = "Preparing interface, waiting for components and data…";
+"a2ui.deleted" = "This interface was removed.";
+
+// Mobile settings groups
+"settings.group.preferences" = "Preferences";
+"settings.group.connections" = "Connections & capabilities";
+"settings.group.security" = "Security";
+
+// Compact bibliography and live process headings.
+"chat.sources.all" = "Show all sources";
+"chat.sources.fewer" = "Show fewer sources";
+"chat.processing" = "Processing";
+"chat.skill.deep_research" = "Deep research";
+
+"model.protocol.guidance" = "For tools with reasoning, choose Responses if your service supports it. Some Chat Completions models require reasoning to be disabled explicitly.";
+
+"information.recentKnowledge" = "Recent insights";
+
+"information.recentConversations" = "Recent conversations";
+
+"activity.recentLoaded" = "recent entries";
+
+/* Model connection draft protection */
+"model.setup.discard_title" = "Discard unsaved changes?";
+"model.setup.discard" = "Discard changes";
+"model.setup.keep_editing" = "Keep editing";
+"model.web_host.saved_token_hint" = "Leave blank to use this host’s saved token.";
+
+"chat.context.import.invalid_text" = "Choose a nonempty UTF-8 text file with at most %d characters (192 KB).";
+
+"chat.context.import.failed_count" = "%d files could not be imported. Use nonempty UTF-8 text files with at most 40,000 characters (192 KB).";
+
+/* Expert roles and revision-aware mentions */
+"experts.reasoning.inherit" = "Inherit model setting";
+"experts.reasoning.unknown" = "This model does not declare reasoning levels. Its default setting is inherited.";
+"experts.role.details" = "Prompt, tools and Skills";
+"experts.role.tools" = "Tool pack";
+"experts.role.permissions" = "These capabilities describe the role. Tool execution still requires the applicable permissions.";
+"experts.mention.changed" = "This expert changed or was archived. Select it again from the updated directory.";
+"experts.mention.rejoin_title" = "Use the latest expert configuration?";
+"experts.mention.rejoin_message" = "This conversation contains an older configuration of this expert. Reintroducing uses the latest configuration for future messages and keeps earlier messages.";
+"experts.mention.rejoin_action" = "Reintroduce with latest configuration";
+"experts.mention.joining" = "Introducing expert…";
+
+"experts.configuration.unsupported" = "This Host does not declare support for role and reasoning configuration. Update the Host to use these options.";
+
+"experts.reasoning.unavailable" = "Unavailable · %@";
+
+"experts.reasoning.selectSupported" = "Choose a reasoning level declared by this model, or inherit its default setting.";
+
+// Parent-owned expert history
+"expert.history.title" = "Expert conversations";
+"expert.history.expanded" = "Expanded";
+"expert.history.collapsed" = "Collapsed";
+"expert.history.current" = "Current conversation";
+"expert.history.previous" = "Previous conversation";
+"expert.history.empty" = "No messages yet";
+"expert.history.more" = "Load more";
+"expert.history.continue" = "Continue in main conversation";
+"expert.history.readOnly" = "Read-only history";
+"expert.history.unavailable" = "History unavailable";
+"expert.history.changed" = "The expert conversation changed. Refresh and try again.";
+"expert.history.unsupportedParent" = "This conversation cannot be continued on iOS. Open it in the client where it was created.";
+"expert.history.peerName" = "Expert";
+
+"experts.mainHostUpgrade" = "Update the connected Host to use experts from the main conversation.";
+
+"main.experts.requiresTools" = "Choose a main model that supports tool calls, or remove the selected experts. Your message is kept.";
+
+"main.experts.enableTools" = "Enable expert tools for the main Agent, or remove the selected experts. Your message is kept.";
+
+"main.experts.sourceChanged" = "The Host data changed. Reload its expert directory and select the experts again. Your message is kept.";
+
+"run.blocked.inputBudget" = "This request exceeds the model’s input budget. Shorten the conversation or attachments, reduce enabled tools, or choose a model with a larger context window.";

@@ -105,7 +105,16 @@ fn model_siwc_mac_admission_binds_exact_profile_without_api_secret() {
     let session=f.sign_in(&id);
     let store=crate::store::NolaStore::open(&f.host.database).unwrap();
     let owner=crate::model_siwc_cli::save_account(&store,&id,"fixture",None,&session).unwrap();
-    let connection=crate::model_siwc_cli::sync_catalog(&store,&owner,vec![ModelChoice {slug:"exact:slug".into(),display_name:"Fixture".into(),..Default::default()}]).unwrap();
+    let connection=crate::model_siwc_cli::sync_catalog(&store,&owner,vec![ModelChoice {slug:"exact:slug".into(),display_name:"Fixture".into(),
+        supported_reasoning_levels: ["low", "medium", "high"].into_iter()
+            .map(|effort| CatalogReasoningLevel { effort: effort.into() }).collect(), ..Default::default()}]).unwrap();
+    let connection: nola_domain::model_connection::ModelConnectionSnapshot = store.application().unwrap().execute(
+        nola_application::ApplicationCommand::Model { command: nola_application::ModelCommand::SetConnectionCapabilityOverride {
+            connection_id: connection.document.connection.id, expected_revision: connection.revision,
+            model_id: "exact:slug".into(), protocol: nola_domain::generation::ModelProtocol::SiwcResponses,
+            capabilities: Some(nola_application::ModelExecutionCapabilities::agent_baseline()),
+            updated_at_ms: chrono::Utc::now().timestamp_millis(),
+        }}).unwrap();
     let _:Value=store.application().unwrap().execute(nola_application::ApplicationCommand::Model {command:nola_application::ModelCommand::ConfigureConnectionModels {
         connection_id:connection.document.connection.id,expected_revision:connection.revision,
         enabled_model_ids:vec!["siwc_responses:exact:slug".into()],selected_model_id:Some("siwc_responses:exact:slug".into()),updated_at_ms:chrono::Utc::now().timestamp_millis(),
@@ -135,6 +144,21 @@ fn model_siwc_mac_admission_binds_exact_profile_without_api_secret() {
     assert_eq!(binding.subject,session.subject);
     assert!(config.model_settings.api_key.is_empty());
     assert_eq!(config.runtime.mac_launch.as_ref().unwrap().permission_mode,"cautious");
+    // A catalog may list effort levels while the effective profile disables reasoning.
+    // Ordinary tier intent must be validated; a resend must retain its frozen
+    // provider-default selection instead of inventing a new effort.
+    let mut frozen = request.clone();
+    frozen["reasoning_selection"] = Value::Null;
+    frozen["reasoning_tier"] = json!("balanced");
+    assert!(crate::native_host_request::apply_siwc_profile(&mut config,&frozen,&store).is_err());
+    config.session.edited_resend_operation_id = Some(uuid::Uuid::new_v4().to_string());
+    crate::native_host_request::apply_siwc_profile(&mut config,&frozen,&store).unwrap();
+    assert!(config.runtime.reasoning_selection.is_none());
+    assert_eq!(config.runtime.siwc.as_ref().unwrap().account.account_id, id);
+    let mut missing = frozen.clone();
+    missing.as_object_mut().unwrap().remove("reasoning_selection");
+    assert!(crate::native_host_request::apply_siwc_profile(&mut config,&missing,&store).is_err());
+    config.session.edited_resend_operation_id = None;
     let mut invalid=request.clone(); invalid["api_key"]=json!("");
     assert!(crate::native_host_request::apply_siwc_profile(&mut config,&invalid,&store).is_err());
     invalid=request.clone();invalid["expected_profile_revision"]=json!(profile.revision+1);

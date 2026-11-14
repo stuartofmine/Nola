@@ -35,7 +35,7 @@ def asset_colors(platform):
 def web_colors():
     css = (ROOT / 'apps/web/frontend/src/theme.css').read_text()
     light = css.split('@media', 1)[0]
-    dark = re.search(r'@media\s*\(prefers-color-scheme:\s*dark\)\s*\{\s*:root\s*\{([^}]+)', css).group(1)
+    dark = re.search(r'@media\s*\(prefers-color-scheme:\s*dark\)\s*\{\s*:root(?::not\([^)]*\))?\s*\{([^}]+)', css).group(1)
     return {mode: {role: re.search(r'--' + role + r':\s*(#[0-9a-fA-F]{6})', block).group(1).lower()
                    for role in ASSETS} for mode, block in [('light', light), ('dark', dark)]}
 
@@ -57,7 +57,7 @@ def luminance(color):
 
 
 def audit():
-    colors = {'mac': asset_colors('NolaMac'), 'ios': asset_colors('Nola'), 'android': android_colors(), 'web': web_colors()}
+    colors = {'mac': asset_colors('apps/macos'), 'ios': asset_colors('apps/ios'), 'android': android_colors(), 'web': web_colors()}
     checks = []
     for platform, modes in colors.items():
         for mode, palette in modes.items():

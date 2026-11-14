@@ -4,6 +4,21 @@ import Foundation
 import Combine
 import SwiftUI
 
+/// External Markdown links are inline references, including inside table cells.
+/// Style parsed destinations rather than matching localized labels such as “来源”.
+enum AppleInlineReferenceStyle {
+    static func applying(to original: AttributedString, color: Color, font: Font = .caption) -> AttributedString {
+        var value = original
+        for run in Array(value.runs) {
+            guard let scheme = run.link?.scheme?.lowercased(), scheme == "http" || scheme == "https" else { continue }
+            value[run.range].font = font
+            value[run.range].foregroundColor = color
+            value[run.range].inlinePresentationIntent = run.inlinePresentationIntent?.subtracting(.stronglyEmphasized)
+        }
+        return value
+    }
+}
+
 struct AppleStreamingMarkdownBuffer: Equatable {
     private(set) var source = ""
     private(set) var visible = ""

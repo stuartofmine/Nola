@@ -10,6 +10,33 @@ import SwiftUI
 import UniformTypeIdentifiers
 import UIKit
 
+struct ContextFileImportOwner {
+    let conversationID: UUID?
+}
+
+enum IOSContextFileImportPolicy {
+    static func isCancellation(_ error: Error) -> Bool {
+        let value = error as NSError
+        return value.domain == NSCocoaErrorDomain && value.code == CocoaError.userCancelled.rawValue
+    }
+
+    static func readText(from url: URL, maximumCharacters: Int) throws -> String {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        let data = try handle.read(upToCount: 192_001) ?? Data()
+        guard data.count <= 192_000, let text = String(data: data, encoding: .utf8),
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              text.count <= maximumCharacters else {
+            throw IOSApplicationRuntimeError.rejected(String(format: NSLocalizedString(
+                "chat.context.import.invalid_text", value: "Choose a nonempty UTF-8 text file with at most %d characters (192 KB).", comment: "Invalid context text import"
+            ), maximumCharacters))
+        }
+        return text
+    }
+}
+
 struct ConversationKnowledgeSaveSnapshot: Equatable, Sendable {
     let conversationID: UUID?
     let knowledgePoints: String
@@ -117,6 +144,8 @@ struct ChatContextSheet: View {
     @State private var isReloading = false
     @State private var showSkillImporter = false
     @State private var showDocumentImporter = false
+    @State private var skillImportOwner: ContextFileImportOwner?
+    @State private var documentImportOwner: ContextFileImportOwner?
     @State private var memorySearchQuery = ""
     @State private var memorySearchResults: [ContextMemorySearchHit] = []
     @State private var selectedContextPane: ContextPane = .overview
@@ -542,6 +571,7 @@ struct ChatContextSheet: View {
                         Label(tr("chat.context.skills.create_template", "新建 Skill", "Create Skill"), systemImage: "plus")
                     }
                     Button {
+                        skillImportOwner = ContextFileImportOwner(conversationID: conversationID)
                         showSkillImporter = true
                     } label: {
                         Label(tr("chat.context.skills.upload_file", "导入 Skill 文件", "Import Skill file"), systemImage: "square.and.arrow.down")
@@ -559,6 +589,7 @@ struct ChatContextSheet: View {
                     )
                     hostDocumentsList(items: hostUploadedDocuments)
                     Button {
+                        documentImportOwner = ContextFileImportOwner(conversationID: conversationID)
                         showDocumentImporter = true
                     } label: {
                         Label(tr("chat.context.documents.upload", "上传文档文件", "Upload document file"), systemImage: "doc.badge.plus")
@@ -699,14 +730,19 @@ struct ChatContextSheet: View {
             allowedContentTypes: [.data],
             allowsMultipleSelection: true
         ) { result in
+            guard skillImportOwner?.conversationID == conversationID, skillImportOwner != nil else { return }
+            skillImportOwner = nil
+            let count = uploadedSkills.count
             importUploadedFiles(result, into: $uploadedSkills)
-            selectedSkillID = uploadedSkills.last?.id
+            if uploadedSkills.count > count { selectedSkillID = uploadedSkills.last?.id }
         }
         .fileImporter(
             isPresented: $showDocumentImporter,
             allowedContentTypes: [.data],
             allowsMultipleSelection: true
         ) { result in
+            guard documentImportOwner?.conversationID == conversationID, documentImportOwner != nil else { return }
+            documentImportOwner = nil
             importUploadedFiles(result, into: $uploadedDocuments)
         }
         .toolbar {
@@ -733,6 +769,10 @@ struct ChatContextSheet: View {
             }
         }
         .onChange(of: conversationID) { _, _ in
+            skillImportOwner = nil
+            documentImportOwner = nil
+            showSkillImporter = false
+            showDocumentImporter = false
             selectedContextPane = .overview
             memorySearchQuery = ""
             memorySearchResults = []
@@ -1045,7 +1085,6 @@ struct ChatContextSheet: View {
                     HStack(spacing: 4) {
                         Text(tr("chat.context.skills.local", "本机", "On device"))
                         Spacer(minLength: 4)
-                        Image(systemName: "chevron.right")
                     }
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(.tertiary)
@@ -1090,7 +1129,6 @@ struct ChatContextSheet: View {
                 HStack(spacing: 4) {
                     Text(tr("chat.context.skills.host", "主机", "Host"))
                     Spacer(minLength: 4)
-                    Image(systemName: "chevron.right")
                 }
                 .font(.caption2.weight(.medium))
                 .foregroundStyle(.tertiary)
@@ -1564,30 +1602,26 @@ struct ChatContextSheet: View {
     private func importUploadedFiles(_ result: Result<[URL], Error>, into items: Binding<[UserUploadedContextItem]>) {
         do {
             let urls = try result.get()
+            var failures = 0
             for url in urls {
-                let didAccess = url.startAccessingSecurityScopedResource()
-                defer {
-                    if didAccess {
-                        url.stopAccessingSecurityScopedResource()
-                    }
-                }
-                let data = try Data(contentsOf: url)
-                guard let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
-                    continue
-                }
-                items.wrappedValue.append(
-                    UserUploadedContextItem(
-                        name: url.lastPathComponent,
-                        content: String(text.prefix(40_000)),
+                do {
+                    let text = try IOSContextFileImportPolicy.readText(from: url, maximumCharacters: 40_000)
+                    items.wrappedValue.append(UserUploadedContextItem(
+                        name: url.lastPathComponent, content: text,
                         description: firstNonEmptyLine(in: text)
-                    )
-                )
+                    ))
+                } catch { failures += 1 }
             }
             if items.wrappedValue.count > 30 {
                 items.wrappedValue = Array(items.wrappedValue.suffix(30))
             }
+            if failures > 0 {
+                errorMessage = String(format: NSLocalizedString(
+                    "chat.context.import.failed_count", value: "%d files could not be imported. Use nonempty UTF-8 text files with at most 40,000 characters (192 KB).", comment: "Context import failures"
+                ), failures)
+            }
         } catch {
-            errorMessage = error.localizedDescription
+            if !IOSContextFileImportPolicy.isCancellation(error) { errorMessage = error.localizedDescription }
         }
     }
 

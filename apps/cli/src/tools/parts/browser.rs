@@ -757,7 +757,7 @@ fn web_fetch(args: &Map<String, Value>) -> ToolOutcome {
             Ok(values) => values.collect::<Vec<_>>(),
             Err(err) => return Err(error(format!("Fetch DNS resolution failed: {err}"))),
         };
-        if let Err(outcome) = validate_public_web_addresses(&addresses) { return Err(outcome); }
+        let addresses = resolve_fake_ip_web_addresses(addresses, std::env::var("NOLA_WEB_FAKE_IP_RECOVERY").as_deref() != Ok("0"), || public_dns_web_addresses(&host, target.port_or_known_default().unwrap_or(443)))?;
         // Pin the validated answers so a second DNS lookup cannot rebind the connection.
         let client = match reqwest::blocking::Client::builder().no_proxy()
             .resolve_to_addrs(&host, &addresses)
@@ -1093,11 +1093,11 @@ fn validate_unified_browser_args(action: &str, target: &str, args: &Map<String, 
 
 fn start_managed_browser_bridge(state_dir: &Path) -> Result<ManagedBrowserBridge, String> {
     let node = env::var("NOLA_PLAYWRIGHT_NODE").map(PathBuf::from)
-        .map_err(|_| "Nola's bundled Playwright runtime is unavailable".to_string())?;
+        .map_err(|_| "Nola's bundled browser runtime is unavailable".to_string())?;
     let bridge_script = env::var("NOLA_PLAYWRIGHT_BRIDGE").map(PathBuf::from)
-        .map_err(|_| "Nola's bundled Playwright bridge is unavailable".to_string())?;
+        .map_err(|_| "Nola's bundled browser bridge is unavailable".to_string())?;
     if !node.is_file() || !bridge_script.is_file() {
-        return Err("Nola's bundled Playwright runtime is incomplete; rebuild the Mac app".to_string());
+        return Err("Nola's bundled browser runtime is incomplete; rebuild the Mac app".to_string());
     }
     std::fs::create_dir_all(state_dir).map_err(|err| format!("Managed browser state directory failed: {err}"))?;
     let control_file = state_dir.join(format!(".runtime-control-{}.json", uuid::Uuid::new_v4()));
@@ -1669,7 +1669,7 @@ fn browser_result_identity(attached: bool) -> (&'static str, &'static str) {
     if attached {
         ("chrome_native", "Chrome extension connected through Nola for Mac")
     } else {
-        ("browser_managed", "Nola-managed Playwright browser")
+        ("browser_managed", "Nola-managed browser")
     }
 }
 
@@ -1681,7 +1681,7 @@ mod browser_result_identity_tests {
     fn managed_and_attached_results_have_distinct_truthful_identity() {
         assert_eq!(
             browser_result_identity(false),
-            ("browser_managed", "Nola-managed Playwright browser")
+            ("browser_managed", "Nola-managed browser")
         );
         assert_eq!(
             browser_result_identity(true),
@@ -3658,4 +3658,62 @@ fn validate_public_web_addresses(addresses: &[std::net::SocketAddr]) -> Result<(
         return Err(error("Fetch DNS resolved to a non-public address".into()));
     }
     Ok(())
+}
+
+// A TUN proxy may synthesize benchmark-range DNS answers for public names.
+// Never connect to these aliases or accept private answers: independently
+// resolve only this specific failure, then use the same public-address pinning.
+fn is_fake_ip_web_address(address: &std::net::SocketAddr) -> bool {
+    matches!(address.ip(), std::net::IpAddr::V4(ip) if ip.octets()[0] == 198 && matches!(ip.octets()[1], 18 | 19))
+}
+
+fn resolve_fake_ip_web_addresses(
+    system: Vec<std::net::SocketAddr>,
+    recovery_enabled: bool,
+    lookup: impl FnOnce() -> Result<Vec<std::net::SocketAddr>, ToolOutcome>,
+) -> Result<Vec<std::net::SocketAddr>, ToolOutcome> {
+    if !system.is_empty() && system.iter().all(is_fake_ip_web_address)
+        && recovery_enabled {
+        let resolved = lookup()?;
+        validate_public_web_addresses(&resolved)?;
+        return Ok(resolved);
+    }
+    validate_public_web_addresses(&system)?;
+    Ok(system)
+}
+
+fn public_dns_web_addresses(host: &str, port: u16) -> Result<Vec<std::net::SocketAddr>, ToolOutcome> {
+    let failure = |detail: String| error(format!(
+        "Public page lookup failed behind Fake-IP DNS: {detail}. Configure this domain to use real-IP DNS in your proxy, or open the page in the connected browser. Repeating the same fetch will not resolve this network configuration."
+    )).with_data(json!({"error_code":"web_fake_ip_dns_unavailable","retryable":false}));
+    // Fixed HTTPS resolver and bootstrap IP; no redirects or DNS re-resolution.
+    // Only the hostname is sent, never the requested path, query or credentials.
+    let client = reqwest::blocking::Client::builder().no_proxy()
+        .resolve("dns.google", std::net::SocketAddr::from(([8,8,8,8],443)))
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(8)).build().map_err(|e|failure(e.to_string()))?;
+    let mut response = client.get("https://dns.google/resolve")
+        .query(&[("name",host),("type","A"),("edns_client_subnet","0.0.0.0/0")])
+        .send().and_then(|response| response.error_for_status()).map_err(|e|failure(e.to_string()))?;
+    let mut bytes = Vec::new();
+    Read::by_ref(&mut response).take(65_537).read_to_end(&mut bytes).map_err(|e|failure(e.to_string()))?;
+    if bytes.len() > 65_536 { return Err(failure("resolver response is too large".into())); }
+    let data: Value = serde_json::from_slice(&bytes).map_err(|e|failure(e.to_string()))?;
+    parse_public_dns_web_addresses(&data, port).map_err(failure)
+}
+
+fn parse_public_dns_web_addresses(data: &Value, port: u16) -> Result<Vec<std::net::SocketAddr>, String> {
+    if data["Status"].as_u64() != Some(0) || data["TC"].as_bool() == Some(true) {
+        return Err("public resolver did not return a complete successful answer".into());
+    }
+    let answers = data["Answer"].as_array().ok_or("public resolver returned no addresses")?;
+    let mut addresses = Vec::new();
+    for answer in answers {
+        if answer["type"].as_u64() != Some(1) { continue; }
+        let ip = answer["data"].as_str().and_then(|value| value.parse::<std::net::Ipv4Addr>().ok())
+            .ok_or("public resolver returned an invalid IPv4 address")?;
+        addresses.push(std::net::SocketAddr::new(ip.into(), port));
+    }
+    validate_public_web_addresses(&addresses).map_err(|outcome|outcome.text)?;
+    Ok(addresses)
 }

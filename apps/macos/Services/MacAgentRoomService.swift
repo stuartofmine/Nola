@@ -235,6 +235,25 @@ nonisolated final class MacAgentRoomService: Sendable {
         return try JSONDecoder().decode(Result.self, from: JSONEncoder().encode(result))
     }
 
+    func childConversations(conversationID: String, limit: Int = 32, offset: Int = 0) throws -> AppleExpertChildConversations {
+        let page: AppleExpertChildConversations = try command(["type": .string("child_conversations"),
+            "conversation_id": .string(conversationID), "limit": .signedInteger(Int64(limit)), "offset": .signedInteger(Int64(offset))])
+        try page.validate(parentID: conversationID, offset: offset)
+        return page
+    }
+
+    func childHistory(parentID: String, childID: String, before: Int64? = nil) throws -> AppleExpertChildHistory<MacCanonicalConversationWindow> {
+        let page: AppleExpertChildHistory<MacCanonicalConversationWindow> = try command(["type": .string("child_history"),
+            "conversation_id": .string(parentID), "child_conversation_id": .string(childID),
+            "before_ordinal": before.map(MacCanonicalJSONValue.signedInteger) ?? .null,
+            "limit": .signedInteger(80), "content_byte_limit": .signedInteger(512_000)])
+        try page.validate(parentID: parentID, childID: childID)
+        guard page.window.projection.conversationID == childID,
+              !page.window.hasMore || (page.window.beforeOrdinal != nil && !page.window.projection.messages.isEmpty),
+              before == nil || !page.window.hasMore || page.window.beforeOrdinal! < before! else { throw MacApplicationPortError.invalidResponse }
+        return page
+    }
+
     struct UserMessageAdmission: Codable, Equatable, Sendable {
         let conversationID: String
         let messageID: String
@@ -352,6 +371,10 @@ nonisolated final class MacAgentRoomService: Sendable {
         }
     }
 
+    func roleTemplates() throws -> AppleExpertRoleTemplateCatalog {
+        try command(["type": .string("role_templates")])
+    }
+
     func directory() throws -> MacAgentDirectory {
         try command(["type": .string("directory")])
     }
@@ -379,6 +402,7 @@ nonisolated final class MacAgentRoomService: Sendable {
         let conversationID: String
         let input: UserMessageAdmission?
         let expertIDs: [String]
+        var expertRevisions: [String: Int64]? = nil
         var completeInput: AppleAdmitExpertConversationMessage? = nil
     }
 
@@ -449,6 +473,13 @@ nonisolated final class MacAgentRoomService: Sendable {
         try command(["type": .string("create"), "title": .string(title), "at_ms": timestamp])
     }
 
+    func rejoin(agent: MacPersistentAgent, room: MacAgentRoomSnapshot) throws -> MacAgentRoomSnapshot {
+        try command(["type": .string("rejoin"), "input": .object([
+            "room_id": .string(room.room.id), "expected_room_revision": .signedInteger(room.revision),
+            "agent_id": .string(agent.id), "expected_agent_revision": .signedInteger(agent.revision), "at_ms": timestamp
+        ])])
+    }
+
     func join(agent: MacPersistentAgent, room: MacAgentRoomSnapshot) throws -> MacAgentRoomSnapshot {
         try command(["type": .string("join"), "input": .object([
             "room_id": .string(room.room.id), "expected_room_revision": .signedInteger(room.revision),
@@ -463,9 +494,10 @@ nonisolated final class MacAgentRoomService: Sendable {
             "at_ms": timestamp])
     }
 
-    func createAgent(name: String, description: String, defaults: MacCanonicalJSONValue, directory: MacAgentDirectory) throws -> MacAgentDirectory {
+    func createAgent(name: String, description: String, defaults: MacCanonicalJSONValue, directory: MacAgentDirectory,
+                     id: String = UUID().uuidString.lowercased()) throws -> MacAgentDirectory {
         try command(["type": .string("configure_agent"), "input": .object([
-            "id": .string(UUID().uuidString.lowercased()), "name": .string(name), "description": .string(description),
+            "id": .string(id), "name": .string(name), "description": .string(description),
             "expected_directory_revision": directory.revision.map { .signedInteger($0) } ?? .null,
             "expected_agent_revision": .null, "defaults": defaults,
             "availability": .string("active"), "updated_at_ms": timestamp

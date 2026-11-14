@@ -89,3 +89,17 @@ test('workspace navigation only intercepts known same-origin pages, not authenti
     assert.equal(workspaceClick(event, {...anchor, target: '_blank'} as HTMLAnchorElement), false);
     assert.equal(workspaceClick(event, {...anchor, hasAttribute: () => true} as HTMLAnchorElement), false);
 });
+
+test('blocked-before-model restores original scoped input and attachments without overwriting a newer draft',async()=>{
+    const {createSourceSubmission}=await import('./sourceSubmission.ts');
+    const host=createWorkspaceDrafts(null).forHost('host');
+    const pending=(submission:string)=>createSourceSubmission({source_host_id:'host',client_id:'client',conversation_id:'conversation',submission_id:submission,user_message_id:submission,assistant_message_id:submission+':assistant'},
+        {expected_host_id:'host',client_id:'client',conversationId:'conversation',submission_id:submission,user_message_id:submission,assistant_message_id:submission+':assistant',messages:[{role:'user',content:'Original'}]});
+    host.text.write('conversation','Original');host.attachments.write('conversation',[{id:'file',conversationId:'conversation',name:'note.txt',mimeType:'text/plain',text:'abc',byteCount:3,clipped:false}]);
+    await host.stageSubmission(pending('one'));await host.retireSubmission('one');
+    assert.equal(host.text.read('conversation'),'');assert.equal(host.restoreBlockedSubmission('one'),true);
+    assert.equal(host.text.read('conversation'),'Original');assert.equal(host.attachments.read('conversation').length,1);
+    assert.equal(host.restoreBlockedSubmission('one'),false);
+    await host.stageSubmission(pending('two'));await host.retireSubmission('two');host.text.write('conversation','New edit');
+    assert.equal(host.restoreBlockedSubmission('two'),false);assert.equal(host.text.read('conversation'),'New edit');
+});

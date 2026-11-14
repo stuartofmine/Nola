@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! A resend creates a fresh conversation containing only edited user input.
+//! Separate fresh-conversation and same-conversation edited resend contracts.
 //! These records carry model identity, never previous execution authority.
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -111,4 +111,25 @@ pub fn canonical_resend_value_sha256(value: &Value) -> Result<String, String> {
     }
     let bytes = serde_json::to_vec(&ordered(value)).map_err(|_| "invalid resend policy value")?;
     Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+/// Rewind an existing conversation; the older fresh-branch API stays unchanged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrepareInPlaceResend {
+    pub operation_id: String,
+    pub conversation_id: String,
+    pub message_id: String,
+    pub expected_revision: i64,
+    pub expected_message_revision: u64,
+    pub edited_text: String,
+    pub created_at_ms: i64,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PreparedInPlaceResend {
+    pub input: PrepareInPlaceResend,
+    pub run_id: String,
+    pub user_message_id: String,
+    pub experts: Vec<crate::expert_message::ExpertParticipantReference>,
 }

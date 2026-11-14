@@ -56,7 +56,7 @@ pub(super) fn start(
     Ok(execution.control)
 }
 
-fn capture_start_configuration(request:&HostInvocationRequest)->Result<Box<AgentCoreConfig>,String> {
+pub(super) fn capture_start_configuration(request:&HostInvocationRequest)->Result<Box<AgentCoreConfig>,String> {
     let host = acquire_core_agent_host(request, Vec::new())?;
     let mut host = host.lock().map_err(|_| "Goal Host lock is poisoned")?;
     // Bind the same execution-tier surface used immediately before dispatch.

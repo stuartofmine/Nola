@@ -1,7 +1,6 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "chat.expert_sessions" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Expert sessions"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "专家会话"}}}},
     "%lld completed tools" : {
       "localizations" : {
         "zh-Hans" : {
@@ -197,6 +196,7 @@
       }
     },
     "A browser connection is not an authorization. Managed browser and Chrome access are checked separately when used." : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -210,8 +210,7 @@
             "value" : "連線狀態不代表授權。受管理瀏覽器與 Chrome 會在使用時分別檢查存取權限。"
           }
         }
-      },
-      "extractionState" : "stale"
+      }
     },
     "A recovery decision is awaiting its receipt. Only that original decision can be recovered." : {
       "localizations" : {
@@ -666,6 +665,7 @@
       }
     },
     "Browser" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -721,8 +721,7 @@
             "value" : "瀏覽器"
           }
         }
-      },
-      "extractionState" : "stale"
+      }
     },
     "Browser actions are provided by the connected host." : {
       "localizations" : {
@@ -741,6 +740,7 @@
       }
     },
     "Browser session connected" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -754,8 +754,7 @@
             "value" : "瀏覽器工作階段已連線"
           }
         }
-      },
-      "extractionState" : "stale"
+      }
     },
     "Cache disabled" : {
       "localizations" : {
@@ -1077,6 +1076,7 @@
       }
     },
     "Changes here apply only to this conversation. Global access and validation live in Data Center." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -1158,6 +1158,7 @@
 
     },
     "Checked on use" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -1315,6 +1316,7 @@
       }
     },
     "Chrome connected" : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -1328,8 +1330,7 @@
             "value" : "Chrome 已連線"
           }
         }
-      },
-      "extractionState" : "stale"
+      }
     },
     "Chrome Extension" : {
       "localizations" : {
@@ -1527,6 +1528,7 @@
       }
     },
     "Computer use" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -1582,8 +1584,7 @@
             "value" : "電腦使用"
           }
         }
-      },
-      "extractionState" : "stale"
+      }
     },
     "Configure Model" : {
       "localizations" : {
@@ -2525,6 +2526,16 @@
         }
       }
     },
+    "Preparing diagram…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在生成图形…"
+          }
+        }
+      }
+    },
     "execution.scope.child" : {
       "localizations" : {
         "de" : {
@@ -2726,6 +2737,7 @@
       }
     },
     "Files" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -2781,8 +2793,7 @@
             "value" : "檔案"
           }
         }
-      },
-      "extractionState" : "stale"
+      }
     },
     "Finishing response" : {
       "localizations" : {
@@ -5503,6 +5514,7 @@
       }
     },
     "Playwright" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -5558,8 +5570,7 @@
             "value" : "Playwright"
           }
         }
-      },
-      "extractionState" : "stale"
+      }
     },
     "Points" : {
       "localizations" : {
@@ -6708,6 +6719,7 @@
       }
     },
     "Shell and Git" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -6763,8 +6775,7 @@
             "value" : "Shell 和 Git"
           }
         }
-      },
-      "extractionState" : "stale"
+      }
     },
     "Show original context" : {
       "extractionState" : "manual",
@@ -6826,6 +6837,7 @@
       }
     },
     "Some operations failed" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -6869,8 +6881,7 @@
             "value" : "部分操作失败"
           }
         }
-      },
-      "extractionState" : "stale"
+      }
     },
     "Some operations have an unknown result" : {
       "localizations" : {
@@ -7821,6 +7832,7 @@
       }
     },
     "Tool availability and permission are checked for each operation. Execution location does not grant access." : {
+      "extractionState" : "stale",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -8223,6 +8235,147 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "您的訊息"
+          }
+        }
+      }
+    },
+    "Model turns" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modellrunden"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Model turns"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Turnos del modelo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tours du modèle"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "モデルの応答回数"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Раунды модели"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型轮次"
+          }
+        }
+      }
+    },
+    "Show all sources" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alle Quellen anzeigen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show all sources"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mostrar todas las fuentes"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Afficher toutes les sources"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "すべての出典を表示"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показать все источники"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "展开全部来源"
+          }
+        }
+      }
+    },
+    "Show fewer sources" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Weniger Quellen anzeigen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show fewer sources"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mostrar menos fuentes"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Réduire les sources"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "出典を折りたたむ"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Свернуть источники"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "收起来源"
           }
         }
       }

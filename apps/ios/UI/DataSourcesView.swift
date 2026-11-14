@@ -949,10 +949,6 @@ struct EnhancedDataSourceRow: View {
                     .foregroundStyle(.secondary)
             }
             
-            Image(systemName: "chevron.right")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.tertiary)
-                .padding(.top, 8)
         }
         .padding(.vertical, 10)
         .accessibilityElement(children: .combine)
@@ -1185,8 +1181,6 @@ private struct InlineURLSourcesList: View {
                                         }
                                     }
                                     Spacer()
-                                    Image(systemName: "chevron.right")
-                                        .foregroundColor(.secondary)
                                 }
                                 .padding(.vertical, 10)
                                 .contentShape(Rectangle())
@@ -1418,10 +1412,6 @@ struct HealthDataSourceRow: View {
                     .lineLimit(1)
             }
 
-            Image(systemName: "chevron.right")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.tertiary)
-                .padding(.top, 8)
         }
         .padding(.vertical, 10)
         .accessibilityElement(children: .combine)

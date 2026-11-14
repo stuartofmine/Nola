@@ -52,4 +52,6 @@
     <string name="activity_status_action_completed">Action completed</string>
     <string name="activity_status_delegated">Delegated</string>
     <string name="activity_status_queued">Queued</string>
+    <string name="ui_surface_pending">Preparing interface, waiting for components and data…</string>
+    <string name="ui_surface_deleted">This interface was removed.</string>
 </resources>

@@ -993,6 +993,7 @@ nonisolated public enum AgentCoreContextPlatform: String, Codable, Sendable {
 
 nonisolated public enum AgentCoreContextComponentKind: String, Codable, Sendable {
     case system
+    case mainExpertSelection = "main_expert_selection"
     case promptTemplate = "prompt_template"
     case memory
     case sessionMemory = "session_memory"

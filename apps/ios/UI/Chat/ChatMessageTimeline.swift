@@ -577,7 +577,10 @@ struct ChatMessageTimeline: View {
                             ownerIsRunning: ownerIsRunning,
                             onEditAndResend: onEditAndResend
                         )
-
+                        if message.role == .assistant, let cursor = message.canonicalJournalCursor {
+                            IOSCanonicalRunFeedbackView(cursor: cursor, store: container.applicationRuntime,
+                                isRunning: isActiveAssistant && ownerIsRunning)
+                        }
 
                     }
                     .id(ChatTimelineMessageIdentity(conversationID: conversationID, messageID: message.id))

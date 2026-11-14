@@ -69,6 +69,7 @@ fn defaults(settings: &str) -> Result<AgentDefaults, String> {
         "modelSelectionID",
         "modelOverrides",
         "selectedPromptTemplateID",
+        "expertReasoningEffort",
         "language",
         "promptResponseStyle",
         "contextLimitOverride",
@@ -83,8 +84,8 @@ fn defaults(settings: &str) -> Result<AgentDefaults, String> {
             .collect(),
     ))
 }
-mod capture;
-mod preview;
+pub(crate) mod capture;
+pub(crate) mod preview;
 
 #[cfg(test)]
 mod context_configuration_tests {
@@ -108,6 +109,18 @@ use crate::expert_template_capture::{
 use nola_store_port::consistent_read::ConsistentReadRepository;
 use nola_store_port::room_presentation::RoomPresentationRepository;
 pub use preview::preview_capture;
+
+/// The former direct fan-out is retained only for exact persisted receipt recovery.
+/// New user turns belong to Main and may carry a typed expert selection.
+pub fn replay_existing<S>(store:&mut S,input:AdmitExpertConversationMessage,host:&HostExpertTemplateCaptureContext,captured_at_ms:i64)->Result<ExpertMessageManifest,String>
+where S: ExpertMessageRepository + ProductSettingRepositoryProvider + ConversationProjectionRepository
+    + ConversationQueryRepository + ConversationWriteRepositoryProvider + RunRecoveryInspectionRepository
+    + RoomPresentationRepository + CommandProtocolRepositoryProvider {
+    if store.expert_message_by_submission(&input.conversation_id,&input.submission_id).map_err(|e|e.to_string())?.is_none(){
+        return Err("expert_dispatch_requires_main_agent_turn".into());
+    }
+    admit(store,input,host,captured_at_ms)
+}
 
 pub fn admit<S>(
     store: &mut S,
@@ -295,10 +308,14 @@ where
 
 /// Busy includes selected work before any Run exists. Only its exact canonical
 /// terminal seal or an explicit pending cancellation/failure releases the slot.
-fn require_context_available<S>(store: &mut S, context: &str, at_ms: i64) -> Result<(), String>
+pub(crate) fn require_context_available<S>(store: &mut S, context: &str, at_ms: i64) -> Result<(), String>
 where
-    S: ExpertMessageRepository + ProductSettingRepositoryProvider + RunRecoveryInspectionRepository,
+    S: ExpertMessageRepository + ProductSettingRepositoryProvider + RunRecoveryInspectionRepository + RoomPresentationRepository,
 {
+    if store.expert_context_has_pending_task(context).map_err(|e| e.to_string())? {
+        return Err("expert_context_has_pending_task".into());
+    }
+    crate::expert_peer::require_peer_context_available(store,context,at_ms)?;
     let Some(reservation) = store
         .expert_context_reservation(context)
         .map_err(|e| e.to_string())?
@@ -352,6 +369,17 @@ where
         }
     }
     Err("expert_context_reserved_by_another_parent".into())
+}
+
+/// A legacy expert resend may be recovered, but new edited input goes through Main.
+pub fn replay_prepared_resend<S>(store:&mut S,input:PrepareEditedResend,authority:&HostExpertTemplateAuthority,captured_at_ms:i64)->Result<PreparedExpertResend,String>
+where S: ExpertMessageRepository + EditedResendRepository + ProductSettingRepositoryProvider
+    + ConversationProjectionRepository + ConversationQueryRepository + ConversationWriteRepositoryProvider
+    + CommandProtocolRepositoryProvider + RunRecoveryInspectionRepository {
+    if store.prepared_expert_resend_by_operation(&input.operation_id).map_err(|e|e.to_string())?.is_none(){
+        return Err("expert_resend_requires_main_agent_turn".into());
+    }
+    prepare_resend(store,input,authority,captured_at_ms)
 }
 
 pub fn prepare_resend<S>(

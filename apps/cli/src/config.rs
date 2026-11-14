@@ -96,6 +96,8 @@ pub struct Config {
     /// visible conversation message.
     pub host_turn_context: Option<String>,
     pub host_context_components: Vec<ContextComponent>,
+    #[serde(skip)]
+    pub main_expert_selection: Option<nola_domain::expert_task_target::MainExpertSelectionContextV1>,
     /// Files explicitly attached by the product Host for this user Turn.
     /// This is transport metadata, not a routing or permission signal.
     pub host_attachments: Vec<HostAttachment>,
@@ -217,6 +219,7 @@ impl Config {
             session: HostSessionRequest {
                 edited_resend_operation_id: None,
                 user_delegation: None,
+                main_expert_selection: self.main_expert_selection.clone(),
                 supports_reviewed_text_parts: !self.json_output,
                 session_id: selected_session,
                 permission_scope_id: self.permission_scope_id.clone(),
@@ -980,6 +983,7 @@ impl Config {
             host_submission_id: None,
             host_user_message_id: None,
             host_assistant_message_id: None,
+            main_expert_selection: None,
             expected_configuration_revision: None,
             expected_parent_message_id: None,
             execution_backend: "nola".to_string(),

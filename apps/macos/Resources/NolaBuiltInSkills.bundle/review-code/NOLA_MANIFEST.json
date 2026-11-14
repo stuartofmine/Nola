@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "id": "review-code",
+  "delivery": "built-in",
+  "category": {
+    "id": "workspace",
+    "name": "Workspace",
+    "name_zh": "工作区"
+  },
+  "source": {
+    "project": "Nola",
+    "license": "Apache-2.0"
+  },
+  "status": "stable",
+  "platforms": [
+    "macos",
+    "cli-web"
+  ],
+  "required_tools": [
+    "Skill"
+  ],
+  "optional_tools": [
+    "codebase_changed_impact",
+    "codebase_trace",
+    "read_file",
+    "bash",
+    "tool_search"
+  ],
+  "runtime_dependencies": [],
+  "permissions": [
+    "filesystem.read"
+  ],
+  "secrets": [],
+  "validation": [
+    "Inspect the actual deliverable and record independent evidence for the requested result."
+  ],
+  "recommended_handoffs": [],
+  "execution_contract": {
+    "schemaVersion": 1,
+    "progressSteps": [
+      {
+        "id": "inspect",
+        "title": "Inspect scope and inputs",
+        "required": true
+      },
+      {
+        "id": "execute",
+        "title": "Produce requested outcome",
+        "required": true
+      },
+      {
+        "id": "verify",
+        "title": "Verify with independent evidence",
+        "required": true
+      }
+    ],
+    "artifacts": [],
+    "verifiers": [
+      {
+        "id": "completion-audit",
+        "method": "model_judgment",
+        "description": "Verify the requested outcome against actual tool receipts, files, images or test results; missing evidence is incomplete.",
+        "required": true
+      }
+    ]
+  }
+}

@@ -11,9 +11,23 @@ use nola_domain::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum HostExpertTemplateOperation {
+    ExportRemoteParentAdmission {conversation_id:String,message_id:String,source_store_epoch:String,authority:HostExpertTemplateAuthority},
+    AbortPeerTaskPreparation {request:Box<nola_agent_engine::agent::host::HostRequestEnvelope>,exchange_id:String,authority:HostExpertTemplateAuthority},
+    LoadPeerForEffect {request:Box<nola_agent_engine::agent::host::HostRequestEnvelope>,authority:HostExpertTemplateAuthority},
+    DerivePeerAuthority { request:Box<nola_agent_engine::agent::host::HostRequestEnvelope>, #[serde(default)] authority:Option<HostExpertTemplateAuthority> },
+    PreparePeerTask { request:Box<nola_agent_engine::agent::host::HostRequestEnvelope>,exchange_id:String,
+        target_configuration:Box<nola_agent_engine::agent::AgentCoreConfig>,#[serde(default)] target_invocation:Option<Box<nola_host_protocol::delegation::DelegatedInvocationSnapshot>>,
+        project_root:String,authority:HostExpertTemplateAuthority },
+    PeerTaskAction { request:Box<nola_agent_engine::agent::host::HostRequestEnvelope>,authority:HostExpertTemplateAuthority },
+    PeerDirectory { source_context_id:String, source_run_id:String, authority:HostExpertTemplateAuthority },
+    PreviewPeer { input: crate::expert_peer::PeerExchangeInput, authority: HostExpertTemplateAuthority },
+    AdmitPeer { input: crate::expert_peer::PeerExchangeInput, context: HostExpertTemplateCaptureContext },
+    LoadPeer { room_id: String, exchange_id: String, authority: HostExpertTemplateAuthority },
+    LoadPeerForSubmission { room_id: String, exchange_id: String, authority: HostExpertTemplateAuthority },
+    ClarifyPeer { source_context_id:String, source_run_id:String, call_id:String, exchange_id:String, text:String, authority:HostExpertTemplateAuthority },
     PreviewCapture {
         input: AdmitExpertConversationMessage,
         authority: HostExpertTemplateAuthority,
@@ -44,6 +58,14 @@ pub enum HostExpertTemplateOperation {
         authority: HostExpertTemplateAuthority,
     },
 }
+impl PartialEq for HostExpertTemplateOperation {
+    fn eq(&self, other: &Self) -> bool {
+        match (serde_json::to_value(self), serde_json::to_value(other)) {
+            (Ok(left),Ok(right)) => left==right,
+            _ => false,
+        }
+    }
+}
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HostExpertTemplateRequest {
@@ -52,23 +74,60 @@ pub struct HostExpertTemplateRequest {
 }
 
 impl HostExpertTemplateOperation {
-    pub fn authority(&self) -> HostExpertTemplateAuthority {
+    /// Exhaustive transport classification. Unknown action inputs remain writes
+    /// until validation rejects them, so uncertain mutation outcomes stay pending.
+    pub fn mutates_state(&self) -> bool {
         match self {
-            Self::Admit { context, .. } => context.authority(),
-            Self::PreviewCapture { authority, .. }
+            Self::Admit {..} | Self::PrepareEditedResend {..} | Self::AdmitPeer {..}
+            | Self::ClarifyPeer {..} | Self::PreparePeerTask {..} | Self::AbortPeerTaskPreparation {..} => true,
+            Self::PeerTaskAction {request,..} => !matches!(&request.payload,
+                nola_agent_engine::agent::host::HostRequest::ExecuteTool {input,..}
+                if matches!(input.get("action").and_then(Value::as_str),Some("directory"|"read"|"wait"))),
+            Self::DerivePeerAuthority {..} | Self::LoadPeerForEffect {..} | Self::PeerDirectory {..}
+            | Self::PreviewPeer {..} | Self::LoadPeer {..} | Self::LoadPeerForSubmission {..}
+            | Self::PreviewCapture {..} | Self::LoadManifest {..} | Self::LoadPreparedResend {..}
+            | Self::LoadChildInstructions {..} | Self::ReadableTemplates {..} | Self::ExportRemoteParentAdmission {..} => false,
+        }
+    }
+    pub fn authority(&self) -> Result<HostExpertTemplateAuthority,String> {
+        Ok(match self {
+            Self::DerivePeerAuthority{authority:Some(authority),..} => authority.clone(),
+            Self::DerivePeerAuthority{authority:None,..} => return Err("expert_peer_authority_is_source_derived".into()),
+            Self::AbortPeerTaskPreparation{authority,..} | Self::LoadPeerForEffect{authority,..} | Self::PreparePeerTask{authority,..} | Self::PeerTaskAction{authority,..} => authority.clone(),
+            Self::Admit { context, .. } | Self::AdmitPeer { context, .. } => context.authority(),
+            Self::PeerDirectory { authority, .. } | Self::PreviewPeer { authority, .. } | Self::LoadPeer { authority, .. } | Self::LoadPeerForSubmission { authority, .. } | Self::ClarifyPeer { authority, .. }
+            | Self::PreviewCapture { authority, .. }
             | Self::PrepareEditedResend { authority, .. }
             | Self::LoadManifest { authority, .. }
             | Self::LoadPreparedResend { authority, .. }
             | Self::LoadChildInstructions { authority, .. }
-            | Self::ReadableTemplates { authority } => authority.clone(),
-        }
+            | Self::ReadableTemplates { authority } | Self::ExportRemoteParentAdmission {authority,..} => authority.clone(),
+        })
     }
     /// Built only from this same typed operation. Callers cannot supply a
     /// different stable command_json alongside the actual execution input.
     fn stable_mutation(&self) -> Result<Option<(&'static str, Value)>, String> {
-        let authority = self.authority();
+        if matches!(self,Self::DerivePeerAuthority{..}) {return Ok(None);}
+        let authority = self.authority()?;
         authority.validate()?;
         match self {
+            Self::AbortPeerTaskPreparation{request,exchange_id,..} => Ok(Some(("abort_expert_peer_task_preparation",json!({"type":"abort_expert_peer_task_preparation","exchange_id":exchange_id,"source_effect":request.effect_id,"authority":authority})))),
+            Self::PreparePeerTask{request,exchange_id,..} => Ok(Some(("prepare_expert_peer_task",json!({"type":"prepare_expert_peer_task","exchange_id":exchange_id,
+                "source_effect":request.effect_id,"source_session":request.session_id,"source_turn":request.turn_id,"authority":authority})))),
+            Self::PeerTaskAction{request,..} => {
+                let nola_agent_engine::agent::host::HostRequest::ExecuteTool{input,..}=&request.payload else {return Err("expert_task_requires_tool_effect".into())};
+                if matches!(input.get("action").and_then(Value::as_str),Some("directory"|"read"|"wait")) {Ok(None)}
+                else {Ok(Some(("expert_peer_task_action",json!({"type":"expert_peer_task_action","source_effect":request.effect_id,"input":input,"authority":authority}))))}
+            }
+            Self::AdmitPeer { input, .. } => {
+                input.validate()?;
+                Ok(Some(("admit_expert_peer",json!({"type":"admit_expert_peer","input":input,"authority":authority}))))
+            }
+            Self::ClarifyPeer { source_context_id,source_run_id,call_id,exchange_id,text,.. } => {
+                let input=crate::expert_peer::PeerClarificationInput{source_context_id:source_context_id.clone(),source_run_id:source_run_id.clone(),call_id:call_id.clone(),exchange_id:exchange_id.clone(),text:text.clone()};
+                input.validate()?;
+                Ok(Some(("clarify_expert_peer",json!({"type":"clarify_expert_peer","input":input,"authority":authority}))))
+            }
             Self::Admit { input, .. } => {
                 input.validate()?;
                 Ok(Some((
@@ -158,6 +217,27 @@ impl<R: crate::repositories::ReceivedCommandRepositories> crate::ApplicationRunt
         )
         .map_err(|_| "expert_host_clock_out_of_range")?;
         let command = match operation {
+            HostExpertTemplateOperation::ExportRemoteParentAdmission {conversation_id,message_id,source_store_epoch,authority} => {
+                if authority.actor.kind!=nola_agent_engine::agent::resource_access::AgentResourcePrincipalKind::LocalUser {
+                    return Err("remote_expert_parent_export_requires_local_host_user".into());
+                }
+                let host=authority.request_host_id.ok_or("remote_expert_parent_export_requires_host_identity")?;
+                crate::ApplicationCommand::ExportRemoteExpertParentAdmission {conversation_id,message_id,source_host_id:host,source_store_epoch}
+            },
+            HostExpertTemplateOperation::AbortPeerTaskPreparation{request,exchange_id,authority} => crate::ApplicationCommand::AbortExpertPeerTaskPreparation{request,exchange_id,authority,now_ms:now_epoch_ms},
+            HostExpertTemplateOperation::LoadPeerForEffect{request,authority} => crate::ApplicationCommand::LoadExpertPeerForEffect{request,authority,now_ms:now_epoch_ms},
+            HostExpertTemplateOperation::DerivePeerAuthority{request,authority} => crate::ApplicationCommand::DeriveExpertPeerAuthority{request,authority,now_ms:now_epoch_ms},
+            HostExpertTemplateOperation::PreparePeerTask{request,exchange_id,target_configuration,target_invocation,project_root,authority} => crate::ApplicationCommand::PrepareExpertPeerTask {
+                input:Box::new(crate::expert_peer_task::PreparePeerTask{request,exchange_id,target_configuration,target_invocation,project_root,authority}),now_ms:now_epoch_ms},
+            HostExpertTemplateOperation::PeerTaskAction{request,authority} => crate::ApplicationCommand::ExpertPeerTaskAction {
+                input:Box::new(crate::expert_peer_task::PeerTaskAction{request,authority}),now_ms:now_epoch_ms},
+            HostExpertTemplateOperation::PeerDirectory {source_context_id,source_run_id,authority} => crate::ApplicationCommand::ExpertPeerDirectory {source_context_id,source_run_id,authority},
+            HostExpertTemplateOperation::PreviewPeer { input, authority } => crate::ApplicationCommand::PreviewExpertPeer { input,authority },
+            HostExpertTemplateOperation::AdmitPeer { input, context } => crate::ApplicationCommand::AdmitExpertPeer { input,context,captured_at_ms:now_epoch_ms },
+            HostExpertTemplateOperation::LoadPeerForSubmission { room_id,exchange_id,authority } => crate::ApplicationCommand::LoadExpertPeerForSubmission {room_id,exchange_id,authority},
+            HostExpertTemplateOperation::LoadPeer { room_id,exchange_id,authority } => crate::ApplicationCommand::LoadExpertPeer {room_id,exchange_id,authority},
+            HostExpertTemplateOperation::ClarifyPeer { source_context_id,source_run_id,call_id,exchange_id,text,authority } => crate::ApplicationCommand::ClarifyExpertPeer {
+                input:crate::expert_peer::PeerClarificationInput{source_context_id,source_run_id,call_id,exchange_id,text},authority,captured_at_ms:now_epoch_ms },
             HostExpertTemplateOperation::PreviewCapture { input, authority } => {
                 crate::ApplicationCommand::PreviewExpertTemplateCapture { input, authority }
             }

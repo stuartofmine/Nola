@@ -3,6 +3,20 @@ import XCTest
 @testable import Nola
 
 final class AppleMessageEditDraftTests: XCTestCase {
+    func testInPlaceSubmissionKeepsTheConversationAndExactEditBoundary() throws {
+        var draft = AppleMessageEditDraft(sourceConversationID: "original", sourceMessageID: "user",
+            expectedSourceRevision: 4, expectedMessageRevision: 7, text: "Original")
+        draft.text = "Edited"
+        let input = try XCTUnwrap(draft.inPlacePreparation())
+        XCTAssertEqual(input.conversation_id, "original")
+        XCTAssertEqual(input.message_id, "user")
+        XCTAssertEqual(input.expected_revision, 4)
+        XCTAssertEqual(input, draft.inPlacePreparation())
+        let submission = AppleMessageEditSubmission(operationID: draft.operationID, targetConversationID: draft.targetConversationID,
+            createdAtMs: draft.createdAtMs, sourceConversationID: "original", sourceMessageID: "user",
+            expectedSourceRevision: 4, expectedMessageRevision: 7, text: "Edited")
+        XCTAssertEqual(submission.inPlacePreparation(), input)
+    }
     func testEditRetainsOriginalOwnerAndStableRetryIdentity() throws {
         var draft = AppleMessageEditDraft(sourceConversationID: "original", sourceMessageID: "user",
             expectedSourceRevision: 4, expectedMessageRevision: 7, text: "Original")

@@ -116,6 +116,7 @@ impl TryFrom<serde_json::Value> for AgentDefaults {
                 "modelSelectionID"
                     | "modelOverrides"
                     | "selectedPromptTemplateID"
+                    | "expertReasoningEffort"
                     | "language"
                     | "promptResponseStyle"
                     | "contextLimitOverride"

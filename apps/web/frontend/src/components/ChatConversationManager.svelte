@@ -8,6 +8,7 @@
     import { locale, t } from '../lib/i18n';
     import ConfirmationDialog from './ConfirmationDialog.svelte';
     import ConversationRowDetails from './ConversationRowDetails.svelte';
+    import ExpertChildHistory from './ExpertChildHistory.svelte';
     import type { ConfirmationHandle } from '../lib/confirmation';
     import { parseChatConversation, parseChatConversations, conversationUrl, conversationTitleRequest, conversationBranchRequest, conversationTruncateRequest, parseConversationExport, sameConversationOperation } from '../lib/chatConversations';
     import type { ChatConversation, ConversationOperationOwner } from '../lib/chatConversations';
@@ -246,6 +247,7 @@
                     <button type="button" disabled={locked} onclick={closeRename}>{t($locale, 'chatConversations.cancel')}</button>
                 </form>
             {/if}
+            {#key `${generation}:${conversation.conversationId}`}<ExpertChildHistory parentId={conversation.conversationId} disabled={locked}/>{/key}
         </div>
     {/each}</div>
     {#if !loading && !loadError && !visible.length}<p class="muted">{t($locale, 'chatConversations.empty')}</p>{/if}

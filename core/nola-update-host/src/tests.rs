@@ -10,7 +10,7 @@ fn source() -> UpdateSource {
 fn manifest() -> Manifest {
     let time=now().unwrap();
     Manifest {schema_version:1,channel:"internal".into(),version:"1.0.1".into(),build:2,issued_at:time-60,expires_at:time+3600,
-        notes:"A release note with <literal> text".into(),store_schema:nola_store::STORE_SCHEMA_VERSION,store_epoch:nola_store::STORE_SCHEMA_EPOCH,targets:vec![TargetRelease {target:"cli-macos-aarch64".into(),artifact:Artifact::Archive {
+        notes:"A release note with <literal> text".into(),store_schema:nola_domain::STORE_SCHEMA_VERSION,store_epoch:nola_domain::STORE_SCHEMA_EPOCH,targets:vec![TargetRelease {target:"cli-macos-aarch64".into(),artifact:Artifact::Archive {
             url:"https://updates.example.org/Nola.zip".into(),filename:"Nola.zip".into(),size:7,sha256:hex::encode(Sha256::digest(b"package"))}}]}
 }
 fn envelope(value:&Manifest)->Vec<u8> {

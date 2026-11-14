@@ -54,6 +54,8 @@ enum IOSChildPermissionEvent: Sendable {
 public actor DeviceAgentCoordinator {
     private typealias StreamContinuation = AsyncThrowingStream<DeviceAgentCoordinatorEvent, Error>.Continuation
 
+    private let expertTargetConfiguration: (@Sendable (AppleExpertPeerMaterial<AgentCoreJSONValue>) async throws -> AgentCoreJSONValue)?
+    private let expertTaskTarget: AppleExpertTaskTargetV1?
     private let delegationSettings: AgentCoreJSONValue?
     private var localTaskHost: IOSLocalTaskHost?
     private let childOnly: Bool
@@ -100,6 +102,16 @@ public actor DeviceAgentCoordinator {
     private var cancellationTask: Task<Void, Never>?
     private var cancellationError: Error?
     private var unconfirmedPhysicalEffects: Set<String> = []
+    private struct ChildModelStop {
+        let id = UUID()
+        let conversationID: String
+        let runID: String
+        let coreSessionID: String
+        let stop: @Sendable () async throws -> Void
+    }
+    private var childModelStops: [String: ChildModelStop] = [:]
+    private var childModelStopTasks: [String: (id: UUID, task: Task<Void, Error>)] = [:]
+
     // Populated only by this owner's actual returned operation, never by a
     // restored queue or absence from the uncertainty set.
     private var locallyQuiescentEffects: Set<String> = []
@@ -125,8 +137,12 @@ public actor DeviceAgentCoordinator {
         preparedHostInvocation: IOSPreparedHostInvocation? = nil,
         recoveryPreparation: (@Sendable (IOSExactRunInvocation) async throws -> Void)? = nil,
         hostDependencyIdentity: AgentCoreJSONValue = .array([]),
-        freshResendTarget: String? = nil
+        freshResendTarget: String? = nil,
+        expertTargetConfiguration: (@Sendable (AppleExpertPeerMaterial<AgentCoreJSONValue>) async throws -> AgentCoreJSONValue)? = nil,
+        expertTaskTarget: AppleExpertTaskTargetV1? = nil
     ) {
+        self.expertTargetConfiguration = expertTargetConfiguration
+        self.expertTaskTarget = expertTaskTarget
         self.freshResendTarget = freshResendTarget
         self.delegationSettings = delegationSettings
         self.childOnly = childOnly
@@ -484,6 +500,58 @@ public actor DeviceAgentCoordinator {
         }
     }
 
+    private func retainChildModelStop(effectID: String, request: AgentModelRequest) throws {
+        guard childOnly else { return }
+        guard let owner = childPermissionOwner, owner.runID == request.turnId,
+              owner.coreSessionID == request.sessionId else { throw DeviceAgentCoordinatorError.invalidTransition }
+        guard let cancellable = modelClient as? AgentModelCancellationClient else { return }
+        childModelStops[effectID] = .init(conversationID: owner.childConversationID, runID: owner.runID,
+            coreSessionID: owner.coreSessionID, stop: { try await cancellable.cancelAgentTurn(request: request) })
+    }
+
+    /// A consumer may have ended on an unconfirmed mailbox ACK while its
+    /// independent provider is still live. Join that exact producer, not just
+    /// an already-finished operation Task, before issuing a stop witness.
+    func stopChildPhysicalModel(effectID: String, conversationID: String, runID: String, coreSessionID: String) async throws {
+        guard childOnly, let owner = childPermissionOwner,
+              owner.childConversationID == conversationID, owner.runID == runID,
+              owner.coreSessionID == coreSessionID else { throw DeviceAgentCoordinatorError.invalidTransition }
+        if locallyQuiescentEffects.contains(effectID), !unconfirmedPhysicalEffects.contains(effectID) { return }
+        guard let operation = childModelStops[effectID] else { return }
+        guard operation.conversationID == conversationID, operation.runID == runID,
+              operation.coreSessionID == coreSessionID else { throw DeviceAgentCoordinatorError.invalidTransition }
+        let stop: Task<Void, Error>
+        if let existing = childModelStopTasks[effectID] {
+            guard existing.id == operation.id else { throw DeviceAgentCoordinatorError.invalidTransition }
+            stop = existing.task
+        } else {
+            stop = Task { try await operation.stop() }
+            childModelStopTasks[effectID] = (operation.id, stop)
+        }
+        defer {
+            if childModelStopTasks[effectID]?.id == operation.id { childModelStopTasks.removeValue(forKey: effectID) }
+        }
+        try await stop.value
+        if childModelStops[effectID]?.id == operation.id {
+            childModelStops.removeValue(forKey: effectID)
+            unconfirmedPhysicalEffects.remove(effectID)
+            locallyQuiescentEffects.insert(effectID)
+        } else {
+            guard childModelStops[effectID] == nil, locallyQuiescentEffects.contains(effectID),
+                  !unconfirmedPhysicalEffects.contains(effectID) else { throw DeviceAgentCoordinatorError.invalidTransition }
+        }
+    }
+
+    func stopChildPhysicalModels(conversationID: String, runID: String, coreSessionID: String) async throws {
+        var firstFailure: Error?
+        for effect in Array(childModelStops.keys) {
+            do { try await stopChildPhysicalModel(effectID: effect, conversationID: conversationID,
+                runID: runID, coreSessionID: coreSessionID) }
+            catch { if firstFailure == nil { firstFailure = error } }
+        }
+        if let firstFailure { throw firstFailure }
+    }
+
     private func confirmCancellationTarget(_ envelope: [String: AgentCoreJSONValue]) throws -> String {
         let (target, admitted) = try IOSCancellationAdmissionContract.target(envelope: envelope,
             conversationID: canonicalApplication.conversationID)
@@ -518,11 +586,11 @@ public actor DeviceAgentCoordinator {
         let candidate = try makeRuntimeConfig(sessionId: activeSessionId, history: [],
             inputOrigin: recoveryInputOrigin, config: config, captureDelegation: false)
         try canonicalApplication.validateRecoveryAuthority(frozen, candidate: candidate)
-        if delegationSettings != nil, localTaskHost == nil,
+        if (delegationSettings != nil || expertTargetConfiguration != nil), localTaskHost == nil,
            let invocation = preparedHostInvocation, let store = canonicalApplication.embeddedStore {
             localTaskHost = IOSLocalTaskHost(store: store, modelClient: modelClient,
                 invocation: invocation, toolPlan: toolPlan, hostExecutor: hostExecutor,
-                config: config, childPermissionEvents: childPermissionEvents, stateChanged: childTaskStateChanged, dependencies: hostDependencyIdentity)
+                config: config, childPermissionEvents: childPermissionEvents, stateChanged: childTaskStateChanged, dependencies: hostDependencyIdentity, expertTargetConfiguration: expertTargetConfiguration)
         }
         // The old lease can keep recovery outside drive(). Preserve Core's
         // validated turn owner now so a Stop during that wait validates the
@@ -615,6 +683,10 @@ public actor DeviceAgentCoordinator {
         responseSequences[effectID] = envelope.int("resume_after_sequence") ?? 0
         responseAttemptIDs.removeValue(forKey: effectID)
         defer { childResponseSinks.removeValue(forKey: effectID) }
+        if let target = expertTaskTarget {
+            try target.validate(taskID: childPermissionOwner?.taskID ?? "", contextID: conversationID, runID: runID)
+
+        }
         // Showing a Core question has no Host side effect. Device permission
         // prompts still require the execution barrier before contacting the OS.
         if try kind != "request_permission" || corePermissionPresentation(request) == nil {
@@ -640,6 +712,8 @@ public actor DeviceAgentCoordinator {
                     Task { await childPermissionEvents?(.requested(pending, self)) }
                 }
             } onCancel: { Task { await self.cancelChildPermission(requestID: requestID) } }
+        case "cancel_task":
+            throw DeviceAgentCoordinatorError.unsupportedHostRequest(kind)
         case "model_stream": _ = try await runModel(request, continuation: observations)
         case "execute_tool": _ = try await executeTool(request)
         case "compact": _ = try await compact(request, continuation: observations)
@@ -719,11 +793,11 @@ public actor DeviceAgentCoordinator {
                 inputOrigin: inputOrigin,
                 config: config
             )
-            if delegationSettings != nil, let invocation = preparedHostInvocation,
+            if (delegationSettings != nil || expertTargetConfiguration != nil), let invocation = preparedHostInvocation,
                let store = canonicalApplication.embeddedStore {
                 localTaskHost = IOSLocalTaskHost(store: store, modelClient: modelClient,
                     invocation: invocation, toolPlan: toolPlan, hostExecutor: hostExecutor,
-                    config: config, childPermissionEvents: childPermissionEvents, stateChanged: childTaskStateChanged, dependencies: hostDependencyIdentity)
+                    config: config, childPermissionEvents: childPermissionEvents, stateChanged: childTaskStateChanged, dependencies: hostDependencyIdentity, expertTargetConfiguration: expertTargetConfiguration)
             }
             let submission = try AgentCoreInputSubmission.make(
                 input: input,
@@ -1073,7 +1147,10 @@ public actor DeviceAgentCoordinator {
                 )
                 try await acceptTransition(admitted, continuation: continuation)
                 try Task.checkCancellation()
-                if let effectID = envelope.string("effect_id") { unconfirmedPhysicalEffects.insert(effectID) }
+                if let effectID = envelope.string("effect_id") {
+                    unconfirmedPhysicalEffects.insert(effectID)
+                    try retainChildModelStop(effectID: effectID, request: modelRequest)
+                }
                 let modelEvents = await modelClient.generateAgentTurn(request: modelRequest)
                 for try await event in modelEvents {
                     try Task.checkCancellation()
@@ -1102,13 +1179,15 @@ public actor DeviceAgentCoordinator {
                             ])
                         )
                         try await acceptTransition(transition, continuation: continuation)
-                    case .toolCallDelta(let partId, let callId, let capabilityId, let argumentsDelta):
+                    case .toolCallDelta(_, let callId, let capabilityId, let argumentsDelta):
                         emittedToolCall = true
                         let transition = try await submitHostResponse(
                             request,
                             payload: .object([
                                 "type": .string("model_tool_call_delta"),
-                                "part_id": .string(partId),
+                                // Provider call IDs are only scoped to one
+                                // response. The committed attempt owns Parts.
+                                "part_id": .string("\(attemptID):tool:\(callId)"),
                                 "call_id": .string(callId),
                                 "capability_id": .string(capabilityId),
                                 "arguments_delta": .string(argumentsDelta),
@@ -1118,6 +1197,7 @@ public actor DeviceAgentCoordinator {
                     case .completed(let value):
                         completion = value
                         if let effectID = envelope.string("effect_id") {
+                            childModelStops.removeValue(forKey: effectID)
                             unconfirmedPhysicalEffects.remove(effectID)
                             locallyQuiescentEffects.insert(effectID)
                         }
@@ -1128,9 +1208,13 @@ public actor DeviceAgentCoordinator {
                 }
             } catch {
                 if error is CancellationError || Task.isCancelled {
-                    if let cancellable = modelClient as? AgentModelCancellationClient {
+                    if childOnly, let effect = envelope.string("effect_id"), let owner = childPermissionOwner {
+                        try await stopChildPhysicalModel(effectID: effect, conversationID: owner.childConversationID,
+                            runID: owner.runID, coreSessionID: owner.coreSessionID)
+                    } else if let cancellable = modelClient as? AgentModelCancellationClient {
                         try await cancellable.cancelAgentTurn(request: modelRequest)
                         if let effectID = envelope.string("effect_id") {
+                            childModelStops.removeValue(forKey: effectID)
                             unconfirmedPhysicalEffects.remove(effectID)
                             locallyQuiescentEffects.insert(effectID)
                         }
@@ -1236,6 +1320,22 @@ public actor DeviceAgentCoordinator {
         return plan
     }
 
+    nonisolated static func expertPreparationFailureResponse(callID: String, error: Error) throws -> AgentCoreJSONValue {
+        if case IOSApplicationRuntimeError.outcomePending = error { throw error }
+        if error is CancellationError { throw error }
+        if let preparation = error as? IOSExpertTaskPreparationError, preparation.taskMayExist { throw error }
+        var output: [String: AgentCoreJSONValue] = ["error": .string(error.localizedDescription)]
+        if let preparation = error as? IOSExpertTaskPreparationError {
+            output["exchange_id"] = .string(preparation.exchangeID)
+            output["preparation_aborted"] = .bool(preparation.preparationAborted)
+            output["execution_started"] = .bool(false)
+            output["recovery_actions"] = .array(preparation.preparationAborted ? [.string("new_request")] : [.string("retry_request"), .string("cancel")])
+        }
+        return .object(["type": .string("tool_completed"), "call_id": .string(callID),
+            "output": Self.toolResult(.object(output), state: "not_started"), "outcome": .string("failed"),
+            "full_output_ref": .null, "artifacts": .array([])])
+    }
+
     private func cancelTaskResponse(_ request: AgentCoreJSONValue) throws -> AgentCoreJSONValue {
         guard let effectID = request.objectValue?.string("effect_id") else { throw DeviceAgentCoordinatorError.invalidTransition }
         return try canonicalApplication.taskCancellationResponse(request: request,
@@ -1255,6 +1355,58 @@ public actor DeviceAgentCoordinator {
             // native handler. Unlike a cold empty registry, this is positive
             // local evidence; cancellation drains only after driver return.
             if !enteredExecutor, let observedEffectID { locallyQuiescentEffects.insert(observedEffectID) }
+        }
+        if let envelope = request.objectValue, let payload = envelope["payload"]?.objectValue,
+           ["delegate_expert", "expert_exchange"].contains(payload.string("capability_id") ?? "") {
+            if childOnly {
+                // Recovery only: no new leaf advertises the alias. Core checks
+                // the original started effect and existing frozen Task before promotion.
+                guard payload.string("capability_id") == "expert_exchange", let target = expertTaskTarget,
+                      !target.source.isMainAgent, let invocation = preparedHostInvocation,
+                      let store = canonicalApplication.embeddedStore, let config = activeConfig else {
+                    throw DeviceAgentCoordinatorError.unsupportedHostRequest("delegate_expert")
+                }
+                if self.localTaskHost == nil {
+                    self.localTaskHost = IOSLocalTaskHost(store: store, modelClient: modelClient, invocation: invocation,
+                        toolPlan: toolPlan, hostExecutor: hostExecutor, config: config, childPermissionEvents: childPermissionEvents,
+                        stateChanged: childTaskStateChanged, dependencies: hostDependencyIdentity, expertTargetConfiguration: expertTargetConfiguration)
+                }
+            }
+            guard let localTaskHost, let runID = activeTurnId else {
+                throw DeviceAgentCoordinatorError.unsupportedHostRequest("delegate_expert")
+            }
+            var current = envelope
+            if let effect = envelope.string("effect_id"), let delivery = responseDeliveries[effect] { current["delivery"] = delivery }
+            let boundRequest = AgentCoreJSONValue.object(current)
+            do {
+                let bound = try IOSExpertPeerHostRequest(request: boundRequest, expectedContextID: canonicalApplication.conversationID, expectedRunID: runID)
+                enteredExecutor = true
+                let response: AgentCoreJSONValue
+                var preparedTask: AgentCoreJSONValue?
+                if bound.arguments["action"] == .string("request") {
+                    let preparation = try await localTaskHost.prepareExpert(boundRequest, contextID: canonicalApplication.conversationID, runID: runID)
+                    guard let fields = preparation.objectValue, let prepared = fields["prepared"], let promoted = fields["response"] else {
+                        throw DeviceAgentCoordinatorError.invalidTransition
+                    }
+                    preparedTask = prepared; response = promoted
+                } else { response = try await localTaskHost.expertAction(boundRequest, contextID: canonicalApplication.conversationID, runID: runID) }
+                let accepted = try await submitHostResponse(request, payload: response)
+                if let effect = envelope.string("effect_id") { locallyQuiescentEffects.insert(effect) }
+                if let preparedTask {
+                    do { try await localTaskHost.wake(preparedTask) }
+                    catch {
+                        // Promotion already committed. Recovery owns the same
+                        // queued Task; never submit a second source response.
+                        await childTaskStateChanged?()
+                    }
+                }
+                return accepted
+            } catch IOSApplicationRuntimeError.outcomePending(let id) { throw IOSApplicationRuntimeError.outcomePending(id) }
+            catch {
+                if let effect = envelope.string("effect_id") { locallyQuiescentEffects.insert(effect) }
+                return try await submitHostResponse(request, payload: Self.expertPreparationFailureResponse(
+                    callID: payload.string("call_id") ?? "", error: error))
+            }
         }
         if let payload = request.objectValue?["payload"]?.objectValue,
            let tool = payload.string("capability_id"), ["read_task", "wait_task"].contains(tool) {
@@ -1484,13 +1636,17 @@ public actor DeviceAgentCoordinator {
         var completion: AgentModelCompletion?
         do {
             try Task.checkCancellation()
-            if let effectID = envelope.string("effect_id") { unconfirmedPhysicalEffects.insert(effectID) }
+            if let effectID = envelope.string("effect_id") {
+                unconfirmedPhysicalEffects.insert(effectID)
+                try retainChildModelStop(effectID: effectID, request: summaryRequest)
+            }
             let stream = await modelClient.generateAgentTurn(request: summaryRequest)
             for try await event in stream {
                 try Task.checkCancellation()
                 if case .completed(let value) = event {
                     completion = value
                     if let effectID = envelope.string("effect_id") {
+                        childModelStops.removeValue(forKey: effectID)
                         unconfirmedPhysicalEffects.remove(effectID)
                         locallyQuiescentEffects.insert(effectID)
                     }
@@ -1498,9 +1654,13 @@ public actor DeviceAgentCoordinator {
             }
         } catch {
             if error is CancellationError || Task.isCancelled {
-                if let cancellable = modelClient as? AgentModelCancellationClient {
+                if childOnly, let effect = envelope.string("effect_id"), let owner = childPermissionOwner {
+                    try await stopChildPhysicalModel(effectID: effect, conversationID: owner.childConversationID,
+                        runID: owner.runID, coreSessionID: owner.coreSessionID)
+                } else if let cancellable = modelClient as? AgentModelCancellationClient {
                     try await cancellable.cancelAgentTurn(request: summaryRequest)
                     if let effectID = envelope.string("effect_id") {
+                        childModelStops.removeValue(forKey: effectID)
                         unconfirmedPhysicalEffects.remove(effectID)
                         locallyQuiescentEffects.insert(effectID)
                     }
@@ -2131,6 +2291,9 @@ public actor DeviceAgentCoordinator {
     ) -> AgentCoreJSONValue {
         let effect = engineeringEffect(for: tool.schema)
         let readOnly = effect == "investigate"
+        // This registered dispatcher journals the original source call and
+        // replays canonical Task receipts; it does not repeat an external write.
+        let expertDispatcher = tool.toolId == "delegate_expert"
         return hostCapability(
             id: tool.toolId,
             title: tool.name,
@@ -2138,11 +2301,11 @@ public actor DeviceAgentCoordinator {
             permissionDomain: tool.permission == "none" ? nil : tool.capability,
             inputSchema: modelInputSchema(from: tool.schema),
             exposure: "visible",
-            originKind: "device",
+            originKind: expertDispatcher ? "internal" : "device",
             effect: effect,
             parallelism: readOnly ? "concurrent_safe" : "serial",
             cancellation: "best_effort",
-            replaySafety: readOnly ? "idempotent" : "requires_recovery_decision",
+            replaySafety: expertDispatcher ? "recoverable" : (readOnly ? "idempotent" : "requires_recovery_decision"),
             permissionContract: {
                 guard case .object(let schema) = tool.schema,
                       case .object(let metadata)? = schema["x_nola"] else { return nil }

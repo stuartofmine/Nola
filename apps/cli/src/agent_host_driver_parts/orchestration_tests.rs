@@ -1243,3 +1243,21 @@ fn ui_publication_unresolved_command_never_emits_terminal_tool_completion() {
         assert!(terminal.is_empty(),"unknown commit must not become model-visible failed/succeeded/cancelled evidence");
     }
 }
+
+#[cfg(test)]
+#[test]
+fn bound_ui_schema_reaches_core_projection_only_with_publisher_and_host_authority() {
+    use effect_delivery_start_barrier_tests::{test_context, test_llm};
+    let root = tempfile::tempdir().unwrap();
+    let driver = CliAgentHostDriver::new("ui-schema-host", test_llm("http://127.0.0.1:1".into()), test_context(root.path()));
+    assert!(driver.bound_ui_model_schema().is_none());
+    let driver = driver.with_ui_publisher(std::sync::Arc::new(|_| Ok(json!({"ready":true}))));
+    let schema = driver.bound_ui_model_schema().expect("bound publisher must have a model schema");
+    let projection = nola_core::agent::capability_projection::AgentTurnCapabilityProjection::resolve(
+        &[schema.clone()], driver.catalog());
+    assert!(projection.enabled.iter().any(|tool| tool.capability_id == "render_ui"));
+    let driver = driver.with_authorized_tool_allowlist(Some(vec!["read_file".to_string()]));
+    assert!(driver.bound_ui_model_schema().is_none(), "visibility must not bypass the native receipt");
+    let driver = driver.with_authorized_tool_allowlist(Some(vec!["render_ui".to_string()]));
+    assert_eq!(driver.bound_ui_model_schema(), Some(schema));
+}

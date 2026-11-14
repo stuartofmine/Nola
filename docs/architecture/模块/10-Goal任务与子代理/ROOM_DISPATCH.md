@@ -44,6 +44,12 @@ Host 主控调用在 `apps/cli/src/room_routing.rs`，复用辅助调用账本�
 
 ## 完整专家集合与编辑重发
 
+专家配置现可选择 Core 角色起点和模型实际声明的精确 reasoning effort。角色目录是只读公共内置定义，工具组合与关联 Skill 仍服从真实可用目录、资源授权及具体审批。配置只保存模板 UUID 和可选 `expertReasoningEffort`，完整集合 preview 在实际模型解析后冻结参数，准入时捕获 Core 角色正文；不会把公开职责简介当成私有系统指令。传输中精确档位使用可选 `reasoning_selection`，旧缺省 payload 保持原三档契约。
+
+`@` 选择保存专家 ID 和观察 revision；空白草稿不因浏览候选而创建会话。专家档案更新不热改已加入成员，只有显式确认的 `rejoin` 才在单事务替换当前 roster、创建新上下文。原上下文与历史发送 manifest 保留；已有活动 Run 或未完成提交阻止替换。终态读取核真实 canonical seal，不按前端已显示完成或 SSE 结束推断可替换。
+
+当前各客户端的会话回溯使用新增 `prepare_in_place_resend`，保留父会话、Room 与专家上下文映射，并原子回溯被替换后文涉及的全部上下文；未结算预留阻止准备。下述 `PrepareEditedExpertResend` 仍是既有的新分支契约，不能将两个接口混用。
+
 统一对话发送选中的多位专家，先调用 `AdmitExpertConversationMessage`：父消息、完整不可变 manifest、全部 child submission 和每个私有上下文占用在同一写事务准入。客户端不得先准入父消息，再独立生成某个成功子集。相同 intent 重放返回原 manifest；selected 到实际 Run 创建前也占用上下文，另一父消息不能抢占。占用只能随合法终态或经过真实 seal 核对的 reconcile 更新，不能按本机缺页推断释放。
 
 实际 child Begin 在同一事务核对 manifest、消息/Run ID、正文和模型/配置，并绑定 Room 回执的 execution_id/state。已有执行意图必须与该真实 Run 一致；没有意图但已有真实 Run 时只能观察，不由 absence 派生执行权限。Web 的 prepared child 不进入普通后台 factory；普通专家 child 采用 Core 预留 ID 和冻结模型声明，不能读当前默认选型替代。
@@ -57,3 +63,9 @@ Host 主控调用在 `apps/cli/src/room_routing.rs`，复用辅助调用账本�
 ### 已知成功输出的恢复
 
 Room 路由的 operation ID 为 submission UUID 的小写形式。Host 先校验并保存成功输出，再调用共享 `ReconcileRoomRouting`：Core 检查 Room/scenario/取消状态和确切成功 attempt，以保存的 participant_id 幂等选择仍有效的成员。记录成功后、提交成员前进程退出，恢复只读取原输出，不再次调用模型。未知 attempt 不推断成功；旧成功记录缺少输出时明确失败，不补造输出。Apple 本地/远端与 Android 本地/远端使用同一提交用例；远端回执通过既有 source observation 绑定本地 Room。
+
+### 工作区回执与专家 Skill 收尾
+
+宿主能力的 effect 声明必须匹配实际回执。工作区创建与交付回收返回已检查的仓库/目录版本及精确后置条件，声明为 `MutateAndValidate` 后，Core 只按检查中的资源和版本消解对应目录项。回收产生的文件 create/write/delete 效果独立保留，仍需实际文件验证；目录检查不代表业务或测试正确。失败、缺少检查及版本不匹配的回执不能清除待验证项。否则目录项残留会持续阻挡 Skill 收尾，即使原项目的测试已经通过。
+
+关联 Skill 的进度、产物及验证记录使用 Core 提供的 ID 与真实执行证据；产物落盘、子任务结束、最终文本与 Skill 完成是不同事实。压缩后通过 `read_task` 重新取得精确工作区选择，不从摘要或路径重建目录身份。

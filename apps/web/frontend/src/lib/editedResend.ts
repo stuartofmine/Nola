@@ -39,11 +39,18 @@ export function editedResendSourceForMessage(message: TimelineMessage, owner: {
     if(message.role!=='user'||message.state!=='completed'||!canonical||canonical.role!=='user'||canonical.state!=='completed'||canonical.message_id!==message.id
         ||!positive(canonical.revision)||canonical.parts.length!==1)return null;
     const part=canonical.parts[0];
-    if(part.kind!=='text'||part.is_final!==true||!positive(part.revision)||typeof part.markdown!=='string'||part.review!=null&&part.review!=='approved'
-        ||displayTextAttachmentMessage(part.markdown)!==null||message.parts.length!==1
-        ||message.parts[0].value.kind!=='text'||message.parts[0].id!==part.part_id
-        ||timelineMessageText(message)!==part.markdown)return null;
-    return Object.freeze({...owner,conversationRevision:snapshot.revision,messageId:canonical.message_id,messageRevision:canonical.revision,originalText:part.markdown});
+    let text:string;
+    if(part.kind==='text'&&part.is_final===true&&typeof part.markdown==='string'&&(part.review==null||part.review==='approved'))text=part.markdown;
+    else if(part.kind==='historical'&&object(part.projection)){
+        const p=part.projection,owner=p.owner,preview=p.canonical_text;
+        if(p.canonical_kind!=='text'||p.schema!=null||!object(owner)||owner.conversation_id!==snapshot.conversationId
+            ||owner.message_id!==canonical.message_id||owner.part_id!==part.part_id||!object(preview)||typeof preview.text!=='string'
+            ||preview.total_utf8_bytes!==new TextEncoder().encode(preview.text).length)return null;
+        text=preview.text;
+    }else return null;
+    if(!positive(part.revision)||displayTextAttachmentMessage(text)!==null||message.parts.length!==1
+        ||message.parts[0].id!==part.part_id||timelineMessageText(message)!==text)return null;
+    return Object.freeze({...owner,conversationRevision:snapshot.revision,messageId:canonical.message_id,messageRevision:canonical.revision,originalText:text});
 }
 export function createEditedResendDraft(source: EditedResendSourceSnapshot, text = source.originalText,
     identity = {operationId: crypto.randomUUID(), targetId: crypto.randomUUID(), createdAtMs: Date.now()}): EditedResendDraft {

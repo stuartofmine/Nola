@@ -105,6 +105,7 @@ pub(crate) fn prepare<R: AgentRuntimeCommandRepositories>(
     if capability_id != "spawn_agent" {
         return Err("Mobile delegation requires spawn_agent".into());
     }
+    if store.read_room_context_owner(&conversation_id).map_err(|e|e.to_string())?.is_some() {return Err("experts_cannot_spawn_agents".into());}
     let frozen = store
         .load_run_invocation_config(&run_id)
         .map_err(|e| e.to_string())?
@@ -311,6 +312,8 @@ pub struct AdmitMobileTaskChild {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AdmittedMobileTaskChild {
+    #[serde(default, skip_serializing_if="Option::is_none")]
+    pub expert_target: Option<Box<nola_domain::expert_task_target::ExpertTaskTargetV1>>,
     pub task_id: String,
     pub parent_conversation_id: String,
     pub attempt: nola_domain::task_execution::RuntimeTaskAttempt,
@@ -426,7 +429,8 @@ pub(crate) fn wake_plan<R: AgentRuntimeCommandRepositories>(
         let invocation = crate::load_exact_run_invocation(store, parent.clone(), parent_run.clone(), assistant)?
             .ok_or("Mobile task parent invocation missing")?;
         let config = crate::load_run_invocation_config(store, &parent_run, &invocation.invocation_config_digest)?;
-        if config.turn_identity.delegation.is_none() { continue; }
+        if config.turn_identity.delegation.is_none()
+            && store.read_validated_expert_task_target(&task.id, child, false).map_err(|e|e.to_string())?.is_none() { continue; }
         plan.candidates.push(MobileTaskWakeCandidate {
             task_id: task.id, parent_conversation_id: parent.clone(), child_conversation_id: child.clone(),
             parent_invocation: invocation, parent_config: config,
@@ -503,9 +507,13 @@ pub(crate) fn admit<R: AgentRuntimeCommandRepositories>(
             };
             // The old attempt is an identity witness, NOT a renewed execution lease.
             // Only the persisted cancellation may be drained; no new model/tool work.
-            return Ok(Some(AdmittedMobileTaskChild { task_id: task.id,
+            let expert_target = store.read_validated_expert_task_target(&task.id, &task.child_session_id.clone().ok_or("Task child missing")?, true).map_err(|e|e.to_string())?.map(Box::new);
+            return Ok(Some(AdmittedMobileTaskChild { expert_target, task_id: task.id,
                 parent_conversation_id: input.parent_conversation_id, attempt: previous,
                 cancellation_only: true, invocation, current }));
+        }
+        if store.read_validated_expert_task_target(&task.id,&admission.child_conversation_id,true).map_err(|e|e.to_string())?.is_some(){
+            crate::expert_peer_task::validate_saved_expert_leaf(&config)?;
         }
         let current = crate::RunRecoveryAuthority {
             host_catalog: config.host_catalog.clone(),
@@ -634,7 +642,9 @@ pub(crate) fn admit<R: AgentRuntimeCommandRepositories>(
             invocation.invocation_config_digest.clone(),
             current.clone(),
         )?;
+        let expert_target = store.read_validated_expert_task_target(&input.task_id, &invocation.conversation_id, true).map_err(|e|e.to_string())?.map(Box::new);
         Ok(Some(AdmittedMobileTaskChild {
+            expert_target,
             task_id: input.task_id,
             parent_conversation_id: input.parent_conversation_id,
             attempt,

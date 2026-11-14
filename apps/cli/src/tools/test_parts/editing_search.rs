@@ -4244,3 +4244,37 @@ fn web_fetch_rejects_rebinding_and_private_redirect_targets_before_connecting() 
     assert!(validate_public_web_addresses(&["[::ffff:127.0.0.1]:443".parse().unwrap()]).is_err());
     assert!(validate_public_web_addresses(&["[2606:4700:4700::1111]:8443".parse().unwrap()]).is_ok());
 }
+
+
+#[test]
+fn fake_ip_recovery_revalidates_public_answers_and_never_relaxes_private_targets() {
+    let fake = "198.18.9.161:443".parse().unwrap();
+    let public = "160.79.104.10:443".parse().unwrap();
+    let private = "127.0.0.1:443".parse().unwrap();
+    assert_eq!(resolve_fake_ip_web_addresses(vec![fake], true, || Ok(vec![public])).unwrap(), vec![public]);
+    assert!(resolve_fake_ip_web_addresses(vec![fake], true, || Ok(vec![private])).is_err());
+    assert!(resolve_fake_ip_web_addresses(vec![fake], false, || panic!("disabled recovery must not query public DNS")).is_err());
+    assert!(resolve_fake_ip_web_addresses(vec![fake,private], true, || panic!("mixed private answers must stay blocked")).is_err());
+    assert_eq!(resolve_fake_ip_web_addresses(vec![public], true, || panic!("normal DNS needs no extra lookup")).unwrap(), vec![public]);
+    assert!(resolve_fake_ip_web_addresses(vec![], true, || panic!("empty DNS must not be treated as a proxy")).is_err());
+}
+
+#[test]
+fn public_dns_parser_rejects_failed_truncated_and_non_public_records() {
+    assert_eq!(parse_public_dns_web_addresses(&json!({"Status":0,"Answer":[{"type":5,"data":"alias.example"},{"type":1,"data":"1.1.1.1"}]}),8443).unwrap(),
+        vec!["1.1.1.1:8443".parse::<std::net::SocketAddr>().unwrap()]);
+    for data in [json!({"Status":3}),json!({"Status":0,"TC":true,"Answer":[{"type":1,"data":"1.1.1.1"}]}),
+        json!({"Status":0,"Answer":[]}),json!({"Status":0,"Answer":[{"type":1,"data":"127.0.0.1"}]}),
+        json!({"Status":0,"Answer":[{"type":1,"data":"198.18.1.1"}]}),json!({"Status":0,"Answer":[{"type":1,"data":"169.254.169.254"}]})] {
+        assert!(parse_public_dns_web_addresses(&data,443).is_err());
+    }
+}
+
+#[test]
+#[ignore = "real public HTTPS fetch; run explicitly for network acceptance"]
+fn real_public_web_fetch_recovers_from_fake_ip_dns() {
+    let args = json!({"url":"https://www.anthropic.com/news","max_chars":2000});
+    let outcome = web_fetch(args.as_object().unwrap());
+    assert!(!outcome.error, "{}",outcome.text);
+    assert!(outcome.text.contains("anthropic.com"));
+}

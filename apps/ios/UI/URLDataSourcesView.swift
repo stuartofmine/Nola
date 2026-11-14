@@ -131,9 +131,11 @@ struct URLDataSourcesView: View {
                     }
                     pendingDeleteSource = nil
                     Task { @MainActor in
-                        container.urlFetcher?.removeSource(id: source.id)
-                        refreshNonce += 1
-                        NotificationCenter.default.post(name: .nolaCustomSourcesUpdated, object: nil)
+                        do {
+                            guard let fetcher = container.urlFetcher else { throw IOSApplicationRuntimeError.applicationUnavailable }
+                            try await fetcher.removeSourceConfirmed(id: source.id, expectedRevision: source.canonicalRevision)
+                            refreshNonce += 1
+                        } catch { refreshErrorMessage = error.localizedDescription }
                     }
                 }
             } message: {
@@ -961,7 +963,7 @@ struct AddURLDataSourceSheet: View {
                 // are intentionally not handled in this editor.
             }
             .navigationTitle(navTitle)
-            .disabled(isSaving)
+            .disabled(isSaving || isValidating)
             .accessibilityIdentifier("data.center.editor")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -1012,6 +1014,9 @@ struct AddURLDataSourceSheet: View {
                 previewEvents = []
             }
             .onChange(of: selectedKind) { _, _ in
+                // Validation may infer the kind; editable controls are frozen
+                // while that owned operation publishes its preview/result.
+                guard !isValidating else { return }
                 validationResult = nil
                 previewEvents = []
             }
@@ -1166,7 +1171,7 @@ struct AddURLDataSourceSheet: View {
                 : String(format: NSLocalizedString("url_sources.local_source.file_desc", value: "Local file: %@", comment: "Local file source description"), selectedURL.lastPathComponent)
             validate()
         } catch {
-            errorMessage = error.localizedDescription
+            if !IOSContextFileImportPolicy.isCancellation(error) { errorMessage = error.localizedDescription }
         }
     }
     

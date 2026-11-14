@@ -75,7 +75,7 @@ export async function readUiSurfaceRevision(reference: UiSurfaceRevisionRef, sig
     );
     const snapshot = result.snapshot;
     if (snapshot !== null && (uiIdentityKey(snapshot.identity) !== uiIdentityKey(reference.identity)
-        || snapshot.revision !== reference.revision || snapshot.phase === 'ready'
+        || snapshot.revision !== reference.revision || !['read_only', 'deleted'].includes(snapshot.phase)
         || Object.values(snapshot.nodes).some(node => Object.keys(node.actions).length || Object.keys(node.bindings).length))) {
         throw new Error('Historical UI projection identity mismatch');
     }

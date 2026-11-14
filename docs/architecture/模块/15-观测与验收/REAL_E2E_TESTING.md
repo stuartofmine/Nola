@@ -211,6 +211,11 @@ must be checked separately. Loopback or adb reverse does not prove real LAN,
 Bonjour, firewall, or physical-device background behavior. Standalone prototype
 replay is design evidence and never counts as a real-model platform lane.
 
+Both matrix loading and the standalone coverage audit check that referenced
+repository entry scripts exist. A missing or moved script is a matrix error and
+contributes no declared lane; it must never be compensated for with a synthetic
+passing receipt. Declaration completeness still does not mean execution passed.
+
 Real-model assertions verify protocol outcomes, persisted state, tool events,
 privacy boundaries, and unique markers. They must not depend on incidental model
 wording. Every Agent run must reach exactly one terminal outcome; a run that

@@ -1918,6 +1918,12 @@ private struct SkillEndToEndArtifact {
         qualityGate: String
     ) -> SkillEndToEndArtifact {
         switch skillID {
+        case .implementCode, .reviewCode, .testSoftware, .createVisualArt:
+            return markdown(
+                "outputs/\(skillID.rawValue)-verification.md",
+                "# \(skillID.rawValue) verification\n\n\(inputToken)\n\nValidation: \(qualityGate)",
+                [inputToken, "Validation:"]
+            )
         case .word:
             return markdown(
                 "outputs/word-project-brief.md",

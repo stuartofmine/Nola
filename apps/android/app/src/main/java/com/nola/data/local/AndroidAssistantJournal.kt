@@ -30,7 +30,7 @@ internal fun recordCursor(record: JsonObject): JsonObject = record.getValue("hea
 } }
 
 data class AndroidJournalTurn(val hostId: String, val conversationId: String, val submissionId: String,
-    val assistantMessageId: String, var runId: String? = null)
+    val assistantMessageId: String, var runId: String? = null, var terminalResult: JsonObject? = null)
 
 /** Thin durable receiver: Application, not a UI cache, validates record chains,
  * content prefixes, complete manifest ownership, and the terminal transition. */
@@ -377,6 +377,7 @@ class AndroidAssistantJournal(private val execute: (JsonObject) -> JsonElement) 
         check(current()); currentCoroutineContext().ensureActive()
         reception = transition("commit_received_assistant_run_terminal")
         require(reception.journalBoolean("committed"))
+        turn.terminalResult = result
         return heads
     }
 }

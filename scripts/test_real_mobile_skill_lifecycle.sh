@@ -184,7 +184,7 @@ xcrun simctl boot "$IOS_DEVICE_ID" >/dev/null 2>&1 || true
 xcrun simctl bootstatus "$IOS_DEVICE_ID" -b >/dev/null
 
 printf '[real-mobile-skill] building iOS product tests\n'
-xcodebuild build-for-testing -project "$ROOT/Nola.xcodeproj" -scheme Nola \
+xcodebuild build-for-testing -project "$ROOT/apple/Nola.xcodeproj" -scheme Nola \
     -destination "platform=iOS Simulator,id=$IOS_DEVICE_ID" \
     -derivedDataPath "$IOS_DERIVED_DATA" CODE_SIGNING_ALLOWED=NO -quiet
 XCTESTRUN="$(find "$IOS_DERIVED_DATA/Build/Products" -maxdepth 1 -name '*.xctestrun' -print -quit)"

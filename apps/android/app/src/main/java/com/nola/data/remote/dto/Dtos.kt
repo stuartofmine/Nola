@@ -108,6 +108,7 @@ data class UnreadCountResponse(
 
 @Serializable
 data class AgentSettingsResponse(
+    @SerialName("source_store_epoch") val sourceStoreEpoch: String? = null,
     @SerialName("enable_local_dev_tools") val enableLocalDevTools: Boolean = false,
     @SerialName("allowed_dirs") val allowedDirs: List<String>? = null,
     @SerialName("bash_prefixes") val bashPrefixes: List<String>? = null,
@@ -277,7 +278,11 @@ data class HostModelProfileDto(
     val revision: Long,
     @SerialName("display_name") val displayName: String,
     @SerialName("model_name") val modelName: String,
+    val reasoning: HostModelReasoningDto? = null,
 )
+
+@Serializable
+data class HostModelReasoningDto(val control: String, val efforts: List<String> = emptyList())
 
 @Serializable
 data class HostModelResolutionDto(

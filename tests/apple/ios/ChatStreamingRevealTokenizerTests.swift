@@ -680,6 +680,32 @@ final class ChatStreamingRevealTokenizerTests: XCTestCase {
     }
 
     @MainActor
+    func testResearchReplyRendersCompactBibliographyInLightAndDarkAppearance() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("research-reply-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let container = ServiceContainer(applicationRuntime: try IOSApplicationRuntime(databaseURL: directory.appendingPathComponent("fixture.sqlite")))
+        let sources = try (1...31).map { index -> IOSConversationProjectionV1.Part in
+            let data = try JSONSerialization.data(withJSONObject: ["kind": "source", "part_id": "source-\(index)", "revision": 1,
+                "source_id": "s\(index)", "title": "跨平台交互与引用格式参考 \(index)", "uri": "https://example.com/\(index)"])
+            return try JSONDecoder().decode(IOSConversationProjectionV1.Part.self, from: data)
+        }
+        let parts: [IOSConversationProjectionV1.Part] = [
+            .text(.init(partID: "answer", revision: 1, markdown: "正文里的[来源](https://example.com/inline)是内联引用。\n\n| 时间 | 经过和影响 |\n| --- | --- |\n| 阶段一 | 保留说明及[来源](https://example.com/table) |", isFinal: true, review: nil)),
+            .skill(id: "skill", revision: 1, runID: "hidden-run", skillID: "conduct-deep-research", displayName: "conduct-deep-research", mode: "inline", state: .running, modelTurns: 8, toolCalls: 10, elapsedMillis: 116945, resultRef: nil, failure: nil)
+        ] + sources
+        let message = ChatMessage(role: .assistant, content: "", canonicalParts: parts)
+        for style in [UIUserInterfaceStyle.light, .dark] {
+            let state = ChatBubbleRuntimeHarnessState(message: message, isStreaming: false)
+            let controller = UIHostingController(rootView: ChatBubbleRuntimeHarness(state: state, container: container))
+            controller.overrideUserInterfaceStyle = style
+            controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 640)
+            await settleRuntimeUI(0.3)
+            let image = snapshot(controller, name: "research-bibliography-\(style == .dark ? "dark" : "light")")
+            XCTAssertGreaterThan(image.pngData()?.count ?? 0, 4000)
+        }
+    }
+
+    @MainActor
     func testCompletedMarkdownRendersInLightAndDarkAppearance() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("hosted-bubble-appearance-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }

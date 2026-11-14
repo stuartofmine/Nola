@@ -448,9 +448,6 @@ private struct HomeScheduleRow: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundColor(.secondary.opacity(0.8))
             }
             .padding(10)
             .background(
@@ -605,7 +602,6 @@ struct HomeTodayBySourceCard: View {
                         Image(systemName: "sparkles").foregroundStyle(DesignTokens.primaryColor)
                         Text(L10n.homeSummaryTitle).font(.title3.bold())
                         Spacer()
-                        Image(systemName: "chevron.right").foregroundStyle(.secondary)
                     }.frame(minHeight: 44).contentShape(Rectangle())
                 }.buttonStyle(.plain)
 
@@ -842,21 +838,19 @@ struct HomeScheduledActionsOverviewCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Image(systemName: "clock.arrow.circlepath")
-                    .foregroundColor(DesignTokens.primaryColor)
-                Text(L10n.scheduledActionsTitle)
-                    .font(.headline)
-                    .foregroundColor(.primary)
-                Spacer()
-                Button(action: onTapAll) {
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.bold))
-                        .foregroundColor(Color(.tertiaryLabel))
-                        .padding(6)
+            Button(action: onTapAll) {
+                HStack {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .foregroundColor(DesignTokens.primaryColor)
+                    Text(L10n.scheduledActionsTitle)
+                        .font(.headline)
+                        .foregroundColor(.primary)
+                    Spacer()
                 }
-                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
 
             if entries.isEmpty {
                 Text(L10n.urlSourcesEmptySubtitle)
@@ -1081,9 +1075,6 @@ struct HomeLatestActivityCard: View {
                         .font(.headline)
                         .foregroundColor(.primary)
                     Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.bold))
-                        .foregroundColor(Color(.tertiaryLabel))
                 }
 
                 if let run = run {

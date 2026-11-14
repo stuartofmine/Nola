@@ -16,6 +16,18 @@ use nola_core::agent::task::TaskHandle;
 use nola_core::agent_trace::{attach_agent_trace, AgentTraceContext, AgentTraceEvent};
 use unicode_width::UnicodeWidthChar;
 
+fn context_budget_blocked_message(language: Language) -> &'static str {
+    match language {
+        Language::ZhHans => "输入和工具说明超出模型上下文容量，尚未发送模型请求。请减少输入或启用的工具，或配置更大的模型上下文窗口后重试。",
+        Language::Ja => "入力とツールの説明がコンテキスト容量を超えたため、モデルへの送信を停止しました。入力や有効なツールを減らすか、より大きいコンテキストウィンドウを設定して再試行してください。",
+        Language::De => "Eingabe und Werkzeugbeschreibungen überschreiten das Kontextfenster. Es wurde keine Modellanfrage gesendet. Kürzen Sie die Eingabe, aktivieren Sie weniger Werkzeuge oder konfigurieren Sie ein größeres Kontextfenster.",
+        Language::Es => "La entrada y las descripciones de herramientas superan el contexto. No se envió ninguna solicitud al modelo. Reduzca la entrada o las herramientas activas, o configure un contexto mayor y vuelva a intentarlo.",
+        Language::Fr => "L’entrée et les descriptions des outils dépassent la capacité du contexte. Aucune requête n’a été envoyée au modèle. Réduisez l’entrée ou les outils actifs, ou configurez un contexte plus grand, puis réessayez.",
+        Language::Ru => "Ввод и описания инструментов превышают размер контекста. Запрос к модели не отправлен. Сократите ввод или число активных инструментов либо настройте больший контекст и повторите попытку.",
+        Language::En => "Input and tool descriptions exceed the model context capacity. No model request was sent. Reduce the input or enabled tools, or configure a larger context window and retry.",
+    }
+}
+
 impl crate::runtime_output::RuntimeOutputPort for Emitter {
  fn bind_execution_control(&mut self, context: crate::execution_context::ExecutionContext) {
  self.output_execution_context = Some(context.clone());
@@ -431,6 +443,23 @@ mod native_host_trace_transport_tests {
             events.as_slice(),
             &[json!({"type":"status", "state":"running"})]
         );
+    }
+
+    #[test]
+    fn sealed_blocked_result_keeps_human_terminal_blocked() {
+        let (_, journal) = crate::source_journal::source_tests::completed_source(&[], "answer");
+        let mut seal = journal.seal.unwrap();
+        // Presentation fixture: the production caller supplies the committed seal.
+        seal.result.value = nola_domain::run_result::RunResultValue::Blocked {
+            reason: nola_domain::run_result::RunResultReason {
+                code: "context.input_budget_exceeded".into(), detail: None,
+            },
+            blocking_fact_refs: vec!["budget".into()],
+            resolution_condition: "Reduce the mandatory input".into(),
+        };
+        let mut emitter = Emitter::new(false);
+        emitter.committed_assistant_run_terminal(&seal);
+        assert_eq!(emitter.take_terminal_reason().as_deref(), Some("blocked"));
     }
 
     #[test]
@@ -1631,7 +1660,22 @@ impl Emitter {
         &mut self,
         seal: &nola_domain::assistant_run_terminal::AssistantRunTerminalSeal,
     ) {
-        if !self.json || self.recovery_transport_suppressed {
+        if self.recovery_transport_suppressed {
+            return;
+        }
+        if !self.json {
+            if let nola_domain::run_result::RunResultValue::Blocked {
+                reason, resolution_condition, ..
+            } = &seal.result.value {
+                let message = if reason.code == "context.input_budget_exceeded" {
+                    context_budget_blocked_message(current_language()).to_owned()
+                } else {
+                    format!("{}: {}", reason.code, resolution_condition)
+                };
+                self.done("blocked");
+                let label = format_error("").trim().to_string();
+                self.print_status_line("error", &label, Some(&message));
+            }
             return;
         }
         self.emit_json_value(json!({

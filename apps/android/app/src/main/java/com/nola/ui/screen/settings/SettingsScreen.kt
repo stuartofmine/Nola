@@ -31,7 +31,6 @@ import com.nola.data.local.datastore.AppearancePreference
 import com.nola.ui.components.NolaIconButton
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Dataset
@@ -258,17 +257,19 @@ fun SettingsMain(
                 Icon(painterResource(R.drawable.nola_back), stringResource(R.string.common_back))
             }
             Text(stringResource(if (detailSection == "general") R.string.settings_general else if (detailSection == "appearance") R.string.appearance_title else if (detailSection == "privacy") R.string.settings_privacy else if (detailSection == "notifications") R.string.notifications_title else R.string.settings_title),
-                Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
+                Modifier.weight(1f), style = if (detailSection == null) MaterialTheme.typography.headlineSmall.copy(fontSize = 28.sp, lineHeight = 36.sp) else MaterialTheme.typography.titleMedium,
+                textAlign = if (detailSection == null) TextAlign.Start else TextAlign.Center)
         }
         if (detailSection == null) {
-            Column(Modifier.fillMaxWidth().nolaSurface(radius = 14.dp)) {
+            MobileSettingsGroup(R.string.settings_group_preferences) {
                 IMSettingsRow(R.drawable.nola_settings, R.string.settings_general) { detailSection = "general" }
             }
-            Column(Modifier.fillMaxWidth().nolaSurface(radius = 14.dp)) {
+            MobileSettingsGroup(R.string.settings_group_connections) {
                 IMSettingsRow(R.drawable.nola_models, R.string.models_title, onOpenModels)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp, modifier = Modifier.padding(start = 34.dp))
                 IMSettingsRow(R.drawable.nola_execution, R.string.settings_capabilities, onOpenIntelligence)
             }
-            Column(Modifier.fillMaxWidth().nolaSurface(radius = 14.dp)) {
+            MobileSettingsGroup(R.string.settings_group_security) {
                 IMSettingsRow(R.drawable.nola_review, R.string.settings_privacy) { detailSection = "privacy" }
             }
             return@NolaPage
@@ -366,7 +367,7 @@ fun SettingsMain(
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
             SettingsNavRow(
                 label = stringResource(R.string.settings_export_data),
-                description = if (isExportingData) stringResource(R.string.settings_exporting_data) else stringResource(R.string.settings_export_desc),
+                description = if (isExportingData) stringResource(R.string.settings_exporting_data) else null,
                 icon = Icons.Filled.FileUpload,
                 isBusy = isExportingData,
                 enabled = !isExportingData && !isClearingData,
@@ -418,12 +419,20 @@ fun SettingsMain(
 }
 
 @Composable
+private fun MobileSettingsGroup(label: Int, content: @Composable () -> Unit) {
+    Column(Modifier.fillMaxWidth()) {
+        Text(stringResource(label), style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+        content()
+    }
+}
+
+@Composable
 private fun IMSettingsRow(icon: Int, label: Int, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).heightIn(min = 62.dp).padding(horizontal = 14.dp, vertical = 10.dp),
+    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).heightIn(min = 62.dp).padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Icon(painterResource(icon), null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
         Text(stringResource(label), Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-        Icon(painterResource(R.drawable.nola_chevron), null, Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -437,21 +446,18 @@ private fun SettingsConnectionsCard(
         NolaSectionTitle(title = stringResource(R.string.settings_connections))
         SettingsNavRow(
             label = stringResource(R.string.settings_data_sources),
-            description = stringResource(R.string.settings_data_sources_desc),
             icon = Icons.Filled.Dataset,
             onClick = onOpenDataSources
         )
         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
         SettingsNavRow(
             label = stringResource(R.string.models_title),
-            description = stringResource(R.string.settings_models_desc),
             icon = Icons.Filled.Memory,
             onClick = onOpenModels
         )
         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
         SettingsNavRow(
             label = stringResource(R.string.settings_capabilities),
-            description = stringResource(R.string.settings_capabilities_desc),
             icon = Icons.Filled.Extension,
             onClick = onOpenIntelligence
         )
@@ -466,7 +472,6 @@ private fun SettingsAutomationCard(
         NolaSectionTitle(title = stringResource(R.string.settings_automation))
         SettingsNavRow(
             label = stringResource(R.string.scheduled_title),
-            description = stringResource(R.string.settings_scheduled_actions_desc),
             icon = Icons.Filled.CalendarMonth,
             onClick = onScheduledActions
         )
@@ -486,7 +491,6 @@ internal fun SettingsNotificationsCard(
         NolaSectionTitle(title = stringResource(R.string.notifications_title))
         SettingsNavRow(
             label = stringResource(R.string.notifications_title),
-            description = stringResource(R.string.settings_notification_center_desc),
             icon = Icons.Filled.Notifications,
             modifier = Modifier.testTag(SETTINGS_NOTIFICATION_CENTER_TEST_TAG),
             onClick = onNotifications
@@ -559,7 +563,7 @@ private fun SettingsFeedbackCard(
 @Composable
 fun SettingsNavRow(
     label: String,
-    description: String,
+    description: String? = null,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     isBusy: Boolean = false,
     enabled: Boolean = true,
@@ -571,7 +575,7 @@ fun SettingsNavRow(
             .fillMaxWidth()
             .clickable(enabled = enabled, role = Role.Button) { onClick() }
             .heightIn(min = 56.dp)
-            .padding(vertical = NolaSpacing.sm),
+            .padding(horizontal = NolaSpacing.sm, vertical = NolaSpacing.sm),
         verticalAlignment = Alignment.CenterVertically
     ) {
         NolaIconBadge(icon = icon, size = 32.dp)
@@ -583,7 +587,7 @@ fun SettingsNavRow(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
-            Text(
+            if (!description.isNullOrBlank()) Text(
                 description,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -591,19 +595,8 @@ fun SettingsNavRow(
                 overflow = TextOverflow.Ellipsis
             )
         }
-        Box(
-            modifier = Modifier.size(24.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            if (isBusy) {
-                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-            } else {
-                Icon(
-                    Icons.AutoMirrored.Filled.KeyboardArrowRight, null,
-                    modifier = Modifier.size(20.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                )
-            }
+        if (isBusy) {
+            CircularProgressIndicator(Modifier.size(24.dp).padding(3.dp), strokeWidth = 2.dp)
         }
     }
 }

@@ -19,6 +19,8 @@ struct ResponseDelivery<P: HostExecutionProtocol> {
     ack: mpsc::SyncSender<Result<(), String>>,
 }
 struct ReplyPort<P: HostExecutionProtocol> {
+    effect_id: String,
+    aborted: AtomicBool,
     sender: mpsc::SyncSender<ResponseDelivery<P>>,
     busy: AtomicBool,
 }
@@ -121,6 +123,9 @@ impl<P: HostExecutionProtocol> HostMailbox<P> {
                 .cloned()
                 .ok_or("unknown or settled Host mailbox ticket")?
         };
+        if port.aborted.load(Ordering::Acquire) {
+            return Err("Host mailbox delivery aborted; execution stop remains unconfirmed".into());
+        }
         if port.busy.swap(true, Ordering::AcqRel) {
             return Err("Host response is awaiting its commit ACK".into());
         }
@@ -157,6 +162,19 @@ impl<P: HostExecutionProtocol> HostMailbox<P> {
                 }
             }
         }
+    }
+    /// Abort only this physical delivery's transport wait. This neither emits a
+    /// Host response nor acknowledges execution/stop; the committed driver's
+    /// exact cancellation drain still owns any subsequent Cancel request.
+    pub fn abort_delivery(&self, effect_id: &str) -> Result<bool, String> {
+        let state = self.shared.state.lock().map_err(|_| "Host mailbox lock poisoned")?;
+        let mut found = false;
+        for port in state.replies.values().filter(|port| port.effect_id == effect_id) {
+            port.aborted.store(true, Ordering::Release);
+            found = true;
+        }
+        self.shared.ready.notify_all();
+        Ok(found)
     }
     pub fn close(&self) {
         if let Ok(mut state) = self.shared.state.lock() {
@@ -200,6 +218,8 @@ where
             state.replies.insert(
                 ticket,
                 Arc::new(ReplyPort {
+                    effect_id: expected.effect_id.0.clone(),
+                    aborted: AtomicBool::new(false),
                     sender,
                     busy: AtomicBool::new(false),
                 }),
@@ -208,9 +228,14 @@ where
             self.shared.ready.notify_all();
             ticket
         };
+        let port = self.shared.state.lock().map_err(|_| "Host mailbox lock poisoned")?
+            .replies.get(&ticket).cloned().ok_or("Host mailbox delivery disappeared")?;
         let result = (|| {
             let mut started = started;
             loop {
+                if port.aborted.load(Ordering::Acquire) {
+                    return Err("Host mailbox delivery aborted; execution stop remains unconfirmed".into());
+                }
                 let delivery = match receiver.recv_timeout(Duration::from_millis(100)) {
                     Ok(value) => value,
                     Err(mpsc::RecvTimeoutError::Timeout) => {

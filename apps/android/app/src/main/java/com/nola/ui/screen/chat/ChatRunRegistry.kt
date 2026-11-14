@@ -35,6 +35,7 @@ internal class ChatRunSession(
         state.update { it.copy(executionTeardownPending = runtime.hasOutstandingGeneration()) }
     }
     var submittedDraft: ConversationComposerDrafts.SubmissionTicket? = null
+    var submittedDraftRunId: String? = null
     var draftRetired = false
     val runtime = ChatTurnRuntime()
     val permission = ChatPermissionSession()

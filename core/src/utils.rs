@@ -22,22 +22,16 @@ pub extern "C" fn nola_core_free_c_string(ptr: *mut c_char) {
     }
 }
 
-/// Transform model output JSON (internal utility passthrough)
-#[no_mangle]
-pub extern "C" fn nola_core_transform_model_output_passthrough(
-    data_ptr: *const u8,
-    data_len: usize,
-) -> *mut c_char {
+#[cfg(test)]
+mod tests {
+    use super::*;
     use std::ptr;
-    if data_ptr.is_null() || data_len == 0 {
-        return ptr::null_mut();
-    }
-    unsafe {
-        let slice = std::slice::from_raw_parts(data_ptr, data_len);
-        // Simple passthrough for now (can add transformation logic if needed)
-        if let Ok(s) = std::str::from_utf8(slice) {
-            return CString::new(s).unwrap().into_raw();
-        }
-        ptr::null_mut()
+
+    #[test]
+    fn free_c_string_handles_null_and_allocated_strings() {
+        nola_core_free_c_string(ptr::null_mut());
+        let raw = CString::new("nola-ffi-string").unwrap().into_raw();
+        assert!(!raw.is_null());
+        nola_core_free_c_string(raw);
     }
 }

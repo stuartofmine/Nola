@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Same-connection SQLite adapter; existing transaction and scheduler semantics.
 use crate::{NolaStore, StoreError};
+use rusqlite::{params, OptionalExtension};
 use nola_store_port::runtime_task::*;
 impl RuntimeTaskRepository for NolaStore {
     fn submit_terminal_input(&mut self, input: &nola_domain::terminal_input::TerminalInputRequest,
@@ -18,6 +19,10 @@ impl RuntimeTaskRepository for NolaStore {
     }
     fn source_agent_task_admission_location(&self, owner: &str, task_id: &str) -> Result<Option<(String, u64)>, Self::Error> {
         NolaStore::source_agent_task_admission_location(self, owner, task_id)
+    }
+    fn validated_expert_task_target(&self, task_id:&str, child:&str, require_admitted:bool)
+        -> Result<Option<nola_domain::expert_task_target::ExpertTaskTargetV1>,Self::Error> {
+        NolaStore::validated_expert_task_target(self,task_id,child,require_admitted)
     }
     fn runtime_agent_task_authority(
         &self,
@@ -92,6 +97,10 @@ impl RuntimeTaskRepository for NolaStore {
         task_id: &str,
     ) -> Result<Option<RuntimeTaskRunBinding>, Self::Error> {
         NolaStore::runtime_task_run_binding(self, task_id)
+    }
+    fn runtime_task_binding_for_run(&self, child: &str, run: &str) -> Result<Option<RuntimeTaskRunBinding>, Self::Error> {
+        let id:Option<String>=self.connection.query_row("SELECT task_id FROM runtime_task_run_bindings WHERE child_session_id=?1 AND run_id=?2",params![child,run],|r|r.get(0)).optional()?;
+        id.map(|id|NolaStore::runtime_task_run_binding(self,&id)).transpose().map(Option::flatten)
     }
     fn validate_runtime_task_turn_admission(
         &self,

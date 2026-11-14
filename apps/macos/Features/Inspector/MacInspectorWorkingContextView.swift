@@ -25,7 +25,7 @@ struct MacInspectorWorkingContextView: View {
     }
 
     var body: some View {
-        MacInspectorSection(title: resourcesOnly ? String(localized: "inspector.resources", table: "ConversationInspector") : String(localized: "Working Context", table: "Chat")) {
+        MacInspectorSection(title: resourcesOnly ? String(localized: "inspector.resources", table: "ConversationInspector") : String(localized: "Working Context", table: "Chat"), showsTitle: resourcesOnly) {
           if resourcesOnly {
             let conversationAttachments = model.selectedConversationAttachments
             if model.attachments.isEmpty && conversationAttachments.isEmpty {

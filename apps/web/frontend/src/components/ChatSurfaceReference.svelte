@@ -62,8 +62,8 @@
     {:else if summary}<p>{summary}</p>{/if}
     {#if !readOnly && !activeCurrent && pendingAttempt}<button type="button" disabled={recovering} onclick={() => void reconcile()}>{t($locale, 'activity.surfacePending')}</button>{/if}
     {#if recoveryFailure}<p role="alert">{recoveryFailure}</p>{/if}
-    <button type="button" aria-expanded={expanded} onclick={() => expanded = !expanded}>{t($locale, 'activity.surfaceVersion', {revision: reference.revision})}</button>
-    {#if expanded}
+    {#if !snapshot}<button type="button" aria-expanded={expanded} onclick={() => expanded = !expanded}>{t($locale, 'activity.surfaceVersion')}</button>{/if}
+    {#if !snapshot && expanded}
         <section aria-label={t($locale, 'activity.surfaceHistory')} aria-busy={loading}>
             <p class="historical-label">{t($locale, 'activity.surfaceReadOnly')}</p>
             {#if loading}<p role="status">{t($locale, 'activity.loading_detail')}</p>{/if}

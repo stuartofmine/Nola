@@ -7,14 +7,14 @@
     import { taskControl, TaskActionSubmission } from '../lib/chatTaskActions';
     import type { TaskOwner, TaskActionState } from '../lib/chatTaskActions';
     import type { TimelinePart } from '../lib/chatTimeline';
-    let { part, owner, clientId = '', onRecovered }: { part: TimelinePart; owner: TaskOwner; clientId?:string; onRecovered?:()=>void } = $props();
+    let { part, owner, clientId = '', active = true, onRecovered }: { part: TimelinePart; owner: TaskOwner; clientId?:string; active?:boolean; onRecovered?:()=>void } = $props();
     const control = $derived(taskControl(part, owner));
     let controller = $state<TaskActionSubmission | null>(null);
     let status = $state<TaskActionState>('ready');
     let recoveryOwner = $state<RecoveryOwner | null>(null);
     let taskContext = $state<OwnedTaskRecoveryContext | undefined>(undefined);
     async function inspectUnknown() {
-        if (!control || !clientId || status==='sending') return;
+        if (!active || !control || !clientId || status==='sending') return;
         const captured={...owner}; const taskId=control.taskId;
         const task={host_id:captured.hostId,conversation_id:captured.conversationId,parent_run_id:captured.runId,task_id:taskId};
         status='sending';
@@ -56,7 +56,7 @@
             else if (!draft && next.pendingGuidanceText) draft = next.pendingGuidanceText;
         } catch { status = 'unknown'; }
     });
-    const disabled = $derived(!control || !controller || !['ready', 'queued', 'rejected', 'delivered'].includes(status));
+    const disabled = $derived(!active || !control || !controller || !['ready', 'queued', 'rejected', 'delivered'].includes(status));
     async function submit(action: 'guidance' | 'cancel') {
         const captured = controller;
         if (disabled || !captured || !control || captured.control.identity !== control.identity
@@ -71,7 +71,7 @@
     }
     async function recover() {
         const captured = controller;
-        if (!captured?.canRecover) return;
+        if (!active || !captured?.canRecover) return;
         const submittedDraft = captured.pendingGuidanceText;
         status = 'sending';
         const pending = captured.recover((path, body) => api(path, {method:'POST', body:JSON.stringify(body), signal: AbortSignal.timeout(30_000)}));
@@ -88,11 +88,11 @@
         {#if control.guidance || controller?.pendingGuidanceText}<label>{t($locale, 'chatPage.taskGuidance')}<textarea bind:value={draft} disabled={disabled || !control.guidance} rows="2" maxlength="4096"></textarea></label>
             {#if control.guidance}<button disabled={disabled || !draft.trim()} onclick={() => submit('guidance')}>{t($locale, 'chatPage.taskSend')}</button>{/if}{/if}
         {#if control.cancellation}<button disabled={disabled} onclick={() => submit('cancel')}>{t($locale, 'chatPage.taskCancel')}</button>{/if}
-        {#if status !== 'sending' && controller?.canRecover}<button onclick={recover}>{t($locale, 'chatPage.taskRecover')}</button>{/if}
+        {#if status !== 'sending' && controller?.canRecover}<button disabled={!active} onclick={recover}>{t($locale, 'chatPage.taskRecover')}</button>{/if}
         {#if clientId && control.cancellationObserved && !control.terminal && status !== 'sending'}
-            <button onclick={inspectUnknown}>{t($locale, 'recovery.title')}</button>
+            <button disabled={!active} onclick={inspectUnknown}>{t($locale, 'recovery.title')}</button>
         {/if}
-        {#if recoveryOwner && taskContext}<ChatUnknownEffectRecovery owner={recoveryOwner} {taskContext} available={true}
+        {#if recoveryOwner && taskContext}<ChatUnknownEffectRecovery owner={recoveryOwner} {taskContext} available={active}
             onResume={() => {}} onObserved={() => { recoveryOwner=null; taskContext=undefined; void recover(); onRecovered?.(); }} />{/if}
         {#if status !== 'ready'}<p role="status">{t($locale, `chatPage.taskAction_${status}`)}</p>{/if}
     </div>

@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections import defaultdict
 import argparse
 import json
+import shlex
 from pathlib import Path
 import sys
 from typing import Any, Iterable
@@ -23,13 +24,14 @@ EXECUTION_FIELDS = {
 }
 
 CLIENT_PLATFORMS = ("cli", "web", "mac", "ios", "android")
+ROOT = Path(__file__).resolve().parent.parent
 
 RUNTIME_PLATFORMS = {
-    "native-process": {"core", "cli", "mac", "backend"},
+    "native-process": {"core", "cli", "mac"},
     "native-app": {"mac"},
     "terminal-pty": {"cli"},
-    "http-service": {"web", "backend"},
-    "local-service-stack": {"cli", "web", "backend"},
+    "http-service": {"web"},
+    "local-service-stack": {"cli", "web"},
     "browser": {"web"},
     "simulator": {"ios"},
     "emulator": {"android"},
@@ -43,7 +45,6 @@ SMOKE_REQUIREMENTS = {
     "mac": {"product-entrypoint", "real-provider", "real-persistence", "product-ui", "semantic-judge"},
     "ios": {"product-entrypoint", "real-provider", "real-persistence", "product-ui", "semantic-judge"},
     "android": {"product-entrypoint", "real-provider", "real-persistence", "product-ui", "semantic-judge"},
-    "backend": {"product-entrypoint", "real-persistence", "http-api"},
 }
 
 FULL_REQUIREMENTS = {
@@ -60,7 +61,6 @@ SMOKE_MODULE_REQUIREMENTS = {
     },
     "ios": {"agent", "core", "provider", "tools", "persistence", "rendering", "ui"},
     "android": {"agent", "core", "provider", "data-source", "skills", "persistence", "ui"},
-    "backend": {"auth", "chat", "database", "http"},
 }
 
 FULL_MODULE_REQUIREMENTS = {
@@ -153,6 +153,23 @@ def validate_execution_claim(scenario: dict[str, Any]) -> list[str]:
                 errors.append(
                     f"scenario {identifier} required chain {index + 1} lacks a valid platform"
                 )
+    # Validate repository entrypoints for both the runner and standalone audit.
+    # Synthetic contract fixtures can omit commands; the runner requires one.
+    if "command" in scenario:
+        command = scenario["command"]
+        if not isinstance(command, str):
+            errors.append(f"scenario {identifier} command must be a string")
+        else:
+            try:
+                arguments = shlex.split(command)
+            except ValueError as error:
+                errors.append(f"scenario {identifier} has invalid shell syntax: {error}")
+                arguments = []
+            for argument in arguments:
+                if argument.startswith(("scripts/", "./scripts/")) and argument.endswith((".py", ".sh", ".cjs", ".mjs", ".js")):
+                    script = (ROOT / argument).resolve()
+                    if not script.is_relative_to(ROOT) or not script.is_file():
+                        errors.append(f"scenario {identifier} references missing repository script: {argument}")
     return errors
 
 
@@ -287,8 +304,10 @@ def main() -> int:
             scenario["_contract"] = contracts.get(scenario.get("contractId"), {})
             if args.suite not in scenario.get("suite", []):
                 continue
-            errors.extend(validate_execution_claim(scenario))
-            scenarios.append(scenario)
+            scenario_errors = validate_execution_claim(scenario)
+            errors.extend(scenario_errors)
+            if not scenario_errors:
+                scenarios.append(scenario)
         report = audit_coverage(scenarios, suite=args.suite)
         report["matrixErrors"] = errors
         report["complete"] = report["complete"] and not errors

@@ -58,9 +58,11 @@
         const system = platform === 'web' ? '浏览器 · 当前 Host' : platform === 'windows' ? 'Windows · Web Host 客户端' : platform === 'cli' ? '终端 · 文本交互草图' : `${names[platform]} · 原生控件布局示意`;
         return `<div class="device-system"><span>${escape(system)}</span><span>仅演示</span></div>${platform === 'cli' ? '' : `<header class="app-top"><strong>Nola</strong><span>${escape(scene.entry)}</span></header>${mobile ? '' : '<div class="review-tabs"><span class="current">当前内容</span><span>任务</span><span>产物</span><span>上下文</span></div>'}`}${content}${mobile ? '<footer class="app-foot"><span>对话</span><span>活动</span><span>资料</span><span>设置</span></footer>' : ''}`;
     }
+    const multiLineLabels = new Set(['消息','修改后的内容','转写草稿','目标','验收条件','补充说明','提示词内容','补充指引','说明','内容','知识内容','文档正文','记忆内容','修改说明','回应']);
+    const isMultiLine = field => field.multiline === true || (field.multiline !== false && (String(field.value || '').includes('\n') || multiLineLabels.has(field.label)));
     function formMarkup(state) {
         if (!['form','choice','review'].includes(state.kind) || !scene.fields.length) return '';
-        return `<form class="sample-form" id="sample-form" novalidate>${scene.fields.map((field, index) => `<label>${escape(field.label)}${field.required ? '<small>必填 · 仅样例</small>' : ''}<textarea aria-label="${escape(field.label)}" data-field="${index}" ${field.required ? 'required' : ''} rows="${field.value.length > 35 ? 3 : 2}">${escape(memory().draft[index])}</textarea></label>`).join('')}<small>修改只保留在此平台、此场景的本页草稿中。</small></form>`;
+        return `<form class="sample-form" id="sample-form" novalidate>${scene.fields.map((field, index) => `<label>${escape(field.label)}${field.required ? '<small>必填 · 仅样例</small>' : ''}${isMultiLine(field) ? `<textarea aria-label="${escape(field.label)}" data-field="${index}" ${field.required ? 'required' : ''} rows="${field.value.length > 35 ? 3 : 2}">${escape(memory().draft[index])}</textarea>` : `<input type="text" aria-label="${escape(field.label)}" data-field="${index}" ${field.required ? 'required' : ''} value="${escape(memory().draft[index])}" autocomplete="off">`}</label>`).join('')}<small>修改只保留在此平台、此场景的本页草稿中。</small></form>`;
     }
     function domainMarkup(state) {
         if (scene.id === 'permission' && state.id === '0') return '<details class="operation-review"><summary>完整操作与授权范围</summary><pre>Command: python3 remote_job.py\nWorking directory: Project directory\n执行位置：已配对宿主机\n范围：仅本次操作</pre><p>批准后才开始执行；拒绝不会修改文件。</p></details>';
@@ -81,7 +83,14 @@
         if (state.kind === 'list') return `<ul class="sample-items">${lines.map((line,index) => `<li>${escape(line)}<small>样例 ${index+1} · 当前来源</small></li>`).join('')}</ul>`;
         if (['stream','answer'].includes(state.kind)) return `<div class="message-sample">${escape(scene.fields[0]?.value || '请核对这次操作的结果与来源。')}</div><div class="answer-sample ${state.kind === 'stream' ? 'reveal' : ''}">${lines.map(line=>`<p>${escape(line)}</p>`).join('')}</div><div class="text-actions"><button data-copy>复制</button>${state.kind === 'stream' ? '<button data-stop>停止演示回复</button>' : ''}</div>`;
         if (state.kind === 'progress') return `<div class="content-lines">${lines.map(line=>`<p>${escape(line)}</p>`).join('')}</div><div class="demo-progress" aria-label="样例进度，不来自真实任务"><span></span></div><small>进度为固定样例；没有运行真实任务。</small>`;
-        if (state.kind === 'inspector') return `<div class="sample-inspector">${['概览','进度','目标','审阅','产物','上下文','执行','参与者'].map((title,index)=>`<details ${index===0 || index===5 ? 'open' : ''}><summary>${title}</summary><p>${escape(lines[index % lines.length])}</p>${title === '上下文' ? '<label>Wiki 草稿<textarea data-wiki aria-label="检查器 Wiki 草稿">'+escape(memory().wiki || '')+'</textarea></label>' : ''}</details>`).join('')}</div>`;
+        if (state.kind === 'inspector') return `<div class="sample-inspector">${[
+            ['概览','就绪 · 本地 Host（演示）。'],
+            ['进度','当前会话的待办计划。'],['目标','目标范围、控制与验收要求。'],
+            ['审阅','当前工作区的文件变更。'],['产物','当前会话生成的文件与资料。'],
+            ['会话配置','会话沙盒与本段会话指令（作用于主 Agent 后续回复）。'],
+            ['上下文预算','上下文用量：尚未测量；缓存命中率：未知。'],
+            ['执行','当前任务与浏览器会话；历史调用按需展开。'],['参与者','Nola 与本会话协作专家。']
+        ].map(([title,copy],index)=>`<details ${index===0?'open':''}><summary>${title}</summary><p>${escape(copy)}</p>${title==='上下文预算'?'<details><summary>会话 Wiki</summary><label>Wiki 草稿<textarea data-wiki aria-label="检查器 Wiki 草稿">'+escape(memory().wiki || '')+'</textarea></label></details>':''}</details>`).join('')}</div>`;
         if (state.kind === 'selection') return `<div class="content-lines">${lines.map(line=>`<p>${escape(line)}</p>`).join('')}</div><div tabindex="0" aria-label="可手动复制的样例文字" class="selection-text">演示回复：原始记录已保留，未确认事项仍需核对。</div>`;
         return `<div class="content-lines ${['error','warning','blocked','permission'].includes(state.kind) ? `state-callout ${state.kind}` : ''}">${lines.map(line=>`<p>${escape(line)}</p>`).join('')}</div>${state.kind === 'blocked' && scene.id === 'permission-missing' ? '<div class="permission-disabled"><button disabled>仅允许本次</button><button disabled>本次对话允许</button></div>' : ''}${scene.id === 'reasoning' && state.id === '0' ? '<fieldset class="sample-form"><legend>推理档位 · 模型声明样例</legend><label><select id="effort" aria-label="实际推理档位">'+['继承','none','low','medium','high','xhigh'].map(value=>`<option ${value===(memory().effort || '继承')?'selected':''}>${value}</option>`).join('')+'</select></label></fieldset>' : ''}${state.kind === 'reader' ? '<pre class="sample-code" tabindex="0" aria-label="可横向滚动的代码样例">记录 | 原始来源 | 已验证状态\n001  | project/source-001.md | 已保留\n002  | project/source-002.md | 尚待核对</pre>' : ''}`;
     }
@@ -162,6 +171,9 @@
             try { await navigator.clipboard.writeText(text); target.textContent = '已复制'; }
             catch { const block=document.createElement('textarea'); block.readOnly=true; block.value=text; block.setAttribute('aria-label','手动复制回复'); target.closest('.text-actions').after(block); block.focus(); block.select(); $('#live').textContent='无法写入剪贴板，请手动复制已选文字。'; }
         }
+    });
+    document.addEventListener('submit', event => {
+        if (event.target.id === 'sample-form') event.preventDefault();
     });
     document.addEventListener('input', event => {
         if (!catalog) return;

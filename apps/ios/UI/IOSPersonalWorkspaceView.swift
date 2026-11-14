@@ -348,7 +348,11 @@ struct IOSInformationNavigationRequest: Identifiable, Equatable {
 
 
 struct IOSInformationView: View {
+    @EnvironmentObject private var container: ServiceContainer
     @State private var pageWidth: CGFloat = 390
+    @State private var directory: [IOSConversationDirectoryEntry] = []
+    @State private var directoryLoadedAt: Date?
+    @State private var directoryError: String?
     private var pageInset: CGFloat { pageWidth < 359 ? 16 : 20 }
     @Binding var path: [IOSWorkspaceDestination]
     @Binding var pendingRequests: [IOSInformationNavigationRequest]
@@ -356,11 +360,10 @@ struct IOSInformationView: View {
     var body: some View {
         NavigationStack(path: $path) {
             List {
-                VStack(spacing: 6) {
-                    Text("navigation.library").font(.headline).frame(maxWidth: .infinity, minHeight: 44)
-                    Text("information.subtitle").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
-                }
-                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 8, trailing: 0))
+                IOSWorkspacePageHeading(title: String(localized: "navigation.library"),
+                    subtitle: String(localized: "information.subtitle"))
+                    .accessibilityIdentifier("information.heading")
+                    .listRowInsets(EdgeInsets(top: 8, leading: pageInset, bottom: 16, trailing: pageInset))
                     .listRowSeparator(.hidden).listRowBackground(Color.clear)
                 Section {
                 ForEach([IOSWorkspaceDestination.knowledge, .memory, .sources]) { item in
@@ -388,6 +391,34 @@ struct IOSInformationView: View {
                 }
                 }
                 .listSectionSeparator(.hidden)
+                if let directoryError {
+                    Section {
+                        Text(directoryError).font(.footnote).foregroundStyle(.secondary)
+                        Button("common.retry") { Task { await loadDirectory(force: true) } }.frame(minHeight: 44)
+                    }
+                }
+                if !directory.isEmpty {
+                    Section {
+                        ForEach(Array(recentKnowledge.prefix(3))) { item in
+                            Button { NotificationCenter.default.post(name: .nolaOpenChatTab, object: item.id) } label: {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(IOSConversationTitlePresentationPolicy.displayTitle(item.title,
+                                        conversationID: item.id.uuidString, fallback: L10n.chatConversationDefaultTitle))
+                                        .font(.body.weight(.medium)).foregroundStyle(.primary).lineLimit(2)
+                                    if !item.knowledgePoints.isEmpty {
+                                        Text(item.knowledgePoints).font(.subheadline).foregroundStyle(.secondary).lineLimit(3)
+                                    }
+                                    Text(item.lastActiveAt, format: .dateTime.month().day()).font(.caption).foregroundStyle(.secondary)
+                                }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+                            }.buttonStyle(.plain)
+                                .listRowInsets(EdgeInsets(top: 14, leading: pageInset, bottom: 14, trailing: pageInset))
+                                .listRowBackground(DesignTokens.surfaceColor)
+                        }
+                    } header: {
+                        Text(recentKnowledge.contains(where: { !$0.knowledgePoints.isEmpty })
+                            ? String(localized: "information.recentKnowledge") : String(localized: "information.recentConversations"))
+                    }
+                }
             }
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
@@ -401,11 +432,29 @@ struct IOSInformationView: View {
                     notificationRequestID: item == .records ? activeRequest?.id : nil)
             }
         }
+        .task { await loadDirectory(force: false) }
+        .refreshable { await loadDirectory(force: true) }
         .onAppear { consumePendingRequest() }
         .onChange(of: pendingRequests) { _, _ in consumePendingRequest() }
         .onChange(of: path) { _, next in
             if next.isEmpty { activeRequest = nil; consumePendingRequest() }
         }
+    }
+
+    private var recentKnowledge: [IOSConversationDirectoryEntry] {
+        let saved = directory.filter { !$0.knowledgePoints.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        return saved.isEmpty ? directory : saved
+    }
+
+    private func loadDirectory(force: Bool) async {
+        guard force || directoryLoadedAt.map({ Date().timeIntervalSince($0) >= 30 }) ?? true else { return }
+        let runtime = container.applicationRuntime
+        do {
+            let loaded = try await Task.detached { try IOSWorkspaceReadFacts.conversationDirectory(runtime: runtime) }.value
+            try Task.checkCancellation()
+            directory = loaded; directoryLoadedAt = Date(); directoryError = nil
+        } catch is CancellationError { }
+        catch { directoryError = error.localizedDescription }
     }
 
     private func consumePendingRequest() {
@@ -425,14 +474,14 @@ private struct IOSKnowledgePointsView: View {
     @State private var pageWidth: CGFloat = 390
     @EnvironmentObject private var container: ServiceContainer
     @Environment(\.dismiss) private var dismiss
-    @State private var conversations: [Conversation] = []
+    @State private var conversations: [IOSConversationDirectoryEntry] = []
     @State private var loadError: String?
 
     var body: some View {
         List {
             if let loadError {
                 Text(loadError).foregroundStyle(.secondary)
-                Button(String(localized: "common.retry")) { reload() }.frame(minHeight: 44)
+                Button(String(localized: "common.retry")) { Task { await reload() } }.frame(minHeight: 44)
             } else if conversations.isEmpty {
                 Text(NSLocalizedString("information.knowledge.empty", value: "No conversation knowledge points yet.", comment: "Empty knowledge list"))
                     .foregroundStyle(.secondary).padding(.vertical, 20).listRowSeparator(.hidden)
@@ -460,18 +509,20 @@ private struct IOSKnowledgePointsView: View {
         .scrollContentBackground(.hidden)
         .background(DesignTokens.backgroundColor)
         .background(IOSWorkspaceWidthObserver(width: $pageWidth))
-        .task { reload() }
-        .refreshable { reload() }
+        .task { await reload() }
+        .refreshable { await reload() }
         .accessibilityIdentifier("information.knowledge.list")
     }
 
-    private func reload() {
+    private func reload() async {
+        let runtime = container.applicationRuntime
         do {
-            conversations = try (container.conversationStore?.getAllConversations() ?? [])
-                .filter { $0.appearsInOrdinaryHistory && !$0.knowledgePoints.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                .sorted { $0.lastActiveAt > $1.lastActiveAt }
+            let loaded = try await Task.detached { try IOSWorkspaceReadFacts.conversationDirectory(runtime: runtime) }.value
+            try Task.checkCancellation()
+            conversations = loaded.filter { !$0.knowledgePoints.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             loadError = nil
-        } catch { loadError = error.localizedDescription }
+        } catch is CancellationError { }
+        catch { loadError = error.localizedDescription }
     }
 }
 
@@ -507,8 +558,30 @@ struct IOSWorkspacePageHeading: View {
 
 struct IOSConversationActivityView: View {
     @EnvironmentObject private var container: ServiceContainer
+    @State private var nextPlan: AppleTodayQueuedInstance?
+    @State private var plansLoadedAt: Date?
+    @State private var plansError: String?
     var body: some View {
         let runtime = container.applicationRuntime
+        VStack(spacing: 0) {
+        NavigationLink { ScheduledActionsView(embedded: true) } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "calendar").font(.title3).foregroundStyle(DesignTokens.actionColor)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("workspace.plans").font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                    if let nextPlan {
+                        Text(nextPlan.title ?? String(localized: "workspace.plans")).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                        Text(Date(timeIntervalSince1970: Double(nextPlan.scheduled_for_ms) / 1000),
+                            format: .dateTime.month().day().hour().minute()).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer(minLength: 8)
+            }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).padding(14)
+                .background(DesignTokens.surfaceColor, in: RoundedRectangle(cornerRadius: 14))
+                .contentShape(Rectangle())
+        }.buttonStyle(.plain).padding(.horizontal, 16).padding(.top, 8)
+            .accessibilityIdentifier("activity.plans")
+        if let plansError { Text(plansError).font(.footnote).foregroundStyle(.secondary).padding(.horizontal) }
         AppleActivityView(load: { query in
             try await Task.detached { try IOSWorkspaceReadFacts.activity(runtime: runtime, query: query) }.value
         }, detail: { entry in
@@ -518,5 +591,16 @@ struct IOSConversationActivityView: View {
                 NotificationCenter.default.post(name: .nolaOpenChatTab, object: id)
             }
         }, canOpenSource: { UUID(uuidString: $0) != nil })
+        }
+        .task {
+            guard plansLoadedAt.map({ Date().timeIntervalSince($0) >= 30 }) ?? true else { return }
+            do {
+                let facts = try await Task.detached { try IOSWorkspaceReadFacts.snapshot(runtime: runtime) }.value
+                try Task.checkCancellation()
+                nextPlan = facts.queued_instances.min { $0.scheduled_for_ms < $1.scheduled_for_ms }
+                plansLoadedAt = Date(); plansError = nil
+            } catch is CancellationError { }
+            catch { plansError = error.localizedDescription }
+        }
     }
 }

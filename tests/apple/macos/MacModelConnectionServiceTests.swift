@@ -3,6 +3,14 @@ import XCTest
 @testable import Nola
 
 @MainActor final class MacModelConnectionServiceTests: XCTestCase {
+    func testEndpointFormRejectsRoutesThatServiceWillReject() {
+        XCTAssertTrue(MacModelConnectionsView.isValidEndpoint("https://models.example/v1"))
+        for endpoint in ["https://models.example/v1?key=secret", "https://models.example/v1#route",
+                         "https://user:secret@models.example/v1", "file:///tmp/models"] {
+            XCTAssertFalse(MacModelConnectionsView.isValidEndpoint(endpoint), endpoint)
+        }
+    }
+
     func testImportedProviderFalseSurvivesOmittedOptionalCapabilityFields() throws {
         let data = Data(#"{"toolCalls":false,"imageInput":false,"reasoning":false,"samplingParameters":false}"#.utf8)
         let declaration = try JSONDecoder().decode(MacModelExecutionCapabilities.self, from: data)

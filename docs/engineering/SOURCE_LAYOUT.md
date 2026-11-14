@@ -11,9 +11,8 @@ apps/                 六个平台入口
   web/                Svelte、Web 资源与浏览器运行时桥接
   cli/                Rust CLI、Agent Host、HTTP 服务
 core/                 Rust 领域、Application Service、Store、FFI
-shared/               Apple 共用代码、FFI 框架、MLX、任务数据类型
+shared/               跨平台设计 Token（design-tokens）、Apple 共用代码、FFI 框架、MLX
 tests/apple/          Apple 单元与 UI 测试
-modules/              TypeScript / Bazel 共享模块
 transport/            跨模块传输定义
 assets/               跨平台设计资源
 scripts/              构建、测试、生成与发布工具
@@ -27,7 +26,7 @@ Doc/                  仅本地当前任务与历史记录，不提交或导出
 
 `legacy/` 中的历史实现仅保留本地，整目录忽略且禁止公开导出，不属于 GitHub 源码树。
 
-根目录保留 `Cargo.toml` / `Cargo.lock`、`Nola.xcodeproj`、`ci_scripts/` 和 Bazel 入口，方便工具发现 workspace 与保留 Apple 构建上下文。Xcode target、scheme、bundle ID 和测试选择器沿用原名称。通过根工程打开 Apple 项目，不从源码子目录新建工程。
+根目录保留 `Cargo.toml` / `Cargo.lock` 与 `ci_scripts/`；Apple 工程入口位于 `apple/Nola.xcodeproj`，通过相对路径将源码根定位到仓库根目录。Xcode target、scheme、bundle ID 和测试选择器沿用原名称。构建、测试和发布脚本都显式使用这个工程入口，不依赖根目录自动发现工程。
 
 Rust 工作区从根目录运行；Android 在 `apps/android/` 执行 Gradle；Web 与 Windows 分别使用 `npm --prefix apps/web/frontend` 和 `npm --prefix apps/windows`。平台依赖和完整命令见[仓库 README](../../README.md)与[平台入口](../platforms/README.md)。
 
@@ -39,6 +38,7 @@ CLI 安装包继续使用 `bin/`、`web/` 资源布局；用户项目的默认 W
 
 ```sh
 python3 scripts/check_source_layout.py
+python3 scripts/check_design_tokens.py
 python3 scripts/check_portable_paths.py
 python3 scripts/check_docs.py
 python3 -m unittest discover -s scripts/releases -p 'test_*.py'

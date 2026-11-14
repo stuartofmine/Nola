@@ -131,3 +131,9 @@ UiAction使用原submission_id生成队列/Item身份，投递目标为Surface o
 | 合法历史base且catalog一致 | Changes或Snapshot | Core比较序列化大小选择较小者；客户端不能假设一定返回diff |
 
 历史revision读取不改变Surface phase，而且不暴露交互handle。旧卡片可以查看，不因历史按钮看起来可点而取得当前执行权。Surface revision、journal cursor、draft generation和Run终态是四种不同进度，不能复用一个“最新版本”数字。
+
+### 发布器的权限边界与呈现
+
+Core 自有 `render_ui` 只发布闭合 schema 校验后的会话内容，不读取外部资源，也不执行组件事件对应的业务动作。运行时对该精确的 Builtin/Nola/generative_ui/HostState 描述符免除“未知风险”的产品默认确认，仍完整评估显式 Ask/Deny 规则。其他来源、其他路由和按钮后续工具操作不继承该豁免。发布回执不是用户同意，也不是业务操作完成凭证。
+
+客户端隐藏 Surface revision 及已显示卡片的重复版本入口；内部 revision、历史精确读取、CAS 和恢复协议不变。原生表单组件不承担任意绘图；Mermaid 图形继续走既有 Markdown 渲染链路，不新增协议组件或修改 catalog。

@@ -1063,12 +1063,12 @@ struct MacRemoteModelManagerView: View {
                                             : endpoint.wrappedValue.models[modelIndex].displayName)
                                             .lineLimit(1)
                                         Spacer()
-                                        Image(systemName: "chevron.right")
                                     }
-                                    .padding(.vertical, 10)
+                                    .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+                                    .padding(.horizontal, 8)
                                     .contentShape(Rectangle())
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(MacPressFeedbackButtonStyle())
                             .draggable(modelID) {
                                 dragPreview(endpoint.wrappedValue.models[modelIndex])
                             }

@@ -7,25 +7,30 @@ import SwiftUI
 struct MacInspectorSection<Content: View>: View {
     let title: String
     let showsDivider: Bool
+    let showsTitle: Bool
     private let content: Content
 
     init(
         title: String,
         showsDivider: Bool = true,
+        showsTitle: Bool = true,
         @ViewBuilder content: () -> Content
     ) {
         self.title = title
         self.showsDivider = showsDivider
+        self.showsTitle = showsTitle
         self.content = content()
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text(title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.primary)
-                .padding(.horizontal, 2)
-                .accessibilityAddTraits(.isHeader)
+            if showsTitle {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 2)
+                    .accessibilityAddTraits(.isHeader)
+            }
 
             VStack(alignment: .leading, spacing: 6) {
                 content

@@ -137,6 +137,25 @@ fn driver(root: &std::path::Path) -> CliAgentHostDriver {
 }
 
 #[test]
+fn unresolved_runtime_task_preparation_never_publishes_a_terminal_tool_response() {
+    let _environment=crate::store::test_env_lock();
+    let root=tempfile::tempdir().unwrap();
+    let _database=Database::bind(root.path());
+    let mut driver=driver(root.path()).with_runtime_tool_handler(|_,_,_,_,_| {
+        Some(RuntimeToolResult::pending("fixture durable commit acknowledgement unavailable".into()))
+    });
+    let request=request(&driver);
+    let mut responses=Vec::new();
+    let error=driver.dispatch(request.clone(),&mut |response| {responses.push(response);Ok(())}).unwrap_err();
+    assert!(error.contains("acknowledgement unavailable"));
+    assert!(responses.iter().any(|response|matches!(response.payload,HostResponse::ExecutionStarted)));
+    assert!(responses.iter().all(|response| !matches!(response.payload,
+        HostResponse::ToolCompleted{..}|HostResponse::TaskPromoted{..}|HostResponse::TaskUpdated{..})),
+        "A lost durable ACK must preserve the original recoverable source effect");
+    assert!(responses.iter().all(|response|response.effect_id==request.effect_id&&response.request_id==request.request_id));
+}
+
+#[test]
 fn admitted_not_started_requires_exact_control_owner_delivery_and_valid_source() {
     use nola_domain::host_effect::HostEffectId;
     use nola_domain::cancellation_not_started::{CancellationTargetNotStarted, CancellationRevokedAttempt};
@@ -205,7 +224,7 @@ fn dispatch_nonce_is_private_nested_scoped_and_old_stop_does_not_authorize_the_n
         let mut previous = capture.lock().unwrap();
         let proof = previous.clone().unwrap_or_else(|| current.clone());
         *previous = Some(current);
-        Some(RuntimeToolResult { outcome:output(proof,ExecutionState::Unknown),task_promotion:None,task_update:None })
+        Some(RuntimeToolResult { outcome:output(proof,ExecutionState::Unknown),task_promotion:None,task_update:None,pending_error:None })
     });
     let mut target = request(&driver);
     driver.dispatch(target.clone(), &mut |_| Ok(())).unwrap();
@@ -297,7 +316,7 @@ fn current_owned_stop_survives_response_rejection_but_still_needs_its_formal_can
     let _database = Database::bind(root.path());
     let mut driver = driver(root.path()).with_runtime_tool_handler(|_, _, _, _, _| {
         Some(RuntimeToolResult { outcome:output(crate::tools::current_local_execution_identity().unwrap(),ExecutionState::Unknown),
-            task_promotion:None,task_update:None })
+            task_promotion:None,task_update:None,pending_error:None })
     });
     let target = request(&driver);
     assert!(driver.dispatch(target.clone(), &mut |response| {

@@ -31,7 +31,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -56,6 +55,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
@@ -273,9 +273,9 @@ private fun MermaidDiagramView(
     modifier: Modifier = Modifier
 ) {
     val density = LocalDensity.current
-    val isDarkMode = isSystemInDarkTheme()
+    val isDarkMode = MaterialTheme.colorScheme.surface.luminance() < 0.5f
     val mermaidTheme = if (isDarkMode) "dark" else "default"
-    val textColor = if (isDarkMode) "#F3F4F6" else "#202124"
+    val textColor = "#%06X".format(MaterialTheme.colorScheme.onSurface.toArgb() and 0xFFFFFF)
     val loadKey = "$mermaidTheme\n$source"
 
     key(loadKey) {
@@ -322,6 +322,11 @@ private fun MermaidDiagramView(
                         }, "NolaMermaid")
                     }
                 },
+                onRelease = { webView ->
+                    webView.removeJavascriptInterface("NolaMermaid")
+                    webView.stopLoading()
+                    webView.destroy()
+                },
                 update = { webView ->
                     if (webView.tag == loadKey) return@AndroidView
                     webView.tag = loadKey
@@ -364,7 +369,7 @@ private fun mermaidHtml(source: String, theme: String, textColor: String): Strin
         html, body { margin: 0; padding: 0; background: transparent; color: $textColor; font-family: sans-serif; }
         .wrap { box-sizing: border-box; min-width: 100%; padding: 12px; overflow: auto; }
         .mermaid { min-width: max-content; }
-        .fallback { white-space: pre; font-family: monospace; font-size: 13px; color: #666; }
+        .fallback { white-space: pre; font-family: monospace; font-size: 13px; color: $textColor; }
         svg { max-width: none; height: auto; }
         </style>
         <script src="mermaid.min.js"></script>
@@ -424,11 +429,13 @@ private fun RichMarkdownRenderer(
     modifier: Modifier = Modifier,
     revealAppendedText: Boolean = false,
     streamInProgress: Boolean = revealAppendedText,
+    textStyle: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.bodyLarge,
 ) {
     val context = LocalContext.current
     val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
     val linkColor = MaterialTheme.colorScheme.primary.toArgb()
     val secondaryTextColor = MaterialTheme.colorScheme.onSurfaceVariant.toArgb()
+    val referenceTextSizePx = with(LocalDensity.current) { MaterialTheme.typography.labelSmall.fontSize.toPx() }
     val outlineColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.62f).toArgb()
     val codeBackgroundColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.48f).toArgb()
     val tableOddRowColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.12f).toArgb()
@@ -442,6 +449,7 @@ private fun RichMarkdownRenderer(
         textColor,
         linkColor,
         secondaryTextColor,
+        referenceTextSizePx,
         outlineColor,
         codeBackgroundColor,
         tableOddRowColor,
@@ -460,6 +468,21 @@ private fun RichMarkdownRenderer(
         Markwon.builder(context)
             .usePlugin(SoftBreakAddsNewLinePlugin.create())
             .usePlugin(object : AbstractMarkwonPlugin() {
+                override fun configureSpansFactory(builder: io.noties.markwon.MarkwonSpansFactory.Builder) {
+                    builder.setFactory(org.commonmark.node.Link::class.java) { configuration, props ->
+                        val destination = io.noties.markwon.core.CoreProps.LINK_DESTINATION.require(props)
+                        val scheme = android.net.Uri.parse(destination).scheme?.lowercase()
+                        if (scheme == "http" || scheme == "https") arrayOf(
+                            object : io.noties.markwon.core.spans.LinkSpan(configuration.theme(), destination, configuration.linkResolver()) {
+                                override fun updateDrawState(paint: android.text.TextPaint) {
+                                    super.updateDrawState(paint)
+                                    paint.color = secondaryTextColor
+                                    paint.isFakeBoldText = false
+                                }
+                            }, android.text.style.AbsoluteSizeSpan(referenceTextSizePx.toInt())
+                        ) else io.noties.markwon.core.spans.LinkSpan(configuration.theme(), destination, configuration.linkResolver())
+                    }
+                }
                 override fun configureTheme(builder: MarkwonTheme.Builder) {
                     builder
                         .linkColor(linkColor)
@@ -490,6 +513,7 @@ private fun RichMarkdownRenderer(
         textColor,
         linkColor,
         secondaryTextColor,
+        referenceTextSizePx,
         outlineColor,
         codeBackgroundColor,
         tableOddRowColor,
@@ -509,6 +533,10 @@ private fun RichMarkdownRenderer(
         )
     }
 
+    // Use the same font scaling as the surrounding Compose content, including
+    // scoped density overrides and Android's accessibility font conversion.
+    val bodyTextSizePx = with(density) { textStyle.fontSize.toPx() }
+    val bodyLineHeightPx = with(density) { textStyle.lineHeight.toPx() }
     val measuredHeightModifier = if (measuredContentHeightPx > 0) {
         Modifier.height(with(density) { measuredContentHeightPx.toDp() })
     } else {
@@ -528,7 +556,7 @@ private fun RichMarkdownRenderer(
                     android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                     android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
                 )
-                textSize = 17f
+                setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, bodyTextSizePx)
                 setTextColor(textColor)
                 setLinkTextColor(linkColor)
                 includeFontPadding = false
@@ -536,12 +564,12 @@ private fun RichMarkdownRenderer(
                 ellipsize = null
                 setHorizontallyScrolling(false)
                 isVerticalScrollBarEnabled = false
-                setLineSpacing((28f * resources.displayMetrics.scaledDensity - paint.fontSpacing).coerceAtLeast(0f), 1f)
+                setLineSpacing((bodyLineHeightPx - paint.fontSpacing).coerceAtLeast(0f), 1f)
             }
         },
         update = { textView ->
-            textView.textSize = 17f
-            textView.setLineSpacing((28f * textView.resources.displayMetrics.scaledDensity - textView.paint.fontSpacing).coerceAtLeast(0f), 1f)
+            textView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, bodyTextSizePx)
+            textView.setLineSpacing((bodyLineHeightPx - textView.paint.fontSpacing).coerceAtLeast(0f), 1f)
             textView.setTextColor(textColor)
             textView.setLinkTextColor(linkColor)
             textView.renderMarkdown(
@@ -1263,11 +1291,10 @@ fun MarkdownTable(block: MarkdownBlock.Table) {
                 .padding(vertical = 8.dp)
         ) {
             block.header.forEach { cell ->
-                Text(
-                    cell,
+                RichMarkdownRenderer(
+                    text = "**$cell**",
                     modifier = Modifier.width(120.dp).padding(horizontal = 8.dp),
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold
+                    textStyle = MaterialTheme.typography.labelMedium,
                 )
             }
         }
@@ -1282,10 +1309,10 @@ fun MarkdownTable(block: MarkdownBlock.Table) {
                     .padding(vertical = 6.dp)
             ) {
                 row.forEach { cell ->
-                    Text(
-                        cell,
+                    RichMarkdownRenderer(
+                        text = cell,
                         modifier = Modifier.width(120.dp).padding(horizontal = 8.dp),
-                        style = MaterialTheme.typography.bodySmall
+                        textStyle = MaterialTheme.typography.bodySmall,
                     )
                 }
             }
@@ -1311,7 +1338,9 @@ fun buildInlineAnnotatedString(inlines: List<MarkdownInline>): AnnotatedString =
             is MarkdownInline.Link -> {
                 pushStringAnnotation(tag = "URL", annotation = inline.url)
                 withStyle(SpanStyle(
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = MaterialTheme.typography.labelSmall.fontSize,
+                    fontWeight = FontWeight.Normal,
                     textDecoration = TextDecoration.Underline
                 )) { append(inline.text) }
                 pop()

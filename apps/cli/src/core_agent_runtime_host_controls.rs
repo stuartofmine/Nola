@@ -422,7 +422,12 @@ impl CoreAgentHost {
             application.execute_typed_received::<serde_json::Value>(&request_id,
                 nola_application::ApplicationCommand::ExecuteUiTool { input })
         });
+        let expert_leaf=crate::task_runtime::is_expert_context(&session_id);
+        let main_expert_dispatch_available=tools.iter().any(|schema|
+            nola_domain::expert_task_target::schema_tool_name(schema)==Some("delegate_expert"));
         let driver = CliAgentHostDriver::new("nola-cli-host", llm, tool_context)
+            .with_expert_leaf(expert_leaf)
+            .with_main_expert_dispatch(main_expert_dispatch_available)
             .with_ui_publisher(ui_publisher)
             .with_code_memory_workspace(config.tool_settings.project_root.clone())
             .with_code_mode_limits(config.runtime.code_mode_limits.clone())?
@@ -434,6 +439,17 @@ impl CoreAgentHost {
         } else {
             driver.with_tool_allowlist(config.tool_settings.tool_allowlist.clone())
         };
+        // The publisher is owned by Application, not the generic ToolSpec
+        // registry. Registration alone does not put its schema in the frozen
+        // model request. Include it only when this bound Host authorizes it.
+        if config.tool_settings.tools_enabled {
+            if let Some(schema) = driver.bound_ui_model_schema() {
+                let id = nola_domain::generative_ui_tool::UI_TOOL_ID;
+                tools.retain(|tool| tool.pointer("/function/name")
+                    .or_else(|| tool.get("name")).and_then(Value::as_str) != Some(id));
+                tools.push(schema);
+            }
+        }
         match crate::code_intelligence_provider::shared_for_application() {
             Ok(provider) => {
                 driver = driver.with_code_intelligence_provider(provider);
@@ -572,6 +588,13 @@ impl CoreAgentHost {
                 crate::task_runtime::replay_runtime_task_tool(name, call_id)
             })
             .with_runtime_tool_handler(move |request, name, call_id, args, context| {
+                if crate::task_runtime::runtime_tool_ids().contains(&name) {
+                    let mut scoped = runtime_tool_config.clone();
+                    scoped.session.session_id = Some(runtime_tool_owner_session_id.clone());
+                    return crate::task_runtime::execute_runtime_task_tool(
+                        &scoped, &runtime_tool_owner_session_id, request, name, call_id, args, context,
+                    );
+                }
                 // Permission-bound macOS tools must execute in the signed app
                 // process even when the same schema is also advertised by the
                 // generic device bridge. Checking the generic bridge first
@@ -1059,6 +1082,9 @@ impl CoreAgentHost {
                 )?;
             }
             if config.session.edited_resend_operation_id.is_some() {
+                let main_selection=turn_context_components.iter()
+                    .filter(|component|component.kind==ContextComponentKind::MainExpertSelection)
+                    .cloned().collect::<Vec<_>>();
                 // Only freshly composed Host guidance plus the Core-frozen
                 // definition data enters this new owner. No renderer resources,
                 // previous history, resident memory or conversation knowledge.
@@ -1071,6 +1097,7 @@ impl CoreAgentHost {
                         component
                     }).collect();
                 turn_context_components.extend(config.runtime.edited_resend_prompt_definitions.clone());
+                turn_context_components.extend(main_selection);
             } else {
             host_policy
                 .components
@@ -1205,6 +1232,7 @@ impl CoreAgentHost {
                 authority
                     .with_active(|lease| {
                         lease.with_attempt(|attempt| {
+                            crate::task_runtime::prepare_expert_task_admission(&attempt.task_id, &mut begin)?;
                             self.runtime.requires_committed_restore = true;
                             let result = store.begin_task_core_turn(
                                 nola_application::RuntimeTaskLeaseWitness::from(&*attempt),

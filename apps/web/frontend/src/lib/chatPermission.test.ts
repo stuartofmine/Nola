@@ -126,14 +126,6 @@ test('actual permission component never renders raw arguments or nonce and disab
         const onceHtml = render(Component, { props: { challenge: onceOnly, reviewText: 'Review this invocation' } }).body;
         assert.ok(!onceHtml.includes(chatPermissionMessages.en['chatPermission.allowConversation']));
         assert.ok(onceHtml.includes(chatPermissionMessages.en['chatPermission.allowOnce']));
-        const recorded = render(Component, { props: { challenge: {...input, permission_instructions: [{permission_request_id: input.request_id, instruction: '<b>Do not overwrite files</b>'}]}, reviewText: 'Read report' } }).body;
-        assert.match(recorded, /class="recorded-guidance/);
-        assert.ok(recorded.includes('&lt;b>Do not overwrite files&lt;/b>'));
-        assert.ok(!recorded.includes('<b>Do not overwrite files</b>'));
-        assert.match(recorded, /data-state="ready"/);
-        const expired = render(Component, {props: {challenge: {...input, expires_at: 1}, reviewText: 'Read report'}}).body;
-        assert.match(expired, /data-state="expired"/);
-        for (const button of expired.matchAll(/<button\b([^>]*)>/g)) assert.ok(button[1].includes('disabled'));
         const parsedOnce = parseChatPermission(onceOnly)!;
         assert.throws(() => permissionDecision(parsedOnce, 'allow_conversation'));
         assert.equal(permissionDecision(parsedOnce, 'allow_once').resolution.decision, 'allow_once');

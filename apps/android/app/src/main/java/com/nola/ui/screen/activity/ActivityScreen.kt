@@ -43,7 +43,7 @@ internal fun ActivityScreen(onOpenConversation: (String) -> Unit, onOpenPlans: (
     fun refresh() = viewModel.refresh(source, needsResponse, search)
     fun submitSearch() { search = searchDraft; keyboard?.hide() }
     LifecycleResumeEffect(source, needsResponse, search) {
-        refresh()
+        viewModel.resume(source, needsResponse, search)
         onPauseOrDispose { }
     }
     Box(Modifier.fillMaxSize().imePadding()) {

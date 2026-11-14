@@ -6,7 +6,6 @@ import SwiftUI
 struct MacInspectorOverviewHeader: View {
     @Bindable var model: MacWorkspaceModel
     let hostDisplayName: String
-    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         let status = model.selectedConversationDisplayStatus
@@ -22,10 +21,11 @@ struct MacInspectorOverviewHeader: View {
                     Text(hostDisplayName).font(.system(size: MacDesignTokens.Typography.inspectorDetail)).foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
-                Text(model.activeModelName)
-                    .font(.system(size: 15, weight: .semibold))
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
+                if status == .waitingApproval || status == .waitingInput || status == .uncertain {
+                    Text("Review the pending request in this conversation before continuing.")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Divider().opacity(0.65)
             VStack(alignment: .leading, spacing: 10) {
@@ -36,7 +36,7 @@ struct MacInspectorOverviewHeader: View {
                     Menu {
                         Button(String(localized: "Choose Folder…")) { model.chooseWorkspace() }
                         Button(String(localized: "Session Sandbox")) { model.useSessionSandbox() }
-                    } label: { Text(String(localized: "Change…")) }
+                    } label: { Text(String(localized: "Change…")).frame(minHeight: 36).contentShape(Rectangle()) }
                     .menuStyle(.borderlessButton)
                     .fixedSize()
                 }
@@ -51,9 +51,6 @@ struct MacInspectorOverviewHeader: View {
                 }
                 HStack(spacing: 8) {
                     Button {
-                        openWindow(value: MacWorkspaceReviewRoute(path: model.effectiveWorkspaceURL.path))
-                    } label: { Label(String(localized: "Workspace Changes"), systemImage: "doc.text.magnifyingglass") }
-                    Button {
                         NSWorkspace.shared.activateFileViewerSelecting([model.effectiveWorkspaceURL])
                     } label: { Image(systemName: "folder") }
                     .help(String(localized: "Reveal in Finder"))
@@ -65,9 +62,10 @@ struct MacInspectorOverviewHeader: View {
                     .help(String(localized: "Copy Path"))
                     .accessibilityLabel(String(localized: "Copy Path"))
                 }
-                .controlSize(.small)
+                .buttonStyle(MacPressFeedbackButtonStyle())
             }
         }
+        .accessibilityIdentifier("mac-inspector-workspace")
         .padding(.vertical, 2)
         .frame(maxWidth: .infinity, alignment: .leading)
     }

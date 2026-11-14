@@ -28,17 +28,11 @@ export function mergeRoomSubmissions(roomId: string, current: RoomSubmission[], 
     return [...values.values()].sort((a, b) => a.input.at_ms - b.input.at_ms || a.input.submission_id.localeCompare(b.input.submission_id));
 }
 
-// CJK text does not need a space before a mention. A Latin word boundary is
-// still required, so an email address does not open the expert picker.
-const mentionSuffix = /(?:^|[\s\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}，。！？、：；（「『])([@＠]([^\s@＠]*))(?![\s\S])/u;
-
-export function mentionQuery(text: string, caret = text.length): string | null {
-    return mentionSuffix.exec(text.slice(0, caret))?.[2] ?? null;
+export function mentionQuery(text: string): string | null {
+    const match = /(?:^|\s)@([^\s@]*)$/u.exec(text);
+    return match ? match[1] : null;
 }
-export function removeMentionQuery(text: string, caret = text.length): string {
-    const match = mentionSuffix.exec(text.slice(0, caret));
-    return match ? text.slice(0, caret - match[1].length) + text.slice(caret) : text;
-}
+export function removeMentionQuery(text: string): string { return text.replace(/(^|\s)@[^\s@]*$/u, '$1'); }
 
 export function roomCommand<T>(command: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
     return api<T>('/api/agent-rooms', {method: 'POST', body: JSON.stringify(command), signal});
@@ -52,4 +46,12 @@ export function mentionCandidates(room: RoomSnapshot, query: string): RoomPartic
 
 export function selectedRecipient(room: RoomSnapshot, id: string | null): RoomParticipant | undefined {
     return room.room.participants.find(member => member.id === id && member.active);
+}
+
+/** Source metadata and Room facts come from one Core transaction; never pair with a later frontier. */
+export async function roomCommandAtSource<T>(command:unknown,expectedEpoch:string|null=null,signal?:AbortSignal):Promise<{result:T;sourceEpoch:string}> {
+    const value=await api<{source_store_epoch:unknown;source_matches:unknown;result:T}>('/api/agent-rooms',{
+        method:'POST',body:JSON.stringify({command,expected_source_store_epoch:expectedEpoch}),signal});
+    if(typeof value.source_store_epoch!=='string'||!value.source_store_epoch.trim()||value.source_matches!==true||expectedEpoch!==null&&value.source_store_epoch!==expectedEpoch)throw Error('Expert source changed');
+    return {result:value.result,sourceEpoch:value.source_store_epoch};
 }

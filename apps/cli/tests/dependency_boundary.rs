@@ -68,6 +68,7 @@ fn boundary_violations(metadata: &serde_json::Value) -> Vec<String> {
         ("nola_application", &["nola_domain", "nola_kernel", "nola_store_port",
             "nola_protocol", "nola_host_protocol", "nola_agent_engine", "nola_measurement"][..], None),
         ("nola_runtime_driver", &["nola_domain", "nola_host_protocol"][..], None),
+        ("nola_update_host", &["nola_domain"][..], None),
     ] {
         let Some(package) = packages.iter().find(|package| package["name"] == name) else {
             errors.push(format!("protected package missing: {name}"));
@@ -78,7 +79,7 @@ fn boundary_violations(metadata: &serde_json::Value) -> Vec<String> {
             let target = dependency["name"].as_str().expect("dependency package name");
             let is_workspace = packages.iter().any(|package| package["name"] == target);
             let backend_in_port = matches!(name, "nola_application" | "nola_runtime_driver"
-                | "nola_store_port" | "nola_protocol" | "nola_host_protocol")
+                | "nola_store_port" | "nola_protocol" | "nola_host_protocol" | "nola_update_host")
                 && matches!(target, "rusqlite" | "libsqlite3-sys" | "sqlx" | "diesel");
             if (is_workspace && !allowed_workspace.contains(&target))
                 || (!is_workspace && pure_external.is_some_and(|allowed| !allowed.contains(&target)))
@@ -113,6 +114,8 @@ fn guard_rejects_renamed_optional_target_and_build_backdoors_but_allows_fixtures
         ("nola_agent_engine", "nola_core", serde_json::Value::Null),
         ("nola_agent_engine", "nola_store", serde_json::Value::Null),
         ("nola_runtime_driver", "nola_core", serde_json::Value::Null),
+        ("nola_update_host", "nola_store", serde_json::Value::Null),
+        ("nola_update_host", "rusqlite", serde_json::Value::Null),
     ] {
         let mut changed = baseline.clone();
         let package = changed["packages"].as_array_mut().unwrap().iter_mut()

@@ -41,11 +41,14 @@ pub(crate) fn bind_changed<S: crate::repositories::AssistantPublicationRepositor
                 _ => continue,
             };
             if call.as_str() != part.call_id { continue; }
-            if name != &part.capability_id { return Err("tool source call has conflicting capability identity".into()); }
             let item_owner=state.item_ownership.get(item.id().as_str()).ok_or("tool source item lacks accepted transcript ownership")?;
+            // Provider call IDs are scoped to their accepted Turn/Message, not
+            // the retained transcript. A prior Run or assistant segment may
+            // legitimately reuse the same upstream ID, even for another tool.
             if item_owner.turn_id != *turn_id || item_owner.message_id != part.ownership.message_id {
-                return Err("tool source transcript belongs to another Turn or Message".into());
+                continue;
             }
+            if name != &part.capability_id { return Err("tool source call has conflicting capability identity".into()); }
             if item_owner.source != part.execution_source {
                 return Err("tool source transcript and Part execution provenance differ".into());
             }
@@ -242,3 +245,7 @@ mod tests {
         assert!(read_complete(&sources, binding, 2, 0).is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "tool_source_scope_tests.rs"]
+mod scope_tests;

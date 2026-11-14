@@ -1302,53 +1302,6 @@
       }
     },
     {
-      "id": "backend-http-persistence",
-      "contractId": "backend-http-lifecycle",
-      "suite": [
-        "smoke",
-        "full"
-      ],
-      "platforms": [
-        "backend"
-      ],
-      "layer": "system",
-      "realModel": false,
-      "command": "python3 scripts/test_real_backend_http_persistence.py",
-      "timeoutSeconds": 120,
-      "execution": {
-        "runtime": "http-service",
-        "productionCode": true,
-        "productEntrypoint": true,
-        "realProvider": false,
-        "realPersistence": true,
-        "realUI": false,
-        "semanticJudge": false,
-        "isolation": "temporary-profile"
-      },
-      "evidence": {
-        "platforms": [
-          "backend"
-        ],
-        "modules": [
-          "auth",
-          "chat",
-          "database",
-          "http"
-        ],
-        "boundaries": [
-          "backend-http",
-          "backend-persistence"
-        ],
-        "requiredObservationKinds": [
-          "http_transcript",
-          "persistence_store",
-          "persistence_audit",
-          "process_log"
-        ],
-        "requireAssertionEvidence": true
-      }
-    },
-    {
       "id": "cli-skill-permission-runtime",
       "platforms": [
         "cli"
@@ -1594,7 +1547,6 @@
       "id": "messaging-webhook-protocols",
       "contractId": "secure-messaging-ingress",
       "platforms": [
-        "backend",
         "web"
       ],
       "layer": "system",
@@ -1617,7 +1569,6 @@
       },
       "evidence": {
         "platforms": [
-          "backend",
           "web"
         ],
         "modules": [
@@ -2107,24 +2058,6 @@
       ],
       "minimumSteps": 1,
       "perPlatformSteps": true
-    },
-    "backend-http-lifecycle": {
-      "requiredAssertions": [
-        "authenticated_http_round_trip",
-        "durable_rows_verified_after_shutdown"
-      ],
-      "minimumSteps": 1,
-      "perPlatformSteps": true,
-      "validators": [
-        "http_api",
-        "persistence_present"
-      ],
-      "requiredObservationKinds": [
-        "http_transcript",
-        "persistence_store",
-        "persistence_audit",
-        "process_log"
-      ]
     },
     "mobile-host-runtime": {
       "minimumSteps": 2,

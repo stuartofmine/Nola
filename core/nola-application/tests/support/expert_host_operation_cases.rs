@@ -70,6 +70,7 @@ fn private_runtime_rejection_requires_new_transport_request_not_new_business_int
         ),
         "A terminal rejected receipt is not re-evaluated"
     );
+    admit_with_host(&mut external,input.clone(),&context).unwrap(); // Seed a persisted pre-Main receipt; new Host admissions cannot fan out.
     let committed = runtime
         .execute_host_expert_template_operation(
             "trusted-host",
@@ -107,8 +108,9 @@ fn private_runtime_rejection_requires_new_transport_request_not_new_business_int
 fn private_runtime_commit_uncertainty_is_pending_and_requires_reopen() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("host-unknown-commit.db");
-    let (store, input) = setup_at(&path);
+    let (mut store, input) = setup_at(&path);
     let context = host_context(&store, &input);
+    admit_with_host(&mut store,input.clone(),&context).unwrap();
     let mut runtime = host_runtime(store, &path);
     let fixture = rusqlite::Connection::open(&path).unwrap();
     fixture.execute_batch("CREATE TABLE host_commit_parent(id INTEGER PRIMARY KEY);
@@ -140,8 +142,8 @@ fn private_runtime_commit_uncertainty_is_pending_and_requires_reopen() {
         .execute_batch("DROP TRIGGER fail_host_receipt_commit;")
         .unwrap();
     drop(runtime);
-    let mut observer = NolaStore::open(&path).unwrap();
-    assert_no_capture_parent(&mut observer, &input);
+    let observer = NolaStore::open(&path).unwrap();
+    assert_eq!(observer.load_conversation(&input.conversation_id).unwrap().unwrap().messages.len(),1);
     drop(observer);
     let mut reopened = support::open_runtime(&path).unwrap();
     let result = reopened
@@ -163,35 +165,45 @@ fn private_runtime_commit_uncertainty_is_pending_and_requires_reopen() {
 fn private_runtime_lost_savepoint_is_pending_not_business_rejection() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("host-lost-savepoint.db");
-    let (store, input) = setup_at(&path);
-    let context = host_context(&store, &input);
+    let (mut store, input) = setup_at(&path);
+    let run=uuid::Uuid::new_v4().to_string();
+    begin_real_child(&mut store,"parent",&run,"Main dispatch",config("parent"),vec![]).unwrap();
+    let request=nola_application::expert_peer::PeerExchangeInput{source_context_id:"parent".into(),source_run_id:run,call_id:"saved-main-call".into(),
+        target_participant_id:input.selected_participants[0].participant_id.clone(),kind:"request".into(),text:"Check one part".into(),in_reply_to:None};
+    let preview=nola_application::expert_peer::preview(&mut store,&request,&authority()).unwrap();
+    let a=authority();
+    let context=HostExpertTemplateCaptureContext{actor:a.actor,request_host_id:a.request_host_id,builtins:vec![],selections:preview.participants.iter().map(|p|HostExpertTemplateSelection{
+        context_conversation_id:p.participant.context_conversation_id.clone(),context_configuration_revision:p.context_configuration_revision,
+        model_profile:nola_host_protocol::HostModelProfileReference{profile_id:p.model_declaration.profile_id.clone(),admitted_revision:p.model_declaration.profile_revision},
+        source:HostExpertTemplateSelectionSource::NoTemplate,template_id:None,host_user_instructions:vec![]}).collect()};
+    let operation=HostExpertTemplateOperation::AdmitPeer{input:request,context};
     let mut runtime = host_runtime(store, &path);
     let fixture = rusqlite::Connection::open(&path).unwrap();
-    fixture.execute_batch("CREATE TRIGGER abort_expert_parent BEFORE INSERT ON messages
-        WHEN NEW.conversation_id='parent' BEGIN SELECT RAISE(ROLLBACK, 'actual transaction aborted'); END;").unwrap();
+    fixture.execute_batch("CREATE TRIGGER abort_expert_parent BEFORE INSERT ON product_settings
+        WHEN NEW.key LIKE 'expert_peer_private/v1/exchange/%' BEGIN SELECT RAISE(ROLLBACK, 'actual transaction aborted'); END;").unwrap();
     let error = runtime
         .execute_host_expert_template_operation(
             "trusted-host",
             "savepoint-request",
-            admit_operation(&input, &context),
+            operation.clone(),
         )
         .unwrap_err();
     assert!(
-        matches!(error, HostExpertOperationError::OutcomePending { ref request_id, reopen_required: true, .. } if request_id == "savepoint-request")
+        matches!(error, HostExpertOperationError::OutcomePending { ref request_id, reopen_required: true, .. } if request_id == "savepoint-request"),"{error:?}"
     );
     fixture
         .execute_batch("DROP TRIGGER abort_expert_parent;")
         .unwrap();
     drop(runtime);
-    let mut observer = NolaStore::open(&path).unwrap();
-    assert_no_capture_parent(&mut observer, &input);
+    let observer = NolaStore::open(&path).unwrap();
+    assert_eq!(observer.load_conversation(&input.conversation_id).unwrap().unwrap().messages.iter().filter(|message|message.role=="user").count(),1);
     drop(observer);
     let mut reopened = support::open_runtime(&path).unwrap();
     reopened
         .execute_host_expert_template_operation(
             "trusted-host",
             "savepoint-request",
-            admit_operation(&input, &context),
+            operation.clone(),
         )
         .unwrap();
 }
@@ -220,4 +232,43 @@ fn renderer_application_json_cannot_spoof_private_expert_capture_authority() {
         let value = serde_json::to_value(command).unwrap();
         assert!(serde_json::from_value::<nola_application::ApplicationCommand>(value).is_err());
     }
+}
+
+#[test]
+fn private_host_parent_export_preserves_hidden_command_boundary_and_canonical_message() {
+    use nola_application::ApplicationCommand;
+    let dir=tempfile::tempdir().unwrap();
+    let path=dir.path().join("parent-export.db");
+    let (mut store,input)=setup_at(&path);
+    let context=host_context(&store,&input);
+    admit_with_host(&mut store,input.clone(),&context).unwrap();
+    let mut runtime=host_runtime(store,&path);
+    runtime.execute_host_expert_template_operation("trusted-host","admit-for-export",admit_operation(&input,&context)).unwrap();
+    let epoch:String=serde_json::from_value(runtime.execute(ApplicationCommand::ReadUiAuthority).unwrap()).unwrap();
+    let op=HostExpertTemplateOperation::ExportRemoteParentAdmission {
+        conversation_id:input.conversation_id.clone(),message_id:input.user_message_id.clone(),
+        source_store_epoch:epoch.clone(),authority:authority(),
+    };
+    assert!(!op.mutates_state());
+    // Production Service decodes the private operation, never the forbidden
+    // generic Application command. Preserve both sides of that wire boundary.
+    let wire=serde_json::to_value(&op).unwrap();
+    let decoded:HostExpertTemplateOperation=serde_json::from_value(wire.clone()).unwrap();
+    let mut forged=wire;
+    forged["source_host_id"]=json!("renderer-selected-host");
+    assert!(serde_json::from_value::<HostExpertTemplateOperation>(forged).is_err());
+    assert!(serde_json::from_value::<ApplicationCommand>(json!({
+        "type":"export_remote_expert_parent_admission","conversation_id":input.conversation_id,
+        "message_id":input.user_message_id,"source_host_id":"capture-host","source_store_epoch":epoch,
+    })).is_err());
+    let exported=runtime.execute_host_expert_template_operation("trusted-host","parent-export",decoded).unwrap();
+    assert_eq!(exported["source_host_id"],"capture-host");
+    assert_eq!(exported["source_store_epoch"],epoch);
+    assert_eq!(exported["conversation_id"],input.conversation_id);
+    assert_eq!(exported["input"],json!(input));
+    let mut wrong_epoch=op.clone();
+    if let HostExpertTemplateOperation::ExportRemoteParentAdmission{source_store_epoch,..}=&mut wrong_epoch {*source_store_epoch="retired".into();}
+    assert!(runtime.execute_host_expert_template_operation("trusted-host","wrong-epoch",wrong_epoch).is_err());
+    let db=rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(db.query_row("SELECT COUNT(*) FROM runs",[],|row|row.get::<_,i64>(0)).unwrap(),0);
 }

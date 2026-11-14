@@ -1,23 +1,9 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "mac.host.error.secure_storage" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The token could not be saved in Keychain. Unlock your login keychain and try again."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "令牌无法保存到钥匙串。请解锁登录钥匙串后重试。"
-          }
-        }
-      }
+    "" : {
+
     },
-    "" : {},
     "—" : {
       "localizations" : {
         "de" : {
@@ -1864,7 +1850,6 @@
         }
       }
     },
-    "%@ ms" : {},
     "%@ steps · %@ kcal" : {
       "localizations" : {
         "de" : {
@@ -4454,18 +4439,640 @@
         }
       }
     },
-    "a2ui.history.version" : {
+    "a2ui.checkSubmission" : {
       "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Übermittlungsergebnis prüfen"
+          }
+        },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "View this form version"
+            "value" : "Check submission result"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Comprobar resultado del envío"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vérifier le résultat de l’envoi"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "送信結果を確認"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "제출 결과 확인"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверить результат отправки"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "查看此记录的表单版本"
+            "value" : "查询提交结果"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查詢提交結果"
+          }
+        }
+      }
+    },
+    "a2ui.deleted" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diese Oberfläche wurde entfernt."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This interface was removed."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esta interfaz se ha eliminado."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cette interface a été supprimée."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この画面は削除されました。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 화면은 삭제되었습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот интерфейс удалён."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此界面已移除。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此介面已移除。"
+          }
+        }
+      }
+    },
+    "a2ui.discardEdits" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Änderungen verwerfen und aktuelle Werte verwenden"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Discard edits and use current values"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Descartar cambios y usar los valores actuales"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Abandonner les modifications et utiliser les valeurs actuelles"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "編集を破棄して現在の値を使用"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "편집 내용을 버리고 현재 값 사용"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отменить правки и использовать текущие значения"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "放弃编辑，使用当前值"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "放棄編輯，使用目前值"
+          }
+        }
+      }
+    },
+    "a2ui.fieldsRemoved" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Formular wurde geändert und einige Felder sind nicht mehr verfügbar. Deine Änderungen bleiben erhalten. Prüfe sie, bevor du sie verwirfst."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The form changed and some fields are no longer available. Your edits are preserved; review before discarding them."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El formulario ha cambiado y algunos campos ya no están disponibles. Tus cambios se conservan; revísalos antes de descartarlos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le formulaire a changé et certains champs ne sont plus disponibles. Vos modifications sont conservées ; vérifiez-les avant de les abandonner."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "フォームが変更され、一部のフィールドが利用できなくなりました。編集内容は保持されています。破棄する前に確認してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "양식이 변경되어 일부 필드를 사용할 수 없습니다. 편집 내용은 보존됩니다. 버리기 전에 확인하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Форма изменилась, и некоторые поля больше недоступны. Ваши правки сохранены; проверьте их перед отменой."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "表单已更新，部分编辑项不再存在。你的编辑已保留，请确认后放弃编辑。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "表單已更新，部分欄位已無法使用。編輯內容已保留，請確認後再放棄。"
+          }
+        }
+      }
+    },
+    "a2ui.finishComposition" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Beende die Texteingabe vor dem Absenden."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Finish composing your text before submitting."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Termina de escribir antes de enviar."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Terminez la saisie du texte avant l’envoi."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "送信する前にテキストの入力を確定してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "문자 입력을 완료한 후 양식을 제출하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Завершите ввод текста перед отправкой."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请先完成当前输入法输入，再提交表单。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請先完成文字輸入，再提交表單。"
+          }
+        }
+      }
+    },
+    "a2ui.history.version" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Inhalt anzeigen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "View content"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ver contenido"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Voir le contenu"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "内容を表示"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "내용 보기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Просмотреть содержимое"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看内容"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看內容"
+          }
+        }
+      }
+    },
+    "a2ui.pending" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Oberfläche wird vorbereitet, Komponenten und Daten werden geladen…"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Preparing interface, waiting for components and data…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Preparando la interfaz; esperando componentes y datos…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Préparation de l’interface, en attente des composants et données…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コンポーネントとデータを待って画面を準備しています…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "구성 요소와 데이터를 기다리며 화면을 준비하고 있습니다…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подготовка интерфейса, ожидание компонентов и данных…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "界面正在准备，等待组件与数据…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在準備介面，等待元件與資料…"
+          }
+        }
+      }
+    },
+    "a2ui.previewMismatch" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Prüfergebnis ist veraltet oder gehört zu einem anderen Formular. Prüfe deine Änderungen erneut."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The validation result is stale or belongs to another form. Review your edits and retry."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El resultado está desactualizado o pertenece a otro formulario. Revisa los cambios y reintenta."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le résultat est périmé ou appartient à un autre formulaire. Vérifiez vos modifications et réessayez."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "検証結果が古いか別のフォームのものです。編集を確認して再試行してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "검증 결과가 오래되었거나 다른 양식에 속합니다. 편집 내용을 확인하고 다시 시도하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Результат проверки устарел или относится к другой форме. Проверьте правки и повторите."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "表单校验结果已过期或归属不匹配，请重新编辑后重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "表單驗證結果已過期或所屬表單不符，請確認編輯內容後重試。"
+          }
+        }
+      }
+    },
+    "a2ui.previewUnavailable" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Formular wurde geändert oder kann nicht geprüft werden. Lade es erneut."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The form changed or validation is unavailable. Reload it before editing."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El formulario cambió o no se puede validar. Vuelve a cargarlo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le formulaire a changé ou ne peut pas être validé. Rechargez-le."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "フォームが変更されたか検証できません。再読み込みしてください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "양식이 변경되었거나 검증할 수 없습니다. 다시 불러온 후 편집하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Форма изменилась или проверка недоступна. Загрузите её снова."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "表单已更新或暂时无法校验，请重新读取后编辑。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "表單已更新或暫時無法驗證，請重新讀取後編輯。"
+          }
+        }
+      }
+    },
+    "a2ui.receiptMismatch" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Übermittlungsergebnis gehört zu einem anderen Formular. Prüfe es erneut."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The submission result belongs to another form. Check again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El resultado del envío pertenece a otro formulario. Compruébalo de nuevo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le résultat de l’envoi appartient à un autre formulaire. Vérifiez à nouveau."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "送信結果は別のフォームのものです。もう一度確認してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "제출 결과가 다른 양식에 속합니다. 다시 확인하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Результат отправки относится к другой форме. Проверьте ещё раз."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提交结果归属不匹配，请重查。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提交結果屬於其他表單，請重新查詢。"
+          }
+        }
+      }
+    },
+    "a2ui.revalidate" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erneut prüfen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Validate again"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Validar de nuevo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Valider à nouveau"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "再検証"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다시 검증"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверить снова"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新校验"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新驗證"
           }
         }
       }
@@ -5785,22 +6392,28 @@
     "activity.conversation" : {
       "extractionState" : "stale",
       "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unterhaltung"
+          }
+        },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Chat"
           }
         },
-        "zh-Hans" : {
+        "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "对话"
+            "value" : "Conversación"
           }
         },
-        "zh-Hant" : {
+        "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "對話"
+            "value" : "Conversation"
           }
         },
         "ja" : {
@@ -5815,22 +6428,16 @@
             "value" : "대화"
           }
         },
-        "fr" : {
+        "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Conversation"
+            "value" : "对话"
           }
         },
-        "de" : {
+        "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Unterhaltung"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Conversación"
+            "value" : "對話"
           }
         }
       }
@@ -6133,22 +6740,16 @@
     },
     "activity.localSummaries" : {
       "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Local summaries"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "本机摘要"
-          }
-        },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Lokale Zusammenfassungen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Local summaries"
           }
         },
         "es" : {
@@ -6179,6 +6780,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Локальные сводки"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本机摘要"
           }
         },
         "zh-Hant" : {
@@ -8832,7 +9439,6 @@
         }
       }
     },
-    "Anthropic Messages" : {},
     "Any language" : {
       "localizations" : {
         "de" : {
@@ -15384,6 +15990,7 @@
       }
     },
     "Blocked" : {
+      "comment" : "Canonical Run result",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -15439,8 +16046,7 @@
             "value" : "已阻止"
           }
         }
-      },
-      "comment" : "Canonical Run result"
+      }
     },
     "Blue" : {
       "extractionState" : "stale",
@@ -16051,6 +16657,12 @@
             "value" : "吹き出しの色"
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "말풍선 색상"
+          }
+        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
@@ -16061,12 +16673,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "气泡颜色"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "말풍선 색상"
           }
         },
         "zh-Hant" : {
@@ -17855,16 +18461,22 @@
     },
     "Changes apply only to this conversation and model. Unset values inherit model defaults." : {
       "localizations" : {
-        "zh-Hans" : {
+        "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "修改仅作用于当前会话和模型。未覆盖的参数沿用模型默认配置。"
+            "value" : "Änderungen gelten nur für diese Unterhaltung und dieses Modell. Nicht gesetzte Werte übernehmen die Modellvorgaben."
           }
         },
-        "zh-Hant" : {
+        "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "變更僅套用至此對話和模型。未設定的值會沿用模型預設值。"
+            "value" : "Los cambios solo afectan a esta conversación y modelo. Los valores sin definir heredan los predeterminados del modelo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Les modifications concernent uniquement cette conversation et ce modèle. Les valeurs non définies héritent des réglages du modèle."
           }
         },
         "ja" : {
@@ -17879,22 +18491,16 @@
             "value" : "변경은 이 대화와 모델에만 적용됩니다. 미설정 값은 모델 기본값을 따릅니다."
           }
         },
-        "fr" : {
+        "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Les modifications concernent uniquement cette conversation et ce modèle. Les valeurs non définies héritent des réglages du modèle."
+            "value" : "修改仅作用于当前会话和模型。未覆盖的参数沿用模型默认配置。"
           }
         },
-        "de" : {
+        "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Änderungen gelten nur für diese Unterhaltung und dieses Modell. Nicht gesetzte Werte übernehmen die Modellvorgaben."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Los cambios solo afectan a esta conversación y modelo. Los valores sin definir heredan los predeterminados del modelo."
+            "value" : "變更僅套用至此對話和模型。未設定的值會沿用模型預設值。"
           }
         }
       }
@@ -18191,7 +18797,6 @@
         }
       }
     },
-    "Chat Completions" : {},
     "Chat Only" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -18371,10 +18976,28 @@
     },
     "chat.conversation.default_title" : {
       "localizations" : {
-        "zh-Hant" : {
+        "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "新對話"
+            "value" : "Neue Unterhaltung"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New conversation"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nueva conversación"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nouvelle conversation"
           }
         },
         "ja" : {
@@ -18389,34 +19012,16 @@
             "value" : "새 대화"
           }
         },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nouvelle conversation"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Neue Unterhaltung"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nueva conversación"
-          }
-        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "新对话"
           }
         },
-        "en" : {
+        "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "New conversation"
+            "value" : "新對話"
           }
         }
       }
@@ -18426,31 +19031,31 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Wähle aus, wer in dieser Unterhaltung antwortet. Die Auswahl startet keine Antwort und erteilt keine Berechtigungen."
+            "value" : "Wähle Experten, die Nola hinzuziehen soll. Nola koordiniert ihre Arbeit und antwortet dir."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Choose who replies in this conversation. Selection does not start a reply or grant permissions."
+            "value" : "Choose experts for Nola to consult. Nola coordinates their work and replies to you."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Elige quién responde en esta conversación. La selección no inicia una respuesta ni concede permisos."
+            "value" : "Elige expertos para que Nola los consulte. Nola coordina su trabajo y te responde."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Choisissez qui répond dans cette conversation. La sélection ne lance aucune réponse et n’accorde aucune autorisation."
+            "value" : "Choisissez les experts que Nola pourra consulter. Nola coordonne leur travail et vous répond."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "この会話で返信するエキスパートを選択します。選択しても返信は開始されず、権限も付与されません。"
+            "value" : "Nola が相談する専門家を選びます。Nola が作業を調整して回答します。"
           }
         },
         "ko" : {
@@ -18462,13 +19067,13 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Выберите, кто отвечает в этом чате. Выбор не запускает ответ и не предоставляет разрешений."
+            "value" : "Выберите экспертов, к которым обратится Nola. Nola координирует их работу и отвечает вам."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "选择在此对话中回复的专家。选择不会启动回复，也不会授予权限。"
+            "value" : "选择希望 Nola 咨询的专家。Nola 统一安排任务并回复你。"
           }
         },
         "zh-Hant" : {
@@ -23202,7 +23807,6 @@
         }
       }
     },
-    "Codex" : {},
     "Collaborate in Figma" : {
       "localizations" : {
         "de" : {
@@ -24166,22 +24770,16 @@
     },
     "common.close" : {
       "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Close"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "关闭"
-          }
-        },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Schließen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Close"
           }
         },
         "es" : {
@@ -24214,6 +24812,12 @@
             "value" : "Закрыть"
           }
         },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "关闭"
+          }
+        },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
@@ -24222,7 +24826,9 @@
         }
       }
     },
-    "common.retry" : {},
+    "common.retry" : {
+
+    },
     "Communication" : {
       "localizations" : {
         "de" : {
@@ -24806,6 +25412,12 @@
             "value" : "リソース"
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "리소스"
+          }
+        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
@@ -24822,12 +25434,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "資源"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "리소스"
           }
         }
       }
@@ -25237,6 +25843,12 @@
             "value" : "%@ の設定 · 吹き出しの色"
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 설정 · 말풍선 색상"
+          }
+        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
@@ -25247,12 +25859,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "配置 %@ · 气泡颜色"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%@ 설정 · 말풍선 색상"
           }
         },
         "zh-Hant" : {
@@ -27923,16 +28529,22 @@
     },
     "Conversation model settings" : {
       "localizations" : {
-        "zh-Hans" : {
+        "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "会话模型设置"
+            "value" : "Modelleinstellungen der Unterhaltung"
           }
         },
-        "zh-Hant" : {
+        "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "對話模型設定"
+            "value" : "Ajustes del modelo de conversación"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Réglages du modèle de conversation"
           }
         },
         "ja" : {
@@ -27947,22 +28559,16 @@
             "value" : "대화 모델 설정"
           }
         },
-        "fr" : {
+        "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Réglages du modèle de conversation"
+            "value" : "会话模型设置"
           }
         },
-        "de" : {
+        "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Modelleinstellungen der Unterhaltung"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ajustes del modelo de conversación"
+            "value" : "對話模型設定"
           }
         }
       }
@@ -30592,7 +31198,9 @@
         }
       }
     },
-    "Decision" : {},
+    "Decision" : {
+
+    },
     "Declare only capabilities supported by this endpoint and model. Thinking does not control answer length." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -30862,10 +31470,22 @@
     },
     "Default model" : {
       "localizations" : {
-        "zh-Hant" : {
+        "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "預設模型"
+            "value" : "Standardmodell"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modelo predeterminado"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modèle par défaut"
           }
         },
         "ja" : {
@@ -30880,28 +31500,16 @@
             "value" : "기본 모델"
           }
         },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Modèle par défaut"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Standardmodell"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Modelo predeterminado"
-          }
-        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "默认模型"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "預設模型"
           }
         }
       }
@@ -31055,6 +31663,12 @@
             "value" : "既定の推論レベル"
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "기본 추론 수준"
+          }
+        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
@@ -31071,12 +31685,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "預設推理強度"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "기본 추론 수준"
           }
         }
       }
@@ -31142,22 +31750,16 @@
     },
     "Delegated" : {
       "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Delegated"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已委派"
-          }
-        },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Delegiert"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delegated"
           }
         },
         "es" : {
@@ -31188,6 +31790,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Делегировано"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已委派"
           }
         },
         "zh-Hant" : {
@@ -32481,6 +33089,7 @@
       }
     },
     "Diagnostics" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -32536,8 +33145,7 @@
             "value" : "診斷"
           }
         }
-      },
-      "extractionState" : "stale"
+      }
     },
     "Diagnostics Error" : {
       "extractionState" : "stale",
@@ -34021,6 +34629,12 @@
             "value" : "編集して再送信"
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "수정 후 다시 보내기"
+          }
+        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
@@ -34031,12 +34645,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "编辑重发"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "수정 후 다시 보내기"
           }
         },
         "zh-Hant" : {
@@ -34399,7 +35007,9 @@
         }
       }
     },
-    "Effort" : {},
+    "Effort" : {
+
+    },
     "en, zh-Hans…" : {
       "localizations" : {
         "de" : {
@@ -35192,7 +35802,9 @@
         }
       }
     },
-    "Error" : {},
+    "Error" : {
+
+    },
     "Errors" : {
       "localizations" : {
         "de" : {
@@ -35741,7 +36353,9 @@
         }
       }
     },
-    "Execution Host" : {},
+    "Execution Host" : {
+
+    },
     "Execution Model" : {
       "localizations" : {
         "de" : {
@@ -38490,7 +39104,9 @@
         }
       }
     },
-    "Full output" : {},
+    "Full output" : {
+
+    },
     "General" : {
       "localizations" : {
         "de" : {
@@ -40003,7 +40619,9 @@
         }
       }
     },
-    "HTTP %@" : {},
+    "HTTP %@" : {
+
+    },
     "http://mac.local:5001" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -40472,7 +41090,9 @@
         }
       }
     },
-    "Icon could not be rendered" : {},
+    "Icon could not be rendered" : {
+
+    },
     "Immediate" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -40972,7 +41592,9 @@
         }
       }
     },
-    "Input" : {},
+    "Input" : {
+
+    },
     "Inspect and improve Figma designs while preserving components, variables, and layout behavior." : {
       "localizations" : {
         "de" : {
@@ -41298,6 +41920,12 @@
             "value" : "インスペクタの幅"
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "사이드바 너비"
+          }
+        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
@@ -41308,12 +41936,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "检查器宽度"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "사이드바 너비"
           }
         },
         "zh-Hant" : {
@@ -41501,7 +42123,9 @@
     "Invalid model configuration field: %@" : {
       "comment" : "Model configuration field decoding error"
     },
-    "Invalid permission configuration. Select a valid permission mode before starting." : {},
+    "Invalid permission configuration. Select a valid permission mode before starting." : {
+
+    },
     "Invalid thinking configuration. Check the supported efforts, three ordered budgets, and output limit." : {
       "localizations" : {
         "de" : {
@@ -42027,7 +42651,6 @@
         }
       }
     },
-    "Kimi Code CLI" : {},
     "km" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -42613,7 +43236,9 @@
         }
       }
     },
-    "Line" : {},
+    "Line" : {
+
+    },
     "Line %lld" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -50753,6 +51378,242 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "允許"
+          }
+        }
+      }
+    },
+    "mac.data_center.permission.continue" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fortfahren"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continue"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continuar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continuer"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "続ける"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "계속"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Продолжить"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "继续"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "繼續"
+          }
+        }
+      }
+    },
+    "mac.data_center.permission.failed" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zugriff konnte nicht angefordert werden. Erneut versuchen oder Nola in den Systemeinstellungen prüfen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Access could not be requested. Try again or review Nola in System Settings."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo solicitar acceso. Reintenta o revisa Nola en Ajustes del Sistema."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible de demander l’accès. Réessayez ou vérifiez Nola dans Réglages Système."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アクセスを要求できませんでした。再試行するか、システム設定で Nola を確認してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "접근을 요청할 수 없습니다. 다시 시도하거나 시스템 설정에서 Nola 권한을 확인하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось запросить доступ. Повторите попытку или проверьте Nola в системных настройках."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法申请访问。请重试，或在系统设置中检查 Nola 的权限。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法申請存取。請重試，或在系統設定中檢查 Nola 的權限。"
+          }
+        }
+      }
+    },
+    "mac.data_center.permission.recovery" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nolas Zugriff in den Systemeinstellungen prüfen und zurückkehren. Einschränkungen werden möglicherweise von deiner Organisation verwaltet."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Review Nola’s access in System Settings, then return here to refresh its status. Restrictions may be managed by your organization."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Revisa el acceso de Nola en Ajustes del Sistema y vuelve para actualizar el estado. Tu organización puede gestionar las restricciones."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vérifiez l’accès de Nola dans Réglages Système, puis revenez pour actualiser l’état. Les restrictions peuvent être gérées par votre organisation."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "システム設定で Nola のアクセスを確認し、戻ると状態が更新されます。制限は組織が管理している場合があります。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "시스템 설정에서 Nola의 접근 권한을 확인한 후 돌아오면 상태가 갱신됩니다. 제한은 조직에서 관리할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверьте доступ Nola в системных настройках и вернитесь для обновления статуса. Ограничениями может управлять ваша организация."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在系统设置中检查 Nola 的访问权限，返回后会刷新状态。受限制的权限可能需要组织管理员调整。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在系統設定中檢查 Nola 的存取權限，返回後會更新狀態。受限制的權限可能需要組織管理員調整。"
+          }
+        }
+      }
+    },
+    "mac.data_center.permission.requesting" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zugriff wird angefordert…"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Requesting access…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Solicitando acceso…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Demande d’accès…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アクセスを要求中…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "접근 요청 중…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запрос доступа…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在申请访问…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在申請存取⋯"
           }
         }
       }
@@ -62529,6 +63390,64 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "宿主機回傳 HTTP %d。請檢查 Agent Host 後再試一次。"
+          }
+        }
+      }
+    },
+    "mac.host.error.secure_storage" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Token konnte nicht im Schlüsselbund gespeichert werden. Entsperre den Anmeldeschlüsselbund und versuche es erneut."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The token could not be saved in Keychain. Unlock your login keychain and try again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo guardar el token en el llavero. Desbloquea el llavero de inicio de sesión y vuelve a intentarlo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible d’enregistrer le jeton dans le trousseau. Déverrouillez le trousseau de session et réessayez."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "トークンをキーチェーンに保存できませんでした。ログインキーチェーンのロックを解除して再試行してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "토큰을 키체인에 저장할 수 없습니다. 로그인 키체인의 잠금을 해제하고 다시 시도하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось сохранить токен в Связке ключей. Разблокируйте связку входа и повторите попытку."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "令牌无法保存到钥匙串。请解锁登录钥匙串后重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "權杖無法儲存到鑰匙圈。請解鎖登入鑰匙圈後重試。"
           }
         }
       }
@@ -87589,7 +88508,6 @@
         }
       }
     },
-    "Model turns" : {},
     "model-name" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -88914,6 +89832,12 @@
             "value" : "元のモデルに一致する認可済みプロファイルが複数あり、一意に確認できません。"
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "원래 모델과 일치하는 승인된 프로필이 여러 개여서 정확한 프로필을 확인할 수 없습니다."
+          }
+        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
@@ -88924,12 +89848,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "有多个已授权配置匹配原模型，无法证明唯一的精确选择。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "원래 모델과 일치하는 승인된 프로필이 여러 개여서 정확한 프로필을 확인할 수 없습니다."
           }
         },
         "zh-Hant" : {
@@ -93329,22 +94247,16 @@
     },
     "Nola delegated the task" : {
       "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nola delegated the task"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nola 已委派任务"
-          }
-        },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Nola hat die Aufgabe delegiert"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nola delegated the task"
           }
         },
         "es" : {
@@ -93375,6 +94287,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Nola делегировала задачу"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nola 已委派任务"
           }
         },
         "zh-Hant" : {
@@ -97238,6 +98156,7 @@
       }
     },
     "onboarding.guide.selection.not_selected" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -97296,6 +98215,7 @@
       }
     },
     "onboarding.guide.selection.selected" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -99605,6 +100525,12 @@
             "value" : "タブで開く"
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "탭에서 열기"
+          }
+        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
@@ -99617,12 +100543,6 @@
             "value" : "在标签页打开"
           }
         },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "탭에서 열기"
-          }
-        },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
@@ -99631,7 +100551,9 @@
         }
       }
     },
-    "Open Link" : {},
+    "Open Link" : {
+
+    },
     "Open Local Models" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -100276,7 +101198,6 @@
         }
       }
     },
-    "OpenCode" : {},
     "openFDA label result" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -100946,7 +101867,9 @@
         }
       }
     },
-    "Page" : {},
+    "Page" : {
+
+    },
     "Parameters" : {
       "localizations" : {
         "de" : {
@@ -101408,7 +102331,9 @@
         }
       }
     },
-    "Pending" : {},
+    "Pending" : {
+
+    },
     "Per Conversation" : {
       "localizations" : {
         "de" : {
@@ -101467,7 +102392,9 @@
         }
       }
     },
-    "Permission" : {},
+    "Permission" : {
+
+    },
     "Permission Mode" : {
       "localizations" : {
         "de" : {
@@ -101700,7 +102627,9 @@
         }
       }
     },
-    "Permissions" : {},
+    "Permissions" : {
+
+    },
     "Pin" : {
       "localizations" : {
         "de" : {
@@ -102795,7 +103724,9 @@
         }
       }
     },
-    "Preparing required tools" : {},
+    "Preparing required tools" : {
+
+    },
     "Preparing the answer" : {
       "localizations" : {
         "de" : {
@@ -105270,7 +106201,9 @@
         }
       }
     },
-    "Reason" : {},
+    "Reason" : {
+
+    },
     "Reasoning effort" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -107819,6 +108752,12 @@
             "value" : "再送信の受け付けは未確認です。準備済みの操作は保持され、再試行前に状態を確認します。"
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "재전송 승인을 확인하지 못했습니다. 준비된 작업은 유지되며, 다시 시도하면 전송 전에 상태를 확인합니다."
+          }
+        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
@@ -107831,12 +108770,6 @@
             "value" : "尚未确认重发准入。已保留准备好的操作，重试会先核实其状态再发送。"
           }
         },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "재전송 승인을 확인하지 못했습니다. 준비된 작업은 유지되며, 다시 시도하면 전송 전에 상태를 확인합니다."
-          }
-        },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
@@ -107846,6 +108779,7 @@
       }
     },
     "Resend branch" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -107889,8 +108823,7 @@
             "value" : "重发分支"
           }
         }
-      },
-      "extractionState" : "stale"
+      }
     },
     "Reset" : {
       "extractionState" : "stale",
@@ -108012,10 +108945,22 @@
     },
     "Resources" : {
       "localizations" : {
-        "zh-Hant" : {
+        "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "資源"
+            "value" : "Ressourcen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recursos"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ressources"
           }
         },
         "ja" : {
@@ -108030,28 +108975,16 @@
             "value" : "리소스"
           }
         },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ressources"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ressourcen"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Recursos"
-          }
-        },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "资源"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "資源"
           }
         }
       }
@@ -108254,7 +109187,6 @@
         }
       }
     },
-    "Responses" : {},
     "Responses is selected in the draft. Review each model's reasoning capabilities and supported efforts, then save. The probe does not verify effort support." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -109026,7 +109958,9 @@
         }
       }
     },
-    "Retry expert reply" : {},
+    "Retry expert reply" : {
+
+    },
     "Retry saved action" : {
       "localizations" : {
         "en" : {
@@ -111625,6 +112559,12 @@
             "value" : "保存して再送信"
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "저장 후 다시 보내기"
+          }
+        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
@@ -111635,12 +112575,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "保存并重新发送"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "저장 후 다시 보내기"
           }
         },
         "zh-Hant" : {
@@ -114853,7 +115787,9 @@
         }
       }
     },
-    "SHA-256 · %@" : {},
+    "SHA-256 · %@" : {
+
+    },
     "Shell and Git" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -116683,7 +117619,9 @@
         }
       }
     },
-    "softwareUpdate.status.%@" : {},
+    "softwareUpdate.status.%@" : {
+
+    },
     "softwareUpdate.status.ahead" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -118670,7 +119608,9 @@
         }
       }
     },
-    "Step" : {},
+    "Step" : {
+
+    },
     "Step guidance" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -119465,7 +120405,9 @@
         }
       }
     },
-    "Summary" : {},
+    "Summary" : {
+
+    },
     "Sunday" : {
       "localizations" : {
         "de" : {
@@ -124712,6 +125654,7 @@
       }
     },
     "The original conversation and its draft remain unchanged. The new branch starts with this edited message." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -124743,6 +125686,12 @@
             "value" : "元の会話と下書きはそのまま残ります。新しいブランチはこの編集済みメッセージから始まります。"
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "원래 대화와 초안은 그대로 유지됩니다. 새 분기는 수정한 이 메시지에서 시작됩니다."
+          }
+        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
@@ -124755,20 +125704,13 @@
             "value" : "原会话和输入草稿保持不变。新分支从修改后的这条消息开始。"
           }
         },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "원래 대화와 초안은 그대로 유지됩니다. 새 분기는 수정한 이 메시지에서 시작됩니다."
-          }
-        },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "原始對話及草稿會保留。新分支將從這則編輯後的訊息開始。"
           }
         }
-      },
-      "extractionState" : "stale"
+      }
     },
     "The original message and sending snapshot could not be verified." : {
       "localizations" : {
@@ -124802,6 +125744,12 @@
             "value" : "元のメッセージと送信時のスナップショットを確認できませんでした。"
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "원래 메시지와 전송 시점의 상태를 확인할 수 없습니다."
+          }
+        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
@@ -124812,12 +125760,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "无法核实原消息及其发送快照。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "원래 메시지와 전송 시점의 상태를 확인할 수 없습니다."
           }
         },
         "zh-Hant" : {
@@ -124860,6 +125802,12 @@
             "value" : "元のモデルの認証情報または設定が変わりました。再送信は受け付けられていません。"
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "원래 모델의 인증 정보 또는 설정이 변경되어 재전송이 승인되지 않았습니다."
+          }
+        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
@@ -124870,12 +125818,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "原模型的凭据或配置已改变，未准入重发。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "원래 모델의 인증 정보 또는 설정이 변경되어 재전송이 승인되지 않았습니다."
           }
         },
         "zh-Hant" : {
@@ -127425,6 +128367,12 @@
             "value" : "この元のモデルは、信頼された編集再送信アダプターでまだ再構成できません。"
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "신뢰할 수 있는 수정 후 재전송 경로에서 이 원래 모델을 아직 복원할 수 없습니다."
+          }
+        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
@@ -127435,12 +128383,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "当前可信编辑重发适配器尚不能重建该原模型。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "신뢰할 수 있는 수정 후 재전송 경로에서 이 원래 모델을 아직 복원할 수 없습니다."
           }
         },
         "zh-Hant" : {
@@ -127483,6 +128425,12 @@
             "value" : "準備済みの再送信には別の編集内容があります。キャンセルして新しく編集してください。"
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "준비된 재전송에 다른 수정 내용이 들어 있습니다. 취소한 뒤 새로 수정하세요."
+          }
+        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
@@ -127493,12 +128441,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "此准备好的重发包含不同的修改。请取消并重新打开编辑。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "준비된 재전송에 다른 수정 내용이 들어 있습니다. 취소한 뒤 새로 수정하세요."
           }
         },
         "zh-Hant" : {
@@ -128053,7 +128995,9 @@
         }
       }
     },
-    "Title" : {},
+    "Title" : {
+
+    },
     "Today" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -128345,7 +129289,6 @@
         }
       }
     },
-    "Tool calls" : {},
     "Tools" : {
       "localizations" : {
         "de" : {
@@ -128869,7 +129812,9 @@
         }
       }
     },
-    "Unable to copy message" : {},
+    "Unable to copy message" : {
+
+    },
     "Unable to create a pointer event." : {
       "localizations" : {
         "de" : {
@@ -129102,7 +130047,9 @@
         }
       }
     },
-    "Unable to open attachment" : {},
+    "Unable to open attachment" : {
+
+    },
     "Unable to Preview File" : {
       "localizations" : {
         "de" : {
@@ -129383,7 +130330,9 @@
         }
       }
     },
-    "Unknown" : {},
+    "Unknown" : {
+
+    },
     "Unpin" : {
       "localizations" : {
         "de" : {
@@ -129562,22 +130511,28 @@
     },
     "Unset selections inherit application defaults. Existing conversations keep their captured configuration." : {
       "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nicht gesetzte Optionen übernehmen die App-Vorgaben. Bestehende Unterhaltungen behalten ihre erfasste Konfiguration."
+          }
+        },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Unset selections inherit application defaults. Existing conversations keep their captured configuration."
           }
         },
-        "zh-Hans" : {
+        "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "未设置的选项继承应用默认值。已有会话保留其已冻结配置。"
+            "value" : "Las opciones sin definir heredan los valores de la aplicación. Las conversaciones existentes conservan su configuración guardada."
           }
         },
-        "zh-Hant" : {
+        "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "未設定的選項會沿用應用程式預設值。現有對話會保留已記錄的設定。"
+            "value" : "Les choix non définis héritent des réglages de l’application. Les conversations existantes conservent leur configuration enregistrée."
           }
         },
         "ja" : {
@@ -129592,22 +130547,16 @@
             "value" : "미설정 선택은 앱 기본값을 따릅니다. 기존 대화는 저장된 설정을 유지합니다."
           }
         },
-        "fr" : {
+        "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Les choix non définis héritent des réglages de l’application. Les conversations existantes conservent leur configuration enregistrée."
+            "value" : "未设置的选项继承应用默认值。已有会话保留其已冻结配置。"
           }
         },
-        "de" : {
+        "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Nicht gesetzte Optionen übernehmen die App-Vorgaben. Bestehende Unterhaltungen behalten ihre erfasste Konfiguration."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Las opciones sin definir heredan los valores de la aplicación. Las conversaciones existentes conservan su configuración guardada."
+            "value" : "未設定的選項會沿用應用程式預設值。現有對話會保留已記錄的設定。"
           }
         }
       }
@@ -130490,23 +131439,30 @@
       }
     },
     "Use default model" : {
+      "extractionState" : "stale",
       "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Standardmodell verwenden"
+          }
+        },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Use default model"
           }
         },
-        "zh-Hans" : {
+        "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "继承默认模型"
+            "value" : "Usar modelo predeterminado"
           }
         },
-        "zh-Hant" : {
+        "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用預設模型"
+            "value" : "Utiliser le modèle par défaut"
           }
         },
         "ja" : {
@@ -130521,45 +131477,44 @@
             "value" : "기본 모델 사용"
           }
         },
-        "fr" : {
+        "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Utiliser le modèle par défaut"
+            "value" : "继承默认模型"
           }
         },
-        "de" : {
+        "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Standardmodell verwenden"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Usar modelo predeterminado"
+            "value" : "使用預設模型"
           }
         }
-      },
-      "extractionState" : "stale"
+      }
     },
     "Use default template" : {
       "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Standardvorlage verwenden"
+          }
+        },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Use default template"
           }
         },
-        "zh-Hans" : {
+        "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "继承默认模板"
+            "value" : "Usar plantilla predeterminada"
           }
         },
-        "zh-Hant" : {
+        "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用預設範本"
+            "value" : "Utiliser le modèle de texte par défaut"
           }
         },
         "ja" : {
@@ -130574,22 +131529,16 @@
             "value" : "기본 템플릿 사용"
           }
         },
-        "fr" : {
+        "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Utiliser le modèle de texte par défaut"
+            "value" : "继承默认模板"
           }
         },
-        "de" : {
+        "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Standardvorlage verwenden"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Usar plantilla predeterminada"
+            "value" : "使用預設範本"
           }
         }
       }
@@ -130948,16 +131897,22 @@
     },
     "Use model defaults" : {
       "localizations" : {
-        "zh-Hans" : {
+        "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用模型默认配置"
+            "value" : "Modellvorgaben verwenden"
           }
         },
-        "zh-Hant" : {
+        "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用模型預設值"
+            "value" : "Usar valores del modelo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Utiliser les réglages du modèle"
           }
         },
         "ja" : {
@@ -130972,22 +131927,16 @@
             "value" : "모델 기본값 사용"
           }
         },
-        "fr" : {
+        "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Utiliser les réglages du modèle"
+            "value" : "使用模型默认配置"
           }
         },
-        "de" : {
+        "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Modellvorgaben verwenden"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Usar valores del modelo"
+            "value" : "使用模型預設值"
           }
         }
       }
@@ -133410,6 +134359,7 @@
       }
     },
     "workspace.activity.help" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -133441,6 +134391,12 @@
             "value" : "アクティビティと結果を表示・非表示"
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "활동 및 결과 표시 또는 숨기기"
+          }
+        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
@@ -133453,20 +134409,13 @@
             "value" : "显示或收起活动与结果"
           }
         },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "활동 및 결과 표시 또는 숨기기"
-          }
-        },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "顯示或收起活動與結果"
           }
         }
-      },
-      "extractionState" : "stale"
+      }
     },
     "workspace.memory" : {
       "extractionState" : "manual",
@@ -133548,6 +134497,12 @@
             "value" : "計画"
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "계획"
+          }
+        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
@@ -133558,12 +134513,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "计划"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "계획"
           }
         },
         "zh-Hant" : {
@@ -133654,6 +134603,12 @@
             "value" : "資料"
           }
         },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "소스"
+          }
+        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
@@ -133670,12 +134625,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "資料來源"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "소스"
           }
         }
       }
@@ -134363,244 +135312,66 @@
         }
       }
     },
-    "使用所示日期或时间" : {},
-    "关闭" : {},
-    "放弃编辑，使用当前值" : {},
-    "查询上次表单提交结果" : {},
-    "查询提交结果" : {},
-    "此组件暂不可显示：%@" : {},
-    "清除" : {},
-    "移除未执行的表单操作" : {},
-    "重新校验" : {},
-    "重新读取表单" : {},
-    "mac.data_center.permission.failed" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "无法申请访问。请重试，或在系统设置中检查 Nola 的权限。"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Access could not be requested. Try again or review Nola in System Settings."
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Zugriff konnte nicht angefordert werden. Erneut versuchen oder Nola in den Systemeinstellungen prüfen."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "No se pudo solicitar acceso. Reintenta o revisa Nola en Ajustes del Sistema."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Impossible de demander l’accès. Réessayez ou vérifiez Nola dans Réglages Système."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "アクセスを要求できませんでした。再試行するか、システム設定で Nola を確認してください。"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не удалось запросить доступ. Повторите попытку или проверьте Nola в системных настройках."
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "無法申請存取。請重試，或在系統設定中檢查 Nola 的權限。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "접근을 요청할 수 없습니다. 다시 시도하거나 시스템 설정에서 Nola 권한을 확인하세요."
-          }
-        }
-      }
+    "使用所示日期或时间" : {
+
     },
-    "mac.data_center.permission.requesting" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在申请访问…"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Requesting access…"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Zugriff wird angefordert…"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Solicitando acceso…"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Demande d’accès…"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "アクセスを要求中…"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Запрос доступа…"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在申請存取⋯"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "접근 요청 중…"
-          }
-        }
-      }
+    "关闭" : {
+
     },
-    "mac.data_center.permission.continue" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "继续"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Continue"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Fortfahren"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Continuar"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Continuer"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "続ける"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Продолжить"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "繼續"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "계속"
-          }
-        }
-      }
+    "此组件暂不可显示：%@" : {
+
     },
-    "mac.data_center.permission.recovery" : {
+    "清除" : {
+
+    },
+    "移除未执行的表单操作" : {
+
+    },
+    "重新读取表单" : {
+
+    },
+    "Choose another prompt template" : {
       "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "在系统设置中检查 Nola 的访问权限，返回后会刷新状态。受限制的权限可能需要组织管理员调整。"
-          }
-        },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Review Nola’s access in System Settings, then return here to refresh its status. Restrictions may be managed by your organization."
+            "value" : "Choose another prompt template"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择其他提示词模板"
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Nolas Zugriff in den Systemeinstellungen prüfen und zurückkehren. Einschränkungen werden möglicherweise von deiner Organisation verwaltet."
+            "value" : "Andere Promptvorlage auswählen"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Revisa el acceso de Nola en Ajustes del Sistema y vuelve para actualizar el estado. Tu organización puede gestionar las restricciones."
+            "value" : "Elegir otra plantilla de instrucciones"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Vérifiez l’accès de Nola dans Réglages Système, puis revenez pour actualiser l’état. Les restrictions peuvent être gérées par votre organisation."
+            "value" : "Choisir un autre modèle d’instructions"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "システム設定で Nola のアクセスを確認し、戻ると状態が更新されます。制限は組織が管理している場合があります。"
+            "value" : "別のプロンプトテンプレートを選択"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Проверьте доступ Nola в системных настройках и вернитесь для обновления статуса. Ограничениями может управлять ваша организация."
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "在系統設定中檢查 Nola 的存取權限，返回後會更新狀態。受限制的權限可能需要組織管理員調整。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "시스템 설정에서 Nola의 접근 권한을 확인한 후 돌아오면 상태가 갱신됩니다. 제한은 조직에서 관리할 수 있습니다."
+            "value" : "Выбрать другой шаблон инструкций"
           }
         }
       }
@@ -134663,6 +135434,650 @@
         }
       }
     },
+    "activity.recentLoaded" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "recent entries"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "条近期记录"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "neueste Einträge"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "registros recientes"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "entrées récentes"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "件の最近の記録"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "недавних записей"
+          }
+        }
+      }
+    },
+    "This Host does not support expert reintroduction." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This Host does not support expert reintroduction."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此宿主机不支持重新引入专家。"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieser Host unterstützt das erneute Hinzufügen von Experten nicht."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Este Host no permite volver a introducir expertos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cet hôte ne permet pas de réintroduire un expert."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このホストはエキスパートの再導入に対応していません。"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот хост не поддерживает повторное добавление эксперта."
+          }
+        }
+      }
+    },
+    "This Host does not support expert reasoning levels." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This Host does not support expert reasoning levels."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此宿主机不支持专家推理档位。"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieser Host unterstützt keine Experten-Denkstufen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Este Host no admite niveles de razonamiento de expertos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cet hôte ne prend pas en charge les niveaux de raisonnement des experts."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このホストはエキスパートの推論レベルに対応していません。"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот хост не поддерживает уровни рассуждения экспертов."
+          }
+        }
+      }
+    },
+    "Choose an available expert reasoning level." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose an available expert reasoning level."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请选择此专家模型支持的推理档位。"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wählen Sie eine unterstützte Experten-Denkstufe."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Elige un nivel de razonamiento compatible."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choisissez un niveau de raisonnement pris en charge."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "対応する推論レベルを選択してください。"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите поддерживаемый уровень рассуждения."
+          }
+        }
+      }
+    },
+    "Role template" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Role template"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "角色模板"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rollenvorlage"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Plantilla de rol"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modèle de rôle"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "役割テンプレート"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Шаблон роли"
+          }
+        }
+      }
+    },
+    "Choose a role" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose a role"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择角色"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rolle wählen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Elegir rol"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choisir un rôle"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "役割を選択"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выбрать роль"
+          }
+        }
+      }
+    },
+    "Apply role template" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apply role template"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "应用角色模板"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rollenvorlage anwenden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aplicar plantilla de rol"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Appliquer le modèle de rôle"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "役割テンプレートを適用"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Применить шаблон роли"
+          }
+        }
+      }
+    },
+    "Replace prompt template?" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Replace prompt template?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "替换提示词模板？"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prompt-Vorlage ersetzen?"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "¿Reemplazar la plantilla?"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remplacer le modèle de consigne ?"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "プロンプトテンプレートを置き換えますか？"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Заменить шаблон запроса?"
+          }
+        }
+      }
+    },
+    "Keep current template" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep current template"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保留当前模板"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aktuelle Vorlage behalten"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conservar plantilla actual"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conserver le modèle actuel"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "現在のテンプレートを保持"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Оставить текущий шаблон"
+          }
+        }
+      }
+    },
+    "The expert will use this role instead. Your custom prompt template is kept in the library." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The expert will use this role instead. Your custom prompt template is kept in the library."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "专家将改用此角色。你的自定义提示词模板仍保留在模板库中。"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Experte verwendet diese Rolle. Ihre eigene Prompt-Vorlage bleibt in der Bibliothek."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El experto usará este rol. Tu plantilla personalizada se conserva en la biblioteca."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "L’expert utilisera ce rôle. Votre modèle personnalisé reste dans la bibliothèque."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "エキスパートはこの役割を使用します。カスタムテンプレートはライブラリに残ります。"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эксперт будет использовать эту роль. Ваш шаблон останется в библиотеке."
+          }
+        }
+      }
+    },
+    "This model has no declared reasoning levels. Automatic inherits its configuration." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This model has no declared reasoning levels. Automatic inherits its configuration."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此模型未声明推理档位。“自动”沿用模型配置。"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Für dieses Modell sind keine Denkstufen deklariert. Automatisch übernimmt die Konfiguration."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Este modelo no declara niveles de razonamiento. Automático hereda su configuración."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ce modèle ne déclare aucun niveau de raisonnement. Automatique hérite de sa configuration."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このモデルには推論レベルの宣言がありません。「自動」はモデル設定を継承します。"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель не объявляет уровни рассуждения. Автоматический режим наследует её настройки."
+          }
+        }
+      }
+    },
+    "Role tools guide the workflow; they do not grant permissions." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Role tools guide the workflow; they do not grant permissions."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "角色工具组合用于指导工作流程，不授予工具权限。"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rollenwerkzeuge leiten den Ablauf; sie erteilen keine Berechtigungen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Las herramientas del rol orientan el flujo; no conceden permisos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Les outils du rôle guident le travail sans accorder d’autorisations."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "役割のツールは作業手順を示すもので、権限を付与しません。"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Инструменты роли задают рабочий процесс, но не предоставляют разрешения."
+          }
+        }
+      }
+    },
+    "Use the expert’s latest configuration?" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use the expert’s latest configuration?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用专家的最新配置？"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Neueste Expertenkonfiguration verwenden?"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "¿Usar la configuración más reciente del experto?"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Utiliser la dernière configuration de l’expert ?"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "エキスパートの最新設定を使用しますか？"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Использовать новые настройки эксперта?"
+          }
+        }
+      }
+    },
+    "Reintroduce expert" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reintroduce expert"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新引入专家"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Experten neu hinzufügen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Volver a añadir al experto"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Réintroduire l’expert"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "エキスパートを再導入"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добавить эксперта заново"
+          }
+        }
+      }
+    },
     "This adds a new expert context with the latest model and template. Previous replies stay in this conversation." : {
       "localizations" : {
         "en" : {
@@ -134717,6 +136132,236 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "최신 모델과 템플릿으로 새 전문가 컨텍스트를 만듭니다. 이전 답변은 이 대화에 유지됩니다."
+          }
+        }
+      }
+    },
+    "Implement code" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Implement code"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "代码编写"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Code implementieren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Implementar código"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Écrire du code"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コード実装"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Разработка кода"
+          }
+        }
+      }
+    },
+    "Review code" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Review code"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "代码审查"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Code prüfen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Revisar código"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Réviser le code"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コードレビュー"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Проверка кода"
+          }
+        }
+      }
+    },
+    "Test software" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Test software"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "软件测试"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Software testen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Probar software"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tester le logiciel"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ソフトウェアテスト"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Тестирование ПО"
+          }
+        }
+      }
+    },
+    "Create visual art" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Create visual art"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "视觉艺术创作"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Visuelle Kunst erstellen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Crear arte visual"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Créer une œuvre visuelle"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ビジュアルアート作成"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Создание визуального искусства"
+          }
+        }
+      }
+    },
+    "The selected expert changed. Select it again before sending." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The selected expert changed. Select it again before sending."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "所选专家已更新，请重新选择后发送。"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der gewählte Experte wurde geändert. Wählen Sie ihn vor dem Senden erneut."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El experto cambió. Selecciónalo de nuevo antes de enviar."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "L’expert a changé. Sélectionnez-le à nouveau avant l’envoi."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選択したエキスパートが更新されました。送信前にもう一度選択してください。"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выбранный эксперт изменился. Выберите его заново перед отправкой."
           }
         }
       }
@@ -134956,6 +136601,53 @@
         }
       }
     },
+    "Previous expert configuration · read only" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Previous expert configuration · read only"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "旧专家配置 · 只读"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Frühere Expertenkonfiguration · schreibgeschützt"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Configuración anterior del experto · solo lectura"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ancienne configuration d’expert · lecture seule"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "以前のエキスパート設定 · 読み取り専用"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Предыдущие настройки эксперта · только чтение"
+          }
+        }
+      }
+    },
     "Continue in main conversation" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -135011,6 +136703,147 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "메인 대화에서 계속"
+          }
+        }
+      }
+    },
+    "Expert history is unavailable" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expert history is unavailable"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法读取专家历史"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expertenverlauf nicht verfügbar"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El historial del experto no está disponible"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Historique de l’expert indisponible"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "エキスパートの履歴を読み込めません"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "История эксперта недоступна"
+          }
+        }
+      }
+    },
+    "This expert history is read only" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This expert history is read only"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此专家历史仅可阅读"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieser Expertenverlauf ist schreibgeschützt"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Este historial del experto es de solo lectura"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cet historique d’expert est en lecture seule"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このエキスパートの履歴は読み取り専用です"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эта история эксперта доступна только для чтения"
+          }
+        }
+      }
+    },
+    "No expert messages yet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No expert messages yet"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "还没有专家消息"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Noch keine Expertennachrichten"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aún no hay mensajes del experto"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aucun message d’expert"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "エキスパートのメッセージはまだありません"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщений эксперта пока нет"
           }
         }
       }

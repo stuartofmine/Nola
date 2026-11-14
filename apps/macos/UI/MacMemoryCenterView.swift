@@ -333,6 +333,7 @@ private struct MacMemoryEditor: View {
     @State private var tags: String
     @State private var confidence: Double
     @State private var showsDiscardConfirmation = false
+    @State private var allowsDiscardClose = false
 
     let isSaving: Bool
     let errorMessage: String?
@@ -445,12 +446,16 @@ private struct MacMemoryEditor: View {
         .frame(minWidth: 440, idealWidth: 560, maxWidth: 680)
         .frame(minHeight: 500, idealHeight: 580, maxHeight: 720)
         .interactiveDismissDisabled(hasUnsavedChanges || isSaving)
+        .background(MacEditorWindowCloseGuard(
+            shouldPreventClose: { (hasUnsavedChanges || isSaving) && !allowsDiscardClose },
+            onCloseAttempt: { if !isSaving { requestDismiss() } }
+        ))
         .confirmationDialog(
             macMemoryText("mac.memory.discard.title", "Discard unsaved changes?"),
             isPresented: $showsDiscardConfirmation,
             titleVisibility: .visible
         ) {
-            Button(macMemoryText("mac.memory.discard", "Discard Changes"), role: .destructive) { dismiss() }
+            Button(macMemoryText("mac.memory.discard", "Discard Changes"), role: .destructive) { allowsDiscardClose = true; dismiss() }
             Button(macMemoryText("mac.memory.cancel", "Cancel"), role: .cancel) {}
         }
     }
@@ -483,6 +488,7 @@ private struct MacMemoryEditor: View {
     }
 
     private func requestDismiss() {
+        guard !isSaving else { return }
         if hasUnsavedChanges {
             showsDiscardConfirmation = true
         } else {

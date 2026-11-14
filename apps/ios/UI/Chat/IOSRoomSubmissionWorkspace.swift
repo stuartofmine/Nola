@@ -11,7 +11,7 @@ nonisolated struct IOSRoomDraft: Codable, Equatable, Sendable {
     var mentionQuery: String? { ExpertMentionQuery.atEnd(of: text)?.query }
 
     mutating func mention(_ id: String) {
-        if let query = ExpertMentionQuery.atEnd(of: text) { text = query.removing(from: text) }
+        if mentionQuery != nil, let at = text.lastIndex(of: "@") { text = String(text[..<at]) }
         participantID = id
         revision &+= 1
     }
@@ -67,6 +67,7 @@ nonisolated struct IOSRoomDraft: Codable, Equatable, Sendable {
     private var pendingAdmission: IOSAgentRoomService.UserMessageAdmission?
     private var pendingDraftTicket: ConversationComposerDraftStore.TextSubmissionTicket?
     private var pendingExpertPlan: AppleAdmitExpertConversationMessage?
+    private var pendingExpertRevisions: [String: Int64] = [:]
     @Published private(set) var recoverableExpertManifests: [String: AppleExpertMessageManifest<AgentCoreJSONValue>] = [:]
     @Published private(set) var resumingExpertMessages = Set<String>()
     @Published private(set) var expertResumeError: String?
@@ -112,6 +113,7 @@ nonisolated struct IOSRoomDraft: Codable, Equatable, Sendable {
             pendingDraftTicket = nil
             pendingExpertPlan = restored.1?.0.plan
             pendingExpertIDs = restored.1?.0.expertIDs ?? []
+            pendingExpertRevisions = restored.1?.0.expertRevisions ?? [:]
             admissionError = pendingAdmission == nil ? nil : "An expert message is pending. Retry sends the original message."
         } catch { admissionError = error.localizedDescription }
     }
@@ -123,46 +125,64 @@ nonisolated struct IOSRoomDraft: Codable, Equatable, Sendable {
         let draftTicket: ConversationComposerDraftStore.TextSubmissionTicket?
     }
     func sendExperts(conversationID: String, text: String, agentIDs: Set<String>,
-                     draftTicket: ConversationComposerDraftStore.TextSubmissionTicket?) async -> ExpertAdmissionAcknowledgement? {
+                     observedRevisions: [String: Int64] = [:], draftTicket: ConversationComposerDraftStore.TextSubmissionTicket?, messageID: String? = nil, createdAtMs: Int64? = nil) async -> ExpertAdmissionAcknowledgement? {
         guard !isAdmitting, !agentIDs.isEmpty else { return nil }
         if admissionOwner != conversationID {
             await restoreConversation(conversationID)
             guard admissionOwner == conversationID, !isAdmitting else { return nil }
         }
         if let pendingAdmission {
-            guard pendingAdmission.conversationID == conversationID else {
+            guard pendingAdmission.conversationID == conversationID,
+                  messageID == nil || (pendingAdmission.messageID == messageID && pendingAdmission.text == text && pendingAdmission.createdAtMs == createdAtMs) else {
                 admissionError = "Retry the pending expert message in its original conversation."
                 return nil
             }
         } else {
             guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
             pendingAdmission = .init(conversationID: conversationID,
-                messageID: UUID().uuidString.lowercased(), text: text,
-                createdAtMs: Int64(Date().timeIntervalSince1970 * 1000))
+                messageID: messageID ?? UUID().uuidString.lowercased(), text: text,
+                createdAtMs: createdAtMs ?? Int64(Date().timeIntervalSince1970 * 1000))
             pendingExpertIDs = agentIDs.sorted()
+            pendingExpertRevisions = observedRevisions.filter { agentIDs.contains($0.key) }
             pendingDraftTicket = draftTicket
         }
         guard let input = pendingAdmission else { return nil }
+        if pendingExpertPlan == nil {
+            // Only a new explicit selection supplies a changed observation;
+            // retries never rebase these revisions from the live directory.
+            pendingExpertRevisions.merge(observedRevisions.filter { pendingExpertIDs.contains($0.key) }) { _, selected in selected }
+        }
         isAdmitting = true
         defer { isAdmitting = false }
         do {
             let service = service
             let frozen = IOSAgentRoomService.ExpertAdmissionDraft(conversationID: conversationID,
-                input: input, expertIDs: pendingExpertIDs, plan: pendingExpertPlan)
+                input: input, expertIDs: pendingExpertIDs, plan: pendingExpertPlan, expertRevisions: pendingExpertRevisions)
             let previousRevision = admissionStorageRevision
             admissionStorageRevision = try await Task.detached {
                 try service.saveExpertAdmission(frozen, expectedRevision: previousRevision)
             }.value
             var association = try await Task.detached { try service.ensureForConversation(input.conversationID) }.value
-            let available = try await Task.detached { try service.directory().agents }.value
-            for id in pendingExpertIDs {
-                if association.room.room.participants.contains(where: { $0.agentID == id && $0.active }) { continue }
-                guard let agent = available.first(where: { $0.id == id && $0.availability == "active" }) else {
-                    throw IOSApplicationRuntimeError.rejected("Selected expert is unavailable")
+            if pendingExpertPlan == nil {
+                var available: [IOSPersistentAgent]?
+                for id in pendingExpertIDs {
+                    if let active = association.room.room.participants.first(where: { $0.agentID == id && $0.active }) {
+                        // Published membership is an immutable execution snapshot.
+                        // A directory edit does not revoke a user's old selection.
+                        if let observed = pendingExpertRevisions[id], active.agentRevision != observed {
+                            throw IOSExpertMentionFailure.requiresRejoin
+                        }
+                        continue
+                    }
+                    if available == nil { available = try await Task.detached { try service.directory().agents }.value }
+                    guard let agent = available?.first(where: { $0.id == id && $0.availability == "active" }),
+                          pendingExpertRevisions[id].map({ $0 == agent.revision }) ?? true else {
+                        throw IOSApplicationRuntimeError.rejected(String(localized: "experts.mention.changed"))
+                    }
+                    let room = association.room
+                    _ = try await Task.detached { try service.join(agent: agent, room: room) }.value
+                    association = try await Task.detached { try service.ensureForConversation(input.conversationID) }.value
                 }
-                let room = association.room
-                _ = try await Task.detached { try service.join(agent: agent, room: room) }.value
-                association = try await Task.detached { try service.ensureForConversation(input.conversationID) }.value
             }
             await select(association.room, resumeExecutions: false)
             guard selectedRoom?.room.id == association.roomID,
@@ -184,7 +204,7 @@ nonisolated struct IOSRoomDraft: Codable, Equatable, Sendable {
                         agent_id: $0.agentID, agent_revision: $0.agentRevision,
                         context_conversation_id: $0.contextConversationID) }, created_at_ms: input.createdAtMs)
                 let frozen = IOSAgentRoomService.ExpertAdmissionDraft(conversationID: conversationID,
-                    input: input, expertIDs: pendingExpertIDs, plan: pendingExpertPlan)
+                    input: input, expertIDs: pendingExpertIDs, plan: pendingExpertPlan, expertRevisions: pendingExpertRevisions)
                 let revision = admissionStorageRevision
                 admissionStorageRevision = try await Task.detached {
                     try service.saveExpertAdmission(frozen, expectedRevision: revision)
@@ -223,6 +243,7 @@ nonisolated struct IOSRoomDraft: Codable, Equatable, Sendable {
             pendingDraftTicket = nil
             pendingExpertPlan = nil
             pendingExpertIDs = []
+            pendingExpertRevisions = [:]
             admissionError = nil
             return acknowledgement
         } catch { admissionError = error.localizedDescription; return nil }

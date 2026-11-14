@@ -117,7 +117,7 @@ pub fn tool_permission_domain(tool_name: &str) -> Option<String> {
         "system_time" | "skill" | "skill_update" | "skill_skip" | "sop"
         | "sop_invoke" | "sop_run_update"
         | "bash_background_status" | "bash_background_wait"
-        | "spawn_agent" | "list_tasks" | "read_task" | "wait_task");
+        | "spawn_agent" | "list_tasks" | "read_task" | "wait_task" | "delegate_expert");
     if internal || domain == "none" || domain == "read" { None } else { Some(domain) }
 }
 
@@ -136,7 +136,7 @@ fn permission_contract_preserves_sensitive_and_unknown_domains() {
     for name in ["delete_file", "workspace_checkpoint", "notebook_edit", "git_commit", "unknown_tool", "bash", "memory_save", "memory_search"] {
         assert!(tool_permission_domain(name).is_some(), "{name}");
     }
-    for name in ["read_file", "Skill", "SOP", "bash_background_status", "conversation_recall"] {
+    for name in ["read_file", "Skill", "SOP", "bash_background_status", "conversation_recall", "delegate_expert"] {
         assert!(tool_permission_domain(name).is_none(), "{name}");
     }
 }

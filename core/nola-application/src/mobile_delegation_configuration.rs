@@ -12,12 +12,16 @@ use std::collections::BTreeMap;
 #[serde(deny_unknown_fields)]
 pub struct MobileDelegationSettings {
     pub project_root: String,
+    #[serde(default,skip_serializing_if="is_false")]
+    pub expert_leaf: bool,
     /// Host can rebuild an exact independent HTTP client from existing credentials.
     #[serde(default)]
     pub independent_model_profiles: bool,
     pub selected_profile: Option<nola_host_protocol::HostModelProfileReference>,
     pub agents: BTreeMap<String, nola_domain::execution_policy::ConversationAgentPolicy>,
 }
+
+fn is_false(value:&bool)->bool{!*value}
 
 /// Called only by a Host with an installed independent child executor. The
 /// complete Host route is already frozen; credential material never enters Core.
@@ -27,6 +31,12 @@ pub fn capture_parent(
 ) -> Result<AgentCoreConfig, String> {
     if config.turn_identity.delegation.is_some() {
         return Err("Mobile delegation configuration was already captured".into());
+    }
+    if settings.expert_leaf {
+        use nola_domain::expert_task_target::{expert_leaf_control,schema_tool_name};
+        config.tools.retain(|tool|!schema_tool_name(tool).is_some_and(expert_leaf_control));
+        if let Some(catalog)=config.host_catalog.as_mut(){catalog.capabilities.retain(|name,_|!expert_leaf_control(name));}
+        if config.turn_identity.host_invocation.is_some(){bind_policy(&mut config)?;}
     }
     if !config.turn_identity.model_capability.native_tool_calls {
         return Ok(config);
@@ -122,6 +132,10 @@ pub fn capture_parent(
         return Ok(config);
     }
     config.turn_identity.delegation = Some(ValidatedDelegationParent::new(parent)?);
+    if settings.expert_leaf {
+        bind_policy(&mut config)?;
+        return Ok(config);
+    }
     let schema = json!({"type":"function","function":{"name":"spawn_agent","description":"Delegate one bounded task to an independent child using this Host and the frozen parent model. Independent profile models require the same authorized connection and frozen generation policy. Other connections and nested delegation are unavailable. Supply a self-contained brief and authorized source references, not the complete parent transcript. The parent supervises and accepts the child result.","parameters":{"type":"object","properties":{"agent_type":{"type":"string","enum":supported_profiles},"prompt":{"type":"string","description":nola_domain::delegation::WORKSPACE_GUIDANCE},"task_id":{"type":"string","description":"Derive new follow-up work from a terminal Task owned by this parent/project. Creates a NEW task_id with resumed_from_task_id lineage and the existing child conversation; the original Task and sealed Run remain terminal. For a running Task use send_agent_message."},"description":{"type":"string"},"max_turns":{"type":"integer","minimum":1,"maximum":20,"description":"Explicit task LLM-turn budget. When omitted use the frozen profile default, then parent iteration budget; fixed during recovery."},"permission_mode":{"type":"string","enum":["ask","read_only"]}},"required":["agent_type","prompt"],"additionalProperties":false}}});
     config.tools.push(schema.clone());
     let catalog = config.host_catalog.as_mut().unwrap();
@@ -230,7 +244,7 @@ pub(super) fn validate_profile_model<R: nola_store_port::model::ModelRepositoryP
     Ok(())
 }
 
-fn bind_policy(config: &mut AgentCoreConfig) -> Result<(), String> {
+pub(crate) fn bind_policy(config: &mut AgentCoreConfig) -> Result<(), String> {
     let mut policy = json!({"host_catalog":config.host_catalog,"tools":config.tools,"permission_rules":config.permission_rules,"context_window":config.context_window,
         "model_capability":config.turn_identity.model_capability});
     if let Some(dependencies) = &config.turn_identity.host_dependencies {
@@ -261,6 +275,12 @@ pub(crate) fn child_config<R: crate::repositories::AgentRuntimeCommandRepositori
         .ok_or("Task missing")?;
     let metadata: serde_json::Value =
         serde_json::from_str(&task.metadata_json).map_err(|e| e.to_string())?;
+    if metadata.get(nola_domain::expert_task_target::EXPERT_TASK_TARGET_METADATA_KEY).is_some() {
+        let child=task.child_session_id.as_deref().ok_or("Expert Task child missing")?;
+        store.read_validated_expert_task_target(task_id,child,false).map_err(|e|e.to_string())?.ok_or("Expert Task target validation unsupported")?;
+        return serde_json::from_value(metadata.get("expert_target_configuration").cloned().ok_or("Expert Task configuration missing")?)
+            .map_err(|_|"Expert Task configuration invalid".into());
+    }
     let snapshot: DelegatedInvocationSnapshot = serde_json::from_value(
         metadata
             .get("delegated_invocation")
@@ -379,6 +399,8 @@ pub(crate) fn child_config<R: crate::repositories::AgentRuntimeCommandRepositori
         !matches!(
             name,
             "spawn_agent"
+                | "delegate_expert"
+                | "expert_exchange"
                 | "list_tasks"
                 | "read_task"
                 | "wait_task"
@@ -390,17 +412,14 @@ pub(crate) fn child_config<R: crate::repositories::AgentRuntimeCommandRepositori
             && (!read_only || parent.read_only_tools.contains(name))
     };
     config.tools.retain(|value| {
-        value
-            .pointer("/function/name")
-            .and_then(|v| v.as_str())
-            .is_some_and(allowed)
+        nola_domain::expert_task_target::schema_tool_name(value).is_some_and(allowed)
     });
     if let Some(catalog) = config.host_catalog.as_mut() {
         catalog.capabilities.retain(|name, value| {
-            matches!(
+            !matches!(name.as_str(),"delegate_expert"|"expert_exchange") && (matches!(
                 value.exposure,
                 HostCapabilityExposure::Internal | HostCapabilityExposure::Hidden
-            ) || allowed(name)
+            ) || allowed(name))
         });
     }
     bind_policy(&mut config)?;
@@ -426,11 +445,24 @@ mod tests {
     use super::*;
     fn settings() -> MobileDelegationSettings {
         MobileDelegationSettings {
+            expert_leaf: false,
             project_root: "device".into(),
             independent_model_profiles: false,
             selected_profile: None,
             agents: BTreeMap::new(),
         }
+    }
+    #[test]
+    fn expert_leaf_strips_both_schema_forms_before_non_tool_model_early_return() {
+        let mut config=AgentCoreConfig::default();
+        config.tools=vec![json!({"type":"function","function":{"name":"spawn_agent"}}),
+            json!({"type":"function","name":"delegate_expert","parameters":{"type":"object"}}),
+            json!({"type":"function","name":"request_user_input","parameters":{"type":"object"}}),
+            json!({"type":"function","name":"read_file","parameters":{"type":"object"}})];
+        let mut settings=settings();settings.expert_leaf=true;
+        let captured=capture_parent(config,settings).unwrap();
+        assert_eq!(captured.tools.len(),1);assert_eq!(captured.tools[0]["name"],"read_file");
+        assert!(captured.turn_identity.delegation.is_none());
     }
     #[test]
     fn model_without_tool_execution_does_not_advertise_delegation() {

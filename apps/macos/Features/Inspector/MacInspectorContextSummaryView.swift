@@ -15,7 +15,7 @@ struct MacInspectorContextSummaryView: View {
                 Image(systemName: "gauge.with.dots.needle.50percent")
                     .font(.system(size: MacDesignTokens.Typography.inspectorBody, weight: .semibold))
                     .foregroundStyle(.secondary)
-                Text(String(localized: "Context"))
+                Text(String(localized: "inspector.context_usage", table: "ConversationInspector"))
                     .font(.system(size: MacDesignTokens.Typography.inspectorBody, weight: .semibold))
                 Spacer()
                 Text(model.contextUsageText)
@@ -34,21 +34,11 @@ struct MacInspectorContextSummaryView: View {
                     : String(localized: "Measured request context", table: "Permissions"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                if let measurement = model.contextMeasurement {
-                    Text("\(String(localized: "Request", table: "Permissions")): \(measurement.requestID)")
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+
             }
 
             HStack(spacing: 6) {
                 if MacExecutionBackendPolicy.requiresNolaModel(model.executionBackend.id) {
-                    Text(model.activeModelName)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Text("·")
                     Text(String(localized: "Window"))
                     Spacer(minLength: 8)
                     Text(
@@ -92,80 +82,92 @@ struct MacInspectorContextSummaryView: View {
                 }
             }
 
-            if let cacheStatus = model.promptCacheStatusText {
-                Divider().opacity(0.45)
-                HStack(spacing: 7) {
-                    Image(systemName: "bolt.horizontal.circle")
-                        .foregroundStyle(MacDesignColor.brand)
-                    Text(String(localized: "Prompt cache", table: "Chat"))
-                    Spacer(minLength: 8)
-                    Text(cacheStatus)
-                        .foregroundStyle(.secondary)
-                }
-                .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .medium))
-
-                if let measurement = model.promptCacheMeasurement {
-                    Text("\(String(localized: "Request", table: "Permissions")): \(measurement.requestID)")
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if let attempt = measurement.attemptID {
-                        Text("\(String(localized: "Attempt", table: "Permissions")): \(attempt)")
+            if model.contextMeasurement != nil || model.promptCacheStatusText != nil {
+                DisclosureGroup(String(localized: "Details")) {
+                    if let measurement = model.contextMeasurement {
+                        Text("\(String(localized: "Request", table: "Permissions")): \(measurement.requestID)")
                             .font(.caption.monospaced())
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                }
-
-                if model.promptCacheReadTokens != nil || model.promptCacheWriteTokens != nil {
-                    HStack(spacing: 12) {
-                        if let readTokens = model.promptCacheReadTokens {
-                            Label(readTokens.formatted(), systemImage: "arrow.down")
-                                .accessibilityLabel(String(localized: "Cache read", table: "Chat"))
+                    if let cacheStatus = model.promptCacheStatusText {
+                        Divider().opacity(0.45)
+                        HStack(spacing: 7) {
+                            Image(systemName: "bolt.horizontal.circle")
+                                .foregroundStyle(MacDesignColor.brand)
+                            Text(String(localized: "Prompt cache", table: "Chat"))
+                            Spacer(minLength: 8)
+                            Text(cacheStatus)
+                                .foregroundStyle(.secondary)
                         }
-                        if let writeTokens = model.promptCacheWriteTokens {
-                            Label(writeTokens.formatted(), systemImage: "arrow.up")
-                                .accessibilityLabel(String(localized: "Cache write", table: "Chat"))
-                        }
-                        Spacer()
-                    }
-                    .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-                }
+                        .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .medium))
 
-                if !model.promptCacheFragmentChanges.isEmpty {
-                    VStack(alignment: .leading, spacing: 5) {
-                        ForEach(
-                            Array(model.promptCacheFragmentChanges.prefix(4).enumerated()),
-                            id: \.offset
-                        ) { _, change in
-                            HStack(spacing: 8) {
-                                Text(change.fragmentId)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                Spacer(minLength: 8)
-                                Text(promptCacheChangeLabel(change.kind))
+                        if let measurement = model.promptCacheMeasurement {
+                            Text("\(String(localized: "Request", table: "Permissions")): \(measurement.requestID)")
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if let attempt = measurement.attemptID {
+                                Text("\(String(localized: "Attempt", table: "Permissions")): \(attempt)")
+                                    .font(.caption.monospaced())
                                     .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
                         }
-                        if model.promptCacheFragmentChanges.count > 4 {
-                            Text(
-                                String(
-                                    format: String(localized: "%lld more changes", table: "Chat"),
-                                    Int64(model.promptCacheFragmentChanges.count - 4)
-                                )
-                            )
+
+                        if model.promptCacheReadTokens != nil || model.promptCacheWriteTokens != nil {
+                            HStack(spacing: 12) {
+                                if let readTokens = model.promptCacheReadTokens {
+                                    Label(readTokens.formatted(), systemImage: "arrow.down")
+                                        .accessibilityLabel(String(localized: "Cache read", table: "Chat"))
+                                }
+                                if let writeTokens = model.promptCacheWriteTokens {
+                                    Label(writeTokens.formatted(), systemImage: "arrow.up")
+                                        .accessibilityLabel(String(localized: "Cache write", table: "Chat"))
+                                }
+                                Spacer()
+                            }
+                            .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .medium, design: .monospaced))
                             .foregroundStyle(.tertiary)
                         }
+
+                        if !model.promptCacheFragmentChanges.isEmpty {
+                            VStack(alignment: .leading, spacing: 5) {
+                                ForEach(
+                                    Array(model.promptCacheFragmentChanges.prefix(4).enumerated()),
+                                    id: \.offset
+                                ) { _, change in
+                                    HStack(spacing: 8) {
+                                        Text(change.fragmentId)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                        Spacer(minLength: 8)
+                                        Text(promptCacheChangeLabel(change.kind))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                if model.promptCacheFragmentChanges.count > 4 {
+                                    Text(
+                                        String(
+                                            format: String(localized: "%lld more changes", table: "Chat"),
+                                            Int64(model.promptCacheFragmentChanges.count - 4)
+                                        )
+                                    )
+                                    .foregroundStyle(.tertiary)
+                                }
+                            }
+                            .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .medium, design: .monospaced))
+                        }
                     }
-                    .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .medium, design: .monospaced))
                 }
+                .disclosureGroupStyle(MacRowDisclosureStyle(toggleIdentifier: "mac-inspector-context-details", isPlain: true))
             }
         }
         .padding(.vertical, 3)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
         .accessibilityLabel(String(localized: "Context"))
         .accessibilityValue(model.contextUsageText)
         .accessibilityIdentifier("mac-inspector-context-summary")

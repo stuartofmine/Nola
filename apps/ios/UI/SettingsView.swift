@@ -72,10 +72,14 @@ struct SettingsView: View {
     private var content: some View {
         settingsPage(title: L10n.settings, showsHeading: false) {
             if ownsNavigationStack {
-                Text(L10n.settings).font(.headline).frame(maxWidth: .infinity).frame(minHeight: 44)
+                IOSWorkspacePageHeading(title: L10n.settings).frame(minHeight: 64)
             }
             ForEach(categoryGroups.indices, id: \.self) { group in
-                VStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(LocalizedStringKey(["settings.group.preferences", "settings.group.connections", "settings.group.security"][group]))
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(DesignTokens.secondaryContentColor)
+                        .padding(.bottom, 8)
                     ForEach(categoryGroups[group], id: \.rawValue) { category in
                         Group {
                             if category == .agents {
@@ -84,13 +88,13 @@ struct SettingsView: View {
                                 NavigationLink { destination(category).toolbar(.visible, for: .navigationBar) } label: { categoryLabel(category) }
                             }
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(NolaPressableButtonStyle())
                         .accessibilityIdentifier(category == .providers ? "settings.models" : "settings.category." + category.rawValue)
                         if category != categoryGroups[group].last {
-                            Rectangle().fill(DesignTokens.borderColor).frame(height: 0.5).padding(.leading, 48).accessibilityHidden(true)
+                            Rectangle().fill(DesignTokens.borderColor).frame(height: 0.5).padding(.leading, 34).accessibilityHidden(true)
                         }
                     }
-                }.background(NolaSurfaceBackground(fill: DesignTokens.surfaceColor, border: DesignTokens.borderColor, cornerRadius: 14))
+                }
             }
         }
         .sheet(isPresented: $showsAgentManagement) { IOSAgentRoomsView().environmentObject(container) }
@@ -102,18 +106,10 @@ struct SettingsView: View {
         HStack(spacing: 12) {
             Image(categoryIcon(category)).renderingMode(.template).resizable().scaledToFit()
                 .frame(width: 22, height: 22).foregroundStyle(DesignTokens.actionColor)
-            VStack(alignment: .leading, spacing: 5) {
-                Text(LocalizedStringKey(category.titleKey)).font(.body.weight(.medium)).foregroundStyle(.primary)
-                if category != .agents {
-                    Group {
-                        if category == .agent { Text("personal.capabilities.subtitle") }
-                        else { Text(LocalizedStringKey(category.detailKey)) }
-                    }.font(.caption).foregroundStyle(.secondary)
-                }
-            }.frame(maxWidth: .infinity, alignment: .leading)
-            Image("nola-chevron").renderingMode(.template).resizable().scaledToFit()
-                .frame(width: 14, height: 14).foregroundStyle(.secondary).accessibilityHidden(true)
-        }.frame(minHeight: 62).padding(.horizontal, 14).padding(.vertical, 8).contentShape(Rectangle())
+            Text(LocalizedStringKey(category.titleKey)).font(.body).foregroundStyle(.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Image(systemName: "chevron.right").font(.caption.weight(.medium)).foregroundStyle(.tertiary)
+        }.frame(maxWidth: .infinity, minHeight: 56).padding(.vertical, 4).contentShape(Rectangle())
     }
 
     private func categoryIcon(_ category: Category) -> String {
@@ -265,7 +261,6 @@ struct SettingsView: View {
                         title: isExporting
                             ? NSLocalizedString("settings.data.exporting", value: "Preparing export…", comment: "Export in progress")
                             : L10n.settingsExportData,
-                        detail: NSLocalizedString("settings.data.export.detail", value: "Create a named, portable copy of your Nola data", comment: "Export data detail"),
                         trailingIcon: nil,
                         isBusy: isExporting
                     )
@@ -282,8 +277,7 @@ struct SettingsView: View {
                     NolaSettingsLinkLabel(
                         icon: "hand.raised.fill",
                         tint: DesignTokens.actionColor,
-                        title: NSLocalizedString("privacy.disclosure.nav.title", value: "Privacy", comment: "Privacy disclosure title"),
-                        detail: NSLocalizedString("settings.privacy.detail", value: "See what stays on this device and when data leaves it", comment: "Privacy settings detail")
+                        title: NSLocalizedString("privacy.disclosure.nav.title", value: "Privacy", comment: "Privacy disclosure title")
                     )
                 }
                 .buttonStyle(.plain)
@@ -458,17 +452,17 @@ struct SettingsView: View {
         Task { @MainActor in
             defer { isClearingData = false }
             await Task.yield()
-            let completelyCleared = clearAllData()
+            let completelyCleared = await clearAllData()
             refreshLocalDataSize()
             operationIsError = !completelyCleared
             operationMessage = completelyCleared
                 ? NSLocalizedString("settings.data.clear_complete", value: "Local data was cleared.", comment: "Clear data completed")
-                : NSLocalizedString("settings.data.clear_partial", value: "Most local data was cleared, but some conversation records could not be removed.", comment: "Clear data partially completed")
+                : NSLocalizedString("settings.data.clear_partial", value: "Some local data could not be removed. Review the remaining conversations and data sources.", comment: "Clear data partially completed")
         }
     }
 
     @discardableResult
-    private func clearAllData() -> Bool {
+    private func clearAllData() async -> Bool {
         var completelyCleared = true
         container.dataManager.clearAllData()
         if let store = container.conversationStore {
@@ -485,9 +479,14 @@ struct SettingsView: View {
         container.chatManager.currentConversationId = nil
         container.chatManager.reset()
         if let fetcher = container.urlFetcher {
-            let sourceIDs = fetcher.sources.map(\.id)
-            for sourceID in sourceIDs {
-                fetcher.removeSource(id: sourceID)
+            let sources = fetcher.sources
+            for source in sources {
+                do {
+                    try await fetcher.removeSourceConfirmed(id: source.id, expectedRevision: source.canonicalRevision)
+                } catch {
+                    completelyCleared = false
+                    container.logger.log(.warn, "SettingsView", "Failed to clear data source", metadata: ["error": error.localizedDescription])
+                }
             }
         }
         return completelyCleared
@@ -596,8 +595,8 @@ struct NolaSettingsLinkLabel: View {
     let icon: String
     let tint: Color
     let title: String
-    let detail: String
-    var trailingIcon: String? = "chevron.right"
+    var detail: String? = nil
+    var trailingIcon: String? = nil
     var isBusy = false
 
     var body: some View {
@@ -618,10 +617,12 @@ struct NolaSettingsLinkLabel: View {
                     .foregroundStyle(.primary)
                     .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
                     .fixedSize(horizontal: false, vertical: true)
-                Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if let detail, !detail.isEmpty {
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 8) }
             if let trailingIcon, !dynamicTypeSize.isAccessibilitySize {
@@ -630,7 +631,8 @@ struct NolaSettingsLinkLabel: View {
                     .foregroundStyle(.tertiary)
             }
         }
-        .frame(minHeight: 64)
+        .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+        .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .contentShape(Rectangle())
     }

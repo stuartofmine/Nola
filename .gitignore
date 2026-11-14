@@ -14,6 +14,7 @@ apps/cli/target
 /target/
 **/target/
 *.profraw
+*.profdata
 *.md
 !/AGENTS.md
 !/README.md
@@ -31,6 +32,7 @@ apps/cli/target
 !/apps/web/frontend/src/vendor/a2ui-svelte/ADAPTATION.md
 !/apps/README.md
 !/shared/README.md
+!/shared/design-tokens/README.md
 !/tests/apple/README.md
 !/apps/cli/README.md
 !/apps/cli/sandbox-runtime/README.md
@@ -45,11 +47,16 @@ apps/ios/Frameworks/
 .venv
 *.pyc
 *.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3
 build
 *.log
 *.lock
 !/Cargo.lock
-!/apps/cli/Cargo.lock
 .DS_Store
 **/.DS_Store
 *.installed.sha256
@@ -122,3 +129,15 @@ apps/web/app/static/ui-tests/
 # Historical implementations are local-only.
 /legacy/
 /backend/
+
+# Android SDK paths are machine-local.
+**/local.properties
+
+# Reproducible Browser Use runtime dependencies are source, not local locks.
+!/apps/web/browser_use_runtime/requirements.lock
+!/apps/web/browser_use_runtime/README.md
+
+# Local backups and temporary files
+*.bak
+*.tmp
+*.tsbuildinfo

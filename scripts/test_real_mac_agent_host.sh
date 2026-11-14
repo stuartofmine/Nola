@@ -139,7 +139,7 @@ NODE
 if [[ "${NOLA_SKIP_MAC_BUILD:-0}" != "1" ]]; then
     printf '[real-mac-agent] building NolaMac\n'
     if ! xcodebuild build \
-        -project "$ROOT/Nola.xcodeproj" \
+        -project "$ROOT/apple/Nola.xcodeproj" \
         -scheme NolaMac \
         -configuration Test \
         -destination "platform=macOS,arch=$MAC_ARCH" \

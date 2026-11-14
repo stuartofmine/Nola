@@ -948,20 +948,46 @@ public final class URLFetcherService: ObservableObject {
         return committed
     }
 
-    /// Remove a source
+    /// Compatibility entry point. New UI callers await removeSourceConfirmed
+    /// so rejected deletes can be presented without hiding the source.
     @MainActor
     public func removeSource(id: UUID) {
-        guard let source = sources.first(where: { $0.id == id }),
-              canAccess(source, permission: .delete) else {
-            logger.log(.warn, "URLFetcher", "Data source deletion denied", metadata: ["id": id.uuidString])
-            return
+        do {
+            try enqueueSourceDeletion(id: id, expectedRevision: nil) { [weak self] result in
+                Task { @MainActor in
+                    guard let self else { return }
+                    switch result {
+                    case .success: self.publishSourceDeletion(id: id)
+                    case .failure(let error):
+                        self.logger.log(.error, "URLFetcher", "Data source deletion failed", metadata: ["id": id.uuidString, "error": error.localizedDescription])
+                    }
+                }
+            }
+        } catch {
+            logger.log(.error, "URLFetcher", "Data source deletion denied", metadata: ["id": id.uuidString, "error": error.localizedDescription])
         }
+    }
+
+    /// Persistence and revision checks complete before the local projection changes.
+    @MainActor
+    public func removeSourceConfirmed(id: UUID, expectedRevision: Int64? = nil) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            do {
+                try enqueueSourceDeletion(id: id, expectedRevision: expectedRevision) { result in
+                    continuation.resume(with: result)
+                }
+            } catch { continuation.resume(throwing: error) }
+        }
+        publishSourceDeletion(id: id)
+    }
+
+    @MainActor
+    private func publishSourceDeletion(id: UUID) {
         sources.removeAll { $0.id == id }
-        deletePersistedSource(id: id)
         notifySourcesUpdated()
         logger.log(.info, "URLFetcher", NSLocalizedString("autogen.URLFetcherService.c40ac45d", comment: "AUTOGEN"), metadata: ["id": id.uuidString])
     }
-    
+
     /// Update a source
     @MainActor
     public func updateSource(_ source: URLDataSource) {
@@ -1978,29 +2004,26 @@ public final class URLFetcherService: ObservableObject {
     
     // MARK: - Persistence
 
-    private func deletePersistedSource(id: UUID) {
-        persistenceQueue.async { [self, applicationRuntime, logger] in
-            guard let applicationRuntime else {
-                logger.log(.error, "URLFetcher", "Data source deletion unavailable", metadata: ["id": id.uuidString])
-                return
-            }
-            guard let expectedRevision = sourceRevisions[id.uuidString] else {
-                logger.log(.error, "URLFetcher", "Data source deletion has no observed revision", metadata: ["id": id.uuidString])
-                return
-            }
+    @MainActor
+    private func enqueueSourceDeletion(
+        id: UUID, expectedRevision: Int64?,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) throws {
+        guard let source = sources.first(where: { $0.id == id }) else { throw CocoaError(.fileNoSuchFile) }
+        guard canAccess(source, permission: .delete) else { throw CocoaError(.fileWriteNoPermission) }
+        persistenceQueue.async { [self] in
             do {
-                _ = try applicationRuntime.deleteDataSource(
-                    id: id.uuidString,
-                    expectedRevision: expectedRevision,
+                guard let applicationRuntime else { throw IOSApplicationRuntimeError.applicationUnavailable }
+                guard let revision = expectedRevision ?? sourceRevisions[id.uuidString] else {
+                    throw URLFetcherError.sourceRevisionUnavailable
+                }
+                guard try applicationRuntime.deleteDataSource(
+                    id: id.uuidString, expectedRevision: revision,
                     deletedAtMs: Int64(Date().timeIntervalSince1970 * 1_000)
-                )
+                ) else { throw IOSApplicationRuntimeError.invalidResponse }
                 sourceRevisions.removeValue(forKey: id.uuidString)
-            } catch {
-                logger.log(.error, "URLFetcher", "Data source deletion failed", metadata: [
-                    "id": id.uuidString,
-                    "error": error.localizedDescription
-                ])
-            }
+                completion(.success(()))
+            } catch { completion(.failure(error)) }
         }
     }
 

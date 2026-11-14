@@ -137,6 +137,43 @@ nonisolated final class IOSModelConnectionService: Sendable {
             "models": .array(entries),
             "enable_models": .bool(true), "updated_at_ms": now])
     }
+
+    /// Explicitly configure another API route. Never replace the old route or
+    /// reuse a credential at a different endpoint; the new route gets its own
+    /// protocol-scoped credential reference through the ordinary create path.
+    @MainActor
+    func configureProtocol(for model: ModelInfo, wireProtocol: ModelWireProtocol) throws -> ModelInfo {
+        guard !model.isLocal, !model.isWebBackend,
+              wireProtocol == .responses || wireProtocol == .chatCompletions,
+              let stored = try application.modelProfile(id: model.id), stored.enabled, stored.deletedAtMs == nil,
+              let current = ModelSelectionManager.modelInfo(from: stored),
+              current.baseURL == model.baseURL, current.wireProtocol == model.wireProtocol,
+              current.effectiveUpstreamModelId == model.effectiveUpstreamModelId,
+              let endpoint = current.baseURL, let originalWire = current.wireProtocol,
+              originalWire == .responses || originalWire == .chatCompletions,
+              let source = try JSONSerialization.jsonObject(with: Data(stored.sourceJSON.utf8)) as? [String: Any],
+              source["sourceKind"] as? String != "nola_chatgpt" else {
+            throw IOSCloudCredentialError.invalidReference
+        }
+        if originalWire == wireProtocol { return current }
+        let secret: String
+        if let connectionID = source["connectionID"] as? String {
+            secret = try credential(connectionID: connectionID, endpoint: endpoint, wireProtocol: originalWire.rawValue).secret
+        } else {
+            secret = try credentials.resolve(model: current) ?? ""
+        }
+        let connection = try create(name: "", endpoint: endpoint, wireProtocol: wireProtocol.rawValue,
+            secret: secret, modelID: current.effectiveUpstreamModelId)
+        guard let profile = try application.listModelProfiles().first(where: { candidate in
+            guard candidate.enabled, candidate.deletedAtMs == nil,
+                  candidate.modelName == current.effectiveUpstreamModelId,
+                  let source = try? JSONSerialization.jsonObject(with: Data(candidate.sourceJSON.utf8)) as? [String: Any] else { return false }
+            return source["connectionID"] as? String == connection.id && source["wireProtocol"] as? String == wireProtocol.rawValue
+        }), let configured = ModelSelectionManager.modelInfo(from: profile) else {
+            throw IOSApplicationRuntimeError.invalidResponse
+        }
+        return configured
+    }
     func disconnect(_ snapshot: IOSModelConnectionSnapshot) throws -> IOSModelConnectionSnapshot {
         var document = snapshot.document; document.connection.enabled = false
         let input = try JSONDecoder().decode(AgentCoreJSONValue.self, from: JSONEncoder().encode(document.connection))

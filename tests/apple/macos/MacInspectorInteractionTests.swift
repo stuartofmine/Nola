@@ -6,6 +6,21 @@ import AppKit
 
 @MainActor
 final class MacInspectorInteractionTests: XCTestCase {
+    func testInspectorAreasPartitionEveryToolAndRetainOtherAreaDisclosureState() {
+        let state = MacInspectorNavigationState()
+        let areas = MacChatInspector.InspectorArea.allCases
+        XCTAssertEqual(areas.flatMap(\.sections), MacChatInspector.InspectorTab.allCases)
+        XCTAssertEqual(Set(areas.flatMap(\.sections)).count, MacChatInspector.InspectorTab.allCases.count)
+        state.setExpanded(.goal, true)
+        _ = state.select(.artifacts, isVisible: true)
+        XCTAssertEqual(state.selectedTab.area, .artifacts)
+        XCTAssertTrue(state.expandedSections.contains(.goal))
+        _ = state.select(.context, isVisible: true)
+        XCTAssertEqual(state.selectedTab.area, .context)
+        XCTAssertTrue(state.expandedSections.contains(.artifacts))
+        XCTAssertTrue(state.expandedSections.contains(.goal))
+    }
+
     func testOpeningSectionsKeepsOtherSectionsExpanded() {
         let state = MacInspectorNavigationState()
         state.selectedTab = .context
@@ -16,6 +31,13 @@ final class MacInspectorInteractionTests: XCTestCase {
         state.selectedTab = .context
         XCTAssertTrue(state.expandedSections.contains(.context))
         XCTAssertGreaterThan(state.revealRevision, revision)
+    }
+
+    func testOpeningContextDoesNotOpenAnUnrequestedEditor() {
+        let state = MacInspectorNavigationState(initialPane: "context")
+        XCTAssertTrue(state.expandedKnowledge.isEmpty)
+        state.knowledgePane = .points
+        XCTAssertEqual(state.expandedKnowledge, [.points])
     }
 
     func testDirectKnowledgeEntryExpandsTheRequestedEditor() {
@@ -130,6 +152,8 @@ final class MacInspectorInteractionTests: XCTestCase {
     }
 
     func testEveryInspectorSectionRendersAtNarrowAndWideWidthsInBothAppearances() async throws {
+        let accessibility = try MacHostedAccessibilitySession()
+        defer { accessibility.restore() }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("inspector-pages-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let port = try MacApplicationPort(databaseURL: root.appendingPathComponent("test.sqlite"))
@@ -157,15 +181,22 @@ final class MacInspectorInteractionTests: XCTestCase {
                     }.padding(16).frame(width: width, alignment: .topLeading)
                         .fixedSize(horizontal: false, vertical: true)
                         .background(MacDesignColor.inspector).environment(\.colorScheme, scheme)
+                        .environment(\.accessibilityEnabled, true)
                     let hosting = NSHostingView(rootView: view)
                     hosting.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
                     hosting.frame = NSRect(x: 0, y: 0, width: width, height: 1800)
                     let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless], backing: .buffered, defer: false)
                     window.contentView = hosting
+                    window.orderFrontRegardless()
                     defer { window.orderOut(nil); window.contentView = nil }
                     // These are real Application reads against an isolated Store.
                     // A yield alone snapshots loading rather than the page itself.
                     try await Task.sleep(for: .milliseconds(250))
+                    for _ in 0..<30 {
+                        guard hasLoadingIndicator(hosting) else { break }
+                        try await Task.sleep(for: .milliseconds(100))
+                    }
+                    XCTAssertFalse(hasLoadingIndicator(hosting), "\(page) must finish its isolated reads before visual acceptance")
                     hosting.layoutSubtreeIfNeeded()
                     let size = hosting.fittingSize
                     XCTAssertTrue(size.height.isFinite && size.height > 0)
@@ -179,6 +210,18 @@ final class MacInspectorInteractionTests: XCTestCase {
                 }
             }
         }
+    }
+
+    private func hasLoadingIndicator(_ root: AnyObject) -> Bool {
+        var queue = [root], seen = Set<ObjectIdentifier>()
+        while let item = queue.popLast() {
+            guard seen.insert(ObjectIdentifier(item)).inserted else { continue }
+            if (item.accessibilityIdentifier?() ?? nil) == "mac-inspector-progress-loading" { return true }
+            let children = item.accessibilityChildren?() ?? []
+            queue += (children + NSAccessibility.unignoredChildren(from: children)).map { $0 as AnyObject }
+            if let view = item as? NSView { queue += view.subviews }
+        }
+        return false
     }
 
 }

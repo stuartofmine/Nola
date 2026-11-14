@@ -40,7 +40,7 @@ run "Web current Markdown renderer regressions" \
 
 run "macOS real journal reads, terminal, and visible-run lifecycle" \
     xcodebuild test -quiet \
-        -project "$ROOT/Nola.xcodeproj" \
+        -project "$ROOT/apple/Nola.xcodeproj" \
         -scheme NolaMac \
         -destination "$MAC_DESTINATION" \
         -destination-timeout 10 \

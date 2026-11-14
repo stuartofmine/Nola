@@ -248,9 +248,6 @@ struct ModelDownloadView: View {
                             .foregroundColor(.secondary)
                     }
                     Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
                 }
             }
             
@@ -274,9 +271,6 @@ struct ModelDownloadView: View {
                             .foregroundColor(.secondary)
                     }
                     Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
                 }
             }
         }

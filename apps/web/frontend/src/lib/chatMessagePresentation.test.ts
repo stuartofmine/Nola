@@ -29,7 +29,7 @@ test('real process component uses one localized disclosure before the answer', a
             const message = {id: 'process', role: 'assistant', state: 'running', canonical: null,
                 parts: [{source: 'canonical', id: 'r', value: {kind: 'reasoning', summary: 'REASONING-MARKER'}}, tool('one'), text('answer', 'ANSWER-MARKER')]};
             const html = render(Component, {props: {ownerKey:"fixture-owner",message}}).body;
-            assert.ok(html.includes(t(language, 'chatPage.executionProcess')));
+            assert.ok(html.includes(t(language, 'chatPage.processing')));
             assert.ok(html.indexOf('REASONING-MARKER') < html.indexOf('ANSWER-MARKER'));
             assert.equal((html.match(/class="execution-process /g) ?? []).length, 1);
         }
@@ -93,16 +93,15 @@ test('public prose remains outside the process disclosure while activity preserv
             const html = render(Component, {props: {ownerKey:"fixture-owner",message: {id: 'message', role: 'assistant', state: 'running', canonical: null, parts}}}).body;
             assert.ok(html.indexOf('BEFORE_SENTINEL') < html.indexOf('<details class="execution-process'));
             assert.ok(html.indexOf('LIVE_SENTINEL') < html.indexOf('AFTER_SENTINEL'));
-            assert.ok(html.lastIndexOf('</details>') < html.indexOf('AFTER_SENTINEL'));
-            assert.equal((html.match(/<details class="execution-process/g) ?? []).length, 1);
+            assert.ok(html.indexOf('AFTER_SENTINEL') < html.lastIndexOf('<details class="execution-process'));
             assert.ok(html.indexOf('BEFORE_SENTINEL') < html.indexOf('AFTER_SENTINEL'));
             assert.ok(html.includes(t(language, 'chatPage.completedTools')));
-            assert.equal((html.match(/<details/g) ?? []).length, 6); // One process, four tool disclosures, and a completed-tool group.
+            assert.equal((html.match(/<details/g) ?? []).length, 7); // Two process segments, four tool disclosures, and a completed-tool group.
         }
     } finally { await server.close(); }
 });
 
-test('live reasoning stays inside its single open process segment as the public body grows', async () => {
+test('live reasoning stays in compact process history as the public body grows', async () => {
     const server = await createServer({server: {middlewareMode: true, ws: false}, appType: 'custom'});
     try {
         const {default: Component} = await server.ssrLoadModule('/src/components/ChatMessageContent.svelte');
@@ -113,7 +112,7 @@ test('live reasoning stays inside its single open process segment as the public 
             reasoning.value.summary = summary;
             const html: string = render(Component, {props: {ownerKey:"fixture-owner",message}}).body;
             assert.ok(html.indexOf(summary) > html.indexOf('<details class="execution-process'));
-            assert.match(html, /<details class="execution-process[^>]*\bopen\b/);
+            assert.doesNotMatch(html, /<details class="execution-process[^>]*\bopen\b/);
             assert.equal(html.split(summary).length - 1, 1);
         }
         const html: string = render(Component, {props: {ownerKey:"fixture-owner",message: {...message, parts: [...message.parts, text('final', 'PUBLIC-ANSWER')]}}}).body;
@@ -180,12 +179,13 @@ test('A2UI and tool boundaries retain public prose and reveal the following reas
         for (const summary of ['CURRENT','CURRENT DELTA']) {
             current.value.summary = summary;
             const html = render(Component,{props:{ownerKey:"fixture-owner",message:{id:'message',role:'assistant',state:'running',canonical:null,parts:[...parts,privateText]},surface:surfaceSlot}}).body;
-            assert.ok(html.indexOf('EARLIER') < html.indexOf(summary));
-            assert.ok(html.indexOf(summary) < html.indexOf('PUBLIC-PROGRESS'));
+            assert.ok(html.indexOf('EARLIER') < html.indexOf('PUBLIC-PROGRESS'));
             assert.ok(html.indexOf('PUBLIC-PROGRESS') < html.indexOf('SURFACE-ANCHOR'));
+            assert.ok(html.indexOf('SURFACE-ANCHOR') < html.indexOf(summary));
             const processes = [...html.matchAll(/<details class="execution-process[^>]*>/g)].map(match => match[0]);
-            assert.equal(processes.length, 1);
-            assert.match(processes[0], /\bopen\b/);
+            assert.equal(processes.length, 3);
+            assert.doesNotMatch(processes[0], /\bopen\b/);
+            assert.doesNotMatch(processes[2], /\bopen\b/);
             assert.ok(!html.includes('PRIVATE-CANDIDATE'));
         }
     } finally { await server.close(); }
@@ -199,11 +199,10 @@ test('process segments retain hard boundaries including empty and withheld text'
     const parts = [reasoning('r1'), tool('one'), surface, reasoning('r2'), text('empty', ''), reasoning('r3'), hidden, reasoning('r4'), text('answer', 'FINAL')];
     const groups = messageFlowPresentation(parts);
     assert.deepEqual(groups.map(group => [group.id, group.kind]), [
-        ['execution-process', 'process'], ['surface', 'part'], ['empty', 'part'],
-        ['hidden', 'part'], ['answer', 'text'],
+        ['r1', 'process'], ['surface', 'part'], ['r2', 'process'], ['empty', 'part'],
+        ['r3', 'process'], ['hidden', 'part'], ['r4', 'process'], ['answer', 'text'],
     ]);
     assert.deepEqual(groups.filter(group => group.kind === 'process').flatMap(group => group.parts.map(part => part.id)), ['r1', 'one', 'r2', 'r3', 'r4']);
-    assert.deepEqual(groups.find(group => group.kind === 'process')?.rounds.map(round => round.map(part => part.id)), [['r1', 'one'], ['r2'], ['r3'], ['r4']]);
     assert.ok(!groups.some(group => group.kind === 'text' && group.text.includes('PRIVATE')));
 });
 
@@ -224,7 +223,8 @@ test('expert Surface preview renders only its own typed anchor and rejects a for
         const html = render(Component, {props}).body;
         assert.ok(html.includes('EXPERT-CARD-SUMMARY'));
         assert.ok(html.includes(t('en', 'chatPage.surfaceReadOnly')));
-        assert.ok(html.includes('7'), 'the original Surface revision remains available');
+        assert.ok(html.includes(t('en', 'activity.surfaceVersion')), 'immutable content remains readable without exposing revision metadata');
+        assert.ok(!html.includes('View this version') && !html.includes('Version 7'));
         assert.throws(() => render(Component, {props: {...props, messageId: 'parent-message'}}).body, /Invalid UI surface/);
         assert.throws(() => render(Component, {props: {...props, conversationId: 'parent-conversation'}}).body, /Invalid UI surface/);
         const ordinaryPart = {...part, value: {kind: 'text', part_id: 'text', revision: 1, markdown: 'not a Surface'}};
@@ -266,7 +266,9 @@ test('saved canonical metadata stays at its Part anchors without stale terminal 
             assert.ok(html.includes(t(language, 'chatPage.stateSealed')));
             assert.ok(html.includes(t(language, 'chatPage.requestRestarted')));
             const summaryRows = [...html.matchAll(/<summary[^>]*class="[^"]*\bpart-summary\b[^"]*"[^>]*>(.*?)<\/summary>/gs)].map(match => match[1]);
-            assert.equal(summaryRows.length, 4);
+            assert.equal(summaryRows.length, 3);
+            assert.match(html, /class="skill-summary/);
+            assert.doesNotMatch(html, /typed-mode|exact-skill/);
             const summaries = summaryRows.join(' ');
             assert.ok(!summaries.includes('RAW-PROVIDER') && !summaries.includes('RAW-MODEL'));
             assert.ok(!summaries.includes(t(language, 'chatPage.toolFailed')), 'a declared successor does not label the current request as failed');
@@ -297,8 +299,71 @@ test('an exact TaskControl reuses one task summary and a plain saved Task grants
     } finally { await server.close(); }
 });
 
-test('completed empty reasoning does not leave an empty disclosure', () => {
-    const empty: TimelinePart = {source: 'canonical', id: 'r', value: {kind: 'reasoning', part_id: 'r', revision: 1, state: 'running', summary: '  '}};
-    assert.deepEqual(messageFlowPresentation([empty]), []);
-    assert.equal(messageFlowPresentation([empty], true)[0]?.kind, 'process');
+
+test('native Surface content and recovery entry stay distinct in every locale and phase', async () => {
+    const server = await createServer({server: {middlewareMode: true, ws: false}, appType: 'custom'});
+    try {
+        const {default: Component} = await server.ssrLoadModule('/src/components/ChatSurfaceReference.svelte');
+        const {render} = await server.ssrLoadModule('svelte/server');
+        const {locale, supportedLocales, t} = await server.ssrLoadModule('/src/lib/i18n.ts');
+        const identity = {owner: {authority_id: 'host', conversation_id: 'conversation', participant_id: 'assistant',
+            context_id: 'conversation', originating_run_id: 'run', message_id: 'message', part_id: 'part'},
+            surface_id: 'card', generation: 1};
+        const snapshot = {identity, revision: 73519, catalog_id: 'fixture', catalog_digest: 'fixture', phase: 'ready',
+            root_instance_id: 'root', nodes: {root: {instance_id: 'root', component_id: 'root', component: 'Text',
+                props: {text: 'ACTUAL-CARD-CONTENT'}, slots: {}, bindings: {}, actions: {}, validation_errors: []}},
+            summary: 'SUMMARY-FALLBACK'};
+        const props = {reference: {identity, revision: snapshot.revision}, summary: snapshot.summary,
+            oninteraction: async () => ({status: 'rejected', message: 'fixture'}), onrefresh: async () => {}};
+        for (const language of supportedLocales) {
+            locale.set(language);
+            for (const phase of ['ready', 'pending', 'read_only', 'deleted']) {
+                const html: string = render(Component, {props: {...props, snapshot: {...snapshot, phase}}}).body;
+                assert.equal((html.match(/data-ui-surface="card"/g) ?? []).length, 1, `${language}/${phase}`);
+                assert.ok(!html.includes(t(language, 'activity.surfaceVersion')));
+                assert.ok(!html.includes('aria-expanded=') && !html.includes('73519'));
+                if (phase === 'ready' || phase === 'read_only') {
+                    assert.equal(html.split('ACTUAL-CARD-CONTENT').length - 1, 1);
+                    assert.ok(!html.includes('SUMMARY-FALLBACK'));
+                } else {
+                    assert.ok(!html.includes('ACTUAL-CARD-CONTENT'));
+                    assert.ok(html.includes(t(language, phase === 'pending' ? 'a2ui.pending' : 'a2ui.deleted')));
+                }
+            }
+            const missing: string = render(Component, {props}).body;
+            assert.ok(missing.includes('SUMMARY-FALLBACK'));
+            assert.ok(missing.includes(t(language, 'activity.surfaceVersion')));
+            assert.ok(missing.includes('aria-expanded="false"'));
+            assert.ok(!missing.includes('73519'));
+        }
+    } finally { await server.close(); }
+});
+
+
+test('failed tool then successful retry stays compact with a neutral process heading', async () => {
+    const server = await createServer({server: {middlewareMode: true, ws: false}, appType: 'custom'});
+    try {
+        const {default: Component} = await server.ssrLoadModule('/src/components/ChatExecutionProcess.svelte');
+        const {render} = await server.ssrLoadModule('svelte/server');
+        const {locale, supportedLocales, t} = await server.ssrLoadModule('/src/lib/i18n.ts');
+        for (const language of supportedLocales) {
+            locale.set(language);
+            const failed = tool('FIRST-ATTEMPT', 'failed');
+            const retry = tool('CURRENT-RETRY', 'running');
+            for (const live of [true, false]) {
+                if (!live) retry.value.state = 'completed';
+                const html = render(Component, {props: {parts: [failed, retry], live, choices: {},
+                    expandedChoice: null, onexpandedchange() {}, onprocessexpandedchange() {}}}).body;
+                assert.doesNotMatch(html, /<details[^>]*\bopen\b/);
+                assert.ok(!html.includes(t(language, 'chatPage.processAttention')));
+                const summary = html.slice(html.indexOf('<summary'), html.indexOf('</summary>'));
+                assert.ok(!summary.includes('FIRST-ATTEMPT'));
+                assert.ok(summary.includes(live ? 'CURRENT-RETRY' : t(language, 'chatPage.executionProcess')));
+                assert.ok(html.includes('FIRST-ATTEMPT'), 'The failed call remains inspectable in history');
+            }
+            const opened = render(Component, {props: {parts: [failed, retry], live: true, choices: {},
+                expandedChoice: true, onexpandedchange() {}, onprocessexpandedchange() {}}}).body;
+            assert.match(opened, /<details[^>]*\bopen\b/);
+        }
+    } finally { await server.close(); }
 });

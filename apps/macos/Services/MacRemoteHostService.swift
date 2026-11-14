@@ -104,7 +104,7 @@ nonisolated enum MacRemoteContextPayload {
     static func encode(
         _ components: [MacCoreContextComponent]
     ) throws -> [[String: Any]] {
-        try components.map { component in
+        try components.filter { $0.kind != "main_expert_selection" }.map { component in
             let data = try JSONEncoder().encode(component)
             guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 throw MacRemoteHostError.invalidResponse
@@ -112,6 +112,25 @@ nonisolated enum MacRemoteContextPayload {
             return object
         }
     }
+    static func selectionEpoch(_ components: [MacCoreContextComponent]) throws -> String? {
+        guard let component = components.first(where: { $0.kind == "main_expert_selection" }) else { return nil }
+        let value = try JSONDecoder().decode(AppleMainExpertSelectionContext.self, from: JSONEncoder().encode(component.content))
+        try value.validate(); return value.expectedSourceStoreEpoch
+    }
+
+    static func selectedExperts(_ components: [MacCoreContextComponent]) throws -> [[String: Any]]? {
+        let selections = components.filter { $0.kind == "main_expert_selection" }
+        guard selections.count <= 1 else { throw MacRemoteHostError.invalidResponse }
+        guard let component = selections.first else { return nil }
+        guard component.id == "nola.main-expert-selection", component.source == nil else { throw MacRemoteHostError.invalidResponse }
+        let data = try JSONEncoder().encode(component.content)
+        let selection = try JSONDecoder().decode(AppleMainExpertSelectionContext.self, from: data)
+        try selection.validate()
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let entries = object["selected_experts"] as? [[String: Any]] else { throw MacRemoteHostError.invalidResponse }
+        return entries
+    }
+
 }
 
 /// Identity belongs to the connected Host's catalog, never the local model name.
@@ -624,6 +643,12 @@ nonisolated enum MacPermissionMode: String, CaseIterable, Identifiable, Codable,
         rawValue
     }
 
+    /// Recovery keeps the original mode. A more permissive preference for the
+    /// next message does not revoke it; a new restriction still blocks resume.
+    func permitsResuming(frozen: Self) -> Bool {
+        self == frozen || self == .allowAll
+    }
+
     var networkPolicy: String { self == .allowAll ? "allow" : "ask" }
     var autoApprovesReversibleWork: Bool { true }
 
@@ -845,6 +870,18 @@ nonisolated final class MacRemoteHostConfigurationStore: @unchecked Sendable {
         )
     }
 
+    /// A blank edit field may reuse a credential only for its saved destination.
+    /// Never resolve the previous Host's token after an address edit.
+    func tokenForDraft(url: URL, enteredToken: String) -> String? {
+        let entered = enteredToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !entered.isEmpty { return entered }
+        configurationLock.lock()
+        defer { configurationLock.unlock() }
+        guard let stored = storedConfiguration(), URL(string: stored.url) == url,
+              let token = loadToken(), !token.isEmpty else { return nil }
+        return token
+    }
+
     func displayValues() -> (url: String, token: String, hostID: String) {
         configurationLock.lock()
         defer { configurationLock.unlock() }
@@ -1056,6 +1093,7 @@ protocol MacRemoteAgentRunning: MacRemoteHostManaging {
     func runBoundRoomRequest(identity: MacRemoteSubmissionIdentity, digest: String,
         target: MacRemoteSubmissionTarget) async -> AsyncThrowingStream<MacLocalAgentEvent, Error>
     nonisolated func captureSubmissionTarget() throws -> MacRemoteSubmissionTarget
+    func expertRooms(command: MacCanonicalJSONValue, target: MacRemoteSubmissionTarget) async throws -> AppleExpertRoomHostResponse<MacCanonicalJSONValue>
     func permissionConfiguration(identity: MacRemoteSubmissionIdentity, target: MacRemoteSubmissionTarget,
                                  expectedRevision: Int64?, profile: MacPermissionMode?, minimumPolicyRevision: Int64?) async throws -> MacRemotePermissionConfiguration
     func refreshSubmission(conversationID: String, target: MacRemoteSubmissionTarget, cancel: Bool, expectedIdentity: MacRemoteSubmissionIdentity?) async throws -> MacRemoteSubmissionIntent?
@@ -1104,6 +1142,8 @@ protocol MacRemoteAgentRunning: MacRemoteHostManaging {
 }
 
 extension MacRemoteAgentRunning {
+    func expertRooms(command: MacCanonicalJSONValue, target: MacRemoteSubmissionTarget) async throws -> AppleExpertRoomHostResponse<MacCanonicalJSONValue> { throw MacRemoteHostError.invalidResponse }
+
     func saveConversationSelection(conversationID: String, title: String, profile: MacRemoteModelProfile?,
         allowCreate: Bool, target: MacRemoteSubmissionTarget) async throws { throw MacRemoteHostError.invalidResponse }
 
@@ -1521,7 +1561,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
     }
 
     private func authenticatedRead<Result: Decodable & Sendable>(_ payload: [String: Any], path: String,
-        configuration: MacRemoteHostConfiguration, responseByteLimit: Int = 512 * 1024, requestByteLimit: Int = 64 * 1024) async throws -> Result {
+        configuration: MacRemoteHostConfiguration, responseByteLimit: Int = 512 * 1024, requestByteLimit: Int = 64 * 1024, expertRoomEnvelope: Bool = false) async throws -> Result {
         guard try JSONSerialization.data(withJSONObject: payload).count <= requestByteLimit else { throw MacRemoteHostError.invalidResponse }
         guard let expectedHostID = configuration.expectedHostID else { throw MacRemoteHostError.invalidResponse }
         var request = URLRequest(url: mobileURL(baseURL: configuration.baseURL, path: path))
@@ -1544,10 +1584,26 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         guard (200...299).contains(http.statusCode) else {
             throw MacRemoteHostError.http(http.statusCode, object["error"] as? String ?? "Journal request failed")
         }
-        guard object["source_host_id"] as? String == expectedHostID, let result = object["result"] else {
-            throw MacRemoteHostError.invalidResponse
+        let result: Any
+        if expertRoomEnvelope {
+            guard object["host_id"] as? String == expectedHostID else { throw MacRemoteHostError.invalidResponse }
+            result = object
+        } else {
+            guard object["source_host_id"] as? String == expectedHostID, let value = object["result"] else { throw MacRemoteHostError.invalidResponse }
+            result = value
         }
         return try JSONDecoder().decode(Result.self, from: JSONSerialization.data(withJSONObject: result, options: [.fragmentsAllowed]))
+    }
+
+    func expertRooms(command: MacCanonicalJSONValue, target: MacRemoteSubmissionTarget) async throws -> AppleExpertRoomHostResponse<MacCanonicalJSONValue> {
+        guard let host = target.configuration.expectedHostID else { throw MacRemoteHostError.invalidResponse }
+        var body: [String: Any] = ["expected_host_id": host,
+            "command": try JSONSerialization.jsonObject(with: JSONEncoder().encode(command))]
+        body["expected_source_store_epoch"] = target.expectedSourceStoreEpoch
+        let value: AppleExpertRoomHostResponse<MacCanonicalJSONValue> = try await authenticatedRead(body,
+            path: "agent-rooms", configuration: target.configuration, expertRoomEnvelope: true)
+        try value.validate(hostID: host, expectedEpoch: target.expectedSourceStoreEpoch)
+        return value
     }
 
     func queuedUIInput(conversationID: String, target: MacRemoteSubmissionTarget) async throws -> MacUIQueueState {
@@ -2074,6 +2130,8 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
             "expected_configuration_revision": frontier.configuration_revision as Any? ?? NSNull(),
             "expected_parent_message_id": frontier.parent_message_id as Any? ?? NSNull(),
         ]
+        payload["selected_experts"] = try MacRemoteContextPayload.selectedExperts(snapshot.contextComponents)
+        if let epoch = try MacRemoteContextPayload.selectionEpoch(snapshot.contextComponents) { payload["expected_source_store_epoch"] = epoch }
         try MacRemoteModelPayload.apply(to: &payload, intent: modelIntent, settings: settings,
             expectedHostID: configuration.expectedHostID, executionBackend: "nola", modelID: modelID,
             modelProviderID: modelProviderID)
@@ -2165,6 +2223,8 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
             "expected_configuration_revision": frontier.configuration_revision as Any? ?? NSNull(),
             "expected_parent_message_id": frontier.parent_message_id as Any? ?? NSNull(),
         ]
+        payload["selected_experts"] = try MacRemoteContextPayload.selectedExperts(contextComponents)
+        if let epoch = try MacRemoteContextPayload.selectionEpoch(contextComponents) { payload["expected_source_store_epoch"] = epoch }
         if let command = submission.queuedUserCommandID {
             guard !command.isEmpty, command.utf8.count <= 128,
                   command == command.trimmingCharacters(in: .whitespacesAndNewlines),

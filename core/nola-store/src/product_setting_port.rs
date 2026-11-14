@@ -41,6 +41,9 @@ impl ProductSettingRepositoryProvider for NolaStore {
 
 impl ProductSettingRepository for SqliteProductSettingRepository<'_> {
     type Error = StoreError;
+    fn list_public_room_submissions(&self, prefix:&str, limit:usize, offset:usize) -> Result<Vec<StoredProductSetting>, Self::Error> {
+        self.store.list_public_room_submissions(prefix,limit,offset)
+    }
     fn list_room_submissions(&self, prefix: &str, limit: usize, offset: usize)
         -> Result<Vec<StoredProductSetting>, Self::Error> {
         self.store.list_room_submissions(prefix, limit, offset)

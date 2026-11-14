@@ -42,5 +42,5 @@ else if(key==='cancel-push'){closeDialog();toast('保留演示提交，未推送
 else if(key==='confirm-push'){if(commitState==='已提交（演示）')commitState='已推送（演示）';closeDialog();render();toast('模拟流程完成；未改变真实仓库')}
 else if(key==='reset-review'){commitState='未提交';render()}
 return true}
-window.manageModule={capabilitiesContent,view:p=>p==='capabilities'?capabilitiesView():p==='activity'?activityView():p==='review'?reviewView():null,handle,bind(){let input=document.querySelector('#mg-search');if(input)input.oninput=e=>{activityQuery=e.target.value;document.querySelector('#mg-results').innerHTML=activityRows();bind(document.querySelector('#mg-results'))}},snapshot:()=>{syncActivities();return {capabilities,activities,commitState}}};
+window.manageModule={capabilitiesContent,view:p=>p==='capabilities'?capabilitiesView():p==='activity'?activityView():p==='review'?reviewView():null,handle,bind(){let input=document.querySelector('#mg-search');if(input)input.oninput=e=>{activityQuery=e.target.value;document.querySelector('#mg-results').innerHTML=activityRows();bind(document.querySelector('#mg-results'))}},snapshot:()=>{syncActivities();return {capabilities,activities,commitState,capTab}}};
 })();

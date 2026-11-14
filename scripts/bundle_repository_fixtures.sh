@@ -15,6 +15,8 @@ ditto "$ROOT/apps/macos/UI" "$FIXTURES/UI"
 ditto "$ROOT/apps/macos/Services" "$FIXTURES/Services"
 mkdir -p "$OUTPUT_ROOT/shared/apple/Presentation"
 install -m 644 "$ROOT/shared/apple/Presentation/AppleSoftwareUpdateSection.swift" "$OUTPUT_ROOT/shared/apple/Presentation/AppleSoftwareUpdateSection.swift"
+mkdir -p "$OUTPUT_ROOT/shared/apple/GenerativeUI"
+install -m 644 "$ROOT/shared/apple/GenerativeUI/AppleUISurfaceView.swift" "$OUTPUT_ROOT/shared/apple/GenerativeUI/AppleUISurfaceView.swift"
 for catalog in AutomationCenter.xcstrings Localizable.xcstrings ModelCenter.xcstrings; do
   install -m 644 "$ROOT/apps/macos/$catalog" "$FIXTURES/$catalog"
 done
@@ -35,6 +37,7 @@ escape_dependency_path() {
     "$ROOT/apps/macos/Localizable.xcstrings" \
     "$ROOT/apps/macos/ModelCenter.xcstrings" \
     "$ROOT/shared/apple/Presentation/AppleSoftwareUpdateSection.swift" \
+    "$ROOT/shared/apple/GenerativeUI/AppleUISurfaceView.swift" \
     "$ROOT/scripts/bundle_repository_fixtures.sh"; do
     printf ' %s' "$(escape_dependency_path "$path")"
   done

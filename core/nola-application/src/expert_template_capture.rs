@@ -540,6 +540,25 @@ pub fn resolve_selection(
         .builtins
         .iter()
         .find(|t| uuid::Uuid::parse_str(&t.template_id).ok() == Some(selected));
+    if let Some(role) = crate::expert_roles::find(&selected.to_string()) {
+        let content = role.instructions();
+        if custom.is_some() || builtin.is_some_and(|definition| definition.content != content) {
+            return Err("expert_template_definition_source_ambiguous".into());
+        }
+        return Ok(ResolvedExpertTemplate {
+            template_id: Some(role.id.clone()),
+            definition: Some(ExpertPromptDefinition {
+                component_id: format!("prompt_template:{}", role.id),
+                content_sha256: format!("{:x}", Sha256::digest(content.as_bytes())),
+                content,
+                definition_revision: None,
+                platform: serde_json::Value::Null,
+            }),
+            origin: ExpertTemplateCaptureOrigin::Builtin {
+                provider_id: "nola.expert-roles.v1".into(), template_id: role.id.clone(),
+            },
+        });
+    }
     match (custom, builtin) {
         (Some(_), Some(_)) => Err("expert_template_definition_source_ambiguous".into()),
         (None, None) => Err("expert_template_definition_missing".into()),

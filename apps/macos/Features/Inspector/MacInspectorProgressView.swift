@@ -145,14 +145,11 @@ struct MacInspectorProgressView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Label(model.inspectorSelectedConversationIsRunning
-                  ? String(localized: "inspector.state.running", table: "ConversationInspector") : String(localized: "inspector.state.idle", table: "ConversationInspector"),
-                  systemImage: "circle.dotted")
             if model.selectedConversationID == nil {
                 Text(String(localized: "inspector.conversation_needed", table: "ConversationInspector"))
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             } else if refresh.owner != model.selectedConversationID || (!refresh.loaded && !refresh.failed) {
-                ProgressView()
+                ProgressView().accessibilityIdentifier("mac-inspector-progress-loading")
             } else {
               if refresh.failed {
                 Text("inspector.failed", tableName: "ConversationInspector")
@@ -163,9 +160,14 @@ struct MacInspectorProgressView: View {
                   if mode == .goal {
                       goalControls.disabled(!refresh.controlsConfirmed || refresh.owner != model.selectedConversationID)
                   }
-                  MacInspectorProgressContent(snapshot: mode == .goal ? snapshot : nil,
-                      todos: mode == .progress ? todos : [], tasks: mode == .goal ? [] : tasks)
-                      .equatable()
+                  if mode == .execution && tasks.isEmpty {
+                      Text("inspector.state.idle", tableName: "ConversationInspector")
+                          .font(.callout).foregroundStyle(.secondary)
+                  } else if mode != .goal || snapshot?.active != nil {
+                      MacInspectorProgressContent(snapshot: mode == .goal ? snapshot : nil,
+                          todos: mode == .progress ? todos : [], tasks: mode == .execution ? tasks : [])
+                          .equatable()
+                  }
               }
             }
         }

@@ -20,7 +20,7 @@
 <section class="overview" aria-label={t($locale, 'chatOverview.title')}>
     {#if !compact}<h2>{t($locale, 'chatOverview.title')}</h2>
     <div class="status"><span class:running={busy} class="dot"></span><span>{t($locale, busy ? 'chatOverview.running' : 'chatOverview.ready')}</span><span class="host">{t($locale, 'chatOverview.localHost')}</span></div>{/if}
-    <div class="model">{conversation.executionBackend === 'nola' ? modelLabel : conversation.executionBackend}</div>
+    {#if !compact}<div class="model">{conversation.executionBackend === 'nola' ? modelLabel : conversation.executionBackend}</div>{/if}
     <div class="context">
         <div class="context-head"><strong>{t($locale, 'chatOverview.context')}</strong><span>{overview
             ? `${BigInt(overview.usedTokens).toLocaleString($locale)} / ${BigInt(overview.contextWindowTokens).toLocaleString($locale)}` : '—'}</span></div>

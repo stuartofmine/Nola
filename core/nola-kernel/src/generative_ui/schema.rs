@@ -206,8 +206,20 @@ pub fn tool_input_schema() -> Result<Value, UiError> {
     let mut input = nola_domain::generative_ui_tool::UiToolInput::input_schema();
     input["$defs"] = serde_json::json!({"message":message,"common":common,"catalog":catalog});
     input["properties"]["messages"]["items"] = serde_json::json!({"$ref":"#/$defs/message"});
-    input["examples"] = serde_json::json!([minimal_form_example()]);
+    input["examples"] = serde_json::json!([minimal_form_example(), minimal_card_example()]);
     Ok(input)
+}
+
+/// Read-only layouts require no artificial form or submit action.
+pub fn minimal_card_example() -> Value {
+    serde_json::json!({"expected_revision":0,"messages":[
+        {"version":"v0.9.1","createSurface":{"surfaceId":"summary","catalogId":NOLA_CATALOG_ID}},
+        {"version":"v0.9.1","updateComponents":{"surfaceId":"summary","components":[
+            {"id":"root","component":"Column","children":["summary-card"]},
+            {"id":"summary-card","component":"Card","child":"summary-text"},
+            {"id":"summary-text","component":"Text","text":"A concise, source-supported summary."}
+        ]}}
+    ]})
 }
 
 pub fn minimal_form_example() -> Value {
@@ -226,6 +238,24 @@ pub fn minimal_form_example() -> Value {
 #[cfg(test)]
 mod model_contract_tests {
     use super::*;
+    #[test]
+    fn advertised_read_only_card_validates_and_projects_without_a_submit_action() {
+        let schema = tool_input_schema().unwrap();
+        let validator = jsonschema::draft202012::options().build(&schema).unwrap();
+        let example = minimal_card_example();
+        assert!(validator.is_valid(&example));
+        let input: nola_domain::generative_ui_tool::UiToolInput = serde_json::from_value(example).unwrap();
+        let identity = nola_domain::generative_ui::UiSurfaceIdentity {
+            owner: nola_domain::generative_ui::UiSurfaceOwner { authority_id:"store".into(), conversation_id:"c".into(),
+                participant_id:"agent".into(), context_id:"ctx".into(), originating_run_id:"run".into(),message_id:"message".into(),part_id:"part".into() },
+            surface_id:"summary".into(), generation:1 };
+        let state = super::super::state::transition_messages(None,&identity,&input).unwrap();
+        let projected = super::super::projection::project_surface(&state).unwrap();
+        assert_eq!(projected.snapshot.phase,nola_domain::generative_ui::UiSurfacePhase::Ready);
+        assert!(projected.snapshot.nodes.values().any(|node|node.component=="Card"));
+        assert!(!projected.snapshot.nodes.values().any(|node|node.component=="Button"));
+    }
+
     #[test]
     fn advertised_form_validates_and_projects_and_rejects_observed_wrong_shapes() {
         let schema = tool_input_schema().unwrap();

@@ -4,7 +4,7 @@ import Foundation
 extension AppleExpertConfigurationDraft {
     nonisolated init(defaults: MacCanonicalJSONValue) throws {
         guard case .object(let fields) = defaults else { throw MacApplicationPortError.invalidResponse }
-        let model: String?, template: String?
+        let model: String?, template: String?, effort: String?
         switch fields["modelSelectionID"] {
         case .string(let id): model = id
         case .none, .null: model = nil
@@ -15,7 +15,12 @@ extension AppleExpertConfigurationDraft {
         case .none, .null: template = nil
         default: throw MacApplicationPortError.invalidResponse
         }
-        self.init(modelID: model, templateID: template)
+        switch fields["expertReasoningEffort"] {
+        case .string(let value): effort = value
+        case .none, .null: effort = nil
+        default: throw MacApplicationPortError.invalidResponse
+        }
+        self.init(modelID: model, templateID: template, reasoningEffort: effort)
     }
 
     nonisolated func applying(to defaults: MacCanonicalJSONValue) throws -> MacCanonicalJSONValue {

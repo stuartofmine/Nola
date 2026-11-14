@@ -1,5 +1,7 @@
 /** Actual CLI Web conversation routes. Request bodies use camelCase. */
 export interface ChatConversation {
+    expertContextOwner?: {roomId:string;participantId:string;agentId:string;agentRevision:number|null;isCurrent:boolean};
+    expertParentConversationId?: string;
     isPinned: boolean;
     conversationId: string; title: string; createdAt: string; updatedAt: string;
     selectedModelSource: string; selectedModelId: string; executionBackend: string;
@@ -15,7 +17,15 @@ export function parseChatConversation(value: unknown): ChatConversation {
     if (typeof object.isPinned !== 'boolean') throw new Error('chatConversations.invalidResponse');
     if (![object.revision, object.configurationRevision].every(value => Number.isSafeInteger(value) && Number(value) >= 1)) throw new Error('chatConversations.invalidResponse');
     if (['conversationId', 'title', 'createdAt', 'updatedAt', 'selectedModelSource', 'selectedModelId', 'executionBackend'].some(key => typeof object[key] !== 'string') || !(object.conversationId as string).trim()) throw new Error('chatConversations.invalidResponse');
-    return { isPinned: object.isPinned, conversationId: object.conversationId as string, title: object.title as string, createdAt: object.createdAt as string, updatedAt: object.updatedAt as string, selectedModelSource: object.selectedModelSource as string, selectedModelId: object.selectedModelId as string, executionBackend: object.executionBackend as string,
+    let expertContextOwner: ChatConversation['expertContextOwner'];
+    if (object.expertContextOwner !== undefined) {
+        const owner = object.expertContextOwner as Record<string,unknown> | null;
+        if (!owner || ['roomId','participantId','agentId'].some(key=>typeof owner[key] !== 'string' || !(owner[key] as string).trim()) ||
+            typeof owner.isCurrent !== 'boolean' || !(owner.agentRevision === null || Number.isSafeInteger(owner.agentRevision) && Number(owner.agentRevision)>0)) throw new Error('chatConversations.invalidResponse');
+        expertContextOwner = owner as unknown as NonNullable<ChatConversation['expertContextOwner']>;
+    }
+    if (object.expertParentConversationId !== undefined && (typeof object.expertParentConversationId !== 'string' || !object.expertParentConversationId.trim() || object.expertParentConversationId === object.conversationId || !expertContextOwner)) throw new Error('chatConversations.invalidResponse');
+    return {...(expertContextOwner ? {expertContextOwner} : {}),...(typeof object.expertParentConversationId === 'string' ? {expertParentConversationId:object.expertParentConversationId} : {}), isPinned: object.isPinned, conversationId: object.conversationId as string, title: object.title as string, createdAt: object.createdAt as string, updatedAt: object.updatedAt as string, selectedModelSource: object.selectedModelSource as string, selectedModelId: object.selectedModelId as string, executionBackend: object.executionBackend as string,
         revision: object.revision as number, configurationRevision: object.configurationRevision as number };
 }
 export function conversationPinRequest(configuration: unknown, expectedPinned: boolean): { expectedRevision: number; isPinned: boolean } {

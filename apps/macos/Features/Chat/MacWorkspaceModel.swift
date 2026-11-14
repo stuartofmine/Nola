@@ -89,6 +89,59 @@ final class MacWorkspaceModel {
             expectedSourceStoreEpoch: epoch)
     }
 
+    @ObservationIgnored private var remoteExpertTargets: [String: MacRemoteSubmissionTarget] = [:]
+    @ObservationIgnored private var remoteExpertSourceIDs: [String: UUID] = [:]
+    func mainExpertSourceIdentity(_ owner: String) -> String? { remoteExpertSourceIDs[owner]?.uuidString }
+
+    func mainExpertSelectionSourceEpoch(_ owner: String) -> String? { remoteExpertTargets[owner]?.expectedSourceStoreEpoch }
+
+    func expertRoomCommand(owner requestedOwner: String?, command: MacCanonicalJSONValue) async throws -> MacCanonicalJSONValue {
+        guard let owner = requestedOwner ?? selectedConversationID, selectedConversationID == owner,
+              let repository = canonicalRepository else { throw CancellationError() }
+        guard executionHost == .remote else {
+            return try modelApplication.executeAgentRoomEnvelope(.object(["type": .string("agent_room"), "command": command]))
+        }
+        let current = try remoteHost.captureSubmissionTarget()
+        let source: AppleConversationSourceOwner = selectedConversation?.isPersisted == false ? .local : try repository.conversationSourceOwner(conversationID: owner)
+        let epoch: String?
+        switch source {
+        case .remote(let host, let value):
+            guard current.configuration.expectedHostID == host else { throw MacRemoteHostError.invalidResponse }
+            epoch = value
+        case .local:
+            if selectedConversation?.isPersisted == true {
+                let projection = try await repository.displayProjectionAsync(conversationID: owner)
+                guard projection.messages.isEmpty else { throw MacApplicationPortError.rejected("This conversation belongs to local history. Open a new Host conversation to choose its experts.") }
+            }
+            epoch = nil
+        case .unavailable: throw MacRemoteHostError.invalidResponse
+        }
+        let fields: [String: MacCanonicalJSONValue]
+        guard case .object(let values) = command else { throw MacRemoteHostError.invalidResponse }; fields = values
+        let isDirectory = fields["type"] == .string("directory")
+        var target = !isDirectory ? (remoteExpertTargets[owner] ?? .init(configuration: current.configuration, clientID: current.clientID, expectedSourceStoreEpoch: epoch))
+            : .init(configuration: current.configuration, clientID: current.clientID, expectedSourceStoreEpoch: epoch)
+        guard Self.sameExpertTarget(target, current) else { throw MacRemoteHostError.invalidResponse }
+        if isDirectory {
+            let read = try await remoteHost.expertRooms(command: .object(["type": .string("role_templates")]), target: target)
+            let catalog = try JSONDecoder().decode(AppleExpertRoleTemplateCatalog.self, from: JSONEncoder().encode(read.result))
+            guard catalog.features.mainAgentDelegation else { throw MacApplicationPortError.rejected(String(localized: "Update the connected Host to use experts from the main conversation.")) }
+            target = .init(configuration: target.configuration, clientID: target.clientID, expectedSourceStoreEpoch: read.sourceStoreEpoch)
+        }
+        let response = try await remoteHost.expertRooms(command: command, target: target)
+        let latest = try remoteHost.captureSubmissionTarget()
+        guard selectedConversationID == owner, executionHost == .remote, Self.sameExpertTarget(target, latest) else { throw CancellationError() }
+        if let previous = remoteExpertTargets[owner], Self.sameExpertTarget(previous, target), previous.expectedSourceStoreEpoch == response.sourceStoreEpoch { }
+        else { remoteExpertSourceIDs[owner] = UUID() }
+        remoteExpertTargets[owner] = .init(configuration: target.configuration, clientID: target.clientID, expectedSourceStoreEpoch: response.sourceStoreEpoch)
+        return response.result
+    }
+
+    private static func sameExpertTarget(_ a: MacRemoteSubmissionTarget, _ b: MacRemoteSubmissionTarget) -> Bool {
+        a.configuration.baseURL == b.configuration.baseURL && a.configuration.token == b.configuration.token
+            && a.configuration.expectedHostID == b.configuration.expectedHostID && a.clientID == b.clientID
+    }
+
     func isLocalConversationSource(_ conversationID: String) throws -> Bool {
         guard let canonicalRepository else { throw MacApplicationPortError.invalidResponse }
         switch try canonicalRepository.conversationSourceOwner(conversationID: conversationID) {
@@ -3482,9 +3535,6 @@ final class MacWorkspaceModel {
 
     /// Persists a normal conversation profile without starting any assistant execution.
     func prepareExpertConversation() throws -> String {
-        guard attachments.isEmpty else {
-            throw MacApplicationPortError.rejected("Remove attachments before sending to experts. Your draft is retained.")
-        }
         guard let repository = canonicalRepository, var conversation = selectedConversation else {
             throw MacApplicationPortError.rejected("Open a conversation before sending to experts")
         }
@@ -3511,47 +3561,59 @@ final class MacWorkspaceModel {
         }
         guard projection.activeRun == nil, candidates.count == 1, let original = candidates.first,
               original.role == .user, original.state == .completed, original.parts.count == 1,
-              case .text(let text) = original.parts[0], text.isFinal,
               let conversation = try await repository.loadCanonicalConversationAsync(conversationID: conversationID) else {
             throw MacEditedResendError.sourceUnavailable
         }
+        let text: String
+        switch original.parts[0] {
+        case .text(let part) where part.isFinal: text = part.markdown
+        case .historical(let part):
+            let p = part.projection
+            guard p.canonicalKind == "text", p.schema == nil, let preview = p.canonicalText,
+                  preview.totalUTF8Bytes == UInt64(preview.text.utf8.count), case .object(let owner) = p.owner,
+                  owner["conversation_id"] == .string(conversationID), owner["message_id"] == .string(original.messageID),
+                  owner["part_id"] == .string(part.partID) else { throw MacEditedResendError.sourceUnavailable }
+            text = preview.text
+        default: throw MacEditedResendError.sourceUnavailable
+        }
         return AppleMessageEditDraft(sourceConversationID: conversationID, sourceMessageID: original.messageID,
-            expectedSourceRevision: conversation.revision, expectedMessageRevision: original.revision, text: text.markdown)
+            expectedSourceRevision: conversation.revision, expectedMessageRevision: original.revision, text: text)
     }
 
     func performEditedResend(_ draft: AppleMessageEditDraft, expertWorkspace: MacAgentRoomWorkspace? = nil) async throws {
-        guard let repository = canonicalRepository,
-              let input = draft.preparation(title: String(localized: "Resend branch")) else {
+        guard let repository = canonicalRepository, let input = draft.inPlacePreparation() else {
             throw MacEditedResendError.sourceUnavailable
         }
         let port = modelApplication
-        guard repository.databaseURL.standardizedFileURL == port.databaseURL.standardizedFileURL else { throw MacEditedResendError.sourceUnavailable }
-        if try port.expertMessageSource(conversationID: input.source_conversation_id, messageID: input.source_message_id) != nil {
-            guard let expertWorkspace else { throw MacEditedResendError.sourceUnavailable }
-            let plan: ApplePreparedExpertResend<MacCanonicalJSONValue>
-            if let prior = try port.loadPreparedExpertResend(input.target_conversation_id) {
-                guard prior.input.operation_id == input.operation_id, prior.input.source_conversation_id == input.source_conversation_id,
-                      prior.input.source_message_id == input.source_message_id, prior.input.expected_source_revision == input.expected_source_revision,
-                      prior.input.expected_source_message_revision == input.expected_source_message_revision,
-                      prior.input.edited_text == input.edited_text else { throw MacEditedResendError.intentChanged }
-                plan = prior
-            } else { plan = try port.prepareExpertResend(input) }
-            try await expertWorkspace.deliverPreparedExpertResend(plan)
-            reloadPersistentData(); selectedConversationID = plan.input.target_conversation_id
+        if try port.activeRunIdentity(conversationID: input.conversation_id)?.runID == input.operation_id
+            || port.canonicalRunTerminal(conversationID: input.conversation_id, runID: input.operation_id) != nil {
+            reloadPersistentData()
             return
         }
-        let prepared: ApplePreparedEditedResend<MacCanonicalJSONValue>
-        if let previous = try port.loadPreparedEditedResend(input.target_conversation_id) {
-            guard previous.input.operation_id == input.operation_id,
-                  previous.input.source_conversation_id == input.source_conversation_id,
-                  previous.input.source_message_id == input.source_message_id,
-                  previous.input.target_conversation_id == input.target_conversation_id,
-                  previous.input.expected_source_revision == input.expected_source_revision,
-                  previous.input.expected_source_message_revision == input.expected_source_message_revision,
-                  previous.input.edited_text == input.edited_text else { throw MacEditedResendError.intentChanged }
-            prepared = previous
-        } else { prepared = try port.prepareEditedResend(input) }
-        try await admitPreparedEditedResend(prepared)
+        guard !isRunning, localRunRecovery == nil, remoteRunRecovery == nil else {
+            throw MacEditedResendError.sourceUnavailable
+        }
+        guard repository.databaseURL.standardizedFileURL == port.databaseURL.standardizedFileURL,
+              selectedConversationID == input.conversation_id,
+              expertWorkspace?.hasUnsettledExpertWork(conversationID: input.conversation_id) != true else {
+            throw MacEditedResendError.sourceUnavailable
+        }
+        if try port.expertMessageSource(conversationID: input.conversation_id, messageID: input.message_id) != nil,
+           expertWorkspace == nil { throw MacEditedResendError.sourceUnavailable }
+        let prepared = try port.prepareInPlaceResend(input)
+        reloadPersistentData()
+        // Normal admission creates the replacement message using its stable ID.
+        // Passing text explicitly preserves the unsent composer and attachments.
+        send(preassignedSubmissionID: prepared.run_id,
+            canonicalUserMessageID: prepared.user_message_id, preassignedText: input.edited_text,
+            selectedExperts: prepared.experts.map { .init(agentID: $0.agent_id, agentRevision: $0.agent_revision, participantID: $0.participant_id, contextConversationID: $0.context_conversation_id) })
+        guard let ticket = runCoordinator.submissionTicket,
+              ticket.identity.submissionID == prepared.run_id else { throw MacEditedResendError.admissionUnconfirmed }
+        let deadline = Date().addingTimeInterval(30)
+        while [.preparing, .dispatching].contains(ticket.phase) && isRunning && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        guard ticket.phase == .accepted else { throw MacEditedResendError.admissionUnconfirmed }
     }
 
     func prepareEditedRoomExecution(_ prepared: ApplePreparedEditedResend<MacCanonicalJSONValue>) async throws -> MacAgentRoomService.ExecutionIntent.Envelope {
@@ -3612,8 +3674,8 @@ final class MacWorkspaceModel {
         editedResendModels[target.id] = nil
     }
 
-    func send() {
-        send(preassignedSubmissionID: nil)
+    func send(selectedExperts: [AppleMainExpertSelectionEntry] = [], expertSelectionSourceEpoch: String? = nil) {
+        send(preassignedSubmissionID: nil, selectedExperts: selectedExperts, expertSelectionSourceEpoch: expertSelectionSourceEpoch)
     }
 
     /// Called only on a dedicated Room owner model, never the main workspace.
@@ -3830,7 +3892,7 @@ final class MacWorkspaceModel {
         }
     }
 
-    private func send(preassignedSubmissionID: String?, queuedUserCommandID: String? = nil, canonicalUserMessageID: String? = nil, preassignedText: String? = nil) {
+    private func send(preassignedSubmissionID: String?, queuedUserCommandID: String? = nil, canonicalUserMessageID: String? = nil, preassignedText: String? = nil, selectedExperts: [AppleMainExpertSelectionEntry] = [], expertSelectionSourceEpoch: String? = nil) {
         guard !selectedModelConfigurationPending else { return }
         parkUnselectedLocalRecovery()
         parkUnselectedRemoteRecovery()
@@ -4211,6 +4273,14 @@ final class MacWorkspaceModel {
             style: runResponseStyle, customSystemPrompt: runModelParameters.customSystemPrompt).map {
                 .init(kind: "prompt_template", id: $0.component_id, content: $0.content)
             }
+        if !selectedExperts.isEmpty {
+            do {
+                let selected = AppleMainExpertSelectionContext(selectedExperts: selectedExperts, expectedSourceStoreEpoch: expertSelectionSourceEpoch)
+                try selected.validate()
+                capturedComponents.append(.init(kind: "main_expert_selection", id: "nola.main-expert-selection",
+                    content: try JSONDecoder().decode(MacCoreJSONValue.self, from: JSONEncoder().encode(selected)), source: nil))
+            } catch { localSubmissionFailure = .init(conversationID: selectedConversationID, submissionID: submissionID, code: "invalid_expert_selection", message: error.localizedDescription); return }
+        }
         if let managedTemplate { capturedComponents.append(managedTemplate) }
             let userPreferences = runMemoryEnabled
                 ? (canonicalRepository?.userPreferences ?? "")

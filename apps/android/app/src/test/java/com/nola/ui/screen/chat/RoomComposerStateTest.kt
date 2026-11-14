@@ -27,10 +27,6 @@ class RoomComposerStateTest {
     @Test fun onlyExplicitTrailingMentionOpensCandidates() {
         assertEquals("研", roomMentionQuery("请 @研"))
         assertEquals("", roomMentionQuery("@"))
-        assertEquals("", roomMentionQuery("＠"))
-        assertEquals("研", roomMentionQuery("请@研"))
-        assertEquals("研", roomMentionQuery("请＠研"))
-        assertEquals("请", removeRoomMentionQuery("请＠研"))
         listOf("user@example.org", "search current", "当前搜索", "@Agent continue").forEach { assertNull(roomMentionQuery(it)) }
         assertEquals("请 ", removeRoomMentionQuery("请 @研"))
     }

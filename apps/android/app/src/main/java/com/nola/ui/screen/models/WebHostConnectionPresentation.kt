@@ -16,6 +16,16 @@ internal fun sameWebHostOrigin(first: String, second: String): Boolean = runCatc
     a.host != null && b.host != null && a.scheme.equals(b.scheme, true) && a.host.equals(b.host, true) && port(a) == port(b)
 }.getOrDefault(false)
 
+/** Saved credentials are reusable only for the same normalized endpoint. */
+internal fun sameWebHostDestination(first: String, second: String): Boolean = runCatching {
+    val a = URI(normalizeWebHostBaseUrl(first))
+    val b = URI(normalizeWebHostBaseUrl(second))
+    sameWebHostOrigin(first, second) && a.path.orEmpty().trimEnd('/') == b.path.orEmpty().trimEnd('/')
+}.getOrDefault(false)
+
+internal fun webHostConnectionToken(currentUrl: String, savedToken: String, destination: String, enteredToken: String): String =
+    enteredToken.trim().ifEmpty { if (sameWebHostDestination(currentUrl, destination)) savedToken else "" }
+
 internal data class WebHostConnectionSetup(val origin: String, val hostId: String, val token: String) {
     companion object {
         fun decode(text: String): WebHostConnectionSetup? = runCatching {

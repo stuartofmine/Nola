@@ -4,12 +4,19 @@ import SwiftUI
 struct IOSAgentRoomsView: View {
     @EnvironmentObject private var container: ServiceContainer
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.locale) private var locale
     @State private var agents: [IOSPersistentAgent] = []
     @State private var editing: IOSPersistentAgent?
     @State private var agentName = ""
     @State private var agentDescription = ""
     @State private var error: String?
     @State private var models: [ModelInfo] = []
+    @State private var roleCatalog: AppleExpertRoleTemplateCatalog?
+    private var roles: [AppleExpertRoleTemplate] { roleCatalog?.templates ?? [] }
+    private var supportsExpertReasoning: Bool {
+        roleCatalog?.features.reasoningEffort == true && roleCatalog?.features.explicitGenerationReasoning == true
+    }
+    @State private var reasoningEfforts: [String] = []
     @State private var showingTemplateLibrary = false
     @State private var configuration = AppleExpertConfigurationDraft()
     private enum PendingEditorAction { case edit(IOSPersistentAgent?), archive, close }
@@ -26,64 +33,8 @@ struct IOSAgentRoomsView: View {
         NavigationStack {
             List {
                 if let error { Text(error).foregroundStyle(.red) }
-                Section("chat.experts.title") {
-                    ForEach(agents) { agent in
-                        Button { requestEditorAction(.edit(agent)) } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(agent.name).foregroundStyle(.primary)
-                                    if !agent.description.isEmpty {
-                                        Text(agent.description).font(.caption).foregroundStyle(.secondary)
-                                    }
-                                }
-                                Spacer()
-                                if agent.availability != "active" { Image(systemName: "archivebox").foregroundStyle(.secondary) }
-                                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
-                            }.frame(minHeight: 44).contentShape(Rectangle())
-                        }.accessibilityIdentifier("experts.edit." + agent.id)
-                    }
-                    Button("room.create_agent") { requestEditorAction(.edit(nil)) }
-                        .accessibilityIdentifier("experts.create")
-                }
-                Section(String(localized: editing == nil ? "room.create_agent" : "experts.edit.title")) {
-                    TextField("room.agent_name", text: $agentName).focused($editorFocused).accessibilityIdentifier("experts.name")
-                    TextField("room.agent_description", text: $agentDescription, axis: .vertical)
-                        .lineLimit(2...4).focused($editorFocused).accessibilityIdentifier("experts.description")
-                    Picker("room.model", selection: $configuration.modelID) {
-                        Text("experts.conversationModel").tag("")
-                        ForEach(models, id: \.id) { model in
-                            Text(model.name).tag(IOSConversationGenerationOverride.modelKey(for: model))
-                        }
-                        if !configuration.modelID.isEmpty,
-                           !models.contains(where: { IOSConversationGenerationOverride.modelKey(for: $0) == configuration.modelID }) {
-                            Text("experts.savedModelUnavailable").tag(configuration.modelID)
-                        }
-                    }.accessibilityIdentifier("experts.model")
-                    if let service = container.promptTemplates {
-                        IOSExpertTemplatePicker(service: service, selection: $configuration.templateID)
-                    } else {
-                        Text(String(localized: "prompt.templates.error.unavailable")).foregroundStyle(.secondary)
-                    }
-                    Button { showingTemplateLibrary = true } label: {
-                        HStack {
-                            Text(String(localized: "experts.manageTemplates"))
-                            Spacer()
-                            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
-                        }.frame(minHeight: 44).contentShape(Rectangle())
-                    }.buttonStyle(.plain).accessibilityIdentifier("experts.templates.manage")
-                    Button { perform { try saveAgent() } } label: {
-                        if editing == nil { Text(String(localized: "room.create_agent")) }
-                        else { Text(String(localized: "experts.save")) }
-                    }
-                        .disabled(agentName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        .accessibilityIdentifier("experts.save")
-                    if let editing {
-                        Button { requestEditorAction(.archive) } label: {
-                            if editing.availability == "active" { Text(String(localized: "experts.archive")) }
-                            else { Text(String(localized: "experts.restore")) }
-                        }.accessibilityIdentifier("experts.archive")
-                    }
-                }
+                expertDirectorySection
+                expertEditorSection
             }
             .scrollDismissesKeyboard(.immediately)
             .navigationTitle("experts.manage")
@@ -100,11 +51,22 @@ struct IOSAgentRoomsView: View {
             }
             .toolbar { ToolbarItem(placement: .confirmationAction) {
                 Button("room.done") { requestEditorAction(.close) }.accessibilityIdentifier("experts.management.done")
-            } }
-            .onAppear { perform {
-                agents = try service.directory().agents
-                models = try ModelSelectionManager.availableModels(using: container.applicationRuntime).filter { !$0.isWebBackend }
-            } }
+            }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button(L10n.done) { editorFocused = false }
+                        .accessibilityIdentifier("experts.keyboard.done")
+                }
+            }
+            .onAppear(perform: reloadEditorData)
+            .onChange(of: configuration.templateID) { _, _ in
+                guard let role = selectedRole else { return }
+                if agentName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { agentName = role.localizedName(locale: locale) }
+                if agentDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { agentDescription = role.localizedDescription(locale: locale) }
+            }
+            .onChange(of: configuration.modelID) { _, _ in
+                refreshReasoningEfforts()
+            }
             .interactiveDismissDisabled(editorIsDirty)
             .alert(NSLocalizedString("common.discard_changes", value: "Discard Changes?", comment: "Discard expert edit"),
                 isPresented: $showDiscardConfirmation) {
@@ -115,6 +77,169 @@ struct IOSAgentRoomsView: View {
                 Button(L10n.cancel, role: .cancel) { pendingEditorAction = nil }.accessibilityIdentifier("experts.keepEditing")
             }
         }
+    }
+
+    private var expertDirectorySection: some View {
+        Section("chat.experts.title") {
+            ForEach(agents) { agent in
+                Button { requestEditorAction(.edit(agent)) } label: {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(agent.name).foregroundStyle(.primary)
+                            if !agent.description.isEmpty {
+                                Text(agent.description).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        Spacer()
+                        if agent.availability != "active" { Image(systemName: "archivebox").foregroundStyle(.secondary) }
+                    }.frame(minHeight: 44).contentShape(Rectangle())
+                }.accessibilityIdentifier("experts.edit." + agent.id)
+            }
+            Button("room.create_agent") { requestEditorAction(.edit(nil)) }
+                .accessibilityIdentifier("experts.create")
+        }
+    }
+
+    private var expertEditorSection: some View {
+        Section(String(localized: editing == nil ? "room.create_agent" : "experts.edit.title")) {
+            identityFields
+            modelPicker
+            reasoningControl
+            templateControl
+            selectedRoleDetails
+            editorActionButtons
+        }
+    }
+
+    @ViewBuilder
+    private var identityFields: some View {
+        TextField("room.agent_name", text: $agentName).focused($editorFocused)
+            .submitLabel(.done).onSubmit { editorFocused = false }
+            .accessibilityIdentifier("experts.name")
+        TextField("room.agent_description", text: $agentDescription, axis: .vertical)
+            .lineLimit(2...4).focused($editorFocused).accessibilityIdentifier("experts.description")
+    }
+
+    private var modelPicker: some View {
+        Picker("room.model", selection: $configuration.modelID) {
+            Text("experts.conversationModel").tag("")
+            ForEach(models, id: \.id) { model in
+                Text(model.name).tag(IOSConversationGenerationOverride.modelKey(for: model))
+            }
+            if !configuration.modelID.isEmpty,
+               !models.contains(where: { IOSConversationGenerationOverride.modelKey(for: $0) == configuration.modelID }) {
+                Text("experts.savedModelUnavailable").tag(configuration.modelID)
+            }
+        }.accessibilityIdentifier("experts.model")
+    }
+
+    @ViewBuilder
+    private var reasoningControl: some View {
+        if supportsExpertReasoning {
+            Picker(ReasoningEffortPresentation.title, selection: $configuration.reasoningEffort) {
+                Text("experts.reasoning.inherit").tag("automatic")
+                ForEach(reasoningEfforts, id: \.self) { effort in
+                    Text(ReasoningEffortPresentation.label(effort)).tag(effort)
+                }
+                if configuration.reasoningEffort != "automatic", !reasoningEfforts.contains(configuration.reasoningEffort) {
+                    Text(String(format: NSLocalizedString("experts.reasoning.unavailable", value: "Unavailable · %@", comment: "Unavailable saved expert reasoning"),
+                        ReasoningEffortPresentation.label(configuration.reasoningEffort)))
+                        .tag(configuration.reasoningEffort).disabled(true)
+                }
+            }.accessibilityIdentifier("experts.reasoning")
+            if reasoningEfforts.isEmpty {
+                if configuration.reasoningEffort == "automatic" {
+                    Text("experts.reasoning.unknown").font(.footnote).foregroundStyle(.secondary)
+                } else {
+                    Text("experts.reasoning.selectSupported").font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+        } else {
+            Text("experts.configuration.unsupported").font(.footnote).foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var templateControl: some View {
+        if let service = container.promptTemplates {
+            IOSExpertTemplatePicker(service: service, roles: roles, selection: $configuration.templateID)
+        } else {
+            Picker("experts.template", selection: $configuration.templateID) {
+                Text("experts.conversationTemplate").tag("")
+                ForEach(roles) { role in Text(role.localizedName(locale: locale)).tag(role.id) }
+            }.accessibilityIdentifier("experts.template")
+        }
+    }
+
+    @ViewBuilder
+    private var selectedRoleDetails: some View {
+        if let role = selectedRole {
+            Text(role.localizedDescription(locale: locale)).font(.callout).foregroundStyle(.secondary)
+            DisclosureGroup("experts.role.details") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(role.prompt).font(.body).textSelection(.enabled)
+                    Text("experts.role.tools").font(.subheadline.weight(.semibold))
+                    Text(role.toolPack.id).font(.caption).foregroundStyle(.secondary)
+                    ForEach(role.toolPack.tools, id: \.self) { tool in Text(tool).font(.callout) }
+                    ForEach(role.skills) { skill in
+                        Text(skill.localizedName(locale: locale)).font(.subheadline.weight(.semibold))
+                        Text(skill.instructions).font(.callout).textSelection(.enabled)
+                    }
+                    Text("experts.role.permissions").font(.footnote).foregroundStyle(.secondary)
+                }
+            }.accessibilityIdentifier("experts.role.details")
+        }
+    }
+
+    @ViewBuilder
+    private var editorActionButtons: some View {
+        Button { showingTemplateLibrary = true } label: {
+            HStack {
+                Text(String(localized: "experts.manageTemplates"))
+                Spacer()
+            }.frame(minHeight: 44).contentShape(Rectangle())
+        }.buttonStyle(.plain).accessibilityIdentifier("experts.templates.manage")
+        Button { perform { try saveAgent() } } label: {
+            if editing == nil { Text(String(localized: "room.create_agent")) }
+            else { Text(String(localized: "experts.save")) }
+        }
+            .disabled(agentName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .accessibilityIdentifier("experts.save")
+        if let editing {
+            Button { requestEditorAction(.archive) } label: {
+                if editing.availability == "active" { Text(String(localized: "experts.archive")) }
+                else { Text(String(localized: "experts.restore")) }
+            }.accessibilityIdentifier("experts.archive")
+        }
+    }
+
+    private func reloadEditorData() {
+        error = nil
+        do {
+            agents = try service.directory().agents
+            models = try ModelSelectionManager.availableModels(using: container.applicationRuntime).filter { !$0.isWebBackend }
+            do { roleCatalog = try service.roleTemplates() }
+            catch { roleCatalog = nil; self.error = String(localized: "experts.configuration.unsupported") }
+            refreshReasoningEfforts()
+        } catch { self.error = error.localizedDescription }
+    }
+
+    private var selectedRole: AppleExpertRoleTemplate? {
+        roles.first { $0.id.caseInsensitiveCompare(configuration.templateID) == .orderedSame }
+    }
+
+    private func refreshReasoningEfforts() {
+        guard supportsExpertReasoning else { reasoningEfforts = []; return }
+        let selected = configuration.modelID.isEmpty
+            ? (try? ModelSelectionManager.lastSelectedModel(using: container.applicationRuntime))
+            : models.first { IOSConversationGenerationOverride.modelKey(for: $0) == configuration.modelID }
+        guard let model = selected, !model.isWebBackend,
+              let snapshot = try? ModelParametersStore.shared.parameterSnapshot(for: model.id),
+              let efforts = try? ModelParametersStore.shared.reasoningEfforts(for: snapshot) else {
+            reasoningEfforts = []
+            return
+        }
+        reasoningEfforts = efforts.filter { $0 != "automatic" }
     }
 
     private func requestEditorAction(_ action: PendingEditorAction) {
@@ -144,6 +269,7 @@ struct IOSAgentRoomsView: View {
         configuration = next
         agentName = agent?.name ?? ""
         agentDescription = agent?.description ?? ""
+        refreshReasoningEfforts()
     }
 
     private func perform(_ action: () throws -> Void) {
@@ -154,11 +280,23 @@ struct IOSAgentRoomsView: View {
         editorFocused = false
         let original = editing?.defaults ?? .object([:])
         let saved = try AppleExpertConfigurationDraft(defaults: original)
+        if configuration.reasoningEffort != saved.reasoningEffort || configuration.modelID != saved.modelID {
+            if configuration.reasoningEffort != "automatic" {
+                guard supportsExpertReasoning else {
+                    throw IOSApplicationRuntimeError.rejected(String(localized: "experts.configuration.unsupported"))
+                }
+                guard reasoningEfforts.contains(configuration.reasoningEffort) else {
+                    throw IOSApplicationRuntimeError.rejected(String(localized: "experts.reasoning.selectSupported"))
+                }
+            } else if configuration.reasoningEffort != saved.reasoningEffort && !supportsExpertReasoning {
+                throw IOSApplicationRuntimeError.rejected(String(localized: "experts.configuration.unsupported"))
+            }
+        }
         if configuration.modelID != saved.modelID, !configuration.modelID.isEmpty,
            !models.contains(where: { IOSConversationGenerationOverride.modelKey(for: $0) == configuration.modelID }) {
             throw IOSApplicationRuntimeError.rejected(String(localized: "room.select_model"))
         }
-        if configuration.templateID != saved.templateID, !configuration.templateID.isEmpty {
+        if configuration.templateID != saved.templateID, !configuration.templateID.isEmpty, selectedRole == nil {
             guard let id = UUID(uuidString: configuration.templateID), let service = container.promptTemplates else {
                 throw IOSApplicationRuntimeError.rejected(String(localized: "experts.templateUnavailable"))
             }
@@ -190,6 +328,7 @@ struct IOSAgentRoomsView: View {
         var defaults = object.filter { $0.key == "modelOverrides" }
         defaults["modelSelectionID"] = .string(key)
         if !configuration.templateID.isEmpty { defaults["selectedPromptTemplateID"] = .string(configuration.templateID) }
+        if configuration.reasoningEffort != "automatic" { defaults["expertReasoningEffort"] = .string(configuration.reasoningEffort) }
         agents = try service.createAgent(name: agentName.trimmingCharacters(in: .whitespacesAndNewlines),
             description: agentDescription.trimmingCharacters(in: .whitespacesAndNewlines),
             defaults: .object(defaults), directory: service.directory()).agents
@@ -224,8 +363,10 @@ struct IOSAgentRoomTimeline: View {
     var ordinaryMessageTimes: [UUID: Int64] = [:]
     var ordinaryConversationID: UUID?
     var showsOwnerControls = true
-    var showsExpertDetails = true
-    var participantID: String?
+    var allowsLiveExecution = true
+    var peerInputAuthors: [String: IOSExpertPeerInputAuthor] = [:]
+    var loadOlderHistory: (@MainActor () async throws -> Void)? = nil
+    @State private var isLoadingOlderHistory = false
     var association: IOSConversationRoomAssociation?
     var submissions: [IOSRoomSubmission] = []
     var pending: [IOSRoomSubmissionWorkspace.Pending] = []
@@ -261,8 +402,6 @@ struct IOSAgentRoomTimeline: View {
             return context + "/" + execution
         })
         let rows = workspace.rows.filter { row in
-            if let participantID, row.participant.id != participantID { return false }
-            if !showsExpertDetails && row.message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return false }
             if let association {
                 return row.message.role != .user && submissions.contains {
                     IOSAgentRoomService.sender(for: $0, association: association)?.id == row.participant.id &&
@@ -305,7 +444,7 @@ struct IOSAgentRoomTimeline: View {
         let source = UUID(uuidString: input.sourceConversationID)
         let target = try await container.chatManager.sendEditedMessage(input)
         guard container.chatManager.currentConversationId == source else { return }
-        NotificationCenter.default.post(name: .nolaOpenChatTab, object: target)
+        if target != source { NotificationCenter.default.post(name: .nolaOpenChatTab, object: target) }
     }
 
     private func startsSenderGroup(_ item: TimelineItem) -> Bool {
@@ -318,7 +457,7 @@ struct IOSAgentRoomTimeline: View {
         VStack(spacing: 0) {
             if showsOwnerControls { ScrollView(.horizontal) {
                 HStack(spacing: 12) {
-                    ForEach((workspace.room?.room.participants ?? []).filter { participantID == nil || $0.id == participantID }) { participant in
+                    ForEach(workspace.room?.room.participants ?? []) { participant in
                         if let owner = UUID(uuidString: participant.contextConversationID),
                            let execution = container.chatManager.executionForConversation(owner) {
                             IOSAgentRoomMemberStatus(participant: participant, execution: execution)
@@ -335,12 +474,18 @@ struct IOSAgentRoomTimeline: View {
                     Button("room.older_messages") {
                         let anchor = workspace.rows.first?.id
                         followsBottom = false
-                        do {
-                            try workspace.loadOlder(container: container)
-                            error = nil
-                            if let anchor { proxy.scrollTo(anchor, anchor: .top) }
-                        } catch { self.error = error.localizedDescription }
-                    }.frame(minHeight: 44)
+                        guard !isLoadingOlderHistory else { return }
+                        isLoadingOlderHistory = true
+                        Task { @MainActor in
+                            defer { isLoadingOlderHistory = false }
+                            do {
+                                if let loadOlderHistory { try await loadOlderHistory() }
+                                else { try workspace.loadOlder(container: container) }
+                                error = nil
+                                if let anchor { proxy.scrollTo(anchor, anchor: .top) }
+                            } catch { self.error = error.localizedDescription }
+                        }
+                    }.frame(minHeight: 44).disabled(isLoadingOlderHistory)
                 }
                 ForEach(timeline) { item in
                     if let ordinary = item.ordinary {
@@ -355,6 +500,9 @@ struct IOSAgentRoomTimeline: View {
                                 ownerIsRunning: ordinary.isCanonicalLive || expertGroupIsBusy, onEditAndResend: resend)
                         }
                     } else if let row = item.row {
+                    if row.message.role == .user, let author = peerInputAuthors[row.projected.messageID] {
+                        IOSExpertPeerInputMessage(message: row.message, messageID: row.projected.messageID, author: author)
+                    } else {
                     HStack(alignment: .top, spacing: identityGap) {
                         if row.message.role != .user {
                             VStack(spacing: 6) {
@@ -371,16 +519,7 @@ struct IOSAgentRoomTimeline: View {
                                 Text(String(format: String(localized: "room.sent_to"), row.participant.displayName))
                                     .font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .trailing)
                             }
-                        if !showsExpertDetails {
-                            ChatSmoothStreamingMarkdownView(content: row.message.content,
-                                isStreaming: row.projected.state == .running || row.projected.state == .pending)
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(12)
-                                .background(expertColors.color(for: row.participant.agentID).fill(colorScheme),
-                                    in: RoundedRectangle(cornerRadius: 16))
-                                .accessibilityIdentifier("chat.expert.answer." + row.projected.messageID)
-                        } else if let owner = UUID(uuidString: row.participant.contextConversationID),
+                        if allowsLiveExecution, let owner = UUID(uuidString: row.participant.contextConversationID),
                            let execution = container.chatManager.executionForConversation(owner) {
                             IOSAgentRoomLiveMessage(row: row, execution: execution,
                                 bubbleFill: expertColors.color(for: row.participant.agentID).fill(colorScheme),
@@ -406,6 +545,7 @@ struct IOSAgentRoomTimeline: View {
 
                     }
 
+                    }
                     } else if let id = item.receiptID {
                         IOSRoomSubmissionRows(room: workspace.room,
                             submissions: submissions.filter { $0.id == id }, pending: pending.filter { $0.id == id },
@@ -578,6 +718,7 @@ private struct IOSAgentRoomLiveMessage: View {
 /// Ordinary-chat selection only. No execution, permission or membership mutation occurs here.
 struct IOSChatExpertPicker: View {
     let agents: [IOSPersistentAgent]
+    var allowsManagement = true
     var onManagementClosed: () -> Void = {}
     @Binding var selection: Set<String>
     @Environment(\.dismiss) private var dismiss
@@ -631,48 +772,16 @@ struct IOSChatExpertPicker: View {
                 }
             }
             if visibleAgents.isEmpty { Text("chat.experts.empty").foregroundStyle(.secondary) }
+            if allowsManagement {
             Button { showingManagement = true } label: {
                 Label("experts.manage", systemImage: "person.crop.circle.badge.gearshape")
                     .font(.callout).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                     .contentShape(Rectangle())
             }.buttonStyle(.plain).accessibilityIdentifier("experts.manage")
+            }
         }.padding(16)
             .sheet(isPresented: $showingManagement, onDismiss: onManagementClosed) { IOSAgentRoomsView() }
             .sheet(item: $configuringAgent) { agent in IOSExpertColorEditor(agentID: agent.id, name: agent.name) }
-    }
-}
-
-/// Child transcripts are navigated from the current conversation's More menu.
-/// Navigating here does not switch the parent conversation or submit new work.
-struct IOSExpertConversations: View {
-    @ObservedObject var workspace: IOSAgentRoomWorkspace
-    @ObservedObject var submission: IOSRoomSubmissionWorkspace
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            List(workspace.room?.room.participants ?? []) { participant in
-                NavigationLink {
-                    IOSAgentRoomTimeline(workspace: workspace, participantID: participant.id,
-                        submissions: (submission.submissions[workspace.room?.room.id ?? ""] ?? []).filter {
-                            $0.contextConversationID == participant.contextConversationID
-                        }, pending: (submission.pending[workspace.room?.room.id ?? ""] ?? []).filter {
-                            $0.input.participantID == participant.id
-                        }, onRetry: submission.retry, onCancelPending: submission.cancelPending)
-                        .navigationTitle(participant.displayName)
-                        .navigationBarTitleDisplayMode(.inline)
-                } label: {
-                    HStack(spacing: 12) {
-                        IOSAgentRoomAvatar(participant: participant)
-                        Text(participant.displayName)
-                    }.frame(minHeight: 44)
-                }.accessibilityIdentifier("chat.expert.conversation." + participant.id)
-            }
-            .navigationTitle(Text("chat.experts.conversations"))
-            .toolbar { ToolbarItem(placement: .confirmationAction) {
-                Button("Done") { dismiss() }
-            } }
-        }
     }
 }
 
@@ -683,7 +792,6 @@ struct IOSUnifiedExpertConversation: View {
     let ordinaryMessages: [ChatMessage]
     let ordinaryMessageTimes: [UUID: Int64]
     let conversationID: UUID?
-    var showsExpertDetails = false
     private var receiptReadIdentity: [String] {
         [conversationID?.uuidString ?? "", submission.conversationAssociation?.roomID ?? ""] +
             ordinaryMessages.filter { $0.role == .user }.map {
@@ -694,7 +802,7 @@ struct IOSUnifiedExpertConversation: View {
         VStack(spacing: 0) {
             IOSAgentRoomTimeline(workspace: workspace, ordinaryMessages: ordinaryMessages,
                 ordinaryMessageTimes: ordinaryMessageTimes,
-                ordinaryConversationID: conversationID, showsOwnerControls: false, showsExpertDetails: showsExpertDetails, association: submission.conversationAssociation,
+                ordinaryConversationID: conversationID, showsOwnerControls: false, association: submission.conversationAssociation,
                 submissions: workspace.room.flatMap { submission.submissions[$0.room.id] } ?? [],
                 pending: workspace.room.flatMap { submission.pending[$0.room.id] } ?? [],
                 onRetry: submission.retry, onCancelPending: submission.cancelPending)
@@ -723,10 +831,10 @@ struct IOSUnifiedExpertConversation: View {
             }
             if let error = submission.expertResumeError { Text(error).font(.caption).foregroundStyle(.red).padding(.horizontal) }
 
-            // The parent shows answer text only, so keep permission, stop and
-            // recovery reachable there even after a child reply arrives.
+            // Before the first canonical reply arrives, keep stop/recovery
+            // reachable. Once a reply exists it owns these controls inline.
             ForEach(workspace.room?.room.participants ?? []) { participant in
-                if !showsExpertDetails || !workspace.rows.contains(where: { $0.participant.id == participant.id && $0.message.role == .assistant }),
+                if !workspace.rows.contains(where: { $0.participant.id == participant.id && $0.message.role == .assistant }),
                    let id = UUID(uuidString: participant.contextConversationID),
                    let execution = container.chatManager.executionForConversation(id) {
                     IOSAgentRoomMemberStatus(participant: participant, execution: execution)
@@ -785,17 +893,24 @@ enum IOSExpertTimelineOrder {
 }
 
 private struct IOSExpertTemplatePicker: View {
+    @Environment(\.locale) private var locale
     @ObservedObject var service: PromptTemplateService
+    let roles: [AppleExpertRoleTemplate]
     @Binding var selection: String
     private var readableTemplates: [PromptTemplate] { service.templates.filter { service.canReadTemplate($0) } }
     var body: some View {
         Picker("experts.template", selection: $selection) {
             Text("experts.conversationTemplate").tag("")
+            ForEach(roles) { role in
+                Text(role.localizedName(locale: locale)).tag(role.id)
+                    .accessibilityIdentifier("experts.role.option." + role.id)
+            }
             ForEach(readableTemplates) { template in
                 Text(template.name).tag(template.id.uuidString)
                     .accessibilityIdentifier("experts.template.option." + template.id.uuidString)
             }
-            if !selection.isEmpty, !readableTemplates.contains(where: { $0.id.uuidString == selection }) {
+            if !selection.isEmpty, !roles.contains(where: { $0.id.caseInsensitiveCompare(selection) == .orderedSame }),
+               !readableTemplates.contains(where: { $0.id.uuidString == selection }) {
                 Text("experts.savedTemplateUnavailable").tag(selection)
             }
         }.accessibilityIdentifier("experts.template")

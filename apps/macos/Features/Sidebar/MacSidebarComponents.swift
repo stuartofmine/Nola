@@ -83,20 +83,49 @@ struct MacSidebarIconButtonBody<Label: View>: View {
     }
 }
 
-struct MacSidebarStatusIndicator: View {
-    let isRunning: Bool
+/// App-wide destinations have a single home; contained features remain searchable.
+struct MacWorkspaceResourceNavigation: View {
+    @Binding var search: String
+    let selection: MacWorkspaceSection
+    let open: (MacWorkspaceSection) -> Void
+    private var destinations: [MacWorkspaceSection] {
+        let candidates = search.isEmpty ? MacWorkspaceSection.resourceNavigationSections
+            : MacWorkspaceSection.resourceNavigationSections + [.memory, .automations]
+        return candidates.filter { search.isEmpty || String(localized: String.LocalizationValue($0.titleKey))
+            .localizedCaseInsensitiveContains(search) }
+    }
     var body: some View {
-        Group {
-            if isRunning {
-                MacBreathingStatusLight(diameter: 26, dotScale: 0.72)
-            } else {
-                Circle()
-                    .fill(.green)
-                    .frame(width: 6, height: 6)
-                    .frame(width: 26, height: 26)
+        VStack(alignment: .leading, spacing: 4) {
+            TextField(String(localized: "Search"), text: $search).textFieldStyle(.roundedBorder)
+                .padding(.bottom, 8)
+            ForEach(destinations) { section in
+                Button { open(section) } label: {
+                    Label(section.title, systemImage: section.symbol)
+                        .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
+                        .padding(.horizontal, 8).contentShape(Rectangle())
+                }
+                .buttonStyle(MacSidebarNavigationButtonStyle(isSelected: selection == section || selection.resourceNavigationOwner == section))
+                .accessibilityIdentifier("workspace.resource." + section.rawValue)
             }
+            Spacer()
+            Divider()
+            MacWorkspaceSettingsRow(isSelected: selection == .settings) { open(.settings) }
+        }.padding(12)
+    }
+}
+
+struct MacWorkspaceSettingsRow: View {
+    let isSelected: Bool
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            Label(String(localized: "Settings"), systemImage: "gearshape")
+                .padding(.horizontal, 8)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
         }
-        .accessibilityHidden(true)
+        .buttonStyle(MacSidebarNavigationButtonStyle(isSelected: isSelected))
+        .accessibilityIdentifier("workspace.settings")
     }
 }
 
@@ -126,7 +155,7 @@ struct MacConversationRow: View {
                         .foregroundStyle(.secondary)
                         .fixedSize()
                 }
-                if !conversation.preview.isEmpty {
+                if !conversation.preview.isEmpty && conversation.preview != conversation.title {
                     Text(conversation.preview)
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
@@ -141,11 +170,7 @@ struct MacConversationRow: View {
                 }
             }
             Spacer(minLength: 4)
-            if conversation.isPinned {
-                Image(systemName: "pin.fill")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Color.secondary.opacity(isSelected || isHovering ? 1 : 0.58))
-            }
+
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

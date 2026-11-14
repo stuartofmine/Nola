@@ -48,3 +48,12 @@ Anthropic 部分路线可能支持原生会话中 system 更新。参考 pi 的 
 真实验收还需：同一模型路线连续请求的最终 body 与 cache-read/write usage；改变动态权限状态的请求；完整工具结果后热分叉压缩。不得以 LAN Chat 的收益推导 Anthropic 收益。当前未连接真实 Anthropic 服务验证，历史缓存改进也未闭环。
 
 参考：`参考资料/pi/packages/ai/src/api/anthropic-messages.ts` 的 `convertMessages`、compat 和最后 block 缓存；`参考资料/claude-code/src/services/api/claude.ts` 的 `addCacheBreakpoints` 和缓存编辑专用字段。引用特性不意味着 Nola 已具备对应协议能力。
+
+## 原生专家提示词模板的默认来源
+
+专家显式保存的 `selectedPromptTemplateID` 优先；未指定时不读取父主会话的模板。客户端空值选项显示“未指定模板”，不承诺跟随主会话，也不把未指定解释为跨平台完全相同的默认模板。
+
+- macOS 从 `MacPromptLibrary.defaultTemplateID` 读取应用全局默认；没有已选全局模板时捕获 `NoTemplate`。
+- iOS 的现有捕获路径在专家 defaults 带有 `language` 时使用应用全局选中模板，或该语言的内置默认；没有显式模板且没有该字段时捕获 `NoTemplate`。新建专家通常不保存 `language`。本次仅纠正文案，没有改变这条既有选择语义。
+
+模板选择及可读正文通过可信 Host capture 交给 Core，不能由模型参数提供模板正文。已冻结任务从原捕获记录恢复，不因全局默认后来变化而重新选择模板。

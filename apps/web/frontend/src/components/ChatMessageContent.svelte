@@ -13,6 +13,7 @@
     import ChatToolPart from './ChatToolPart.svelte';
     import ChatToolGroup from './ChatToolGroup.svelte';
     import ChatReferenceCard from './ChatReferenceCard.svelte';
+    import ChatReferenceFooter from './ChatReferenceFooter.svelte';
     import ChatJournalDetails from './ChatJournalDetails.svelte';
     import ChatTaskActions from './ChatTaskActions.svelte';
     import ChatReplyError from './ChatReplyError.svelte';
@@ -20,7 +21,8 @@
 
     let { message, ownerKey, readingActive = true, skipText = false, taskOwner, taskClientId, onTaskRecovered, surface }: {message: TimelineMessage; ownerKey:string; readingActive?:boolean; skipText?: boolean;
         taskOwner?: TaskOwner; taskClientId?:string; onTaskRecovered?:()=>void; surface?: Snippet<[TimelinePart]>} = $props();
-    const groups = $derived(message.role === 'assistant' ? messageFlowPresentation(message.parts, message.state === 'running' || message.state === 'pending') : messagePresentation(message.parts));
+    const groups = $derived(message.role === 'assistant' ? messageFlowPresentation(message.parts.filter(part => !['source', 'citation'].includes(part.value.kind))) : messagePresentation(message.parts));
+    const latestProcessID = $derived([...groups].reverse().find(group => group.kind === 'process')?.id);
     const initialTexts = untrack(() => new Map((message.state === 'running' || message.state === 'pending' ? groups : []).flatMap(group => group.kind === 'text' ? [[group.id, group.text] as const] : [])));
     $effect(() => { if (message.state !== 'running' && message.state !== 'pending') initialTexts.clear(); });
     const reasoning = $derived(new Set(timelineReasoningParts(message).map(part => part.id)));
@@ -129,10 +131,10 @@
 {#if message.role === 'assistant' && message.state === 'failed' && !message.parts.some(part => part.value.kind === 'error')}
     <ChatReplyError />
 {/if}
-{#each groups as group (group.kind === 'process' ? 'process' : 'part:' + group.id)}
+{#each groups as group (group.id)}
     {#if group.kind === 'process'}
         {@const reading=controls(group.parts)}
-        <ChatExecutionProcess parts={group.parts} rounds={group.rounds} live={message.state === 'running' || message.state === 'pending'} choices={toolChoices} expandedChoice={executionProcessChoice(group.parts, processChoices)}
+        <ChatExecutionProcess parts={group.parts} live={(message.state === 'running' || message.state === 'pending') && group.id === latestProcessID} choices={toolChoices} expandedChoice={executionProcessChoice(group.parts, processChoices)}
             onprocessexpandedchange={reading.process} onexpandedchange={reading.tool} />
     {:else if group.kind === 'text'}
         {#if !skipText}<Markdown source={group.text} initialText={initialTexts.get(group.id) ?? ''} streaming={message.role === 'assistant' && (message.state === 'running' || message.state === 'pending')} />{/if}
@@ -155,12 +157,13 @@
             <details><summary>{typeof part.value.title === 'string' && part.value.title.length ? part.value.title : t($locale, 'chatPage.thinking')}</summary><Markdown source={historicalReasoning || timelinePartText(part, 'reasoning')} /></details>
         {:else if reference}<ChatReferenceCard {reference} />
         {:else if part.source !== 'optimistic' && !['text', 'reasoning', 'ui_surface'].includes(part.value.kind)}
-            <ChatJournalDetails {part} taskNumber={taskNumbers.get(String(part.value.task_id)) ?? 1}
+            <ChatJournalDetails {part} live={message.state === 'running' || message.state === 'pending'} taskNumber={taskNumbers.get(String(part.value.task_id)) ?? 1}
                 showSummary={part.value.kind !== 'task_control' || !message.parts.some(item => item.value.kind === 'task' && item.value.task_id === part.value.task_id)} />{/if}
         {#if part.value.kind === 'historical' && surface}{@render surface(part)}{/if}
-        {#if taskOwner && part.value.kind === 'task_control'}{@const historicalOwner=journalTaskOwner(part,taskOwner)}{#if historicalOwner}<ChatTaskActions {part} owner={historicalOwner} clientId={taskClientId} onRecovered={onTaskRecovered} />{/if}{/if}
+        {#if taskOwner && part.value.kind === 'task_control'}{@const historicalOwner=journalTaskOwner(part,taskOwner)}{#if historicalOwner}<ChatTaskActions {part} active={readingActive} owner={historicalOwner} clientId={taskClientId} onRecovered={onTaskRecovered} />{/if}{/if}
     {/if}
 {/each}
+{#if message.role === 'assistant'}{#key readingOwner}<ChatReferenceFooter parts={message.parts} />{/key}{/if}
 {#if textSnapshot}{@const shown=textSnapshot}{#key shown}<ChatTextReaderDialog snapshot={shown} onclose={()=>void closeTextReader(shown)} />{/key}{/if}
 </div>
 

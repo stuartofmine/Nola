@@ -582,6 +582,19 @@ mod engineering_effect_contract_tests {
     }
 
     #[test]
+    fn git_operations_expose_their_version_bound_postcondition_checks() {
+        for name in ["git_commit", "git_worktree_create", "git_worktree_integrate"] {
+            assert_eq!(
+                tool_effect_declaration_with_read_only(name, false).resolve(&json!({})),
+                HostCapabilityEffect::MutateAndValidate,
+                "Git metadata checks must reach the receipt reducer: {name}",
+            );
+        }
+        assert_eq!(tool_effect_declaration_with_read_only("write_file", false).resolve(&json!({})),
+            HostCapabilityEffect::Mutate, "Ordinary writes still require applicable validation");
+    }
+
+    #[test]
     fn host_state_writes_declare_canonical_readback_validation() {
         for name in ["memory_save", "nola_orchestrate"] {
             assert_eq!(
@@ -1296,5 +1309,27 @@ mod pending_permission_trace_tests {
             "why"
         )
         .is_none());
+    }
+}
+
+#[cfg(test)]
+mod expert_tool_pack_contract_tests {
+    use super::*;
+
+    #[test]
+    fn compact_host_packs_reference_real_tools_and_review_is_read_only() {
+        let skills = SkillRuntimeContext::from_configured_dirs(Some(Vec::new()));
+        let specs = specs_with_skills(&skills);
+        for role in &nola_application::expert_roles::catalog().templates {
+            // Calendar/reminder handlers belong to the native productivity Host.
+            if role.role_id == "private-secretary" { continue; }
+            for id in &role.tool_pack.tools {
+                let spec = specs.iter().find(|spec| spec.name == id.as_str())
+                    .unwrap_or_else(|| panic!("{} refers to undeclared Host tool {id}", role.role_id));
+                if role.role_id == "code-reviewer" {
+                    assert!(spec.read_only, "Review must not preload a mutating tool: {id}");
+                }
+            }
+        }
     }
 }

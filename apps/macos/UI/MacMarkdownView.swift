@@ -139,6 +139,7 @@ private enum MacInlineMarkdownCache {
         for run in Array(value.runs) where run.inlinePresentationIntent?.contains(.code) == true {
             value[run.range].font = .system(size: MacMarkdownTypography.inlineCodeSize, design: .monospaced)
         }
+        value = AppleInlineReferenceStyle.applying(to: value, color: Color("NolaTextSecondary"))
         if let key {
             entries.setObject(
                 Entry(value), forKey: key,
@@ -420,6 +421,7 @@ struct MacAssistantPresentationView: View {
     let contentIsFinal: Bool
     var suppressReveal = false
     var previouslyRevealedNodeIDs: Set<UUID> = []
+    var mutableNodeID: UUID? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -469,7 +471,7 @@ struct MacAssistantPresentationView: View {
                              animatesInitialContent: !previouslyRevealedNodeIDs.contains(node.id),
                              suppressReveal: suppressReveal)
         case .mermaid:
-            MacMermaidBlockView(source: node.text)
+            MacMermaidBlockView(source: node.text, isStreaming: !contentIsFinal && node.id == mutableNodeID)
                 .modifier(MacStreamingBlockRevealModifier(
                     shouldAnimate: animateNewNodes && !previouslyRevealedNodeIDs.contains(node.id),
                     reduceMotion: reduceMotion || suppressReveal))
@@ -649,12 +651,7 @@ private struct MacMarkdownDocumentView: View {
                              animatesInitialContent: animatesInitialContent, suppressReveal: reduceMotion)
 
         case .mermaid(let source):
-            if repairsIncompleteInlineSyntax {
-                MacCodeBlockView(language: "mermaid", source: source, streaming: animatesAppends,
-                                 animatesInitialContent: animatesInitialContent, suppressReveal: reduceMotion)
-            } else {
-                MacMermaidBlockView(source: source)
-            }
+            MacMermaidBlockView(source: source, isStreaming: repairsIncompleteInlineSyntax)
 
         case .divider:
             Divider()
@@ -942,26 +939,44 @@ enum MacMarkdownParser {
     }
 }
 
-private struct MacMermaidBlockView: View {
+struct MacMermaidBlockView: View {
     let source: String
+    var isStreaming = false
     @Environment(\.colorScheme) private var colorScheme
     @State private var parseError: Error?
     @State private var diagramBounds: CGRect = .zero
+    @State private var measuredSource: String?
+
+    private var preparing: some View {
+        Label { Text("Preparing diagram…", tableName: "Chat") } icon: {
+            Image(systemName: "point.3.connected.trianglepath.dotted")
+        }
+        .font(.callout).foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, minHeight: 190)
+        .accessibilityIdentifier("chat.diagram.preparing")
+    }
 
     var body: some View {
         Group {
-            if parseError == nil {
+            if isStreaming {
+                preparing
+            } else if source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                MacCodeBlockView(language: "mermaid", source: source)
+            } else if parseError == nil || measuredSource != source {
                 ScrollView([.horizontal, .vertical], showsIndicators: true) {
-                    MermaidDiagramView(
+                    MacStableMermaidDiagram(
                         source: source,
                         theme: mermaidTheme,
                         parseError: $parseError,
-                        diagramBounds: $diagramBounds
+                        diagramBounds: $diagramBounds,
+                        measuredSource: $measuredSource
                     )
                     .frame(width: diagramSize.width, height: diagramSize.height)
                     .padding(14)
+                    .opacity(diagramBounds.isEmpty || measuredSource != source ? 0 : 1)
                 }
                 .frame(height: containerHeight)
+                .overlay { if diagramBounds.isEmpty || measuredSource != source { preparing } }
             } else {
                 MacCodeBlockView(language: "mermaid", source: source)
             }
@@ -977,11 +992,8 @@ private struct MacMermaidBlockView: View {
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .onChange(of: source) { _, _ in
             parseError = nil
-            diagramBounds = .zero
         }
-        .onChange(of: colorScheme) { _, _ in
-            diagramBounds = .zero
-        }
+        .transaction { $0.animation = nil }
     }
 
     private var mermaidTheme: DiagramTheme {
@@ -1123,5 +1135,44 @@ private struct MacCodeBlockView: View {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .stroke(Color.primary.opacity(0.09), lineWidth: 0.5)
         }
+    }
+}
+
+
+/// Publish only the current native render's measurements. The package wrapper
+/// queues uncorrelated callbacks that can reset a newer diagram's geometry.
+private struct MacStableMermaidDiagram: NSViewRepresentable {
+    let source: String
+    let theme: DiagramTheme
+    @Binding var parseError: Error?
+    @Binding var diagramBounds: CGRect
+    @Binding var measuredSource: String?
+
+    final class Coordinator {
+        var generation = 0
+        var publishedGeneration = -1
+    }
+    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeNSView(context: Context) -> MermaidView { MermaidView() }
+    func updateNSView(_ view: MermaidView, context: Context) {
+        var changed = false
+        if view.theme != theme { view.theme = theme; changed = true }
+        if view.source != source { view.source = source; changed = true }
+        if changed { context.coordinator.generation += 1 }
+        let generation = context.coordinator.generation
+        guard context.coordinator.publishedGeneration != generation else { return }
+        context.coordinator.publishedGeneration = generation
+        let coordinator = context.coordinator
+        let bounds = view.diagramBounds
+        let error = view.parseError
+        DispatchQueue.main.async {
+            guard coordinator.generation == generation else { return }
+            parseError = error
+            if !bounds.isEmpty, diagramBounds != bounds { diagramBounds = bounds }
+            measuredSource = source
+        }
+    }
+    static func dismantleNSView(_ view: MermaidView, coordinator: Coordinator) {
+        coordinator.generation += 1
     }
 }

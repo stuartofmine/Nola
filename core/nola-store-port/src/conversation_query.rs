@@ -56,6 +56,7 @@ pub trait ConversationQueryRepository {
         conversation_id: &str,
     ) -> Result<Option<ConversationSummary>, Self::Error>;
     fn list_conversations(&self) -> Result<Vec<ConversationSummary>, Self::Error>;
+    fn list_root_conversation_page(&self, query: &ConversationListQuery) -> Result<Vec<ConversationSummary>, Self::Error>;
     fn list_conversation_page(&self, query: &ConversationListQuery) -> Result<Vec<ConversationSummary>, Self::Error>;
     fn load_conversation_settings(
         &self,

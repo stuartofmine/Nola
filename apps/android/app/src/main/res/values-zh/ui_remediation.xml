@@ -52,4 +52,6 @@
     <string name="activity_status_action_completed">操作已完成</string>
     <string name="activity_status_delegated">已委派</string>
     <string name="activity_status_queued">排队中</string>
+    <string name="ui_surface_pending">界面正在准备，等待组件与数据…</string>
+    <string name="ui_surface_deleted">此界面已移除。</string>
 </resources>

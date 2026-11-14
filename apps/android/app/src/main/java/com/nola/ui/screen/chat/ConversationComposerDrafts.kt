@@ -150,6 +150,15 @@ internal class ConversationComposerDrafts(private val repository: ConversationDr
         if (owner == key(null)) pending.value = repository?.pendingOwner() ?: UUID.randomUUID().toString()
         return true
     }
+    fun restoreBlockedSubmission(ticket: SubmissionTicket, conversationId: String): Boolean {
+        val capture=ticket.capture
+        if(ownerKey(conversationId)!=capture.owner || (editRevisions[capture.owner]?:0)!=capture.editRevision)return false
+        val original=capture.draft?:return false
+        val current=forConversation(conversationId)
+        if(current.text.value.isNotEmpty()||current.attachments.value.isNotEmpty())return false
+        current.text.value=original.text.value;current.attachments.value=original.attachments.value
+        return true
+    }
     fun forConversation(id: String?): ConversationComposerDraft {
         val owner = key(id)
         return drafts.getOrPut(owner) {

@@ -141,7 +141,9 @@ impl RuntimeOutputPort for NativeRuntimeOutput {
     fn status(&mut self, _phase: &str, _message: &str) {}
     fn done(&mut self, _reason: &str) {}
     fn error(&mut self, message: &str) {
-        self.json_line(json!({"type":"error","detail":message,"reason":"failed"}));
+        let mut frame=json!({"type":"error","detail":message,"reason":"failed"});
+        if let Some(code)=main_expert_admission_error_code(message) {frame["code"]=json!(code);}
+        self.json_line(frame);
     }
     fn defer_terminal_transport(&mut self) {
         self.terminal_transport_deferred = true;
@@ -219,6 +221,7 @@ impl RuntimeOutputPort for NativeRuntimeOutput {
         if let Some(message) = rejection {
             frame["code"] = json!("request_rejected_before_admission");
             frame["message"] = json!(message);
+            if let Some(code)=main_expert_admission_error_code(message) {frame["reason_code"]=json!(code);}
         }
         self.emit_json_value(frame);
     }
@@ -499,5 +502,28 @@ mod tests {
         let sequences: Vec<_> = frames.iter().filter_map(|frame| frame.get("trace")).map(|trace| trace["sequence"].as_u64().unwrap()).collect();
         assert_eq!(sequences, vec![1, 2]);
         assert!(frames.last().unwrap().get("trace").is_none());
+    }
+}
+
+/// Presentation of closed Core rejection IDs, never inference from user text
+/// or a tool-routing/permission rule. Preserve the existing outer frame code.
+pub(crate) fn main_expert_admission_error_code(message:&str)->Option<&'static str> {
+    let detail=message.rsplit_once(": ").map_or(message,|(_,detail)|detail).trim();
+    match detail {
+        "main_expert_selection_requires_tool_capable_main_model"=>Some("main_expert_selection_requires_tool_capable_main_model"),
+        "main_expert_selection_requires_enabled_expert_dispatch"=>Some("main_expert_selection_requires_enabled_expert_dispatch"),
+        "main_expert_selection_source_changed"=>Some("main_expert_selection_source_changed"),
+        _=>None,
+    }
+}
+#[cfg(test)]
+mod main_expert_error_frame_tests {
+    use super::*;
+    #[test]
+    fn closed_admission_code_survives_service_wrapper_without_free_text_matching() {
+        let code="main_expert_selection_requires_tool_capable_main_model";
+        assert_eq!(main_expert_admission_error_code(code),Some(code));
+        assert_eq!(main_expert_admission_error_code(&format!("command_rejected: {code}")),Some(code));
+        assert_eq!(main_expert_admission_error_code(&format!("The model said {code} in its answer")),None);
     }
 }

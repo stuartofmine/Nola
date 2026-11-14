@@ -199,7 +199,7 @@ struct MacExtensionsCenterView: View {
                 symbol: "shippingbox",
                 navigationAction: navigationAction
             ) {
-                Text(macExtensionsText("mac.extensions.subtitle", "Browse, configure, and edit tools available to this Mac."))
+                EmptyView()
             } actions: {
                 if showsBrowserIntegration {
                     Button {
@@ -741,11 +741,18 @@ private struct MacExtensionGalleryCard: View {
             .accessibilityIdentifier("mac.extensions.card.\(item.id)")
 
             HStack(spacing: 8) {
-                Label(item.source.title, systemImage: sourceSymbol)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                Spacer(minLength: 8)
+                Button(action: action) {
+                    Label(item.source.title, systemImage: sourceSymbol)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(item.title)
+                .accessibilityHint(macExtensionsText("mac.extensions.action.open_details", "Open details"))
+                .accessibilityIdentifier("mac.extensions.details.\(item.id)")
                 if let onEnabledChange {
                     Toggle(
                         macExtensionsText("mac.extensions.metric.enabled", "Enabled"),
@@ -778,14 +785,7 @@ private struct MacExtensionGalleryCard: View {
                         symbol: item.isEnabled ? "checkmark" : "power"
                     )
                 }
-                Button(action: action) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(isHovering ? MacDesignColor.brand : Color.secondary)
-                        .frame(width: 22, height: 22)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(macExtensionsText("mac.extensions.action.open_details", "Open details"))
+
             }
             .padding(.horizontal, 14)
             .frame(height: 42)
@@ -810,6 +810,7 @@ private struct MacExtensionGalleryCard: View {
         }
         .accessibilityLabel("\(item.title), \(item.source.title)")
         .accessibilityHint(macExtensionsText("mac.extensions.action.open_details", "Open details"))
+                .accessibilityIdentifier("mac.extensions.details.\(item.id)")
     }
 
     private var skillCategory: MacSkillFunctionalCategory? {

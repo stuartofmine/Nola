@@ -61,7 +61,7 @@ export function createBrowserNotifications(environment: Environment) {
             environment.show(title, body);
         },
         completed(evidence: unknown, owner: ChatTurnOwner, title: string, body: string): boolean {
-            if (!isVerifiedTerminal(evidence) || evidence.owner.hostId !== owner.hostId
+            if (!isVerifiedTerminal(evidence) || !['answered','action_completed'].includes(evidence.seal.result.value.kind) || evidence.owner.hostId !== owner.hostId
                 || evidence.owner.conversationId !== owner.conversationId || evidence.owner.clientId !== owner.clientId
                 || evidence.owner.generation !== owner.generation) return false;
             const key = JSON.stringify([owner.hostId, owner.clientId, owner.conversationId, evidence.seal.identity.run_id]);

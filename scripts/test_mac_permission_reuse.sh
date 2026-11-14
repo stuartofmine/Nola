@@ -9,7 +9,7 @@ case "${1:-fixture}" in
     . "$ROOT/scripts/lib/xcode_test_device_guard.sh"
     nola_xctest_device_guard_begin "$ROOT" macos
     nola_xctest_device_guard_install_traps "$ROOT" macos
-    args=(test -quiet -project "$ROOT/Nola.xcodeproj" -scheme NolaMac -configuration Test
+    args=(test -quiet -project "$ROOT/apple/Nola.xcodeproj" -scheme NolaMac -configuration Test
       -destination "platform=macOS,arch=$(uname -m)" -destination-timeout 10
       -only-testing:NolaMacTests/MacAgentCapabilityEndToEndTests/testCautiousConversationGrantReusesOnlyOriginalResourceAndOwner
       CODE_SIGNING_ALLOWED=NO ONLY_ACTIVE_ARCH=YES)

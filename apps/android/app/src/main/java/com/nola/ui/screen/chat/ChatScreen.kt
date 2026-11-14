@@ -208,6 +208,7 @@ import com.nola.ui.components.NolaSpacing
 import com.nola.ui.components.PermissionDialog
 import com.nola.ui.components.hostToolDisplayName
 import com.nola.ui.components.SmoothStreamingMarkdownRenderer
+import com.nola.ui.components.ThinkingBlock
 import com.nola.ui.components.NolaDisclosureChevron
 import com.nola.ui.components.nolaDisclosureEnter
 import com.nola.ui.components.nolaDisclosureExit
@@ -317,6 +318,13 @@ internal fun ChatScreen(
     var showContextSheet by rememberSaveable { mutableStateOf(ContextDisplayMode.Context) }
     var showContextSheetOpen by rememberSaveable(state.conversationId, state.executionHostBinding) { mutableStateOf(false) }
     var showConversations by rememberSaveable { mutableStateOf(true) }
+    var expertHistoryTarget by remember { mutableStateOf<ExpertHistoryTarget?>(null) }
+    expertHistoryTarget?.let { target ->
+        androidx.compose.runtime.key(target) { ExpertChildHistoryDialog(target,
+            load = { before -> viewModel.loadExpertChildHistory(target, before) },
+            onContinue = { viewModel.continueExpertChildHistory(target.parentId, target.child); showConversations = false },
+            onClose = { expertHistoryTarget = null }) }
+    }
     LaunchedEffect(requestedConversationId, requestedNewConversation) {
         if (requestedNewConversation) {
             dismissNavigationKeyboard()
@@ -340,10 +348,8 @@ internal fun ChatScreen(
     val conversationActivity by viewModel.conversationActivity.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val preparingExpertPicker by viewModel.preparingExpertPicker.collectAsStateWithLifecycle()
-    var expertSourceLocal by remember(state.conversationId) { mutableStateOf(false) }
+    var expertSourceAvailable by remember(state.conversationId) { mutableStateOf(false) }
     var showExpertPicker by rememberSaveable { mutableStateOf(false) }
-    var showExpertSessions by rememberSaveable(state.conversationId) { mutableStateOf(false) }
-    var selectedExpertContextId by rememberSaveable(state.conversationId) { mutableStateOf<String?>(null) }
     var showExpertManagement by rememberSaveable { mutableStateOf(false) }
     var colorEditingExpertId by rememberSaveable { mutableStateOf<String?>(null) }
     val availableExperts by viewModel.conversationAgentDirectory.collectAsStateWithLifecycle()
@@ -355,7 +361,7 @@ internal fun ChatScreen(
     var mentionIndex by remember(state.conversationId) { mutableIntStateOf(0) }
     val mentionQuery = roomMentionQuery(inputText)
     val mentionCandidates = availableExperts?.agents.orEmpty().filter {
-        expertSourceLocal &&
+        expertSourceAvailable &&
         it.availability == "active" && it.id !in selectedExpertIds &&
             it.name.contains(mentionQuery.orEmpty(), ignoreCase = true)
     }
@@ -370,16 +376,17 @@ internal fun ChatScreen(
     val commandsVisible = mentionFocused && commandQuery != null && commandDismissed != inputText
     fun openExpertPicker() {
         scope.launch {
-            if (viewModel.prepareExpertPicker()) { expertSourceLocal = true; showExpertManagement = false; showExpertPicker = true }
+            if (viewModel.prepareExpertPicker()) { expertSourceAvailable = true; showExpertManagement = false; showExpertPicker = true }
         }
     }
     LaunchedEffect(state.conversationId, state.configurationRevision, state.processingState, state.executionHostBinding) {
-        expertSourceLocal = false
-        val id = state.conversationId ?: return@LaunchedEffect
-        expertSourceLocal = try { viewModel.isLocalExpertSource(id) }
+        expertSourceAvailable = false
+        val id = state.conversationId
+        if (id == null) { expertSourceAvailable = true; return@LaunchedEffect }
+        expertSourceAvailable = try { viewModel.canReadExpertSource(id) }
         catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
         catch (_: Exception) { false }
-        if (!expertSourceLocal && !showExpertManagement) showExpertPicker = false
+        if (!expertSourceAvailable && !showExpertManagement) showExpertPicker = false
     }
     fun completeCommand(command: ComposerCommand) { if (!canMutateDraft()) return; inputText = "/${command.name} "; commandError = null; commandIndex = 0 }
     fun executeCommand(): Boolean {
@@ -409,26 +416,71 @@ internal fun ChatScreen(
     LaunchedEffect(mentionIndex, mentionsVisible) {
         if (mentionsVisible && mentionCandidates.isNotEmpty()) mentionListState.animateScrollToItem(mentionIndex.coerceIn(mentionCandidates.indices))
     }
-    LaunchedEffect(mentionQuery != null, state.conversationId, expertSourceLocal) {
+    LaunchedEffect(mentionQuery != null, state.conversationId) {
         if (mentionQuery != null) {
-            if (state.conversationId == null) scope.launch {
-                if (viewModel.prepareExpertPicker()) expertSourceLocal = true
-            }
-            else if (expertSourceLocal) viewModel.refreshConversationExperts(restoreSelection = false)
+            if (state.conversationId == null) scope.launch { viewModel.prepareExpertPicker() }
+            else if (expertSourceAvailable) viewModel.refreshConversationExperts(restoreSelection = false)
         }
     }
     fun selectMention(id: String) {
         if (!canMutateDraft()) return
         if (mentionCandidates.none { it.id == id }) return
-        viewModel.toggleConversationExpert(id)
-        inputText = removeRoomMentionQuery(inputText)
-        mentionIndex = 0
+        val original = inputText
+        val owner = state.conversationId
+        viewModel.toggleConversationExpert(id) {
+            if (viewModel.uiState.value.conversationId == owner && inputText == original && canMutateDraft()) {
+                inputText = removeRoomMentionQuery(original)
+                mentionIndex = 0
+            }
+        }
     }
 
     var attachments by composerDraft.attachments
     var attachmentMessage by composerDraft.notice
     var isImportingAttachments by composerDraft.importing
+    val expertRejoin by viewModel.expertRejoinRequest.collectAsStateWithLifecycle()
+    val expertRejoining by viewModel.expertRejoining.collectAsStateWithLifecycle()
+    val expertRejoinError by viewModel.expertRejoinError.collectAsStateWithLifecycle()
+    expertRejoin?.takeIf { it.conversationId == state.conversationId }?.let { request ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { viewModel.cancelExpertRejoin() },
+            title = { Text(stringResource(R.string.expert_rejoin_action)) },
+            text = { Column {
+                Text(request.agent.name)
+                Text(stringResource(R.string.expert_rejoin_guidance))
+                expertRejoinError?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error)
+                    TextButton(enabled = !expertRejoining, onClick = { viewModel.refreshExpertRejoin() }) {
+                        Text(stringResource(R.string.common_refresh))
+                    }
+                }
+            } },
+            confirmButton = { TextButton(enabled = !expertRejoining, onClick = { viewModel.confirmExpertRejoin() }) {
+                Text(stringResource(R.string.expert_rejoin_action))
+            } },
+            dismissButton = { TextButton(enabled = !expertRejoining, onClick = { viewModel.cancelExpertRejoin() }) {
+                Text(stringResource(R.string.common_cancel))
+            } }
+        )
+    }
     var launchedAgentPermission by remember { mutableStateOf<AndroidAgentPermissionAction?>(null) }
+    var showRuntimePermissionSettings by rememberSaveable { mutableStateOf(false) }
+    if (showRuntimePermissionSettings) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showRuntimePermissionSettings = false },
+            title = { Text(stringResource(R.string.permission_settings_title)) },
+            text = { Text(stringResource(R.string.permission_settings_guidance)) },
+            confirmButton = { TextButton(onClick = {
+                val intent = Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:${context.packageName}"))
+                context.startActivity(intent)
+                showRuntimePermissionSettings = false
+            }) { Text(stringResource(R.string.permission_settings_open)) } },
+            dismissButton = { TextButton(onClick = { showRuntimePermissionSettings = false }) {
+                Text(stringResource(R.string.common_cancel))
+            } }
+        )
+    }
     var learningMessage by remember { mutableStateOf<ConversationMessage?>(null) }
     var actionMessage by remember { mutableStateOf<ConversationMessage?>(null) }
     val transcriptStates = rememberSaveableStateHolder()
@@ -473,7 +525,13 @@ internal fun ChatScreen(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { grants ->
         val action = launchedAgentPermission as? AndroidAgentPermissionAction.RuntimePermissions
-        if (action != null) viewModel.completeLocalRuntimePermission(action.requestId, grants)
+        if (action != null) {
+            viewModel.completeLocalRuntimePermission(action.requestId, grants)
+            val activity = context.permissionRecoveryActivity()
+            if (activity != null && requiresRuntimePermissionSettings(grants) {
+                    androidx.core.app.ActivityCompat.shouldShowRequestPermissionRationale(activity, it)
+                }) showRuntimePermissionSettings = true
+        }
         launchedAgentPermission = null
     }
     val agentDocumentLauncher = rememberLauncherForActivityResult(
@@ -544,12 +602,11 @@ internal fun ChatScreen(
 
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { viewModel.onConversationBackground() }
 
-    BackHandler(enabled = inspector != null || showExpertPicker || showExpertSessions || showContextSheetOpen) {
+    BackHandler(enabled = inspector != null || showExpertPicker || showContextSheetOpen) {
         when {
-            showExpertSessions -> if (selectedExpertContextId != null) selectedExpertContextId = null else showExpertSessions = false
             showContextSheetOpen -> showContextSheetOpen = false
             inspector != null -> inspector = null
-            showExpertPicker -> if (showExpertManagement && expertSourceLocal) showExpertManagement = false else { showExpertManagement = false; showExpertPicker = false }
+            showExpertPicker -> if (showExpertManagement && expertSourceAvailable) showExpertManagement = false else { showExpertManagement = false; showExpertPicker = false }
             else -> { dismissNavigationKeyboard(); viewModel.loadConversations(); showConversations = true }
         }
     }
@@ -558,103 +615,20 @@ internal fun ChatScreen(
         ExpertBubbleColorEditor(agentId = agent.id, name = agent.name, onDismiss = { colorEditingExpertId = null })
     }
 
-    if (showExpertSessions) {
-        val sessions = expertReplies.values.flatten().groupBy { it.participant.contextConversationId }
-        val selectedReplies = selectedExpertContextId?.let(sessions::get)
-        val selectedParticipant = selectedReplies?.firstOrNull()?.participant
-        ModalBottomSheet(onDismissRequest = { showExpertSessions = false; selectedExpertContextId = null },
-            sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-            BackHandler(enabled = selectedExpertContextId != null) { selectedExpertContextId = null }
-            Column(Modifier.fillMaxWidth().fillMaxHeight(0.9f).testTag("chat.expert.sessions")) {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (selectedExpertContextId != null) {
-                        NolaIconButton(label = stringResource(R.string.common_back), onClick = { selectedExpertContextId = null },
-                            modifier = Modifier.testTag("chat.expert.sessions.back")) {
-                            Icon(painterResource(R.drawable.nola_back), contentDescription = null)
-                        }
-                    }
-                    Text(selectedParticipant?.displayName ?: stringResource(R.string.chat_expert_sessions),
-                        style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    TextButton(onClick = { showExpertSessions = false; selectedExpertContextId = null }) { Text(stringResource(R.string.common_done)) }
-                }
-                androidx.compose.runtime.key(selectedExpertContextId) {
-                    LazyColumn(Modifier.weight(1f).testTag(if (selectedExpertContextId == null) "chat.expert.sessions.list" else "chat.expert.sessions.transcript"),
-                        contentPadding = PaddingValues(vertical = 12.dp)) {
-                        if (sessions.isEmpty() || (selectedExpertContextId != null && selectedReplies.isNullOrEmpty())) item {
-                            Text(stringResource(R.string.chat_expert_sessions_empty), Modifier.padding(20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        if (selectedExpertContextId == null) {
-                            items(sessions.entries.toList(), key = { it.key }) { (contextId, replies) ->
-                                val participant = replies.first().participant
-                                val needsResponse = replies.any { it.hostPermission != null || it.localPermission != null || it.permissionAction != null }
-                                val running = replies.any { it.isStreaming || it.state in setOf("accepted", "queued", "executing", "running") }
-                                Row(Modifier.fillMaxWidth().clickable { selectedExpertContextId = contextId }
-                                    .testTag("chat.expert.session.$contextId").padding(horizontal = 20.dp, vertical = 14.dp),
-                                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    ExpertReplyAvatar(participant.displayName)
-                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                        Text(participant.displayName, style = MaterialTheme.typography.titleMedium)
-                                        Text(stringResource(when {
-                                            needsResponse -> R.string.conversations_waiting
-                                            running -> R.string.conversations_running
-                                            replies.last().state == "failed" -> R.string.chat_response_failed
-                                            replies.last().state == "blocked" -> R.string.room_submission_blocked
-                                            replies.last().state == "incomplete" -> R.string.room_submission_incomplete
-                                            replies.last().state == "cancelled" -> R.string.room_submission_cancelled
-                                            replies.last().state in setOf("completed", "completed_with_warnings") -> R.string.room_submission_completed
-                                            else -> R.string.room_submission_unconfirmed
-                                        }), style = MaterialTheme.typography.labelMedium,
-                                            color = if (needsResponse) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                }
-                            }
-                        } else {
-                            expertReplies.forEach { (messageId, replies) ->
-                                val sessionReplies = replies.filter { it.participant.contextConversationId == selectedExpertContextId }
-                                if (sessionReplies.isNotEmpty()) {
-                                    state.messages.firstOrNull { it.id == messageId }?.text?.takeIf { it.isNotBlank() }?.let { question ->
-                                        item(key = "question.$messageId") {
-                                            Text(question, Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-                                                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                    }
-                                    items(sessionReplies, key = { it.submissionId }) { reply ->
-                                        ConversationExpertReplyBubble(reply, Modifier.padding(vertical = 8.dp),
-                                            viewModel::resolvePermission, viewModel::resolveLocalAgentPermission,
-                                            viewModel::provideHostPermissionInstruction, viewModel::provideLocalPermissionInstruction,
-                                            uiPartContent = { part -> CanonicalUiReference(part, uiSurfaces, viewModel::loadUiSurfaceRevision,
-                                                viewModel::submitUiInteraction, { receipt -> ++uiReadSequence; uiSurfaces = uiSurfaces.map {
-                                                    if (it.identity == receipt.snapshot.identity && receipt.snapshot.revision >= it.revision) receipt.snapshot else it
-                                                } }, viewModel::restoreUiInteraction, viewModel::previewUiSurface) })
-                                    }
-                                    if (messageId in resumableExpertMessages) item(key = "resume.$messageId") {
-                                        TextButton(onClick = { viewModel.resumeOriginalExpertMessage(messageId) }, enabled = resumingExpertMessage == null) {
-                                            Text(stringResource(R.string.chat_resume_expert_message))
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     if (showExpertPicker) {
         ModalBottomSheet(onDismissRequest = { showExpertPicker = false; showExpertManagement = false },
             sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
             if (showExpertManagement) {
                 ExpertManagementPanel(viewModel, onBack = {
                     showExpertManagement = false
-                    if (expertSourceLocal) viewModel.refreshConversationExperts() else showExpertPicker = false
+                    if (expertSourceAvailable) viewModel.refreshConversationExperts(restoreSelection = false) else showExpertPicker = false
                 })
             } else Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp)) {
                 TextButton(onClick = { showExpertManagement = true }, modifier = Modifier.testTag("chat.experts.manage").heightIn(min = 48.dp)) { Text(stringResource(R.string.expert_manage)) }
                 Text(stringResource(R.string.chat_experts), style = MaterialTheme.typography.titleLarge)
                 Text(stringResource(R.string.chat_experts_hint), style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
-                val agents = availableExperts?.agents.orEmpty().filter { expertSourceLocal && it.availability == "active" }
+                val agents = availableExperts?.agents.orEmpty().filter { expertSourceAvailable && it.availability == "active" }
                 if (agents.isEmpty()) {
                     Text(stringResource(R.string.chat_experts_empty), modifier = Modifier.padding(vertical = 20.dp))
                 } else {
@@ -829,7 +803,7 @@ internal fun ChatScreen(
     }
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     PredictiveBackHandler(enabled = !showConversations && !keyboardVisible && inspector == null &&
-        !showExpertPicker && !showExpertSessions && !showContextSheetOpen && !showActions && !showIMSearch) { events ->
+        !showExpertPicker && !showContextSheetOpen && !showActions && !showIMSearch) { events ->
         try {
             events.collect { event ->
                 if (!navigationReduceMotion) navigationState.seekTo(event.progress, true)
@@ -878,7 +852,10 @@ internal fun ChatScreen(
             activity = conversationActivity,
             onLoadPreview = viewModel::loadConversationPreview,
             error = conversationListError,
-            onRetry = viewModel::loadConversations
+            onRetry = viewModel::loadConversations,
+            expertChildren = { conversation -> androidx.compose.runtime.key(conversation.id, conversation.executionHostBinding) {
+                ExpertChildTree(conversation.id, load = { viewModel.loadExpertChildren(conversation.id, it) }, onOpen = { expertHistoryTarget = it })
+            } }
         )
     } else {
 
@@ -929,24 +906,18 @@ internal fun ChatScreen(
             }
 
             Row(horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-                NolaIconButton(label = stringResource(R.string.intelligence_more), onClick = { showActions = true }, modifier = Modifier.testTag("chat.topbar.more")) {
-                    Text("⋯", style = MaterialTheme.typography.titleLarge)
-                }
                 Box {
                     NolaIconButton(label = stringResource(R.string.chat_search_loaded_title), onClick = { showIMSearch = true }, modifier = Modifier.testTag("chat.topbar.search")) {
                         Icon(painterResource(R.drawable.nola_search), contentDescription = stringResource(R.string.chat_search_loaded_title))
                     }
                     if (showActions) ModalBottomSheet(onDismissRequest = { showActions = false }) {
-                        DropdownMenuItem(text = { Text(stringResource(R.string.chat_expert_sessions)) },
-                            modifier = Modifier.testTag("chat.expert.sessions.open"),
-                            onClick = { showActions = false; selectedExpertContextId = null; showExpertSessions = true })
                         DropdownMenuItem(text = { Text(stringResource(R.string.chat_experts)) },
                             modifier = Modifier.testTag("chat.experts.open"),
                             enabled = draftWritable && !preparingExpertPicker,
                             onClick = { showActions = false; openExpertPicker() })
                         DropdownMenuItem(text = { Text(stringResource(R.string.expert_manage)) },
                             modifier = Modifier.testTag("chat.experts.manage.local"),
-                            onClick = { showActions = false; showExpertManagement = true; showExpertPicker = true; viewModel.refreshConversationExperts() })
+                            onClick = { showActions = false; showExpertManagement = true; showExpertPicker = true; viewModel.refreshConversationExperts(restoreSelection = false) })
                         DropdownMenuItem(text = { Text(stringResource(R.string.chat_open_context_settings)) },
                             modifier = Modifier.testTag("chat.context.open"),
                             enabled = presentationReady,
@@ -1000,7 +971,7 @@ internal fun ChatScreen(
             transcriptStates.SaveableStateProvider(state.conversationId ?: "new-conversation") {
             ChatTranscript(
             state = state,
-            onResendEditedMessage = viewModel::beginMessageEdit,
+            onResendEditedMessage = if (state.expertContextOwner == null) viewModel::beginMessageEdit else null,
             expertReplies = expertReplies,
             resumableExpertMessages = resumableExpertMessages,
             resumingExpertMessage = resumingExpertMessage,
@@ -1091,8 +1062,8 @@ internal fun ChatScreen(
                 }
             }
             if (selectedExpertIds.isNotEmpty()) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
-                availableExperts?.agents.orEmpty().filter { it.id in selectedExpertIds }.forEach { expert ->
-                    TextButton(onClick = { viewModel.toggleConversationExpert(expert.id) }) { Text("${expert.name} ×") }
+                selectedExpertIds.forEach { agentId ->
+                    TextButton(onClick = { viewModel.toggleConversationExpert(agentId) }) { Text("${viewModel.conversationExpertLabel(agentId)} ×") }
                 }
             }
             state.expertHostConfirmationStatus?.let { status ->
@@ -1106,7 +1077,10 @@ internal fun ChatScreen(
                     if (state.checkingExpertHostAdmission) LinearProgressIndicator(Modifier.fillMaxWidth())
                 }
             }
-            if (state.taskChildOwner != null) {
+            if (state.expertContextOwner != null) {
+                Text(stringResource(R.string.expert_child_read_only), Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                state.expertContextParentId?.let { parent -> TextButton(onClick = { viewModel.loadConversation(parent) }) { Text(stringResource(R.string.chat_task_return_parent)) } }
+            } else if (state.taskChildOwner != null) {
                 TextButton(onClick = { state.taskChildOwner?.let { viewModel.loadConversation(it.parentConversationId) } }) {
                     Text(stringResource(R.string.chat_task_return_parent))
                 }
@@ -1286,7 +1260,7 @@ internal fun ChatScreen(
                     if (executeCommand()) { /* Local command consumed before any admission. */ }
                     else if (state.processingState.isGenerating) {
                         viewModel.cancelGeneration(viewModel.composerDrafts.ownerKey(state.conversationId), state.activeResponseId)
-                    } else if (state.currentModel == null) {
+                    } else if (requiresPrimaryModelForComposer(state.currentModel != null, selectedExpertIds)) {
                         showModelMenu = true
                     } else if (!state.processingState.blocksInput && !state.permissionSaving && !state.permissionSaveFailed) {
                         val trimmed = inputText.trim()
@@ -1740,7 +1714,7 @@ internal fun ChatTranscript(
                         expertReplies[message.id].orEmpty().forEach { reply ->
                             ConversationExpertReplyBubble(reply, Modifier.padding(top = 6.dp), onResolveHostPermission,
                                 onResolveLocalPermission, onHostPermissionInstruction, onLocalPermissionInstruction,
-                                uiPartContent = { part -> CanonicalUiReference(part, uiSurfaces, onUiReadHistory, onUiSubmit, onUiAccepted, onUiRestore, onUiPreview) }, showDetails = false)
+                                uiPartContent = { part -> CanonicalUiReference(part, uiSurfaces, onUiReadHistory, onUiSubmit, onUiAccepted, onUiRestore, onUiPreview) })
                         }
                         if (message.id in resumableExpertMessages) TextButton(onClick = { onResumeExpertMessage(message.id) },
                             enabled = resumingExpertMessage == null) { Text(stringResource(R.string.chat_resume_expert_message)) }
@@ -2195,7 +2169,7 @@ internal fun ChatComposerBar(
             )
         }
 
-        Column(Modifier.fillMaxWidth().nolaSurface(radius = 24.dp, raised = false,
+        Column(Modifier.fillMaxWidth().nolaSurface(radius = 25.dp, raised = false,
             border = if (inputFocused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant).padding(4.dp)) {
             BasicTextField(
                 value = currentEditor,
@@ -2506,7 +2480,6 @@ internal fun ConversationExpertReplyBubble(reply: ChatViewModel.ConversationExpe
     onHostPermissionInstruction: (String, String) -> Unit = { _, _ -> },
     onLocalPermissionInstruction: (String, String) -> Unit = { _, _ -> },
     uiPartContent: (@Composable (com.nola.data.local.UiReferencePresentation) -> Unit)? = null,
-    showDetails: Boolean = true,
 ) {
     if (reply.message?.conversationId?.let { it != reply.participant.contextConversationId } == true) {
         Text(stringResource(R.string.canonical_message_owner_error), color = MaterialTheme.colorScheme.error,
@@ -2538,17 +2511,16 @@ internal fun ConversationExpertReplyBubble(reply: ChatViewModel.ConversationExpe
             val bubble = Modifier.widthIn(max = compactWidth?.coerceAtMost(720.dp) ?: 720.dp)
                 .clip(RoundedCornerShape(topStart = 5.dp, topEnd = 14.dp, bottomEnd = 14.dp, bottomStart = 14.dp))
                 .background(tint).padding(horizontal = bubblePadding, vertical = 10.dp)
-            if (showDetails && reply.message != null) {
+            if (reply.message != null) {
                 MessageBubble(message = reply.message, conversationId = reply.participant.contextConversationId,
                     contentPadding = PaddingValues(0.dp), assistantContainerColor = tint,
                     isActiveResponse = reply.isStreaming, isStreaming = reply.isStreaming,
                     thinking = reply.thinking, thinkingFinished = reply.thinkingFinished, liveToolEvents = reply.toolEvents, uiPartContent = uiPartContent)
                 if (!reply.isStreaming && reply.state !in setOf("completed", "completed_with_warnings")) Text(label,
                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } else if (reply.text.ifBlank { reply.message?.text.orEmpty() }.isNotBlank()) {
-                val answer = reply.text.ifBlank { reply.message?.text.orEmpty() }
-                StreamingText(answer, isStreaming = reply.isStreaming, modifier = bubble)
-                MessageCopyAction(answer)
+            } else if (reply.text.isNotBlank()) {
+                StreamingText(reply.text, isStreaming = reply.isStreaming, modifier = bubble)
+                MessageCopyAction(reply.text)
             } else Text(label, modifier = bubble, style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurface)
             reply.hostPermission?.let { HostPermissionCard(it, onResolveHostPermission, onHostPermissionInstruction) }
@@ -2626,6 +2598,7 @@ fun MessageBubble(
     assistantContainerColor: Color? = null,
     onResendEditedMessage: ((ConversationMessage) -> Unit)? = null,
     uiPartContent: (@Composable (com.nola.data.local.UiReferencePresentation) -> Unit)? = null,
+    readOnlyHistory: Boolean = false,
 ) {
     var activityChoices by remember(message.conversationId, message.id) { mutableStateOf(CanonicalActivityDisclosureChoices()) }
     val isUser = message.role == ChatRole.user
@@ -2647,7 +2620,9 @@ fun MessageBubble(
     }
     val skillToolEventIds = skillRuns.mapTo(mutableSetOf()) { "core-skill:${it.runId}" }
     val visibleHostToolEvents = hostToolEvents.filterNot { it.id in skillToolEventIds }
-    val hasCanonicalActivities = message.canonicalParts.any(::isExecutionActivity)
+    val hasCanonicalActivities = message.canonicalParts.any {
+        it is ConversationProjectionV1.Part.Tool || it is ConversationProjectionV1.Part.Reasoning
+    }
     val hasCanonicalSources = message.canonicalParts.any {
         it is ConversationProjectionV1.Part.Source || it is ConversationProjectionV1.Part.Citation || it is ConversationProjectionV1.Part.Attachment
     }
@@ -2682,14 +2657,6 @@ fun MessageBubble(
 
     CanonicalPartReaderBoundary(message.conversationId, message.id, message.canonicalParts) { onReadText ->
     Row(Modifier.fillMaxWidth().padding(contentPadding), horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.Top) {
-    if (!isUser && assistantContainerColor == null) {
-        Column(Modifier.width(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(Modifier.size(30.dp).background(MaterialTheme.colorScheme.surface, CircleShape), contentAlignment = Alignment.Center) {
-                Text("n", fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
-            }
-            Text("Nola", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
     Column(
         modifier = modifier
             .weight(1f)
@@ -2700,27 +2667,27 @@ fun MessageBubble(
             ),
         horizontalAlignment = alignment
     ) {
+        if (!isUser && assistantContainerColor == null) {
+            Row(Modifier.padding(bottom = 10.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                val markSize = with(LocalDensity.current) { 12.sp.toDp() } + 6.dp
+                Box(Modifier.size(markSize).border(0.5.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape),
+                    contentAlignment = Alignment.Center) {
+                    Text("n", fontSize = 12.sp, lineHeight = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text("Nola", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
         if (isUser) {
             HistoricalPartActions(message.historicalParts)
-            CompactionSourceActions(conversationId, message.canonicalParts, onCompactionSourceRequested)
+            if (!readOnlyHistory) CompactionSourceActions(conversationId, message.canonicalParts, onCompactionSourceRequested)
             ModelAttemptDisclosures(message.canonicalParts)
         }
         if (isUser) {
             if (visibleText.isNotBlank()) {
-                val userBubbleShape = RoundedCornerShape(
-                    topStart = NolaRadius.lg,
-                    topEnd = 5.dp,
-                    bottomStart = NolaRadius.lg,
-                    bottomEnd = NolaRadius.lg
-                )
+                val userBubbleShape = RoundedCornerShape(20.dp)
                 Card(
-                    modifier = Modifier
-                        .widthIn(max = 560.dp)
-                        .border(
-                            width = 0.5.dp,
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
-                            shape = userBubbleShape
-                        ),
+                    modifier = Modifier.widthIn(max = 560.dp),
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.primaryContainer
                     ),
@@ -2785,8 +2752,8 @@ fun MessageBubble(
                 modifier = Modifier
                     .widthIn(max = compactExpertWidth?.coerceAtMost(720.dp) ?: 720.dp)
                     .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 18.dp, bottomEnd = 18.dp, bottomStart = 18.dp))
-                    .background(assistantContainerColor ?: MaterialTheme.colorScheme.surface)
-                    .padding(horizontal = expertPadding, vertical = 10.dp),
+                    .background(assistantContainerColor ?: Color.Transparent)
+                    .padding(horizontal = if (assistantContainerColor == null) 0.dp else expertPadding, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 if (isRetryingModel || isCompactingContext) {
@@ -2807,21 +2774,36 @@ fun MessageBubble(
                         )
                     }
                 }
-                if (hasLegacyExecutionDisclosure(hasCanonicalActivities, thinkingEnabled, thinking,
-                    visibleHostToolEvents.isNotEmpty(), isStreaming && message.text.isEmpty() &&
-                        visibleHostToolEvents.isEmpty() && skillRuns.isEmpty() && taskHandles.isEmpty())) {
-                    LegacyExecutionDisclosure(message.conversationId, message.id,
-                        if (thinkingEnabled) thinking else "", visibleHostToolEvents,
-                        isStreaming && !thinkingFinished)
+                if (
+                    !hasCanonicalActivities && (
+                        (thinkingEnabled && thinking.isNotEmpty()) ||
+                        (
+                            isStreaming &&
+                                message.text.isEmpty() &&
+                                visibleHostToolEvents.isEmpty() &&
+                                skillRuns.isEmpty() &&
+                                taskHandles.isEmpty()
+                        )
+                    )
+                ) {
+                    ThinkingBlock(
+                        thinking = if (thinkingEnabled) thinking else "",
+                        finished = !isStreaming || thinkingFinished
+                    )
                 }
                 if (message.canonicalParts.isNotEmpty()) {
-                    canonicalMessageBlocks(message.canonicalParts).forEach { block ->
+                    val blocks = canonicalMessageBlocks(message.canonicalParts.filterNot { it is ConversationProjectionV1.Part.Source || it is ConversationProjectionV1.Part.Citation })
+                    val latestActivityKey = blocks.lastOrNull { it is CanonicalMessageBlock.Activity }?.key
+                    blocks.forEach { block ->
                         if (block is CanonicalMessageBlock.Part && block.part is ConversationProjectionV1.Part.Text &&
                             block.part.disclosedMarkdown.isEmpty()) return@forEach
-                        if (block is CanonicalMessageBlock.Activity && visibleExecutionActivities(block.parts, isStreaming, thinkingEnabled).isEmpty()) return@forEach
+                        if (block is CanonicalMessageBlock.Activity && block.parts.none { part ->
+                            part is ConversationProjectionV1.Part.Tool || (thinkingEnabled && part is ConversationProjectionV1.Part.Reasoning &&
+                                (!part.summary.isNullOrBlank() || part.partId == visibleReasoningPlaceholderId(block.parts, isStreaming)))
+                        }) return@forEach
                         key(block.key) {
                         Column(Modifier.testTag("chat.part.${block.key}")) { when (block) {
-                            is CanonicalMessageBlock.Activity -> CanonicalActivityCards(block.parts, isStreaming, activityChoices, { activityChoices = it }, onReadText, thinkingEnabled)
+                            is CanonicalMessageBlock.Activity -> CanonicalActivityCards(block.parts, isStreaming && block.key == latestActivityKey, activityChoices, { activityChoices = it }, onReadText, thinkingEnabled)
                             is CanonicalMessageBlock.Part -> when (val part = block.part) {
                                 is ConversationProjectionV1.Part.Text -> if (part.disclosedMarkdown.isNotEmpty()) StreamingText(
                                     text = part.disclosedMarkdown, isStreaming = isStreaming, revealOnFirstComposition = revealOnFirstComposition,
@@ -2829,7 +2811,9 @@ fun MessageBubble(
                                 is ConversationProjectionV1.Part.UiSurface, is ConversationProjectionV1.Part.Historical -> {
                                     if (part is ConversationProjectionV1.Part.Historical) {
                                         HistoricalPartActions(listOf(part))
-                                        part.projection.timelineText?.takeUnless { isExecutionActivity(part) }?.takeIf { it.isNotBlank() }?.let { text -> StreamingText(text,
+                                        if (part.projection.canonicalKind == "reasoning" && part.projection.decodedText != null) {
+                                            if (thinkingEnabled) ThinkingBlock(part.projection.decodedText.orEmpty(), finished = true)
+                                        } else part.projection.timelineText?.takeIf { it.isNotBlank() }?.let { text -> StreamingText(text,
                                             isStreaming = false, modifier = Modifier.padding(horizontal = 2.dp, vertical = 2.dp)) }
                                     }
                                     com.nola.data.local.uiReferencePresentation(part, conversationId, message.id)?.let { reference ->
@@ -2838,11 +2822,11 @@ fun MessageBubble(
                                 }
                                 is ConversationProjectionV1.Part.Error -> CanonicalErrorPart(part, onReadText)
                                 is ConversationProjectionV1.Part.UiAction -> if (part.summary.isNotBlank()) Text(part.summary)
-                                is ConversationProjectionV1.Part.Compaction -> CompactionSourceActions(conversationId, listOf(part), onCompactionSourceRequested)
+                                is ConversationProjectionV1.Part.Compaction -> if (!readOnlyHistory) CompactionSourceActions(conversationId, listOf(part), onCompactionSourceRequested)
                                 is ConversationProjectionV1.Part.ModelAttempt -> ModelAttemptDisclosures(listOf(part))
-                                is ConversationProjectionV1.Part.Source, is ConversationProjectionV1.Part.Citation,
+                                is ConversationProjectionV1.Part.Source, is ConversationProjectionV1.Part.Citation -> Unit
                                 is ConversationProjectionV1.Part.Attachment -> CanonicalSourceCards(listOf(part), onReadText)
-                                is ConversationProjectionV1.Part.Skill -> AgentCoreSkillRunList(skillRuns.filter { it.runId == part.runId }, Modifier.fillMaxWidth())
+                                is ConversationProjectionV1.Part.Skill -> AgentCoreSkillRunList(skillRuns.filter { it.runId == part.runId }, Modifier.fillMaxWidth(), live = isStreaming)
                                 is ConversationProjectionV1.Part.Task -> AgentCoreTaskList(
                                     tasks = taskHandles.filter { it.id == part.taskId },
                                     loadDetail = loadTaskDetail?.let { loader -> { task, before -> loader(task, message.meta?.get("nola.canonicalMessageID") ?: message.id, before) } },
@@ -2854,7 +2838,8 @@ fun MessageBubble(
                         } }
                     } }
                 } else {
-                    if (skillRuns.isNotEmpty()) AgentCoreSkillRunList(skillRuns, Modifier.fillMaxWidth())
+                    if (visibleHostToolEvents.isNotEmpty()) HostToolTimeline(visibleHostToolEvents, Modifier.fillMaxWidth())
+                    if (skillRuns.isNotEmpty()) AgentCoreSkillRunList(skillRuns, Modifier.fillMaxWidth(), live = isStreaming)
                     if (taskHandles.isNotEmpty()) AgentCoreTaskList(tasks = taskHandles, controls = emptyMap(),
                         loadDetail = loadTaskDetail?.let { loader -> { task, before -> loader(task, message.id, before) } },
                         recovery = taskRecovery?.let { action -> { task, decision, submit -> action(task, message.id, decision, submit) } },
@@ -2870,6 +2855,7 @@ fun MessageBubble(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
                     )
                 }
+                if (hasCanonicalSources) CanonicalSourceCards(message.canonicalParts.filter { it is ConversationProjectionV1.Part.Source || it is ConversationProjectionV1.Part.Citation }, onReadText)
                 if (!hasCanonicalSources && answerSources.isNotEmpty()) AnswerSourcesList(answerSources)
             }
         }
@@ -2988,119 +2974,40 @@ private fun ModelAttemptDisclosures(parts: List<ConversationProjectionV1.Part>) 
 private fun AgentCoreSkillRunList(
     runs: List<AgentCoreSkillRun>,
     modifier: Modifier = Modifier,
+    live: Boolean = false,
 ) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(7.dp)) {
         runs.forEach { run ->
-            AgentCoreSkillRunCard(run = run)
+            AgentCoreSkillRunCard(run = run, live = live)
         }
     }
 }
 
 @Composable
-private fun AgentCoreSkillRunCard(run: AgentCoreSkillRun) {
-    val reduceMotion = rememberReduceMotionEnabled()
-    var expanded by remember(run.runId) { mutableStateOf(false) }
-    val active = !run.status.isTerminal
-    val statusLabel = stringResource(
-        when (run.status) {
-            AgentCoreSkillRunStatus.Running -> R.string.chat_skill_run_running
-            AgentCoreSkillRunStatus.WaitingForCatalog -> R.string.chat_skill_run_waiting
-            AgentCoreSkillRunStatus.Completed -> R.string.chat_skill_run_completed
-            AgentCoreSkillRunStatus.Failed -> R.string.chat_skill_run_failed
-            AgentCoreSkillRunStatus.Cancelled -> R.string.chat_skill_run_cancelled
-        },
-    )
-    val statusColor = when (run.status) {
-        AgentCoreSkillRunStatus.Completed -> MaterialTheme.colorScheme.primary
-        AgentCoreSkillRunStatus.Failed,
-        AgentCoreSkillRunStatus.Cancelled -> MaterialTheme.colorScheme.error
-        else -> MaterialTheme.colorScheme.onSurfaceVariant
+private fun AgentCoreSkillRunCard(run: AgentCoreSkillRun, live: Boolean) {
+    var details by remember(run.runId) { mutableStateOf(false) }
+    val incomplete = !live && !run.status.isTerminal
+    val name = if (run.skillId == "conduct-deep-research" && (run.displayName.isBlank() || run.displayName == run.skillId))
+        stringResource(R.string.chat_skill_deep_research) else run.displayName.ifBlank { run.skillId }
+    val label = if (incomplete) R.string.chat_skill_run_incomplete else when (run.status) {
+        AgentCoreSkillRunStatus.Running -> R.string.chat_skill_run_running
+        AgentCoreSkillRunStatus.WaitingForCatalog -> R.string.chat_skill_run_waiting
+        AgentCoreSkillRunStatus.Completed -> R.string.chat_skill_run_completed
+        AgentCoreSkillRunStatus.Failed -> R.string.chat_skill_run_failed
+        AgentCoreSkillRunStatus.Cancelled -> R.string.chat_skill_run_cancelled
     }
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(NolaRadius.md))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f))
-            .combinedClickable(onClick = { expanded = !expanded }, onLongClick = {}),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 11.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            if (active) {
-                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-            } else {
-                Icon(
-                    imageVector = when (run.status) {
-                        AgentCoreSkillRunStatus.Completed -> Icons.Filled.Check
-                        AgentCoreSkillRunStatus.Failed -> Icons.Filled.Error
-                        AgentCoreSkillRunStatus.Cancelled -> Icons.Filled.Close
-                        else -> Icons.Filled.AutoAwesome
-                    },
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                    tint = statusColor,
-                )
-            }
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                    text = run.displayName.ifBlank { run.skillId },
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = statusLabel,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = statusColor,
-                )
-            }
-            NolaDisclosureChevron(expanded, reduceMotion, Modifier.size(18.dp))
-        }
-        AnimatedVisibility(visible = expanded, enter = nolaDisclosureEnter(reduceMotion), exit = nolaDisclosureExit(reduceMotion)) {
-            Column(
-                modifier = Modifier.padding(start = 39.dp, end = 11.dp, bottom = 11.dp),
-                verticalArrangement = Arrangement.spacedBy(5.dp),
-            ) {
-                Text(
-                    text = stringResource(R.string.chat_skill_run_identity, run.mode, run.version),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    text = stringResource(
-                        R.string.chat_skill_run_usage,
-                        run.usage.modelTurns,
-                        run.usage.toolCalls,
-                        run.usage.elapsedMillis / 1000,
-                    ),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                run.resultRef?.takeIf(String::isNotBlank)?.let { result ->
-                    Text(
-                        text = stringResource(R.string.chat_skill_run_result, result),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                run.failure?.takeIf(String::isNotBlank)?.let { failure ->
-                    Text(
-                        text = stringResource(R.string.chat_skill_run_error, failure),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                        maxLines = 4,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(name, Modifier.weight(1f), style = MaterialTheme.typography.labelLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(stringResource(label), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        androidx.compose.material3.IconButton(onClick = { details = true }) {
+            Icon(Icons.Filled.Info, stringResource(R.string.canonical_details), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
+    if (details) androidx.compose.material3.AlertDialog(onDismissRequest = { details = false }, title = { Text(name) },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(stringResource(R.string.chat_skill_run_usage, run.usage.modelTurns, run.usage.toolCalls, run.usage.elapsedMillis / 1000))
+            run.failure?.takeIf(String::isNotBlank)?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        } }, confirmButton = { TextButton(onClick = { details = false }) { Text(stringResource(R.string.common_done)) } })
 }
 
 @Composable
@@ -3259,47 +3166,18 @@ private fun AgentCoreTaskCard(
 @Composable
 internal fun AnswerSourcesList(sources: List<AnswerSource>) {
     val context = LocalContext.current
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        sources.forEach { source ->
-            val parsed = remember(source.uri) { Uri.parse(source.uri) }
-            val domain = parsed.host ?: parsed.lastPathSegment.orEmpty()
-            val location = listOfNotNull(
-                source.section?.takeIf(String::isNotBlank),
-                source.page?.let { "p. $it" },
-                source.lineStart?.let { start ->
-                    source.lineEnd?.takeIf { it != start }?.let { "L$start–$it" } ?: "L$start"
-                },
-            ).joinToString(" · ")
-            val memoryMetadata = listOfNotNull(
-                source.memoryScope?.replace('_', ' '),
-                source.memoryNamespace?.replace('_', ' '),
-                source.memorySource?.takeIf(String::isNotBlank),
-                source.memoryObservedAt?.takeIf(String::isNotBlank),
-                source.memoryUsageCount.takeIf { it > 0 }?.let { "×$it" },
-                source.memorySupersedesCount.takeIf { it > 0 }?.let { "↺$it" },
-                source.memoryRequiresVerification.takeIf { it }?.let { "⚠︎" },
-                source.memoryTruncated.takeIf { it }?.let { "…" },
-            ).joinToString(" · ")
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(NolaRadius.md))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f))
-                    .clickable(enabled = isExternalAnswerSource(source.uri), role = Role.Button) { openAnswerSource(context, source) }
-                    .heightIn(min = 48.dp)
-                    .padding(horizontal = 11.dp, vertical = 9.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(9.dp),
-            ) {
-                Icon(Icons.Filled.Description, null, Modifier.size(18.dp), MaterialTheme.colorScheme.primary)
-                Column(Modifier.weight(1f)) {
-                    Text(source.title, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(listOf(domain, location).filter(String::isNotBlank).joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    if (memoryMetadata.isNotEmpty()) {
-                        Text(memoryMetadata, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    }
-                }
-            }
+    val references = sources.distinctBy { listOf(it.uri, it.section, it.page, it.lineStart, it.lineEnd) }
+    var expanded by remember(sources.firstOrNull()?.id) { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("${stringResource(R.string.chat_sources_title)} ${references.size}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        references.take(if (expanded) references.size else 3).forEachIndexed { index, source ->
+            Text("[${index + 1}] ${source.title}", Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                .clickable(enabled = isExternalAnswerSource(source.uri), role = Role.Button) { openAnswerSource(context, source) }
+                .padding(vertical = 10.dp), style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+        if (references.size > 3) TextButton(onClick = { expanded = !expanded }) {
+            Text(stringResource(if (expanded) R.string.chat_sources_fewer else R.string.chat_sources_all), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -3724,28 +3602,99 @@ private fun AnswerContextFooter(message: ConversationMessage) {
     }
 }
 
-/** Legacy metadata has no cross-kind sequence. Keep its existing reasoning-then-tools order. */
 @Composable
-private fun LegacyExecutionDisclosure(conversationId: String?, messageId: String, thinking: String,
-    events: List<HostAgentToolEvent>, reasoningLive: Boolean) {
-    var manualExpanded by remember(conversationId, messageId) { mutableStateOf<Boolean?>(null) }
-    val activityState = hostToolActivityPresentation(events).state
-    val attention = activityState == HostToolActivityState.Failed || activityState == HostToolActivityState.PermissionRequired
-    val expanded = manualExpanded ?: (reasoningLive || attention)
+private fun HostToolTimeline(
+    events: List<HostAgentToolEvent>,
+    modifier: Modifier = Modifier
+) {
     val reduceMotion = rememberReduceMotionEnabled()
-    Column(Modifier.fillMaxWidth().testTag("assistant.execution.disclosure")
-        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f), RoundedCornerShape(12.dp))
-        .padding(horizontal = 12.dp)) {
-        TextButton(onClick = { manualExpanded = !expanded }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-            Text(stringResource(R.string.chat_execution_process), Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
-            com.nola.ui.components.NolaDisclosureChevron(expanded, reduceMotion)
+    val presentation = hostToolActivityPresentation(events)
+    // Appending streamed events must not reset the user's disclosure choice.
+    var userExpanded by remember(events.firstOrNull()?.id) { mutableStateOf(false) }
+    val needsAttention = presentation.state == HostToolActivityState.PermissionRequired ||
+        presentation.state == HostToolActivityState.Failed
+    val expanded = userExpanded || needsAttention
+
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(NolaRadius.lg))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f))
+            .border(
+                width = 0.5.dp,
+                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f),
+                shape = RoundedCornerShape(NolaRadius.lg)
+            )
+            .padding(horizontal = 10.dp, vertical = 6.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(role = Role.Button) { userExpanded = !userExpanded }
+                .heightIn(min = 48.dp)
+                .padding(horizontal = 2.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(
+                Icons.Filled.QuestionAnswer,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+            Text(
+                stringResource(R.string.chat_tool_activity),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f)
+            )
+            Text(
+                when (presentation.state) {
+                    HostToolActivityState.PermissionRequired ->
+                        stringResource(R.string.chat_host_tool_status_permission_required)
+                    HostToolActivityState.Running ->
+                        stringResource(R.string.chat_tool_activity_running_format, presentation.count)
+                    HostToolActivityState.Failed ->
+                        stringResource(R.string.chat_tool_activity_failed_format, presentation.count)
+                    HostToolActivityState.Completed ->
+                        stringResource(R.string.chat_tool_activity_completed_format, presentation.count)
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = when (presentation.state) {
+                    HostToolActivityState.PermissionRequired -> MaterialTheme.colorScheme.tertiary
+                    HostToolActivityState.Running -> NolaColors.accent
+                    HostToolActivityState.Failed -> MaterialTheme.colorScheme.error
+                    HostToolActivityState.Completed -> NolaColors.success
+                }
+            )
+            Icon(
+                imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
-        AnimatedVisibility(expanded, enter = com.nola.ui.components.nolaDisclosureEnter(reduceMotion),
-            exit = com.nola.ui.components.nolaDisclosureExit(reduceMotion)) {
-            Column(Modifier.padding(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (thinking.isNotBlank()) com.nola.ui.components.ThinkingBody(thinking)
-                else if (reasoningLive && events.isEmpty()) Text(stringResource(R.string.chat_processing), style = MaterialTheme.typography.bodySmall)
-                events.forEach { tool -> key(tool.id) { HostToolEventRow(tool) } }
+
+        AnimatedVisibility(
+            visible = expanded,
+            enter = androidx.compose.animation.fadeIn(
+                tween(if (reduceMotion) 0 else NolaMotion.disclosure, easing = NolaMotion.disclosureEasing)
+            ) + androidx.compose.animation.expandVertically(
+                tween(if (reduceMotion) 0 else NolaMotion.disclosure, easing = NolaMotion.disclosureEasing),
+                expandFrom = Alignment.Top,
+            ),
+            exit = androidx.compose.animation.fadeOut(
+                tween(if (reduceMotion) 0 else NolaMotion.disclosure, easing = NolaMotion.disclosureEasing)
+            ) + androidx.compose.animation.shrinkVertically(
+                tween(if (reduceMotion) 0 else NolaMotion.disclosure, easing = NolaMotion.disclosureEasing),
+                shrinkTowards = Alignment.Top,
+            ),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                events.forEach { tool ->
+                    androidx.compose.runtime.key(tool.id) {
+                        HostToolEventRow(tool)
+                    }
+                }
             }
         }
     }

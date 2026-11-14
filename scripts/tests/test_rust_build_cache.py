@@ -340,7 +340,7 @@ class RustBuildCacheTests(unittest.TestCase):
         self.assertIn(str(resource), (derived / "core.d").read_text())
 
     def test_mac_tests_cannot_replace_the_signed_debug_application(self):
-        scheme = ET.parse(REPOSITORY_ROOT / "Nola.xcodeproj/xcshareddata/xcschemes/NolaMac.xcscheme").getroot()
+        scheme = ET.parse(REPOSITORY_ROOT / "apple/Nola.xcodeproj/xcshareddata/xcschemes/NolaMac.xcscheme").getroot()
         self.assertEqual(scheme.find("TestAction").attrib["buildConfiguration"], "Test")
         self.assertEqual(scheme.find("LaunchAction").attrib["buildConfiguration"], "Debug")
         runner = (REPOSITORY_ROOT / "scripts/test_mac_layers.sh").read_text()

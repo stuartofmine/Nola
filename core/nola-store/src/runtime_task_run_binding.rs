@@ -2,7 +2,7 @@
 //! Immutable task admission and terminal reconciliation from its exact Run.
 use super::*;
 
-fn binding(connection: &Connection, task_id: &str) -> StoreResult<Option<RuntimeTaskRunBinding>> {
+pub(crate) fn binding(connection: &Connection, task_id: &str) -> StoreResult<Option<RuntimeTaskRunBinding>> {
     connection.query_row(
         "SELECT task_id,owner_session_id,child_session_id,run_id,admission_attempt_id,input_watermark,bound_at_ms
          FROM runtime_task_run_bindings WHERE task_id=?1", params![task_id], |row| Ok(RuntimeTaskRunBinding {
@@ -16,6 +16,7 @@ fn binding(connection: &Connection, task_id: &str) -> StoreResult<Option<Runtime
 // worker-supplied session ID nor mutable task metadata establishes this chain.
 fn validate_child_history(connection: &Connection, task_id: &str, child: &str,
     admitted_run: Option<&str>, now: i64) -> StoreResult<()> {
+    if crate::expert_task_target::validate_persistent_expert_history(connection,task_id,child,admitted_run)? {return Ok(());}
     let admission = crate::agent_task_admission_store::authority(connection, task_id)?
         .and_then(|authority| authority.admission)
         .ok_or_else(|| StoreError::Conflict("task continuation has no admitted source".into()))?;
@@ -147,11 +148,8 @@ impl NolaStore {
     }
 
     pub fn is_runtime_task_child_session(&self, child_session_id: &str) -> StoreResult<bool> {
-        self.connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM durable_tasks WHERE kind='agent' AND child_session_id=?1)
-                 OR EXISTS(SELECT 1 FROM runtime_task_run_bindings WHERE child_session_id=?1)",
-            params![child_session_id], |row|row.get(0),
-        ).map_err(StoreError::from)
+        Ok(!matches!(crate::conversation_history_port::source_execution_ownership(&self.connection,child_session_id)?,
+            nola_domain::ConversationExecutionOwnership::User))
     }
 
     pub fn validate_runtime_task_turn_admission(

@@ -2118,7 +2118,7 @@
 "settings.data.clearing" = "Удаление данных…";
 "settings.data.export_failed" = "Не удалось создать экспорт: %@";
 "settings.data.clear_complete" = "Локальные данные удалены.";
-"settings.data.clear_partial" = "Большая часть данных удалена, но некоторые диалоги удалить не удалось.";
+"settings.data.clear_partial" = "Некоторые локальные данные удалить не удалось. Проверьте оставшиеся диалоги и источники данных.";
 "settings.operation.title" = "Управление данными";
 
 /* Настройки macOS */
@@ -2781,7 +2781,7 @@
 
 /* Expert picker */
 "chat.experts.title" = "Эксперты";
-"chat.experts.description" = "Выберите, кто отвечает в этом чате. Выбор не запускает ответ и не предоставляет разрешений.";
+"chat.experts.description" = "Выберите экспертов, к которым обратится Nola. Nola координирует их работу и отвечает вам.";
 "chat.experts.search" = "Поиск экспертов";
 "chat.experts.empty" = "Нет доступных экспертов";
 "chat.experts.selected" = "Выбрано";
@@ -2843,7 +2843,7 @@
 "expert.color.pink" = "Розовый";
 "chat.message.edit" = "Изменить и отправить снова";
 "chat.message.editWait" = "Перед изменением остановите текущий ответ или дождитесь завершения.";
-"chat.message.editPreservesOriginal" = "Повторная отправка создаёт отдельный диалог. Исходное сообщение и черновик сохраняются.";
+"chat.message.editPreservesOriginal" = "Это сообщение и всё после него будут заменены в том же разговоре. Черновик ввода сохранится.";
 "chat.message.saveResend" = "Сохранить и отправить";
 "chat.message.resendUnavailable" = "Повторная отправка недоступна до подтверждения исходной конфигурации выполнения.";
 
@@ -2867,11 +2867,11 @@
 "experts.save" = "Сохранить";
 "experts.archive" = "Архивировать эксперта";
 "experts.restore" = "Восстановить эксперта";
-"experts.conversationModel" = "Использовать модель беседы";
+"experts.conversationModel" = "Использовать модель приложения по умолчанию";
 
 "experts.template" = "Шаблон инструкций";
 
-"experts.conversationTemplate" = "Использовать шаблон беседы";
+"experts.conversationTemplate" = "Шаблон не задан";
 
 "experts.savedModelUnavailable" = "Сохранённая модель (недоступна)";
 
@@ -2887,9 +2887,9 @@
 
 "work.tools.noGoal" = "Нет активной цели";
 
-"chat.experts.sourceUnavailable.title" = "Эксперты здесь недоступны";
+"chat.experts.sourceUnavailable.title" = "Источник экспертов недоступен";
 
-"chat.experts.sourceUnavailable.detail" = "Локальные эксперты не могут участвовать в беседе другого хоста или с неподтверждённым источником. Управление локальными экспертами остаётся доступным.";
+"chat.experts.sourceUnavailable.detail" = "Переподключите Host этого разговора или обновите его список экспертов.";
 "chat.request.diagnostic_details" = "Диагностические сведения";
 
 "chat.step.failed" = "Этот шаг завершился ошибкой";
@@ -3009,7 +3009,7 @@
 "Model request waiting" = "Запрос к модели в ожидании";
 "Model route changed" = "Маршрут модели изменён";
 "Request restarted" = "Запрос перезапущен";
-"a2ui.history.version" = "Посмотреть эту версию формы";
+"a2ui.history.version" = "Просмотреть содержимое";
 "activity.emptyResponse" = "Сейчас нет запросов, требующих ответа.";
 "activity.fullResultInSource" = "Откройте исходный разговор, чтобы увидеть полный результат.";
 "activity.localScope" = "Запуски, сохранённые на этом устройстве, включая полученные удалённые результаты.";
@@ -3135,5 +3135,86 @@
 "settings.navigation.general" = "Общие";
 "settings.navigation.general.detail" = "Оформление, уведомления и обновления";
 
-"chat.experts.conversations" = "Беседы с экспертами";
-"chat.experts.conversations.empty" = "Упомяните эксперта в этой беседе, чтобы увидеть здесь подробности выполнения.";
+// Generated UI recovery and presentation
+"a2ui.revalidate" = "Проверить снова";
+"a2ui.discardEdits" = "Отменить правки и использовать текущие значения";
+"a2ui.checkSubmission" = "Проверить результат отправки";
+"a2ui.finishComposition" = "Завершите ввод текста перед отправкой.";
+"a2ui.fieldsRemoved" = "Форма изменилась, и некоторые поля больше недоступны. Ваши правки сохранены; проверьте их перед отменой.";
+"a2ui.receiptMismatch" = "Результат отправки относится к другой форме. Проверьте ещё раз.";
+"a2ui.previewUnavailable" = "Форма изменилась или проверка недоступна. Загрузите её снова.";
+"a2ui.previewMismatch" = "Результат проверки устарел или относится к другой форме. Проверьте правки и повторите.";
+"a2ui.pending" = "Подготовка интерфейса, ожидание компонентов и данных…";
+"a2ui.deleted" = "Этот интерфейс удалён.";
+
+// Mobile settings groups
+"settings.group.preferences" = "Предпочтения";
+"settings.group.connections" = "Подключения и возможности";
+"settings.group.security" = "Безопасность";
+
+// Compact bibliography and live process headings.
+"chat.sources.all" = "Все источники";
+"chat.sources.fewer" = "Свернуть источники";
+"chat.processing" = "Обработка";
+"chat.skill.deep_research" = "Глубокое исследование";
+
+"model.protocol.guidance" = "Для инструментов с рассуждением выберите Responses, если сервис его поддерживает. Некоторые модели Chat Completions требуют явно отключить рассуждение.";
+
+"information.recentKnowledge" = "Последние выводы";
+
+"information.recentConversations" = "Последние беседы";
+
+"activity.recentLoaded" = "недавних записей";
+
+/* Model connection draft protection */
+"model.setup.discard_title" = "Отменить несохранённые изменения?";
+"model.setup.discard" = "Отменить изменения";
+"model.setup.keep_editing" = "Продолжить редактирование";
+"model.web_host.saved_token_hint" = "Оставьте поле пустым, чтобы использовать сохранённый токен этого хоста.";
+
+"chat.context.import.invalid_text" = "Выберите непустой текстовый файл UTF-8: не более %d символов (192 КБ).";
+
+"chat.context.import.failed_count" = "Не удалось импортировать файлов: %d. Используйте непустые текстовые файлы UTF-8: не более 40 000 символов (192 КБ).";
+
+/* Expert roles and revision-aware mentions */
+"experts.reasoning.inherit" = "Наследовать настройку модели";
+"experts.reasoning.unknown" = "Эта модель не объявляет уровни рассуждения. Используется её настройка по умолчанию.";
+"experts.role.details" = "Промпт, инструменты и Skills";
+"experts.role.tools" = "Набор инструментов";
+"experts.role.permissions" = "Эти возможности описывают роль. Для выполнения инструментов по-прежнему нужны соответствующие разрешения.";
+"experts.mention.changed" = "Этот эксперт изменён или архивирован. Выберите его заново в обновлённом каталоге.";
+"experts.mention.rejoin_title" = "Использовать новую конфигурацию эксперта?";
+"experts.mention.rejoin_message" = "В этом диалоге используется старая конфигурация эксперта. Повторное добавление применит новую конфигурацию к будущим сообщениям и сохранит предыдущие.";
+"experts.mention.rejoin_action" = "Добавить заново с новой конфигурацией";
+"experts.mention.joining" = "Добавление эксперта…";
+
+"experts.configuration.unsupported" = "Этот хост не объявляет поддержку настройки ролей и рассуждения. Обновите хост, чтобы использовать эти параметры.";
+
+"experts.reasoning.unavailable" = "Недоступно · %@";
+
+"experts.reasoning.selectSupported" = "Выберите уровень рассуждения, объявленный этой моделью, или наследуйте её настройку по умолчанию.";
+
+// Parent-owned expert history
+"expert.history.title" = "Диалоги экспертов";
+"expert.history.expanded" = "Развёрнуто";
+"expert.history.collapsed" = "Свёрнуто";
+"expert.history.current" = "Текущий диалог";
+"expert.history.previous" = "Предыдущий диалог";
+"expert.history.empty" = "Сообщений пока нет";
+"expert.history.more" = "Загрузить ещё";
+"expert.history.continue" = "Продолжить в основном диалоге";
+"expert.history.readOnly" = "История только для чтения";
+"expert.history.unavailable" = "История недоступна";
+"expert.history.changed" = "Диалог эксперта изменился. Обновите и повторите попытку.";
+"expert.history.unsupportedParent" = "Этот диалог нельзя продолжить в iOS. Откройте его в клиенте, где он был создан.";
+"expert.history.peerName" = "Эксперт";
+
+"experts.mainHostUpgrade" = "Обновите подключённый Host, чтобы использовать экспертов из основного разговора.";
+
+"main.experts.requiresTools" = "Выберите основную модель с поддержкой инструментов или уберите выбранных экспертов. Сообщение сохранено.";
+
+"main.experts.enableTools" = "Включите инструменты экспертов для основного агента или уберите выбранных экспертов. Сообщение сохранено.";
+
+"main.experts.sourceChanged" = "Данные хоста изменились. Обновите каталог и выберите экспертов заново. Сообщение сохранено.";
+
+"run.blocked.inputBudget" = "Запрос превышает входной бюджет модели. Сократите диалог или вложения, уменьшите число инструментов либо выберите модель с большим контекстом.";

@@ -156,7 +156,8 @@ fn capability_from_runtime(name: &str) -> Option<&'static str> {
 fn internal_control_tool(name: &str) -> bool {
     matches!(
         name,
-        "agent_config_context"
+        "expert_exchange" | "delegate_expert"
+            | "agent_config_context"
             | "agent_context"
             | "agent_plan_file"
             | "agent_task_status"

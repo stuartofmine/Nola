@@ -116,11 +116,20 @@ Task journal中的sealed是终态，只表示已封存，不自动表示成功�
 | load_today_facts | 单一致读事务聚合本地普通会话、owned task及专家等待；独立全局recent、显式offset和queued分页；不授予恢复权 |
 | admit_expert_conversation_message | 单写事务准入父消息、完整专家manifest及全部child；同intent幂等、不同载荷冲突 |
 | load_expert_message_manifest | 读取精确父消息的完整集合与源发送见证；不以Room第一页或客户端当前选择替代 |
+| prepare_in_place_resend | 各客户端同会话回溯；原输入及后文退出有效投影，重建编辑点前的 Core 上下文；UUID intent 幂等，prepare 不表示模型已准入 |
 | prepare_edited_resend / prepare_edited_expert_resend | 核原消息与源配置见证，新建仅含编辑输入的目标；prepare结果不是已发送 |
 | load_prepared_edited_resend / load_prepared_expert_resend | 查询准确operation/目标的真实准入；组状态必须同一读事务 |
 | load_expert_child_instructions（仅可信 Host 私有操作） | 核当前 actor / Host、精确 child conversation / Run 和捕获来源后读取完整 typed 定义；不是旧资源授权的继承 |
 
 `agent_room` 新精确子查询 `submission {room_id,submission_id}` 是只读；不能用分页第一页证明原child不存在。admit/prepare/claim依旧是写用例。精确字段以Domain类型和`ApplicationCommand`为准，当前数据不匹配明确拒绝，不补旧字段或自动改写记录。
+
+### 专家角色与精确推理偏好
+
+- `agent_room.role_templates` 为只读目录，返回 `version: 1`、`features` 及七种角色的 UUID、各语言名称、提示词、工具组合和关联 Skill。新编辑功能正向检查 `reasoning_effort`、`explicit_generation_reasoning`、`rejoin` 能力；旧 Host 不支持时明确拒绝新功能，不把新字段盲写到旧端。
+- 专家沿用 `selectedPromptTemplateID` 引用角色 UUID。Core 自己解析内置角色定义，客户端不需要声明这些 builtin 的正文；同 UUID 自定义模板或不一致的 Host 声明被拒绝，不能覆盖 Core 内容。捕获后沿现有 immutable prompt definition 与 child/Run 见证保留精确正文；更新目录不改变已捕获任务。
+- defaults 新增可选 `expertReasoningEffort`。缺省表示继承，解析具体模型后降低为该模型既有 `modelOverrides.reasoningPreference`；模型真实能力在 preview/准入时校验。精确选择优先旧粗档位，互斥项不会一起发出。
+- `RunGenerationOverrides.reasoning_selection` 是经过上述能力检查的可选扩展。缺省时旧 JSON 序列化保持不变；存在时由 Host 对其绑定档案再次解析，优先精确选择而不同时制造 `reasoning_tier`。既有三档请求仍按原契约处理。协议/ABI/数据库编号不因此重置，也不迁移或重写旧会话。
+- `agent_room.rejoin {input: JoinAgent}` 是显式写用例。CAS 核对 Room 与 Agent revision，核对真实 Run/提交终态，在同一事务新建上下文并替换当前 roster。维持已发布 Room 每 Agent 唯一的格式；旧 participant 身份保留在历史 manifest/context ownership 中，旧会话与消息不删除。最终写失败回滚新上下文，重试不能重复创建。
 
 可信Host私有 attestation 的唯一输入是 `{core_config,submission}`，证明后同一 submission 进入 Begin。C ABI为 `nola_core_application_attest_resend_host_policy`；普通 Renderer 命令JSON不能制造这个内部用例。Core共用typed组件校验，Store消费校验组件摘要和既有accepted-input digest；禁止证明后换正文、加入旧history或资源授权。私有模型重建材料不能通过通用product_settings读写/同步取得。
 

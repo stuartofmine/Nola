@@ -21,10 +21,8 @@ mod expert_template_host;
 pub use edited_resend::nola_core_application_attest_resend_host_policy;
 pub use child_pump::*;
 mod intelligence;
-mod model_manager;
 mod mcp_host;
 pub use mcp_host::{nola_core_mobile_mcp_host,nola_core_mobile_mcp_retain};
-mod persistence;
 mod software_update;
 pub use software_update::nola_core_software_update_json;
 mod projection;
@@ -33,15 +31,6 @@ pub use intelligence::{
     nola_core_intelligence_abi_version, nola_core_intelligence_clear,
     nola_core_intelligence_ingest, nola_core_intelligence_recall,
     nola_core_intelligence_snapshot,
-};
-pub use model_manager::{
-    nola_core_model_manager_cancel, nola_core_model_manager_download, nola_core_model_manager_free,
-    nola_core_model_manager_new, nola_core_model_manager_progress, nola_core_model_sha256,
-    ModelManager,
-};
-pub use persistence::{
-    nola_core_persistence_clear, nola_core_persistence_data_dir, nola_core_persistence_load,
-    nola_core_persistence_save,
 };
 pub use projection::*;
 pub use submission::nola_core_application_submit;
@@ -71,26 +60,14 @@ pub extern "C" fn nola_mobile_bindings_force_link_core() -> usize {
         nola_core::nola_core_lifecycle_hook_build_registry as *const (),
         nola_core::nola_core_lifecycle_hook_plan as *const (),
         nola_core::nola_core_lifecycle_hook_project_execution as *const (),
-        nola_core::nola_core_decide_actions as *const (),
         nola_core::nola_core_memory_select_json as *const (),
         nola_core::nola_core_memory_selection_abi_version as *const (),
-        nola_core::nola_core_generate_dedupe_key as *const (),
-        nola_core::nola_core_parse_url_json as *const (),
-        nola_core::nola_core_process_raw_events as *const (),
-        nola_core::nola_core_preprocess_raw_events as *const (),
         nola_core::nola_core_prompt_cache_abi_version as *const (),
         nola_core::nola_core_prompt_cache_diagnose as *const (),
-        nola_core::nola_core_rules_clear_history as *const (),
-        nola_core::nola_core_rules_filter as *const (),
-        nola_core::nola_core_rules_init as *const (),
-        nola_core::nola_core_rules_is_quiet_hours as *const (),
-        nola_core::nola_core_rules_mark_sent as *const (),
-        nola_core::nola_core_scheduler_schedule as *const (),
         nola_core::nola_core_tool_policy_abi_version as *const (),
+        nola_core::nola_core_tool_policy_mcp_allowed as *const (),
         nola_core::nola_core_tool_policy_resolve as *const (),
-        nola_core::nola_core_transform_model_output as *const (),
         nola_core::nola_core_free_c_string as *const (),
-        nola_core::nola_core_transform_model_output_passthrough as *const (),
     ]);
     symbols.iter().fold(0usize, |digest, symbol| {
         digest.rotate_left(1) ^ (*symbol as usize)
@@ -103,15 +80,133 @@ pub struct NolaCoreApplication {
     application: Arc<EmbeddedApplication>,
 }
 
-struct EmbeddedApplication {
+pub(crate) struct EmbeddedApplication {
     runtime: Mutex<Option<ApplicationRuntime>>,
     database_path: PathBuf,
+    read_pool: Option<nola_application_bootstrap::ReadStorePool>,
+    owner_available: std::sync::atomic::AtomicBool,
     _ownership: Option<std::fs::File>,
 }
+
 impl EmbeddedApplication {
-    fn lock(&self) -> Result<nola_application_bootstrap::RuntimeOwnerGuard<'_>, String> {
-        nola_application_bootstrap::acquire_owned_runtime(&self.runtime, &self.database_path)
+    pub(crate) fn can_serve_read_replica(&self) -> bool {
+        self.owner_available
+            .load(std::sync::atomic::Ordering::Acquire)
+            && self
+                .read_pool
+                .as_ref()
+                .is_some_and(|pool| pool.is_enabled())
     }
+
+    pub(crate) fn try_execute_on_read_replica(
+        &self,
+        command: ApplicationCommand,
+    ) -> Result<Result<Value, String>, ApplicationCommand> {
+        if !command.is_read_only_query()
+            || !command.can_execute_on_read_replica()
+            || !self.can_serve_read_replica()
+        {
+            return Err(command);
+        }
+        let Some(pool) = self.read_pool.as_ref() else {
+            return Err(command);
+        };
+        let Ok(mut replica) = pool.checkout() else {
+            return Err(command);
+        };
+        Ok(nola_application::execute_read_only_query(
+            &mut *replica,
+            command,
+        ))
+    }
+
+    pub(crate) fn execute_command(&self, command: ApplicationCommand) -> Result<Value, String> {
+        let command = match self.try_execute_on_read_replica(command) {
+            Ok(result) => return result,
+            Err(command) => command,
+        };
+        let mut locked = self.lock()?;
+        locked.execute(command)
+    }
+
+    pub(crate) fn lock(&self) -> Result<nola_application_bootstrap::RuntimeOwnerGuard<'_>, String> {
+        match nola_application_bootstrap::acquire_owned_runtime(&self.runtime, &self.database_path)
+        {
+            Ok(guard) => {
+                self.owner_available
+                    .store(true, std::sync::atomic::Ordering::Release);
+                Ok(guard)
+            }
+            Err(error) => {
+                self.owner_available
+                    .store(false, std::sync::atomic::Ordering::Release);
+                if let Some(pool) = self.read_pool.as_ref() {
+                    pool.clear();
+                }
+                Err(error)
+            }
+        }
+    }
+
+    pub(crate) fn reopen_locked(
+        &self,
+        runtime: &mut nola_application_bootstrap::RuntimeOwnerGuard<'_>,
+    ) -> Result<(), String> {
+        if let Some(pool) = self.read_pool.as_ref() {
+            pool.clear();
+        }
+        match runtime.reopen() {
+            Ok(()) => {
+                self.owner_available
+                    .store(true, std::sync::atomic::Ordering::Release);
+                Ok(())
+            }
+            Err(error) => {
+                self.owner_available
+                    .store(false, std::sync::atomic::Ordering::Release);
+                Err(error)
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+struct RuntimeRegistry {
+    by_identity: HashMap<PathBuf, Weak<EmbeddedApplication>>,
+    recency: Vec<Weak<EmbeddedApplication>>,
+}
+
+static RUNTIMES: OnceLock<Mutex<RuntimeRegistry>> = OnceLock::new();
+
+#[cfg(test)]
+thread_local! {
+    static TEST_PINNED_APPLICATION: RefCell<Option<Weak<EmbeddedApplication>>> = const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn set_test_pinned_application(app: Option<&Arc<EmbeddedApplication>>) {
+    TEST_PINNED_APPLICATION.with(|slot| {
+        *slot.borrow_mut() = app.map(Arc::downgrade);
+    });
+}
+
+/// Returns the most recently opened live file-backed `EmbeddedApplication` in this process.
+pub(crate) fn active_embedded_application() -> Option<Arc<EmbeddedApplication>> {
+    #[cfg(test)]
+    if let Some(pinned) =
+        TEST_PINNED_APPLICATION.with(|slot| slot.borrow().as_ref().and_then(Weak::upgrade))
+    {
+        return Some(pinned);
+    }
+    let mut registry = RUNTIMES
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    registry
+        .by_identity
+        .retain(|_, value| value.strong_count() > 0);
+    registry.recency.retain(|value| value.strong_count() > 0);
+    registry.recency.iter().rev().find_map(Weak::upgrade)
 }
 
 fn open_owned_runtime(
@@ -141,9 +236,16 @@ fn open_owned_runtime(
         None
     };
     let runtime = nola_application_bootstrap::open(path)?;
+    let database_path = key
+        .map(std::path::Path::to_owned)
+        .unwrap_or_else(|| path.into());
+    let read_pool = (path != ":memory:")
+        .then(|| nola_application_bootstrap::ReadStorePool::new(database_path.clone()));
     Ok(Arc::new(EmbeddedApplication {
         runtime: Mutex::new(Some(runtime)),
-        database_path: key.map(std::path::Path::to_owned).unwrap_or_else(|| path.into()),
+        database_path,
+        read_pool,
+        owner_available: std::sync::atomic::AtomicBool::new(true),
         _ownership: ownership,
     }))
 }
@@ -183,7 +285,6 @@ pub extern "C" fn nola_core_application_open(
     };
     // Handles for the same canonical database share both hot Core state and
     // its command-admission mutex. In-memory databases remain independent.
-    static RUNTIMES: OnceLock<Mutex<HashMap<PathBuf, Weak<EmbeddedApplication>>>> = OnceLock::new();
     let application = if path == ":memory:" {
         open_owned_runtime(&path, None)
     } else {
@@ -212,18 +313,34 @@ pub extern "C" fn nola_core_application_open(
                         return ptr::null_mut();
                     }
                 };
-                registry.retain(|_, value| value.strong_count() > 0);
+                registry
+                    .by_identity
+                    .retain(|_, value| value.strong_count() > 0);
+                registry.recency.retain(|value| value.strong_count() > 0);
                 use std::os::unix::fs::MetadataExt;
                 let identity_key = |path: &std::path::Path| {
                     std::fs::metadata(path)
                         .map(|meta| PathBuf::from(format!("inode:{}:{}", meta.dev(), meta.ino())))
                         .unwrap_or_else(|_| path.to_owned())
                 };
-                if let Some(runtime) = registry.get(&identity_key(&key)).and_then(Weak::upgrade) {
+                if let Some(runtime) = registry
+                    .by_identity
+                    .get(&identity_key(&key))
+                    .and_then(Weak::upgrade)
+                {
+                    let weak = Arc::downgrade(&runtime);
+                    registry
+                        .recency
+                        .retain(|entry| !Weak::ptr_eq(entry, &weak));
+                    registry.recency.push(weak);
                     Ok(runtime)
                 } else {
                     open_owned_runtime(&path, Some(&key)).map(|runtime| {
-                        registry.insert(identity_key(&key), Arc::downgrade(&runtime));
+                        let weak = Arc::downgrade(&runtime);
+                        registry
+                            .by_identity
+                            .insert(identity_key(&key), weak.clone());
+                        registry.recency.push(weak);
                         runtime
                     })
                 }
@@ -304,6 +421,16 @@ pub extern "C" fn nola_core_application_execute(
         }}));
     }
     let runtime = unsafe { &*application };
+    let command = match runtime.application.try_execute_on_read_replica(command) {
+        Ok(Ok(value)) => return encode(json!({"ok": true, "result": value})),
+        Ok(Err(error)) => {
+            return encode(json!({
+                "ok": false,
+                "error": {"code": "application_error", "message": error}
+            }))
+        }
+        Err(command) => command,
+    };
     let mut locked = match runtime.application.lock() {
         Ok(locked) => locked,
         Err(_) => {
@@ -661,5 +788,161 @@ use nola_domain::core_event::{EventCursor};
         nola_core_free_c_string(output);
         nola_core_application_free(reopened);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn embedded_read_replica_executes_concurrently_while_writer_lock_and_wal_write_are_held() {
+        use super::*;
+        use std::sync::{mpsc, Arc, Barrier};
+        use std::time::{Duration, Instant};
+
+        let directory = tempfile::tempdir().unwrap();
+        let db_path = directory.path().join("mobile-wal-concurrent.sqlite");
+        let db_path_str = db_path.to_string_lossy().into_owned();
+
+        let raw_handle = nola_core_application_open(db_path_str.as_ptr(), db_path_str.len());
+        assert!(!raw_handle.is_null());
+
+        let submit = |handle: *mut NolaCoreApplication, request_id: &str, cmd_type: &str, args: Value| -> Value {
+            let envelope = json!({
+                "protocol_version": APPLICATION_SERVICE_PROTOCOL_VERSION,
+                "request_id": request_id,
+                "client_id": "mobile-test",
+                "expected_revision": null,
+                "command": {
+                    "type": cmd_type,
+                    "arguments": args,
+                }
+            })
+            .to_string();
+            let out = nola_core_application_submit(handle, envelope.as_ptr(), envelope.len());
+            assert!(!out.is_null());
+            let parsed: Value = serde_json::from_str(
+                unsafe { std::ffi::CStr::from_ptr(out) }.to_str().unwrap(),
+            )
+            .unwrap();
+            nola_core_free_c_string(out);
+            parsed
+        };
+
+        let exec_raw = |handle: *mut NolaCoreApplication, cmd: Value| -> Value {
+            let raw = cmd.to_string();
+            let out = nola_core_application_execute(handle, raw.as_ptr(), raw.len());
+            assert!(!out.is_null());
+            let parsed: Value = serde_json::from_str(
+                unsafe { std::ffi::CStr::from_ptr(out) }.to_str().unwrap(),
+            )
+            .unwrap();
+            nola_core_free_c_string(out);
+            parsed
+        };
+
+        assert_eq!(
+            submit(
+                raw_handle,
+                "seed-setting",
+                "put_product_setting",
+                json!({"key": "ui.theme", "value_json": "\"dark\"", "updated_at_ms": 100})
+            )["ok"],
+            true
+        );
+        assert_eq!(
+            submit(
+                raw_handle,
+                "seed-conv",
+                "create_conversation",
+                json!({
+                    "input": {
+                        "id": "conv-mobile-1",
+                        "title": "Mobile WAL Reader",
+                        "settings_json": null,
+                        "created_at_ms": 100,
+                        "updated_at_ms": 100
+                    }
+                })
+            )["ok"],
+            true
+        );
+
+        let embedded = Arc::clone(&(unsafe { &*raw_handle }).application);
+        let writer_ready = Arc::new(Barrier::new(2));
+        let (reader_done_tx, reader_done_rx) = mpsc::channel();
+
+        let embedded_writer = Arc::clone(&embedded);
+        let writer_ready_clone = Arc::clone(&writer_ready);
+        let db_path_writer = db_path.clone();
+        let writer_thread = std::thread::spawn(move || {
+            let _writer_guard = embedded_writer.lock().unwrap();
+            let wal_conn = rusqlite::Connection::open(&db_path_writer).unwrap();
+            wal_conn
+                .execute_batch(
+                    "BEGIN IMMEDIATE;
+                     UPDATE product_settings SET value_json='\"uncommitted\"', revision=99
+                     WHERE key='ui.theme';",
+                )
+                .unwrap();
+            writer_ready_clone.wait();
+            reader_done_rx.recv().unwrap();
+            wal_conn.execute_batch("ROLLBACK").unwrap();
+        });
+
+        writer_ready.wait();
+
+        let started = Instant::now();
+
+        // 1. get_product_setting via nola_core_application_execute
+        let setting = exec_raw(
+            raw_handle,
+            json!({"type": "get_product_setting", "key": "ui.theme"}),
+        );
+        assert_eq!(setting["ok"], true);
+        assert_eq!(setting["result"]["value_json"], "\"dark\"");
+
+        // 2. list_conversations via nola_core_application_submit
+        let conversations = submit(
+            raw_handle,
+            "read-convs",
+            "list_conversations",
+            json!({
+                "query": {
+                    "project_root": null,
+                    "non_empty": false,
+                    "limit": 32,
+                    "offset": 0
+                }
+            }),
+        );
+        assert_eq!(conversations["ok"], true);
+        assert_eq!(
+            conversations["result"]["result"].as_array().unwrap().len(),
+            1
+        );
+
+        // 3. load_conversation_projection_window_v1 via nola_core_application_execute
+        let window = exec_raw(
+            raw_handle,
+            json!({
+                "type": "load_conversation_projection_window_v1",
+                "conversation_id": "conv-mobile-1",
+                "before_ordinal": null,
+                "limit": 20,
+                "content_byte_limit": 65536
+            }),
+        );
+        assert_eq!(window["ok"], true);
+        assert_eq!(
+            window["result"]["projection"]["conversation_id"],
+            "conv-mobile-1"
+        );
+
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < Duration::from_millis(200),
+            "concurrent embedded WAL reads took {elapsed:?}, expected < 200ms"
+        );
+
+        reader_done_tx.send(()).unwrap();
+        writer_thread.join().unwrap();
+        nola_core_application_free(raw_handle);
     }
 }

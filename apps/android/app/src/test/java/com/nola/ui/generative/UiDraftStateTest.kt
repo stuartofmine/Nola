@@ -40,4 +40,23 @@ class UiDraftStateTest {
         assertFalse(state.revalidate(snapshot().copy(phase = UiSurfacePhase.ReadOnly), false))
         assertEquals(1L, state.revision.value)
     }
+
+    @Test fun coldStartRetainsValuesAndOriginalRequestAfterRejection() {
+        val state = UiDraftState()
+        val submission = UiSubmission(UiInteraction(identity, 1,
+            listOf(UiEdit.Set("field", "value", JsonPrimitive("保留填写值 👩🏽‍💻"))), null), "original-request", 1)
+        state.restore(submission, identity)
+        assertEquals(submission, state.unresolved.value)
+        state.unresolved.value = null
+        assertEquals(1L, state.revision.value)
+        assertEquals(JsonPrimitive("保留填写值 👩🏽‍💻"), state.drafts["field" to "value"])
+    }
+
+    @Test fun foreignRestoreCannotOverwriteExistingDraft() {
+        val state = draft()
+        val submission = UiSubmission(UiInteraction(identity.copy(surface_id = "foreign"), 2, emptyList(), null), "request", 1)
+        assertFailsWith<IllegalArgumentException> { state.restore(submission, identity) }
+        assertEquals(JsonPrimitive("保留输入"), state.drafts["field" to "value"])
+        assertNull(state.unresolved.value)
+    }
 }

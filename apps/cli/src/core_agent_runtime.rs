@@ -22,6 +22,38 @@ pub(crate) fn frozen_expert_prompt_components(definitions:&[nola_domain::expert_
 #[path = "core_agent_goal_binding.rs"]
 mod goal_binding;
 
+/// Freeze a newly assembled, idle target without starting model execution.
+/// Goals and persistent expert Tasks use the same Host admission producer.
+pub(crate) fn capture_task_target_configuration(
+    request: &crate::host_invocation_request::HostInvocationRequest,
+) -> Result<AgentCoreConfig, String> {
+    let mut request = request.clone();
+    // Goal/Main captures keep their scheduling surface. Only a persistent
+    // expert context narrows authorization, before actual driver/policy capture.
+    if request.session.session_id.as_deref().is_some_and(crate::task_runtime::is_expert_context) {
+        let skills=SkillRuntimeContext::from_configured_dirs(request.tool_settings.skill_dirs.clone());
+        let allowed=selected_tool_schemas(&request,&skills).into_iter().filter_map(|schema|
+            nola_domain::expert_task_target::schema_tool_name(&schema).map(str::to_owned))
+            .filter(|name|!crate::agent_host_driver::expert_leaf_driver_control(name)).collect::<Vec<_>>();
+        request.tool_settings.tool_allowlist=Some(allowed);
+        request.tool_settings.tool_allowlist_is_authorization_only=false;
+    }
+    freeze_host_output_admission(&mut request)?;
+    goal_binding::capture_start_configuration(&request).map(|value| *value)
+}
+
+pub(crate) fn restore_task_target_configuration(
+    configuration: &AgentCoreConfig,
+    conversation_id: &str,
+) -> Result<crate::host_invocation_request::HostInvocationRequest, String> {
+    let binding = configuration.turn_identity.host_invocation.as_ref().ok_or("Expert invocation binding missing")?;
+    let reference = configuration.turn_identity.host_recovery.as_ref().ok_or("Expert Host reconstruction reference missing")?;
+    let mut request = host_recovery::restore(reference, conversation_id, binding)?;
+    restore_host_memory_admission(&mut request, &configuration.memory_policy)?;
+    binding.require_exact(&host_invocation_binding(&request)?).map_err(str::to_owned)?;
+    Ok(request)
+}
+
 pub fn cancel_agent_core_expected(
     config: &crate::host_invocation_request::HostInvocationRequest,
     emitter: &mut dyn crate::runtime_output::RuntimeOutputPort,
@@ -567,6 +599,9 @@ fn resume_agent_core_checked(
     let mut host = host_handle
         .lock()
         .map_err(|_| "Agent Core session lock is poisoned".to_string())?;
+    if host.execution_config.runtime.expert_template_authority!=resume_config.runtime.expert_template_authority {
+        return Err("Native Host principal changed; reconnect the owning native transport before resuming this Run".into());
+    }
     // A competing executor may finish while foreground resume waits on the
     // Host mutex. Observe that completion before evicting or reopening a Host.
     match application.active_run(session_id)? {
@@ -741,6 +776,9 @@ pub(crate) fn resumed_execution_config(
     run_id: &str,
 ) -> Result<HostInvocationRequest, String> {
     let mut execution = frozen.clone();
+    // Reacquire the current native principal through the trusted resume frame;
+    // it is neither a portable policy field nor borrowed from the old Host.
+    execution.runtime.expert_template_authority=requested.runtime.expert_template_authority.clone();
     let Some(authority) = requested.session.host_task_execution.as_ref() else {
         let task_child: bool = crate::application_port::CliApplicationPort::persistent_default()?
             .execute(nola_application::ApplicationCommand::RuntimeTask {
@@ -1150,11 +1188,19 @@ fn run_agent_core_turn_with_admission(
     initial_items: Vec<AgentItem>,
     input_items: Vec<AgentItem>,
     turn_context_platform: nola_core::context_engine::ContextPlatform,
-    turn_context_components: Vec<nola_core::context_engine::ContextComponent>,
+    mut turn_context_components: Vec<nola_core::context_engine::ContextComponent>,
     cancellation: RuntimeExecutionControl,
     emitter: &mut dyn crate::runtime_output::RuntimeOutputPort,
     queued: Option<QueuedUserAdmission>,
 ) -> Result<CoreRunOutcome, String> {
+    if let Some(selection)=&config.session.main_expert_selection {
+        if turn_context_components.iter().any(|item|item.kind==ContextComponentKind::MainExpertSelection) {
+            return Err("duplicate_main_expert_selection".into());
+        }
+        turn_context_components.push(ContextComponent {kind:ContextComponentKind::MainExpertSelection,
+            id:nola_domain::expert_task_target::MAIN_EXPERT_SELECTION_COMPONENT_ID.into(),
+            content:serde_json::to_value(selection).map_err(|e|e.to_string())?,source:None});
+    }
     let startup_started_at = std::time::Instant::now();
     // Product adapters own input listeners. Enter their execution identity
     // before acquisition/recovery so cancellation remains bound to this call.
@@ -2678,7 +2724,7 @@ fn host_ui_presentation_context(platform: ContextPlatform) -> ContextComponent {
         "platform":platform,"presentation":presentation,"graphical_form_interaction":graphical,
         "ui_publication_is_independent_of_presentation":true,
         "guidance":if graphical {
-            "The client can render committed Core UI projections and submit real user actions. Publication receipts are not evidence that the user interacted."
+            "The client can render committed Core UI projections and submit real user actions. The graphical client renders fenced mermaid blocks as actual diagrams. Use that renderer for supported relationship, route-topology, flow and sequence diagrams. Prefer the admitted render_ui capability when native forms, adjustable choices, grouped detail cards, tabbed comparisons or a compact multi-step interaction would make the requested result easier to use. The user does not need to name this capability. Use real native inputs and buttons instead of asking the user to copy a Markdown template back into chat. Keep short explanations and ordinary conversation as text; do not publish a redundant card for every reply. Its Text/Row/Card layout is not a map or diagram canvas. Never imitate diagrams with whitespace, ASCII arrows or rows of prose cards. Distinguish route topology from geographic position: a flowchart is not a scale map, and a north-up geographic view must not depict northward movement as downward. Verify factual relationships, chronology, labels and arrow directions before rendering; separate different events instead of suggesting one continuous route. Do not use a disclaimer to excuse contradictory placement or missing branches. If the requested artifact needs unsupported geometry, explain the limitation and use an admitted artifact/graphics capability instead of claiming a form is a map. Ordinary conversational answers can remain text. Publication receipts are not evidence that the user interacted."
         } else {
             "This surface displays Core UI summaries only and cannot collect graphical form input. If publishing a form, explain this limitation and offer ordinary conversation input or opening the same conversation in a graphical client. Do not invent clicks or user actions. UI publication remains available when admitted by the tool catalog."
         }
@@ -2706,6 +2752,12 @@ fn host_ui_presentation_facts_distinguish_terminal_from_graphical_clients() {
         assert_eq!(facts["graphical_form_interaction"], graphical);
         assert_eq!(facts["ui_publication_is_independent_of_presentation"], true);
         if !graphical { assert!(facts["guidance"].as_str().unwrap().contains("cannot collect graphical form input")); }
+        if graphical {
+            let guidance = facts["guidance"].as_str().unwrap();
+            assert!(guidance.contains("tabbed comparisons"));
+            assert!(guidance.contains("does not need to name this capability"));
+            assert!(guidance.contains("do not publish a redundant card"));
+        }
     }
 }
 
@@ -3011,6 +3063,9 @@ fn prepare_dynamic_context_component(
     mut component: ContextComponent,
     platform: ContextPlatform,
 ) -> Result<ContextComponent, String> {
+    // This is untrusted selection data until Core's Main admission resolves
+    // exact members. Do not label it as a Host assertion or render it here.
+    if component.kind == ContextComponentKind::MainExpertSelection { return Ok(component); }
     // Typed components cross this boundary as data. Core owns their one
     // instruction/reference wrapper and token budget; pre-rendering here
     // nests a second wrapper and can contradict Core's declared trust kind.
@@ -3210,6 +3265,7 @@ fn acquire_core_agent_host(
                     .map_err(|_| "Agent Core session lock is poisoned".to_string())?;
                 host.recover_projection_if_needed()?;
                 host.signature == signature
+                    && host.execution_config.runtime.expert_template_authority==config.runtime.expert_template_authority
             };
             if matches {
                 if config.session.save_session {
@@ -3871,6 +3927,9 @@ fn selected_tool_schemas(config: &HostInvocationRequest, skills: &SkillRuntimeCo
         return Vec::new();
     }
     let portable_delegation = crate::delegated_invocation::supports_portable_delegation(config).unwrap_or(false);
+    let expert_context = config.session.session_id.as_deref().is_some_and(crate::task_runtime::is_expert_context);
+    let main_expert_dispatch = config.session.host_task_execution.is_none()
+        && config.session.session_id.as_deref().is_some_and(crate::task_runtime::can_dispatch_experts);
     let allowlist = config.tool_settings.tool_allowlist.as_ref().map(|items| {
         items
             .iter()
@@ -3900,7 +3959,13 @@ fn selected_tool_schemas(config: &HostInvocationRequest, skills: &SkillRuntimeCo
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_ascii_lowercase();
+            if expert_context && crate::agent_host_driver::expert_leaf_driver_control(&name) {
+                return false;
+            }
             if !portable_delegation && name == "spawn_agent" {
+                return false;
+            }
+            if name == "delegate_expert" && !main_expert_dispatch {
                 return false;
             }
             allowlist
@@ -4472,3 +4537,79 @@ include!("core_agent_provider_fallback_tests.rs");
 
 #[cfg(test)]
 include!("core_agent_delegated_commit_tests.rs");
+
+#[cfg(test)]
+mod expert_leaf_host_capture_tests {
+    use super::*;
+    #[test]
+    fn actual_no_tools_and_bounded_main_capture_reject_selection_without_partial_admission(){
+        let _lock=crate::store::test_env_lock();let root=tempfile::tempdir().unwrap();
+        struct Environment(Vec<(&'static str,Option<std::ffi::OsString>)>);
+        impl Drop for Environment{fn drop(&mut self){for(key,value)in &self.0{match value{Some(value)=>std::env::set_var(key,value),None=>std::env::remove_var(key)}}}}
+        let _environment=Environment(["NOLA_DB_PATH","NOLA_HOME"].into_iter().map(|key|(key,std::env::var_os(key))).collect());
+        let path=root.path().join("main-dispatch-surface.db");std::env::set_var("NOLA_DB_PATH",&path);std::env::set_var("NOLA_HOME",root.path());
+        let mut app=crate::application_port::CliApplicationPort::persistent(&path).unwrap();
+        for (parent,tools_enabled) in [("main-no-tools",false),("main-bounded-tools",true)] {
+            let _:Value=app.execute(nola_application::ApplicationCommand::CreateConversation{input:nola_application::CreateConversation{id:parent.into(),title:"Main".into(),settings_json:None,created_at_ms:1,updated_at_ms:1}}).unwrap();
+            let mut request=HostInvocationRequest::for_test().unwrap();request.session.session_id=Some(parent.into());request.session.save_session=true;
+            request.tool_settings.project_root=root.path().into();request.tool_settings.tools_enabled=tools_enabled;
+            request.runtime.model_capabilities.native_tool_calls=Some(true); // actual isolated Host declaration, before capture
+            if tools_enabled {request.tool_settings.tool_allowlist=Some(vec!["read_file".into()]);request.tool_settings.tool_allowlist_is_authorization_only=false;}
+            let captured=capture_task_target_configuration(&request).unwrap();
+            assert!(captured.turn_identity.model_capability.native_tool_calls);
+            assert!(!captured.host_catalog.as_ref().unwrap().capabilities.contains_key("delegate_expert"));
+            assert!(captured.tools.iter().all(|tool|nola_domain::expert_task_target::schema_tool_name(tool)!=Some("delegate_expert")));
+            let before=app.load_conversation(parent).unwrap().unwrap();
+            let component=ContextComponent{kind:ContextComponentKind::MainExpertSelection,id:nola_domain::expert_task_target::MAIN_EXPERT_SELECTION_COMPONENT_ID.into(),source:None,
+                content:json!({"version":1,"selected_experts":[{"agent_id":"not-joined","agent_revision":1}]})};
+            let begin=|run:&str,components| nola_application::BeginAssistantTurn{conversation_id:parent.into(),expected_configuration_revision:Some(before.configuration_revision),expected_parent_message_id:None,
+                conversation_title:before.title.clone(),user_message_id:format!("{run}:user"),user_part_id:format!("{run}:user:text"),user_text:"Actual user input".into(),user_content_json:None,
+                assistant_message_id:format!("{run}:assistant"),context_checkpoint_id:None,core_config:captured.clone(),created_at_ms:10,
+                submission:AgentSubmission::UserInput{items:vec![AgentItem::user_message(ItemId::from_string(format!("{run}:user")),"Actual user input")],turn_context_items:vec![],turn_context_platform:Default::default(),
+                    turn_context_components:components,submission_id:Some(run.into()),submitted_at_epoch_ms:Some(10),delivery:AgentInputDelivery::CurrentTurn}};
+            let run=uuid::Uuid::new_v4().to_string();
+            let error=app.begin_assistant_turn(begin(&run,vec![component])).unwrap_err();
+            assert!(error.to_string().contains("main_expert_selection_requires_enabled_expert_dispatch"),"{parent}: {error}");
+            assert_eq!(app.load_conversation(parent).unwrap().unwrap(),before);
+            assert!(app.active_run(parent).unwrap().is_none());
+            let room:Value=app.execute(nola_application::ApplicationCommand::AgentRoom{command:nola_application::agent_room::AgentRoomCommand::ForConversation{conversation_id:parent.into()}}).unwrap();assert!(room.is_null());
+            // The same actual frozen Main can still admit ordinary chat; only
+            // explicit unsupported selection is rejected.
+            let run=uuid::Uuid::new_v4().to_string();assert!(app.begin_assistant_turn(begin(&run,vec![])).is_ok());
+        }
+    }
+    #[test]
+    fn actual_joined_expert_host_freezes_a_leaf_catalog_while_main_keeps_dispatch(){
+        let _lock=crate::store::test_env_lock();
+        let root=tempfile::tempdir().unwrap();
+        struct Environment(Vec<(&'static str,Option<std::ffi::OsString>)>);
+        impl Drop for Environment{fn drop(&mut self){for(key,value)in &self.0{match value{Some(value)=>std::env::set_var(key,value),None=>std::env::remove_var(key)}}}}
+        let _environment=Environment(["NOLA_DB_PATH","NOLA_HOME"].into_iter().map(|key|(key,std::env::var_os(key))).collect());
+        let path=root.path().join("actual-leaf-host.db");std::env::set_var("NOLA_DB_PATH",&path);std::env::set_var("NOLA_HOME",root.path());
+        let mut app=crate::application_port::CliApplicationPort::persistent(&path).unwrap();
+        let _:Value=app.execute(nola_application::ApplicationCommand::CreateConversation{input:nola_application::CreateConversation{id:"main-leaf-test".into(),title:"Main".into(),settings_json:None,created_at_ms:1,updated_at_ms:1}}).unwrap();
+        let _:Value=app.execute(nola_application::ApplicationCommand::AgentRoom{command:nola_application::agent_room::AgentRoomCommand::ConfigureAgent{input:nola_application::persistent_agent::ConfigureAgent{
+            id:"leaf-test-agent".to_owned().try_into().unwrap(),expected_directory_revision:None,expected_agent_revision:None,name:"Leaf".into(),description:"Bounded worker".into(),
+            defaults:nola_domain::persistent_agent::AgentDefaults::try_from(json!({})).unwrap(),availability:nola_domain::persistent_agent::AgentAvailability::Active,updated_at_ms:1}}}).unwrap();
+        let association:nola_application::agent_room::ConversationRoomAssociation=app.execute(nola_application::ApplicationCommand::AgentRoom{command:nola_application::agent_room::AgentRoomCommand::EnsureForConversation{conversation_id:"main-leaf-test".into(),at_ms:1}}).unwrap();
+        let joined:nola_application::agent_room::RoomSnapshot=app.execute(nola_application::ApplicationCommand::AgentRoom{command:nola_application::agent_room::AgentRoomCommand::Join{input:nola_application::agent_room::JoinAgent{
+            room_id:association.room_id,expected_room_revision:association.room.revision,agent_id:"leaf-test-agent".to_owned().try_into().unwrap(),expected_agent_revision:1,at_ms:1}}}).unwrap();
+        let child=joined.room.participants()[0].context_conversation_id.clone();
+        let mut request=HostInvocationRequest::for_test().unwrap();request.session.session_id=Some(child.clone());request.session.save_session=true;
+        request.tool_settings.project_root=root.path().into();request.tool_settings.tools_enabled=true;
+        let captured=capture_task_target_configuration(&request).unwrap();
+        assert_eq!(captured.session_id.as_ref().unwrap().as_str(),child);
+        assert!(captured.host_catalog.as_ref().unwrap().capabilities.keys().all(|id|!crate::agent_host_driver::expert_leaf_driver_control(id)));
+        assert!(captured.tools.iter().all(|schema|!nola_domain::expert_task_target::schema_tool_name(schema).is_some_and(crate::agent_host_driver::expert_leaf_driver_control)));
+        assert!(captured.host_catalog.as_ref().unwrap().capabilities.contains_key("model.stream"));
+        let original=captured.turn_identity.host_invocation.clone().unwrap();
+        let restored=restore_task_target_configuration(&captured,&child).unwrap();
+        let recaptured=capture_task_target_configuration(&restored).unwrap();
+        original.require_exact(recaptured.turn_identity.host_invocation.as_ref().unwrap()).unwrap();
+        assert_eq!(captured.host_catalog.as_ref().unwrap().capabilities,recaptured.host_catalog.as_ref().unwrap().capabilities);
+        request.session.session_id=Some("main-leaf-test".into());
+        let main=capture_task_target_configuration(&request).unwrap();
+        assert!(main.host_catalog.as_ref().unwrap().capabilities.contains_key("delegate_expert"));
+        assert!(main.host_catalog.as_ref().unwrap().capabilities.contains_key("spawn_agent"));
+    }
+}
