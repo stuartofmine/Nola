@@ -2,7 +2,8 @@
 
 # Rust 共享编译缓存
 
-更新：2026-10-08。使用 mr-boxington（`mbx`），不改变 Cargo 的依赖图与目标平台。
+更新：2026-11-14。普通 Host/CLI 使用 mr-boxington（`mbx`）；最终静态库优先使用可用的 sccache。
+两者分别选择，不叠加，不改变 Cargo 的依赖图与目标平台。
 本轮同时调整开发 profile 和共享产物目录，具体见下方存储策略。
 构建仍由 Cargo 决定，mbx 在编译边界缓存
 符合条件的 action；跨 checkout 的路径归一化允许共享结果。
@@ -15,21 +16,26 @@ CLI、Mac 内嵌 runtime、Core Apple/Android 构建接入同一辅助模块。
 
 | 配置 | 行为 |
 | --- | --- |
-| `NOLA_RUST_BUILD_CACHE=auto`（默认） | 可用时使用 mbx；缺失或调用者设置了 compiler wrapper 时报告原因并使用 Cargo |
-| `NOLA_RUST_BUILD_CACHE=off` | 不启用本仓库的 mbx 包装；保留调用者自己的 Cargo/wrapper 配置 |
+| `NOLA_RUST_BUILD_CACHE=auto`（默认） | 静态库入口优先使用已安装的 sccache，其余使用 mbx；缺失时回退，显式 wrapper 始终保留 |
+| `NOLA_RUST_BUILD_CACHE=off` | 不启用本仓库的缓存包装；保留调用者自己的 Cargo/wrapper 配置 |
 | `NOLA_RUST_BUILD_CACHE=mbx` 或 `required` | mbx 缺失或与显式 compiler wrapper 冲突时直接失败 |
+| `NOLA_RUST_BUILD_CACHE=sccache` | 明确要求 sccache；缺失或与显式 wrapper 冲突时失败 |
+| `NOLA_SCCACHE_BIN=/absolute/path/sccache` | 指定 sccache 可执行文件，不接受 shell 表达式 |
 | `NOLA_MBX_BIN=/absolute/path/mbx` | 指定一个可执行文件，不接受 shell 表达式 |
 | `CARGO=/absolute/path/cargo` | mbx 和直接调用使用同一个已解析 Cargo |
 
 显式设置的 `RUSTC_WRAPPER` / `RUSTC_WORKSPACE_WRAPPER` 包括空值，均应尊重。
-编译命令使用 `mbx build/test/...`，不是 `mbx cargo ...`；metadata、clean、
+mbx 后端的编译命令使用 `mbx build/test/...`，不是 `mbx cargo ...`；metadata、clean、
 帮助等非编译操作仍交给原 Cargo。`mbx clean` 的管理语义不同，不用于替换
-用户请求的 Cargo clean。[官方 CLI](https://mr-boxington.jdx.dev/cli)。
+用户请求的 Cargo clean。sccache 后端通过 `RUSTC_WRAPPER` 直接调用 Cargo，
+不再经过 mbx；metadata/clean 不注入 wrapper。启动服务时默认 `SCCACHE_CACHE_SIZE=4G`，
+保留调用者设置；已有 daemon 使用其启动时的配置。
+构建入口只发现现有工具，不自动安装、修改全局 shim 或清空缓存。[官方 CLI](https://mr-boxington.jdx.dev/cli)。
 
 CLI 与 Mac 内嵌 runtime 默认共用 workspace `target`，保留显式覆盖选项；
 不再默认维护独立的 `target/mac-runtime`。平台构建按 target triple 隔离。
 构建脚本不执行 `mbx setup`、全局 Cargo shim、远端缓存配置、target 迁移或清理。
-本机经用户授权单独执行 `mbx adopt`，workspace `target` 现在指向受管理缓存。
+`target` 可以是普通目录，也可以是显式 adopt 后的受管理链接；清理后不假定缓存仍存在。
 不修改用户的 shell、mise、编辑器或全局 Cargo 配置。
 [官方安装](https://mr-boxington.jdx.dev/installation)、
 [setup 行为](https://mr-boxington.jdx.dev/setup)。
@@ -172,3 +178,7 @@ fixture不调用真实Cargo，不能代替上述真实项目构建验收。
 
 清理器测试包含真实的最小 Cargo 项目：验证锁竞争、保留依赖、删除测试程序后可
 重新构建。空间收益以文件系统实际可用空间为准，不用 APFS 逻辑大小冒充物理释放量。
+
+
+并行度、codegen units、社区方案选择与隔离冷/热构建实测见
+[Rust 构建性能](RUST_BUILD_PERFORMANCE.md)。

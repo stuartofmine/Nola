@@ -49,31 +49,27 @@ write_dependency_file() {
   mkdir -p "$(dirname "$dependency_file")"
   {
     printf '%s:' "$(escape_dependency_path "$HOST_DEST")"
-    find \
-      "$ROOT/apps/cli/src" \
-      "$ROOT/apps/cli/vendor" \
-      "$ROOT/core" \
-      "$ROOT/third_party/a2ui/spec" \
-      -type d \( -name target -o -name 'target_*' -o -name tests \) -prune -o \
-      -type f \( -name '*.rs' -o -name '*.json' -o -name 'Cargo.toml' -o -name 'build.rs' -o -name '*.sql' -o -name '*.py' \) \
-      -print | sort | while IFS= read -r path; do
-        printf ' %s' "$(escape_dependency_path "$path")"
-      done
-    find "$ROOT/apps/macos/Resources/NolaBuiltInSkills.bundle" \
-      -type f ! -name '*.pyc' -print | sort | while IFS= read -r path; do
-        printf ' %s' "$(escape_dependency_path "$path")"
-      done
-    for path in \
-      "$ROOT/Cargo.toml" \
-      "$ROOT/Cargo.lock" \
-      "$ROOT/rust-toolchain.toml" \
-      "$ROOT/apps/cli/build.rs" \
-      "$ROOT/scripts/build_mac_runtime.sh" \
-      "$NOLA_RUST_BUILD_CACHE_HELPER" \
-      "$NOLA_MAC_INSTALL_HELPER" \
-      "$ROOT/apps/macos/Resources/com.gaojc.Nola.background-scheduler.plist"; do
-      printf ' %s' "$(escape_dependency_path "$path")"
-    done
+    {
+      find \
+        "$ROOT/apps/cli/src" \
+        "$ROOT/apps/cli/vendor" \
+        "$ROOT/core" \
+        "$ROOT/third_party/a2ui/spec" \
+        -type d \( -name target -o -name 'target_*' -o -name tests \) -prune -o \
+        -type f \( -name '*.rs' -o -name '*.json' -o -name 'Cargo.toml' -o -name 'build.rs' -o -name '*.sql' -o -name '*.py' \) \
+        -print
+      find "$ROOT/apps/macos/Resources/NolaBuiltInSkills.bundle" \
+        -type f ! -name '*.pyc' -print
+      printf '%s\n' \
+        "$ROOT/Cargo.toml" \
+        "$ROOT/Cargo.lock" \
+        "$ROOT/rust-toolchain.toml" \
+        "$ROOT/apps/cli/build.rs" \
+        "$ROOT/scripts/build_mac_runtime.sh" \
+        "$NOLA_RUST_BUILD_CACHE_HELPER" \
+        "$NOLA_MAC_INSTALL_HELPER" \
+        "$ROOT/apps/macos/Resources/com.gaojc.Nola.background-scheduler.plist"
+    } | LC_ALL=C sort -u | sed 's/[\\ #]/\\&/g' | awk '{ printf " %s", $0 }'
     printf '\n'
   } > "$dependency_file"
 }

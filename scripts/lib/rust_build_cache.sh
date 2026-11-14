@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Shared, process-scoped Rust cache selection. No setup, global configuration,
 # target adoption, installation, or build retry is performed here.
-# NOLA_RUST_BUILD_CACHE: auto (default), off, mbx/required (strict).
+# NOLA_RUST_BUILD_CACHE: auto (default), off, mbx/required, sccache (strict).
 # NOLA_MBX_BIN optionally selects one executable, never a shell expression.
 
 nola_rust_command_path() (
@@ -18,17 +18,75 @@ nola_rust_command_path() (
     esac
 )
 
+# Bound compiler parallelism without changing profiles, target identity or caches.
+# Budget four GiB per Cargo job, capped at four; CLI -j still wins in Cargo.
+nola_rust_jobs_for_resources() (
+    nola_cpus=${1:-2}
+    nola_memory=${2:-0}
+    case "$nola_cpus" in ''|*[!0-9]*) nola_cpus=2 ;; esac
+    case "$nola_memory" in ''|*[!0-9]*) nola_memory=0 ;; esac
+    nola_jobs=4
+    [ "$nola_cpus" -ge "$nola_jobs" ] || nola_jobs=$nola_cpus
+    if [ "$nola_memory" -gt 0 ]; then
+        nola_memory_jobs=$((nola_memory / 4294967296))
+        [ "$nola_memory_jobs" -ge "$nola_jobs" ] || nola_jobs=$nola_memory_jobs
+    else
+        [ "$nola_jobs" -le 2 ] || nola_jobs=2
+    fi
+    [ "$nola_jobs" -ge 1 ] || nola_jobs=1
+    printf '%s\n' "$nola_jobs"
+)
+
+nola_rust_build_jobs_init() {
+    # Even an explicit empty value belongs to the caller; Cargo validates it.
+    [ "${CARGO_BUILD_JOBS+x}" != x ] || return 0
+    case "${NOLA_RUST_BUILD_JOBS:-auto}" in
+        cargo) return 0 ;;
+        auto)
+            nola_build_cpus=2
+            nola_build_memory=0
+            case "$(uname -s 2>/dev/null || :)" in
+                Darwin)
+                    nola_build_cpus=$(sysctl -n hw.logicalcpu 2>/dev/null || printf 2)
+                    nola_build_memory=$(sysctl -n hw.memsize 2>/dev/null || printf 0)
+                    ;;
+                Linux)
+                    nola_build_cpus=$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf 2)
+                    nola_build_memory=$(awk '/^MemTotal:/ {printf "%.0f", $2 * 1024}' /proc/meminfo 2>/dev/null || printf 0)
+                    # Container memory limits take precedence over host RAM.
+                    for nola_limit_file in /sys/fs/cgroup/memory.max /sys/fs/cgroup/memory/memory.limit_in_bytes; do
+                        [ -r "$nola_limit_file" ] || continue
+                        IFS= read -r nola_memory_limit < "$nola_limit_file" || continue
+                        case "$nola_memory_limit" in ''|*[!0-9]*) continue ;; esac
+                        if [ "$nola_memory_limit" -gt 0 ] && { [ "${nola_build_memory:-0}" -eq 0 ] || [ "$nola_memory_limit" -lt "$nola_build_memory" ]; }; then
+                            nola_build_memory=$nola_memory_limit
+                        fi
+                    done
+                    ;;
+            esac
+            CARGO_BUILD_JOBS=$(nola_rust_jobs_for_resources "$nola_build_cpus" "$nola_build_memory")
+            ;;
+        ''|*[!0-9]*|0*)
+            printf '%s\n' 'error: NOLA_RUST_BUILD_JOBS must be auto, cargo or a positive integer.' >&2
+            return 2 ;;
+        *) CARGO_BUILD_JOBS=$NOLA_RUST_BUILD_JOBS ;;
+    esac
+    export CARGO_BUILD_JOBS
+}
+
 nola_rust_build_cache_init() {
     NOLA_RUST_CARGO_COMMAND=$(nola_rust_command_path "${1:-${CARGO:-cargo}}") || {
         printf '%s\n' 'error: Cargo executable unavailable; set CARGO to an executable path.' >&2
         return 127
     }
+    nola_rust_build_jobs_init || return $?
     NOLA_RUST_CACHE_BACKEND=cargo
     NOLA_RUST_CACHE_MBX=
+    NOLA_RUST_CACHE_SCCACHE=
     NOLA_RUST_CACHE_MODE=${NOLA_RUST_BUILD_CACHE:-auto}
     case "$NOLA_RUST_CACHE_MODE" in
-        auto|off|mbx|required) ;;
-        *) printf 'error: invalid NOLA_RUST_BUILD_CACHE=%s (auto, off, mbx, required).\n' "$NOLA_RUST_CACHE_MODE" >&2; return 2 ;;
+        auto|off|mbx|required|sccache) ;;
+        *) printf 'error: invalid NOLA_RUST_BUILD_CACHE=%s (auto, off, mbx, required, sccache).\n' "$NOLA_RUST_CACHE_MODE" >&2; return 2 ;;
     esac
     if [ "$NOLA_RUST_CACHE_MODE" = off ]; then
         printf '%s\n' 'Nola Rust cache: direct Cargo (repository cache integration disabled).' >&2
@@ -38,11 +96,36 @@ nola_rust_build_cache_init() {
     # or layer another cache over a caller-selected compiler wrapper.
     if [ "${RUSTC_WRAPPER+x}" = x ] || [ "${RUSTC_WORKSPACE_WRAPPER+x}" = x ]; then
         if [ "$NOLA_RUST_CACHE_MODE" != auto ]; then
-            printf '%s\n' 'error: required mbx conflicts with an explicitly configured Rust compiler wrapper.' >&2
+            printf '%s\n' 'error: required Rust cache conflicts with an explicitly configured Rust compiler wrapper.' >&2
             return 2
         fi
         printf '%s\n' 'Nola Rust cache: direct Cargo (preserving explicit Rust compiler wrapper).' >&2
         return 0
+    fi
+    # staticlib is cacheable by sccache, but not by mbx. This hint only
+    # changes auto selection for the native archive build entry points.
+    if [ "$NOLA_RUST_CACHE_MODE" = sccache ] || { [ "$NOLA_RUST_CACHE_MODE" = auto ] && [ "${2:-}" = staticlib ]; }; then
+        if [ "${NOLA_SCCACHE_BIN+x}" = x ]; then
+            NOLA_RUST_CACHE_SCCACHE=$(nola_rust_command_path "$NOLA_SCCACHE_BIN") || NOLA_RUST_CACHE_SCCACHE=
+        else
+            NOLA_RUST_CACHE_SCCACHE=$(nola_rust_command_path sccache) || NOLA_RUST_CACHE_SCCACHE=
+            if [ -z "$NOLA_RUST_CACHE_SCCACHE" ] && [ -n "${HOME:-}" ]; then
+                for nola_candidate in "$HOME/.local/bin/sccache" "$HOME/.cargo/bin/sccache"; do
+                    if [ -f "$nola_candidate" ] && [ -x "$nola_candidate" ]; then
+                        NOLA_RUST_CACHE_SCCACHE=$nola_candidate
+                        break
+                    fi
+                done
+            fi
+        fi
+        if [ -n "$NOLA_RUST_CACHE_SCCACHE" ]; then
+            NOLA_RUST_CACHE_BACKEND=sccache
+            printf 'Nola Rust cache: sccache selected (%s); static archives use a compiler wrapper, without mbx stacking.\n' "$NOLA_RUST_CACHE_SCCACHE" >&2
+            return 0
+        elif [ "$NOLA_RUST_CACHE_MODE" = sccache ]; then
+            printf '%s\n' 'error: required sccache is unavailable; install it or set NOLA_SCCACHE_BIN.' >&2
+            return 127
+        fi
     fi
     if [ "${NOLA_MBX_BIN+x}" = x ]; then
         NOLA_RUST_CACHE_MBX=$(nola_rust_command_path "$NOLA_MBX_BIN") || NOLA_RUST_CACHE_MBX=
@@ -136,6 +219,8 @@ nola_cargo() {
         else
             CARGO="$NOLA_RUST_CARGO_COMMAND" "$NOLA_RUST_CACHE_MBX" "$@"
         fi
+    elif [ "$NOLA_RUST_CACHE_BACKEND" = sccache ] && nola_rust_cache_wraps_command "$@"; then
+        RUSTC_WRAPPER="$NOLA_RUST_CACHE_SCCACHE" SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-4G}" "$NOLA_RUST_CARGO_COMMAND" "$@"
     else
         "$NOLA_RUST_CARGO_COMMAND" "$@"
     fi
@@ -149,6 +234,8 @@ nola_cargo_exec() {
         else
             CARGO="$NOLA_RUST_CARGO_COMMAND" exec "$NOLA_RUST_CACHE_MBX" "$@"
         fi
+    elif [ "$NOLA_RUST_CACHE_BACKEND" = sccache ] && nola_rust_cache_wraps_command "$@"; then
+        RUSTC_WRAPPER="$NOLA_RUST_CACHE_SCCACHE" SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-4G}" exec "$NOLA_RUST_CARGO_COMMAND" "$@"
     else
         exec "$NOLA_RUST_CARGO_COMMAND" "$@"
     fi

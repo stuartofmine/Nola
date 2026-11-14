@@ -13,7 +13,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
 . "$ROOT/../scripts/lib/rust_build_cache.sh"
-nola_rust_build_cache_init "${CARGO:-cargo}"
+nola_rust_build_cache_init "${CARGO:-cargo}" staticlib
 BINDINGS_MANIFEST="$ROOT/nola-mobile-bindings/Cargo.toml"
 TARGET="darwin"
 OUT_DIR="$ROOT/../Frameworks"

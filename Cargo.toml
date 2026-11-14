@@ -43,16 +43,27 @@ incremental = false
 # Everyday builds omit debug information and incremental object caches.
 # Cargo fingerprints still reuse unchanged dependencies and build outputs.
 [profile.dev]
+# Disabling incremental must not also collapse workspace codegen to 16 units.
+codegen-units = 256
 debug = 0
 strip = "debuginfo"
 split-debuginfo = "off"
 incremental = false
 
 [profile.test]
+codegen-units = 256
 debug = 0
 strip = "debuginfo"
 split-debuginfo = "off"
 incremental = false
+
+# Keep unchanged third-party dependencies at their previous storage/codegen
+# setting. Only frequently edited workspace crates get more codegen units.
+[profile.dev.package."*"]
+codegen-units = 16
+
+[profile.test.package."*"]
+codegen-units = 16
 
 # Recovery verifies immutable checkpoint/configuration digests on every cold
 # admission. Keep the compression kernel optimized in development and tests;

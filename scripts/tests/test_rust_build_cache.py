@@ -55,7 +55,7 @@ class RustBuildCacheTests(unittest.TestCase):
             "import json, os, sys\n"
             f"kind = {kind!r}\n"
             "environment = {key: value for key, value in os.environ.items()\n"
-            "               if key.startswith(('CARGO', 'MBX_'))\n"
+            "               if key.startswith(('CARGO', 'MBX_', 'SCCACHE_'))\n"
             "               or key in ('RUSTC_WRAPPER', 'RUSTC_WORKSPACE_WRAPPER',\n"
             "                          'RUSTFLAGS', 'NOLA_TEST_VALUE', 'TMPDIR')}\n"
             "record = {'kind': kind, 'executable': sys.argv[0],\n"
@@ -110,7 +110,7 @@ class RustBuildCacheTests(unittest.TestCase):
         self.assertFalse(self.log_path.exists())
 
     def run_launcher(self, shell, arguments=("build",), *, environment=None,
-                     mode=None, execute=False, cargo=None, launcher=None):
+                     mode=None, execute=False, cargo=None, launcher=None, purpose=None):
         self.log_path.unlink(missing_ok=True)
         child_environment = {
             "PATH": str(self.bin_directory),
@@ -121,9 +121,10 @@ class RustBuildCacheTests(unittest.TestCase):
             child_environment["NOLA_RUST_BUILD_CACHE"] = mode
         child_environment.update(environment or {})
         launch = launcher or ("nola_cargo_exec" if execute else "nola_cargo")
+        initialization = 'nola_rust_build_cache_init "$2"' + (' ' + shlex.quote(purpose) if purpose else '') + '\n'
         program = (
             '. "$1"\n'
-            'nola_rust_build_cache_init "$2"\n'
+            + initialization +
             'shift 2\n'
             'printf "backend=%s\\n" "$NOLA_RUST_CACHE_BACKEND"\n'
             f'{launch} "$@"\n'
@@ -154,6 +155,136 @@ class RustBuildCacheTests(unittest.TestCase):
         self.assertEqual([record["kind"] for record in records], kinds)
         for record in records:
             self.assertEqual(record["argv"], list(arguments))
+
+    def test_static_archive_auto_uses_sccache_without_stacking_mbx(self):
+        cache = self.bin_directory / 'sccache'
+        self.write_executable(cache, 'sccache')
+        for shell in SHELLS:
+            for execute in [False, True]:
+                result, records, _ = self.run_launcher(shell, ('rustc', '--lib', '--crate-type', 'staticlib'), purpose='staticlib', execute=execute)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assert_backend(result, 'sccache')
+                self.assertEqual([r['kind'] for r in records], ['cargo'])
+                self.assertEqual(records[0]['env']['RUSTC_WRAPPER'], str(cache))
+                self.assertEqual(records[0]['env']['SCCACHE_CACHE_SIZE'], '4G')
+            result, records, _ = self.run_launcher(shell)
+            self.assert_backend(result, 'mbx')
+            self.assertEqual([r['kind'] for r in records], ['mbx', 'cargo'])
+
+    def test_sccache_explicit_mode_and_user_cache_size_are_preserved(self):
+        cache = self.bin_directory / 'sccache'
+        self.write_executable(cache, 'sccache')
+        for shell in SHELLS:
+            result, records, _ = self.run_launcher(shell, ('ndk', '-t', 'arm64-v8a', 'rustc', '--lib'), mode='sccache', environment={'SCCACHE_CACHE_SIZE': '2G'})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(records[0]['env']['SCCACHE_CACHE_SIZE'], '2G')
+            self.assertEqual(records[0]['env']['RUSTC_WRAPPER'], str(cache))
+            result, records, _ = self.run_launcher(shell, ('metadata', '--no-deps'), mode='sccache')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn('RUSTC_WRAPPER', records[0]['env'])
+
+    def test_static_cache_falls_back_and_respects_explicit_wrappers(self):
+        for shell in SHELLS:
+            result, records, _ = self.run_launcher(shell, purpose='staticlib')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assert_backend(result, 'mbx')
+            result, records, _ = self.run_launcher(shell, mode='sccache')
+            self.assertEqual(result.returncode, 127, result.stderr)
+            self.assertEqual(records, [])
+            for key in ['RUSTC_WRAPPER', 'RUSTC_WORKSPACE_WRAPPER']:
+                for value in ['', 'user wrapper']:
+                    result, records, _ = self.run_launcher(shell, purpose='staticlib', environment={key: value})
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assert_backend(result, 'cargo')
+                    self.assertEqual(records[0]['env'][key], value)
+                    result, records, _ = self.run_launcher(shell, mode='sccache', environment={key: value})
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertEqual(records, [])
+
+    def test_mac_runtime_dependency_writer_escapes_paths_and_excludes_builds(self):
+        fixture = self.root / 'runtime workspace'
+        for name in ['apps/cli/src', 'apps/cli/vendor', 'core/target', 'third_party/a2ui/spec',
+                     'apps/macos/Resources/NolaBuiltInSkills.bundle', 'target/debug']:
+            (fixture / name).mkdir(parents=True, exist_ok=True)
+        resource = fixture / 'core/model # catalog.json'
+        resource.write_text('{}')
+        (fixture / 'core/target/ignored.rs').write_text('// generated')
+        (fixture / 'apps/macos/Resources/com.gaojc.Nola.background-scheduler.plist').write_text('fixture')
+        for name in ['nola-agent-host', 'nola-service']:
+            shutil.copy('/bin/echo', fixture / 'target/debug' / name)
+        dependency = self.root / 'runtime inputs.d'
+        env = {**os.environ, 'CARGO': str(self.cargo), 'NOLA_TEST_LOG': str(self.log_path),
+               'NOLA_RUST_BUILD_CACHE': 'off', 'NOLA_REPOSITORY_ROOT': str(fixture),
+               'NOLA_RUNTIME_OUTPUT_DIR': str(self.root / 'runtime outputs'), 'NOLA_BUILD_PROFILE': 'dev',
+               'NOLA_DEPENDENCY_FILE': str(dependency), 'CARGO_TARGET_DIR': str(fixture / 'target')}
+        env.pop('NOLA_AGENT_CARGO_TARGET_DIR', None)
+        result = subprocess.run(['/bin/bash', str(REPOSITORY_ROOT / 'scripts/build_mac_runtime.sh')], env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        escaped = str(resource).replace('\\', '\\\\').replace(' ', '\\ ').replace('#', '\\#')
+        self.assertIn(escaped, dependency.read_text())
+        self.assertNotIn('ignored.rs', dependency.read_text())
+
+    def test_development_codegen_is_separate_from_release_and_dependency_storage(self):
+        import tomllib
+        manifest = tomllib.loads((REPOSITORY_ROOT / 'Cargo.toml').read_text())
+        for profile in ['dev', 'test']:
+            settings = manifest['profile'][profile]
+            self.assertEqual(settings['codegen-units'], 256)
+            self.assertEqual(settings['package']['*']['codegen-units'], 16)
+            self.assertIs(settings['incremental'], False)
+            self.assertEqual(settings['debug'], 0)
+        self.assertNotIn('codegen-units', manifest['profile']['release'])
+        self.assertEqual(manifest['profile']['release']['opt-level'], 2)
+
+    def test_resource_budget_caps_jobs_without_incremental_storage(self):
+        for cpus, memory, expected in [(10, 16 * 1024**3, 4), (8, 8 * 1024**3, 2),
+                                       (16, 2 * 1024**3, 1), (1, 64 * 1024**3, 1),
+                                       (10, 0, 2), (0, 0, 1), (64, 128 * 1024**3, 4)]:
+            for shell in SHELLS:
+                result = subprocess.run([shell, '-eu', '-c', '. "$1"; nola_rust_jobs_for_resources "$2" "$3"',
+                    'job-budget', str(HELPER), str(cpus), str(memory)], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), str(expected))
+
+    def test_auto_jobs_use_detected_mac_resources(self):
+        for name, body in [('uname', "print('Darwin')"), ('sysctl', "print(10 if sys.argv[-1] == 'hw.logicalcpu' else 17179869184)")]:
+            tool = self.bin_directory / name
+            tool.write_text(f'#!{sys.executable}\nimport sys\n' + body + '\n')
+            tool.chmod(0o755)
+        for shell in SHELLS:
+            result, records, _ = self.run_launcher(shell, mode='off')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(records[0]['env']['CARGO_BUILD_JOBS'], '4')
+
+    def test_auto_jobs_use_linux_memory_budget(self):
+        for name, body in [('uname', "print('Linux')"), ('getconf', 'print(16)'), ('awk', 'print(2147483648)')]:
+            tool = self.bin_directory / name
+            tool.write_text(f'#!{sys.executable}\n' + body + '\n')
+            tool.chmod(0o755)
+        for shell in SHELLS:
+            result, records, _ = self.run_launcher(shell, mode='off')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(records[0]['env']['CARGO_BUILD_JOBS'], '1')
+
+    def test_job_policy_preserves_explicit_cargo_values_and_escape_hatch(self):
+        for shell in SHELLS:
+            for value in ['7', '-1', '']:
+                result, records, _ = self.run_launcher(shell, mode='off', environment={'CARGO_BUILD_JOBS': value, 'NOLA_RUST_BUILD_JOBS': 'invalid'})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(records[0]['env']['CARGO_BUILD_JOBS'], value)
+            result, records, _ = self.run_launcher(shell, mode='off', environment={'NOLA_RUST_BUILD_JOBS': '3'})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(records[0]['env']['CARGO_BUILD_JOBS'], '3')
+            result, records, _ = self.run_launcher(shell, mode='off', environment={'NOLA_RUST_BUILD_JOBS': 'cargo'})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn('CARGO_BUILD_JOBS', records[0]['env'])
+
+    def test_invalid_job_policy_fails_before_launch(self):
+        for value in ['-1', '0', '00', 'unknown', '2; echo unsafe']:
+            for shell in SHELLS:
+                result, records, _ = self.run_launcher(shell, mode='off', environment={'NOLA_RUST_BUILD_JOBS': value})
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(records, [])
 
     def test_filtered_test_launcher_scopes_targets_and_preserves_test_arguments(self):
         script = REPOSITORY_ROOT / "scripts/test_rust.sh"
