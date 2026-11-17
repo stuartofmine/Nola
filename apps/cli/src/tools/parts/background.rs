@@ -2953,6 +2953,13 @@ fn run_bash_execution(
             .allowed_dirs
             .iter()
             .find(|root| cwd.starts_with(root))
+            .or_else(|| {
+                ctx.permission_scope
+                    .owner_session_id()
+                    .is_some()
+                    .then(|| ctx.allowed_dirs.first())
+                    .flatten()
+            })
             .cloned()
             .unwrap_or_else(|| cwd.clone());
         let output_contract = tool_try!(prepare_background_output_contract(
@@ -3080,6 +3087,13 @@ fn run_bash_execution(
             .allowed_dirs
             .iter()
             .find(|root| cwd.starts_with(root))
+            .or_else(|| {
+                ctx.permission_scope
+                    .owner_session_id()
+                    .is_some()
+                    .then(|| ctx.allowed_dirs.first())
+                    .flatten()
+            })
             .cloned()
             .unwrap_or_else(|| cwd.clone());
         let output_contract = tool_try!(prepare_background_output_contract(
@@ -3806,7 +3820,38 @@ fn hydrate_background_task(
     Ok(())
 }
 
+fn background_task_matches_scope(
+    task: &BackgroundBashTask,
+    allowed_dirs: &[PathBuf],
+    owner_session_id: Option<&str>,
+) -> bool {
+    match (task.owner_session_id.as_deref(), owner_session_id) {
+        (Some(task_owner), Some(expected_owner)) => task_owner == expected_owner,
+        (None, None) => background_task_within_roots(task, allowed_dirs),
+        _ => false,
+    }
+}
+
 fn background_task_visible(task: &BackgroundBashTask, ctx: &ToolContext) -> bool {
-    task.owner_session_id == ctx.permission_scope.owner_session_id()
-        && background_task_within_roots(task, &ctx.allowed_dirs)
+    let owner_session_id = ctx.permission_scope.owner_session_id();
+    background_task_matches_scope(task, &ctx.allowed_dirs, owner_session_id.as_deref())
+}
+
+#[cfg(test)]
+pub(crate) fn background_record_matches_scope(
+    record: DbBackgroundTask,
+    allowed_dirs: &[PathBuf],
+    owner_session_id: Option<&str>,
+) -> bool {
+    let task = background_task_from_record(record).expect("valid background task record");
+    background_task_matches_scope(&task, allowed_dirs, owner_session_id)
+}
+
+#[cfg(test)]
+pub(crate) fn clear_cached_background_tasks() {
+    if let Some(cache) = BACKGROUND_BASH_TASKS.get() {
+        if let Ok(mut guard) = cache.lock() {
+            guard.clear();
+        }
+    }
 }

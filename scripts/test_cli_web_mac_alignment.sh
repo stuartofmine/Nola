@@ -26,7 +26,7 @@ run "CLI journal consumption and authenticated transport" \
     bash -lc "cd '$ROOT' && mbx test -p nola_cli --lib journal -- --nocapture"
 
 run "Host real HTTP submission, receipt, and model configuration" \
-    bash -lc "cd '$ROOT' && mbx test -p nola_cli --test conversation_configuration_web_e2e -- --nocapture"
+    bash -lc "cd '$ROOT' && mbx test -p nola_cli --test web_host_e2e conversation_configuration_web_e2e -- --nocapture"
 
 run "Web production submission and journal observation contracts" \
     node --test \

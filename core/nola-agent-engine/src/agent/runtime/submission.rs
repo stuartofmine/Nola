@@ -2197,6 +2197,22 @@ impl AgentRuntime {
                         &mut effects,
                     ) {
                         let pending_skill_updates = self.session.pending_skill_completion_steps();
+                        let observed_execution_evidence = self
+                            .session
+                            .execution
+                            .requirements
+                            .observations
+                            .values()
+                            .filter(|obs| obs.turn_id == turn_id.as_str())
+                            .map(|obs| {
+                                serde_json::json!({
+                                    "evidence_id": obs.evidence_id,
+                                    "call_id": obs.call_id,
+                                    "tool_name": obs.tool_name,
+                                    "outcome": obs.outcome,
+                                })
+                            })
+                            .collect::<Vec<_>>();
                         // A syntactically valid Skill update can still violate the active
                         // completion contract (for example, by using a filename instead of
                         // the declared artifact id). That is a recoverable model protocol
@@ -2210,8 +2226,9 @@ impl AgentRuntime {
                             },
                             "tool_execution_skipped": true,
                             "recovery": "correct_arguments",
-                            "next_action": "Retry only the exact pending skill_update calls supplied by Core. Do not search for tool documentation or repeat completed execution and validation.",
+                            "next_action": "Retry only the exact pending skill_update calls supplied by Core. Prefer citing observed_execution_evidence[].evidence_id via {\"kind\":\"execution_evidence\",\"evidence_id\":\"...\"} or copy call_id verbatim. Do not search for tool documentation or repeat completed execution and validation.",
                             "pending_skill_updates": pending_skill_updates,
+                            "observed_execution_evidence": observed_execution_evidence,
                         });
                         outcome = nola_host_protocol::HostToolOutcome::Failed;
                         artifacts.clear();
@@ -3273,120 +3290,657 @@ fn contains_embedded_tool_call_protocol(text: &str) -> bool {
 mod skill_verification_source_tests {
     use super::*;
     use crate::agent::capability::*;
-    use nola_domain::execution_evidence::*;
+    use crate::agent::host::{HostCapabilityCatalog, HostCapabilityExposure, HostCapabilityRoute};
     use nola_domain::assistant_journal_operations::JournalNumber;
-
-    fn fixture(method: SkillVerificationMethod) -> (AgentRuntime, SkillVerificationResult) {
-        let mut runtime = AgentRuntime::try_new(AgentCoreConfig {
-            session_id: Some(SessionId::from_string("skill-evidence-session".into())),
-            turn_identity: crate::agent::model_capability::test_host_identity(), ..Default::default()
-        }).unwrap();
-        runtime.session.skill_runtime.apply(SkillRuntimeCommandEnvelope { operation_id: "start-skill".into(),
-            command: SkillRuntimeCommand::Start { run_id: "skill-run".into(),
-                owner: SkillRunOwner { session_id: "skill-evidence-session".into(), parent_turn_id: "turn".into(), child_turn_id: None },
-                descriptor: SkillDescriptor { skill_id: "review".into(), version: "1.0.0".into(), display_name: "Review".into(),
-                    instructions_ref: format!("skill://review/1.0.0/SKILL.md#sha256={}", "a".repeat(64)), instructions_digest: "a".repeat(64),
-                    required_tools: vec![], default_mode: Some(SkillExecutionMode::Inline),
-                    execution_contract: SkillExecutionContract { verifiers: vec![SkillVerifierContract {
-                        id: "validation".into(), description: "Check current output".into(), method, required: true }], ..Default::default() } },
-                mode: SkillExecutionMode::Inline, budget: SkillRunBudget::default() } }).unwrap();
-        let observation = ExecutionEvidenceObservation { evidence_id: "validation-evidence".into(), call_id: "validation-call".into(),
-            tool_name: "validator".into(), source: ExecutionEvidenceSource { effect_id: "effect".into(), request_id: "request".into(),
-                host_id: "host".into(), attempt_id: None, response_sequence: JournalNumber(1), catalog_revision: JournalNumber(1), availability_epoch: JournalNumber(0) },
-            outcome: HostToolOutcome::Succeeded,
-            receipt: Some(ExecutionReceipt { local_stop: None, state: ExecutionState::Completed,
-                effects: vec![ResourceEffect { resource_uri: "file:///workspace/report".into(), operation: "validation".into(),
-                    before_version: Some("sha256:v1".into()), after_version: Some("sha256:v1".into()) }],
-                checks: vec![PostconditionCheck { kind: ExecutionCheckKind::Postcondition,
-                    resource_uri: "file:///workspace/report".into(), version: "sha256:v1".into(), predicate: "rendered_pages_checked".into(), passed: true }] }) };
-        runtime.session.execution.requirements.observations.insert(observation.evidence_id.clone(), (&observation, "turn", 10).into());
-        let result = SkillVerificationResult { verifier_id: "validation".into(), passed: true,
-            replaces_evidence: None,
-            evidence: SkillVerificationEvidence::HostCheck { source: SkillEvidenceReference::ToolCall { call_id: "validation-call".into() },
-                resource_uri: "file:///workspace/report".into(), version: "sha256:v1".into(), check_kind: ExecutionCheckKind::Postcondition,
-                predicate: "rendered_pages_checked".into() }, summary: "Actual current resource check".into() };
-        (runtime, result)
-    }
+    use nola_domain::execution_evidence::*;
 
     #[test]
     fn host_check_requires_an_exact_owner_receipt_predicate_version_and_verdict() {
-        let (mut runtime, result) = fixture(SkillVerificationMethod::HostCheck);
-        assert!(runtime.validate_skill_verification_sources("skill-run", &result).is_ok());
+        let mut model = crate::agent::code_mode::capability_descriptors(&Default::default())
+            .unwrap()
+            .remove(0);
+        model.id = "model.stream".into();
+        model.route = HostCapabilityRoute::Model;
+        let mut validator = model.clone();
+        validator.id = "validator".into();
+        validator.route = HostCapabilityRoute::Tool;
+        validator.exposure = HostCapabilityExposure::Visible;
+        validator.permission_domain = None;
+        validator.input_normalization = Default::default();
+        validator.input_schema = serde_json::json!({"type": "object", "properties": {}});
+        let mut updater = validator.clone();
+        updater.id = "skill_update".into();
+        updater.exposure = HostCapabilityExposure::Internal;
+        updater.input_schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "run_id": { "type": "string" },
+                "action": { "type": "string" }
+            },
+            "required": ["run_id", "action"]
+        });
+        let mut catalog = HostCapabilityCatalog::empty("host");
+        catalog.capabilities.insert(model.id.clone(), model);
+        catalog.capabilities.insert(validator.id.clone(), validator);
+        catalog.capabilities.insert(updater.id.clone(), updater);
+
+        let mut runtime = AgentRuntime::try_new(AgentCoreConfig {
+            session_id: Some(SessionId::from_string("skill-evidence-session".into())),
+            turn_identity: crate::agent::model_capability::test_host_identity(),
+            host_catalog: Some(catalog),
+            permission_rules: crate::agent::permissions::PermissionRuleSet::default()
+                .with_profile(nola_domain::PermissionProfile::AllowAll),
+            tools: vec![serde_json::json!({
+                "type": "function",
+                "function": {
+                    "name": "validator",
+                    "parameters": { "type": "object", "properties": {} }
+                }
+            })],
+            ..Default::default()
+        })
+        .unwrap();
+
+        runtime
+            .dispatch(AgentCommand::SubmitInput {
+                origin: Default::default(),
+                items: vec![AgentItem::user_message(
+                    ItemId::from_string("review-input".into()),
+                    "Run review",
+                )],
+                turn_context_items: vec![],
+                turn_context_platform: Default::default(),
+                turn_context_components: vec![],
+                submission_id: Some("review-submit".into()),
+                submitted_at_epoch_ms: Some(1_000),
+                delivery: AgentInputDelivery::CurrentTurn,
+            })
+            .unwrap();
+        let turn_id = runtime
+            .session
+            .execution
+            .active_turn
+            .as_ref()
+            .unwrap()
+            .turn_id
+            .clone();
+
+        let skill_descriptor = |skill_id: &str, method: SkillVerificationMethod| SkillDescriptor {
+            skill_id: skill_id.into(),
+            version: "1.0.0".into(),
+            display_name: "Review".into(),
+            instructions_ref: format!("skill://{skill_id}/1.0.0/SKILL.md#sha256={}", "a".repeat(64)),
+            instructions_digest: "a".repeat(64),
+            required_tools: vec![],
+            default_mode: Some(SkillExecutionMode::Inline),
+            execution_contract: SkillExecutionContract {
+                verifiers: vec![SkillVerifierContract {
+                    id: "validation".into(),
+                    description: "Check current output".into(),
+                    method,
+                    required: true,
+                }],
+                ..Default::default()
+            },
+        };
+
+        runtime
+            .session
+            .skill_runtime
+            .apply(SkillRuntimeCommandEnvelope {
+                operation_id: "start-skill".into(),
+                command: SkillRuntimeCommand::Start {
+                    run_id: "skill-run".into(),
+                    owner: SkillRunOwner {
+                        session_id: "skill-evidence-session".into(),
+                        parent_turn_id: turn_id.as_str().into(),
+                        child_turn_id: None,
+                    },
+                    descriptor: skill_descriptor("review", SkillVerificationMethod::HostCheck),
+                    mode: SkillExecutionMode::Inline,
+                    budget: SkillRunBudget::default(),
+                },
+            })
+            .unwrap();
+
+        runtime
+            .dispatch(AgentCommand::ModelCompleted {
+                turn_id: turn_id.clone(),
+                items: vec![],
+                tool_calls: vec![ModelToolCall {
+                    call_id: CallId::from_string("validation-call".into()),
+                    name: "validator".into(),
+                    permission_scope: None,
+                    permission_rationale: None,
+                    arguments: serde_json::json!({}),
+                }],
+                usage: Default::default(),
+                output_limited: false,
+                effect_elapsed_millis: 1,
+            })
+            .unwrap();
+        runtime
+            .dispatch(AgentCommand::ToolCompleted {
+                turn_id: turn_id.clone(),
+                call_id: CallId::from_string("validation-call".into()),
+                capability_id: "validator".into(),
+                evidence: None,
+                output: serde_json::json!({"ok": true}),
+                outcome: HostToolOutcome::Succeeded,
+                activation: None,
+                full_output_ref: None,
+                artifacts: vec![],
+                skill_invocation: None,
+                skill_runtime_update: None,
+                effect_elapsed_millis: 1,
+            })
+            .unwrap();
+
+        let receipt_v1 = ExecutionReceipt {
+            local_stop: None,
+            state: ExecutionState::Completed,
+            effects: vec![ResourceEffect {
+                resource_uri: "file:///workspace/report".into(),
+                operation: "validation".into(),
+                before_version: Some("sha256:v1".into()),
+                after_version: Some("sha256:v1".into()),
+            }],
+            checks: vec![PostconditionCheck {
+                kind: ExecutionCheckKind::Postcondition,
+                resource_uri: "file:///workspace/report".into(),
+                version: "sha256:v1".into(),
+                predicate: "rendered_pages_checked".into(),
+                passed: true,
+            }],
+        };
+        let observation = ExecutionEvidenceObservation {
+            evidence_id: "validation-evidence".into(),
+            call_id: "validation-call".into(),
+            tool_name: "validator".into(),
+            source: ExecutionEvidenceSource {
+                effect_id: "effect".into(),
+                request_id: "request".into(),
+                host_id: "host".into(),
+                attempt_id: None,
+                response_sequence: JournalNumber(1),
+                catalog_revision: JournalNumber(1),
+                availability_epoch: JournalNumber(0),
+            },
+            outcome: HostToolOutcome::Succeeded,
+            receipt: Some(receipt_v1.clone()),
+        };
+        runtime
+            .session
+            .execution
+            .requirements
+            .observations
+            .insert(
+                observation.evidence_id.clone(),
+                (&observation, turn_id.as_str(), 10).into(),
+            );
+        let mut result = SkillVerificationResult {
+            verifier_id: "validation".into(),
+            passed: true,
+            replaces_evidence: None,
+            evidence: SkillVerificationEvidence::HostCheck {
+                source: SkillEvidenceReference::ToolCall {
+                    call_id: "validation-call".into(),
+                },
+                resource_uri: "file:///workspace/report".into(),
+                version: "sha256:v1".into(),
+                check_kind: ExecutionCheckKind::Postcondition,
+                predicate: "rendered_pages_checked".into(),
+            },
+            summary: "Actual current resource check".into(),
+        };
+
+        // 1. Exact owner receipt, predicate, version, and verdict enforcement.
+        assert!(runtime
+            .validate_skill_verification_sources("skill-run", &result)
+            .is_ok());
         let mut invented = result.clone();
         if let SkillVerificationEvidence::HostCheck { source, .. } = &mut invented.evidence {
-            *source = SkillEvidenceReference::ExecutionEvidence { evidence_id: "self-described-search-evidence".into() };
+            *source = SkillEvidenceReference::ExecutionEvidence {
+                evidence_id: "self-described-search-evidence".into(),
+            };
         }
-        assert!(runtime.validate_skill_verification_sources("skill-run", &invented).is_err());
+        assert!(runtime
+            .validate_skill_verification_sources("skill-run", &invented)
+            .is_err());
         let mut unrelated_check = result.clone();
-        if let SkillVerificationEvidence::HostCheck { predicate, .. } = &mut unrelated_check.evidence { *predicate = "all_requirements_passed".into(); }
-        assert!(runtime.validate_skill_verification_sources("skill-run", &unrelated_check).is_err());
-        let mut false_verdict = result.clone(); false_verdict.passed = false;
-        assert!(runtime.validate_skill_verification_sources("skill-run", &false_verdict).is_err());
-        runtime.session.execution.requirements.observations.get_mut("validation-evidence").unwrap().turn_id = "another-owner".into();
-        assert!(runtime.validate_skill_verification_sources("skill-run", &result).is_err());
-        let observation = runtime.session.execution.requirements.observations.get_mut("validation-evidence").unwrap();
-        observation.turn_id = "turn".into(); observation.receipt = None;
-        assert!(runtime.validate_skill_verification_sources("skill-run", &result).is_err(), "Success without a check receipt cannot become verification");
-    }
+        if let SkillVerificationEvidence::HostCheck { predicate, .. } =
+            &mut unrelated_check.evidence
+        {
+            *predicate = "all_requirements_passed".into();
+        }
+        assert!(runtime
+            .validate_skill_verification_sources("skill-run", &unrelated_check)
+            .is_err());
+        let mut false_verdict = result.clone();
+        false_verdict.passed = false;
+        assert!(runtime
+            .validate_skill_verification_sources("skill-run", &false_verdict)
+            .is_err());
+        runtime
+            .session
+            .execution
+            .requirements
+            .observations
+            .get_mut("validation-evidence")
+            .unwrap()
+            .turn_id = "another-owner".into();
+        assert!(runtime
+            .validate_skill_verification_sources("skill-run", &result)
+            .is_err());
+        let observed = runtime
+            .session
+            .execution
+            .requirements
+            .observations
+            .get_mut("validation-evidence")
+            .unwrap();
+        observed.turn_id = turn_id.as_str().into();
+        observed.receipt = None;
+        assert!(
+            runtime
+                .validate_skill_verification_sources("skill-run", &result)
+                .is_err(),
+            "Success without a check receipt cannot become verification"
+        );
+        runtime
+            .session
+            .execution
+            .requirements
+            .observations
+            .get_mut("validation-evidence")
+            .unwrap()
+            .receipt = Some(receipt_v1);
 
-    #[test]
-    fn newer_resource_version_blocks_completion_without_rewriting_prior_verification() {
-        let (mut runtime, result) = fixture(SkillVerificationMethod::HostCheck);
-        runtime.apply_skill_runtime_command(SkillRuntimeCommandEnvelope { operation_id: "verify".into(),
-            command: SkillRuntimeCommand::RecordVerification { run_id: "skill-run".into(), result: result.clone() } }, &mut vec![], &mut vec![]).unwrap();
-        let mut newer = runtime.session.execution.requirements.observations["validation-evidence"].clone();
-        newer.evidence_id = "changed-resource".into(); newer.call_id = "write-later".into(); newer.recorded_core_revision = 11;
+        // 2. Provider call_id suffix resolution, exact bad call_id error, recovery payload, and ambiguity.
+        let full_id =
+            "4C5FDA13-7E4A-4B5D-BD43-D22F37B9604B:host_effect:387::call_22d8892839ef4487bcfb0855f4dc9a9c";
+        runtime
+            .session
+            .execution
+            .requirements
+            .observations
+            .get_mut("validation-evidence")
+            .unwrap()
+            .call_id = full_id.into();
+        if let SkillVerificationEvidence::HostCheck { source, .. } = &mut result.evidence {
+            *source = SkillEvidenceReference::ToolCall {
+                call_id: "call_22d8892839ef4487bcfb0855f4dc9a9c".into(),
+            };
+        }
+        assert!(runtime
+            .validate_skill_verification_sources("skill-run", &result)
+            .is_ok());
+
+        let typo_id =
+            "4C5FDA13-7E4A-4B5D-BD43-D22F37B9604B:host_effect:387::call_22d8892839ef4487bc0855f4dc9a9c";
+        let mut typo = result.clone();
+        if let SkillVerificationEvidence::HostCheck { source, .. } = &mut typo.evidence {
+            *source = SkillEvidenceReference::ToolCall {
+                call_id: typo_id.into(),
+            };
+        }
+        let err = runtime
+            .validate_skill_verification_sources("skill-run", &typo)
+            .unwrap_err();
+        assert!(err.contains("Skill verification cites an unobserved tool call"));
+        assert!(err.contains(typo_id), "{err}");
+
+        runtime
+            .session
+            .skill_runtime
+            .apply(SkillRuntimeCommandEnvelope {
+                operation_id: "start-typo-run".into(),
+                command: SkillRuntimeCommand::Start {
+                    run_id: "typo-run".into(),
+                    owner: SkillRunOwner {
+                        session_id: "skill-evidence-session".into(),
+                        parent_turn_id: turn_id.as_str().into(),
+                        child_turn_id: None,
+                    },
+                    descriptor: skill_descriptor("review-typo", SkillVerificationMethod::HostCheck),
+                    mode: SkillExecutionMode::Inline,
+                    budget: SkillRunBudget::default(),
+                },
+            })
+            .unwrap();
+        runtime
+            .dispatch(AgentCommand::ModelCompleted {
+                turn_id: turn_id.clone(),
+                items: vec![],
+                tool_calls: vec![ModelToolCall {
+                    call_id: CallId::from_string("skill-update-typo".into()),
+                    name: "skill_update".into(),
+                    permission_scope: None,
+                    permission_rationale: None,
+                    arguments: serde_json::json!({
+                        "run_id": "typo-run",
+                        "action": "verification"
+                    }),
+                }],
+                usage: Default::default(),
+                output_limited: false,
+                effect_elapsed_millis: 1,
+            })
+            .unwrap();
+        runtime
+            .dispatch(AgentCommand::ToolCompleted {
+                turn_id: turn_id.clone(),
+                call_id: CallId::from_string("skill-update-typo".into()),
+                capability_id: "skill_update".into(),
+                evidence: None,
+                output: serde_json::json!({"ok": true}),
+                outcome: HostToolOutcome::Succeeded,
+                activation: None,
+                full_output_ref: None,
+                artifacts: vec![],
+                skill_invocation: None,
+                skill_runtime_update: Some(MaterializedSkillRuntimeUpdate::Verification {
+                    run_id: "typo-run".into(),
+                    verifier_id: "validation".into(),
+                    passed: true,
+                    evidence: typo.evidence.clone(),
+                    replaces_evidence: None,
+                    summary: typo.summary.clone(),
+                }),
+                effect_elapsed_millis: 1,
+            })
+            .unwrap();
+        let failed_update = runtime
+            .session
+            .execution
+            .active_turn
+            .as_ref()
+            .unwrap()
+            .tools
+            .last()
+            .unwrap();
+        assert_eq!(failed_update.status, ToolCallStatus::Failed);
+        let recovery = failed_update.output.as_ref().unwrap();
+        assert_eq!(recovery["error"]["code"], "invalid_skill_runtime_update");
+        assert!(
+            recovery["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains(typo_id),
+            "{recovery}"
+        );
+        assert_eq!(recovery["recovery"], "correct_arguments");
+        assert!(!recovery["pending_skill_updates"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            recovery["observed_execution_evidence"],
+            serde_json::json!([{
+                "evidence_id": "validation-evidence",
+                "call_id": full_id,
+                "tool_name": "validator",
+                "outcome": "succeeded",
+            }])
+        );
+
+        let mut duplicate =
+            runtime.session.execution.requirements.observations["validation-evidence"].clone();
+        duplicate.evidence_id = "second-evidence".into();
+        duplicate.call_id =
+            "4C5FDA13-7E4A-4B5D-BD43-D22F37B9604B:host_effect:388::call_22d8892839ef4487bcfb0855f4dc9a9c"
+                .into();
+        runtime
+            .session
+            .execution
+            .requirements
+            .observations
+            .insert(duplicate.evidence_id.clone(), duplicate);
+        let ambiguous = runtime
+            .validate_skill_verification_sources("typo-run", &result)
+            .unwrap_err();
+        assert_eq!(ambiguous, "Skill tool-call evidence identity is ambiguous");
+
+        if let SkillVerificationEvidence::HostCheck { source, .. } = &mut result.evidence {
+            *source = SkillEvidenceReference::ToolCall {
+                call_id: full_id.into(),
+            };
+        }
+        assert!(runtime
+            .validate_skill_verification_sources("typo-run", &result)
+            .is_ok());
+        runtime
+            .session
+            .execution
+            .requirements
+            .observations
+            .remove("second-evidence");
+
+        // 3. Newer resource version blocks completion until replaced by current evidence.
+        runtime
+            .apply_skill_runtime_command(
+                SkillRuntimeCommandEnvelope {
+                    operation_id: "verify".into(),
+                    command: SkillRuntimeCommand::RecordVerification {
+                        run_id: "typo-run".into(),
+                        result: result.clone(),
+                    },
+                },
+                &mut vec![],
+                &mut vec![],
+            )
+            .unwrap();
+        let mut newer =
+            runtime.session.execution.requirements.observations["validation-evidence"].clone();
+        newer.evidence_id = "changed-resource".into();
+        newer.call_id = "write-later".into();
+        newer.recorded_core_revision = 11;
         let receipt = newer.receipt.as_mut().unwrap();
-        receipt.checks.clear(); receipt.effects[0].after_version = Some("sha256:v2".into());
-        runtime.session.execution.requirements.observations.insert(newer.evidence_id.clone(), newer);
-        assert!(runtime.validate_skill_verification_sources("skill-run", &result).is_err());
-        assert!(runtime.apply_skill_runtime_command(SkillRuntimeCommandEnvelope { operation_id: "complete".into(),
-            command: SkillRuntimeCommand::Complete { run_id: "skill-run".into(), result_ref: None } }, &mut vec![], &mut vec![]).is_err());
-        assert_eq!(runtime.session.skill_runtime.runs["skill-run"].verifications["validation"], result);
-        assert_eq!(runtime.session.skill_runtime.runs["skill-run"].status, SkillRunStatus::Running);
-        let mut current = runtime.session.execution.requirements.observations["validation-evidence"].clone();
-        current.evidence_id = "current-check".into(); current.call_id = "current-check-call".into(); current.recorded_core_revision = 12;
+        receipt.checks.clear();
+        receipt.effects[0].after_version = Some("sha256:v2".into());
+        runtime
+            .session
+            .execution
+            .requirements
+            .observations
+            .insert(newer.evidence_id.clone(), newer);
+        assert!(runtime
+            .validate_skill_verification_sources("typo-run", &result)
+            .is_err());
+        assert!(runtime
+            .apply_skill_runtime_command(
+                SkillRuntimeCommandEnvelope {
+                    operation_id: "complete".into(),
+                    command: SkillRuntimeCommand::Complete {
+                        run_id: "typo-run".into(),
+                        result_ref: None,
+                    },
+                },
+                &mut vec![],
+                &mut vec![],
+            )
+            .is_err());
+        assert_eq!(
+            runtime.session.skill_runtime.runs["typo-run"].verifications["validation"],
+            result
+        );
+        assert_eq!(
+            runtime.session.skill_runtime.runs["typo-run"].status,
+            SkillRunStatus::Running
+        );
+
+        let mut current =
+            runtime.session.execution.requirements.observations["validation-evidence"].clone();
+        current.evidence_id = "current-check".into();
+        current.call_id = "current-check-call".into();
+        current.recorded_core_revision = 12;
         let receipt = current.receipt.as_mut().unwrap();
         receipt.effects[0].after_version = Some("sha256:v2".into());
         receipt.checks[0].version = "sha256:v2".into();
-        runtime.session.execution.requirements.observations.insert(current.evidence_id.clone(), current);
+        runtime
+            .session
+            .execution
+            .requirements
+            .observations
+            .insert(current.evidence_id.clone(), current);
+
         let mut replacement = result.clone();
-        if let SkillVerificationEvidence::HostCheck { source, version, .. } = &mut replacement.evidence {
-            *source = SkillEvidenceReference::ExecutionEvidence { evidence_id: "current-check".into() };
+        if let SkillVerificationEvidence::HostCheck {
+            source, version, ..
+        } = &mut replacement.evidence
+        {
+            *source = SkillEvidenceReference::ExecutionEvidence {
+                evidence_id: "current-check".into(),
+            };
             *version = "sha256:v2".into();
         }
-        assert!(runtime.apply_skill_runtime_command(SkillRuntimeCommandEnvelope { operation_id: "unrelated-success".into(),
-            command: SkillRuntimeCommand::RecordVerification { run_id: "skill-run".into(), result: replacement.clone() } }, &mut vec![], &mut vec![]).is_err());
+        assert!(runtime
+            .apply_skill_runtime_command(
+                SkillRuntimeCommandEnvelope {
+                    operation_id: "unrelated-success".into(),
+                    command: SkillRuntimeCommand::RecordVerification {
+                        run_id: "typo-run".into(),
+                        result: replacement.clone(),
+                    },
+                },
+                &mut vec![],
+                &mut vec![],
+            )
+            .is_err());
         replacement.replaces_evidence = Some(result.evidence.clone());
         let mut invented_replacement = replacement.clone();
-        if let SkillVerificationEvidence::HostCheck { source, .. } = &mut invented_replacement.evidence {
-            *source = SkillEvidenceReference::ToolCall { call_id: "unobserved-new-check".into() };
+        if let SkillVerificationEvidence::HostCheck { source, .. } =
+            &mut invented_replacement.evidence
+        {
+            *source = SkillEvidenceReference::ToolCall {
+                call_id: "unobserved-new-check".into(),
+            };
         }
-        assert!(runtime.apply_skill_runtime_command(SkillRuntimeCommandEnvelope { operation_id: "replace-with-unverified-source".into(),
-            command: SkillRuntimeCommand::RecordVerification { run_id: "skill-run".into(), result: invented_replacement } }, &mut vec![], &mut vec![]).is_err());
-        assert_eq!(runtime.session.skill_runtime.runs["skill-run"].verifications["validation"], result,
-            "Naming the prior evidence does not validate a replacement source");
-        runtime.apply_skill_runtime_command(SkillRuntimeCommandEnvelope { operation_id: "replace-old-check".into(),
-            command: SkillRuntimeCommand::RecordVerification { run_id: "skill-run".into(), result: replacement.clone() } }, &mut vec![], &mut vec![]).unwrap();
-        runtime.apply_skill_runtime_command(SkillRuntimeCommandEnvelope { operation_id: "complete-current-check".into(),
-            command: SkillRuntimeCommand::Complete { run_id: "skill-run".into(), result_ref: None } }, &mut vec![], &mut vec![]).unwrap();
-        assert_eq!(runtime.session.skill_runtime.runs["skill-run"].verifications["validation"], replacement);
-        assert_eq!(runtime.session.skill_runtime.runs["skill-run"].status, SkillRunStatus::Completed);
-    }
+        assert!(runtime
+            .apply_skill_runtime_command(
+                SkillRuntimeCommandEnvelope {
+                    operation_id: "replace-with-unverified-source".into(),
+                    command: SkillRuntimeCommand::RecordVerification {
+                        run_id: "typo-run".into(),
+                        result: invented_replacement,
+                    },
+                },
+                &mut vec![],
+                &mut vec![],
+            )
+            .is_err());
+        assert_eq!(
+            runtime.session.skill_runtime.runs["typo-run"].verifications["validation"],
+            result,
+            "Naming the prior evidence does not validate a replacement source"
+        );
+        runtime
+            .apply_skill_runtime_command(
+                SkillRuntimeCommandEnvelope {
+                    operation_id: "replace-old-check".into(),
+                    command: SkillRuntimeCommand::RecordVerification {
+                        run_id: "typo-run".into(),
+                        result: replacement.clone(),
+                    },
+                },
+                &mut vec![],
+                &mut vec![],
+            )
+            .unwrap();
+        runtime
+            .apply_skill_runtime_command(
+                SkillRuntimeCommandEnvelope {
+                    operation_id: "complete-current-check".into(),
+                    command: SkillRuntimeCommand::Complete {
+                        run_id: "typo-run".into(),
+                        result_ref: None,
+                    },
+                },
+                &mut vec![],
+                &mut vec![],
+            )
+            .unwrap();
+        assert_eq!(
+            runtime.session.skill_runtime.runs["typo-run"].verifications["validation"],
+            replacement
+        );
+        assert_eq!(
+            runtime.session.skill_runtime.runs["typo-run"].status,
+            SkillRunStatus::Completed
+        );
 
-    #[test]
-    fn model_judgment_is_explicit_and_supplied_sources_still_have_to_resolve() {
-        let (mut runtime, mut result) = fixture(SkillVerificationMethod::ModelJudgment);
-        result.evidence = SkillVerificationEvidence::ModelJudgment { sources: vec![SkillEvidenceReference::ToolCall { call_id: "validation-call".into() }] };
-        runtime.apply_skill_runtime_command(SkillRuntimeCommandEnvelope { operation_id: "judge".into(),
-            command: SkillRuntimeCommand::RecordVerification { run_id: "skill-run".into(), result } }, &mut vec![], &mut vec![]).unwrap();
-        let (_, mut invented) = fixture(SkillVerificationMethod::ModelJudgment);
-        invented.evidence = SkillVerificationEvidence::ModelJudgment { sources: vec![SkillEvidenceReference::ToolCall { call_id: "invented-call".into() }] };
-        assert!(runtime.validate_skill_verification_sources("skill-run", &invented).is_err());
-        let mut wire = serde_json::to_value(&runtime.session.execution.requirements.observations["validation-evidence"]).unwrap();
+        // 4. ModelJudgment explicit source resolution and wire schema invariants on the same session.
+        runtime
+            .session
+            .skill_runtime
+            .apply(SkillRuntimeCommandEnvelope {
+                operation_id: "start-judgment".into(),
+                command: SkillRuntimeCommand::Start {
+                    run_id: "judgment-run".into(),
+                    owner: SkillRunOwner {
+                        session_id: "skill-evidence-session".into(),
+                        parent_turn_id: turn_id.as_str().into(),
+                        child_turn_id: None,
+                    },
+                    descriptor: skill_descriptor("judgment", SkillVerificationMethod::ModelJudgment),
+                    mode: SkillExecutionMode::Inline,
+                    budget: SkillRunBudget::default(),
+                },
+            })
+            .unwrap();
+        let judgment = SkillVerificationResult {
+            verifier_id: "validation".into(),
+            passed: true,
+            replaces_evidence: None,
+            evidence: SkillVerificationEvidence::ModelJudgment {
+                sources: vec![SkillEvidenceReference::ToolCall {
+                    call_id: full_id.into(),
+                }],
+            },
+            summary: "Actual current resource check".into(),
+        };
+        runtime
+            .apply_skill_runtime_command(
+                SkillRuntimeCommandEnvelope {
+                    operation_id: "judge".into(),
+                    command: SkillRuntimeCommand::RecordVerification {
+                        run_id: "judgment-run".into(),
+                        result: judgment,
+                    },
+                },
+                &mut vec![],
+                &mut vec![],
+            )
+            .unwrap();
+        let invented_judgment = SkillVerificationResult {
+            verifier_id: "validation".into(),
+            passed: true,
+            replaces_evidence: None,
+            evidence: SkillVerificationEvidence::ModelJudgment {
+                sources: vec![SkillEvidenceReference::ToolCall {
+                    call_id: "invented-call".into(),
+                }],
+            },
+            summary: "Invented".into(),
+        };
+        assert!(runtime
+            .validate_skill_verification_sources("judgment-run", &invented_judgment)
+            .is_err());
+        let mut wire = serde_json::to_value(
+            &runtime.session.execution.requirements.observations["validation-evidence"],
+        )
+        .unwrap();
         wire.as_object_mut().unwrap().remove("turn_id");
-        assert!(serde_json::from_value::<super::super::requirements::ObservedEvidenceReference>(wire).is_err());
-        assert!(serde_json::from_value::<SkillVerificationResult>(serde_json::json!({"verifierId":"validation","passed":true,"evidenceRef":"invented"})).is_err());
+        assert!(
+            serde_json::from_value::<super::super::requirements::ObservedEvidenceReference>(wire)
+                .is_err()
+        );
+        assert!(serde_json::from_value::<SkillVerificationResult>(serde_json::json!({
+            "verifierId": "validation",
+            "passed": true,
+            "evidenceRef": "invented"
+        }))
+        .is_err());
     }
 }
 
@@ -3559,10 +4113,30 @@ impl AgentRuntime {
             SkillEvidenceReference::ExecutionEvidence { evidence_id } => observations.get(evidence_id)
                 .ok_or_else(|| "Skill verification cites unknown execution evidence".into()),
             SkillEvidenceReference::ToolCall { call_id } => {
-                let mut matching = observations.values().filter(|observation| observation.call_id == *call_id);
-                let observed = matching.next().ok_or("Skill verification cites an unobserved tool call")?;
-                if matching.next().is_some() { return Err("Skill tool-call evidence identity is ambiguous".into()); }
-                Ok(observed)
+                let mut exact = observations.values().filter(|observation| observation.call_id == *call_id);
+                if let Some(observed) = exact.next() {
+                    if exact.next().is_some() {
+                        return Err("Skill tool-call evidence identity is ambiguous".into());
+                    }
+                    return Ok(observed);
+                }
+                if !call_id.contains("::") {
+                    let mut suffix = observations.values().filter(|observation| {
+                        observation
+                            .call_id
+                            .rsplit_once("::")
+                            .is_some_and(|(_, provider_call_id)| provider_call_id == call_id)
+                    });
+                    if let Some(observed) = suffix.next() {
+                        if suffix.next().is_some() {
+                            return Err("Skill tool-call evidence identity is ambiguous".into());
+                        }
+                        return Ok(observed);
+                    }
+                }
+                Err(format!(
+                    "Skill verification cites an unobserved tool call: {call_id}"
+                ))
             }
         }
     }

@@ -874,7 +874,7 @@ final class MacChatWorkspaceBehaviorTests: XCTestCase {
         XCTAssertNotNil(UUID(uuidString: String(runDirectory.dropFirst(prefix.count))))
     }
 
-    func testAgentLaunchEnvironmentDoesNotOverrideConversationPermissionMode() {
+    func testAgentLaunchEnvironmentDoesNotOverrideConversationPermissionMode() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("nola-agent-environment-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -890,6 +890,41 @@ final class MacChatWorkspaceBehaviorTests: XCTestCase {
         XCTAssertEqual(environment["CRASHREPORTER_DISABLE"], "1")
         XCTAssertEqual(environment["CRASH_REPORTER_DISABLE"], "1")
         XCTAssertNil(environment["NOLA_PERMISSION_PROFILE"])
+        XCTAssertNotNil(environment["PATH"])
+
+        let home = URL(fileURLWithPath: "/Users/fixture", isDirectory: true)
+        let guiInherited = "/usr/bin:/bin:/usr/sbin:/sbin"
+        let pathEntries = MacAppEnvironment.buildLaunchAgentPath(
+            inheritedPath: guiInherited,
+            userHome: home
+        ).split(separator: ":").map(String.init)
+
+        let localBinIndex = try XCTUnwrap(pathEntries.firstIndex(of: "/Users/fixture/.local/bin"))
+        let cargoBinIndex = try XCTUnwrap(pathEntries.firstIndex(of: "/Users/fixture/.cargo/bin"))
+        let brewOpenSSLIndex = try XCTUnwrap(pathEntries.firstIndex(of: "/opt/homebrew/opt/openssl@3/bin"))
+        let brewBinIndex = try XCTUnwrap(pathEntries.firstIndex(of: "/opt/homebrew/bin"))
+        let usrLocalBinIndex = try XCTUnwrap(pathEntries.firstIndex(of: "/usr/local/bin"))
+        let usrBinIndex = try XCTUnwrap(pathEntries.firstIndex(of: "/usr/bin"))
+        let binIndex = try XCTUnwrap(pathEntries.firstIndex(of: "/bin"))
+
+        XCTAssertLessThan(localBinIndex, usrBinIndex)
+        XCTAssertLessThan(cargoBinIndex, usrBinIndex)
+        XCTAssertLessThan(brewOpenSSLIndex, usrBinIndex)
+        XCTAssertLessThan(brewBinIndex, usrBinIndex)
+        XCTAssertLessThan(usrLocalBinIndex, usrBinIndex)
+        XCTAssertLessThan(usrBinIndex, binIndex)
+        XCTAssertEqual(pathEntries.count, Set(pathEntries).count)
+
+        let customEntries = MacAppEnvironment.buildLaunchAgentPath(
+            inheritedPath: "/custom/sdk/bin:/opt/homebrew/bin:/custom/sdk/bin:/usr/bin:/bin:/usr/bin",
+            userHome: home
+        ).split(separator: ":").map(String.init)
+        XCTAssertEqual(customEntries.first, "/custom/sdk/bin")
+        XCTAssertEqual(customEntries.count, Set(customEntries).count)
+        XCTAssertLessThan(
+            try XCTUnwrap(customEntries.firstIndex(of: "/opt/homebrew/bin")),
+            try XCTUnwrap(customEntries.firstIndex(of: "/usr/bin"))
+        )
     }
 
     func testConversationPermissionModeRoundTripsAndDefaultsToCautious() throws {

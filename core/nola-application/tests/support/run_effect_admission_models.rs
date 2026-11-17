@@ -4,9 +4,77 @@
 use nola_store::{NolaStore, StoreError};
 use nola_store_port::model::*;
 #[derive(Clone)]
-pub(super) struct Models(std::rc::Rc<std::cell::RefCell<NolaStore>>);
+pub(super) struct Models(pub(super) std::rc::Rc<std::cell::RefCell<NolaStore>>);
 impl Default for Models {
     fn default() -> Self { Self(std::rc::Rc::new(std::cell::RefCell::new(NolaStore::open(":memory:").unwrap()))) }
+}
+impl nola_store_port::product_setting::ProductSettingRepository for Models {
+    type Error = StoreError;
+    fn put_product_setting(&mut self, key: &str, value_json: &str, updated_at_ms: i64) -> Result<nola_store_port::product_setting::StoredProductSetting, Self::Error> {
+        self.0.borrow_mut().product_setting_repository().put_product_setting(key, value_json, updated_at_ms)
+    }
+    fn product_setting(&self, key: &str) -> Result<Option<nola_store_port::product_setting::StoredProductSetting>, Self::Error> {
+        self.0.borrow_mut().product_setting_repository().product_setting(key)
+    }
+    fn list_product_settings(&self, prefix: &str, limit: usize, offset: usize) -> Result<Vec<nola_store_port::product_setting::StoredProductSetting>, Self::Error> {
+        self.0.borrow_mut().product_setting_repository().list_product_settings(prefix, limit, offset)
+    }
+    fn list_room_submissions(&self, prefix: &str, limit: usize, offset: usize) -> Result<Vec<nola_store_port::product_setting::StoredProductSetting>, Self::Error> {
+        self.0.borrow_mut().product_setting_repository().list_room_submissions(prefix, limit, offset)
+    }
+    fn delete_product_setting(&mut self, key: &str) -> Result<bool, Self::Error> {
+        self.0.borrow_mut().product_setting_repository().delete_product_setting(key)
+    }
+    fn has_write_unit_of_work(&self) -> bool {
+        self.0.borrow_mut().product_setting_repository().has_write_unit_of_work()
+    }
+}
+impl nola_store_port::conversation_profile::ConversationProfileRepository for Models {
+    type Error = StoreError;
+    fn patch_conversation_metadata(&mut self, input: &nola_store_port::conversation_profile::PatchConversationMetadataInput) -> Result<Option<i64>, Self::Error> {
+        self.0.borrow_mut().conversation_write_repository().patch_conversation_metadata(input)
+    }
+    fn patch_conversation_configuration(&mut self, input: &nola_store_port::conversation_profile::PatchConversationConfigurationInput) -> Result<nola_domain::conversation_configuration::ConfigurationCommitResult, Self::Error> {
+        self.0.borrow_mut().conversation_write_repository().patch_conversation_configuration(input)
+    }
+    fn create_conversation(&mut self, input: &nola_store_port::conversation_profile::CreateConversationInput) -> Result<nola_store_port::conversation_profile::CreateConversationResult, Self::Error> {
+        self.0.borrow_mut().conversation_write_repository().create_conversation(input)
+    }
+    fn rename_conversation(&mut self, id: &str, title: &str, title_source: Option<nola_domain::conversation_configuration::ConversationTitleSource>, updated_at_ms: i64) -> Result<bool, Self::Error> {
+        self.0.borrow_mut().conversation_write_repository().rename_conversation(id, title, title_source, updated_at_ms)
+    }
+}
+impl nola_store_port::canonical_branch::CanonicalBranchRepository for Models {
+    type Error = StoreError;
+    fn create_conversation_branch(&mut self, intent: &nola_domain::CanonicalBranchIntent) -> Result<nola_domain::CanonicalBranchResult, Self::Error> {
+        self.0.borrow_mut().conversation_write_repository().create_conversation_branch(intent)
+    }
+}
+impl nola_store_port::conversation_deletion::ConversationDeletionRepository for Models {
+    type Error = StoreError;
+    fn delete_conversation(&mut self, conversation_id: &str) -> Result<bool, Self::Error> {
+        self.0.borrow_mut().conversation_write_repository().delete_conversation(conversation_id)
+    }
+}
+impl nola_store_port::transcript_write::TranscriptWriteRepository for Models {
+    type Error = StoreError;
+    fn message_frontier(&self, conversation_id: &str) -> Result<(usize, i64), Self::Error> {
+        self.0.borrow_mut().conversation_write_repository().message_frontier(conversation_id)
+    }
+    fn has_active_run(&self, conversation_id: &str) -> Result<bool, Self::Error> {
+        self.0.borrow_mut().conversation_write_repository().has_active_run(conversation_id)
+    }
+    fn conversation_id_for_run(&self, run_id: &str) -> Result<Option<String>, Self::Error> {
+        self.0.borrow_mut().conversation_write_repository().conversation_id_for_run(run_id)
+    }
+    fn append_messages(&mut self, input: &nola_store_port::transcript_write::AppendMessagesInput) -> Result<nola_store_port::transcript_write::AppendMessagesResult, Self::Error> {
+        self.0.borrow_mut().conversation_write_repository().append_messages(input)
+    }
+}
+impl nola_store_port::transcript_write::TranscriptEditRepository for Models {
+    fn apply_conversation_projection(&mut self, input: &nola_store_port::conversation_revert::ApplyConversationProjectionInput) -> Result<nola_store_port::conversation_revert::ApplyConversationProjectionResult, Self::Error> {
+        self.0.borrow_mut().conversation_write_repository().apply_conversation_projection(input)
+    }
 }
 impl ModelRepository for Models {
     type Error = StoreError;

@@ -76,5 +76,9 @@ fn mailbox_cancellation(busy:bool){
     assert!(unknown_effect_refs.is_empty(),"the native confirmation must settle the exact physical effect");
     assert!(load_committed_host_requests(&store,&run).unwrap().requests.is_empty());
 }
-#[test]fn idle_mailbox_model_drains_real_cancel_only_after_native_stop(){mailbox_cancellation(false)}
-#[test]fn busy_mailbox_model_drains_real_cancel_only_after_native_stop(){mailbox_cancellation(true)}
+#[test]
+fn mailbox_model_drains_real_cancel_only_after_native_stop_for_idle_and_busy_streams() {
+    for busy in [false, true] {
+        mailbox_cancellation(busy);
+    }
+}

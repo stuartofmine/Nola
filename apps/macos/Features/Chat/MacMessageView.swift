@@ -1238,8 +1238,14 @@ private struct MacCanonicalPartFlowView: View {
     @State private var presentationOwner = MacJournalPresentationOwner()
 
     var body: some View {
+        let renderableParts = canonical.parts.filter { part in
+            if case .text(let value) = part {
+                return MacCanonicalPartFlow.rendersTextPart(value, isStreaming: isStreaming)
+            }
+            return true
+        }
         VStack(alignment: .leading, spacing: 12) {
-            ForEach(MacCanonicalPartFlow.segments(canonical.parts)) { segment in
+            ForEach(MacCanonicalPartFlow.segments(renderableParts)) { segment in
                 if segment.kind == .process {
                     let states = MacCanonicalPartFlow.states(segment.parts)
                     MacJournalProcessView(partIDs: segment.parts.map(\.partID),
@@ -1271,7 +1277,7 @@ private struct MacCanonicalPartFlowView: View {
     @ViewBuilder private func partView(_ part: MacCanonicalConversationProjectionV1.Part) -> some View {
         switch part {
         case .text(let value):
-            if value.isDisclosed {
+            if MacCanonicalPartFlow.rendersTextPart(value, isStreaming: isStreaming) {
                 MacMarkdownView(markdown: value.markdown, isStreaming: isStreaming && !value.isFinal, animatesAppends: false)
                     .accessibilityIdentifier("chat.canonical.text." + value.partID)
             }
@@ -1368,5 +1374,11 @@ nonisolated enum MacCanonicalPartFlow {
     static func delivery(_ states: [MacCanonicalConversationProjectionV1.ActivityState]) -> MacChatMessage.DeliveryState? {
         if states.contains(where: { ![.completed,.sealed,.failed,.cancelled].contains($0) }) { return .running }
         return nil
+    }
+    static func rendersTextPart(
+        _ value: MacCanonicalConversationProjectionV1.TextPart,
+        isStreaming: Bool
+    ) -> Bool {
+        value.isDisclosed && (!value.markdown.isEmpty || (isStreaming && !value.isFinal))
     }
 }

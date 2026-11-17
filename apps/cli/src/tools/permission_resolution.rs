@@ -846,7 +846,18 @@ fn process_working_directory(context: &ToolContext,input: &Value) -> Result<Path
         .map(str::to_owned).or_else(||context.allowed_dirs.first().map(|path|path.to_string_lossy().into_owned()))
         .ok_or("no shell resource base directory")?;
     let cwd = resolved_path(&raw,context)?;
-    if !cwd.is_dir() { return Err("shell resource cwd is not a directory".into()); }
+    if !cwd.exists() {
+        return Err(format!(
+            "Working directory does not exist: '{}' (shell resource cwd is not a directory)",
+            cwd.display()
+        ));
+    }
+    if !cwd.is_dir() {
+        return Err(format!(
+            "Working directory path is not a directory: '{}' (shell resource cwd is not a directory)",
+            cwd.display()
+        ));
+    }
     Ok(cwd)
 }
 
@@ -981,6 +992,46 @@ mod tests {
             assert_eq!(facts(&context,"read_file",json!({"path":alias})).bindings[0].observation,
                 PermissionOperationRisk::SensitiveRead);
         }
+
+        // Shell cwd validation reports exact path and distinguishes missing vs non-directory files.
+        let missing = workspace.path().join("does-not-exist");
+        let missing_input = json!({"command": "ls", "cwd": missing});
+        let bash_plan = builtin_permission_contract("bash", false)
+            .resource_plan_for(&missing_input)
+            .unwrap();
+        let missing_err = resolve_permission_resources(
+            &context,
+            &PermissionResolutionRequest {
+                resolution_id: "missing-cwd".into(),
+                execution_target: "isolated-host".into(),
+                invocation_digest: PermissionResolutionRequest::input_digest(&missing_input),
+                capability: bash_plan.capability.clone(),
+                operation: bash_plan.operation.clone(),
+                demands: bash_plan.extract(&missing_input).unwrap(),
+            },
+            &missing_input,
+        )
+        .unwrap_err();
+        assert!(missing_err.contains("Working directory does not exist:"), "{missing_err}");
+        assert!(missing_err.contains(&missing.display().to_string()), "{missing_err}");
+        assert!(missing_err.contains("shell resource cwd is not a directory"), "{missing_err}");
+
+        let file_input = json!({"command": "ls", "cwd": ordinary});
+        let file_err = resolve_permission_resources(
+            &context,
+            &PermissionResolutionRequest {
+                resolution_id: "file-cwd".into(),
+                execution_target: "isolated-host".into(),
+                invocation_digest: PermissionResolutionRequest::input_digest(&file_input),
+                capability: bash_plan.capability.clone(),
+                operation: bash_plan.operation.clone(),
+                demands: bash_plan.extract(&file_input).unwrap(),
+            },
+            &file_input,
+        )
+        .unwrap_err();
+        assert!(file_err.contains("Working directory path is not a directory:"), "{file_err}");
+        assert!(file_err.contains(&ordinary.display().to_string()), "{file_err}");
     }
 
     fn browser_facts() -> BrowserPermissionResourceFacts {

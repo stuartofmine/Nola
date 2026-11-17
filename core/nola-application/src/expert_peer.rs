@@ -470,7 +470,33 @@ fn source_scope<S: ApplicationCommandRepositories>(
     let target = binding
         .room
         .room
-        .recipient(&input.target_participant_id)?
+        .recipient(&input.target_participant_id)
+        .map_err(|error| {
+            if error == "room_participant_not_found" {
+                let source_context = binding.source.context_conversation_id();
+                let available = binding
+                    .room
+                    .room
+                    .participants()
+                    .iter()
+                    .filter(|member| member.active && member.context_conversation_id != source_context)
+                    .map(|member| format!("{} ({})", member.id, member.display_name))
+                    .collect::<Vec<_>>();
+                let listed = if available.is_empty() {
+                    "none".to_string()
+                } else {
+                    available.join(", ")
+                };
+                format!(
+                    "room_participant_not_found: target_participant_id '{}' does not match any active participant in room '{}' (available_participants: [{}])",
+                    input.target_participant_id,
+                    binding.room.room.id(),
+                    listed
+                )
+            } else {
+                error
+            }
+        })?
         .clone();
     if binding.source.context_conversation_id() == target.context_conversation_id
     {

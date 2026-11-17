@@ -579,6 +579,17 @@ nonisolated enum MacJournalPartFlow {
         // Step outcomes are not an outcome for reasoning or for the run.
         return nil
     }
+    static func rendersPublicTextPart(
+        _ part: MacAssistantJournalPart,
+        runDelivery: MacChatMessage.DeliveryState?
+    ) -> Bool {
+        guard case .text(let text) = part.metadata,
+              text.visibility == "public",
+              let content = part.bodies.first(where: { $0.field == "markdown" }) else {
+            return false
+        }
+        return content.utf8_bytes != "0" || (!text.is_final && runDelivery == .running)
+    }
 }
 
 /// A presentation partition, never a rewritten transcript or inferred summary.
@@ -1006,7 +1017,8 @@ struct MacJournalMessageTextView: View {
                 MacJournalHistoricalPartView(reference: loadedReference, part: part, historical: historical)
                     .id(MacHistoricalJournalPartViewKey(owner: loadedReference.ownerKey, partID: part.part_id,
                         canonicalRevision: historical.canonical_revision))
-            } else if case .text(let text) = part.metadata, text.visibility == "public",
+            } else if case .text(let text) = part.metadata,
+               MacJournalPartFlow.rendersPublicTextPart(part, runDelivery: effectiveDelivery),
                let content = part.bodies.first(where: { $0.field == "markdown" }) {
                 MacJournalTextPreview(reference: loadedReference, partID: part.part_id,
                     content: content, isFinal: text.is_final)
@@ -1024,7 +1036,14 @@ struct MacJournalMessageTextView: View {
                 let loadedReference = projection.reference
                 let ordered = projection.parts
                 let sources = MacJournalSourceGrouping(ordered)
-                let flow = MacJournalPartFlow.segments(ordered.filter { !sources.referenceIDs.contains($0.part_id) })
+                let renderable = ordered.filter { part in
+                    guard !sources.referenceIDs.contains(part.part_id) else { return false }
+                    if case .text = part.metadata {
+                        return MacJournalPartFlow.rendersPublicTextPart(part, runDelivery: effectiveDelivery)
+                    }
+                    return true
+                }
+                let flow = MacJournalPartFlow.segments(renderable)
                 let latestProcessID = flow.last(where: { $0.kind == .process })?.id
                 ForEach(flow) { segment in
                     if segment.kind == .process {

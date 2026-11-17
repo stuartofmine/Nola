@@ -80,14 +80,14 @@ BoundaryInputSource.take_pending 可返回整批。接受失败或源 ACK 失败
 
 ## 自动门禁
 
-复用 `apps/cli/tests/dependency_boundary.rs`，不增加另一套 manifest 解析器：
+复用 `apps/cli/tests/suites/dependency_boundary.rs`，不增加另一套 manifest 解析器：
 
 ```sh
-cargo test --locked -p nola_cli --test dependency_boundary
+cargo test --locked -p nola_cli --test cli_contracts dependency_boundary
 ```
 
 现有 `.github/workflows/rust-build.yml` 已运行这个 integration target，新增测试随同进入该门禁。
-仓库另有 `core/nola-domain/tests/workspace_dependency_architecture.rs` 的既有禁止边/源码检查，
+仓库另有 `core/nola-domain/tests/suites/workspace_dependency_architecture.rs` 的既有禁止边/源码检查，
 覆盖既有禁止依赖与部分跨语言源码边界。这里仅记录门禁入口，本次文档核对没有重新运行测试。新增允许方向检查收紧未列出的反向边；两组不允许有相反规则。
 检查使用 Cargo 原始 package name，覆盖别名、可选依赖、所有 target 声明、build dependency；
 允许 dev fixture 使用具体 Store。缺失受保护包直接失败，不允许删除/重命名后悄悄跳过检查。

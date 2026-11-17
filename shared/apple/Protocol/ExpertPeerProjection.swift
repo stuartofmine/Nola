@@ -84,8 +84,15 @@ nonisolated struct AppleExpertPeerView: Codable, Equatable, Identifiable, Sendab
         return normalized
     }
     func displayName(for source: AppleExpertTaskSource) -> String? {
-        guard source == self.source, let name = sourceDisplayName?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty else { return nil }
-        return name
+        switch source {
+        case .legacyExpert(let participant):
+            return displayName(for: participant)
+        case .mainAgent:
+            guard source == self.source,
+                  let name = sourceDisplayName?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !name.isEmpty else { return nil }
+            return name
+        }
     }
 
 }

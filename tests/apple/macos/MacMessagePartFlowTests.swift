@@ -37,6 +37,30 @@ final class MacMessagePartFlowTests: XCTestCase {
         let appended = MacJournalPartFlow.segments([parts[0], parts[1], parts[2], parts[3], tool("next-tool"), parts[4]])
         XCTAssertEqual(appended.map(\.id), flow.map(\.id), "Appending a Tool retains its contiguous process identity")
         XCTAssertEqual(appended[2].parts.map(\.part_id), ["r2", "next-tool"])
+
+        let emptyFinalJournal = MacAssistantJournalPart(
+            identity: identity, part_id: "j-empty-final", generation: "1", revision: "1", metadata_revision: "1",
+            order_key: .init(section: "transcript", position: "1"),
+            metadata: .text(.init(is_final: true, visibility: "public", review: nil)),
+            bodies: [.init(field: "markdown", content_generation: "1", utf8_bytes: "0", chunk_count: "1", content_root: "root")]
+        )
+        let emptyLiveJournal = MacAssistantJournalPart(
+            identity: identity, part_id: "j-empty-live", generation: "1", revision: "1", metadata_revision: "1",
+            order_key: .init(section: "transcript", position: "2"),
+            metadata: .text(.init(is_final: false, visibility: "public", review: nil)),
+            bodies: [.init(field: "markdown", content_generation: "1", utf8_bytes: "0", chunk_count: "1", content_root: "root")]
+        )
+        let nonEmptyJournal = MacAssistantJournalPart(
+            identity: identity, part_id: "j-answer", generation: "1", revision: "1", metadata_revision: "1",
+            order_key: .init(section: "transcript", position: "3"),
+            metadata: .text(.init(is_final: true, visibility: "public", review: nil)),
+            bodies: [.init(field: "markdown", content_generation: "1", utf8_bytes: "12", chunk_count: "1", content_root: "root")]
+        )
+        XCTAssertFalse(MacJournalPartFlow.rendersPublicTextPart(emptyFinalJournal, runDelivery: .completed))
+        XCTAssertFalse(MacJournalPartFlow.rendersPublicTextPart(emptyFinalJournal, runDelivery: .running))
+        XCTAssertTrue(MacJournalPartFlow.rendersPublicTextPart(emptyLiveJournal, runDelivery: .running))
+        XCTAssertFalse(MacJournalPartFlow.rendersPublicTextPart(emptyLiveJournal, runDelivery: .completed))
+        XCTAssertTrue(MacJournalPartFlow.rendersPublicTextPart(nonEmptyJournal, runDelivery: .completed))
     }
     func testHistoricalTextAndEveryOtherKindAreHardBoundariesWithoutCrossPartDeduplication() {
         let parts = [reasoning("r1", state: "completed"),
@@ -107,6 +131,21 @@ final class MacMessagePartFlowTests: XCTestCase {
         XCTAssertNil(encoded["canonicalPresentation"])
         let restored = try JSONDecoder().decode(MacChatMessage.self,from:JSONEncoder().encode(projected))
         XCTAssertNil(restored.canonicalPresentation)
+
+        let emptyFinalCanonical = MacCanonicalConversationProjectionV1.TextPart(
+            partID: "empty-final", revision: 1, markdown: "", isFinal: true, review: .approved
+        )
+        let emptyLiveCanonical = MacCanonicalConversationProjectionV1.TextPart(
+            partID: "empty-live", revision: 1, markdown: "", isFinal: false, review: .approved
+        )
+        let nonEmptyCanonical = MacCanonicalConversationProjectionV1.TextPart(
+            partID: "answer", revision: 1, markdown: "Hello", isFinal: true, review: .approved
+        )
+        XCTAssertFalse(MacCanonicalPartFlow.rendersTextPart(emptyFinalCanonical, isStreaming: false))
+        XCTAssertFalse(MacCanonicalPartFlow.rendersTextPart(emptyFinalCanonical, isStreaming: true))
+        XCTAssertTrue(MacCanonicalPartFlow.rendersTextPart(emptyLiveCanonical, isStreaming: true))
+        XCTAssertFalse(MacCanonicalPartFlow.rendersTextPart(emptyLiveCanonical, isStreaming: false))
+        XCTAssertTrue(MacCanonicalPartFlow.rendersTextPart(nonEmptyCanonical, isStreaming: false))
     }
 
     func testCurrentTypedSealedActivityIsNeutralAndUnknownActivityStillRejects() throws {
@@ -157,5 +196,4 @@ final class MacMessagePartFlowTests: XCTestCase {
         XCTAssertNotEqual(local,MacCanonicalReadingOwner(conversationID:"A",messageID:"message",
             source:.init(databaseURL:URL(fileURLWithPath:"/tmp/other.db"),sourceOwner:.local)))
     }
-
 }

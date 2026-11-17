@@ -458,8 +458,8 @@
           "context_window_tokens": 128000,
           "prompt_token_limit": 119808,
           "usage_is_estimated": true,
-          "usage_percent": 2.61171875,
-          "used_tokens": 3343
+          "usage_percent": 3.06875,
+          "used_tokens": 3928
         },
         "context_window_tokens": 128000,
         "measurement": {
@@ -470,8 +470,8 @@
         "prompt_cache_measurement": null,
         "type": "context_updated",
         "usage_is_estimated": true,
-        "usage_percent": 2.61171875,
-        "used_tokens": 3343
+        "usage_percent": 3.06875,
+        "used_tokens": 3928
       },
       "revision": 1,
       "session_id": "session-part-lifecycle-v1",
@@ -1370,8 +1370,8 @@
           "context_window_tokens": 128000,
           "prompt_token_limit": 119808,
           "usage_is_estimated": true,
-          "usage_percent": 2.76171875,
-          "used_tokens": 3535
+          "usage_percent": 3.21875,
+          "used_tokens": 4120
         },
         "context_window_tokens": 128000,
         "measurement": {
@@ -1382,8 +1382,8 @@
         "prompt_cache_measurement": null,
         "type": "context_updated",
         "usage_is_estimated": true,
-        "usage_percent": 2.76171875,
-        "used_tokens": 3535
+        "usage_percent": 3.21875,
+        "used_tokens": 4120
       },
       "revision": 7,
       "session_id": "session-part-lifecycle-v1",
@@ -2042,8 +2042,8 @@
           "context_window_tokens": 128000,
           "prompt_token_limit": 119808,
           "usage_is_estimated": true,
-          "usage_percent": 2.80703125,
-          "used_tokens": 3593
+          "usage_percent": 3.2640625,
+          "used_tokens": 4178
         },
         "context_window_tokens": 128000,
         "measurement": {
@@ -2054,8 +2054,8 @@
         "prompt_cache_measurement": null,
         "type": "context_updated",
         "usage_is_estimated": true,
-        "usage_percent": 2.80703125,
-        "used_tokens": 3593
+        "usage_percent": 3.2640625,
+        "used_tokens": 4178
       },
       "revision": 11,
       "session_id": "session-part-lifecycle-v1",

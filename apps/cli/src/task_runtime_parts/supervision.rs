@@ -1209,14 +1209,23 @@ fn next_task_operation_id(kind: &str, task_id: &str) -> String {
     format!("{kind}:{task_id}:{sequence}")
 }
 
-fn list_tasks(config: &HostInvocationRequest) -> ToolOutcome {
-    let project_root = config.tool_settings.project_root.to_string_lossy();
-    let mut tasks =
-        match NolaStore::open_default().and_then(|store| store.list_runtime_tasks(&project_root)) {
-            Ok(tasks) => tasks,
-            Err(error) => return task_error(error),
-        };
+fn list_scoped_runtime_tasks(config: &HostInvocationRequest) -> Result<Vec<DbRuntimeTask>, String> {
+    let store = NolaStore::open_default()?;
+    let mut tasks = if config.session.session_id.is_some() {
+        store.list_all_runtime_tasks()?
+    } else {
+        let project_root = config.tool_settings.project_root.to_string_lossy();
+        store.list_runtime_tasks(&project_root)?
+    };
     tasks.retain(|task| task_scope_matches(config, task));
+    Ok(tasks)
+}
+
+fn list_tasks(config: &HostInvocationRequest) -> ToolOutcome {
+    let tasks = match list_scoped_runtime_tasks(config) {
+        Ok(tasks) => tasks,
+        Err(error) => return task_error(error),
+    };
     let items = tasks.iter().map(task_json).collect::<Vec<_>>();
     task_ok(
         json!({"tasks": items, "count": items.len()}).to_string(),
@@ -1225,13 +1234,10 @@ fn list_tasks(config: &HostInvocationRequest) -> ToolOutcome {
 }
 
 fn render_task_list(config: &HostInvocationRequest) -> ToolOutcome {
-    let root = config.tool_settings.project_root.to_string_lossy();
-    let mut tasks =
-        match NolaStore::open_default().and_then(|store| store.list_runtime_tasks(&root)) {
-            Ok(tasks) => tasks,
-            Err(error) => return task_error(error),
-        };
-    tasks.retain(|task| task_scope_matches(config, task));
+    let tasks = match list_scoped_runtime_tasks(config) {
+        Ok(tasks) => tasks,
+        Err(error) => return task_error(error),
+    };
     let core_projection = config.session.session_id.as_deref().and_then(|id| {
         crate::session::load_session_task_projection(id)
             .ok()
@@ -1498,18 +1504,27 @@ fn task_scope_matches(config: &HostInvocationRequest, task: &DbRuntimeTask) -> b
     )
 }
 
+fn is_shell_runtime_task_kind(kind: &str) -> bool {
+    matches!(kind, "shell" | "shell_process")
+}
+
 fn task_scope_matches_values(
     task: &DbRuntimeTask,
     project_root: &str,
     owner_session_id: Option<&str>,
 ) -> bool {
+    if let Some(expected_owner) = owner_session_id {
+        return task.owner_session_id.as_deref() == Some(expected_owner);
+    }
+    if task.owner_session_id.is_some() {
+        return false;
+    }
     let task_root = std::path::Path::new(&task.project_root);
     let requested_root = std::path::Path::new(project_root);
-    let same_project = match (task_root.canonicalize(), requested_root.canonicalize()) {
+    match (task_root.canonicalize(), requested_root.canonicalize()) {
         (Ok(task_root), Ok(requested_root)) => task_root == requested_root,
         _ => task_root == requested_root,
-    };
-    same_project && task.owner_session_id.as_deref() == owner_session_id
+    }
 }
 
 fn render_task_detail(
@@ -1596,7 +1611,10 @@ fn read_task(
     let Some(task_id) = string_arg(args, "task_id").map(str::trim) else {
         return task_error("read_task requires task_id");
     };
-    if runtime_task_kind(config, task_id).as_deref() == Some("shell") {
+    if runtime_task_kind(config, task_id)
+        .as_deref()
+        .is_some_and(is_shell_runtime_task_kind)
+    {
         return tools::manage_background_bash_tasks(
             "status",
             Some(task_id),
@@ -1676,7 +1694,10 @@ fn wait_task_until_return(config: &HostInvocationRequest, args: &Map<String, Val
     {
         return task_error(format!("Unknown task: {task_id}"));
     }
-    if stored_task.as_ref().is_none_or(|task| task.kind == "shell") {
+    if stored_task
+        .as_ref()
+        .is_none_or(|task| is_shell_runtime_task_kind(&task.kind))
+    {
         loop {
             let summaries = match tools::background_bash_task_summaries(
                 &config.tool_settings.allowed_dirs,
@@ -1874,7 +1895,9 @@ fn stop_task(
         return task_error("stop_task requires task_id");
     };
     if task_id.starts_with("bash-")
-        || runtime_task_kind(config, task_id).as_deref() == Some("shell")
+        || runtime_task_kind(config, task_id)
+            .as_deref()
+            .is_some_and(is_shell_runtime_task_kind)
     {
         return tools::manage_background_bash_tasks(
             "stop",
@@ -1903,7 +1926,7 @@ fn stop_task(
     if !task_scope_matches(config, &task) {
         return task_error(format!("Unknown task: {task_id}"));
     }
-    if task.kind == "shell" {
+    if is_shell_runtime_task_kind(&task.kind) {
         return tools::manage_background_bash_tasks(
             "stop",
             Some(task_id),
@@ -2644,12 +2667,8 @@ pub fn pending_task_context(config: &HostInvocationRequest) -> Option<(ContextCo
     if config.session.session_id.is_none() {
         return None;
     }
-    let root = config.tool_settings.project_root.to_string_lossy();
-    let store = NolaStore::open_default().ok()?;
-    let mut tasks = store.list_runtime_tasks(&root).ok()?;
-    tasks.retain(|task| {
-        task_scope_matches(config, task) && !is_live_status(&task.status) && task.unread
-    });
+    let mut tasks = list_scoped_runtime_tasks(config).ok()?;
+    tasks.retain(|task| !is_live_status(&task.status) && task.unread);
     tasks.sort_by_key(|task| task.ended_at_ms.unwrap_or(task.updated_at_ms));
     if tasks.is_empty() {
         return None;
@@ -2678,16 +2697,8 @@ pub fn current_turn_task_context(config: &HostInvocationRequest) -> Option<(Cont
     if task_ids.is_empty() {
         return None;
     }
-    let root = config.tool_settings.project_root.to_string_lossy();
-    let mut tasks = NolaStore::open_default()
-        .ok()?
-        .list_runtime_tasks(&root)
-        .ok()?;
-    tasks.retain(|task| {
-        task_ids.contains(&task.id)
-            && task_scope_matches(config, task)
-            && !is_live_status(&task.status)
-    });
+    let mut tasks = list_scoped_runtime_tasks(config).ok()?;
+    tasks.retain(|task| task_ids.contains(&task.id) && !is_live_status(&task.status));
     tasks.sort_by_key(|task| task.created_at_ms);
     let (mut component, ids) = mailbox_context(&tasks)?;
     component.id = format!("nola-goal-audit-task-ledger-{latest_turn_id}");

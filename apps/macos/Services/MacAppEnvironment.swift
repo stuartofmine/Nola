@@ -135,27 +135,43 @@ nonisolated struct MacAppEnvironment: Sendable {
         return environment
     }
 
+    static func buildLaunchAgentPath(
+        inheritedPath: String?,
+        userHome: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> String {
+        let systemPaths = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+        let systemPathSet = Set(systemPaths)
+        let inheritedEntries = (inheritedPath ?? "")
+            .split(separator: ":")
+            .map(String.init)
+            .filter { !$0.isEmpty }
+        let nonSystemInherited = inheritedEntries.filter { !systemPathSet.contains($0) }
+        let systemInherited = inheritedEntries.filter { systemPathSet.contains($0) }
+        let userToolchainPaths = [
+            userHome.appendingPathComponent(".local/bin", isDirectory: true).path,
+            userHome.appendingPathComponent(".cargo/bin", isDirectory: true).path,
+            "/opt/homebrew/opt/openssl@3/bin",
+            "/opt/homebrew/bin",
+            "/opt/homebrew/sbin",
+            "/usr/local/opt/openssl@3/bin",
+            "/usr/local/bin",
+            "/usr/local/sbin",
+        ]
+        return (nonSystemInherited + userToolchainPaths + systemInherited + systemPaths)
+            .reduce(into: [String]()) { paths, path in
+                guard !path.isEmpty, !paths.contains(path) else { return }
+                paths.append(path)
+            }
+            .joined(separator: ":")
+    }
+
     func launchAgentEnvironment(projectURL: URL) -> [String: String] {
         var environment = isolatedVariables(projectURL: projectURL)
         let userHome = FileManager.default.homeDirectoryForCurrentUser
-        let inheritedPaths = (ProcessInfo.processInfo.environment["PATH"] ?? "")
-            .split(separator: ":")
-            .map(String.init)
-        let desktopPaths = [
-            userHome.appendingPathComponent(".local/bin", isDirectory: true).path,
-            userHome.appendingPathComponent(".cargo/bin", isDirectory: true).path,
-            "/opt/homebrew/bin",
-            "/opt/homebrew/sbin",
-            "/usr/local/bin",
-            "/usr/bin",
-            "/bin",
-            "/usr/sbin",
-            "/sbin",
-        ]
-        environment["PATH"] = (inheritedPaths + desktopPaths).reduce(into: [String]()) { paths, path in
-            guard !path.isEmpty, !paths.contains(path) else { return }
-            paths.append(path)
-        }.joined(separator: ":")
+        environment["PATH"] = Self.buildLaunchAgentPath(
+            inheritedPath: ProcessInfo.processInfo.environment["PATH"],
+            userHome: userHome
+        )
         // Keep the Nola Host's HOME isolated while allowing an explicitly
         // selected external execution unit to use its own install and auth state.
         environment["NOLA_EXTERNAL_EXECUTION_HOME"] = userHome.path

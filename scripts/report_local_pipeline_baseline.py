@@ -50,7 +50,7 @@ def main():
         "samples_sha256": sha(destination / "samples.json"),
         "source_manifest_sha256": sha(destination / "source-digests.json"),
         "source_identity_caveat": "Dirty shared worktree snapshot captured after run; binary digest is authoritative for executed artifact.",
-        "build_command": "nola_cargo test -p nola_cli --test local_pipeline_baseline -- --ignored --nocapture",
+        "build_command": "nola_cargo test -p nola_cli --test cli_contracts local_pipeline_baseline -- --ignored --nocapture",
         "runtime": {"NOLA_HOME": "isolated temporary directory", "RUST_MIN_STACK": 16777216},
         "missing": ["provider", "UI frame", "IPC ACK", "process cold start", "OS page-cache cold", "power-loss durability"]}
     (destination / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")

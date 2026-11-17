@@ -18,7 +18,7 @@
 | 12-记忆数据源与自动化 | [memory.rs](../../../core/nola-application/src/memory.rs) / [data_source.rs](../../../core/nola-application/src/data_source.rs) / [automation_execution.rs](../../../core/nola-application/src/automation_execution.rs) | AutomationDefinition 已有 typed execution_spec（agent/user_task）；MemoryRecord.owner、RecallQuery.binding 与 Store owner 过滤/去重已接线，移动端 profile 搜索复用 Recall。原生 workspace/turn 选择界面与真实并发模型验收不由这些接口自动推定。 |
 | 13-客户端投影 | [lib.rs](../../../core/nola-mobile-bindings/src/lib.rs) / [projection.rs](../../../core/nola-mobile-bindings/src/projection.rs) / [RemoteSubmissionIdentity.swift](../../../shared/apple/Protocol/RemoteSubmissionIdentity.swift) | 原生静态/动态库由 mobile_bindings 产出，再保留 Core 辅助符号。Swift/Kotlin 的观察、草稿、IME 与焦点不是第二个业务 Runtime；手机导航不改变已准入 Run。 |
 | 14-远程Host与同步 | [routes.rs](../../../apps/cli/src/web_parts/routes.rs) / [README.md](../../../transport/tailcat/README.md) | Rust 执行 Host、客户端认证镜像与可选 Tailcat 是不同角色；当前产品没有独立 Backend。可选隧道替换承载，不取代配对/登录/CSRF/HMAC、源 Run 权威或恢复游标。 |
-| 15-观测与验收 | [lib.rs](../../../core/nola-measurement/src/lib.rs) / [dependency_boundary.rs](../../../apps/cli/tests/dependency_boundary.rs) / [test_mac_layers.sh](../../../scripts/test_mac_layers.sh) | 文档中的历史通过数、一次沙箱拒绝或“尚未运行”都仅属于原快照；当前测试范围以实际命令/报告为准。依赖图、静态检查和组件测试不能推出业务恢复或真机通过。 |
+| 15-观测与验收 | [lib.rs](../../../core/nola-measurement/src/lib.rs) / [dependency_boundary.rs](../../../apps/cli/tests/suites/dependency_boundary.rs) / [test_mac_layers.sh](../../../scripts/test_mac_layers.sh) | 文档中的历史通过数、一次沙箱拒绝或“尚未运行”都仅属于原快照；当前测试范围以实际命令/报告为准。依赖图、静态检查和组件测试不能推出业务恢复或真机通过。 |
 
 ## 部署、制品与版本
 

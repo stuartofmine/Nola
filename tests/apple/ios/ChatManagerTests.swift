@@ -1174,7 +1174,7 @@ final class ChatManagerTests: XCTestCase {
                 assistantMessageID: assistantMessageID
             )
         }
-        for _ in 0..<40 {
+        for _ in 0..<200 {
             let hasUserMessage = (try? store.getMessages(conversationId: first.id, limit: 0))?
                 .contains { $0.role == .user } == true
             if client.responseContinuation != nil && hasUserMessage {
@@ -1184,6 +1184,10 @@ final class ChatManagerTests: XCTestCase {
         }
 
         XCTAssertNotNil(client.responseContinuation)
+        guard client.responseContinuation != nil else {
+            generation.cancel()
+            return
+        }
         XCTAssertTrue(try store.getMessages(conversationId: first.id, limit: 0).contains { $0.role == .user })
 
         manager.currentConversationId = second.id

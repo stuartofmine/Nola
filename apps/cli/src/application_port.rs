@@ -82,6 +82,41 @@ impl fmt::Debug for CliApplicationPort {
     }
 }
 
+fn rejected_expert_host_operation_error(
+    raw: String,
+) -> nola_application::host_expert_template_operation::HostExpertOperationError {
+    let message = raw
+        .strip_prefix("expert_host_operation_rejected: ")
+        .unwrap_or(&raw)
+        .to_string();
+    nola_application::host_expert_template_operation::HostExpertOperationError::Rejected {
+        code: "expert_host_operation_rejected".into(),
+        message,
+    }
+}
+
+fn map_service_expert_host_error(
+    error: ApplicationServiceCommandError,
+) -> nola_application::host_expert_template_operation::HostExpertOperationError {
+    use nola_application::host_expert_template_operation::HostExpertOperationError;
+    if error.requires_reconciliation() || matches!(error, ApplicationServiceCommandError::Transport { .. }) {
+        let reopen_required = matches!(
+            &error,
+            ApplicationServiceCommandError::OutcomeUnknown {
+                reopen_required: true,
+                ..
+            }
+        );
+        HostExpertOperationError::OutcomePending {
+            request_id: error.request_id().into(),
+            message: error.to_string(),
+            reopen_required,
+        }
+    } else {
+        rejected_expert_host_operation_error(error.to_string())
+    }
+}
+
 impl CliApplicationPort {
     /// Native/server Host factory channel; never forward arbitrary renderer JSON.
     pub(crate) fn execute_expert_host_operation<T: DeserializeOwned>(
@@ -92,13 +127,9 @@ impl CliApplicationPort {
         use nola_application::host_expert_template_operation::HostExpertOperationError;
         let mutating = operation.mutates_state();
         let value: serde_json::Value = match self {
-            Self::Service(client) => client.execute_host_expert_template_operation_with_request_id(request_id, &operation)
-                .map_err(|error| {
-                    if error.requires_reconciliation() || matches!(error,ApplicationServiceCommandError::Transport{..}) {
-                        let reopen_required = matches!(&error, ApplicationServiceCommandError::OutcomeUnknown { reopen_required: true, .. });
-                        HostExpertOperationError::OutcomePending { request_id: error.request_id().into(), message: error.to_string(), reopen_required }
-                    } else { HostExpertOperationError::Rejected { code: "expert_host_operation_rejected".into(), message: error.to_string() } }
-                })?,
+            Self::Service(client) => client
+                .execute_host_expert_template_operation_with_request_id(request_id, &operation)
+                .map_err(map_service_expert_host_error)?,
             Self::InProcess(runtime) => runtime.execute_host_expert_template_operation("cli-expert-host", request_id, operation)?,
             #[cfg(test)]
             Self::ReceivedInProcess(runtime) => runtime.execute_host_expert_template_operation("cli-expert-host", request_id, operation)?,
@@ -1681,5 +1712,99 @@ mod tests {
             .expect("load conversation through Application port")
             .expect("conversation exists");
         assert_eq!(conversation.id, "in-process-conversation");
+    }
+
+    #[test]
+    fn expert_host_error_mapping_covers_all_rejection_and_conflict_shapes() {
+        use nola_application::host_expert_template_operation::HostExpertOperationError;
+        use nola_protocol::{ProtocolFailure, RevisionConflict};
+
+        // Direct unprefixed diagnostic gains a single canonical prefix.
+        let unprefixed = rejected_expert_host_operation_error("room_participant_not_found".into());
+        assert!(matches!(
+            &unprefixed,
+            HostExpertOperationError::Rejected { code, message }
+                if code == "expert_host_operation_rejected" && message == "room_participant_not_found"
+        ));
+        assert_eq!(
+            unprefixed.to_string(),
+            "expert_host_operation_rejected: room_participant_not_found"
+        );
+
+        // Unprefixed service ProtocolFailure preserves diagnostic code and message.
+        let app_rejected = map_service_expert_host_error(ApplicationServiceCommandError::Rejected {
+            client_id: "cli".into(),
+            request_id: "req-1".into(),
+            error: ProtocolFailure {
+                code: "application_rejected".into(),
+                message: "room_participant_not_found".into(),
+                recoverable: false,
+                details: None,
+            },
+        });
+        assert!(matches!(
+            &app_rejected,
+            HostExpertOperationError::Rejected { code, message }
+                if code == "expert_host_operation_rejected"
+                    && message == "application_rejected: room_participant_not_found"
+        ));
+
+        // Already-prefixed expert host rejection never duplicates the prefix.
+        let already_prefixed =
+            map_service_expert_host_error(ApplicationServiceCommandError::Rejected {
+                client_id: "cli".into(),
+                request_id: "req-2".into(),
+                error: ProtocolFailure {
+                    code: "expert_host_operation_rejected".into(),
+                    message: "room_participant_not_found".into(),
+                    recoverable: false,
+                    details: None,
+                },
+            });
+        assert!(matches!(
+            &already_prefixed,
+            HostExpertOperationError::Rejected { code, message }
+                if code == "expert_host_operation_rejected" && message == "room_participant_not_found"
+        ));
+        assert_eq!(
+            already_prefixed.to_string(),
+            "expert_host_operation_rejected: room_participant_not_found"
+        );
+
+        // Store/revision conflicts map cleanly without reconciliation ambiguity.
+        let store_conflict =
+            map_service_expert_host_error(ApplicationServiceCommandError::Conflict {
+                client_id: "cli".into(),
+                request_id: "req-3".into(),
+                conflict: RevisionConflict {
+                    scope_id: "expert-room-1".into(),
+                    expected_revision: 2,
+                    actual_revision: 3,
+                },
+            });
+        assert!(matches!(
+            &store_conflict,
+            HostExpertOperationError::Rejected { code, message }
+                if code == "expert_host_operation_rejected"
+                    && message == "revision_conflict: expert-room-1 expected revision 2, actual revision 3"
+        ));
+
+        // Uncertain outcomes preserve reconciliation metadata instead of pretending rejection.
+        let pending =
+            map_service_expert_host_error(ApplicationServiceCommandError::OutcomeUnknown {
+                client_id: "cli".into(),
+                request_id: "req-4".into(),
+                code: "service_reopen_required".into(),
+                message: "journal reopen required".into(),
+                reopen_required: true,
+            });
+        assert!(matches!(
+            pending,
+            HostExpertOperationError::OutcomePending {
+                ref request_id,
+                reopen_required: true,
+                ..
+            } if request_id == "req-4"
+        ));
     }
 }

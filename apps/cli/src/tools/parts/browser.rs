@@ -265,10 +265,11 @@ fn background_bash_task_summaries_scoped(
     sync_background_tasks(&mut guard)?;
     let mut visible = guard
         .iter()
-        .filter(|(_, task)| {
-            owner_filter
-                .is_none_or(|owner_session_id| task.owner_session_id.as_deref() == owner_session_id)
-                && background_task_within_roots(task, allowed_dirs)
+        .filter(|(_, task)| match owner_filter {
+            Some(owner_session_id) => {
+                background_task_matches_scope(task, allowed_dirs, owner_session_id)
+            }
+            None => background_task_within_roots(task, allowed_dirs),
         })
         .map(|(id, task)| (id.clone(), task.started_at_ms))
         .collect::<Vec<_>>();
@@ -314,8 +315,7 @@ pub fn take_background_task_notifications(
         .iter()
         .filter(|(_, task)| {
             task.notify_on_completion
-                && task.owner_session_id.as_deref() == owner_session_id
-                && background_task_within_roots(task, allowed_dirs)
+                && background_task_matches_scope(task, allowed_dirs, owner_session_id)
         })
         .map(|(id, task)| (id.clone(), task.started_at_ms))
         .collect::<Vec<_>>();

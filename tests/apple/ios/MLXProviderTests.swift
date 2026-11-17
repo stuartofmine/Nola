@@ -1,11 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // File Overview:
-// - Purpose: Implements MLXProviderTests logic in the project module.
-// - Interfaces:
-//   - Internal implementation details only.
-// - APIs:
-//   - none
-//
-import XCTest
+// - Purpose: Consolidated MLX provider and integration placeholder boundary for NolaTests (runtime MLX inference tests live in NolaMLXRuntimeTests under tests/apple/mlx/).
 
-// Removed placeholder-only MLX provider test.
+import XCTest
+@testable import Nola

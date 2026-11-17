@@ -66,7 +66,7 @@ fn snapshot_for_settings(settings: &Value, store: &NolaStore) -> Result<Snapshot
     if let Some(key) = settings["modelSelectionID"].as_str() {
         let id = key.strip_prefix("configured:").ok_or("This CLI executor cannot run the conversation's selected local or connected-host model")?;
         let profile = store.model_profile(id)?.ok_or("Conversation model profile is unavailable")?;
-        let overrides = settings["modelOverrides"].get(key).ok_or("Conversation model parameters are missing")?;
+        let overrides = settings["modelOverrides"].get(key).unwrap_or(&Value::Null);
         let profile = crate::model_profile_resolution::profile_with_session_contract(&profile, overrides)?;
         let source: Value = serde_json::from_str(&profile.source_json).map_err(|error| error.to_string())?;
         let request = crate::model_profile_resolution::session_override_request(overrides, &source["reasoning"], source["wireProtocol"].as_str().ok_or("Model source wireProtocol is missing")?)?;
@@ -656,6 +656,48 @@ mod tests {
         let wire = serde_json::to_value(policy).unwrap();
         assert!(wire.get("reasoning_selection").is_none());
         assert!(wire.get("sampling_override").is_none());
+
+        let directory = tempfile::tempdir().unwrap();
+        let store = NolaStore::open(&directory.path().join("snapshot.sqlite")).unwrap();
+        store.upsert_model_profile(nola_application::ModelProfile {
+            id: "declared".into(), display_name: "Declared".into(), model_name: "qwen3.6-plus".into(),
+            provider: "openai-compatible".into(), runtime: "remote".into(),
+            source_json: json!({"baseURL":"https://fixture.invalid/v1","endpointID":"fixture-endpoint","wireProtocol":"chat_completions",
+                "capabilities":["chat"],"executionCapabilities":{"toolCalls":true,"imageInput":false,"reasoning":true,"samplingParameters":true},
+                "reasoning":{"control":"effort","efforts":["low","medium","high"]}}).to_string(),
+            parameters_json: json!({"temperature":0.4,"topP":0.85,"maxOutputTokens":4096,"maxContextLength":64000}).to_string(),
+            selected: true, enabled: true, revision: 1, created_at_ms: 1, updated_at_ms: 1, deleted_at_ms: None,
+        }).unwrap();
+
+        // Explicit session modelOverrides + executionPolicy preserve selected thinking, sampling, and swe_mode.
+        let mut config = Config::for_test().unwrap();
+        config.swe_mode = true;
+        let policy = execution_policy(&config, vec![]).unwrap();
+        let explicit_settings = json!({"permissionModeRawValue":"cautious", "executionPolicy":policy,
+            "modelSelectionID":"configured:declared", "modelOverrides":{"configured:declared":{
+                "reasoningPreference":"concise", "samplingOverride":true, "temperature":0.2}}});
+        let snapshot = snapshot_for_settings(&explicit_settings, &store).unwrap();
+        assert_eq!(snapshot.runtime.reasoning_selection, Some(nola_domain::generation::ReasoningSelection::Effort { value: "low".into() }));
+        assert!(snapshot.runtime.sampling_override);
+        assert!(snapshot.model.swe_mode);
+        assert_eq!(snapshot.runtime.temperature, Some(0.2));
+        assert_eq!(snapshot.runtime.compaction.context_window_tokens, Some(64000));
+        assert!(matches!(snapshot.runtime.model_capabilities.reasoning_declaration,
+            Some(nola_domain::reasoning_tiers::ReasoningCapabilityDeclaration::Effort { ref values })
+            if values == &vec!["low".to_string(), "medium".to_string(), "high".to_string()]));
+
+        // Sparse expert settings (missing or empty modelOverrides) inherit profile defaults cleanly.
+        for sparse_settings in [
+            json!({"permissionModeRawValue": "allow_all", "modelSelectionID": "configured:declared"}),
+            json!({"permissionModeRawValue": "allow_all", "modelSelectionID": "configured:declared", "modelOverrides": {"configured:declared": {}}}),
+        ] {
+            let sparse = snapshot_for_settings(&sparse_settings, &store).unwrap();
+            assert_eq!(sparse.model.model, "qwen3.6-plus");
+            assert_eq!(sparse.runtime.temperature, Some(0.4));
+            assert_eq!(sparse.runtime.top_p, Some(0.85));
+            assert_eq!(sparse.runtime.max_output_tokens, Some(4096));
+            assert_eq!(sparse.runtime.compaction.context_window_tokens, Some(64000));
+        }
     }
 
     #[test]
@@ -688,35 +730,6 @@ mod tests {
         restore(&mut config, snapshot, &store).unwrap();
         assert_eq!(config.external_execution_session_id.as_deref(), Some("exact-session"));
         assert!(config.swe_mode);
-    }
-
-    #[test]
-    fn canonical_model_snapshot_preserves_selected_thinking_sampling_and_swe() {
-        let directory = tempfile::tempdir().unwrap();
-        let store = NolaStore::open(&directory.path().join("snapshot.sqlite")).unwrap();
-        store.upsert_model_profile(nola_application::ModelProfile {
-            id:"declared".into(), display_name:"Declared".into(), model_name:"fixture".into(),
-            provider:"openai-compatible".into(), runtime:"remote".into(),
-            source_json:json!({"baseURL":"https://fixture.invalid/v1","endpointID":"fixture-endpoint","wireProtocol":"chat_completions",
-                "capabilities":["chat"],"executionCapabilities":{"toolCalls":true,"imageInput":false,"reasoning":true,"samplingParameters":true},
-                "reasoning":{"control":"effort","efforts":["low","medium","high"]}}).to_string(),
-            parameters_json:json!({"temperature":0.7,"topP":0.9,"maxOutputTokens":8192,"maxContextLength":64000}).to_string(),
-            selected:false,enabled:true,revision:1,created_at_ms:1,updated_at_ms:1,deleted_at_ms:None,
-        }).unwrap();
-        let mut config = Config::for_test().unwrap();
-        config.swe_mode = true;
-        let policy = execution_policy(&config, vec![]).unwrap();
-        let settings = json!({"permissionModeRawValue":"cautious", "executionPolicy":policy,
-            "modelSelectionID":"configured:declared", "modelOverrides":{"configured:declared":{
-                "reasoningPreference":"concise", "samplingOverride":true, "temperature":0.2}}});
-        let snapshot = snapshot_for_settings(&settings, &store).unwrap();
-        assert_eq!(snapshot.runtime.reasoning_selection, Some(nola_domain::generation::ReasoningSelection::Effort { value:"low".into() }));
-        assert!(snapshot.runtime.sampling_override);
-        assert!(snapshot.model.swe_mode);
-        assert_eq!(snapshot.runtime.temperature, Some(0.2));
-        assert!(matches!(snapshot.runtime.model_capabilities.reasoning_declaration,
-            Some(nola_domain::reasoning_tiers::ReasoningCapabilityDeclaration::Effort { ref values })
-            if values == &vec!["low".to_string(), "medium".to_string(), "high".to_string()]));
     }
 
     #[test]

@@ -394,6 +394,7 @@ fn begin_assistant_turn_in_transaction<R: RunCreationRepository
         .iter()
         .find_map(|request| match &request.payload {
             HostRequest::ModelStream { text_part_id, .. } => Some(text_part_id.clone()),
+            HostRequest::DelegatedAgent { request } => Some(request.text_part_id.clone()),
             _ => None,
         })
         .unwrap_or_else(|| format!("{run_id}:assistant:text"));

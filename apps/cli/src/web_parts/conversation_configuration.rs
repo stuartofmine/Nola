@@ -228,7 +228,7 @@ fn patch_conversation_configuration_response(
     let result = (|| -> Result<ConfigurationCommitResult, String> {
         let path = crate::platform_paths::application_database_path()?;
         let mut app = crate::application_port::CliApplicationPort::persistent(&path)?;
-        if let Some(profile) = patch.get("permissionProfile") {
+        if let Some(profile) = patch.get("permissionProfile").filter(|value| !value.is_null()) {
             let mut additional = patch.as_object().cloned().ok_or("invalid configuration patch")?;
             additional.remove("permissionProfile");
             let additional_configuration = if additional.is_empty() { None } else {

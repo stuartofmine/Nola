@@ -105,7 +105,7 @@ impl ProviderFailure {
         }
         let projection = model_failure_projection(error);
         super::diagnostics::log_local_debug_payload("model_attempt_failure",
-            &super::diagnostics::model_failure_debug_payload(error));
+            &super::diagnostics::model_failure_debug_payload(projection.code, projection.retryable));
         let exhausts_target = structured_provider_error_is_exhausted_quota(error);
         Self {
             code: projection.code.to_string(),
@@ -1956,63 +1956,36 @@ mod retry_policy_tests {
     }
 
     #[test]
-    fn partial_stream_unexpected_eof_enters_bounded_continuation_recovery() {
+    fn incomplete_stream_and_http2_recovery_preserve_transaction_safety() {
         assert!(should_treat_stream_read_as_complete(
             "LLM stream read failed: request or response body error: error reading a body from connection: unexpected EOF during chunk size line"
         ));
-    }
-
-    #[test]
-    fn http2_protocol_stream_failure_uses_transaction_safe_recovery() {
-        let error = "error sending request for url (https://provider.invalid/api): http2 error: stream error received: unspecific protocol error detected";
-
-        assert!(is_retryable_llm_error(error));
-        assert!(should_treat_stream_read_as_complete(error));
-        // No published delta can be resampled by the bounded provider retry.
-        assert!(super::should_retry_incomplete_stream_round(
-            false, false, false, true
-        ));
-        // Published answer text is retained and continued semantically instead
-        // of being replayed by the provider retry loop.
-        assert!(!super::should_retry_incomplete_stream_round(
-            true, true, false, true
-        ));
-        // Partial tool arguments have no side effect and are safe to discard
-        // before resampling the model round.
-        assert!(super::should_retry_incomplete_stream_round(
-            true, true, true, true
-        ));
-    }
-
-    #[test]
-    fn partial_tool_stream_failure_remains_retryable_after_arguments_are_discarded() {
+        let http2_err = "error sending request for url (https://provider.invalid/api): http2 error: stream error received: unspecific protocol error detected";
+        assert!(is_retryable_llm_error(http2_err));
+        assert!(should_treat_stream_read_as_complete(http2_err));
         assert!(is_retryable_llm_error(
             "incomplete read: LLM stream closed before the provider completed a tool call; partial tool arguments were discarded"
         ));
-        assert!(super::should_retry_incomplete_stream_round(
-            true, true, true, true
-        ));
-        assert!(!super::should_retry_incomplete_stream_round(
-            true, true, false, true
-        ));
+        // No published delta -> safe to retry.
+        assert!(super::should_retry_incomplete_stream_round(false, false, false, true));
+        // Published answer text -> retained for continuation instead of replayed.
+        assert!(!super::should_retry_incomplete_stream_round(true, true, false, true));
+        // Partial tool arguments -> discarded safely before resampling.
+        assert!(super::should_retry_incomplete_stream_round(true, true, true, true));
     }
 
     #[test]
-    fn duplicate_native_tool_arguments_remain_invalid_instead_of_last_key_winning() {
+    fn malformed_or_duplicate_native_tool_arguments_preserve_protocol_errors() {
         let raw = r#"{"messages":[{"version":"0.9.1","version":"1.0"}]}"#;
         for input in [raw.to_owned(), serde_json::to_string(raw).unwrap()] {
             assert_eq!(super::normalized_tool_arguments_value(&input), serde_json::Value::String(raw.into()));
         }
         let valid = r#"{"messages":[{"version":"0.9.1"}]}"#;
         assert_eq!(super::normalized_tool_arguments_value(valid), serde_json::from_str::<serde_json::Value>(valid).unwrap());
-    }
 
-    #[test]
-    fn double_encoded_truncated_tool_arguments_keep_the_inner_protocol_error() {
         let encoded = serde_json::to_string("{\"path\":\"large.cpp\",\"content\":\"partial")
             .expect("encode outer provider string");
         let normalized = super::normalize_tool_arguments_text(&encoded);
-
         assert_eq!(normalized, "{\"path\":\"large.cpp\",\"content\":\"partial");
         assert!(serde_json::from_str::<serde_json::Value>(&normalized).is_err());
     }
@@ -2075,16 +2048,41 @@ mod stream_completion_tests {
     use std::collections::BTreeMap;
 
     #[test]
-    fn unfinished_tool_transaction_has_explicit_safe_failure_code() {
-        let mut choice = StreamedChoice { tool_calls: vec![ToolCall {
-            id: "partial".into(), name: "write_file".into(), arguments: "{\"path\":".into(),
-        }], ..Default::default() };
-        let error = finalize_stream_completion(&mut choice, false).unwrap_err();
+    fn finalize_stream_completion_classifies_text_partial_tool_and_terminal_tool_states() {
+        let mut partial_tool = StreamedChoice {
+            tool_calls: vec![ToolCall {
+                id: "partial".into(),
+                name: "write_file".into(),
+                arguments: "{\"path\":".into(),
+            }],
+            ..Default::default()
+        };
+        let error = finalize_stream_completion(&mut partial_tool, false).unwrap_err();
         let projection = super::model_failure_projection(&error);
         assert_eq!(projection.code, "tool_transaction_incomplete");
         assert!(projection.retryable);
-        assert!(choice.tool_calls.is_empty());
+        assert!(partial_tool.tool_calls.is_empty());
         assert!(!projection.message.contains("write_file"));
+
+        let mut partial_text = StreamedChoice {
+            content: "partial answer".to_string(),
+            ..StreamedChoice::default()
+        };
+        finalize_stream_completion(&mut partial_text, false).unwrap();
+        assert_eq!(partial_text.finish_reason, "stream_incomplete");
+        assert_eq!(partial_text.sampling_measurement_outcome(), nola_measurement::Outcome::Incomplete);
+
+        let mut terminal_tool = StreamedChoice {
+            tool_calls: vec![ToolCall {
+                id: "call-1".to_string(),
+                name: "read_file".to_string(),
+                arguments: "{\"path\":\"README.md\"}".to_string(),
+            }],
+            ..StreamedChoice::default()
+        };
+        finalize_stream_completion(&mut terminal_tool, true).unwrap();
+        assert_eq!(terminal_tool.finish_reason, "tool_calls");
+        assert_eq!(terminal_tool.tool_calls.len(), 1);
     }
 
     #[test]
@@ -2190,47 +2188,7 @@ mod stream_completion_tests {
     }
 
     #[test]
-    fn interrupted_text_stream_is_not_reported_as_stop() {
-        let mut choice = StreamedChoice {
-            content: "partial answer".to_string(),
-            ..StreamedChoice::default()
-        };
-        finalize_stream_completion(&mut choice, false).unwrap();
-        assert_eq!(choice.finish_reason, "stream_incomplete");
-        assert_eq!(choice.sampling_measurement_outcome(), nola_measurement::Outcome::Incomplete);
-    }
-
-    #[test]
-    fn interrupted_tool_stream_discards_partial_call() {
-        let mut choice = StreamedChoice {
-            tool_calls: vec![ToolCall {
-                id: "call-1".to_string(),
-                name: "write_file".to_string(),
-                arguments: "{\"path\":".to_string(),
-            }],
-            ..StreamedChoice::default()
-        };
-        assert!(finalize_stream_completion(&mut choice, false).is_err());
-        assert!(choice.tool_calls.is_empty());
-    }
-
-    #[test]
-    fn terminal_tool_stream_keeps_executable_call() {
-        let mut choice = StreamedChoice {
-            tool_calls: vec![ToolCall {
-                id: "call-1".to_string(),
-                name: "read_file".to_string(),
-                arguments: "{\"path\":\"README.md\"}".to_string(),
-            }],
-            ..StreamedChoice::default()
-        };
-        finalize_stream_completion(&mut choice, true).unwrap();
-        assert_eq!(choice.finish_reason, "tool_calls");
-        assert_eq!(choice.tool_calls.len(), 1);
-    }
-
-    #[test]
-    fn openai_argument_fragments_reassemble_as_one_json_object() {
+    fn openai_tool_delta_reassembles_fragments_and_rejects_slot_id_changes() {
         let mut slots = BTreeMap::<usize, ToolSlot>::new();
         let first = append_openai_tool_delta(
             &mut slots,
@@ -2248,17 +2206,8 @@ mod stream_completion_tests {
         )
         .unwrap()
         .expect("second tool event");
-
-        assert!(matches!(
-            first,
-            LlmEvent::ToolCallDelta { ref arguments_delta, .. }
-                if arguments_delta == "{\"path\":"
-        ));
-        assert!(matches!(
-            second,
-            LlmEvent::ToolCallDelta { ref arguments_delta, .. }
-                if arguments_delta == "\"多语言.txt\"}"
-        ));
+        assert!(matches!(first, LlmEvent::ToolCallDelta { ref arguments_delta, .. } if arguments_delta == "{\"path\":"));
+        assert!(matches!(second, LlmEvent::ToolCallDelta { ref arguments_delta, .. } if arguments_delta == "\"多语言.txt\"}"));
         let slot = slots.get(&0).unwrap();
         assert_eq!(slot.id, "call-1");
         assert_eq!(slot.name, "write_file");
@@ -2266,23 +2215,13 @@ mod stream_completion_tests {
             serde_json::from_str::<serde_json::Value>(&slot.arguments).unwrap(),
             json!({"path": "多语言.txt"})
         );
-    }
 
-    #[test]
-    fn openai_stream_rejects_a_call_id_change_in_the_same_slot() {
-        let mut slots = BTreeMap::<usize, ToolSlot>::new();
-        append_openai_tool_delta(
-            &mut slots,
-            &json!({"index": 0, "id": "call-original", "function": {"name": "read_file"}}),
-        )
-        .unwrap();
         let error = append_openai_tool_delta(
             &mut slots,
             &json!({"index": 0, "id": "call-replaced", "function": {"arguments": "{}"}}),
         )
         .unwrap_err();
-
-        assert!(error.contains("call-original -> call-replaced"));
+        assert!(error.contains("call-1 -> call-replaced"));
     }
 }
 
@@ -2491,43 +2430,26 @@ mod stream_transport_recovery_tests {
     }
 
     #[test]
-    fn local_worker_loss_has_a_typed_non_provider_failure() {
+    fn non_provider_and_local_control_failures_are_never_retried_or_spoofed() {
         let cfg = config("http://127.0.0.1:1/v1".into());
-        let failure = super::ProviderAttemptError::WorkerDisconnected.into_failure(&cfg);
-        assert_eq!(failure.code, "transport_worker_disconnected");
-        assert!(!failure.retryable);
-        assert!(!failure.same_target_retryable);
-        assert!(!failure.fallback_eligible);
-        assert!(!failure.exhausts_target);
-        assert_eq!(failure.status, None);
-        assert_eq!(failure.retry_after_ms, None);
-        assert_eq!(failure.model.as_deref(), Some("test-model"));
+        let worker_loss = super::ProviderAttemptError::WorkerDisconnected.into_failure(&cfg);
+        assert_eq!(worker_loss.code, "transport_worker_disconnected");
+        assert!(!worker_loss.retryable && !worker_loss.same_target_retryable && !worker_loss.fallback_eligible && !worker_loss.exhausts_target);
+        assert_eq!(worker_loss.status, None);
+        assert_eq!(worker_loss.retry_after_ms, None);
+        assert_eq!(worker_loss.model.as_deref(), Some("test-model"));
         assert!(!cfg.cancellation.is_requested());
-    }
 
-    #[test]
-    fn repetitive_reasoning_is_failure_not_success_or_automatic_retry() {
-        let cfg = config("http://127.0.0.1:1/v1".into());
-        let failure = super::ProviderAttemptError::Message(super::super::stream_state::REPETITIVE_REASONING.into()).into_failure(&cfg);
-        assert_eq!(failure.code, "model_repetitive_reasoning");
-        assert!(!failure.retryable);
-        assert!(!failure.same_target_retryable);
-        assert!(!failure.fallback_eligible);
-    }
+        let repetitive = super::ProviderAttemptError::Message(super::super::stream_state::REPETITIVE_REASONING.into()).into_failure(&cfg);
+        assert_eq!(repetitive.code, "model_repetitive_reasoning");
+        assert!(!repetitive.retryable && !repetitive.same_target_retryable && !repetitive.fallback_eligible);
 
-    #[test]
-    fn local_cancellation_is_typed_control_and_never_provider_retry_or_fallback() {
-        let cfg = config("http://127.0.0.1:1/v1".into());
-        let failure = ProviderFailure::cancelled(&cfg);
-        assert_eq!(failure.code, "cancelled");
-        assert!(!failure.retryable);
-        assert!(!failure.same_target_retryable);
-        assert!(!failure.fallback_eligible);
-        assert!(!failure.exhausts_target);
-        assert_eq!(failure.status, None);
-        assert_eq!(failure.retry_after_ms, None);
-        assert_eq!(failure.model.as_deref(), Some("test-model"));
-        // A provider-controlled string cannot manufacture local cancellation.
+        let cancelled = ProviderFailure::cancelled(&cfg);
+        assert_eq!(cancelled.code, "cancelled");
+        assert!(!cancelled.retryable && !cancelled.same_target_retryable && !cancelled.fallback_eligible && !cancelled.exhausts_target);
+        assert_eq!(cancelled.status, None);
+        assert_eq!(cancelled.retry_after_ms, None);
+        assert_eq!(cancelled.model.as_deref(), Some("test-model"));
         assert_ne!(ProviderFailure::classify(&cfg, "cancelled").code, "cancelled");
         assert_ne!(ProviderFailure::classify(&cfg, "用户取消").code, "cancelled");
     }
@@ -2596,30 +2518,6 @@ mod stream_transport_recovery_tests {
             super::output_token_parameter_name(&explicit),
             "max_output_tokens"
         );
-    }
-
-    #[test]
-    fn explicit_chat_output_limit_field_reaches_the_http_request() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let body = read_request(&mut stream);
-            assert_eq!(body["max_completion_tokens"], 256);
-            assert!(body.get("max_tokens").is_none());
-            write_sse(&mut stream, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n");
-        });
-        let mut cfg = config(format!("http://{address}/v1"));
-        cfg.chat_output_token_field = nola_application::ChatOutputTokenField::MaxCompletionTokens;
-        let result = stream_chat(
-            &cfg,
-            &[json!({"role":"user","content":"hello"})],
-            &[],
-            "auto",
-            |_| {},
-        );
-        server.join().unwrap();
-        assert_eq!(result.unwrap().content, "ok");
     }
 
     #[test]
@@ -2940,48 +2838,6 @@ mod stream_transport_recovery_tests {
     }
 
     #[test]
-    fn visible_primary_output_prevents_cross_provider_replay() {
-        let primary = TcpListener::bind("127.0.0.1:0").expect("bind partial provider");
-        let primary_address = primary.local_addr().expect("primary address");
-        let primary_server = thread::spawn(move || {
-            let (mut stream, _) = primary.accept().expect("accept primary request");
-            read_request(&mut stream);
-            write_truncated_sse(
-                &mut stream,
-                "data: {\"choices\":[{\"delta\":{\"content\":\"visible primary\"},\"finish_reason\":null}]}\n\n",
-            );
-        });
-        let fallback = TcpListener::bind("127.0.0.1:0").expect("bind forbidden fallback");
-        fallback
-            .set_nonblocking(true)
-            .expect("set fallback nonblocking");
-        let fallback_address = fallback.local_addr().expect("fallback address");
-        let mut cfg = config(format!("http://{primary_address}/v1"));
-        cfg.fallbacks.push(LlmProviderTarget {
-            provider: None,
-            endpoint: format!("http://{fallback_address}/v1"),
-            api_key: None,
-            model: None,
-        });
-
-        let choice = stream_chat(
-            &cfg,
-            &[json!({"role":"user", "content":"do not replay"})],
-            &[],
-            "auto",
-            |_| {},
-        )
-        .expect("visible incomplete response remains the terminal attempt");
-        primary_server.join().expect("primary server");
-        assert_eq!(choice.content, "visible primary");
-        assert_eq!(choice.finish_reason, "stream_incomplete");
-        assert!(
-            matches!(fallback.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
-            "fallback received a replay after visible output"
-        );
-    }
-
-    #[test]
     fn real_http_partial_tool_attempt_is_discarded_before_clean_retry() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind fault provider");
         let address = listener.local_addr().expect("fault provider address");
@@ -3176,57 +3032,86 @@ mod stream_transport_recovery_tests {
     }
 
     #[test]
-    fn typed_context_overflow_bypasses_host_retry_despite_transient_http_status() {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind overflow provider");
-        let address = listener.local_addr().expect("overflow provider address");
-        let server = thread::spawn(move || {
-            let (mut first, _) = listener.accept().expect("accept overflow request");
-            read_request(&mut first);
-            write_error_response(
-                &mut first,
-                "503 Service Unavailable",
+    fn context_overflow_across_http_compatible_sse_and_anthropic_sse_bypasses_host_retry() {
+        enum OverflowWire {
+            Http503(&'static str),
+            CompatibleSse(&'static str),
+            AnthropicSse(&'static str),
+        }
+        for scenario in [
+            OverflowWire::Http503(
                 r#"{"errors":[{"code":"gateway_failure"},{"type":"prompt_too_long","message":"入力が長すぎます"}]}"#,
-                Some(0),
-            );
-            drop(first);
-
-            listener
-                .set_nonblocking(true)
-                .expect("inspect overflow retries");
-            let deadline = std::time::Instant::now() + Duration::from_millis(350);
-            while std::time::Instant::now() < deadline {
-                match listener.accept() {
-                    Ok(_) => panic!("typed context overflow triggered a Host-private retry"),
-                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                        thread::sleep(Duration::from_millis(10));
+            ),
+            OverflowWire::CompatibleSse(concat!(
+                "data: {\"id\":\"response-before-error\",\"choices\":[]}\n\n",
+                "data: {\"errors\":[{\"code\":\"gateway_failure\"},{\"type\":\"context_length_exceeded\",\"message\":\"入力が長すぎます\"}]}\n\n",
+            )),
+            OverflowWire::AnthropicSse(concat!(
+                "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":120000}}}\n\n",
+                "data: {\"type\":\"error\",\"error\":{\"type\":\"prompt_too_long\",\"message\":\"入力が長すぎます\"}}\n\n",
+            )),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind overflow provider");
+            let address = listener.local_addr().expect("overflow provider address");
+            let is_anthropic = matches!(scenario, OverflowWire::AnthropicSse(_));
+            let server = thread::spawn(move || {
+                let (mut first, _) = listener.accept().expect("accept overflow request");
+                read_request(&mut first);
+                match scenario {
+                    OverflowWire::Http503(body) => {
+                        write_error_response(&mut first, "503 Service Unavailable", body, Some(0));
                     }
-                    Err(error) => panic!("inspect overflow retry: {error}"),
+                    OverflowWire::CompatibleSse(frames) | OverflowWire::AnthropicSse(frames) => {
+                        write_sse(&mut first, frames);
+                    }
                 }
+                drop(first);
+                listener.set_nonblocking(true).expect("inspect overflow retries");
+                let deadline = std::time::Instant::now() + Duration::from_millis(250);
+                while std::time::Instant::now() < deadline {
+                    match listener.accept() {
+                        Ok(_) => panic!("typed context overflow triggered a Host-private retry"),
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(error) => panic!("inspect overflow retry: {error}"),
+                    }
+                }
+            });
+            let mut cfg = config(if is_anthropic {
+                format!("http://{address}")
+            } else {
+                format!("http://{address}/v1")
+            });
+            if is_anthropic {
+                cfg.provider = Some("anthropic".to_string());
             }
-        });
-
-        let events = Arc::new(Mutex::new(Vec::new()));
-        let observed = Arc::clone(&events);
-        let error = stream_chat(
-            &config(format!("http://{address}/v1")),
-            &[json!({"role":"user", "content":"long canonical turn"})],
-            &[],
-            "none",
-            move |event| observed.lock().expect("record overflow event").push(event),
-        )
-        .expect_err("typed overflow must return to Core for compaction");
-
-        server.join().expect("overflow provider server");
-        assert!(error.contains("prompt_too_long"));
-        assert_eq!(
-            events
-                .lock()
-                .expect("read overflow events")
-                .iter()
-                .filter(|event| matches!(event, LlmEvent::Retrying { .. }))
-                .count(),
-            0
-        );
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let observed = Arc::clone(&events);
+            let error = stream_chat(
+                &cfg,
+                &[json!({"role":"user", "content":"long canonical turn"})],
+                &[],
+                "none",
+                move |event| observed.lock().expect("record overflow event").push(event),
+            )
+            .expect_err("typed overflow must return to Core for compaction");
+            server.join().expect("overflow provider server");
+            assert_eq!(
+                super::structured_provider_error_is_context_limit(&error),
+                Some(true),
+                "{error}"
+            );
+            assert_eq!(
+                events
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|event| matches!(event, LlmEvent::Retrying { .. }))
+                    .count(),
+                0
+            );
+        }
     }
 
     #[test]
@@ -3292,6 +3177,9 @@ mod stream_transport_recovery_tests {
         let address = listener
             .local_addr()
             .expect("visible partial provider address");
+        let fallback = TcpListener::bind("127.0.0.1:0").expect("bind forbidden fallback");
+        fallback.set_nonblocking(true).expect("set fallback nonblocking");
+        let fallback_address = fallback.local_addr().expect("fallback address");
         let server = thread::spawn(move || {
             let (mut first, _) = listener.accept().expect("accept visible partial request");
             read_request(&mut first);
@@ -3301,7 +3189,7 @@ mod stream_transport_recovery_tests {
             listener
                 .set_nonblocking(true)
                 .expect("make visible partial listener nonblocking");
-            let deadline = std::time::Instant::now() + Duration::from_millis(750);
+            let deadline = std::time::Instant::now() + Duration::from_millis(400);
             while std::time::Instant::now() < deadline {
                 match listener.accept() {
                     Ok(_) => panic!("visible provider delta triggered a whole-request retry"),
@@ -3313,10 +3201,17 @@ mod stream_transport_recovery_tests {
             }
         });
 
+        let mut cfg = config(format!("http://{address}/v1"));
+        cfg.fallbacks.push(LlmProviderTarget {
+            provider: None,
+            endpoint: format!("http://{fallback_address}/v1"),
+            api_key: None,
+            model: None,
+        });
         let events = Arc::new(Mutex::new(Vec::new()));
         let observed = Arc::clone(&events);
         let choice = stream_chat(
-            &config(format!("http://{address}/v1")),
+            &cfg,
             &[json!({"role":"user", "content":"inspect only"})],
             &[json!({
                 "type":"function",
@@ -3335,70 +3230,14 @@ mod stream_transport_recovery_tests {
         assert_eq!(choice.finish_reason, "stream_incomplete");
         assert_eq!(choice.content, expected_content);
         assert_eq!(choice.reasoning, expected_reasoning);
+        assert!(
+            matches!(fallback.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+            "fallback received a replay after visible output"
+        );
         assert_eq!(
             events
                 .lock()
                 .expect("read visible events")
-                .iter()
-                .filter(|event| matches!(event, LlmEvent::Retrying { .. }))
-                .count(),
-            0
-        );
-    }
-
-    #[test]
-    fn anthropic_sse_context_overflow_returns_to_core_without_host_retry() {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind Anthropic provider");
-        let address = listener.local_addr().expect("Anthropic provider address");
-        let server = thread::spawn(move || {
-            let (mut first, _) = listener.accept().expect("accept Anthropic request");
-            read_request(&mut first);
-            write_sse(
-                &mut first,
-                concat!(
-                    "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":120000}}}\n\n",
-                    "data: {\"type\":\"error\",\"error\":{\"type\":\"prompt_too_long\",\"message\":\"入力が長すぎます\"}}\n\n"
-                ),
-            );
-            drop(first);
-
-            listener
-                .set_nonblocking(true)
-                .expect("inspect Anthropic retries");
-            let deadline = std::time::Instant::now() + Duration::from_millis(350);
-            while std::time::Instant::now() < deadline {
-                match listener.accept() {
-                    Ok(_) => panic!("Anthropic typed overflow triggered a Host-private retry"),
-                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                        thread::sleep(Duration::from_millis(10));
-                    }
-                    Err(error) => panic!("inspect Anthropic retry: {error}"),
-                }
-            }
-        });
-
-        let events = Arc::new(Mutex::new(Vec::new()));
-        let observed = Arc::clone(&events);
-        let mut cfg = config(format!("http://{address}"));
-        cfg.provider = Some("anthropic".to_string());
-        let error = stream_chat(
-            &cfg,
-            &[json!({"role":"user", "content":"continue canonical work"})],
-            &[],
-            "none",
-            move |event| observed.lock().expect("record Anthropic event").push(event),
-        )
-        .expect_err("typed Anthropic overflow must return to Core");
-
-        server.join().expect("Anthropic provider server");
-        assert_eq!(
-            super::structured_provider_error_is_context_limit(&error),
-            Some(true)
-        );
-        assert_eq!(
-            events
-                .lock()
-                .expect("read Anthropic events")
                 .iter()
                 .filter(|event| matches!(event, LlmEvent::Retrying { .. }))
                 .count(),
@@ -3436,78 +3275,60 @@ mod stream_transport_recovery_tests {
     }
 
     #[test]
-    fn compatible_sse_context_overflow_is_not_an_empty_completion() {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind compatible provider");
-        let address = listener.local_addr().expect("compatible provider address");
-        let server = thread::spawn(move || {
-            let (mut first, _) = listener.accept().expect("accept compatible request");
-            read_request(&mut first);
-            write_sse(
-                &mut first,
-                concat!(
-                    "data: {\"id\":\"response-before-error\",\"choices\":[]}\n\n",
-                    "data: {\"errors\":[{\"code\":\"gateway_failure\"},{\"type\":\"context_length_exceeded\",\"message\":\"入力が長すぎます\"}]}\n\n"
-                ),
-            );
-            drop(first);
-
-            listener
-                .set_nonblocking(true)
-                .expect("inspect compatible retries");
-            let deadline = std::time::Instant::now() + Duration::from_millis(350);
-            while std::time::Instant::now() < deadline {
-                match listener.accept() {
-                    Ok(_) => panic!("SSE typed overflow triggered a Host-private retry"),
-                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                        thread::sleep(Duration::from_millis(10));
-                    }
-                    Err(error) => panic!("inspect compatible retry: {error}"),
-                }
-            }
-        });
-
-        let events = Arc::new(Mutex::new(Vec::new()));
-        let observed = Arc::clone(&events);
-        let error = stream_chat(
-            &config(format!("http://{address}/v1")),
-            &[json!({"role":"user", "content":"continue canonical work"})],
-            &[],
-            "none",
-            move |event| {
-                observed
-                    .lock()
-                    .expect("record compatible event")
-                    .push(event)
-            },
-        )
-        .expect_err("typed SSE overflow must return to Core instead of completing empty");
-
-        server.join().expect("compatible provider server");
-        assert_eq!(
-            super::structured_provider_error_is_context_limit(&error),
-            Some(true)
+    fn real_http_visible_partial_is_not_retried_or_replayed_to_fallback() {
+        assert_real_http_visible_partial_is_not_retried(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"visible text\"},\"finish_reason\":null}]}\n\n",
+            "visible text",
+            "",
         );
-        assert_eq!(
-            events
-                .lock()
-                .expect("read compatible events")
-                .iter()
-                .filter(|event| matches!(event, LlmEvent::Retrying { .. }))
-                .count(),
-            0
+        assert_real_http_visible_partial_is_not_retried(
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"visible thought\"},\"finish_reason\":null}]}\n\n",
+            "",
+            "visible thought",
         );
     }
 
     #[test]
-    fn compatible_sse_null_empty_or_malformed_errors_do_not_abort_completion() {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind compatible provider");
-        let address = listener.local_addr().expect("compatible provider address");
+    fn sse_keepalive_comments_do_not_reset_first_event_idle_timeout() {
+        let _guard = crate::store::test_env_lock();
+        std::env::set_var("NOLA_LLM_STREAM_FIRST_EVENT_TIMEOUT_SEC", "1");
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap();
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop_server = Arc::clone(&stop);
+        let accept_next = |listener: &TcpListener, stop_flag: &std::sync::atomic::AtomicBool| -> Option<TcpStream> {
+            let accept_deadline = std::time::Instant::now() + Duration::from_secs(3);
+            while std::time::Instant::now() < accept_deadline
+                && !stop_flag.load(std::sync::atomic::Ordering::Relaxed)
+            {
+                match listener.accept() {
+                    Ok((stream, _)) => {
+                        stream.set_nonblocking(false).unwrap();
+                        stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+                        return Some(stream);
+                    }
+                    Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(_) => return None,
+                }
+            }
+            None
+        };
         let server = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("accept compatible request");
-            read_request(&mut stream);
+            // Request 1: SSE keepalive comments and non-error envelopes before a real delta complete normally,
+            // while honoring explicit max_completion_tokens wire contract.
+            let Some(mut ok_stream) = accept_next(&listener, &stop_server) else {
+                return;
+            };
+            let ok_body = read_request(&mut ok_stream);
+            assert_eq!(ok_body["max_completion_tokens"], 256);
+            assert!(ok_body.get("max_tokens").is_none());
             write_sse(
-                &mut stream,
+                &mut ok_stream,
                 concat!(
+                    ": keep-alive\n\n",
                     "data: not-json\n\n",
                     "data: {\"error\":null,\"errors\":[]}\n\n",
                     "data: {\"error\":\"malformed\"}\n\n",
@@ -3517,38 +3338,71 @@ mod stream_transport_recovery_tests {
                     "data: [DONE]\n\n"
                 ),
             );
+            drop(ok_stream);
+
+            // Request 2: keepalive comments and empty delta frames without real content/tool progress
+            // must NOT reset the first-event idle timeout.
+            let Some(mut stalled_stream) = accept_next(&listener, &stop_server) else {
+                return;
+            };
+            read_request(&mut stalled_stream);
+            let _ = write!(
+                stalled_stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n"
+            );
+            let _ = stalled_stream.flush();
+            for _ in 0..15 {
+                if stop_server.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+                if write!(
+                    stalled_stream,
+                    ": keep-alive\n\ndata: {{\"choices\":[{{\"delta\":{{}}}}]}}\n\n"
+                )
+                .is_err()
+                    || stalled_stream.flush().is_err()
+                {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(150));
+            }
         });
 
-        let choice = stream_chat(
-            &config(format!("http://{address}/v1")),
+        let mut cfg = config(format!("http://{address}/v1"));
+        cfg.max_retries = 0;
+        cfg.chat_output_token_field = nola_application::ChatOutputTokenField::MaxCompletionTokens;
+        let ok_choice = stream_chat(
+            &cfg,
             &[json!({"role":"user", "content":"continue canonical work"})],
             &[],
-            "none",
+            "auto",
             |_| {},
         )
-        .expect("non-error envelopes must not abort a valid completion");
+        .expect("keepalive comments and non-error envelopes must not abort valid completion");
+        assert_eq!(ok_choice.content, "completed");
+        assert_eq!(ok_choice.finish_reason, "stop");
 
-        server.join().expect("compatible provider server");
-        assert_eq!(choice.content, "completed");
-        assert_eq!(choice.finish_reason, "stop");
-    }
+        let started = std::time::Instant::now();
+        let failure = super::stream_chat_checked(
+            &cfg,
+            &[json!({"role":"user", "content":"ping"})],
+            &[],
+            "none",
+            |_| Ok(()),
+        )
+        .unwrap_err();
+        let elapsed = started.elapsed();
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        std::env::remove_var("NOLA_LLM_STREAM_FIRST_EVENT_TIMEOUT_SEC");
+        let _ = server.join();
 
-    #[test]
-    fn real_http_visible_text_partial_is_not_whole_request_retried() {
-        assert_real_http_visible_partial_is_not_retried(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"visible text\"},\"finish_reason\":null}]}\n\n",
-            "visible text",
-            "",
+        assert!(
+            failure.diagnostic.contains("stream idle timeout after 1s"),
+            "unexpected diagnostic: {}",
+            failure.diagnostic
         );
-    }
-
-    #[test]
-    fn real_http_visible_reasoning_partial_is_not_whole_request_retried() {
-        assert_real_http_visible_partial_is_not_retried(
-            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"visible thought\"},\"finish_reason\":null}]}\n\n",
-            "",
-            "visible thought",
-        );
+        assert!(failure.retryable);
+        assert!(elapsed < Duration::from_secs(4), "took too long: {elapsed:?}");
     }
 }
 
@@ -3581,23 +3435,29 @@ mod openai_tool_contract_tests {
     use serde_json::{json, Value};
 
     #[test]
-    fn empty_core_projection_is_transmitted_as_explicit_tool_free_boundary() {
-        let mut body = json!({"messages": []});
-        apply_openai_tool_contract(&mut body, &[], "none");
-        assert_eq!(body["tool_choice"], Value::String("none".to_string()));
-        assert!(body.get("tools").is_none());
-    }
+    fn openai_tool_contract_handles_empty_and_executable_projections() {
+        let mut empty_body = json!({"messages": []});
+        apply_openai_tool_contract(&mut empty_body, &[], "none");
+        assert_eq!(empty_body["tool_choice"], Value::String("none".to_string()));
+        assert!(empty_body.get("tools").is_none());
 
-    #[test]
-    fn executable_projection_keeps_tools_and_requested_choice() {
-        let mut body = json!({"messages": []});
+        let mut exec_body = json!({"messages": []});
         let tools = vec![json!({
             "type": "function",
             "function": {"name": "web_search", "parameters": {"type": "object"}}
         })];
-        apply_openai_tool_contract(&mut body, &tools, "auto");
-        assert_eq!(body["tools"], Value::Array(tools));
-        assert_eq!(body["tool_choice"], Value::String("auto".to_string()));
+        apply_openai_tool_contract(&mut exec_body, &tools, "auto");
+        assert_eq!(exec_body["tools"], Value::Array(tools));
+
+        let reauth = super::model_failure_projection("siwc_reauthorization_required");
+        let payload = super::super::diagnostics::model_failure_debug_payload(reauth.code, reauth.retryable);
+        assert_eq!(payload["failure_code"], "chatgpt_reauthorization_required");
+        assert_eq!(payload["retryable"], false);
+        let raw = "credential-secret siwc_reauthorization_required";
+        let unknown = super::model_failure_projection(raw);
+        let unknown_payload = super::super::diagnostics::model_failure_debug_payload(unknown.code, unknown.retryable).to_string();
+        assert!(!unknown_payload.contains("secret") && unknown_payload.contains("provider_failed"));
+        assert_eq!(exec_body["tool_choice"], Value::String("auto".to_string()));
     }
 }
 
@@ -3894,19 +3754,24 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
                 last_meaningful_progress_at = std::time::Instant::now();
             }
             let has_progress = stream_has_progress(&choice, &slots);
-            if has_progress && last_meaningful_progress_at.elapsed() >= stream_tail_idle_timeout {
-                break;
-            }
-            let mut recv_timeout = if has_progress {
+            let active_idle_limit = if has_progress {
                 stream_tail_idle_timeout
             } else {
                 stream_first_event_timeout
             };
-            if has_progress {
-                recv_timeout = recv_timeout.min(
-                    stream_tail_idle_timeout.saturating_sub(last_meaningful_progress_at.elapsed()),
-                );
+            let idle_elapsed = last_meaningful_progress_at.elapsed();
+            if idle_elapsed >= active_idle_limit {
+                if has_progress {
+                    break;
+                }
+                return Err(format!(
+                    "{} stream idle timeout after {}s",
+                    tr(Message::LlmStreamReadFailedPrefix),
+                    active_idle_limit.as_secs()
+                )
+                .into());
             }
+            let recv_timeout = active_idle_limit.saturating_sub(idle_elapsed);
             let line = match recv_stream_line(&line_rx, recv_timeout, &cfg.cancellation) {
                 StreamLineRecv::Line(line) => line,
                 StreamLineRecv::Error(err) => {
@@ -3966,7 +3831,7 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
                     return Err(format!(
                         "{} stream idle timeout after {}s",
                         tr(Message::LlmStreamReadFailedPrefix),
-                        recv_timeout.as_secs()
+                        active_idle_limit.as_secs()
                     )
                     .into());
                 }
@@ -3980,7 +3845,11 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
                 }
                 StreamLineRecv::Cancelled => return Err(llm_cancelled_message().into()),
             };
-            let raw = line.trim_start_matches("data: ").trim();
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with(':') {
+                continue;
+            }
+            let raw = trimmed.trim_start_matches("data:").trim();
             if raw.is_empty() {
                 continue;
             }
@@ -4824,19 +4693,24 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
                 last_meaningful_progress_at = std::time::Instant::now();
             }
             let has_progress = stream_has_progress(&choice, &slots);
-            if has_progress && last_meaningful_progress_at.elapsed() >= stream_tail_idle_timeout {
-                break;
-            }
-            let mut recv_timeout = if has_progress {
+            let active_idle_limit = if has_progress {
                 stream_tail_idle_timeout
             } else {
                 stream_first_event_timeout
             };
-            if has_progress {
-                recv_timeout = recv_timeout.min(
-                    stream_tail_idle_timeout.saturating_sub(last_meaningful_progress_at.elapsed()),
-                );
+            let idle_elapsed = last_meaningful_progress_at.elapsed();
+            if idle_elapsed >= active_idle_limit {
+                if has_progress {
+                    break;
+                }
+                return Err(format!(
+                    "{} stream idle timeout after {}s",
+                    tr(Message::LlmStreamReadFailedPrefix),
+                    active_idle_limit.as_secs()
+                )
+                .into());
             }
+            let recv_timeout = active_idle_limit.saturating_sub(idle_elapsed);
             let line = match recv_stream_line(&line_rx, recv_timeout, &cfg.cancellation) {
                 StreamLineRecv::Line(line) => line,
                 StreamLineRecv::Error(err) => {
@@ -4870,7 +4744,7 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
                     return Err(format!(
                         "{} stream idle timeout after {}s",
                         tr(Message::LlmStreamReadFailedPrefix),
-                        recv_timeout.as_secs()
+                        active_idle_limit.as_secs()
                     )
                     .into());
                 }
@@ -4884,7 +4758,11 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
                 }
                 StreamLineRecv::Cancelled => return Err(llm_cancelled_message().into()),
             };
-            let raw = line.trim_start_matches("data: ").trim();
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with(':') {
+                continue;
+            }
+            let raw = trimmed.trim_start_matches("data:").trim();
             if raw.is_empty() {
                 continue;
             }

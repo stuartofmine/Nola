@@ -171,13 +171,35 @@ fn private_runtime_lost_savepoint_is_pending_not_business_rejection() {
     let request=nola_application::expert_peer::PeerExchangeInput{source_context_id:"parent".into(),source_run_id:run,call_id:"saved-main-call".into(),
         target_participant_id:input.selected_participants[0].participant_id.clone(),kind:"request".into(),text:"Check one part".into(),in_reply_to:None};
     let preview=nola_application::expert_peer::preview(&mut store,&request,&authority()).unwrap();
+    let mut mistyped = request.clone();
+    mistyped.call_id = "mistyped-target-call".into();
+    mistyped.target_participant_id = "7117E4C8-81D1-4D83-850A-C93977C13DFC".into();
+    let preview_err = nola_application::expert_peer::preview(&mut store, &mistyped, &authority()).unwrap_err();
+    assert!(preview_err.contains("room_participant_not_found"), "{preview_err}");
+    assert!(preview_err.contains("7117E4C8-81D1-4D83-850A-C93977C13DFC"), "{preview_err}");
+    assert!(preview_err.contains("available_participants"), "{preview_err}");
+    assert!(preview_err.contains(&input.selected_participants[0].participant_id), "{preview_err}");
+    assert!(preview_err.contains(&input.selected_participants[1].participant_id), "{preview_err}");
     let a=authority();
     let context=HostExpertTemplateCaptureContext{actor:a.actor,request_host_id:a.request_host_id,builtins:vec![],selections:preview.participants.iter().map(|p|HostExpertTemplateSelection{
         context_conversation_id:p.participant.context_conversation_id.clone(),context_configuration_revision:p.context_configuration_revision,
         model_profile:nola_host_protocol::HostModelProfileReference{profile_id:p.model_declaration.profile_id.clone(),admitted_revision:p.model_declaration.profile_revision},
         source:HostExpertTemplateSelectionSource::NoTemplate,template_id:None,host_user_instructions:vec![]}).collect()};
-    let operation=HostExpertTemplateOperation::AdmitPeer{input:request,context};
+    let operation=HostExpertTemplateOperation::AdmitPeer{input:request,context:context.clone()};
     let mut runtime = host_runtime(store, &path);
+    match runtime.execute_host_expert_template_operation(
+        "trusted-host",
+        "mistyped-target-request",
+        HostExpertTemplateOperation::AdmitPeer { input: mistyped, context },
+    ) {
+        Err(HostExpertOperationError::Rejected { message, .. }) => {
+            assert!(message.contains("room_participant_not_found"), "{message}");
+            assert!(message.contains("7117E4C8-81D1-4D83-850A-C93977C13DFC"), "{message}");
+            assert!(message.contains("available_participants"), "{message}");
+            assert!(message.contains(&input.selected_participants[0].participant_id), "{message}");
+        }
+        other => panic!("expected rejected host operation, got {other:?}"),
+    }
     let fixture = rusqlite::Connection::open(&path).unwrap();
     fixture.execute_batch("CREATE TRIGGER abort_expert_parent BEFORE INSERT ON product_settings
         WHEN NEW.key LIKE 'expert_peer_private/v1/exchange/%' BEGIN SELECT RAISE(ROLLBACK, 'actual transaction aborted'); END;").unwrap();

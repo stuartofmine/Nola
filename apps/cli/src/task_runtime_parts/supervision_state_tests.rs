@@ -21,27 +21,20 @@ mod tests {
     }
 
     #[test]
-    fn task_wait_observes_a_wake_that_precedes_the_block() {
+    fn task_wait_observes_preceding_and_concurrent_structured_runtime_wakes() {
         let observed = task_wake_generation();
         wake_task_waiters();
         let started = Instant::now();
-
         wait_for_task_wake(observed, Duration::from_secs(1));
-
         assert!(started.elapsed() < Duration::from_millis(100));
-    }
 
-    #[test]
-    fn task_wait_blocks_until_a_structured_runtime_wake() {
         let observed = task_wake_generation();
         let notifier = std::thread::spawn(|| {
             std::thread::sleep(Duration::from_millis(30));
             wake_task_waiters();
         });
         let started = Instant::now();
-
         wait_for_task_wake(observed, Duration::from_secs(1));
-
         notifier.join().expect("join task wake notifier");
         assert!(started.elapsed() >= Duration::from_millis(20));
         assert!(started.elapsed() < Duration::from_millis(250));
@@ -562,6 +555,7 @@ mod tests {
         owner_config.tool_settings.project_root = root.clone();
         owner_config.tool_settings.allowed_dirs = vec![root.clone()];
         owner_config.session.session_id = Some("owner-session".to_string());
+        owner_config.session.save_session = true;
 
         let task_id = format!("task-{}", uuid::Uuid::new_v4());
         let now = unix_epoch_millis();
@@ -749,6 +743,131 @@ mod tests {
         assert_eq!(owner_notifications.len(), 1);
         assert_eq!(owner_notifications[0].id, task_id);
 
+        // Session-owned background shell tasks in an external cwd remain visible
+        // only to the owning session across both tool-layer and runtime-task scopes,
+        // while unscoped tasks stay bound to allowed roots.
+        tools::clear_cached_background_tasks();
+        let external = tempfile::tempdir().expect("create external cwd");
+        let ext_task_id = format!("bash-ext-{}", uuid::Uuid::new_v4());
+        let ext_record = crate::store::DbBackgroundTask {
+            process_sandbox: None,
+            terminal: None,
+            id: ext_task_id.clone(),
+            project_root: external.path().to_string_lossy().into_owned(),
+            command: "ls -la".to_string(),
+            cwd: external.path().to_string_lossy().into_owned(),
+            pid: 4242,
+            stdout_path: root.join("ext-out.log").to_string_lossy().into_owned(),
+            stderr_path: root.join("ext-err.log").to_string_lossy().into_owned(),
+            status_path: root.join("ext-status.txt").to_string_lossy().into_owned(),
+            started_at_ms: now + 3,
+            owner_session_id: Some("owner-session".to_string()),
+            output_contract_json: None,
+            sop_invocation: None,
+        };
+        let allowed = vec![root.clone()];
+        assert!(tools::background_record_matches_scope(
+            ext_record.clone(),
+            &allowed,
+            Some("owner-session")
+        ));
+        assert!(!tools::background_record_matches_scope(
+            ext_record.clone(),
+            &allowed,
+            Some("other-session")
+        ));
+        assert!(!tools::background_record_matches_scope(
+            ext_record.clone(),
+            &allowed,
+            None
+        ));
+        let mut unscoped_record = ext_record.clone();
+        unscoped_record.owner_session_id = None;
+        assert!(!tools::background_record_matches_scope(
+            unscoped_record.clone(),
+            &allowed,
+            None
+        ));
+        assert!(tools::background_record_matches_scope(
+            unscoped_record,
+            &[external.path().to_path_buf()],
+            None
+        ));
+
+        reopened
+            .save_background_task(&ext_record)
+            .expect("persist external-cwd background task");
+        assert!(tools::take_background_task_notifications(&allowed, Some("owner-session"))
+            .expect("hydrate active external background task")
+            .is_empty());
+        let ext_metadata = reopened
+            .runtime_task(&ext_task_id)
+            .unwrap()
+            .unwrap()
+            .metadata_json;
+        let ext_attempt = reopened
+            .claim_runtime_task(
+                &ext_task_id,
+                "ext-worker",
+                "ext-gen",
+                "ext-token",
+                now + 4,
+                now + 10_000,
+            )
+            .unwrap()
+            .unwrap();
+        let ext_lease = crate::runtime_task_port::register_runtime_task_attempt(ext_attempt);
+        assert!(reopened
+            .finish_runtime_task_detailed_with_event(
+                &ext_lease,
+                "completed",
+                None,
+                Some("exited(0)"),
+                Some("Shell command finished with exited(0)."),
+                None,
+                None,
+                true,
+                "finished",
+                "completed",
+                Some("background shell finished"),
+                &ext_metadata,
+                now + 5,
+            )
+            .unwrap());
+        let persisted_ext = reopened.runtime_task(&ext_task_id).unwrap().unwrap();
+        assert!(is_shell_runtime_task_kind(&persisted_ext.kind));
+        assert!(task_scope_matches(&owner_config, &persisted_ext));
+        assert!(!task_scope_matches(&other_config, &persisted_ext));
+        let mut unscoped_config = owner_config.clone();
+        unscoped_config.session.session_id = None;
+        assert!(!task_scope_matches(&unscoped_config, &persisted_ext));
+
+        assert!(tools::take_background_task_notifications(&allowed, Some("other-session"))
+            .unwrap()
+            .is_empty());
+        assert!(tools::take_background_task_notifications(&allowed, None)
+            .unwrap()
+            .is_empty());
+        let bg_notifications =
+            tools::take_background_task_notifications(&allowed, Some("owner-session")).unwrap();
+        assert_eq!(bg_notifications.len(), 1);
+        assert_eq!(bg_notifications[0].summary.id, ext_task_id);
+
+        let scoped_owner_ids = list_scoped_runtime_tasks(&owner_config)
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.id)
+            .collect::<Vec<_>>();
+        assert!(scoped_owner_ids.contains(&task_id));
+        assert!(scoped_owner_ids.contains(&ext_task_id));
+        assert!(list_scoped_runtime_tasks(&other_config).unwrap().is_empty());
+        let (_, mailbox_ids) = pending_task_context(&owner_config)
+            .expect("owner session must receive unread mailbox context for both tasks");
+        assert!(mailbox_ids.contains(&task_id));
+        assert!(mailbox_ids.contains(&ext_task_id));
+        assert!(pending_task_context(&other_config).is_none());
+
+        tools::clear_cached_background_tasks();
         std::env::remove_var("NOLA_DB_PATH");
         let _ = std::fs::remove_dir_all(root);
     }

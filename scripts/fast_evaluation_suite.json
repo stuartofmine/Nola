@@ -23,6 +23,7 @@
         "test",
         "--quiet",
         "--test",
+        "core_contracts",
         "agent_prompt_sop_contract"
       ]
     },
@@ -36,6 +37,7 @@
         "test",
         "--quiet",
         "--test",
+        "core_contracts",
         "agent_goal_runtime_checkpoint_contract"
       ]
     },
@@ -49,6 +51,7 @@
         "test",
         "--quiet",
         "--test",
+        "core_contracts",
         "agent_task_handle_contract"
       ]
     },
@@ -62,6 +65,7 @@
         "test",
         "--quiet",
         "--test",
+        "core_contracts",
         "capability_skill_contract"
       ]
     },
@@ -75,6 +79,7 @@
         "test",
         "--quiet",
         "--test",
+        "core_contracts",
         "agent_trace_contract"
       ]
     },
@@ -90,6 +95,7 @@
         "-p",
         "nola_service",
         "--test",
+        "service_suite",
         "goal_idle_cold_restart_e2e"
       ]
     },
@@ -105,6 +111,7 @@
         "-p",
         "nola_service",
         "--test",
+        "service_suite",
         "runtime_task_worker_recovery_e2e"
       ]
     },

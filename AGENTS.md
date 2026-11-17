@@ -56,7 +56,7 @@ Filtered Rust unit tests must select `--lib`; integration tests must select
 `--test <target>`. A bare filter still compiles every integration target and can
 link many large test executables without running them. For example use
 `cargo test -p nola_application --lib model_generation`, or
-`cargo test -p nola_application --test model_connections_e2e`.
+`cargo test -p nola_application --test application_suite model_connections`.
 Use `scripts/test_rust.sh <package> [filter]` for the bounded unit-test default.
 Preview disposable integration runner cleanup with
 `python3 scripts/maintain_build_storage.py`; `--apply` preserves dependencies,

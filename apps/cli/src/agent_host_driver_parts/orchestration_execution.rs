@@ -124,6 +124,83 @@ for line in sys.stdin:
     }
 }
 
+struct ModelEffectDeadlineGuard {
+    signal: Option<std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>>,
+    exceeded: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+
+impl ModelEffectDeadlineGuard {
+    fn arm(
+        deadline_ms: Option<u64>,
+        cancellation: crate::execution_context::ExecutionContext,
+    ) -> Self {
+        let exceeded = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let Some(deadline_ms) = deadline_ms.filter(|value| *value > 0) else {
+            return Self {
+                signal: None,
+                exceeded,
+                worker: None,
+            };
+        };
+        let now_ms = nola_runtime_driver::monotonic_epoch_millis().max(0) as u64;
+        if now_ms >= deadline_ms {
+            exceeded.store(true, std::sync::atomic::Ordering::Release);
+            cancellation.request();
+            return Self {
+                signal: None,
+                exceeded,
+                worker: None,
+            };
+        }
+        let remaining = std::time::Duration::from_millis(deadline_ms - now_ms);
+        let signal = std::sync::Arc::new((
+            std::sync::Mutex::new(false),
+            std::sync::Condvar::new(),
+        ));
+        let worker_signal = std::sync::Arc::clone(&signal);
+        let worker_exceeded = std::sync::Arc::clone(&exceeded);
+        let worker = std::thread::spawn(move || {
+            let (lock, cvar) = &*worker_signal;
+            let Ok(guard) = lock.lock() else {
+                return;
+            };
+            let Ok((guard, _)) = cvar.wait_timeout_while(guard, remaining, |disarmed| !*disarmed)
+            else {
+                return;
+            };
+            if !*guard {
+                worker_exceeded.store(true, std::sync::atomic::Ordering::Release);
+                cancellation.request();
+            }
+        });
+        Self {
+            signal: Some(signal),
+            exceeded,
+            worker: Some(worker),
+        }
+    }
+
+    fn is_exceeded(&self) -> bool {
+        self.exceeded.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
+impl Drop for ModelEffectDeadlineGuard {
+    fn drop(&mut self) {
+        if let Some(signal) = self.signal.take() {
+            let (lock, cvar) = &*signal;
+            if let Ok(mut disarmed) = lock.lock() {
+                *disarmed = true;
+                cvar.notify_all();
+            }
+        }
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
 impl CliAgentHostDriver {
     fn model_target_key(provider: Option<&str>, endpoint: &str, model: &str) -> String {
         format!(
@@ -1211,6 +1288,8 @@ impl CliAgentHostDriver {
             effect_id: request.effect_id.0.clone(),
             registry: std::sync::Arc::clone(&self.active_effect_cancellations),
         };
+        let deadline_guard =
+            ModelEffectDeadlineGuard::arm(request.deadline_ms, model_cancellation.clone());
         let mut llm = self.llm.clone();
         llm.cancellation = model_cancellation;
         if !model_id.trim().is_empty() {
@@ -1689,13 +1768,30 @@ impl CliAgentHostDriver {
                     }
                 }
                 Err(error) => {
+                    let deadline_exceeded =
+                        deadline_guard.is_exceeded() && !self.llm.cancellation.is_requested();
+                    let (code, message, retryable, status) = if deadline_exceeded {
+                        (
+                            "deadline_exceeded".to_string(),
+                            "Model stream exceeded its execution deadline".to_string(),
+                            false,
+                            None,
+                        )
+                    } else {
+                        (
+                            error.code.clone(),
+                            error.display_message(),
+                            error.retryable,
+                            error.status,
+                        )
+                    };
                     crate::llm::log_local_debug_payload(
                         "model_provider_failure",
                         &json!({
                             "type": "model_provider_failure",
-                            "code": error.code,
-                            "status": error.status,
-                            "retryable": error.retryable,
+                            "code": code,
+                            "status": status,
+                            "retryable": retryable,
                             "provider": error.provider,
                             "model": error.model,
                         }),
@@ -1705,10 +1801,10 @@ impl CliAgentHostDriver {
                         &mut sequence,
                         HostResponse::Failed {
                             error: HostError {
-                                code: error.code.clone(),
-                                message: error.display_message(),
-                                retryable: error.retryable,
-                                http_status: error.status,
+                                code,
+                                message,
+                                retryable,
+                                http_status: status,
                             },
                         },
                         emit,
@@ -4106,5 +4202,57 @@ mod expert_leaf_catalog_tests {
         assert!(driver.catalog.capabilities.contains_key("request_user_input"));
         assert!(driver.capability_catalog.builtin_tools.contains("request_user_input"));
         assert!(driver.capability_catalog.builtin_tools.contains("delegate_expert"));
+    }
+
+    #[test]
+    fn model_effect_deadline_guard_cancels_stalled_stream_without_marking_user_cancellation() {
+        let parent_cancellation = crate::execution_context::ExecutionContext::default();
+
+        // Unbounded (None) and normal early-drop guards must never fire or mark cancellation.
+        let unbounded_child = parent_cancellation.child();
+        let unbounded_guard = ModelEffectDeadlineGuard::arm(None, unbounded_child.clone());
+        assert!(!unbounded_guard.is_exceeded());
+        assert!(!unbounded_child.is_requested());
+        drop(unbounded_guard);
+
+        let completed_child = parent_cancellation.child();
+        let now_ms = nola_runtime_driver::monotonic_epoch_millis().max(0) as u64;
+        let completed_guard =
+            ModelEffectDeadlineGuard::arm(Some(now_ms + 90), completed_child.clone());
+        assert!(!completed_guard.is_exceeded());
+        drop(completed_guard);
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        assert!(
+            !completed_child.is_requested(),
+            "dropping the deadline guard on normal completion must disarm the timer"
+        );
+        assert!(!parent_cancellation.is_requested());
+
+        // Already-expired and active stalled deadlines cancel only the child effect token.
+        let expired_child = parent_cancellation.child();
+        let now_ms = nola_runtime_driver::monotonic_epoch_millis().max(0) as u64;
+        let expired_guard = ModelEffectDeadlineGuard::arm(
+            Some(now_ms.saturating_sub(1).max(1)),
+            expired_child.clone(),
+        );
+        assert!(expired_guard.is_exceeded());
+        assert!(expired_child.is_requested());
+        assert!(!parent_cancellation.is_requested());
+
+        let model_cancellation = parent_cancellation.child();
+        let now_ms = nola_runtime_driver::monotonic_epoch_millis().max(0) as u64;
+        let guard = ModelEffectDeadlineGuard::arm(Some(now_ms + 80), model_cancellation.clone());
+        let started = std::time::Instant::now();
+        while !model_cancellation.is_requested()
+            && started.elapsed() < std::time::Duration::from_secs(2)
+        {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(model_cancellation.is_requested());
+        assert!(guard.is_exceeded());
+        assert!(
+            !parent_cancellation.is_requested(),
+            "effect deadline must not mark user turn cancellation"
+        );
     }
 }

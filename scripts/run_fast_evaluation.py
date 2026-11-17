@@ -74,6 +74,28 @@ def _test_target(command: list[str]) -> str | None:
         return None
 
 
+def _test_filters(command: list[str]) -> list[str]:
+    try:
+        index = command.index("--test")
+    except ValueError:
+        return []
+    filters: list[str] = []
+    skip_next = False
+    for arg in command[index + 2:]:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == "--":
+            break
+        if arg in {"-p", "--package", "--manifest-path", "--features", "--jobs", "-j"}:
+            skip_next = True
+            continue
+        if arg.startswith("-"):
+            continue
+        filters.append(arg)
+    return filters
+
+
 def _reported_peak_rss(output: str) -> int | None:
     matches = re.findall(r"NOLA_PERF_PEAK_RSS_BYTES=(\d+)", output)
     return int(matches[-1]) if matches else None
@@ -90,8 +112,12 @@ def _case_metrics(case: dict[str, Any]) -> dict[str, Any]:
         return {}
 
 
-def _run_direct_test(binary: Path, timeout: float) -> tuple[int, float, int | None, str]:
-    measured, flavor = _time_command([str(binary), "--quiet"])
+def _run_direct_test(
+    binary: Path,
+    timeout: float,
+    filters: list[str] | None = None,
+) -> tuple[int, float, int | None, str]:
+    measured, flavor = _time_command([str(binary), "--quiet", *(filters or [])])
     started = time.monotonic()
     completed = _run_bounded(
         measured,
@@ -260,7 +286,7 @@ def run_case(case: dict[str, Any], remaining: float) -> CaseResult:
             else:
                 direct_timeout = max(1.0, timeout - elapsed)
                 direct_code, direct_elapsed, runtime_peak, direct_output = _run_direct_test(
-                    binary, direct_timeout
+                    binary, direct_timeout, _test_filters(command)
                 )
                 elapsed += direct_elapsed
                 combined = "\n".join(part for part in [combined, direct_output] if part)
