@@ -522,6 +522,28 @@ final class MacCanonicalStoreEndToEndTests: XCTestCase {
         ), ["--database", "/tmp/product.db", "--socket", "/tmp/service.sock", "--parent-pid", "42"])
     }
 
+    func testStartupLockMatchesAgentHostPathAndReleasesOnClose() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("nola-startup-lock-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let socket = root.appendingPathComponent("service.sock")
+        let held = try MacApplicationServiceSupervisor.acquireStartupLock(for: socket)
+        let contender = open(root.appendingPathComponent("service.startup.lock").path, O_RDWR)
+        guard contender >= 0 else {
+            close(held)
+            return XCTFail("Agent Host's startup lock path was not created")
+        }
+        defer { close(contender) }
+        let firstResult = flock(contender, LOCK_EX | LOCK_NB)
+        let firstError = errno
+        close(held)
+        XCTAssertEqual(firstResult, -1)
+        XCTAssertEqual(firstError, EWOULDBLOCK)
+        XCTAssertEqual(flock(contender, LOCK_EX | LOCK_NB), 0)
+    }
+
     func testOnlyDirectStructuredStartupFailureEnablesIncompatibleStoreRecovery() throws {
         let envelope = #"{"type":"nola.service.startup_failure","protocol_version":1,"code":"incompatible_canonical_store","detail":"schema 11"}"#
         let classified = try XCTUnwrap(
@@ -583,7 +605,7 @@ final class MacCanonicalStoreEndToEndTests: XCTestCase {
     }
 
     func testNativeClientUsesSharedApplicationServiceSocketProtocol() {
-        let databaseURL = URL(fileURLWithPath: "/tmp/nola socket contract/product.db")
+        let databaseURL = URL(fileURLWithPath: "/private/tmp/nola socket contract/product.db")
         var hash: UInt64 = 14_695_981_039_346_656_037
         for byte in databaseURL.standardizedFileURL.path.utf8 {
             hash ^= UInt64(byte)
@@ -603,6 +625,15 @@ final class MacCanonicalStoreEndToEndTests: XCTestCase {
             MacApplicationServiceClient.serviceClientID(for: databaseURL),
             String(format: "nola-local-%016llx", hash)
         )
+    }
+
+    func testDatabaseSocketIdentityResolvesAliasBeforeCreation() {
+        let alias = URL(fileURLWithPath: "/tmp/nola socket contract/missing/product.db")
+        let canonical = URL(fileURLWithPath: "/private/tmp/nola socket contract/missing/product.db")
+        XCTAssertEqual(MacApplicationServiceClient.serviceSocketURL(for: alias),
+                       MacApplicationServiceClient.serviceSocketURL(for: canonical))
+        XCTAssertEqual(MacApplicationServiceClient.serviceClientID(for: alias),
+                       MacApplicationServiceClient.serviceClientID(for: canonical))
     }
 
     func testModelProfileSelectionAndRuntimeSurviveRealCoreABIReopen() throws {

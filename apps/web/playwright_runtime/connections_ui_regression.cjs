@@ -10,6 +10,8 @@ const fs = require('node:fs');
             let selected=false, failRead=false;
             page.on('pageerror', e=>errors.push(e.message));
             const inventory=()=>({accounts:[], selections:selected?[{connection_id:'fixture',catalog_key:'chat_completions:test',enabled:true,selected:false}]:[], connections:[{revision:1, document:{format_version:1, connection:{id:'fixture',display_name:'隔离连接 · 长名称的模型服务用于验证文字换行',base_url:'https://example.invalid/very-long-endpoint-address/v1',protocols:['chat_completions'],source:'manual',source_id:null,account_id:null,enabled:true},catalog:{observed_at_ms:1,models:[{model_id:'test',display_name:'长模型名称 Model for writing and reasoning',protocol:'chat_completions',context_window:131072,modalities:['text'],reasoning_levels:[]}]}}}]});
+            await page.route('**/api/web/session', r => r.fulfill({json:{authenticated:true,sessionAuthenticated:false,localTrust:true,hostId:'connection-ui-fixture'}}));
+            await page.route('**/api/chat/conversations', r => r.fulfill({json:{conversations:[]}}));
             await page.route('**/api/model-gateway/access', r=>r.fulfill({json:{revision:1,enabled:false}}));
             await page.route('**/api/model-connections', async route=>{
                 if(route.request().method()==='POST') {

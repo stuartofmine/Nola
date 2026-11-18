@@ -123,14 +123,24 @@ nonisolated struct MacLocalAgentRunRequest: Sendable {
         self.expectedConfigurationRevision = expectedConfigurationRevision
         self.expectedParentMessageID = expectedParentMessageID
         let canonicalAssistantMessageID = "\(submissionID):assistant"
+        let automationPrefix = "automation-submission-"
+        let automationKey = submissionID.dropFirst(automationPrefix.count)
+        // A scheduled occurrence uses the identities issued by Core. They
+        // also need to survive cold resume with the original conversation.
+        let matchesAutomationIdentity = inputOrigin == "scheduled_action"
+            && submissionID.hasPrefix(automationPrefix)
+            && automationKey.utf8.count == 64
+            && automationKey.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
+            && conversationID == "automation-\(automationKey)"
+            && assistantMessageID == "automation-assistant-\(automationKey)"
         if let assistantMessageID,
-           assistantMessageID != canonicalAssistantMessageID {
+           assistantMessageID != canonicalAssistantMessageID, !matchesAutomationIdentity {
             throw MacLocalAgentContractError.assistantMessageIdentityMismatch(
                 expected: canonicalAssistantMessageID,
                 actual: assistantMessageID
             )
         }
-        self.assistantMessageID = canonicalAssistantMessageID
+        self.assistantMessageID = assistantMessageID ?? canonicalAssistantMessageID
         self.prompt = prompt
         self.contextComponents = contextComponents
         self.projectURL = projectURL

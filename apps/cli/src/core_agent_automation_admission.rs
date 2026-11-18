@@ -7,7 +7,7 @@ fn actual_automation_execution_spec(
     config: &HostInvocationRequest,
 ) -> Result<Option<nola_domain::automation_execution::AutomationExecutionSpec>, String> {
     use nola_domain::automation_execution::{
-        AutomationModelSelection, AutomationPermissionProfile,
+        AutomationExecutionScope, AutomationModelSelection, AutomationPermissionProfile,
     };
     let Some(declared) = &config.session.automation_execution_spec else {
         if config.session.automation_execution_lease.is_some() || !config.session.automation_artifacts.is_empty() {
@@ -32,13 +32,19 @@ fn actual_automation_execution_spec(
     {
         return Err("automation permission profile cannot be overridden by separate grants".into());
     }
+    let AutomationExecutionScope::LocalWorkspace { root } = &declared.execution_scope else {
+        return Err("desktop automation requires a local workspace".into());
+    };
+    let declared_root = std::fs::canonicalize(root)
+        .map_err(|error| format!("automation workspace cannot be resolved: {error}"))?;
+    if declared_root != config.tool_settings.project_root {
+        return Err("automation workspace differs from actual Host workspace".into());
+    }
+    // Keep the stored spelling for the admission digest after checking the
+    // same physical directory that the Host normalized at launch.
     let actual = nola_domain::automation_execution::AutomationExecutionSpec {
         prompt: config.input.message.clone(),
-        execution_scope: nola_domain::automation_execution::AutomationExecutionScope::LocalWorkspace { root: config
-            .tool_settings.project_root
-            .to_str()
-            .ok_or("automation workspace is not UTF-8")?
-            .to_string() },
+        execution_scope: declared.execution_scope.clone(),
         permission_profile: match profile {
             crate::permissions::PermissionProfile::Cautious => {
                 AutomationPermissionProfile::Cautious
@@ -322,6 +328,31 @@ mod automation_actual_config_tests {
             mutate(&mut changed);
             assert!(actual_automation_execution_spec(&changed).is_err());
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn actual_spec_preserves_the_declared_path_after_checking_workspace_identity() {
+        let _environment = crate::store::test_env_lock();
+        let directory = tempfile::tempdir().unwrap();
+        let alias = directory.path().join("workspace-link");
+        let workspace = directory.path().join("workspace");
+        std::fs::create_dir(&workspace).unwrap();
+        std::os::unix::fs::symlink(&workspace, &alias).unwrap();
+
+        let mut config = fixture();
+        config.tool_settings.project_root = workspace.canonicalize().unwrap();
+        config.tool_settings.allowed_dirs = vec![config.tool_settings.project_root.clone()];
+        config.session.automation_execution_spec.as_mut().unwrap().execution_scope =
+            AutomationExecutionScope::LocalWorkspace { root: alias.to_str().unwrap().into() };
+
+        assert_eq!(
+            actual_automation_execution_spec(&config).unwrap(),
+            config.session.automation_execution_spec
+        );
+        config.tool_settings.project_root = directory.path().canonicalize().unwrap();
+        config.tool_settings.allowed_dirs = vec![config.tool_settings.project_root.clone()];
+        assert!(actual_automation_execution_spec(&config).is_err());
     }
 
     #[test]

@@ -1,4 +1,14 @@
 fn read_file(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
+    let expected_json = match args.get("expected_json") {
+        None => None,
+        Some(Value::String(expected)) if args.get("operation_kind").and_then(Value::as_str) == Some("validate") => {
+            match serde_json::from_str::<Value>(expected) {
+                Ok(value) => Some(value),
+                Err(_) => return error("expected_json must contain one valid JSON value".into()),
+            }
+        }
+        Some(_) => return error("expected_json requires operation_kind=validate and a JSON string".into()),
+    };
     let path = tool_try!(required_string(args, "path"));
     if let Ok(reference) = ctx.output_store.resolve(Path::new(&path)) {
         let mut outcome = error_data_with_display(json!({
@@ -35,7 +45,7 @@ fn read_file(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
     }
     let count = tool_try!(media_file.read(&mut header).map_err(|err| error(format!("Read failed: {err}"))));
     let header = &header[..count];
-    if header.starts_with(b"%PDF-") && args.contains_key("pdf_page") {
+    if header.starts_with(b"%PDF-") && args.contains_key("pdf_page") && expected_json.is_none() {
         let page = tool_try!(args.get("pdf_page").and_then(Value::as_u64)
             .filter(|page| (1..=500).contains(page))
             .ok_or_else(|| error("pdf_page must be an integer from 1 to 500".into())));
@@ -47,6 +57,9 @@ fn read_file(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
         else if header.starts_with(b"RIFF") && header.get(8..12) == Some(b"WEBP") { Some("image/webp") }
         else if header.starts_with(b"%PDF-") && args.get("visual").and_then(Value::as_bool) == Some(true) { Some("application/pdf") }
         else { None };
+    if expected_json.is_some() && (mime.is_some() || header.starts_with(b"%PDF-")) {
+        return error("JSON validation requires a complete UTF-8 text file".into());
+    }
     if let Some(mime) = mime {
         const LIMIT: u64 = 30 * 1024 * 1024;
         let mut bytes = header.to_vec();
@@ -87,6 +100,40 @@ fn read_file(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
     ));
     if observed.presentation_exhausted {
         return error("File-read headers/continuation exceed the presentation budget; select a shorter authorized path or a bounded source inspection method. No file content was returned.".into());
+    }
+    if let Some(expected) = expected_json {
+        use nola_host_protocol::tool_result::{
+            ExecutionCheckKind, ExecutionReceipt, ExecutionState, PostconditionCheck,
+        };
+        let Some(observation) = observed.observation.as_ref()
+            .filter(|observation| observation.coverage == FileReadCoverage::Full) else {
+            return error("JSON validation requires a complete UTF-8 read; no check was recorded".into());
+        };
+        let Some(content) = observed.raw_content.as_deref() else {
+            return error("JSON validation cannot use extracted document text".into());
+        };
+        let Ok(uri) = url::Url::from_file_path(&target) else {
+            return error("JSON validation could not identify the file resource".into());
+        };
+        let passed = serde_json::from_str::<Value>(content).is_ok_and(|actual| actual == expected);
+        let receipt = ExecutionReceipt {
+            local_stop: None,
+            state: ExecutionState::Completed,
+            effects: Vec::new(),
+            checks: vec![PostconditionCheck {
+                kind: ExecutionCheckKind::Postcondition,
+                resource_uri: uri.to_string(),
+                version: format!("sha256:{}", observation.version.sha256),
+                predicate: "json_value_matches_expected".into(),
+                passed,
+            }],
+        };
+        let outcome = if passed {
+            ok("JSON value matches expected_json".into(), format!("Validated {}", target.display()))
+        } else {
+            error("File does not contain the expected JSON value".into())
+        };
+        return outcome.with_execution(receipt);
     }
     let data = json!({
         "path": target.to_string_lossy(),

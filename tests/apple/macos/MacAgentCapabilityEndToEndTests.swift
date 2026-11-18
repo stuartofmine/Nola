@@ -3,6 +3,7 @@
 // - Purpose: Exercises Mac chat capability routing and durable memory through the real Agent Host process.
 
 import AppKit
+import CryptoKit
 import Darwin
 import Foundation
 import SwiftUI
@@ -30,9 +31,12 @@ final class MacAgentCapabilityEndToEndTests: XCTestCase {
         let workspace = try makeWorkspace("cold-owned-run")
         defer { try? FileManager.default.removeItem(at: workspace) }
         let target = workspace.appendingPathComponent("cold-written.txt")
+        let originalFile = "ORIGINAL_CONTENT"
+        try originalFile.write(to: target, atomically: true, encoding: .utf8)
+        let originalDigest = SHA256.hash(data: Data(originalFile.utf8)).map { String(format: "%02x", $0) }.joined()
         let server = try MacAgentCapabilityMockServer(workspace: workspace, steps: [
             ["message_contains": ["COLD_PERMISSION_WRITE"], "required_tools": ["write_file"], "tool_name": "write_file",
-             "tool_args": ["path": target.path, "content": "COLD_RUN_CONTINUED"]],
+             "tool_args": ["path": target.path, "content": "COLD_RUN_CONTINUED", "expected_sha256": originalDigest]],
             ["message_contains": ["cold-written.txt"], "required_tools": ["read_file"], "tool_name": "read_file",
              "tool_args": ["path": target.path, "operation_kind": "validate"]],
             ["message_contains": ["COLD_RUN_CONTINUED"], "content": "COLD_RECOVERY_DONE"],
@@ -44,21 +48,26 @@ final class MacAgentCapabilityEndToEndTests: XCTestCase {
         let source: [String: Any] = ["schemaVersion": 1, "endpointID": "cold-endpoint",
             "endpointName": "Cold fixture", "baseURL": server.endpoint, "endpointEnabled": true,
             "endpointOrder": 0, "modelEnabled": true, "modelOrder": 0, "priority": 100,
-            "capabilities": ["chat"], "wireProtocol": "chat_completions", "credentialAccount": "cold-key"]
+            "capabilities": ["chat"], "wireProtocol": "chat_completions", "credentialAccount": "cold-key",
+            "executionCapabilities": ["toolCalls": true, "imageInput": false, "reasoning": false,
+                "samplingParameters": false, "samplingRequiresNoReasoning": false]]
+        var fixtureParameters = ModelParameters()
+        fixtureParameters.maxOutputTokens = 1024
         try port.upsertModelProfile(MacCanonicalModelProfile(id: "cold-profile", displayName: "Cold fixture",
             provider: "openai-compatible", modelName: "nola-capability-e2e", runtime: "remote",
             sourceJSON: String(decoding: try JSONSerialization.data(withJSONObject: source), as: UTF8.self),
-            parametersJSON: "{}", selected: false, enabled: true, revision: 0,
+            parametersJSON: String(decoding: try JSONEncoder().encode(fixtureParameters), as: UTF8.self), selected: false, enabled: true, revision: 0,
             createdAtMs: 1, updatedAtMs: 1, deletedAtMs: nil))
         let keys = MacLocalAgentCredentialGateTests.Credentials()
         keys.set("cold-key", "local-e2e-key")
         let credentials = MacAppleChatConfigurationStore(applicationPort: port, credentialReader: { keys.read($0) })
+        let profile = try XCTUnwrap(port.modelProfile("cold-profile"))
         let original = MacAgentHostRuntime(credentialStore: credentials)
         var preparedRequest = try MacLocalAgentRunRequest(conversationID: "cold-owner-\(UUID())",
-            prompt: "COLD_PERMISSION_WRITE: create cold-written.txt and validate it", projectURL: workspace,
+            prompt: "COLD_PERMISSION_WRITE: overwrite cold-written.txt and validate it", projectURL: workspace,
             attachmentURLs: [], authorizedWorkspaceURLs: [workspace], modelID: "nola-capability-e2e",
-            modelProfileID: "cold-profile", endpoint: server.endpoint, apiKey: "local-e2e-key",
-            contextWindowTokens: 32768, inputOrigin: inputOrigin, permissionMode: .cautious,
+            modelProfileID: profile.id, modelProfileRevision: Int64(profile.revision), endpoint: server.endpoint, apiKey: "local-e2e-key",
+            contextWindowTokens: 131072, modelParameters: fixtureParameters, modelExecutionCapabilities: .init(toolCalls: true), inputOrigin: inputOrigin, permissionMode: .cautious,
             databaseURLOverride: environment.databaseURL, appEnvironment: environment, applicationPort: port)
         if inputOrigin == "scheduled_action" {
             // Match scheduled launch's workspace-only scope. Origin does not
@@ -74,8 +83,10 @@ final class MacAgentCapabilityEndToEndTests: XCTestCase {
         }
         var originalPermissionID: String?
         var killedOwnedHost = false
+        var observedEvents: [MacLocalAgentEvent] = []
         do {
             for try await event in await original.run(request) {
+                observedEvents.append(event)
                 if let permission = event.permissionRequest {
                     originalPermissionID = permission.id
                     let ownedPID = await original.ownedProcessIdentifier(conversationID: request.conversationID,
@@ -95,9 +106,10 @@ final class MacAgentCapabilityEndToEndTests: XCTestCase {
         watchdog.cancel()
         await watchdog.value
         guard originalPermissionID != nil, killedOwnedHost else {
-            return XCTFail("Fixture did not reach and kill the permission-owning Host")
+            let terminal = try port.canonicalRunTerminal(conversationID: request.conversationID, runID: request.submissionID)
+            return XCTFail("Fixture did not reach and kill the permission-owning Host. Result: \(String(describing: terminal?.result.value.payload)). Events: \(allEventText(observedEvents))")
         }
-        XCTAssertFalse(FileManager.default.fileExists(atPath: target.path))
+        XCTAssertEqual(try String(contentsOf: target, encoding: .utf8), originalFile)
         let reopened = try MacApplicationPort(databaseURL: environment.databaseURL)
         XCTAssertEqual(try reopened.activeRunIdentity(conversationID: request.conversationID)?.runID, request.submissionID)
         let before = try XCTUnwrap(reopened.loadExactRunInvocation(conversationID: request.conversationID,
@@ -583,10 +595,16 @@ final class MacAgentCapabilityEndToEndTests: XCTestCase {
         XCTAssertGreaterThan(compactionWindow, 0)
         defer { try? FileManager.default.removeItem(at: workspace) }
         let conversationID = "mac-real-compaction-\(UUID().uuidString)"
-        let databaseURL = URL(fileURLWithPath: environment["NOLA_DB_PATH"] ?? workspace.appendingPathComponent("state/nola.db").path)
+        // Only the interrupted-summary runner inspects a shared evidence
+        // database after XCTest. Ordinary live tests own their Store.
+        let databaseURL = environment["NOLA_REAL_COMPACTION_REASONING_NONE"] == "1"
+            ? URL(fileURLWithPath: try XCTUnwrap(environment["NOLA_DB_PATH"]))
+            : workspace.appendingPathComponent("state/nola.db")
+        let applicationPort = try MacApplicationPort(databaseURL: databaseURL)
+        let repository = MacCanonicalConversationRepository(store: applicationPort)
         let fact = "MAC-COMPACTION-FACT-\(UUID().uuidString.uppercased())"
-        let originalPrompt = "Remember this exact conversation fact: \(fact). Reply only ACK-0."
-        try isolatedConversationRepository(workspace: workspace).restoreBackupSnapshot([
+        let originalPrompt = "Project reference code recorded for this conversation: \(fact)."
+        try repository.restoreBackupSnapshot([
             MacStoredConversation(
                 conversation: MacConversation(
                     id: conversationID,
@@ -603,10 +621,12 @@ final class MacAgentCapabilityEndToEndTests: XCTestCase {
                 )
             )
         ])
+        let originalMessage = try XCTUnwrap(applicationPort.loadConversation(conversationID)?.messages.first)
+        let originalPart = try XCTUnwrap(originalMessage.parts.first)
         var allEvents: [MacLocalAgentEvent] = []
 
         let firstEvents = try await runAgentHost(
-            prompt: originalPrompt,
+            prompt: "For this test, return only the exact ASCII token ACK-0.",
             conversationID: conversationID,
             workspace: workspace,
             endpoint: endpoint,
@@ -655,7 +675,7 @@ final class MacAgentCapabilityEndToEndTests: XCTestCase {
             "The configured real model path never emitted context.compacted"
         )
         XCTAssertTrue(
-            try isolatedConversationRepository(workspace: workspace).loadAll()
+            try repository.loadAll()
                 .first(where: { $0.conversation.id == conversationID })?
                 .messages.contains(where: { $0.text.contains(fact) }) == true,
             "Compaction replaced or lost the original conversation transcript"
@@ -699,7 +719,9 @@ final class MacAgentCapabilityEndToEndTests: XCTestCase {
         )
         XCTAssertTrue(
             canonicalResults.contains { result in
-                return containsCanonicalRecallEvidence(result, fact: fact)
+                containsCanonicalRecallEvidence(
+                    result, fact: fact, messageID: originalMessage.id, partID: originalPart.id
+                )
             },
             "History results must identify the canonical source message"
         )
@@ -1425,7 +1447,7 @@ final class MacAgentCapabilityEndToEndTests: XCTestCase {
             FileManager.default.fileExists(atPath: firstURL.path),
             "Approved command did not execute. Events: \(allEventText(firstRun))"
         )
-        XCTAssertTrue(firstRun.compactMap(\.permissionRequest).allSatisfy { !$0.allowConversation })
+        XCTAssertTrue(firstRun.compactMap(\.permissionRequest).allSatisfy(\.allowConversation))
         XCTAssertTrue(FileManager.default.fileExists(atPath: secondURL.path))
         XCTAssertTrue(
             assistantText(firstRun).contains("CONVERSATION_PERMISSION_FIRST_RUN_COMPLETE")
@@ -1442,7 +1464,7 @@ final class MacAgentCapabilityEndToEndTests: XCTestCase {
         )
         XCTAssertEqual(secondRun.filter { $0.kind == .permissionRequested }.count, 1,
             "A prior opaque process approval cannot authorize a new invocation")
-        XCTAssertTrue(secondRun.compactMap(\.permissionRequest).allSatisfy { !$0.allowConversation })
+        XCTAssertTrue(secondRun.compactMap(\.permissionRequest).allSatisfy(\.allowConversation))
         XCTAssertFalse(
             FileManager.default.fileExists(atPath: secondURL.path),
             "Reused command did not execute. Events: \(allEventText(secondRun))"
@@ -1853,7 +1875,7 @@ final class MacAgentCapabilityEndToEndTests: XCTestCase {
             permissionScope: .once
         )
         XCTAssertEqual(firstRun.filter { $0.kind == .permissionRequested }.count, 1)
-        XCTAssertTrue(firstRun.compactMap(\.permissionRequest).allSatisfy { !$0.allowConversation })
+        XCTAssertTrue(firstRun.compactMap(\.permissionRequest).allSatisfy(\.allowConversation))
         XCTAssertFalse(FileManager.default.fileExists(atPath: workspace.appendingPathComponent("first-session.txt").path))
 
         let secondRun = try await runAgentHost(
@@ -1870,7 +1892,7 @@ final class MacAgentCapabilityEndToEndTests: XCTestCase {
             1,
             "A once-only opaque process approval cannot authorize another conversation"
         )
-        XCTAssertTrue(secondRun.compactMap(\.permissionRequest).allSatisfy { !$0.allowConversation })
+        XCTAssertTrue(secondRun.compactMap(\.permissionRequest).allSatisfy(\.allowConversation))
         XCTAssertFalse(FileManager.default.fileExists(atPath: workspace.appendingPathComponent("second-session.txt").path))
         try assertCompleteReport(server, expectedStageCount: 4)
     }
@@ -2114,6 +2136,8 @@ final class MacAgentCapabilityEndToEndTests: XCTestCase {
                 createdAtMs: Int64(100 + index) * 1_000
             )
         }
+        let source = try XCTUnwrap(applicationPort.loadConversation(conversationID)?.messages.first)
+        let sourcePart = try XCTUnwrap(source.parts.first)
         let server = try MacAgentCapabilityMockServer(
             workspace: workspace,
             steps: [
@@ -2128,7 +2152,8 @@ final class MacAgentCapabilityEndToEndTests: XCTestCase {
                         "October 14",
                         "message_id",
                         "part_id",
-                        "originalMessage",
+                        source.id,
+                        sourcePart.id,
                     ],
                     "content": "CONVERSATION_RECALL_COMPLETE October 14",
                 ],
@@ -2185,6 +2210,11 @@ final class MacAgentCapabilityEndToEndTests: XCTestCase {
             )]
         )
 
+        let source = try XCTUnwrap(applicationPort.loadConversation(conversationID)?.messages.first)
+        let sourcePart = try XCTUnwrap(source.parts.first)
+        // Leave room for the real tool catalog and reserved output. The
+        // accumulated turns, rather than one oversized prompt, cross the threshold.
+        let contextWindow = 65_536
         let turnCount = 24
         var steps: [[String: Any]] = (0..<turnCount).map { index in
             [
@@ -2196,40 +2226,35 @@ final class MacAgentCapabilityEndToEndTests: XCTestCase {
             "message_contains": ["回忆 Aurora 最初的发布日期和负责人"],
             "required_tools": ["conversation_recall"],
             "tool_name": "conversation_recall",
-            "tool_args": ["query": "Project Aurora immutable original", "limit": 12],
+            "tool_args": ["message_id": source.id, "part_id": sourcePart.id],
         ])
         steps.append([
-            "message_contains": [
-                "Project Aurora immutable original",
-                "October 14",
-                "owner is Mina",
-                "message_id",
-                "part_id",
-            ],
+            "tool_message_contains": [originalText],
             "content": "REAL_COMPACTION_RECALL_COMPLETE October 14 Mina",
         ])
         let server = try MacAgentCapabilityMockServer(
             workspace: workspace,
             steps: steps,
-            contextWindow: 16_000,
+            contextWindow: contextWindow,
             compactionSummary: "# Continuation\n\nAurora work remains active. Preserve exact original transcript through conversation recall."
         )
         defer { server.stop() }
 
         var allTurnEvents: [MacLocalAgentEvent] = []
         for index in 0..<turnCount {
-            let filler = String(repeating: "bounded-context-payload-\(index)-", count: 220)
+            let filler = String(repeating: "bounded-context-payload-\(index)-", count: 400)
             let events = try await runAgentHost(
                 prompt: "REAL_COMPACTION_TURN_\(index) \(filler)",
                 conversationID: conversationID,
                 workspace: workspace,
                 endpoint: server.endpoint,
                 memoryEnabled: false,
-                contextWindowTokens: 16_000,
+                contextWindowTokens: contextWindow,
                 databaseURL: databaseURL,
                 deleteSessionAfterRun: false
             )
-            XCTAssertTrue(assistantText(events).contains("REAL_COMPACTION_ACK_\(index)"))
+            XCTAssertTrue(assistantText(events).contains("REAL_COMPACTION_ACK_\(index)"),
+                "Missing compaction fixture reply for turn \(index). Events: \(allEventText(events))")
             allTurnEvents.append(contentsOf: events)
         }
 
@@ -2243,7 +2268,7 @@ final class MacAgentCapabilityEndToEndTests: XCTestCase {
         XCTAssertFalse(contextUsage.isEmpty, "The real Agent Host emitted no context usage events")
         XCTAssertEqual(
             observedWindows,
-            [16_000],
+            [contextWindow],
             "The Mac-selected context window was replaced before reaching Core: \(observedWindows)"
         )
         let preRecallReport = try server.report()
@@ -2276,10 +2301,13 @@ final class MacAgentCapabilityEndToEndTests: XCTestCase {
             workspace: workspace,
             endpoint: server.endpoint,
             memoryEnabled: false,
-            contextWindowTokens: 16_000,
+            contextWindowTokens: contextWindow,
             databaseURL: databaseURL
         )
         XCTAssertTrue(recallEvents.contains { $0.kind == .toolStarted && $0.title == "conversation_recall" })
+        XCTAssertTrue(recallEvents.contains {
+            $0.kind == .toolFinished && $0.title == "conversation_recall" && !$0.isError
+        }, allEventText(recallEvents))
         XCTAssertFalse(recallEvents.contains { $0.kind == .permissionRequested })
         XCTAssertTrue(
             assistantText(recallEvents).contains("REAL_COMPACTION_RECALL_COMPLETE October 14 Mina")
@@ -2302,7 +2330,7 @@ final class MacAgentCapabilityEndToEndTests: XCTestCase {
                 ],
                 [
                     "message_contains": [
-                        "The preceding assistant response reached the provider output limit"
+                        "Resume immediately after its final character"
                     ],
                     "content": "::string> values;\n```\nEND_UNIQUE",
                     "finish_reason": "stop",
@@ -2686,33 +2714,43 @@ final class MacAgentCapabilityEndToEndTests: XCTestCase {
     }
 
     private func containsCanonicalRecallEvidence(
-        _ value: MacAgentTraceJSONValue,
-        fact: String,
+        _ value: MacAgentTraceJSONValue, fact: String, messageID: String, partID: String,
         depth: Int = 0
     ) -> Bool {
         guard depth < 10 else { return false }
+        let next: [MacAgentTraceJSONValue]
         switch value {
         case .object(let fields):
-            if fields["source"] == .string("originalMessage"),
-               case .string(let messageID) = fields["message_id"], !messageID.isEmpty,
-               case .string(let partID) = fields["part_id"], !partID.isEmpty,
-               case .string(let snippet) = fields["snippet"], snippet.contains(fact) {
+            if case .object(let source) = fields["source"],
+               source["message_id"] == .string(messageID),
+               source["part_id"] == .string(partID),
+               case .string(let body) = fields["text"] ?? fields["snippet"],
+               body.contains(fact) {
                 return true
             }
-            return fields.values.contains { containsCanonicalRecallEvidence($0, fact: fact, depth: depth + 1) }
+            next = Array(fields.values)
         case .array(let values):
-            return values.contains { containsCanonicalRecallEvidence($0, fact: fact, depth: depth + 1) }
+            next = values
         case .string(let text):
-            guard let nested = try? JSONDecoder().decode(MacAgentTraceJSONValue.self, from: Data(text.utf8)) else { return false }
-            return containsCanonicalRecallEvidence(nested, fact: fact, depth: depth + 1)
+            guard let nested = try? JSONDecoder().decode(MacAgentTraceJSONValue.self, from: Data(text.utf8)) else {
+                return false
+            }
+            next = [nested]
         default:
             return false
+        }
+        return next.contains {
+            containsCanonicalRecallEvidence($0, fact: fact, messageID: messageID, partID: partID, depth: depth + 1)
         }
     }
 
     private func allEventText(_ events: [MacLocalAgentEvent]) -> String {
         events
-            .map { "\($0.title ?? "")\n\($0.text)" }
+            .map { event in
+                [String(describing: event.kind), event.title, event.text, event.detail,
+                    event.terminalReason, event.coreTurnTerminal?.reason]
+                    .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ": ")
+            }
             .joined(separator: "\n")
     }
 
@@ -2957,6 +2995,9 @@ private final class MacAgentCapabilityMockServer: @unchecked Sendable {
             for (name, passed) in checks where !passed {
                 report.failures.append("stage \(stage): \(name)")
             }
+            if let evidence = object["failed_tool_evidence"] as? String {
+                report.failures.append("stage \(stage) tool evidence: \(evidence)")
+            }
         }
         return report
     }
@@ -3038,10 +3079,13 @@ def append_timing(phase, path):
             "wall_time_ns": time.time_ns(), "monotonic_ns": time.monotonic_ns()
         }, sort_keys=True) + "\n")
 
-def append_report(stage, checks, tool_names=None):
+def append_report(stage, checks, tool_names=None, failed_tool_evidence=None):
+    record = {"stage": stage, "checks": checks, "tool_names": tool_names or []}
+    if failed_tool_evidence:
+        record["failed_tool_evidence"] = failed_tool_evidence
     with open(CONFIG["report_path"], "a", encoding="utf-8") as handle:
         handle.write(json.dumps(
-            {"stage": stage, "checks": checks, "tool_names": tool_names or []},
+            record,
             ensure_ascii=False,
             sort_keys=True
         ) + "\n")
@@ -3178,7 +3222,12 @@ class Handler(BaseHTTPRequestHandler):
         if "NOLA_SCOPE_QUALIFICATION_V1" in request_messages:
             self.send_payload(final_response('{"scope":"specific"}'), body)
             return
-        if "Create a loss-minimizing continuation checkpoint" in request_messages:
+        if any(
+            item.get("role") in ("system", "developer")
+            and isinstance(item.get("content"), str)
+            and "Evidence preservation contract:" in item["content"]
+            for item in body.get("messages", [])
+        ):
             with LOCK:
                 compaction_index = COMPACTION_COUNT
                 COMPACTION_COUNT += 1
@@ -3278,6 +3327,21 @@ class Handler(BaseHTTPRequestHandler):
         checks = {}
         for value in step.get("message_contains", []):
             checks["message:" + value] = value in messages_text
+        tool_messages_text = json.dumps(
+            [
+                item for item in body.get("messages", [])
+                if item.get("role") == "tool"
+                or (
+                    item.get("role") == "user"
+                    and isinstance(item.get("content"), str)
+                    and item["content"].startswith('<tool_evidence name="conversation_recall" is_error=false>')
+                )
+            ],
+            ensure_ascii=False,
+            sort_keys=True
+        )
+        for value in step.get("tool_message_contains", []):
+            checks["tool_message:" + value] = value in tool_messages_text
         for name in step.get("required_tools", []):
             checks["required_tool:" + name] = name in tool_names
         for name in step.get("forbidden_tools", []):
@@ -3297,7 +3361,8 @@ class Handler(BaseHTTPRequestHandler):
                 if isinstance(message, dict)
                 for content in [message.get("content")]
             )
-        append_report(stage, checks, tool_names)
+        failed_tool_check = any(not passed for name, passed in checks.items() if name.startswith("tool_message:"))
+        append_report(stage, checks, tool_names, tool_messages_text[-2000:] if failed_tool_check else None)
 
         if step.get("tool_calls"):
             payload = tool_batch_response(

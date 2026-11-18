@@ -41,7 +41,7 @@ Use stable stages: validating dependencies, designing workflow, running dry-run,
 2. Define idempotency keys, checkpoints, deduplication window, concurrency policy, timeout, retry conditions, exponential backoff, and retry cap.
 3. Separate transient tool failure from permanent validation or authorization failure. Add a dead-letter or human-review path for unrecoverable work.
 4. Add structured run history: trigger time, step, tool, bounded result, duration, status, error, and correlation identifier.
-5. Run a dry-run with safe representative data, then a one-time controlled execution when side effects permit.
+5. When the user requests validation, run a dry-run with representative data or a controlled execution within their approved scope.
 6. Show trigger, steps, permissions, outputs, retry policy, failure notification, and next-run calculation before enabling.
 
 ## Native persistence contract
@@ -49,7 +49,7 @@ Use stable stages: validating dependencies, designing workflow, running dry-run,
 - On macOS, a durable automation must be created or updated through `nola_orchestrate` after the user approves the preview. A JSON or Markdown automation draft is only a proposal and is never evidence that an automation exists.
 - An imperative user request that explicitly says to create, enable, schedule, pause, resume, update, or delete a specific automation is lifecycle approval for that requested action. Do not ask the same confirmation again. Call `nola_orchestrate`; the Host permission boundary remains authoritative and will suspend the call if an additional runtime approval is required.
 - Ask a follow-up only when a material field such as schedule, timezone, target data, output, or destructive scope is genuinely missing or ambiguous. In a non-interactive run, do not replace an already explicit command with `request_user_input`.
-- Keep a new automation disabled until its dependencies and representative dry-run pass. Re-read the returned identifier and persisted fields before reporting success.
+- For a requested creation, persist the schedule first. Put future actions in the scheduled prompt. Run a representative dry-run only if requested. Save disabled when the user requests validation before enabling. Re-read the returned identifier and persisted fields before reporting success.
 - Use the stable workspace-and-name identity for idempotent updates. Repeating the same approved request must update one automation rather than create duplicates.
 - A disabled automation must not create a runner, receipt, execution log, notification, or side effect. A controlled run must produce a bounded log, structured receipt, and visible history entry before the automation may be enabled.
 

@@ -284,7 +284,7 @@ final class MacAutomationStore {
             enabled: automation.isEnabled,
             revision: 0,
             executionSpec: .agent(submittedSpec),
-            metadataJSON: try presentationMetadata(for: automation),
+            metadataJSON: try presentationMetadata(for: automation, executionSpecDigest: submittedDigest),
             createdAtMs: Int64(automation.createdAt.timeIntervalSince1970 * 1_000),
             updatedAtMs: Int64(Date().timeIntervalSince1970 * 1_000),
             deletedAtMs: nil
@@ -912,11 +912,11 @@ final class MacAutomationStore {
                      contextRefs: refs, skillRefs: automation.skillID.map { [$0.rawValue] } ?? [])
     }
 
-    private func presentationMetadata(for automation: MacAutomation) throws -> String {
+    private func presentationMetadata(for automation: MacAutomation, executionSpecDigest: String) throws -> String {
         let encoded = try JSONEncoder().encode(automation)
         guard var fields = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] else { throw CocoaError(.coderInvalidValue) }
         for key in ["id", "name", "isEnabled", "createdAt", "prompt", "workspacePath", "contextSources", "webSourceIDs", "skillID", "executionSpec"] { fields.removeValue(forKey: key) }
-        fields["submittedExecutionSpecSHA256"] = try Self.executionSpecDigest(executionSpec(for: automation))
+        fields["submittedExecutionSpecSHA256"] = executionSpecDigest
         return String(decoding: try JSONSerialization.data(withJSONObject: fields, options: .sortedKeys), as: UTF8.self)
     }
 
@@ -988,7 +988,7 @@ final class MacAutomationStore {
                     enabled: automation.isEnabled,
                     revision: 0,
                     executionSpec: .agent(spec),
-                    metadataJSON: try presentationMetadata(for: automation),
+                    metadataJSON: try presentationMetadata(for: automation, executionSpecDigest: Self.executionSpecDigest(spec)),
                     createdAtMs: Int64(automation.createdAt.timeIntervalSince1970 * 1_000),
                     updatedAtMs: now,
                     deletedAtMs: nil
@@ -1136,10 +1136,10 @@ final class MacAutomationStore {
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
         func digest(_ bytes: Data) -> String { SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined() }
-        func snapshot(kind: String, id: String, data: Data) throws -> [String: Any] {
-            // File names derive from trusted IDs through a digest, never raw model paths.
-            let name = digest(Data("\(kind):\(id)".utf8)) + ".txt"
-            let path = directory.appendingPathComponent(name)
+        func snapshot(kind: String, id: String, index: Int, data: Data) throws -> [String: Any] {
+            // The ordinal is scoped to the occurrence directory. IDs remain
+            // in the artifact manifest and never enter a filesystem path.
+            let path = directory.appendingPathComponent("source-\(index).txt")
             try data.write(to: path, options: .atomic)
             try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
             return ["kind": kind, "id": id, "path": path.path, "sha256": digest(data)]
@@ -1152,7 +1152,7 @@ final class MacAutomationStore {
                     sourceID: reference.id, purpose: automation.name)
                 guard let oldestObservation = item.observedAt else { throw CocoaError(.fileReadUnknown) }
                 let data = Data("[\(item.sourceID)]\n\(item.content)".utf8)
-                var artifact = try snapshot(kind: reference.kind, id: reference.id, data: data)
+                var artifact = try snapshot(kind: reference.kind, id: reference.id, index: artifacts.count, data: data)
                 artifact["source"] = ["authorization": "available", "observed_at": oldestObservation.ISO8601Format(), "maximum_age_minutes": automation.effectiveMaximumDataAgeMinutes]
                 artifacts.append(artifact)
             case "web_source":
@@ -1173,7 +1173,7 @@ final class MacAutomationStore {
                 content:
                 \(source.cachedText)
                 """
-                var artifact = try snapshot(kind: reference.kind, id: reference.id, data: Data(text.utf8))
+                var artifact = try snapshot(kind: reference.kind, id: reference.id, index: artifacts.count, data: Data(text.utf8))
                 guard let observedAt = source.lastFetchedAt else {
                     throw NSError(domain: "MacAutomationDependency", code: 5,
                         userInfo: [NSLocalizedDescriptionKey: "Automation dependency has no observation time: \(reference.kind):\(reference.id)"])

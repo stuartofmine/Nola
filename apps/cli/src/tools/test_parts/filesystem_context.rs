@@ -1498,6 +1498,31 @@ fn read_file_supports_line_ranges_and_numbers() {
     assert!(outcome.text.contains("   3 | three"));
     assert!(!outcome.text.contains("one"));
     assert!(!outcome.text.contains("four"));
+    let json_path = root.join("result.json");
+    fs::write(&json_path, "{\"status\":\"validated\",\"rows\":73}").unwrap();
+    let validation = |expected: &str| {
+        let args = json!({
+            "path": json_path,
+            "operation_kind": "validate",
+            "expected_json": expected,
+        });
+        read_file(args.as_object().unwrap(), &ctx)
+    };
+    let matched = validation("{\"rows\":73,\"status\":\"validated\"}");
+    assert!(!matched.error, "{}", matched.text);
+    let matched_receipt = matched.execution.unwrap();
+    assert_eq!(matched_receipt.checks.len(), 1);
+    let check = &matched_receipt.checks[0];
+    assert!(check.passed);
+    assert_eq!(check.version, resource_content_version(&json_path).unwrap());
+    assert_eq!(check.predicate, "json_value_matches_expected");
+
+    let mismatch = validation("{\"rows\":72,\"status\":\"validated\"}");
+    assert!(mismatch.error);
+    assert!(!mismatch.execution.unwrap().checks[0].passed);
+    let invalid = validation("not JSON");
+    assert!(invalid.error && invalid.execution.is_none());
+
     let _ = fs::remove_dir_all(root);
 }
 

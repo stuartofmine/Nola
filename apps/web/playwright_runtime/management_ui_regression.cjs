@@ -17,14 +17,20 @@ const actions = [0,1].map(i => ({id:'fixture-'+i,name:i ? '每周资料检查' :
    await page.route('**/api/**', async route=>{
     const path=new URL(route.request().url()).pathname;
     const json = path==='/api/web/session' ? {authenticated:true,sessionAuthenticated:false,localTrust:true,hostId:'ui-review-fixture'}
+     : path==='/api/chat/conversations' ? {conversations:[{conversationId:'review',title:'Fixture',isPinned:false,createdAt:'',updatedAt:'',selectedModelSource:'auto',selectedModelId:'',executionBackend:'nola',revision:1,configurationRevision:1}]}
+     : path==='/api/chat/agent/v2/observe' ? {source_host_id:'ui-review-fixture',result:null}
+     : path==='/api/chat/conversations/review/messages' ? {sourceHostId:'ui-review-fixture',conversationProjection:{contract_version:1,conversation_id:'review',revision:1,execution_ownership:{kind:'user'},messages:[],surface:{revision:1,committed_message_ids:[],live_message_id:null}},messageWindow:{projectionRevision:1,eventSequence:1,before:null,hasMore:false,totalCount:0}}
+     : path==='/api/chat/conversations/review/configuration' ? {configurationRevision:1,permissionProfile:null,memoryEnabledOverride:null,retrievalEnabledOverride:null,modelOverrides:{},activeRunID:null,activePermissionPolicy:null}
+     : path==='/api/model-profiles' ? {profiles:[]}
+     : path==='/api/local-models' ? {models:[]}
      : path==='/api/data-sources' ? {sources:[{source:{id:'source-1',name:longName,kind:'localFile',location:'/fixtures/project/records-with-long-file-name.json',accessPolicy:'conversationOptIn',validationContract:null}}]}
      : path==='/api/data-sources/usage' ? {usageRecords:[]}
      : path==='/api/scheduled-actions' ? {actions,executionCapabilities:{manualRun:true,scheduledDispatch:false,promptAutomations:true}}
-     : path==='/api/agent/settings' ? {skills:[{name:longName,description:'将工作区资料整理成可追溯的简报；授权仍按实际调用判断。',content:'Read the project documents.',enabled:true,source:'custom'},{name:'代码阅读',description:'阅读结构与测试，保留现有数据。',content:'Read code.',enabled:false,source:'custom'}],mcp_servers:[]}
+     : path==='/api/agent/settings' ? {skills:[{name:longName,description:'将工作区资料整理成可追溯的简报；授权仍按实际调用判断。',content:'Read the project documents.',enabled:true,source:'custom'},{name:'代码阅读',description:'阅读结构与测试，保留现有数据。',content:'Read code.',enabled:false,source:'custom'}],mcp_servers:[],execution_backends:[],skill_settings_backup_key:null}
      : path==='/api/skills' ? {skills:[]}
      : undefined;
     if(json) return route.fulfill({json});
-    return route.fallback();
+    return route.fulfill({status:503,json:{code:'isolated_fixture_unavailable'}});
    });
    for(const route of ['settings','data-sources','scheduled-actions','capabilities']) {
     await page.goto(`${base}/${route}`); await page.locator('.management-content').waitFor();
@@ -36,20 +42,21 @@ const actions = [0,1].map(i => ({id:'fixture-'+i,name:i ? '每周资料检查' :
      await page.screenshot({path:`${out}/${route}-${colorScheme}-${width}.png`,fullPage:true});
     }
     if(route==='settings') {
-     const tab=page.locator('#settings-tab-general'); await tab.focus(); await page.keyboard.press('End');
-     assert.equal(await page.locator('#settings-tab-diagnostics').getAttribute('aria-selected'),'true');
-     const endBounds=await page.locator('#settings-tab-diagnostics').boundingBox(); assert.ok(endBounds.x>=0 && endBounds.x+endBounds.width<=320);
-     await page.screenshot({path:`${out}/settings-tabs-end-${colorScheme}-320.png`});
-     await page.keyboard.press('Home'); assert.equal(await tab.getAttribute('aria-selected'),'true');
-     const bounds=await tab.boundingBox(); assert.ok(bounds.x>=0 && bounds.x+bounds.width<=320);
+     const overview=page.locator('.settings-overview');
+     await overview.locator('a[href="/settings?section=diagnostics"]').click();
+     await page.locator('[id$="settings-panel-diagnostics"]:visible').waitFor();
+     await page.locator('.settings-back button:visible').click();
+     await overview.locator('a[href="/settings?section=general"]').click();
+     await page.locator('[id$="settings-panel-general"]:visible').waitFor();
      await page.emulateMedia({reducedMotion:'reduce'});
-     assert.ok(await page.locator('#settings-panel-general').evaluate(e=>parseFloat(getComputedStyle(e).animationDuration)<=.00001));
+     assert.ok(await page.locator('[id$="settings-panel-general"]:visible').evaluate(e=>parseFloat(getComputedStyle(e).animationDuration)<=.00001));
      await page.emulateMedia({reducedMotion:'no-preference'});
     }
     if(route==='data-sources') {
-     await page.locator('#data-tab-sources').click();
+     await page.goto(`${base}/data-sources`);
+     await page.locator('.information-navigation a[href="/data-sources?tab=sources"]').click();
      await page.screenshot({path:`${out}/sources-${colorScheme}-320.png`,fullPage:true});
-     await page.locator('#data-panel-sources .actions button').first().click();
+     await page.locator('.page-actions .primary:visible').click();
      await page.locator('dialog:modal').waitFor();
      assert.equal(await page.locator('dialog:modal').evaluate(e=>e.contains(document.activeElement)),true);
      await page.screenshot({path:`${out}/source-editor-${colorScheme}-320.png`});
@@ -79,33 +86,36 @@ const actions = [0,1].map(i => ({id:'fixture-'+i,name:i ? '每周资料检查' :
     await page.screenshot({path:`${out}/${route}-${colorScheme}-text200.png`,fullPage:true});
     await page.evaluate(()=>document.documentElement.style.fontSize='');
    }
-   await page.goto(`${base}/chat?conversation=review`);
-   await page.locator('#chat-composer').waitFor();
-   await page.locator('#chat-composer').fill('保留正在编辑的草稿');
    await page.setViewportSize({width:1440,height:1000});
-   const settingsToggle=page.locator('.chat-header [aria-controls="chat-details"]').last();
+   await page.goto(`${base}/chat?conversation=review`);
+   await page.locator('textarea[id$=chat-composer]:visible').waitFor({timeout:6000}).catch(async error => { throw new Error(`Composer unavailable at ${page.url()}: ${(await page.locator('body').innerText()).slice(0,800)}`,{cause:error}); });
+   await page.locator('textarea[id$=chat-composer]:visible').fill('保留正在编辑的草稿');
+   await page.setViewportSize({width:1440,height:1000});
+   const settingsToggle=page.locator('.chat-header button[data-panel=context]:visible').last();
    await settingsToggle.focus(); await page.keyboard.press('Enter');
-   await page.locator('.session-settings').waitFor(); await page.waitForTimeout(220);
+   await page.locator('details[data-inspector-section=settings] > summary:visible').click();
+   await page.locator('.session-settings:visible').waitFor(); await page.waitForTimeout(220);
    await page.screenshot({path:`${out}/chat-inspector-${colorScheme}-1440.png`});
    await page.setViewportSize({width:320,height:900});
+   await page.getByRole('button', {name:/^(上下文|Context)$/}).click();
    await page.locator('dialog:modal').waitFor();
    await page.waitForTimeout(250);
    assert.equal(await page.locator('dialog:modal .panel-toolbar > button').evaluate(e=>e===document.activeElement && e.getClientRects().length>0),true);
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
    await page.screenshot({path:`${out}/chat-inspector-${colorScheme}-320.png`});
    await page.keyboard.press('Escape');
-   assert.equal(await page.locator('#chat-composer').inputValue(),'保留正在编辑的草稿');
-   await page.locator('#chat-composer').fill('');
+   assert.equal(await page.locator('textarea[id$=chat-composer]:visible').inputValue(),'保留正在编辑的草稿');
+   await page.locator('textarea[id$=chat-composer]:visible').fill('');
    let failSource=true;
    await page.route('**/api/data-sources',route=>failSource ? route.fulfill({status:503,json:{error:'fixture_sources_unavailable'}}) : route.fallback());
-   await page.goto(`${base}/data-sources`);
-   await page.locator('#data-panel-overview [role="alert"]').waitFor();
+   await page.goto(`${base}/data-sources?tab=sources`);
+   await page.locator('[id$="data-panel-sources"]:visible [role="alert"]').waitFor();
    await page.screenshot({path:`${out}/sources-error-${colorScheme}-320.png`});
    failSource=false;
-   await page.locator('#data-panel-overview .row button').first().click();
-   await page.locator('.source-stats').waitFor();
-   assert.equal(await page.locator('#data-panel-overview [role="alert"]').count(),0);
-   assert.deepEqual(errors,[]); console.log(`PASS ${colorScheme}: 4 real management routes, desktop/390/320/200% text, tab keyboard, editor focus, menus and reduced motion`);
+   await page.locator('[id$=data-panel-sources]:visible .row button').first().click();
+   await page.locator('.source:visible').waitFor();
+   assert.equal(await page.locator('[id$=data-panel-sources]:visible [role="alert"]').count(),0);
+   assert.deepEqual(errors,[]); console.log(`PASS ${colorScheme}: 4 real management routes, desktop/390/320/200% text, mobile navigation, editor focus, menus and reduced motion`);
    await page.close();
   }
  } finally {await browser.close();}

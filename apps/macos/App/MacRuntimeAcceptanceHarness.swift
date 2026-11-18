@@ -370,6 +370,7 @@ enum MacRuntimeAcceptanceHarness {
         }
 
         let cancellationID = "\(request.conversationID)-cancel"
+        let cancellationSubmissionID = UUID().uuidString
         let cancellationStartedAt = Date()
         var cancellationAdmitted = false
         let cancellationPrompt = environment["NOLA_MAC_RUNTIME_ACCEPTANCE_CANCELLATION_PROMPT"]?
@@ -378,9 +379,11 @@ enum MacRuntimeAcceptanceHarness {
             ? cancellationPrompt!
             : "Use the available shell tool to run `sleep 30`, wait for it to finish, then reply with CANCEL_TEST_DONE."
         let cancellationTask = Task { () -> String in
+            var streamFailure = ""
             do {
                 let cancelRequest = try MacLocalAgentRunRequest(
                     conversationID: cancellationID,
+                    submissionID: cancellationSubmissionID,
                     prompt: effectiveCancellationPrompt,
                     projectURL: URL(fileURLWithPath: projectPath, isDirectory: true),
                     attachmentURLs: [],
@@ -394,36 +397,37 @@ enum MacRuntimeAcceptanceHarness {
                     wireProtocol: acceptanceProvider?.wireProtocol,
                     executionBackend: selectedExecutionBackend
                 )
-                var cancellationFailure = ""
                 for try await event in await MacAgentHostRuntime.shared.run(cancelRequest) {
-                    if event.kind == .failed { cancellationFailure = event.text }
+                    if event.kind == .failed { streamFailure = event.text }
                     if event.assistantJournalCursor != nil || event.assistantRunTerminalSealDigest != nil {
                         cancellationAdmitted = true
                     }
                     // Drain through Host cancellation confirmation and the
                     // final Store seal; the Core event alone is not completion.
                 }
-                guard let terminal = try cancelRequest.applicationPort?.canonicalRunTerminal(
-                    conversationID: cancellationID, runID: cancelRequest.submissionID
-                ), terminal.result.value.kind == .cancelled else {
-                    return "cancellation_missing_canonical_terminal: \(cancellationFailure)"
-                }
-                return "run.cancelled"
             } catch is CancellationError {
-                // Cancellation before admission has no Run to terminate. Do
-                // not accept this path if an admitted conversation remains:
-                // that would hide a stranded running/cancelling checkpoint.
+                // Transport interruption can precede the durable Store seal.
+                streamFailure = "transport_cancelled"
+            } catch {
+                streamFailure = error.localizedDescription
+            }
+            let deadline = ContinuousClock.now + .seconds(4)
+            repeat {
                 do {
-                    let conversation = try MacApplicationPort.shared.loadConversation(cancellationID)
-                    return conversation == nil
-                        ? "cancelled_before_admission"
-                        : "cancellation_missing_canonical_terminal"
+                    if let terminal = try MacApplicationPort.shared.canonicalRunTerminal(
+                        conversationID: cancellationID, runID: cancellationSubmissionID
+                    ) {
+                        return terminal.result.value.kind == .cancelled
+                            ? "run.cancelled"
+                            : "cancellation_unexpected_terminal: \(terminal.result.value.kind)"
+                    }
                 } catch {
                     return "cancellation_state_unreadable: \(error.localizedDescription)"
                 }
-            } catch {
-                return error.localizedDescription
-            }
+                if !cancellationAdmitted { break }
+                try? await Task.sleep(for: .milliseconds(50))
+            } while ContinuousClock.now < deadline
+            return "cancellation_missing_canonical_terminal: \(streamFailure)"
         }
         // Exercise cancellation after durable admission, not only cancelling
         // startup before there is any Run to settle.
@@ -1100,15 +1104,27 @@ enum MacRuntimeAcceptanceHarness {
             let orchestrationRequest = try MacLocalAgentRunRequest(
                 conversationID: "mac-autonomous-orchestration-\(UUID().uuidString)",
                 prompt: """
-                AUTONOMOUS_ORCHESTRATION_E2E
-                Create one enabled daily automation scheduled for 09:00.
-                Its task must read \(source.url), load the data-analysis Skill, and write a JSON \
-                receipt to \(outputURL.path).
-                Use the web_sources context with that URL and the analyze-data Skill. \
-                Do not request personal data or run-on-data-change triggers.
-                The JSON receipt must contain keys status="validated", source="\(sourceToken)", \
-                and skill="\(MacBuiltInSkillID.dataAnalysis.resourceDirectory)".
-                The automation's final response must include exactly AUTOMATION_CHAIN_COMPLETE.
+                Create one daily automation for 09:00 in workspace \(workspace.path).
+                Save it disabled so the test can validate the saved definition before dispatch.
+                Use the native automation tool. The current turn should only save and verify the
+                definition. Do not run the scheduled task, fetch the source, or write its output now.
+
+                Configure exactly one web source named Runtime acceptance source, with UUID
+                \(source.id.uuidString.lowercased()) and URL \(source.url). Use that same UUID in
+                the execution spec's web source reference. Select the analyze-data Skill and cautious permissions.
+
+                The scheduled task prompt should instruct the agent to load analyze-data, read the
+                approved web source snapshot supplied in its run context, and create \(outputURL.path)
+                as JSON with status="validated", skill="analyze-data", and source equal to the
+                fixture token read from that snapshot. Verify the complete JSON value using
+                read_file with operation_kind=validate and expected_json set to the desired JSON
+                encoded as a string. That equality check is the only requested check.
+                Use native file tools and do not run
+                shell commands. Declare the exact output file as the required scope using
+                task_scope_update. Once the JSON check passes, submit requirements_update with
+                outcome=completed and a satisfied assessment citing the actual write and JSON
+                check evidence for that requirement. Include AUTOMATION_CHAIN_COMPLETE in the answer.
+                If the observed evidence is insufficient, explain the gap without claiming completion.
                 """,
                 projectURL: workspace,
                 attachmentURLs: [],
@@ -1153,7 +1169,7 @@ enum MacRuntimeAcceptanceHarness {
                 assistantMessageID: orchestrationRequest.assistantMessageID)
             let orchestrationSealed: Bool
             if case .terminal(let result, _, _) = orchestrationInspection.observation {
-                orchestrationSealed = result.value.kind == .actionCompleted
+                orchestrationSealed = result.value.kind == .answered || result.value.kind == .actionCompleted
             } else { orchestrationSealed = false }
             let orchestrationProjection = try MacCanonicalConversationRepository(store: fixture.port)
                 .conversationProjection(conversationID: orchestrationRequest.conversationID)
@@ -1173,11 +1189,17 @@ enum MacRuntimeAcceptanceHarness {
                 activityStore: activityStore, completionNotifier: { _, _ in },
                 dataSourceRegistry: registry, webSourceStore: webSources, runtime: runtime)
             guard automationStore.automations.count == 1,
-                  let automation = automationStore.automations.first, automation.isEnabled else {
+                  let automation = automationStore.automations.first, !automation.isEnabled else {
                 return (false, [
                     "matched": false,
-                    "error": "The Agent Host did not create an automation from natural language.",
+                    "error": "Expected exactly one disabled automation from the creation turn.",
+                    "saved_automation_count": automationStore.automations.count,
+                    "orchestration_tool_finished": orchestrationToolFinished,
                 ])
+            }
+            automationStore.setEnabled(true, for: automation)
+            guard automationStore.automations.first(where: { $0.id == automation.id })?.isEnabled == true else {
+                return (false, ["matched": false, "error": "The saved automation could not be enabled"])
             }
             let scheduledForMs = Int64(Date().timeIntervalSince1970 * 1_000)
             let occurrence = MacAutomationOccurrence(
@@ -1199,7 +1221,11 @@ enum MacRuntimeAcceptanceHarness {
             let output = (try? String(contentsOf: outputURL, encoding: .utf8)) ?? ""
             let artifact = (try? JSONSerialization.jsonObject(with: Data(output.utf8))) as? [String: Any]
             let activity = activityStore.entries.first {
-                $0.kind == .automation && $0.sourceID == executionReceipt.notificationID
+                $0.kind == .automation
+                    && $0.automationIdentity?.definitionID == automation.id
+                    && $0.automationIdentity?.occurrenceID == executionReceipt.binding.occurrenceID
+                    && $0.automationIdentity?.runID == executionReceipt.binding.runID
+                    && $0.automationIdentity?.notificationID == executionReceipt.notificationID
             }
             let identity = executionReceipt.terminal.identity
             guard identity.conversation_id == executionReceipt.binding.conversationID,

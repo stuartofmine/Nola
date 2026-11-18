@@ -197,6 +197,10 @@ fn specs_with_skills(skills: &SkillRuntimeContext) -> Vec<ToolSpec<'static>> {
                     "start_line": {"type": "integer", "minimum": 1, "maximum": 1000000000, "description": "Optional 1-based first line to read"},
                     "line_count": {"type": "integer", "minimum": 1, "maximum": 2000, "description": "Optional number of lines to read"},
                     "show_line_numbers": {"type": "boolean", "default": true},
+                    "expected_json": {
+                        "type": "string",
+                        "description": "Optional exact expected JSON value, encoded as a string. Use with operation_kind=validate on a complete UTF-8 file to record a versioned equality check without running a process."
+                    },
                     "operation_kind": {
                         "type": "string",
                         "enum": ["inspect", "validate"],
@@ -668,7 +672,7 @@ fn specs_with_skills(skills: &SkillRuntimeContext) -> Vec<ToolSpec<'static>> {
         },
         ToolSpec {
             name: "nola_orchestrate",
-            description: "Create/update a requested recurring, scheduled, monitored, or event-driven Nola automation from a Skill in the current Host catalog, a trigger, and authorized data sources. Requires explicit confirmation; claim creation only after success.",
+            description: "Create/update a requested recurring, scheduled, monitored, or event-driven Nola automation from a Skill in the current Host catalog, a trigger, and authorized data sources. Use this tool to save the schedule itself. Put the future work in prompt and execution_spec.spec.prompt; do not perform it in the creation turn. A web source id must match its execution_spec reference. Host approval still applies; claim creation only after the persisted receipt returns.",
             read_only: false,
             parameters: json!({
                 "type": "object",

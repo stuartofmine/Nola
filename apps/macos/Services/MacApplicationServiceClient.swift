@@ -187,8 +187,9 @@ nonisolated final class MacApplicationServiceClient: @unchecked Sendable {
         try Self.requireLinkedContract()
         self.databaseURL = databaseURL
         expertHostJournal = Self.makeExpertHostJournal(databaseURL)
-        socketURL = Self.serviceSocketURL(for: databaseURL)
-        clientID = Self.serviceClientID(for: databaseURL)
+        let hash = Self.databaseIdentityHash(for: databaseURL)
+        socketURL = Self.serviceSocketURL(hash: hash)
+        clientID = Self.serviceClientID(hash: hash)
         ownsSupervisorReference = true
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(),
@@ -207,11 +208,11 @@ nonisolated final class MacApplicationServiceClient: @unchecked Sendable {
         }
     }
 
-    private init(databaseURL: URL, socketURL: URL, retainsSupervisor: Bool = false) {
+    private init(databaseURL: URL, socketURL: URL, clientID: String? = nil, retainsSupervisor: Bool = false) {
         self.databaseURL = databaseURL
         expertHostJournal = Self.makeExpertHostJournal(databaseURL)
         self.socketURL = socketURL
-        clientID = Self.serviceClientID(for: databaseURL)
+        self.clientID = clientID ?? Self.serviceClientID(for: databaseURL)
         ownsSupervisorReference = retainsSupervisor
         if retainsSupervisor {
             MacApplicationServiceSupervisor.shared.retainClient(socketURL: socketURL)
@@ -221,9 +222,11 @@ nonisolated final class MacApplicationServiceClient: @unchecked Sendable {
     /// Creating the application dependency graph must not perform fallible IO.
     /// Startup and individual commands surface connection errors to their caller.
     static func deferred(databaseURL: URL) -> MacApplicationServiceClient {
-        MacApplicationServiceClient(
+        let hash = databaseIdentityHash(for: databaseURL)
+        return MacApplicationServiceClient(
             databaseURL: databaseURL,
-            socketURL: serviceSocketURL(for: databaseURL),
+            socketURL: serviceSocketURL(hash: hash),
+            clientID: serviceClientID(hash: hash),
             retainsSupervisor: true
         )
     }
@@ -744,7 +747,10 @@ nonisolated final class MacApplicationServiceClient: @unchecked Sendable {
     }
 
     static func serviceSocketURL(for databaseURL: URL) -> URL {
-        let hash = databaseIdentityHash(for: databaseURL)
+        serviceSocketURL(hash: databaseIdentityHash(for: databaseURL))
+    }
+
+    private static func serviceSocketURL(hash: UInt64) -> URL {
         // This is a protocol identity shared with nola-service-client. Both the
         // native app and Agent Host must address the same single writer for a
         // database; a platform-specific socket name starts competing services
@@ -757,16 +763,35 @@ nonisolated final class MacApplicationServiceClient: @unchecked Sendable {
     }
 
     static func serviceClientID(for databaseURL: URL) -> String {
-        String(format: "nola-local-%016llx", databaseIdentityHash(for: databaseURL))
+        serviceClientID(hash: databaseIdentityHash(for: databaseURL))
+    }
+
+    private static func serviceClientID(hash: UInt64) -> String {
+        String(format: "nola-local-%016llx", hash)
     }
 
     private static func databaseIdentityHash(for databaseURL: URL) -> UInt64 {
         var hash: UInt64 = 14_695_981_039_346_656_037
-        for byte in databaseURL.standardizedFileURL.path.utf8 {
+        for byte in databaseIdentityPath(for: databaseURL).utf8 {
             hash ^= UInt64(byte)
             hash &*= 1_099_511_628_211
         }
         return hash
+    }
+
+    private static func databaseIdentityPath(for databaseURL: URL) -> String {
+        var ancestor = databaseURL.standardizedFileURL
+        var tail: [String] = []
+        while true {
+            if let resolved = realpath(ancestor.path, nil) {
+                defer { free(resolved) }
+                let prefix = String(cString: resolved)
+                return ([prefix == "/" ? "" : prefix] + tail.reversed()).joined(separator: "/")
+            }
+            guard ancestor.path != "/" else { return databaseURL.standardizedFileURL.path }
+            tail.append(ancestor.lastPathComponent)
+            ancestor.deleteLastPathComponent()
+        }
     }
 
     private static func posixMessage() -> String {
@@ -932,6 +957,12 @@ nonisolated final class MacApplicationServiceSupervisor: @unchecked Sendable {
             try waitUntilHealthy(client: client, process: existing)
             return false
         }
+        // Match nola-service-client's process lock. The in-process gate
+        // cannot serialize a concurrent Agent Host launch for this database.
+        let startupLock = try Self.acquireStartupLock(for: socketURL)
+        defer { close(startupLock) }
+        if (try? client.healthCheck()) != nil { return false }
+
         guard let executableURL = Self.executableURL() else {
             throw MacApplicationServiceError.executableUnavailable
         }
@@ -988,6 +1019,36 @@ nonisolated final class MacApplicationServiceSupervisor: @unchecked Sendable {
             throw error
         }
         return archiveURL != nil
+    }
+
+    static func acquireStartupLock(for socketURL: URL) throws -> Int32 {
+        let path = socketURL.deletingPathExtension().appendingPathExtension("startup.lock").path
+        let descriptor = open(path, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, mode_t(0o600))
+        guard descriptor >= 0 else {
+            throw MacApplicationServiceError.launchFailed(String(cString: strerror(errno)))
+        }
+        var acquired = false
+        defer { if !acquired { close(descriptor) } }
+        var metadata = stat()
+        guard fstat(descriptor, &metadata) == 0,
+              metadata.st_mode & S_IFMT == S_IFREG,
+              metadata.st_uid == geteuid(), metadata.st_mode & 0o077 == 0 else {
+            throw MacApplicationServiceError.launchFailed("Application Service startup lock is not a private regular file.")
+        }
+        let deadline = ContinuousClock.now + .seconds(5)
+        while ContinuousClock.now < deadline {
+            if flock(descriptor, LOCK_EX | LOCK_NB) == 0 {
+                acquired = true
+                return descriptor
+            }
+            let code = errno
+            if code == EINTR { continue }
+            guard code == EWOULDBLOCK else {
+                throw MacApplicationServiceError.launchFailed(String(cString: strerror(code)))
+            }
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        throw MacApplicationServiceError.launchFailed("Application Service startup coordination timed out.")
     }
 
     static func classifiedStartupFailure(from diagnostic: String) -> MacApplicationServiceError? {

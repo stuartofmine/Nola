@@ -38,6 +38,15 @@ Place iOS Swift tests in `tests/apple/ios/` or `tests/apple/ios-ui/` and macOS t
 
 ## Commit & Pull Request Guidelines
 
+When the owner asks to push or publish Nola, update the public repository
+`https://github.com/stuartofmine/Nola.git` on `main` by default. Use
+`scripts/releases/export_public.py` to produce a reviewed source snapshot from
+the intended commit, then commit that snapshot on top of the current public
+`main` in a clean, isolated checkout. Preserve the public history and independent
+release files. Verify the exported diff and the remote commit after pushing.
+Never push the development branch or its history directly to the public remote.
+Use the development remote only when the owner asks for it explicitly.
+
 Git history uses Conventional Commit-style prefixes, especially `feat:`. Keep commits focused and descriptive, for example `feat: add chat thinking parser` or `fix: handle OAuth relay errors`. PRs should include a summary, validation commands, linked issues when relevant, screenshots for UI changes, docs updates for user-facing behavior, and removed-interface notes. Update current callers together; preserve the reissued 1.0.0 compatibility baseline and test any subsequent versioned adapters or data migrations.
 
 ## Security & Configuration Tips

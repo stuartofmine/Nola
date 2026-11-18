@@ -778,7 +778,7 @@ impl CoreAgentHost {
                 execution_backend: restored_execution_backend,
                 ..AgentTurnIdentity::default()
             },
-            automation_execution_spec: actual_automation_execution_spec(config)?,
+            automation_execution_spec: None,
         };
         // The active Run owns its Core configuration. Current Host credentials
         // were proven above, but must not replace model/context/catalog policy.
@@ -1179,7 +1179,11 @@ impl CoreAgentHost {
             // Only this explicit new-submission boundary restores discovery
             // schemas. A terminal/idle checkpoint is historical and correctly
             // omits them; same-Run recovery must retain its frozen projection.
-            let admission_core_config=self.runtime.new_run_admission_configuration(&self.admission_tool_schemas)?;
+            let mut admission_core_config =
+                self.runtime.new_run_admission_configuration(&self.admission_tool_schemas)?;
+            // The adopted checkpoint describes the session, not the upcoming
+            // occurrence. Carry its verified launch spec into admission only.
+            admission_core_config.automation_execution_spec = actual_automation_execution_spec(config)?;
             let store = self
                 .session_store
                 .as_mut()

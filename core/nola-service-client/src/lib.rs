@@ -75,8 +75,9 @@ impl ApplicationServiceRequestCancellation {
 impl ApplicationServiceClient {
     pub fn for_database(database_path: impl Into<PathBuf>) -> Self {
         let database_path = database_path.into();
-        let socket_path = socket_path_for_database(&database_path);
-        let client_id = client_id_for_database(&database_path);
+        let hash = database_path_hash(&database_path);
+        let socket_path = socket_path_for_hash(hash);
+        let client_id = format!("nola-local-{hash:016x}");
         Self {
             database_path,
             socket_path,
@@ -733,7 +734,10 @@ fn client_id_for_database(database_path: &Path) -> String {
 pub fn socket_path_for_database(database_path: &Path) -> PathBuf {
     // FNV-1a matches the native Mac client and avoids exposing database paths
     // in a world-readable temporary directory name.
-    let hash = database_path_hash(database_path);
+    socket_path_for_hash(database_path_hash(database_path))
+}
+
+fn socket_path_for_hash(hash: u64) -> PathBuf {
     // Unix-domain socket paths have a small fixed-size address field (104
     // bytes on macOS). Process-specific TMPDIR values can already exceed that
     // limit before the socket name is appended, so keep transport endpoints
@@ -748,9 +752,29 @@ pub fn socket_path_for_database(database_path: &Path) -> PathBuf {
     ))
 }
 
+fn database_identity_path(database_path: &Path) -> PathBuf {
+    let absolute = if database_path.is_absolute() {
+        database_path.to_owned()
+    } else {
+        std::env::current_dir()
+            .map(|directory| directory.join(database_path))
+            .unwrap_or_else(|_| database_path.to_owned())
+    };
+    // Resolve aliases even before the database and its parent folders exist.
+    // Both clients must address the same writer and the same startup lock.
+    for ancestor in absolute.ancestors() {
+        if let Ok(resolved) = std::fs::canonicalize(ancestor) {
+            if let Ok(tail) = absolute.strip_prefix(ancestor) {
+                return if tail.as_os_str().is_empty() { resolved } else { resolved.join(tail) };
+            }
+        }
+    }
+    absolute
+}
+
 fn database_path_hash(database_path: &Path) -> u64 {
     let mut hash = 0xcbf29ce484222325_u64;
-    for byte in database_path.as_os_str().to_string_lossy().as_bytes() {
+    for byte in database_identity_path(database_path).as_os_str().to_string_lossy().as_bytes() {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0x100000001b3);
     }
@@ -2453,6 +2477,21 @@ mod tests {
         let client = ApplicationServiceClient::for_database("/tmp/unused-budget-fixture.db");
         assert_eq!(client.request_timeout, Duration::from_secs(30));
         assert!(client.with_request_timeout(Duration::ZERO).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn database_socket_identity_unifies_aliases_before_creation() {
+        let root = std::env::temp_dir().join(format!("nola-db-alias-{}", next_request_id()));
+        let directory = root.join("real");
+        std::fs::create_dir_all(&directory).unwrap();
+        let alias = root.join("alias");
+        std::os::unix::fs::symlink(&directory, &alias).unwrap();
+        let canonical = ApplicationServiceClient::for_database(directory.join("missing/db"));
+        let aliased = ApplicationServiceClient::for_database(alias.join("missing/db"));
+        assert_eq!(canonical.socket_path(), aliased.socket_path());
+        assert_eq!(canonical.client_id(), aliased.client_id());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
