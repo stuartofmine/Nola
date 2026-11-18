@@ -391,7 +391,7 @@ use nola_domain::core_event::{EventCursor};
     }})).unwrap();
     for (id, turn) in [("original-skill", "run"), ("next-skill", "next-turn")] {
         let skill = serde_json::from_value(serde_json::json!({"run_id":id,"owner":{"session_id":"core-owner-session","parent_turn_id":turn},
-            "descriptor":{"skill_id":"skill","version":"1","display_name":"Skill","instructions_ref":format!("skill#sha256={}","a".repeat(64)),"instructions_digest":"a".repeat(64)},
+            "descriptor":{"skill_id":"skill","version":"1","display_name":"Skill","instructions_ref":"skill://skill/1"},
             "mode":"inline","status":"running","budget":{"max_model_turns":100,"max_tool_calls":100,"max_elapsed_millis":null},
             "usage":{"model_turns":0,"tool_calls":0,"elapsed_millis":0},"catalog_revision":1})).unwrap();
         state.skill_runtime.runs.insert(id.into(), skill);
@@ -652,7 +652,7 @@ use nola_domain::core_event::{EventCursor};
     let skill = serde_json::from_value(serde_json::json!({
         "run_id":"old-skill","owner":{"session_id":CORE_SESSION,"parent_turn_id":"old-core-turn"},
         "descriptor":{"skill_id":"skill","version":"1","display_name":"Historical skill",
-            "instructions_ref":format!("skill#sha256={}","a".repeat(64)),"instructions_digest":"a".repeat(64)},
+            "instructions_ref":"skill://skill/1"},
         "mode":"inline","status":"failed","budget":{"max_model_turns":100,"max_tool_calls":100,"max_elapsed_millis":null},
         "usage":{"model_turns":0,"tool_calls":0,"elapsed_millis":0},"catalog_revision":1
     })).unwrap();

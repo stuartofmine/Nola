@@ -112,6 +112,7 @@ function desktopPaths() {
             path.join(repoRoot, "target", "release", executableName),
             path.join(repoRoot, "target", "x86_64-pc-windows-msvc", "debug", executableName),
             path.join(repoRoot, "target", "x86_64-pc-windows-msvc", "release", executableName),
+            path.join(repoRoot, "target", "aarch64-pc-windows-msvc", "debug", executableName),
             path.join(repoRoot, "target", "aarch64-pc-windows-msvc", "release", executableName),
         ],
     });

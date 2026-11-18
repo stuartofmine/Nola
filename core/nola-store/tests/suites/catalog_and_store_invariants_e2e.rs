@@ -479,8 +479,6 @@ fn skill_versions_model_catalog_scoping_and_data_sources_persist_across_reopen()
         summary: "Document authoring".into(),
         category: "documents".into(),
         instructions_ref: format!("skill://word/{version}/SKILL.md"),
-        instructions_digest: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
-            .into(),
         instructions_text: "hello".into(),
         required_tools_json: None,
         default_mode: None,
@@ -495,9 +493,9 @@ fn skill_versions_model_catalog_scoping_and_data_sources_persist_across_reopen()
     let mut wrong_source = skill_pkg("v2");
     wrong_source.source = SkillSourceKind::User;
     assert!(store.register_skill_version(&wrong_source).is_err());
-    let mut invalid_digest = skill_pkg("v2");
-    invalid_digest.instructions_digest = "invalid".into();
-    assert!(store.register_skill_version(&invalid_digest).is_err());
+    let mut empty_instructions = skill_pkg("v2");
+    empty_instructions.instructions_text = "   ".into();
+    assert!(store.register_skill_version(&empty_instructions).is_err());
     let next_skill = skill_pkg("v2");
     store.register_skill_version(&next_skill).unwrap();
     store.register_skill_version(&next_skill).unwrap();

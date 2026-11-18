@@ -139,6 +139,11 @@ internal fun conversationPermissionMode(
     else -> throw IllegalArgumentException("Permission profile must be cautious or allow_all")
 }
 
+private val CHAT_ATTACHMENT_BLOCK = Regex(
+    pattern = """<attachment\b[^>]*>.*?</attachment>""",
+    options = setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
+)
+
 private fun List<JsonObject>.dropLastUserMessage(): List<JsonObject> {
     val lastUserIndex = indexOfLast { message ->
         message["role"]?.jsonPrimitive?.contentOrNull == "user"
@@ -266,9 +271,9 @@ class ChatViewModel @Inject constructor(
                     return@withContext when (result.status) {
                         "committed" -> com.nola.ui.generative.UiSubmissionOutcome.Committed(checkNotNull(result.receipt))
                         "rejected", "conflict" -> com.nola.ui.generative.UiSubmissionOutcome.Rejected(
-                            result.message ?: "Host 拒绝了提交，请刷新表单。")
+                            result.message ?: context.getString(R.string.chat_ui_host_submission_rejected))
                         else -> com.nola.ui.generative.UiSubmissionOutcome.Unknown(
-                            result.message ?: "Host 提交结果尚未确认。")
+                            result.message ?: context.getString(R.string.chat_ui_host_submission_unknown))
                     }
                 }
                 check(conversation.selectedModelInfo?.source != ModelInfo.ModelSource.WebHost) {
@@ -289,9 +294,11 @@ class ChatViewModel @Inject constructor(
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (rejected: com.nola.data.local.AndroidApplicationRuntime.RejectedMutation) {
-                com.nola.ui.generative.UiSubmissionOutcome.Rejected(rejected.message ?: "提交被拒绝。")
+                com.nola.ui.generative.UiSubmissionOutcome.Rejected(
+                    rejected.message ?: context.getString(R.string.chat_ui_submission_rejected))
             } catch (error: Exception) {
-                com.nola.ui.generative.UiSubmissionOutcome.Unknown(error.message ?: "提交结果尚未确认。")
+                com.nola.ui.generative.UiSubmissionOutcome.Unknown(
+                    error.message ?: context.getString(R.string.chat_ui_submission_unknown))
             }
         }
 
@@ -926,6 +933,14 @@ class ChatViewModel @Inject constructor(
         context.getSharedPreferences("goal-control-intents", android.content.Context.MODE_PRIVATE)
             .contains("${host.expectedHostId}:$owner")
     }
+    internal suspend fun discardPendingGoalControl(owner: String) = withContext(Dispatchers.IO) {
+        val host = resolveConversationProgressHost(owner) ?: return@withContext
+        val preferences = context.getSharedPreferences("goal-control-intents", android.content.Context.MODE_PRIVATE)
+        check(preferences.edit().remove("${host.expectedHostId}:$owner").commit()) {
+            context.getString(R.string.goal_operation_failed)
+        }
+    }
+
     internal suspend fun submitGoalControl(owner: String, control: JsonObject?): com.nola.data.repository.ConversationProgress =
         withContext(Dispatchers.IO) { remoteGoalMutex.withLock {
             val host = resolveConversationProgressHost(owner)
@@ -954,15 +969,29 @@ class ChatViewModel @Inject constructor(
         } }
 
     private val localGoalWakes = mutableSetOf<String>()
+    private val activeGoalReplies = mutableSetOf<String>()
 
-    private suspend fun stepLocalGoal(owner: String, control: JsonObject? = null, hostAvailable: Boolean = true): JsonObject = withContext(Dispatchers.IO) {
+    private suspend fun stepLocalGoal(
+        owner: String,
+        control: JsonObject? = null,
+        hostAvailable: Boolean = true,
+        userPrompt: String = "",
+    ): JsonObject = withContext(Dispatchers.IO) {
         check(resolveConversationProgressHost(owner) == null) { "Goal belongs to a paired Host" }
         val nativeHost = withContext(Dispatchers.Main) { localToolPlan(owner,
             runRegistry.find(composerDrafts.ownerKey(owner))?.state?.value ?: _uiState.value).identity.hostId }
-        val selectedModel = if (control?.get("action")?.jsonPrimitive?.content == "start") {
-            val state = withContext(Dispatchers.Main) { runRegistry.find(composerDrafts.ownerKey(owner))?.state?.value ?: _uiState.value }
-            agentTurnService.goalModelAdmission(checkNotNull(state.currentModel), state.effectiveGenerationParameters,
-                state.currentParameters.enableThinking)
+        val action = control?.get("action")?.jsonPrimitive?.content
+        val state = withContext(Dispatchers.Main) { runRegistry.find(composerDrafts.ownerKey(owner))?.state?.value ?: _uiState.value }
+        val needsModel = action in setOf("start", "resume") || userPrompt.isNotBlank()
+        val selectedModel = if (needsModel) {
+            val resolvedModel = state.currentModel
+            if (resolvedModel != null) {
+                agentTurnService.goalModelAdmission(resolvedModel, state.effectiveGenerationParameters,
+                    state.currentParameters.enableThinking)
+            } else {
+                check(action != "start") { context.getString(R.string.chat_no_model_selected) }
+                JsonNull
+            }
         } else JsonNull
         val operation = control?.getValue("operationId")?.jsonPrimitive?.content
         val intent = control?.let { value -> buildJsonObject {
@@ -977,7 +1006,7 @@ class ChatViewModel @Inject constructor(
         }, operation?.let { "goal-intent:$owner:$it" }) }
         val command = buildJsonObject {
             put("type", "step_goal"); put("conversation_id", owner); put("source_host_id",nativeHost); put("host_available",hostAvailable)
-            put("control", envelope ?: JsonNull); put("selected_model",selectedModel)
+            put("control", envelope ?: JsonNull); put("selected_model",selectedModel); put("user_prompt", userPrompt)
         }
         val result = applicationRuntime.submitMutation(command, operation?.let { "embedded-goal:$owner:$it" }).jsonObject
         result["error"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.content?.let { error(it) }
@@ -995,7 +1024,7 @@ class ChatViewModel @Inject constructor(
                 while (remoteUiForeground && result["instruction"]?.jsonObject?.get("type") == JsonPrimitive("wait")) {
                     val instruction = result.getValue("instruction").jsonObject
                     val wake = instruction["wake_at_epoch_ms"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.longOrNull ?: return@launch
-                    kotlinx.coroutines.delay((wake - System.currentTimeMillis()).coerceAtLeast(0))
+                    kotlinx.coroutines.delay((wake - System.currentTimeMillis()).coerceAtLeast(250L))
                     if (!remoteUiForeground) return@launch
                     result = stepLocalGoal(owner)
                 }
@@ -1006,8 +1035,18 @@ class ChatViewModel @Inject constructor(
                 val conversation = withContext(Dispatchers.IO) { conversationRepo.getConversation(owner) } ?: return@launch
                 // Existing registry/recovery owns the physical model, tools,
                 // permission wait, journal projection and terminal seal.
-                if (session != null) runRegistry.enter(session) { resumeExistingDeviceRun(conversation, run) }
-                else if (_uiState.value.conversationId == owner) resumeExistingDeviceRun(conversation, run)
+                val targetSession = runRegistry.find(composerDrafts.ownerKey(owner)) ?: runRegistry.session(
+                    composerDrafts.ownerKey(owner),
+                    ChatUiState(
+                        conversationId = conversation.id,
+                        configurationRevision = conversation.configurationRevision,
+                        currentModel = conversation.selectedModelInfo,
+                        executionHostBinding = conversation.executionHostBinding,
+                        permissionMode = conversationPermissionMode(conversation.permissionMode, defaultPermissionMode),
+                        responseStyleOverride = conversation.promptResponseStyle ?: _uiState.value.responseStyleOverride,
+                    ),
+                )
+                runRegistry.enter(targetSession) { resumeExistingDeviceRun(conversation, run) }
             } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
             catch (failure: Exception) {
                 runRegistry.find(composerDrafts.ownerKey(owner))?.state?.update { it.copy(error = failure.message) }
@@ -1137,9 +1176,11 @@ class ChatViewModel @Inject constructor(
                 val revision = manifestEntry.modelDeclaration.getValue("profile_revision").jsonPrimitive.longOrNull
                 val candidate = modelRepo.listConfiguredModels().singleOrNull { it.profileId == profileId && it.profileRevision == revision }
                     ?: error("The original expert model declaration is no longer available")
-                val parameters = com.nola.data.repository.readConversationParameters(manifestEntry.defaults.toString(), candidate)
-                    ?: Json.decodeFromJsonElement(com.nola.domain.model.ModelParameters.serializer(),
-                        manifestEntry.modelDeclaration.getValue("parameters"))
+                val parameters = com.nola.data.repository.readExpertConversationParameters(
+                    manifestEntry.defaults,
+                    candidate,
+                    manifestEntry.modelDeclaration.getValue("parameters").jsonObject,
+                )
                 agentTurnService.captureModel(candidate, parameters)
             } else null
             // Inherited expert contexts intentionally have no selected model.
@@ -1233,19 +1274,40 @@ class ChatViewModel @Inject constructor(
                 current = withContext(Dispatchers.IO) { agentRooms.fail(current, if (current.state == "accepted") "routing_failed" else "execution_unavailable") }
             }
         } finally {
-            runCatching { refreshRoomSubmissions(room.room.id) }
+            withContext(kotlinx.coroutines.NonCancellable) {
+                runCatching { refreshRoomSubmissions(room.room.id) }
+            }
             permissionMirror?.cancel()
             activeRoomDispatches.remove(accepted.input.submissionId)
         }
     }
 
     internal suspend fun refreshRoomSubmissions(roomId: String) {
-        val values = withContext(Dispatchers.IO) { agentRooms.submissions(roomId).map { value ->
-            if (value.state == "executing") runCatching { agentRooms.observeExecution(value) }.getOrDefault(value) else value
-        } }
+        val (values, exchanges) = withContext(Dispatchers.IO) {
+            val submissions = agentRooms.submissions(roomId).map { value ->
+                if (value.state == "executing") runCatching { agentRooms.observeExecution(value) }.getOrDefault(value) else value
+            }
+            val peerList = agentRooms.load(roomId)?.room?.participants.orEmpty()
+                .flatMap { participant ->
+                    runCatching {
+                        (agentRooms.peerExchanges(participant.contextConversationId)["exchanges"] as? JsonArray)
+                            .orEmpty()
+                            .mapNotNull { it as? JsonObject }
+                    }.getOrDefault(emptyList())
+                }
+            submissions to peerList
+        }
         roomSubmissions[roomId] = mergeRoomSubmissions(roomId, roomSubmissions[roomId].orEmpty(), values)
         roomSubmissions[roomId].orEmpty().filter { it.state in setOf("accepted", "selected", "executing") && it.input.submissionId !in activeRoomDispatches }.forEach { value ->
             viewModelScope.launch { withContext(Dispatchers.IO) { agentRooms.load(roomId) }?.let { dispatchRoomSubmission(it, value) } }
+        }
+        exchanges.mapNotNull { exchange ->
+            exchange["target"]?.jsonObject?.get("context_conversation_id")?.jsonPrimitive?.contentOrNull
+                ?.takeIf(String::isNotBlank)
+        }.distinct().forEach { childContextId ->
+            if (runRegistry.find(composerDrafts.ownerKey(childContextId)) == null) {
+                loadConversation(childContextId, background = true)
+            }
         }
         val current = roomDrafts[roomId] ?: return
         val pending = current.pending ?: return
@@ -1757,7 +1819,40 @@ class ChatViewModel @Inject constructor(
                     conversationCatalog.value = convs
                     conversationListError.value = null
                     _uiState.update { it.copy(conversations = convs) }
-                }.onFailure { conversationListError.value = it.message ?: it.toString() }
+                }.onFailure { error ->
+                    if (error is kotlinx.coroutines.CancellationException) throw error
+                    conversationListError.value = error.message ?: error.toString()
+                }
+        }
+    }
+
+    fun renameConversation(conversationId: String, rawTitle: String) {
+        val trimmed = rawTitle.trim()
+        if (conversationId.isBlank() || trimmed.isEmpty()) return
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    conversationRepo.updateTitle(conversationId, trimmed)
+                }
+                conversationCatalog.update { list ->
+                    list.map { conv -> if (conv.id == conversationId) conv.copy(title = trimmed) else conv }
+                }
+                _uiState.update { state ->
+                    state.copy(conversations = state.conversations.map { conv ->
+                        if (conv.id == conversationId) conv.copy(title = trimmed) else conv
+                    })
+                }
+                displayedState.update { state ->
+                    state.copy(conversations = state.conversations.map { conv ->
+                        if (conv.id == conversationId) conv.copy(title = trimmed) else conv
+                    })
+                }
+                loadConversations()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                conversationListError.value = error.message ?: error.toString()
+            }
         }
     }
 
@@ -2623,6 +2718,7 @@ class ChatViewModel @Inject constructor(
                 if (displayedState.value.conversationId == convId) newConversation()
                 loadConversations()
             }.onFailure { error ->
+                if (error is kotlinx.coroutines.CancellationException) throw error
                 conversationListError.value = error.message ?: error.toString()
             }
         }
@@ -3912,6 +4008,96 @@ class ChatViewModel @Inject constructor(
             _uiState.update { it.copy(error = "An expert message is still awaiting confirmation. Restore its original text and select its experts to retry.") }
             return
         }
+        val targetGoalConversationId = state.conversationId
+        if (submissionIdentity == null && editedResend == null && selectedExpertIds.isEmpty() && attachments.isEmpty() &&
+            targetGoalConversationId != null && state.currentModel?.source != ModelInfo.ModelSource.WebHost) {
+            val capturedDraft = composerDrafts.captureSubmission(composerDrafts.ownerKey(targetGoalConversationId))
+            if (activeGoalReplies.add(targetGoalConversationId)) {
+                viewModelScope.launch {
+                    try {
+                        val goalStatus = withContext(Dispatchers.IO) {
+                            runCatching { conversationProgress.load(targetGoalConversationId).status }
+                                .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
+                                .getOrNull()
+                        }
+                        if (goalStatus in setOf("needs_user", "paused")) {
+                            val ticket = composerDrafts.prepareSubmission(capturedDraft)
+                            val result = stepLocalGoal(targetGoalConversationId, userPrompt = text)
+                            composerDrafts.submitted(ticket)
+                            val updatedMessages = withContext(Dispatchers.IO) {
+                                conversationRepo.getMessages(targetGoalConversationId)
+                            }
+                            runRegistry.find(composerDrafts.ownerKey(targetGoalConversationId))?.state?.update {
+                                it.copy(messages = updatedMessages, error = null)
+                            }
+                            if (displayedState.value.conversationId == targetGoalConversationId) {
+                                displayedState.update { it.copy(messages = updatedMessages, error = null) }
+                            }
+                            wakeLocalGoal(targetGoalConversationId, result)
+                            return@launch
+                        }
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                        throw cancelled
+                    } catch (failure: Exception) {
+                        runRegistry.find(composerDrafts.ownerKey(targetGoalConversationId))?.state?.update {
+                            it.copy(error = failure.message)
+                        }
+                        if (displayedState.value.conversationId == targetGoalConversationId) {
+                            displayedState.update { it.copy(error = failure.message) }
+                        }
+                        return@launch
+                    } finally {
+                        activeGoalReplies.remove(targetGoalConversationId)
+                    }
+                    dispatchSendMessage(
+                        text, messageMeta, attachments, submissionIdentity, queuedAdmission,
+                        remoteQueuedCommandId, remoteQueuedConfiguration, expertParticipantAgentIds,
+                        editedResend, canonicalUserMessageId, capturedExpertModel,
+                    )
+                }
+                return
+            }
+            return
+        }
+        dispatchSendMessage(
+            text, messageMeta, attachments, submissionIdentity, queuedAdmission,
+            remoteQueuedCommandId, remoteQueuedConfiguration, expertParticipantAgentIds,
+            editedResend, canonicalUserMessageId, capturedExpertModel,
+        )
+    }
+
+    private fun dispatchSendMessage(
+        text: String,
+        messageMeta: Map<String, String>? = null,
+        attachments: List<com.nola.domain.model.ModelAttachment> = emptyList(),
+        submissionIdentity: String? = null,
+        queuedAdmission: com.nola.core.AndroidQueuedUserAdmission? = null,
+        remoteQueuedCommandId: String? = null,
+        remoteQueuedConfiguration: WebAgentProvider.Config? = null,
+        expertParticipantAgentIds: Set<String> = emptySet(),
+        editedResend: AndroidPreparedEditedResend? = null,
+        canonicalUserMessageId: String? = null,
+        capturedExpertModel: com.nola.core.AndroidTurnModelSnapshot? = null,
+    ) {
+        val state = capturedExpertModel?.let { _uiState.value.copy(currentModel = it.model, currentParameters = it.parameters) } ?: _uiState.value
+        val draftOwner = if (submissionIdentity == null) composerDrafts.ownerKey(state.conversationId) else null
+        val pendingExpertAdmission = draftOwner?.let { pendingExpertAdmissionByDraft.find(it, state.conversationId) }
+        val selectedExpertIds = if (submissionIdentity == null) pendingExpertAdmission?.selectedAgentIds ?: expertParticipantAgentIds else emptySet()
+        val selectedExpertSource = expertPickerSource
+        val selectedExpertContext = runCatching {
+            mainExpertSelection(selectedExpertIds, selectedConversationAgentRevisions.toMap(), selectedConversationAgentParticipants.toMap())?.let { selection ->
+                selectedExpertSource?.let { JsonObject(selection + ("expected_source_store_epoch" to JsonPrimitive(it.epoch))) } ?: selection
+            }
+        }.getOrElse { _uiState.update { it.copy(error = context.getString(R.string.expert_profile_changed)) }; return }
+        if (state.currentModel == null) {
+            _uiState.update { it.copy(error = context.getString(R.string.chat_no_model_selected)) }
+            return
+        }
+        if (selectedExpertContext != null && state.currentModel.source != ModelInfo.ModelSource.WebHost &&
+            state.currentModel.executionCapabilitiesDeclared && !state.currentModel.executionCapabilities.toolCalls) {
+            _uiState.update { it.copy(error = context.getString(R.string.expert_main_requires_tools)) }
+            return
+        }
         val executionOwner = composerDrafts.ownerKey(state.conversationId)
         if (runRegistry.find(executionOwner)?.runtime?.hasOutstandingGeneration() == true) {
             _uiState.update { it.copy(error = context.getString(R.string.chat_previous_turn_settling)) }
@@ -4194,12 +4380,18 @@ class ChatViewModel @Inject constructor(
     ): Boolean {
         executionSession.hasCommittedTerminalSeal = false
         val executionMode = AndroidAgentExecutionMode.DeviceLocal
+        val hasPreparedAttachments = prepared?.turnContextComponents?.any { it.kind == "attachment" } == true
+        val modelInput = if (hasPreparedAttachments) {
+            input.replace(CHAT_ATTACHMENT_BLOCK, "").trim()
+        } else {
+            input
+        }
         val turn = agentTurnService.start(
             AndroidAgentTurnRequest(
                 model = if (recoverExistingRun) null else modelSnapshot ?: agentTurnService.captureModel(
                     checkNotNull(state.currentModel) { "Select a model before starting" }, state.effectiveGenerationParameters),
                 sessionId = convId,
-                input = input,
+                input = modelInput,
                 history = prepared?.modelInput?.canonicalMessages?.dropLastUserMessage()
                     ?.mapNotNull(::agentCoreMessage).orEmpty(),
                 tools = modelSnapshot?.modelFacingTools(prepared?.modelInput?.tools ?: toolPlan.tools)
@@ -4211,6 +4403,7 @@ class ChatViewModel @Inject constructor(
                     contextWindowTokens = state.effectiveGenerationParameters.maxContextTokens,
                     grantedCapabilities = toolPlan.grantedCapabilities,
                 ),
+                turnContextComponents = prepared?.turnContextComponents.orEmpty(),
                 responseStyle = state.responseStyle,
                 customSystemPrompt = state.currentParameters.customSystemPrompt,
                 enableThinking = state.currentParameters.enableThinking,
@@ -4855,7 +5048,7 @@ class ChatViewModel @Inject constructor(
                         // If admission won the cancel race, cancel that exact
                         // live Run normally; a pending receipt never means idle.
                         if (receipt?.phase == com.nola.data.remote.api.RemoteSubmissionPhase.Admitted)
-                            webAgentProvider.cancelAdmittedSubmission(durable.identity, digest, configuration)
+                            webAgentProvider.cancelAdmittedSubmission(durable.identity, configuration)
                         else if (result !is JsonObject && current())
                             _uiState.update { it.copy(processingState = ProcessingState.BuildingContext) }
                     }
@@ -4872,7 +5065,6 @@ class ChatViewModel @Inject constructor(
         val usedWebHost = state.currentModel?.source == ModelInfo.ModelSource.WebHost
         val cancelIdentity = remoteAdmissionReceipt?.identity ?: pending?.takeIf {
             it.phase == com.nola.data.remote.api.RemoteSubmissionPhase.Admitted }?.identity
-        val cancelDigest = remoteAdmissionReceipt?.requestDigest ?: pending?.requestDigest
         val localCoordinator = turnRuntime.deviceCoordinator()
         if (localCoordinator == null && !usedWebHost) turnRuntime.cancelGeneration()
         permissionSession.clear()
@@ -4885,7 +5077,7 @@ class ChatViewModel @Inject constructor(
             if (usedWebHost && convId != null) {
                 try {
                     require(cancelIdentity?.conversationId == convId)
-                    webAgentProvider.cancelAdmittedSubmission(checkNotNull(cancelIdentity), checkNotNull(cancelDigest), capturedConfiguration)
+                    webAgentProvider.cancelAdmittedSubmission(checkNotNull(cancelIdentity), capturedConfiguration)
                 } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
                 catch (failure: Exception) {
                     if (_uiState.value.conversationId == convId && remoteAdmissionReceipt?.identity == cancelIdentity)
@@ -4968,6 +5160,7 @@ class ChatViewModel @Inject constructor(
                 }.onSuccess {
                     observeRemoteAgentTasks(state.conversationId)
                 }.onFailure { error ->
+                    if (error is kotlinx.coroutines.CancellationException) throw error
                     _uiState.update { it.copy(error = error.message ?: context.getString(R.string.chat_agent_error)) }
                 }
             }
@@ -5243,8 +5436,14 @@ class ChatViewModel @Inject constructor(
 
         val conv = conversationRepo.getConversation(convId)
         if (conv?.title == null || conv.title.isNullOrEmpty()) {
-            val userMsgs = _uiState.value.messages.filter { it.role == ChatRole.user }
-            val firstQuery = userMsgs.firstOrNull()?.text?.take(80)
+            val firstUser = canonicalMessages.firstOrNull { it.role == ChatRole.user }
+            val rawFirstQuery = firstUser?.meta?.get("nola.displayMessage")?.takeIf(String::isNotBlank)
+                ?: firstUser?.text
+            val firstQuery = rawFirstQuery
+                ?.replace(CHAT_ATTACHMENT_BLOCK, "")
+                ?.trim()
+                ?.takeIf(String::isNotEmpty)
+                ?.take(80)
             if (firstQuery != null) {
                 conversationRepo.updateTitle(convId, firstQuery)
                 loadConversations()
@@ -5360,7 +5559,7 @@ class ChatViewModel @Inject constructor(
                 requestId = requestId,
                 uri = uri,
                 write = write,
-                persistable = persistable
+                persistable = persistable || permissionSession.shouldRememberLocalGrant(),
             )
         completeLocalAgentPermission(
             decision.withConversationScope(
@@ -5418,6 +5617,7 @@ class ChatViewModel @Inject constructor(
                         }
                     }
                     .onFailure { error ->
+                        if (error is kotlinx.coroutines.CancellationException) throw error
                         permissionSession.finishInstruction(decision.requestId)
                         _uiState.update {
                             if (permissionResponseStillCurrent(decision.requestId, it.agentPermissionRequest?.requestId))
@@ -5572,6 +5772,7 @@ class ChatViewModel @Inject constructor(
         turnState: ChatUiState = _uiState.value,
     ): AndroidPreparedContext {
         val state = turnState
+        val useWebHost = route == AndroidContextRoute.Web
         val result = contextPreparer.prepare(
             ChatContextPreparationRequest(
                 conversation = conv,
@@ -5582,9 +5783,9 @@ class ChatViewModel @Inject constructor(
                 mode = mode,
                 responseStyle = state.responseStyle,
                 parameters = state.effectiveGenerationParameters,
-                uploadedSkills = state.hostUploadedSkills,
-                uploadedDocuments = state.hostUploadedDocuments,
-                mcpServers = state.hostMcpServers,
+                uploadedSkills = if (useWebHost) state.hostUploadedSkills else state.uploadedSkills,
+                uploadedDocuments = if (useWebHost) state.hostUploadedDocuments else state.uploadedDocuments,
+                mcpServers = if (useWebHost) state.hostMcpServers else state.mcpServers,
             )
         )
         _uiState.update {

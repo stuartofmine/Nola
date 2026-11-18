@@ -83,6 +83,7 @@ import com.nola.ui.components.NolaColors
 import com.nola.ui.components.NolaDivider
 import com.nola.ui.components.NolaSectionTitle
 import com.nola.ui.components.NolaSpacing
+import com.nola.ui.components.NolaSwitch
 import com.nola.ui.components.NolaTopAppBar
 import kotlinx.coroutines.launch
 
@@ -896,6 +897,6 @@ fun ToggleRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Uni
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-        Switch(checked = checked, onCheckedChange = null)
+        NolaSwitch(checked = checked, onCheckedChange = null)
     }
 }

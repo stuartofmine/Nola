@@ -55,13 +55,4 @@ object AgentCoreDataSourceResolver {
         val output = AgentCoreNative.nativeDataSourceResolve(encoded) ?: return null
         return runCatching { decodeOutput(output) }.getOrNull()
     }
-
-    fun sealContract(contract: JsonObject): JsonObject? {
-        if (!isAvailable) return null
-        val encoded = json.encodeToString(JsonObject.serializer(), contract).encodeToByteArray()
-        val output = AgentCoreNative.nativeDataSourceSealContract(encoded) ?: return null
-        return runCatching {
-            json.decodeFromString(JsonObject.serializer(), output.decodeToString())
-        }.getOrNull()
-    }
 }

@@ -109,7 +109,8 @@ class SettingsViewModel @Inject constructor(
                 )
             }.onSuccess { loaded ->
                 _uiState.value = loaded
-            }.onFailure {
+            }.onFailure { error ->
+                if (error is kotlinx.coroutines.CancellationException) throw error
                 _uiState.update { it.copy(isLoading = false, loadFailed = true) }
             }
         }

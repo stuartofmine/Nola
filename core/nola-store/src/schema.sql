@@ -461,7 +461,6 @@ CREATE TABLE skill_versions(
     skill_id TEXT NOT NULL REFERENCES skill_definitions(id) ON DELETE CASCADE,
     version TEXT NOT NULL,
     instructions_ref TEXT NOT NULL,
-    instructions_digest TEXT NOT NULL,
     instructions_text TEXT NOT NULL,
     required_tools_json TEXT,
     default_mode TEXT CHECK(default_mode IS NULL OR default_mode IN ('inline', 'fork')),

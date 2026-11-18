@@ -16,8 +16,15 @@ pub trait GoalExecutionRepository {
         goal_id: &str,
     ) -> Result<Option<StoredGoalExecutionBinding>, Self::Error>;
     /// Requires the caller's transaction. Identical retries are idempotent;
-    /// neither a different operation nor different execution facts may replace it.
+    /// neither a different operation nor different execution facts may replace it
+    /// via insert, while rebind explicitly uses upsert_goal_execution_binding.
     fn insert_goal_execution_binding(
+        &mut self,
+        binding: &StoredGoalExecutionBinding,
+    ) -> Result<(), Self::Error>;
+    /// Requires the caller's transaction. Replaces the Goal execution binding when
+    /// resuming or reconfiguring between rounds.
+    fn upsert_goal_execution_binding(
         &mut self,
         binding: &StoredGoalExecutionBinding,
     ) -> Result<(), Self::Error>;

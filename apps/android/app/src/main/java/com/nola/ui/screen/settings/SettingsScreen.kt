@@ -259,6 +259,7 @@ fun SettingsMain(
             Text(stringResource(if (detailSection == "general") R.string.settings_general else if (detailSection == "appearance") R.string.appearance_title else if (detailSection == "privacy") R.string.settings_privacy else if (detailSection == "notifications") R.string.notifications_title else R.string.settings_title),
                 Modifier.weight(1f), style = if (detailSection == null) MaterialTheme.typography.headlineSmall.copy(fontSize = 28.sp, lineHeight = 36.sp) else MaterialTheme.typography.titleMedium,
                 textAlign = if (detailSection == null) TextAlign.Start else TextAlign.Center)
+            if (detailSection != null) Spacer(Modifier.size(48.dp))
         }
         if (detailSection == null) {
             MobileSettingsGroup(R.string.settings_group_preferences) {
@@ -272,6 +273,7 @@ fun SettingsMain(
             MobileSettingsGroup(R.string.settings_group_security) {
                 IMSettingsRow(R.drawable.nola_review, R.string.settings_privacy) { detailSection = "privacy" }
             }
+            SettingsAutomationCard(onScheduledActions)
             return@NolaPage
         }
 
@@ -429,10 +431,23 @@ private fun MobileSettingsGroup(label: Int, content: @Composable () -> Unit) {
 
 @Composable
 private fun IMSettingsRow(icon: Int, label: Int, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).heightIn(min = 62.dp).padding(vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .heightIn(min = 62.dp)
+            .padding(horizontal = 4.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
         Icon(painterResource(icon), null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
         Text(stringResource(label), Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+        Icon(
+            painterResource(R.drawable.nola_chevron),
+            contentDescription = null,
+            modifier = Modifier.size(16.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 

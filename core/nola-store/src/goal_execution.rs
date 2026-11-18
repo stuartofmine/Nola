@@ -52,4 +52,43 @@ impl GoalExecutionRepository for NolaStore {
             params![binding.identity.conversation_id,binding.identity.goal_id,binding.identity.operation_id,binding.identity.source_host_id,binding.binding_json,binding.binding_sha256,binding.created_at_ms])?;
         Ok(())
     }
+    fn upsert_goal_execution_binding(
+        &mut self,
+        binding: &StoredGoalExecutionBinding,
+    ) -> StoreResult<()> {
+        if !self.has_write_unit_of_work() {
+            return Err(StoreError::Invariant(
+                "Goal binding requires canonical transaction".into(),
+            ));
+        }
+        binding.identity.validate().map_err(StoreError::Invariant)?;
+        if binding.created_at_ms < 0
+            || format!("{:x}", Sha256::digest(binding.binding_json.as_bytes()))
+                != binding.binding_sha256
+        {
+            return Err(StoreError::Invariant(
+                "invalid Goal execution binding digest or time".into(),
+            ));
+        }
+        self.connection.execute(
+            "INSERT INTO goal_execution_bindings(conversation_id,goal_id,operation_id,source_host_id,binding_json,binding_sha256,created_at_ms)
+             VALUES(?1,?2,?3,?4,?5,?6,?7)
+             ON CONFLICT(conversation_id,goal_id) DO UPDATE SET
+                 operation_id=excluded.operation_id,
+                 source_host_id=excluded.source_host_id,
+                 binding_json=excluded.binding_json,
+                 binding_sha256=excluded.binding_sha256,
+                 created_at_ms=excluded.created_at_ms",
+            params![
+                binding.identity.conversation_id,
+                binding.identity.goal_id,
+                binding.identity.operation_id,
+                binding.identity.source_host_id,
+                binding.binding_json,
+                binding.binding_sha256,
+                binding.created_at_ms
+            ],
+        )?;
+        Ok(())
+    }
 }

@@ -49,3 +49,5 @@
 "goal.cancel_explanation" = "Automatic work on this goal will stop. Your conversation and completed results remain.";
 
 "inspector.conversation_needed" = "Start or open a conversation to view progress and set a goal.";
+"goal.discard" = "Discard";
+"goal.paused_reply_hint" = "Paused for your input. Send a reply in chat or tap Continue.";

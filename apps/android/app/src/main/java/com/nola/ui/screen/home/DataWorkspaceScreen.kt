@@ -67,7 +67,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Switch
+import androidx.compose.foundation.selection.toggleable
+import com.nola.ui.components.NolaSwitch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.LaunchedEffect
@@ -785,7 +786,7 @@ private fun CustomDataSourceCard(
                             strokeWidth = 2.dp
                         )
                     } else {
-                        Switch(
+                        NolaSwitch(
                             checked = source.enabled,
                             onCheckedChange = onEnabledChange,
                             modifier = Modifier.semantics { contentDescription = source.name }
@@ -1054,12 +1055,22 @@ private fun DataSourceEditorDialog(
                     }
                 }
                 item {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .toggleable(
+                                value = allowCloud,
+                                role = Role.Switch,
+                                onValueChange = { allowCloud = it }
+                            )
+                            .heightIn(min = 48.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Column(Modifier.weight(1f)) {
                             Text(stringResource(R.string.data_sources_editor_cloud), style = MaterialTheme.typography.bodyMedium)
                             Text(stringResource(R.string.data_sources_editor_cloud_hint), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Switch(checked = allowCloud, onCheckedChange = { allowCloud = it })
+                        NolaSwitch(checked = allowCloud, onCheckedChange = null)
                     }
                 }
                 item {

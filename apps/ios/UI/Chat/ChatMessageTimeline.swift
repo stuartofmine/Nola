@@ -95,8 +95,7 @@ enum ChatCompactionSourceNavigator {
         messages: [ChatMessage]
     ) -> Bool {
         guard request.conversationID == conversationID,
-              !request.sourceItemIDs.isEmpty,
-              !request.sourceFingerprint.isEmpty else { return false }
+              !request.sourceItemIDs.isEmpty else { return false }
         return messages.contains { message in
             message.canonicalParts.contains { part in
                 guard case let .compaction(

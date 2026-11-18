@@ -193,6 +193,8 @@ pub struct TaskLineage {
     pub permission_scope_id: Option<String>,
     #[serde(default)]
     pub cancellation_scope_id: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1278,6 +1280,7 @@ mod tests {
             parent_call_id: Some(CallId::from_string("call-parent".to_string())),
             permission_scope_id: Some("permission-session".to_string()),
             cancellation_scope_id: Some("cancel-child".to_string()),
+            title: None,
         };
         projection.promote(promoted.clone()).expect("promote Task");
         let updated = projection

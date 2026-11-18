@@ -42,7 +42,9 @@ struct IOSCanonicalMessageSurface: View {
     }
 
     @MainActor private func submitUI(_ input: AppleUISubmission<AgentCoreJSONValue>) async -> AppleUISubmissionOutcome<AgentCoreJSONValue> {
-        guard accepts(input.interaction.identity), let manager else { return .rejected("会话来源已改变，请返回原会话操作。") }
+        guard accepts(input.interaction.identity), let manager else {
+            return .rejected(NSLocalizedString("a2ui.surface.source_changed", value: "Conversation source changed. Return to the original conversation.", comment: "UI surface source changed"))
+        }
         return await manager.submitUIInteraction(input)
     }
 

@@ -198,7 +198,6 @@ object CompactionSourceNavigator {
         messages: List<ConversationMessage>,
     ): Boolean = request.conversationId == currentConversationId &&
         request.sourceItemIds.isNotEmpty() &&
-        request.sourceFingerprint.isNotBlank() &&
         messages.any { message ->
             message.canonicalParts.any { part ->
                 part is ConversationProjectionV1.Part.Compaction &&
@@ -214,7 +213,6 @@ object CompactionSourceNavigator {
         projection: ConversationProjectionV1,
     ): Boolean = request.conversationId == currentConversationId &&
         request.sourceItemIds.isNotEmpty() &&
-        request.sourceFingerprint.isNotBlank() &&
         projection.conversationId == currentConversationId &&
         projection.messages.any { message ->
             message.parts.any { part ->

@@ -38,3 +38,16 @@
 "goal.model_note" = "Utilise le modèle choisi pour cette conversation et les autorisations actuelles des outils.";
 
 "inspector.conversation_needed" = "Démarrez ou ouvrez une conversation pour voir la progression et définir un objectif.";
+"goal.pending" = "En attente de confirmation de l’Hôte";
+"goal.retry" = "Réessayer l’action enregistrée";
+"goal.discard" = "Abandonner";
+"goal.pause" = "Mettre en pause";
+"goal.resume" = "Continuer";
+"goal.paused_reply_hint" = "En pause pour votre réponse. Répondez dans le chat ou touchez Continuer.";
+"goal.schedule" = "Planifier la suite";
+"goal.cancel" = "Annuler l’objectif";
+"goal.actions" = "Actions de l’objectif";
+"goal.start" = "Démarrer un objectif";
+"goal.sending" = "Envoi de l’action";
+"goal.objective" = "Que doit accomplir cet objectif ?";
+"goal.wake" = "Continuer à";

@@ -42,7 +42,8 @@ pub(crate) fn apply_idle(
         nola_application::ApplicationCommand::LoadHostExecutionState {conversation_id:session.into()})?;
     let result:serde_json::Value=application.execute(nola_application::ApplicationCommand::StepGoal {
         conversation_id:session.into(),source_host_id:execution.configuration.host_catalog.ok_or("Goal Host unavailable")?.host_id.0,
-        control:Some(envelope),start_configuration:None,selected_model:None,user_prompt:String::new(),host_available:Some(true) })?;
+        control:Some(envelope),start_configuration:None,selected_model:None,user_prompt:String::new(),host_available:Some(true),
+        submitted_run_id:None,submitted_user_message_id:None,submitted_assistant_message_id:None,stop_after_sealed_round:false })?;
     if let Some(error)=result["error"].as_str(){return Err(error.into());}
     Ok(())
 }

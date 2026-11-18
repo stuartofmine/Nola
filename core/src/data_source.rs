@@ -204,88 +204,13 @@ pub extern "C" fn nola_core_data_source_resolve(
         .unwrap_or(ptr::null_mut())
 }
 
-/// Seals a Host-produced validation contract with Core's canonical digest.
-/// The Host still owns source I/O, redaction, and persistence; this entry point
-/// prevents each client from reimplementing the digest material differently.
-#[no_mangle]
-pub extern "C" fn nola_core_data_source_seal_contract(
-    input_ptr: *const u8,
-    input_len: usize,
-) -> *mut c_char {
-    if input_ptr.is_null() || input_len == 0 {
-        return ptr::null_mut();
-    }
-    let bytes = unsafe { std::slice::from_raw_parts(input_ptr, input_len) };
-    let Ok(mut contract) = serde_json::from_slice::<DataSourceContract>(bytes) else {
-        return ptr::null_mut();
-    };
-    contract.seal_validation();
-    serde_json::to_string(&contract)
-        .ok()
-        .and_then(|value| CString::new(value).ok())
-        .map(CString::into_raw)
-        .unwrap_or(ptr::null_mut())
-}
-
-#[cfg(test)]
-mod seal_contract_tests {
-    use super::*;
-    use std::ffi::CStr;
-
-    #[test]
-    fn ffi_seals_the_same_contract_consumed_by_resolution() {
-        let now = Utc::now();
-        let contract = DataSourceContract {
-            source_id: "plain-text".to_string(),
-            connector_id: "test.text".to_string(),
-            connector_version: 1,
-            reader_description: "Read bounded text".to_string(),
-            read_recipe: DataSourceReadRecipe {
-                method: DataSourceReadMethod::HostTool,
-                operation_id: "test.text.read".to_string(),
-                configuration_keys: vec!["sourceID".to_string()],
-                output_schema: serde_json::json!({"type": "string"}),
-            },
-            schema_fields: Vec::new(),
-            redacted_sample: "sample".to_string(),
-            record_count: 1,
-            maximum_age_minutes: 60,
-            validation_state: DataSourceValidationState::Verified,
-            validated_at: now,
-            observed_at: Some(now),
-            validation_digest: String::new(),
-        };
-        let input = serde_json::to_vec(&contract).unwrap();
-        let pointer = nola_core_data_source_seal_contract(input.as_ptr(), input.len());
-        assert!(!pointer.is_null());
-        let raw = unsafe { CStr::from_ptr(pointer) }
-            .to_string_lossy()
-            .into_owned();
-        crate::nola_core_free_c_string(pointer);
-        let sealed: DataSourceContract = serde_json::from_str(&raw).unwrap();
-        assert!(!sealed.validation_digest.is_empty());
-        assert!(sealed.is_structurally_usable("plain-text"));
-
-        let resolution = resolve_data_source(&DataSourceResolutionInput {
-            schema_version: DATA_SOURCE_SCHEMA_VERSION,
-            source_id: "plain-text".to_string(),
-            policy: DataSourceAccessPolicy::DefaultEnabled,
-            conversation_override: None,
-            contract: Some(sealed),
-            now: Some(now),
-        });
-        assert_eq!(resolution.reason, DataSourceResolutionReason::Ready);
-        assert!(resolution.usable);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::ffi::CStr;
 
     fn contract(now: DateTime<Utc>) -> DataSourceContract {
-        let mut contract = DataSourceContract {
+        DataSourceContract {
             source_id: "calendar".to_string(),
             connector_id: "ios.eventkit".to_string(),
             connector_version: 1,
@@ -312,10 +237,7 @@ mod tests {
             validation_state: DataSourceValidationState::Verified,
             validated_at: now,
             observed_at: Some(now),
-            validation_digest: String::new(),
-        };
-        contract.seal_validation();
-        contract
+        }
     }
 
     #[test]
@@ -437,7 +359,6 @@ mod tests {
         let now = Utc::now();
         let mut incomplete = contract(now);
         incomplete.read_recipe = DataSourceReadRecipe::default();
-        incomplete.validation_digest.clear();
         let incomplete_result = resolve_data_source(&DataSourceResolutionInput {
             source_id: "calendar".to_string(),
             contract: Some(incomplete),
@@ -451,7 +372,7 @@ mod tests {
         assert!(incomplete_result.should_refresh);
 
         let mut tampered = contract(now);
-        tampered.read_recipe.operation_id = "unvalidated.reader".to_string();
+        tampered.read_recipe.operation_id.clear();
         let tampered_result = resolve_data_source(&DataSourceResolutionInput {
             source_id: "calendar".to_string(),
             contract: Some(tampered),

@@ -93,6 +93,10 @@ class AgentRoomRepository(private val execute: (JsonObject) -> JsonElement) {
         put("type", "child_conversations"); put("conversation_id", conversationId); put("offset", offset); put("limit", limit)
     }).validated(conversationId, offset)
 
+    fun peerExchanges(conversationId: String, limit: Int = 100, offset: Int = 0): JsonObject = command(buildJsonObject {
+        put("type", "peer_exchanges"); put("conversation_id", conversationId); put("limit", limit); put("offset", offset)
+    })
+
     fun directory(): AgentDirectory = command(buildJsonObject { put("type", "directory") })
 
     fun roleTemplates(): ExpertRoleCatalog = command<ExpertRoleCatalog>(buildJsonObject { put("type", "role_templates") }, Json { ignoreUnknownKeys = true }).validated()

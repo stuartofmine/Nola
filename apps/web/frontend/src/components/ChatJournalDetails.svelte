@@ -46,7 +46,7 @@
     const skillTitle = $derived(value.skill_id === 'conduct-deep-research' && (!title || title === value.skill_id) ? t($locale, 'chatPage.deepResearch') : title);
     const seconds = $derived(typeof value.elapsed_millis === 'number' || typeof value.elapsed_millis === 'string' ? Number(value.elapsed_millis) / 1000 : NaN);
     const stateLabel = $derived(stateKey && !hasSuccessor ? t($locale, stateKey) : '');
-    const diagnostics = $derived(Object.fromEntries(['task_id', 'skill_id', 'run_id', 'mode', 'model_turns', 'tool_calls', 'elapsed_millis', 'result_ref', 'attempt_id', 'provider', 'model', 'fallback_attempt_id', 'fallback_provider', 'fallback_model', 'source_fingerprint', 'retained_item_ids', 'original_token_count', 'compacted_token_count']
+    const diagnostics = $derived(Object.fromEntries(['task_id', 'skill_id', 'run_id', 'mode', 'model_turns', 'tool_calls', 'elapsed_millis', 'result_ref', 'attempt_id', 'provider', 'model', 'fallback_attempt_id', 'fallback_provider', 'fallback_model', 'retained_item_ids', 'original_token_count', 'compacted_token_count']
         .filter(key => value[key] !== undefined && value[key] !== null).map(key => [key, value[key]])));
 </script>
 
@@ -69,7 +69,7 @@
 {#if showSummary && value.kind === 'skill'}
     <section class="skill-summary" data-part-id={part.id}>
         <span>{skillTitle || t($locale, 'chatPage.details')}</span>{#if stateLabel}<small>{stateLabel}</small>{/if}
-        <details class="skill-info"><summary aria-label={t($locale, 'chatPage.details')}>ⓘ</summary><div>
+        <details class="skill-info"><summary>{t($locale, 'chatPage.details')}</summary><div class="skill-stats">
             {#if value.model_turns != null}<p>{t($locale, 'chatPage.modelTurns')} {String(value.model_turns)}</p>{/if}
             {#if value.tool_calls != null}<p>{t($locale, 'chatPage.toolCallsCount')} {String(value.tool_calls)}</p>{/if}
             {#if Number.isFinite(seconds) && seconds >= 0}<p>{Math.floor(seconds / 60)}:{String(Math.floor(seconds % 60)).padStart(2, '0')}</p>{/if}
@@ -89,12 +89,14 @@
     .skill-summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin-block: 8px; }
     .skill-summary > small { margin-inline-start: auto; color: var(--muted); }
     .skill-body { flex-basis: 100%; }
-    .skill-info { position: relative; color: var(--muted); }
-    .skill-info > summary { list-style: none; min-width: 28px; min-height: 32px; padding: 4px; text-align: center; }
+    .skill-info { flex-basis: 100%; color: var(--muted); }
+    .skill-info > summary { display: flex; align-items: center; justify-content: space-between; width: 100%; list-style: none; min-height: 36px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); font-size: 12px; }
     .skill-info > summary::-webkit-details-marker { display: none; }
-    .skill-info > div { position: absolute; z-index: 2; inset-inline-end: 0; min-width: 180px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); font-size: .8125rem; }
+    .skill-info > summary::after { content: '›'; transform: rotate(90deg); font-size: 14px; color: var(--muted); }
+    .skill-info[open] > summary::after { transform: rotate(270deg); }
+    .skill-stats { margin-top: 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); font-size: .8125rem; }
     .skill-info p { margin: 4px 0; }
-    @media (pointer: coarse) { .skill-info > summary { min-width: 44px; min-height: 44px; } }
+    @media (pointer: coarse) { .skill-info > summary { min-height: 44px; } }
     .journal-detail { margin: .55rem 0; }
     .task-conversation, button { display: inline-flex; align-items: center; min-height: 44px; }
     summary { cursor: pointer; overflow-wrap: anywhere; min-height: 44px; box-sizing: border-box; padding-block: 12px; }

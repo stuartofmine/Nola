@@ -18,7 +18,14 @@ struct MacInspectorParticipantsView: View {
                     Text(participant.name).fixedSize(horizontal: false, vertical: true)
                 }
             }
-            if participants.isEmpty { Text("No experts in this conversation").font(.callout).foregroundStyle(.secondary) }
+            if participants.isEmpty {
+                Label("No experts in this conversation", systemImage: "person.2")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
         }
     }
 }
@@ -48,20 +55,47 @@ struct MacInspectorArtifactRow: View {
                 case nil: break
                 }
             } label: {
-                Label(name, systemImage: url.isFileURL ? "doc" : "link")
-                    .lineLimit(3).fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
-                    .contentShape(Rectangle())
+                HStack(alignment: .center, spacing: 9) {
+                    Image(systemName: url.isFileURL ? "doc" : "link")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 24, height: 24)
+                        .background(
+                            Color.primary.opacity(0.05),
+                            in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        )
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(name)
+                            .font(.system(size: 13, weight: .medium))
+                            .lineLimit(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                        HStack(spacing: 4) {
+                            Text(source, style: .date)
+                            if !type.isEmpty {
+                                Text("·")
+                                Text(type)
+                            }
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: url.isFileURL ? "doc.text.magnifyingglass" : "arrow.up.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                        .accessibilityHidden(true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .buttonStyle(MacPressFeedbackButtonStyle())
+            .buttonStyle(MacHorizontalBarButtonStyle(isSubtle: true))
             .disabled(destination == nil)
             .help(name)
-            Text(source, style: .date).font(.caption).foregroundStyle(.secondary)
-            if !type.isEmpty { Text(type).font(.caption).foregroundStyle(.secondary) }
             if destination == nil {
                 Text("This artifact requires its source Host to provide a preview.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 4)
             }
         }
     }
@@ -90,7 +124,14 @@ struct MacInspectorArtifactsView: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if artifacts.isEmpty { Text("No artifacts in the loaded conversation history").font(.callout).foregroundStyle(.secondary) }
+            if artifacts.isEmpty {
+                Label("No artifacts in the loaded conversation history", systemImage: "doc.on.doc")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
             ForEach(artifacts) { artifact in
                 MacInspectorArtifactRow(name: artifact.name, url: artifact.url, source: artifact.source,
                     type: artifact.type, canReadLocalFiles: canReadLocalFiles,
@@ -136,7 +177,7 @@ struct MacInspectorReviewView: View {
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     Button(String(localized: "Choose Folder…")) { model.chooseWorkspace() }
-                        .buttonStyle(MacPressFeedbackButtonStyle())
+                        .buttonStyle(MacActionButtonStyle())
                 }
                 if let error { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
                 if let snapshot {
@@ -199,20 +240,33 @@ struct MacInspectorGitChangesView: View {
         VStack(alignment: .leading, spacing: 8) {
             if snapshot.changes.isEmpty { Text("Workspace Is Clean").foregroundStyle(.secondary) }
             ForEach(snapshot.changes) { change in
+                let isSelected = selected == change.id
                 VStack(alignment: .leading, spacing: 6) {
                     Button { select(change.id) } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(change.path).font(.callout).lineLimit(3)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Text(change.displayStatus).font(.caption).foregroundStyle(.secondary)
+                        HStack(spacing: 8) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(change.path)
+                                    .font(.callout.weight(.medium))
+                                    .lineLimit(3)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Text(change.displayStatus)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 8)
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 10.5, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .rotationEffect(.degrees(isSelected ? 180 : 0))
+                                .accessibilityHidden(true)
                         }
-                        .padding(8)
-                        .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(MacSidebarNavigationButtonStyle(isSelected: selected == change.id))
-                    .accessibilityAddTraits(selected == change.id ? .isSelected : [])
+                    .buttonStyle(MacHorizontalBarButtonStyle(isSubtle: true, isExpanded: isSelected))
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
                     .help(change.path)
-                    if selected == change.id {
+                    if isSelected {
                         if isLoadingDiff {
                             ProgressView().controlSize(.small).accessibilityLabel(String(localized: "Loading"))
                         } else if let diffError {
@@ -224,13 +278,13 @@ struct MacInspectorGitChangesView: View {
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         Button("Open in Tab") { openReview(snapshot.repositoryURL) }
-                            .buttonStyle(MacPressFeedbackButtonStyle())
+                            .buttonStyle(MacActionButtonStyle())
                     }
                 }
             }
             if selected == nil {
                 Button("Open in Tab") { openReview(snapshot.repositoryURL) }
-                    .buttonStyle(MacPressFeedbackButtonStyle())
+                    .buttonStyle(MacActionButtonStyle())
             }
         }
     }

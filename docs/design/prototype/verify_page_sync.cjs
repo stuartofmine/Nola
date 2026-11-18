@@ -49,11 +49,11 @@ const out=process.env.PROTOTYPE_OUT||require('../../../apps/web/playwright_runti
   if(width>700){
    const startup=page.getByRole('switch',{name:'登录时启动 Nola（演示）',exact:true});
    await startup.scrollIntoViewIfNeeded();
-   const before=await startup.getAttribute('aria-checked'),offset=await page.locator('.studio-center').evaluate(e=>e.scrollTop);
+   const before=await startup.getAttribute('aria-checked'),offset=await page.locator('.settings-window-detail').evaluate(e=>e.scrollTop);
    await startup.focus();await page.keyboard.press('Space');
    assert.notEqual(await page.getByRole('switch',{name:'登录时启动 Nola（演示）',exact:true}).getAttribute('aria-checked'),before);
    assert.equal(await page.evaluate(()=>document.activeElement?.dataset.action),'ex-pref:startup:general');
-   assert.ok(Math.abs(await page.locator('.studio-center').evaluate(e=>e.scrollTop)-offset)<2,'Settings toggle preserves reading position');
+   assert.ok(Math.abs(await page.locator('.settings-window-detail').evaluate(e=>e.scrollTop)-offset)<2,'Settings toggle preserves reading position');
    await shot('general-lower');
    const padding=await page.locator('.prototype-general>.inline-card').first().evaluate(e=>parseFloat(getComputedStyle(e).paddingLeft));
    assert.ok(padding>=16,'Settings content must retain card insets');
@@ -88,11 +88,12 @@ const out=process.env.PROTOTYPE_OUT||require('../../../apps/web/playwright_runti
    await shot('chat-composer');await click('im:back:conversations');
    await settings();await click('im:nav:capabilities');
   }else{
+   await click('dk-settings-close');
    await settings();await click('ex-settings:agent');await click('ex-route:capabilities');
   }
   await page.locator('.prototype-state-controls>summary').click();await click('mg-catalog-fail');
   await page.getByRole('alert').filter({hasText:'无法读取能力清单'}).waitFor();await shot('capabilities-failed');
-  await click('mg-catalog-reload');await click('mg-cap-tab:MCP');await click('mg-cap:mcp');await click('mg-configure:mcp');
+  await click('mg-catalog-reload');if(width<=700)await click('mg-cap-tab:MCP');else await click('dk-ext-tab:mcp');await click('mg-cap:mcp');await click('mg-configure:mcp');
   const field=page.getByLabel('名称',{exact:true});const original=await field.inputValue();await field.fill('保留未确认的配置草稿');
   await page.locator('dialog .prototype-state-controls>summary').click();await click('mg-save-unconfirmed');
   await page.getByRole('button',{name:'保存演示配置',exact:true}).click();
@@ -102,19 +103,18 @@ const out=process.env.PROTOTYPE_OUT||require('../../../apps/web/playwright_runti
   await field.fill(original);await page.keyboard.press('Escape');await page.getByRole('dialog').waitFor({state:'hidden'});
   if(width===1440){
    await page.goto(base);
-   const tab=await page.locator('.studio-center').getAttribute('data-tabkey');
+   const owner=await page.locator('.studio-center').getAttribute('data-context');
    assert.equal(await page.locator('#work-tool').count(),0,'inspector has no page selector');
-   for(const [label,area,names] of [['任务','task',['工作概览','进度','目标']],['产物','artifacts',['审阅','产物']],['上下文','context',['会话配置','上下文预算','执行','参与者']]]){
+   assert.equal(await page.locator('[data-inspector-section]').count(),0,'inspector has no outer collapsible wrappers');
+   for(const [label,area] of [['任务','task'],['产物','artifacts'],['上下文','context']]){
     if(await page.locator(`[data-action="sn-group:${label}"]`).getAttribute('aria-pressed')!=='true')await click('sn-group:'+label);
     assert.equal(await page.locator(`[data-inspector-area="${area}"]`).count(),1);
-    for(const name of names)if(await page.locator(`[data-action="dk-section:${name}"]`).getAttribute('aria-expanded')!=='true')await click('dk-section:'+name);
-    assert.equal(await page.locator('[data-inspector-section]').count(),names.length);
    }
-   await page.locator('.inspector-knowledge summary').filter({hasText:/^Wiki$/}).click();
+   await page.locator('.inspector-knowledge summary').filter({hasText:/^会话 Wiki$/}).click();
    await page.getByLabel('Wiki草稿',{exact:true}).fill('保留未保存的 Wiki 演示草稿');
-   await click('dk-section:上下文预算');await click('dk-section:上下文预算');
+   await click('sn-group:任务');await click('sn-group:上下文');
    assert.equal(await page.getByLabel('Wiki草稿',{exact:true}).inputValue(),'保留未保存的 Wiki 演示草稿');
-   assert.equal(await page.locator('.studio-center').getAttribute('data-tabkey'),tab,'inspector never navigates the main content');
+   assert.equal(await page.locator('.studio-center').getAttribute('data-context'),owner,'inspector never navigates the main content');
    await shot('inspector-expanded');
    await page.getByLabel('Wiki草稿',{exact:true}).scrollIntoViewIfNeeded();await shot('inspector-context');
   }

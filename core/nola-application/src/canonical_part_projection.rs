@@ -373,7 +373,7 @@ pub(crate) fn part_mutations_for_update(
             })?;
             Ok(vec![PartMutation::AppendText {
                 part_id: part_id.clone(),
-                expected_content_digest: format!("{:x}", Sha256::digest(prefix.as_bytes())),
+                expected_prefix_bytes: prefix.len() as u64,
                 text: delta.clone(),
                 updated_at_ms: now_ms,
             }])
@@ -1121,7 +1121,7 @@ mod tests {
             let mutations = part_mutations_for_update(&update, &text("前文🙂尾"), 3, 42).unwrap();
             let [PartMutation::AppendText {
                 part_id,
-                expected_content_digest,
+                expected_prefix_bytes,
                 text: delta,
                 updated_at_ms,
             }] = mutations.as_slice()
@@ -1130,10 +1130,7 @@ mod tests {
             };
             assert_eq!(part_id, "text");
             assert_eq!(delta, "🙂尾");
-            assert_eq!(
-                expected_content_digest,
-                &format!("{:x}", Sha256::digest("前文".as_bytes()))
-            );
+            assert_eq!(*expected_prefix_bytes, "前文".len() as u64);
             assert_eq!(*updated_at_ms, 42);
             assert!(part_mutations_for_update(&update, &text("not the suffix"), 3, 42).is_err());
         }

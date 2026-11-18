@@ -272,7 +272,9 @@ struct AppleUIIntentJournal<JSON: JournalJSONValue> {
     func pending(identity: AppleUISurfaceIdentity, source: AppleUIIntentSource) throws -> AppleUISubmission<JSON>? {
         guard let stored = try read(key(identity)), let record = try decode(stored.json) else { return nil }
         guard record.source == source, record.input.interaction.identity == identity else {
-            throw NSError(domain: "NolaUIIntent", code: 1, userInfo: [NSLocalizedDescriptionKey: "请重新连接原 Host，以确认待处理的表单提交。"])
+            throw NSError(domain: "NolaUIIntent", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: String(localized: "a2ui.intent.reconnectHost", defaultValue: "Reconnect to the original Host to confirm the pending form submission."),
+            ])
         }
         return record.input
     }
@@ -285,7 +287,9 @@ struct AppleUIIntentJournal<JSON: JournalJSONValue> {
         guard encoded.count <= 256 * 1024 else { throw NSError(domain: "NolaUIIntent", code: 2) }
         if let stored, let existing = try decode(stored.json) {
             guard try encoder.encode(existing) == encoded else {
-                throw NSError(domain: "NolaUIIntent", code: 3, userInfo: [NSLocalizedDescriptionKey: "上一条表单提交结果未确认，请先查询原提交。"])
+                throw NSError(domain: "NolaUIIntent", code: 3, userInfo: [
+                    NSLocalizedDescriptionKey: String(localized: "a2ui.intent.previousUnconfirmed", defaultValue: "The previous form submission is unconfirmed. Check the original submission first."),
+                ])
             }
             return
         }

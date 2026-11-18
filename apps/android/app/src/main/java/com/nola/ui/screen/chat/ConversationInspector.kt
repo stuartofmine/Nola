@@ -56,9 +56,15 @@ internal fun ConversationInspectorButtons(selected: ConversationInspector?, sele
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun ConversationProgressPanel(state: ChatUiState, load: suspend (String) -> ConversationProgress,
+internal fun ConversationProgressPanel(
+    state: ChatUiState,
+    load: suspend (String) -> ConversationProgress,
     pendingControl: suspend (String) -> Boolean,
-    submitControl: suspend (String, JsonObject?) -> ConversationProgress, onClose: () -> Unit) {
+    submitControl: suspend (String, JsonObject?) -> ConversationProgress,
+    onClose: () -> Unit,
+    discardControl: suspend (String) -> Unit = {},
+    expertChildren: @Composable (String) -> Unit = {}
+) {
     val owner = state.conversationId
     val host = state.executionHostBinding
     var value by remember(owner, host) { mutableStateOf<ConversationProgress?>(null) }
@@ -66,6 +72,7 @@ internal fun ConversationProgressPanel(state: ChatUiState, load: suspend (String
     var loading by remember(owner, host) { mutableStateOf(owner != null) }
     val scope = rememberCoroutineScope()
     var objective by rememberSaveable(owner) { mutableStateOf("") }
+    var constraintsText by rememberSaveable(owner) { mutableStateOf("") }
     var pending by remember(owner, host) { mutableStateOf(false) }
     var submitting by remember(owner, host) { mutableStateOf(false) }
     var cancelRequest by remember(owner, host) { mutableStateOf<JsonObject?>(null) }
@@ -75,9 +82,14 @@ internal fun ConversationProgressPanel(state: ChatUiState, load: suspend (String
         if (submitting || (action == "start" && objective.isBlank())) return
         val capturedOwner = owner ?: return
         val observed = value?.goalControl
+        val parsedConstraints = if (action == "start") {
+            constraintsText.split('\n', ',').map { it.trim() }.filter { it.isNotEmpty() }
+        } else {
+            emptyList()
+        }
         val control = prepared ?: action?.let {
             com.nola.data.local.remoteGoalControlInput(java.util.UUID.randomUUID().toString(), it,
-                observed?.goalId, observed?.controlToken, if (it == "start") objective else "")
+                observed?.goalId, observed?.controlToken, if (it == "start") objective else "", parsedConstraints)
         }
         submitting = true; controlError = null
         scope.launch {
@@ -126,15 +138,52 @@ internal fun ConversationProgressPanel(state: ChatUiState, load: suspend (String
                     controlError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                     if (pending) {
                         Text(stringResource(R.string.goal_operation_pending))
-                        TextButton(onClick = { submit(null) }, enabled = !submitting) {
-                            Text(stringResource(R.string.goal_operation_retry))
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            TextButton(onClick = { submit(null) }, enabled = !submitting) {
+                                Text(stringResource(R.string.goal_operation_retry))
+                            }
+                            TextButton(
+                                onClick = {
+                                    val capturedOwner = owner ?: return@TextButton
+                                    submitting = true
+                                    controlError = null
+                                    scope.launch {
+                                        try {
+                                            discardControl(capturedOwner)
+                                            pending = pendingControl(capturedOwner)
+                                        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                                            throw cancelled
+                                        } catch (error: Exception) {
+                                            controlError = error.message?.takeIf { it.isNotBlank() } ?: operationFailedMessage
+                                        } finally {
+                                            submitting = false
+                                        }
+                                    }
+                                },
+                                enabled = !submitting
+                            ) {
+                                Text(stringResource(R.string.goal_discard_pending))
+                            }
                         }
-                    } else if (progress.status == null || progress.status in setOf("completed", "cancelled")) {
+                    } else if (
+                        progress.status == null ||
+                        (progress.status in setOf("completed", "failed", "cancelled") && progress.goalControl?.canResume != true)
+                    ) {
                         Text(stringResource(R.string.goal_guidance), color = MaterialTheme.colorScheme.onSurfaceVariant)
                         OutlinedTextField(value = objective, onValueChange = { objective = it },
                             label = { Text(stringResource(R.string.goal_objective)) },
                             placeholder = { Text(stringResource(R.string.goal_example)) }, minLines = 3, maxLines = 8,
                             enabled = !submitting, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(
+                            value = constraintsText,
+                            onValueChange = { constraintsText = it },
+                            label = { Text(stringResource(R.string.goal_constraints)) },
+                            placeholder = { Text(stringResource(R.string.goal_constraints_hint)) },
+                            minLines = 1,
+                            maxLines = 4,
+                            enabled = !submitting,
+                            modifier = Modifier.fillMaxWidth()
+                        )
                         Button(onClick = { submit("start") }, enabled = !submitting && objective.isNotBlank()) {
                             Text(stringResource(R.string.goal_start))
                         }
@@ -153,11 +202,23 @@ internal fun ConversationProgressPanel(state: ChatUiState, load: suspend (String
                 }
                 progress.objective?.let { Text(it, style = MaterialTheme.typography.titleMedium) }
                 progress.status?.let { Text(progressStatusText(it), style = MaterialTheme.typography.labelMedium) }
+                progress.nextWakeAtEpochMs?.let { wakeMs ->
+                    val formattedWake = remember(wakeMs) {
+                        java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT)
+                            .format(java.util.Date(wakeMs))
+                    }
+                    Text(
+                        stringResource(R.string.goal_next_wake_format, formattedWake),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 if (progress.requirements.isEmpty() && progress.todos.isEmpty()) Text(stringResource(R.string.inspector_no_plan), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 ProgressItems(stringResource(R.string.inspector_requirements), progress.requirements)
                 ProgressItems(stringResource(R.string.inspector_plan), progress.todos)
             }
             if (owner == null) Text(stringResource(R.string.inspector_conversation_needed))
+            else expertChildren(owner)
             state.coreTaskProjection.orderedTasks.filter { owner != null && it.ownerSessionId == state.coreTaskProjection.sessionId }.forEach { task ->
                 HorizontalDivider()
                 Text(task.currentStep ?: task.id, style = MaterialTheme.typography.bodyMedium)
@@ -200,10 +261,13 @@ internal fun ConversationResourcesPanel(state: ChatUiState, onClose: () -> Unit)
     }
     val sources = messages.flatMap { com.nola.domain.model.decodeAnswerSourcesFromMeta(it.meta) }.distinctBy { it.id }
     val attachments = messages.flatMap { decodeMessageAttachments(it.meta) }.distinctBy { it.uri }
+    val selectedDataSources = state.dataSources.filter { it.id in state.selectedDataSourceIds }
     Column(Modifier.fillMaxSize()) {
         NolaTopAppBar(title = stringResource(R.string.inspector_resources), onBack = onClose)
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (parts.isEmpty() && sources.isEmpty() && attachments.isEmpty()) Text(stringResource(R.string.inspector_no_resources), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (parts.isEmpty() && sources.isEmpty() && attachments.isEmpty() && selectedDataSources.isEmpty()) {
+                Text(stringResource(R.string.inspector_no_resources), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             messages.forEach { message -> key(message.conversationId, message.id) {
                 val messageParts = message.canonicalParts.filter {
                     it is com.nola.domain.projection.ConversationProjectionV1.Part.Source ||
@@ -219,7 +283,7 @@ internal fun ConversationResourcesPanel(state: ChatUiState, onClose: () -> Unit)
                 Text(attachment.name, style = MaterialTheme.typography.bodyMedium)
                 Text(attachment.sizeLabel, style = MaterialTheme.typography.labelMedium)
             }
-            state.dataSources.filter { it.id in state.selectedDataSourceIds }.forEach { source ->
+            selectedDataSources.forEach { source ->
                 Text(source.name, style = MaterialTheme.typography.bodyMedium)
             }
         }

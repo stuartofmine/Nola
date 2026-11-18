@@ -56,6 +56,6 @@
     p { margin: 0; color: var(--muted); font-size: .875rem; line-height: 1.6; } .workspace-root code { display: block; overflow-wrap: anywhere; }
     ul { list-style: none; margin: 0; padding: 0; } li { display: flex; gap: 8px; border-bottom: 1px solid var(--border); padding-block: 10px; font-size: .875rem; } li span { overflow-wrap: anywhere; min-width: 0; } li code { white-space: pre; flex: none; }
     summary { min-height: 44px; padding-block: 10px; cursor: pointer; font-size: .875rem; }
-    pre { max-height: min(60dvh, 600px); overflow: auto; padding: 12px; border: 1px solid var(--border); border-radius: 10px; font: 12px/1.65 var(--font-mono, monospace); white-space: pre; }
+    pre { max-height: min(60dvh, 600px); overflow: auto; padding: 12px; border: 1px solid var(--border); border-radius: 10px; font: 12px/1.65 var(--font-code, monospace); white-space: pre; }
     button { min-height: var(--control-hit-size); }
 </style>

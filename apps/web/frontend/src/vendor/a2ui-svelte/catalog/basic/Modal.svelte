@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
+	import { locale, t } from '../../../../lib/i18n';
 	import Slot from '../../render/Slot.svelte';
 	import type { SlotContent } from '../types.js';
 
@@ -45,7 +46,7 @@
 	aria-disabled={disabled}
 	aria-haspopup="dialog"
 	aria-expanded={open}
-	aria-label={ariaLabel ?? "查看详情"}
+	aria-label={ariaLabel ?? t($locale, 'a2ui.viewDetails')}
 	onclick={reveal}
 	onkeydown={(e) => {
 		if (!disabled && (e.key === 'Enter' || e.key === ' ')) {
@@ -58,7 +59,7 @@
     <div inert class="trigger-content"><Slot content={slots.trigger} presentationOnly /></div>
 </div>
 
-<dialog bind:this={dialog} class="a2ui-modal" aria-label={ariaLabel ?? "详情"} onclose={closed} onclick={(event) => {
+<dialog bind:this={dialog} class="a2ui-modal" aria-label={ariaLabel ?? t($locale, 'a2ui.details')} onclose={closed} onclick={(event) => {
         if (event.target !== dialog || !dialog) return;
         const rect = dialog.getBoundingClientRect();
         if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close();
@@ -69,7 +70,7 @@
 		{/if}
 	</div>
 	<form method="dialog" class="dismiss">
-		<button type="submit" aria-label="关闭">关闭</button>
+		<button type="submit" aria-label={t($locale, 'a2ui.close')}>{t($locale, 'a2ui.close')}</button>
 	</form>
 </dialog>
 

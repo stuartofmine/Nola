@@ -95,6 +95,110 @@ pub(crate) fn validate_permission_resource_execution(context: &ToolContext,
     Ok(PermissionExecutionExpectations { browser, derived,mcp })
 }
 
+pub(crate) fn committed_work_step_outcome(
+    context: &ToolContext,
+    session_id: &str,
+    capability_id: &str,
+    call_id: &str,
+    normalized_args: Option<&serde_json::Map<String, Value>>,
+    raw_input: &Value,
+) -> Option<ToolOutcome> {
+    if session_id.trim().is_empty()
+        || context
+            .permission_scope
+            .owner_session_id()
+            .is_some_and(|owner| owner != session_id)
+    {
+        return None;
+    }
+    let root = context
+        .allowed_dirs
+        .first()
+        .map(|path| path.canonicalize().unwrap_or_else(|_| path.clone()))
+        .unwrap_or_else(|| PathBuf::from("."));
+    let root_text = root.to_string_lossy().into_owned();
+    let work_id = context
+        .permission_scope
+        .owner_session_id()
+        .unwrap_or_else(|| format!("workspace:{root_text}"));
+    let transaction_id = format!("work-step:{work_id}:{call_id}");
+    let tx = crate::work_step_port::work_step_transaction(&transaction_id)
+        .ok()
+        .flatten()?;
+    if tx.phase != nola_application::WorkStepTransactionPhase::Committed
+        || tx.work_id != work_id
+        || tx.root != root_text
+        || tx.tool_call_id != call_id
+        || tx.request.get("capability_id").and_then(Value::as_str) != Some(capability_id)
+    {
+        return None;
+    }
+    let stored_args = tx.request.get("arguments")?;
+    let matches_args = normalized_args
+        .is_some_and(|args| stored_args.as_object() == Some(args))
+        || stored_args == raw_input;
+    if !matches_args {
+        return None;
+    }
+    tx.result.as_ref().and_then(super::tool_outcome_from_transaction)
+}
+
+pub(crate) fn grant_matches_committed_work_step(
+    context: &ToolContext,
+    contract: &PermissionOperationContract,
+    host_id: &str,
+    session_id: &str,
+    capability_id: &str,
+    call_id: &str,
+    normalized_args: Option<&serde_json::Map<String, Value>>,
+    input: &Value,
+    grant: Option<&Value>,
+) -> bool {
+    let Some(plan) = contract.resource_plan_for(input) else {
+        return false;
+    };
+    let Some(frozen) = grant.and_then(|grant| grant.get("permission_resolution")) else {
+        return false;
+    };
+    let Ok(resolution) = frozen
+        .get("request")
+        .cloned()
+        .ok_or(())
+        .and_then(|value| serde_json::from_value::<PermissionResolutionRequest>(value).map_err(|_| ()))
+    else {
+        return false;
+    };
+    let Ok(facts) = frozen
+        .get("facts")
+        .cloned()
+        .ok_or(())
+        .and_then(|value| serde_json::from_value::<PermissionResolutionFacts>(value).map_err(|_| ()))
+    else {
+        return false;
+    };
+    let Ok(demands) = plan.extract(input) else {
+        return false;
+    };
+    if resolution.execution_target != host_id
+        || resolution.capability != plan.capability
+        || resolution.operation != plan.operation
+        || resolution.demands != demands
+        || resolution.invocation_digest != PermissionResolutionRequest::input_digest(input)
+        || facts.subject_for(&resolution).is_err()
+    {
+        return false;
+    }
+    committed_work_step_outcome(
+        context,
+        session_id,
+        capability_id,
+        call_id,
+        normalized_args,
+        input,
+    )
+    .is_some()
+}
+
 pub(crate) fn permission_resource_execution_failure(message: String) -> ToolOutcome {
     error_data(json!({"error":message,"code":"permission_resource_changed","tool_execution_skipped":true,
         "next_action":"Resolve the changed resource and obtain any required approval before a new attempt."}))
@@ -340,7 +444,7 @@ pub(crate) fn builtin_permission_contract(name: &str, read_only: bool) -> Permis
         "web_search" | "web_fetch" => PermissionOperationContract {risk:PermissionOperationRisk::OrdinaryRead, ..Default::default()},
         // Controls declare state or ask the owner; neither grants authority to
         // execute a subsequent external operation.
-        "request_user_input" | "goal_complete" | "skill_update" | "skill_skip" | "sop_run_update" => PermissionOperationContract {risk:PermissionOperationRisk::OrdinaryRead, ..Default::default()},
+        "request_user_input" | "goal_complete" | "skill_skip" | "sop_run_update" => PermissionOperationContract {risk:PermissionOperationRisk::OrdinaryRead, ..Default::default()},
         _ => {
             let domain = nola_core::agent::tool_permission_domain(name);
             let sensitive = domain.as_deref().is_some_and(|domain| matches!(domain,
@@ -1084,7 +1188,7 @@ mod tests {
     fn internal_skill_progress_keeps_its_transaction_without_prompting_for_external_access() {
         use nola_core::agent::permissions::{PermissionRuleSet,PermissionSubject};
         use nola_core::agent::protocol::AgentInputOrigin;
-        for name in ["skill_update", "skill_skip", "sop_run_update"] {
+        for name in ["skill_skip", "sop_run_update"] {
             let contract = builtin_permission_contract(name, false);
             assert_eq!(contract.risk, PermissionOperationRisk::OrdinaryRead);
             assert!(!contract.risk.requires_confirmation());
@@ -1097,10 +1201,10 @@ mod tests {
         for decision in [nola_domain::PermissionPolicyDecision::Ask, nola_domain::PermissionPolicyDecision::Deny] {
             let mut rules = PermissionRuleSet::default().with_profile(nola_domain::PermissionProfile::Cautious);
             rules.rules.push(nola_core::agent::permissions::PermissionRule {
-                capability_pattern: "skill_update".into(), resource_pattern: "*".into(),
+                capability_pattern: "skill_skip".into(), resource_pattern: "*".into(),
                 decision, source: nola_core::agent::permissions::PermissionRuleSource::UserGlobal,
             });
-            let subject = PermissionSubject { capability: "skill_update".into(), resource: "current-skill".into() };
+            let subject = PermissionSubject { capability: "skill_skip".into(), resource: "current-skill".into() };
             assert_eq!(rules.evaluate_resolved_for_origin_with_explanation(&subject, AgentInputOrigin::InteractiveUser, false).decision, decision);
         }
         assert!(builtin_permission_contract("unknown_mutation", false).risk.requires_confirmation());

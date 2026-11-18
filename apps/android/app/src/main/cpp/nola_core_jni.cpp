@@ -198,16 +198,6 @@ Java_com_nola_core_AgentCoreNative_nativeDataSourceResolve(JNIEnv* env, jobject,
     return consume_json(env, result);
 }
 
-extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_nola_core_AgentCoreNative_nativeDataSourceSealContract(JNIEnv* env, jobject, jbyteArray input) {
-    jbyte* pinned = nullptr;
-    jsize length = 0;
-    const unsigned char* bytes = pin_bytes(env, input, &pinned, &length);
-    char* result = nola_core_data_source_seal_contract(bytes, static_cast<size_t>(length));
-    release_bytes(env, input, pinned);
-    return consume_json(env, result);
-}
-
 extern "C" JNIEXPORT jint JNICALL
 Java_com_nola_core_AgentCoreNative_nativeResourceAccessAbiVersion(JNIEnv*, jobject) {
     return static_cast<jint>(nola_core_resource_access_abi_version());
@@ -386,7 +376,12 @@ Java_com_nola_core_AgentCoreNative_nativeChildPumpStart(JNIEnv* env, jobject, jl
     char* error=nullptr;
     auto* pump=nola_core_child_pump_start(reinterpret_cast<NolaCoreApplication*>(static_cast<std::intptr_t>(handle)),bytes,static_cast<size_t>(length),&error);
     release_bytes(env,input,pinned);
-    if(error){env->ThrowNew(env->FindClass("java/lang/IllegalStateException"),error);nola_core_free_c_string(error);}
+    if(error){
+        if (jclass cls = env->FindClass("java/lang/IllegalStateException")) {
+            env->ThrowNew(cls, error);
+        }
+        nola_core_free_c_string(error);
+    }
     return static_cast<jlong>(reinterpret_cast<std::intptr_t>(pump));
 }
 extern "C" JNIEXPORT jbyteArray JNICALL

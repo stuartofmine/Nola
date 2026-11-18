@@ -3203,3 +3203,27 @@
 "main.experts.sourceChanged" = "ホストのデータが変更されました。一覧を更新し、エキスパートを選び直してください。入力は保持されています。";
 
 "run.blocked.inputBudget" = "モデルの入力上限を超えています。会話や添付を短くする、ツールを減らす、またはコンテキストの大きいモデルを選んでください。";
+"chat.task.state.retry_waiting" = "再試行待ち";
+"chat.host_tool.name.goal_complete" = "目標を完了";
+"chat.host_tool.name.ask_user" = "ユーザー入力を要求";
+"chat.host_tool.name.mcp_list" = "MCP リソース一覧";
+"chat.host_tool.name.mcp_read" = "MCP リソースを読み取る";
+"chat.conversations.rename" = "会話名を変更";
+"chat.conversations.title_field" = "タイトル";
+"a2ui.history.readOnly" = "履歴フォームは読み取り専用です。";
+"a2ui.date.useShown" = "表示されている日時を使用";
+"a2ui.date.clear" = "クリア";
+"a2ui.component.unsupported" = "このコンポーネントは表示できません：";
+"a2ui.history.unavailable" = "このバージョンは利用できません。";
+"a2ui.history.mismatch" = "履歴フォームのバージョンが一致しません。";
+"a2ui.reloadForm" = "フォームを再読み込み";
+"a2ui.submission.pending" = "前回のフォーム送信が確認されていません。元の結果を確認してください。";
+"a2ui.intent.reconnectHost" = "保留中のフォーム送信を確認するには元の Host に再接続してください。";
+"a2ui.intent.previousUnconfirmed" = "前回の送信結果が未確認です。先に元の送信を確認してください。";
+"a2ui.surface.source_changed" = "会話の接続元が変わりました。元の会話に戻ってください。";
+"a2ui.intent.source_changed" = "会話の接続元が変わりました。元の Host に接続して結果を確認してください。";
+"a2ui.form.updated" = "フォームが更新されました。送信前にもう一度確認してください。";
+"a2ui.queue.not_executed" = "元のリクエストが拒否または取り消されたため、フォーム操作は実行されませんでした。";
+"a2ui.queue.cancel_rejected" = "未実行のフォーム操作を削除";
+"chat.host.reconnect_bound" = "この会話に紐づく Host に再接続してください。";
+"chat.host.source_unavailable" = "この会話の接続元 Host を確認できません。";

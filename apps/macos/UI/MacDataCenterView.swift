@@ -22,7 +22,7 @@ final class MacDataCenterNavigationState: ObservableObject {
     }
 
     @Published var route: Route = .overview
-    @Published var section: MacDataCenterSection = .sources
+    @Published var section: MacDataCenterSection = .memory
 
     func showOverview() { route = .overview }
     func showWebSources() { route = .webSources }
@@ -30,10 +30,9 @@ final class MacDataCenterNavigationState: ObservableObject {
 }
 
 enum MacDataCenterSection: String, CaseIterable, Identifiable {
-    case overview
-    case sources
     case memory
-    case plans
+    case sources
+    case overview
     case usage
 
     var id: String { rawValue }
@@ -41,7 +40,6 @@ enum MacDataCenterSection: String, CaseIterable, Identifiable {
         switch self {
         case .overview: return macDataCenterText("mac.data_center.section.overview", "Overview")
         case .sources: return macDataCenterText("mac.data_center.section.sources", "Sources")
-        case .plans: return String(localized: "workspace.plans")
         case .memory: return macDataCenterText("mac.data_center.section.memory", "Memory")
         case .usage: return macDataCenterText("mac.data_center.section.usage", "Usage")
         }
@@ -107,25 +105,27 @@ struct MacDataCenterView: View {
                 }
             }
 
-            Picker(macDataCenterText("mac.data_center.title", "Data Center"), selection: $navigation.section) {
-                ForEach(MacDataCenterSection.allCases.filter { $0 != .overview }) { item in
-                    Text(item.title).tag(item)
+            HStack(spacing: 12) {
+                Picker(macDataCenterText("mac.data_center.title", "Data Center"), selection: $navigation.section) {
+                    ForEach(MacDataCenterSection.allCases.filter { $0 != .overview }) { item in
+                        Text(item.title).tag(item)
+                    }
                 }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: 360)
+                Spacer(minLength: 0)
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(maxWidth: 420)
-            .padding(.vertical, 12)
+            .padding(.horizontal, MacDesignTokens.Layout.pageGutter)
+            .padding(.vertical, 10)
 
-            Divider()
+            Rectangle()
+                .fill(MacDesignColor.borderSubtle)
+                .frame(height: 1)
 
-            if section == .plans {
-                MacAutomationCenterView(navigation: automationNavigation)
-            } else {
             ScrollView {
                 Group {
                     switch section {
-                    case .plans: EmptyView()
                     case .overview: overview
                     case .sources: sources
                     case .memory: MacMemoryCenterView()
@@ -136,7 +136,6 @@ struct MacDataCenterView: View {
                 .padding(.vertical, MacDesignTokens.Spacing.xl)
                 .frame(maxWidth: MacDesignTokens.Layout.contentWidth)
                 .frame(maxWidth: .infinity)
-            }
             }
         }
         .background(MacPageBackground())
@@ -554,15 +553,10 @@ private struct MacWebDataSourceCard: View {
                         }
                     }
                 } label: {
-                    HStack(spacing: 5) {
-                        Text(policy.title)
-                    }
-                    .font(.system(size: 12, weight: .medium))
-                    .padding(.horizontal, 10)
-                    .frame(height: 32)
-                    .background(Color.primary.opacity(0.045), in: Capsule())
+                    Text(policy.title)
+                        .font(.system(size: 12, weight: .medium))
                 }
-                .menuStyle(.borderlessButton)
+                .menuStyle(MacPillMenuStyle(height: 30))
                 .fixedSize()
                 .accessibilityLabel(macDataCenterText("mac.data_center.policy.label", "Default access policy"))
                 Button(action: openEditor) {
@@ -695,14 +689,10 @@ private struct MacDataSourceCard: View {
                             }
                         }
                     } label: {
-                        HStack(spacing: 5) {
-                            Text(policy.title)
-                        }
-                        .font(.system(size: 12, weight: .medium))
-                        .padding(.horizontal, 10).frame(height: 32)
-                        .background(Color.primary.opacity(0.045), in: Capsule())
+                        Text(policy.title)
+                            .font(.system(size: 12, weight: .medium))
                     }
-                    .menuStyle(.borderlessButton)
+                    .menuStyle(MacPillMenuStyle(height: 30))
                     .fixedSize()
                     .accessibilityLabel(macDataCenterText("mac.data_center.policy.label", "Default access policy"))
                 }

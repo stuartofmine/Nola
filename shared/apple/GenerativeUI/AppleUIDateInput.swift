@@ -61,12 +61,12 @@ struct AppleUIDateInput: View {
             }
             if rawValue.isEmpty {
                 // DatePicker needs a display date; do not silently commit today.
-                Button("使用所示日期或时间") {
+                Button(String(localized: "a2ui.date.useShown", defaultValue: "Use shown date or time")) {
                     let displayed = selection.wrappedValue
                     selection.wrappedValue = displayed
                 }
             } else {
-                Button("清除") { changed("") }.buttonStyle(.borderless)
+                Button(String(localized: "a2ui.date.clear", defaultValue: "Clear")) { changed("") }.buttonStyle(.borderless)
             }
         }
         }

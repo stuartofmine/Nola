@@ -76,7 +76,7 @@ export function sourceSubmissionBody(pending: PendingSourceSubmission): Record<s
 }
 export function exactSubmissionCancel(pending: PendingSourceSubmission) {
     if (!digest(pending.request_digest) || pending.receipt?.phase !== 'admitted') throw new Error('No admitted cancellation authority');
-    return { identity: pending.identity, request_digest: pending.request_digest };
+    return { identity: pending.identity };
 }
 export function settledSourceSubmission(pending: PendingSourceSubmission) { return pending.receipt?.phase === 'rejected' || pending.receipt?.phase === 'cancelled'; }
 
@@ -91,7 +91,7 @@ export function parseObservedSourceReceipt(value: unknown, owner: ChatTurnOwner,
 }
 export function admittedReceiptCancel(receipt: SourceSubmissionReceipt) {
     if (receipt.phase !== 'admitted') throw new Error('No admitted cancellation authority');
-    return { identity: receipt.identity, request_digest: receipt.request_digest };
+    return { identity: receipt.identity };
 }
 
 /** Browser source mode stores no replica intent and never writes local Runs.

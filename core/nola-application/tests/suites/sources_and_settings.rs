@@ -71,7 +71,7 @@ mod data_source_lifecycle_e2e {
     }
 
     fn valid_contract() -> DataSourceContract {
-        let mut contract: DataSourceContract = serde_json::from_value(json!({
+        let contract: DataSourceContract = serde_json::from_value(json!({
             "sourceId": "source-1",
             "connectorId": "test.http",
             "connectorVersion": 1,
@@ -88,11 +88,9 @@ mod data_source_lifecycle_e2e {
             "maximumAgeMinutes": 60,
             "validationState": "verified",
             "validatedAt": "2026-09-04T00:00:00Z",
-            "observedAt": "2026-09-04T00:00:00Z",
-            "validationDigest": ""
+            "observedAt": "2026-09-04T00:00:00Z"
         }))
         .unwrap();
-        contract.seal_validation();
         assert_eq!(contract.read_recipe.method, DataSourceReadMethod::HttpGet);
         assert!(contract.read_recipe.is_structurally_usable());
         contract
@@ -133,7 +131,6 @@ mod data_source_lifecycle_e2e {
         let token = pending.validation.validation_token.clone().unwrap();
         let mut wrong_connector = valid_contract();
         wrong_connector.connector_id = "another.connector".into();
-        wrong_connector.seal_validation();
         let rejected_connector = execute_application_command(
             &mut store,
             ApplicationCommand::DataSource {

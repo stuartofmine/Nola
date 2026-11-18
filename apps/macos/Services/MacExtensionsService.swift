@@ -20,10 +20,14 @@ nonisolated private func macExtensionBoundedData(at url: URL) -> Data? {
     return data
 }
 
+nonisolated private func macExtensionStrippingLegacyDigest(_ itemID: String) -> String {
+    guard let marker = itemID.range(of: "#sha256=", options: .backwards) else { return itemID }
+    return String(itemID[..<marker.lowerBound])
+}
+
 nonisolated private func macExtensionTrustedItemID(_ itemID: String) -> Bool {
-    guard let marker = itemID.range(of: "#sha256=", options: .backwards) else { return false }
-    let digest = itemID[marker.upperBound...]
-    return digest.count == 64 && digest.allSatisfy { $0.isHexDigit }
+    let base = macExtensionStrippingLegacyDigest(itemID)
+    return base.contains(":skill:") || base.contains(":mcp:") || base.hasPrefix("managed-mcp:")
 }
 
 nonisolated struct MacExtensionItem: Identifiable, Hashable, Sendable {
@@ -110,7 +114,7 @@ nonisolated struct MacExtensionItem: Identifiable, Hashable, Sendable {
     }
 
     var isLocallyEditable: Bool {
-        path != nil && source != .connectedHost
+        (path != nil || id.hasPrefix("managed-mcp:")) && source != .connectedHost
     }
 }
 
@@ -172,6 +176,7 @@ nonisolated enum MacExtensionsServiceError: LocalizedError {
     case readOnly
     case invalidJSON
     case emptySkill
+    case invalidDraftConfiguration(String)
 
     var errorDescription: String? {
         switch self {
@@ -187,6 +192,8 @@ nonisolated enum MacExtensionsServiceError: LocalizedError {
             return String(localized: "The MCP configuration is not valid JSON.")
         case .emptySkill:
             return String(localized: "A Skill cannot be empty.")
+        case .invalidDraftConfiguration(let detail):
+            return detail
         }
     }
 }
@@ -201,9 +208,7 @@ nonisolated enum MacLocalSkillActivationStore {
 
     static func itemID(source: MacExtensionItem.Source, instructionURL: URL) -> String {
         let url = instructionURL.standardizedFileURL
-        let digest = macExtensionBoundedData(at: url).map(macExtensionContentDigest)
-            ?? "unavailable"
-        return "\(source.rawValue):skill:\(url.path)#sha256=\(digest)"
+        return "\(source.rawValue):skill:\(url.path)"
     }
 
     static func isEnabled(
@@ -211,7 +216,8 @@ nonisolated enum MacLocalSkillActivationStore {
         store: MacApplicationPort? = .shared
     ) -> Bool {
         guard macExtensionTrustedItemID(itemID) else { return false }
-        if let record = try? store?.listSkills().first(where: { $0.id == itemID }) {
+        let normalized = macExtensionStrippingLegacyDigest(itemID)
+        if let record = try? store?.listSkills().first(where: { $0.id == normalized || $0.id == itemID }) {
             return record.enabled
         }
         return false
@@ -226,7 +232,8 @@ nonisolated enum MacLocalSkillActivationStore {
             throw CocoaError(.fileReadCorruptFile)
         }
         guard let store else { throw CocoaError(.fileReadUnknown) }
-        if let current = try store.skillEditor(itemID) {
+        let normalized = macExtensionStrippingLegacyDigest(itemID)
+        if let current = try store.skillEditor(normalized) ?? store.skillEditor(itemID) {
             _ = try store.setSkillEnabled(current, enabled: enabled,
                 updatedAtMs: Int64(Date().timeIntervalSince1970 * 1_000))
         } else {
@@ -298,7 +305,6 @@ nonisolated enum MacLocalSkillActivationStore {
                 summary: "",
                 category: "custom",
                 instructionsRef: url.absoluteString,
-                instructionsDigest: digest,
                 instructionsText: text,
                 requiredTools: [],
                 defaultMode: .inline,
@@ -310,18 +316,16 @@ nonisolated enum MacLocalSkillActivationStore {
     }
 
     private static func candidate(for itemID: String) -> Candidate? {
-        guard let marker = itemID.range(of: ":skill:"),
-              let digestMarker = itemID.range(of: "#sha256=", options: .backwards),
-              digestMarker.lowerBound > marker.upperBound,
-              let source = MacExtensionItem.Source(rawValue: String(itemID[..<marker.lowerBound]))
+        let normalized = macExtensionStrippingLegacyDigest(itemID)
+        guard let marker = normalized.range(of: ":skill:"),
+              let source = MacExtensionItem.Source(rawValue: String(normalized[..<marker.lowerBound]))
         else { return nil }
-        let path = String(itemID[marker.upperBound..<digestMarker.lowerBound])
-        let digest = String(itemID[digestMarker.upperBound...])
+        let path = String(normalized[marker.upperBound...])
         let url = URL(fileURLWithPath: path).standardizedFileURL
         guard let data = macExtensionBoundedData(at: url),
-              macExtensionContentDigest(data) == digest,
               let text = String(data: data, encoding: .utf8) else { return nil }
-        return Candidate(id: itemID, source: source, url: url, digest: digest, text: text)
+        let digest = macExtensionContentDigest(data)
+        return Candidate(id: normalized, source: source, url: url, digest: digest, text: text)
     }
 
 }
@@ -346,11 +350,7 @@ nonisolated enum MacLocalMCPActivationStore {
         serverName: String
     ) -> String {
         let url = configurationURL.standardizedFileURL
-        let digest = serverConfigurations(in: url)[serverName]
-            .flatMap { try? JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]) }
-            .map(macExtensionContentDigest)
-            ?? "unavailable"
-        return "\(source.rawValue):mcp:\(url.path):\(serverName)#sha256=\(digest)"
+        return "\(source.rawValue):mcp:\(url.path):\(serverName)"
     }
 
     static func isEnabled(
@@ -358,7 +358,17 @@ nonisolated enum MacLocalMCPActivationStore {
         store: MacApplicationPort? = .shared
     ) -> Bool {
         guard macExtensionTrustedItemID(itemID) else { return false }
-        if let record = try? store?.listMCPServers().first(where: { $0.id == itemID }) {
+        if itemID.hasPrefix("managed-mcp:") {
+            let serverID = String(itemID.dropFirst("managed-mcp:".count))
+            if let record = (try? store?.listMCPServers())?.first(where: { $0.id == serverID && $0.deletedAtMs == nil }) {
+                return record.enabled
+            }
+            return false
+        }
+        let normalized = macExtensionStrippingLegacyDigest(itemID)
+        if let record = try? store?.listMCPServers().first(where: {
+            $0.deletedAtMs == nil && macExtensionStrippingLegacyDigest($0.id) == normalized
+        }) {
             return record.enabled
         }
         return false
@@ -369,18 +379,38 @@ nonisolated enum MacLocalMCPActivationStore {
         itemID: String,
         store: MacApplicationPort? = .shared
     ) throws {
-        guard macExtensionTrustedItemID(itemID), let candidate = candidate(for: itemID) else {
+        guard macExtensionTrustedItemID(itemID) else {
             throw CocoaError(.fileReadCorruptFile)
         }
         guard let store else { throw CocoaError(.fileReadUnknown) }
-        if let current = try store.listMCPServers().first(where: { $0.id == itemID }) {
+        let now = Int64(Date().timeIntervalSince1970 * 1_000)
+        if itemID.hasPrefix("managed-mcp:") {
+            let serverID = String(itemID.dropFirst("managed-mcp:".count))
+            guard let current = try store.listMCPServers().first(where: { $0.id == serverID && $0.deletedAtMs == nil }) else {
+                throw CocoaError(.fileNoSuchFile)
+            }
             _ = try store.configureMCPServer(
                 current, displayName: current.displayName, enabled: enabled,
                 configurationJSON: current.configurationJSON,
-                updatedAtMs: Int64(Date().timeIntervalSince1970 * 1_000)
+                updatedAtMs: now
+            )
+            return
+        }
+        guard let candidate = candidate(for: itemID) else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        let normalized = macExtensionStrippingLegacyDigest(itemID)
+        let next = candidate.input(enabled: enabled)
+        if let current = try store.listMCPServers().first(where: {
+            $0.deletedAtMs == nil && macExtensionStrippingLegacyDigest($0.id) == normalized
+        }) {
+            _ = try store.configureMCPServer(
+                current, displayName: next.displayName, enabled: enabled,
+                configurationJSON: enabled ? next.configurationJSON : current.configurationJSON,
+                updatedAtMs: now
             )
         } else {
-            _ = try store.createMCPServer(candidate.input(enabled: enabled))
+            _ = try store.createMCPServer(next)
         }
     }
 
@@ -400,20 +430,23 @@ nonisolated enum MacLocalMCPActivationStore {
         ]
         var active: [[String: Any]] = []
         var seen = Set<String>()
+        let records = (try? store?.listMCPServers())?.filter { $0.deletedAtMs == nil } ?? []
         let canonical = Dictionary(
-            uniqueKeysWithValues: ((try? store?.listMCPServers()) ?? []).map { ($0.id, $0) }
+            records.map { (macExtensionStrippingLegacyDigest($0.id), $0) },
+            uniquingKeysWith: { _, latest in latest }
         )
         for (source, root) in roots {
             for relativePath in configurationPaths {
                 let url = root.appendingPathComponent(relativePath).standardizedFileURL
-                for (name, rawConfiguration) in serverConfigurations(in: url).sorted(by: { $0.key < $1.key }) {
+                for (name, _) in serverConfigurations(in: url).sorted(by: { $0.key < $1.key }) {
                     let id = itemID(source: source, configurationURL: url, serverName: name)
-                    let enabled = canonical[id]?.enabled
-                        ?? isEnabled(itemID: id, store: store)
-                    guard enabled, seen.insert(id).inserted else {
+                    guard let approvedRecord = canonical[id],
+                          approvedRecord.enabled,
+                          seen.insert(id).inserted,
+                          let approvedData = approvedRecord.configurationJSON.data(using: .utf8),
+                          var configuration = (try? JSONSerialization.jsonObject(with: approvedData)) as? [String: Any] else {
                         continue
                     }
-                    var configuration = rawConfiguration
                     configuration["name"] = name
                     configuration["server_id"] = serverID(for: id)
                     configuration["enabled"] = true
@@ -426,6 +459,22 @@ nonisolated enum MacLocalMCPActivationStore {
                     active.append(configuration)
                 }
             }
+        }
+        for record in records.sorted(by: { $0.id < $1.id }) where record.enabled && !record.id.contains(":mcp:") {
+            guard seen.insert("managed-mcp:\(record.id)").inserted,
+                  let data = record.configurationJSON.data(using: .utf8),
+                  var configuration = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+                continue
+            }
+            configuration["name"] = record.displayName
+            if (configuration["server_id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+                configuration["server_id"] = record.id
+            }
+            configuration["enabled"] = true
+            if configuration["endpoint"] == nil, let url = configuration["url"] as? String {
+                configuration["endpoint"] = url
+            }
+            active.append(configuration)
         }
         guard !active.isEmpty else { return nil }
         return try? JSONSerialization.data(withJSONObject: active, options: [.sortedKeys])
@@ -461,21 +510,17 @@ nonisolated enum MacLocalMCPActivationStore {
     }
 
     private static func candidate(for itemID: String) -> Candidate? {
-        guard let marker = itemID.range(of: ":mcp:"),
-              let digestMarker = itemID.range(of: "#sha256=", options: .backwards),
-              digestMarker.lowerBound > marker.upperBound,
-              let source = MacExtensionItem.Source(rawValue: String(itemID[..<marker.lowerBound]))
+        let normalized = macExtensionStrippingLegacyDigest(itemID)
+        guard let marker = normalized.range(of: ":mcp:"),
+              let source = MacExtensionItem.Source(rawValue: String(normalized[..<marker.lowerBound]))
         else { return nil }
-        let identity = String(itemID[marker.upperBound..<digestMarker.lowerBound])
+        let identity = String(normalized[marker.upperBound...])
         guard let separator = identity.range(of: ":", options: .backwards) else { return nil }
         let url = URL(fileURLWithPath: String(identity[..<separator.lowerBound])).standardizedFileURL
         let name = String(identity[separator.upperBound...])
-        let digest = String(itemID[digestMarker.upperBound...])
-        guard let configuration = serverConfigurations(in: url)[name],
-              let data = try? JSONSerialization.data(withJSONObject: configuration, options: [.sortedKeys]),
-              macExtensionContentDigest(data) == digest else { return nil }
+        guard let configuration = serverConfigurations(in: url)[name] else { return nil }
         return Candidate(
-            id: itemID,
+            id: normalized,
             name: name,
             source: source,
             configurationURL: url,
@@ -549,13 +594,241 @@ nonisolated enum MacLocalMCPActivationStore {
     }
 }
 
+nonisolated struct MacManagedMCPServerDraft: Equatable, Sendable {
+    enum Transport: String, CaseIterable, Identifiable, Sendable {
+        case stdio
+        case http
+
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .stdio: return "Stdio"
+            case .http: return "HTTP / SSE"
+            }
+        }
+    }
+
+    private static let managedKeys: Set<String> = [
+        "name", "command", "args", "env", "cwd", "url", "endpoint", "headers", "timeout_ms", "timeoutMs",
+    ]
+
+    var displayName: String = ""
+    var transport: Transport = .stdio
+    var stdioCommand: String = ""
+    var httpEndpointURL: String = ""
+    var argumentsText: String = ""
+    var workingDirectory: String = ""
+    var environmentText: String = ""
+    var headersText: String = ""
+    var timeoutMilliseconds: String = ""
+    var enabled: Bool = true
+    var preservedExtraJSON: String? = nil
+
+    init(
+        displayName: String = "",
+        transport: Transport = .stdio,
+        stdioCommand: String = "",
+        httpEndpointURL: String = "",
+        commandOrURL: String? = nil,
+        argumentsText: String = "",
+        workingDirectory: String = "",
+        environmentText: String = "",
+        headersText: String = "",
+        timeoutMilliseconds: String = "",
+        enabled: Bool = true,
+        preservedExtraJSON: String? = nil
+    ) {
+        self.displayName = displayName
+        self.transport = transport
+        if let commandOrURL {
+            self.stdioCommand = transport == .stdio ? commandOrURL : stdioCommand
+            self.httpEndpointURL = transport == .http ? commandOrURL : httpEndpointURL
+        } else {
+            self.stdioCommand = stdioCommand
+            self.httpEndpointURL = httpEndpointURL
+        }
+        self.argumentsText = argumentsText
+        self.workingDirectory = workingDirectory
+        self.environmentText = environmentText
+        self.headersText = headersText
+        self.timeoutMilliseconds = timeoutMilliseconds
+        self.enabled = enabled
+        self.preservedExtraJSON = preservedExtraJSON
+    }
+
+    var commandOrURL: String {
+        get { transport == .stdio ? stdioCommand : httpEndpointURL }
+        set {
+            switch transport {
+            case .stdio: stdioCommand = newValue
+            case .http: httpEndpointURL = newValue
+            }
+        }
+    }
+
+    func validatedConfigurationJSON() throws -> (displayName: String, json: String) {
+        let trimmedName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            throw MacExtensionsServiceError.invalidDraftConfiguration(
+                String(localized: "MCP server name cannot be empty.")
+            )
+        }
+        var payload: [String: Any] = [:]
+        if let preservedExtraJSON,
+           let extraData = preservedExtraJSON.data(using: .utf8),
+           let extraObject = (try? JSONSerialization.jsonObject(with: extraData)) as? [String: Any] {
+            for (key, value) in extraObject where !Self.managedKeys.contains(key) {
+                payload[key] = value
+            }
+        }
+        payload["name"] = trimmedName
+        let trimmedTimeout = timeoutMilliseconds.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedTimeout.isEmpty {
+            guard let timeout = Int(trimmedTimeout), timeout >= 1_000, timeout <= 21_600_000 else {
+                throw MacExtensionsServiceError.invalidDraftConfiguration(
+                    String(localized: "Timeout must be an integer between 1000 and 21600000 ms.")
+                )
+            }
+            payload["timeout_ms"] = timeout
+        }
+        switch transport {
+        case .stdio:
+            let trimmedCommand = stdioCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedCommand.isEmpty else {
+                throw MacExtensionsServiceError.invalidDraftConfiguration(
+                    String(localized: "Stdio command cannot be empty.")
+                )
+            }
+            payload["command"] = trimmedCommand
+            let args = argumentsText
+                .components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            if !args.isEmpty { payload["args"] = args }
+            let trimmedCwd = workingDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedCwd.isEmpty { payload["cwd"] = trimmedCwd }
+            let env = try Self.parseKeyValueLines(environmentText, separator: "=", label: "Environment")
+            if !env.isEmpty { payload["env"] = env }
+        case .http:
+            let trimmedEndpoint = httpEndpointURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let url = URL(string: trimmedEndpoint),
+                  let scheme = url.scheme?.lowercased(),
+                  (scheme == "http" || scheme == "https"),
+                  !(url.host ?? "").isEmpty else {
+                throw MacExtensionsServiceError.invalidDraftConfiguration(
+                    String(localized: "Endpoint URL must be a valid HTTP or HTTPS URL.")
+                )
+            }
+            payload["url"] = trimmedEndpoint
+            payload["endpoint"] = trimmedEndpoint
+            let headers = try Self.parseKeyValueLines(headersText, separator: ":", label: "Headers")
+            if !headers.isEmpty { payload["headers"] = headers }
+        }
+        let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+        return (trimmedName, String(decoding: data, as: UTF8.self))
+    }
+
+    static func from(server: MacCanonicalMCPServer) -> MacManagedMCPServerDraft? {
+        guard let data = server.configurationJSON.data(using: .utf8),
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            return nil
+        }
+        let extra = object.filter { !managedKeys.contains($0.key) }
+        let extraJSON = extra.isEmpty
+            ? nil
+            : (try? JSONSerialization.data(withJSONObject: extra, options: [.sortedKeys]))
+                .map { String(decoding: $0, as: UTF8.self) }
+        let timeoutText = (object["timeout_ms"] as? NSNumber ?? object["timeoutMs"] as? NSNumber)
+            .map { String($0.intValue) } ?? ""
+        if let command = object["command"] as? String {
+            let args = (object["args"] as? [String])?.joined(separator: "\n") ?? ""
+            let env = (object["env"] as? [String: String])?
+                .sorted { $0.key < $1.key }
+                .map { "\($0.key)=\($0.value)" }
+                .joined(separator: "\n") ?? ""
+            let cwd = (object["cwd"] as? String) ?? ""
+            return MacManagedMCPServerDraft(
+                displayName: server.displayName,
+                transport: .stdio,
+                stdioCommand: command,
+                httpEndpointURL: "",
+                argumentsText: args,
+                workingDirectory: cwd,
+                environmentText: env,
+                headersText: "",
+                timeoutMilliseconds: timeoutText,
+                enabled: server.enabled,
+                preservedExtraJSON: extraJSON
+            )
+        }
+        if let endpoint = (object["url"] as? String) ?? (object["endpoint"] as? String) {
+            let headers = (object["headers"] as? [String: String])?
+                .sorted { $0.key < $1.key }
+                .map { "\($0.key): \($0.value)" }
+                .joined(separator: "\n") ?? ""
+            return MacManagedMCPServerDraft(
+                displayName: server.displayName,
+                transport: .http,
+                stdioCommand: "",
+                httpEndpointURL: endpoint,
+                argumentsText: "",
+                workingDirectory: "",
+                environmentText: "",
+                headersText: headers,
+                timeoutMilliseconds: timeoutText,
+                enabled: server.enabled,
+                preservedExtraJSON: extraJSON
+            )
+        }
+        return nil
+    }
+
+    private static func parseKeyValueLines(
+        _ text: String,
+        separator: Character,
+        label: String
+    ) throws -> [String: String] {
+        var result: [String: String] = [:]
+        for line in text.split(whereSeparator: \.isNewline) {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            guard let idx = trimmed.firstIndex(of: separator) else {
+                throw MacExtensionsServiceError.invalidDraftConfiguration(
+                    String(
+                        format: String(localized: "%1$@ line (%2$@) must use KEY%3$@VALUE format."),
+                        label,
+                        trimmed,
+                        String(separator)
+                    )
+                )
+            }
+            let key = String(trimmed[..<idx]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let value = String(trimmed[trimmed.index(after: idx)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.isEmpty else {
+                throw MacExtensionsServiceError.invalidDraftConfiguration(
+                    String(
+                        format: String(localized: "%1$@ key cannot be empty in line (%2$@)."),
+                        label,
+                        trimmed
+                    )
+                )
+            }
+            result[key] = value
+        }
+        return result
+    }
+}
+
 actor MacExtensionsService {
     static let shared = MacExtensionsService()
 
     private let maximumDocumentBytes = 2 * 1_024 * 1_024
     private let fileManager = FileManager.default
-    func localExtensions(workspaceURL: URL?) throws -> [MacExtensionItem] {
-        var items = try MacBuiltInSkillRegistry.extensionItems()
+    func localExtensions(
+        workspaceURL: URL?,
+        store: MacApplicationPort = .shared
+    ) throws -> [MacExtensionItem] {
+        var items = try MacBuiltInSkillRegistry.extensionItems(store: store)
         if let workspaceURL {
             items.append(contentsOf: scanSkills(root: workspaceURL, source: .workspace, limit: 120))
             items.append(contentsOf: scanKnownExtensions(root: workspaceURL, source: .workspace))
@@ -568,10 +841,70 @@ actor MacExtensionsService {
             root: fileManager.homeDirectoryForCurrentUser,
             source: .global
         ))
+        items.append(contentsOf: managedMCPItems(store: store))
         return deduplicated(items).sorted {
             if $0.kind != $1.kind { return $0.kind.rawValue < $1.kind.rawValue }
             return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
         }
+    }
+
+    func managedMCPDraft(
+        forItemID itemID: String,
+        store: MacApplicationPort = .shared
+    ) throws -> MacManagedMCPServerDraft? {
+        guard let server = try managedMCPServer(forItemID: itemID, store: store) else { return nil }
+        return MacManagedMCPServerDraft.from(server: server)
+    }
+
+    @discardableResult
+    func createManagedMCPServer(
+        _ draft: MacManagedMCPServerDraft,
+        store: MacApplicationPort = .shared
+    ) throws -> MacCanonicalMCPServer {
+        let validated = try draft.validatedConfigurationJSON()
+        let now = Int64(Date().timeIntervalSince1970 * 1_000)
+        return try store.createMCPServer(MacCanonicalMCPServerInput(
+            id: UUID().uuidString.lowercased(),
+            displayName: validated.displayName,
+            enabled: draft.enabled,
+            configurationJSON: validated.json,
+            revision: 0,
+            createdAtMs: now,
+            updatedAtMs: now,
+            deletedAtMs: nil
+        ))
+    }
+
+    @discardableResult
+    func updateManagedMCPServer(
+        itemID: String,
+        draft: MacManagedMCPServerDraft,
+        store: MacApplicationPort = .shared
+    ) throws -> MacCanonicalMCPServer {
+        guard let existing = try managedMCPServer(forItemID: itemID, store: store) else {
+            throw MacExtensionsServiceError.contentUnavailable
+        }
+        let validated = try draft.validatedConfigurationJSON()
+        let now = Int64(Date().timeIntervalSince1970 * 1_000)
+        return try store.configureMCPServer(
+            existing,
+            displayName: validated.displayName,
+            enabled: draft.enabled,
+            configurationJSON: validated.json,
+            updatedAtMs: now
+        )
+    }
+
+    @discardableResult
+    func deleteManagedMCPServer(
+        itemID: String,
+        store: MacApplicationPort = .shared
+    ) throws -> Bool {
+        guard let existing = try managedMCPServer(forItemID: itemID, store: store) else {
+            return false
+        }
+        let now = Int64(Date().timeIntervalSince1970 * 1_000)
+        return try store.deleteMCPServer(existing, deletedAtMs: now)
     }
 
     func document(
@@ -585,10 +918,10 @@ actor MacExtensionsService {
         if item.source == .builtIn {
             guard let skillID = MacBuiltInSkillRegistry.skillID(forExtensionItemID: item.id),
                   let editor = try store.skillEditor(skillID.rawValue),
-                  editor.record.source == .builtIn,
-                  let url = URL(string: editor.record.instructionsRef), url.isFileURL else {
+                  editor.record.source == .builtIn else {
                 throw MacExtensionsServiceError.contentUnavailable
             }
+            let url = try MacBuiltInSkillRegistry.materializedInstructionURL(for: skillID, record: editor.record)
             guard editor.record.instructionsText.utf8.count <= maximumDocumentBytes else {
                 throw MacExtensionsServiceError.contentTooLarge
             }
@@ -596,6 +929,21 @@ actor MacExtensionsService {
                 content: editor.record.instructionsText, url: url,
                 format: .markdown, isEditable: item.isLocallyEditable,
                 canonicalSkillRevision: editor.revision
+            )
+        }
+        if item.id.hasPrefix("managed-mcp:") {
+            guard let server = try managedMCPServer(forItemID: item.id, store: store) else {
+                throw MacExtensionsServiceError.contentUnavailable
+            }
+            let content = prettyPrintedJSON(server.configurationJSON) ?? server.configurationJSON
+            guard content.utf8.count <= maximumDocumentBytes else {
+                throw MacExtensionsServiceError.contentTooLarge
+            }
+            return MacExtensionDocument(
+                content: content,
+                url: URL(fileURLWithPath: "/managed-mcp/\(server.id).json"),
+                format: .json,
+                isEditable: true
             )
         }
         let url: URL
@@ -623,7 +971,11 @@ actor MacExtensionsService {
         )
     }
 
-    func save(_ content: String, for item: MacExtensionItem) throws -> MacExtensionDocument {
+    func save(
+        _ content: String,
+        for item: MacExtensionItem,
+        store: MacApplicationPort = .shared
+    ) throws -> MacExtensionDocument {
         guard item.isLocallyEditable else {
             throw MacExtensionsServiceError.readOnly
         }
@@ -632,6 +984,32 @@ actor MacExtensionsService {
         guard data.count <= maximumDocumentBytes else {
             throw MacExtensionsServiceError.contentTooLarge
         }
+        if item.id.hasPrefix("managed-mcp:") {
+            let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty,
+                  let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                  !object.isEmpty else {
+                throw MacExtensionsServiceError.invalidJSON
+            }
+            guard let server = try managedMCPServer(forItemID: item.id, store: store) else {
+                throw MacExtensionsServiceError.contentUnavailable
+            }
+            let now = Int64(Date().timeIntervalSince1970 * 1_000)
+            let updated = try store.configureMCPServer(
+                server,
+                displayName: server.displayName,
+                enabled: server.enabled,
+                configurationJSON: trimmed,
+                updatedAtMs: now
+            )
+            let formatted = prettyPrintedJSON(updated.configurationJSON) ?? updated.configurationJSON
+            return MacExtensionDocument(
+                content: formatted,
+                url: URL(fileURLWithPath: "/managed-mcp/\(updated.id).json"),
+                format: .json,
+                isEditable: true
+            )
+        }
         if item.kind == .skill,
            content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             throw MacExtensionsServiceError.emptySkill
@@ -639,8 +1017,8 @@ actor MacExtensionsService {
         let url: URL
         if item.source == .builtIn,
            let skillID = MacBuiltInSkillRegistry.skillID(forExtensionItemID: item.id) {
-            url = try MacBuiltInSkillRegistry.saveOverride(content, for: skillID)
-            try MacBuiltInSkillRegistry.synchronizeCatalog()
+            url = try MacBuiltInSkillRegistry.saveOverride(content, for: skillID, store: store)
+            try MacBuiltInSkillRegistry.synchronizeCatalog(store: store)
             try MacBuiltInSkillRegistry.installTrustedRouter()
         } else if let path = item.path {
             url = URL(fileURLWithPath: path).standardizedFileURL
@@ -661,6 +1039,57 @@ actor MacExtensionsService {
             format: documentFormat(for: url, kind: item.kind),
             isEditable: true
         )
+    }
+
+    private func managedMCPItems(store: MacApplicationPort) -> [MacExtensionItem] {
+        let servers = (try? store.listMCPServers()) ?? []
+        return servers
+            .filter { $0.deletedAtMs == nil && !$0.id.contains(":mcp:") }
+            .map { server in
+                MacExtensionItem(
+                    id: "managed-mcp:\(server.id)",
+                    kind: .mcp,
+                    source: .global,
+                    title: server.displayName,
+                    detail: managedMCPDetail(server),
+                    path: nil,
+                    isEnabled: server.enabled,
+                    mcpSummary: .configured
+                )
+            }
+    }
+
+    private func managedMCPServer(
+        forItemID itemID: String,
+        store: MacApplicationPort
+    ) throws -> MacCanonicalMCPServer? {
+        guard itemID.hasPrefix("managed-mcp:") else { return nil }
+        let serverID = String(itemID.dropFirst("managed-mcp:".count))
+        return try store.listMCPServers().first { $0.id == serverID && $0.deletedAtMs == nil }
+    }
+
+    private func managedMCPDetail(_ server: MacCanonicalMCPServer) -> String {
+        guard let data = server.configurationJSON.data(using: .utf8),
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            return String(localized: "Managed MCP")
+        }
+        if let command = object["command"] as? String, !command.isEmpty {
+            let args = (object["args"] as? [String])?.joined(separator: " ") ?? ""
+            return args.isEmpty ? command : "\(command) \(args)"
+        }
+        if let endpoint = (object["url"] as? String) ?? (object["endpoint"] as? String), !endpoint.isEmpty {
+            return endpoint
+        }
+        return String(localized: "Managed MCP")
+    }
+
+    private func prettyPrintedJSON(_ raw: String) -> String? {
+        guard let data = raw.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              let pretty = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]) else {
+            return nil
+        }
+        return String(decoding: pretty, as: UTF8.self)
     }
 
     private func authorizeManagedResource(

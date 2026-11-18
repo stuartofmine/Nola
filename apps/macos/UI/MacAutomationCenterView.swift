@@ -262,22 +262,26 @@ struct MacAutomationCenterView: View {
 
                 Spacer(minLength: 12)
 
-                Toggle(isOn: Binding(
-                    get: { automation.isEnabled },
-                    set: { store.setEnabled($0, for: automation) }
-                )) {
+                HStack(spacing: 8) {
                     Text(
                         automation.isEnabled
                             ? String(localized: "Enabled", table: "AutomationCenter")
                             : String(localized: "Paused", table: "AutomationCenter")
                     )
-                    .font(.system(size: 10.5, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(automation.isEnabled ? Color.green : Color.secondary)
+
+                    Toggle(
+                        String(localized: "Enabled", table: "AutomationCenter"),
+                        isOn: Binding(
+                            get: { automation.isEnabled },
+                            set: { store.setEnabled($0, for: automation) }
+                        )
+                    )
+                    .toggleStyle(.macSwitchControl)
+                    .accessibilityLabel(String(localized: "Enabled", table: "AutomationCenter"))
                 }
-                .toggleStyle(.switch)
-                .controlSize(.small)
                 .fixedSize()
-                .accessibilityLabel(String(localized: "Enabled", table: "AutomationCenter"))
             }
 
             Text(automation.prompt)
@@ -407,8 +411,7 @@ struct MacAutomationCenterView: View {
             } label: {
                 Image(systemName: "ellipsis")
             }
-            .menuStyle(.borderlessButton)
-            .macToolbarIcon()
+            .menuStyle(MacToolbarMenuStyle())
             .accessibilityLabel(String(localized: "More", table: "AutomationCenter"))
             .help(String(localized: "View Run History", table: "AutomationCenter") + " · " + String(localized: "Delete", table: "AutomationCenter"))
         }
@@ -708,6 +711,7 @@ private struct MacAutomationEditor: View {
                 }
                 DatePicker(String(localized: "Time", table: "AutomationCenter"), selection: $time, displayedComponents: .hourAndMinute)
                 Toggle(String(localized: "Run when selected data changes", table: "AutomationCenter"), isOn: $runWhenDataChanges)
+                    .toggleStyle(.macSwitch)
                 HStack {
                     TextField(String(localized: "Workspace", table: "AutomationCenter"), text: $workspacePath)
                     Button {
@@ -735,6 +739,7 @@ private struct MacAutomationEditor: View {
                         )) {
                             Label(source.title, systemImage: source.symbol)
                         }
+                        .toggleStyle(.checkbox)
                     }
 
                     if contextSources.contains(.personalData) {
@@ -765,6 +770,7 @@ private struct MacAutomationEditor: View {
                                         }
                                     }
                                 ))
+                                .toggleStyle(.checkbox)
                             }
                         }
                     }
@@ -972,7 +978,7 @@ private struct MacAutomationFilterBar: View {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.tertiary)
                 }
-                .buttonStyle(MacActionButtonStyle(contentInsets: .init()))
+                .buttonStyle(MacInlineIconButtonStyle(size: 22))
                 .accessibilityLabel(String(localized: "Clear", table: "AutomationCenter"))
             }
         }

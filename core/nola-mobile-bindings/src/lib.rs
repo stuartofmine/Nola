@@ -55,7 +55,6 @@ pub extern "C" fn nola_mobile_bindings_force_link_core() -> usize {
         nola_core::nola_core_context_prepare as *const (),
         nola_core::nola_core_data_source_abi_version as *const (),
         nola_core::nola_core_data_source_resolve as *const (),
-        nola_core::nola_core_data_source_seal_contract as *const (),
         nola_core::nola_core_lifecycle_hook_abi_version as *const (),
         nola_core::nola_core_lifecycle_hook_build_registry as *const (),
         nola_core::nola_core_lifecycle_hook_plan as *const (),
@@ -721,7 +720,7 @@ use nola_domain::core_event::{EventCursor};
                 "expected_revision": draft["revision"], "requested_at_ms": 110
             }
         }));
-        let mut contract: nola_core::data_source::DataSourceContract =
+        let contract: nola_core::data_source::DataSourceContract =
             serde_json::from_value(serde_json::json!({
                 "sourceId": "mobile-source", "connectorId": "mobile", "connectorVersion": 1,
                 "readerDescription": "Read authorized JSON through the mobile host",
@@ -732,7 +731,6 @@ use nola_domain::core_event::{EventCursor};
                 "validatedAt": "2026-09-05T00:00:00Z"
             }))
             .unwrap();
-        contract.seal_validation();
         let verified = execute(serde_json::json!({
             "type": "data_source", "command": {
                 "type": "record_validation", "id": "mobile-source",

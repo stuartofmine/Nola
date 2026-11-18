@@ -67,14 +67,12 @@ data class DataSourceValidationContract(
     val validationState: DataSourceValidationState = DataSourceValidationState.Verified,
     val validatedAt: Long = System.currentTimeMillis(),
     val observedAt: Long = validatedAt,
-    val readRecipe: DataSourceReadRecipe? = null,
-    val validationDigest: String? = null
+    val readRecipe: DataSourceReadRecipe? = null
 ) {
     val isUsable: Boolean
         get() = connectorVersion == 1 &&
             validationState != DataSourceValidationState.Failed &&
-            readRecipe?.isUsable == true &&
-            !validationDigest.isNullOrBlank()
+            readRecipe?.isUsable == true
 
 }
 

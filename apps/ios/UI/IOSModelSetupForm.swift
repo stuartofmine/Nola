@@ -79,8 +79,14 @@ struct IOSModelSetupForm: View {
                     Text(verbatim: "Chat Completions").tag("chat_completions")
                     Text(verbatim: "Responses").tag("responses")
                     Text(verbatim: "Anthropic Messages").tag("anthropic")
-                }.labelsHidden().frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                    .accessibilityIdentifier("model.setup.protocol")
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .padding(.horizontal, 12)
+                .background(DesignTokens.surfaceColor, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(DesignTokens.borderColor, lineWidth: 1))
+                .accessibilityIdentifier("model.setup.protocol")
             }
             Text(NSLocalizedString("model.protocol.guidance", value: "For tools with reasoning, choose Responses if your service supports it. Some Chat Completions models require reasoning to be disabled explicitly.", comment: "API protocol compatibility guidance"))
                 .font(.footnote).foregroundStyle(.secondary)
@@ -96,6 +102,7 @@ struct IOSModelSetupForm: View {
                 Text(NSLocalizedString("model.setup.advanced", value: "Advanced settings", comment: "Advanced settings"))
                     .frame(minHeight: 44)
             }
+            .disclosureGroupStyle(NolaRowDisclosureStyle())
             Text(NSLocalizedString("model.setup.summary", value: "Save to enable this model and use it by default. No model discovery or test request is required.", comment: "Manual model configuration summary"))
                 .font(.footnote).foregroundStyle(.secondary)
             if let error { Text(error).font(.callout).foregroundStyle(.red).textSelection(.enabled).accessibilityIdentifier("model.setup.error") }
@@ -205,9 +212,12 @@ struct IOSModelProtocolEditor: View {
                 Text(model.effectiveUpstreamModelId).textSelection(.enabled)
                 Text(model.baseURL ?? "").font(.footnote).foregroundStyle(.secondary).textSelection(.enabled)
                 Picker(NSLocalizedString("model.connections.protocol", comment: "Protocol"), selection: $wire) {
-                    Text("Responses").tag(ModelWireProtocol.responses)
-                    Text("Chat Completions").tag(ModelWireProtocol.chatCompletions)
-                }.accessibilityIdentifier("model.protocol.selection")
+                    Text(verbatim: "Responses").tag(ModelWireProtocol.responses)
+                    Text(verbatim: "Chat Completions").tag(ModelWireProtocol.chatCompletions)
+                    Text(verbatim: "Anthropic Messages").tag(ModelWireProtocol.anthropic)
+                }
+                .pickerStyle(.menu)
+                .accessibilityIdentifier("model.protocol.selection")
             } footer: {
                 Text(NSLocalizedString("model.protocol.guidance", value: "For tools with reasoning, choose Responses if your service supports it. Some Chat Completions models require reasoning to be disabled explicitly.", comment: "API protocol compatibility guidance"))
             }

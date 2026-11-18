@@ -72,7 +72,6 @@ fn skill_descriptor(skill: &Skill) -> SkillDescriptor {
         version: skill.version.clone(),
         display_name: skill.display_name.clone(),
         instructions_ref: skill.instructions_ref.clone(),
-        instructions_digest: skill.instructions_digest.clone(),
         required_tools: skill.required_tools.clone(),
         default_mode: skill.default_mode,
         execution_contract: Default::default(),

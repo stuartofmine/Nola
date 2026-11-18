@@ -34,8 +34,6 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.Button
@@ -55,7 +53,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -85,9 +82,11 @@ import com.nola.domain.model.UnifiedDataSourceConnectionState
 import com.nola.domain.model.UnifiedDataSourcePrivacyScope
 import com.nola.ui.components.NolaCard
 import com.nola.ui.components.NolaColors
+import com.nola.ui.components.NolaDisclosureChevron
 import com.nola.ui.components.NolaMotion
 import com.nola.ui.components.NolaSectionTitle
 import com.nola.ui.components.NolaSpacing
+import com.nola.ui.components.NolaSwitch
 import com.nola.ui.components.NolaTopAppBar
 import com.nola.ui.components.rememberReduceMotionEnabled
 import kotlinx.coroutines.delay
@@ -196,7 +195,7 @@ fun ChatContextScreen(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var noticeMessage by remember { mutableStateOf<String?>(null) }
     var selectedContextPane by remember(displayMode) { mutableStateOf(ContextPane.Overview) }
-    var expandedSkillIndex by remember { mutableStateOf<Int?>(null) }
+    var expandedSkillKey by remember { mutableStateOf<String?>(null) }
     var expandedMcpServerIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var pendingSkillDeletion by remember { mutableStateOf<UploadedContent?>(null) }
     var showSkillEditor by remember { mutableStateOf(false) }
@@ -240,7 +239,7 @@ fun ChatContextScreen(
                 TextButton(
                     onClick = {
                         onSkillDelete(skill)
-                        expandedSkillIndex = null
+                        expandedSkillKey = null
                         pendingSkillDeletion = null
                     }
                 ) {
@@ -594,6 +593,8 @@ fun ChatContextScreen(
                                     errorMessage = null
                                     try {
                                         searchResults = onSearchMemory(searchQuery)
+                                    } catch (e: kotlinx.coroutines.CancellationException) {
+                                        throw e
                                     } catch (e: Exception) {
                                         errorMessage = e.message
                                     }
@@ -752,6 +753,8 @@ fun ChatContextScreen(
                                     try {
                                         onSaveMemoryProfile()
                                         noticeMessage = context.getString(R.string.chat_memory_saved)
+                                    } catch (e: kotlinx.coroutines.CancellationException) {
+                                        throw e
                                     } catch (e: Exception) {
                                         errorMessage = e.message
                                     }
@@ -783,6 +786,8 @@ fun ChatContextScreen(
                                         errorMessage = null
                                         try {
                                             onCompact()
+                                        } catch (e: kotlinx.coroutines.CancellationException) {
+                                            throw e
                                         } catch (e: Exception) {
                                             errorMessage = e.message
                                         }
@@ -807,6 +812,47 @@ fun ChatContextScreen(
                 }
 
                 if (selectedContextPane == ContextPane.Tools) {
+                NolaSectionTitle(title = stringResource(R.string.chat_local_mcp_servers))
+                NolaCard {
+                    if (mcpServers.isEmpty()) {
+                        Text(
+                            stringResource(R.string.chat_local_mcp_empty),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(NolaSpacing.xs)) {
+                            mcpServers.forEachIndexed { index, server ->
+                                if (index > 0) HorizontalDivider(Modifier.padding(vertical = NolaSpacing.xs))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(NolaSpacing.sm)
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            server.name.ifBlank { server.url },
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                        if (server.url.isNotBlank()) {
+                                            Text(
+                                                server.url,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                    Text(
+                                        text = stringResource(if (server.enabled) R.string.common_enabled else R.string.common_disabled),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (server.enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
                 // ---- Agent Host MCP capability catalog ----
                 NolaSectionTitle(title = stringResource(R.string.chat_mcp_capabilities))
                 NolaCard {
@@ -977,7 +1023,11 @@ fun ChatContextScreen(
                 }
 
                 uploadedSkills.forEachIndexed { index, skill ->
-                    val isExpanded = expandedSkillIndex == index
+                    val skillKey = skill.resourceId ?: "${skill.name}#$index"
+                    val isExpanded = expandedSkillKey == skillKey
+                    val toggleSkill = {
+                        expandedSkillKey = if (isExpanded) null else skillKey
+                    }
 
                     NolaCard {
                         Column {
@@ -986,9 +1036,7 @@ fun ChatContextScreen(
                                     Modifier
                                         .weight(1f)
                                         .clip(RoundedCornerShape(10.dp))
-                                        .clickable {
-                                            expandedSkillIndex = if (isExpanded) null else index
-                                        }
+                                        .clickable(role = Role.Button, onClick = toggleSkill)
                                         .heightIn(min = 48.dp)
                                         .padding(vertical = 4.dp)
                                 ) {
@@ -1003,12 +1051,9 @@ fun ChatContextScreen(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
-                                Switch(checked = skill.enabled, onCheckedChange = { onSkillToggle(skill, it) })
-                                IconButton(onClick = { expandedSkillIndex = if (isExpanded) null else index }) {
-                                    Icon(
-                                        if (isExpanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
-                                        contentDescription = stringResource(R.string.chat_skill_content)
-                                    )
+                                NolaSwitch(checked = skill.enabled, onCheckedChange = { onSkillToggle(skill, it) })
+                                IconButton(onClick = toggleSkill) {
+                                    NolaDisclosureChevron(expanded = isExpanded, reduceMotion = reduceMotion)
                                 }
                             }
                             if (!isExpanded && skill.content.isNotBlank()) {
@@ -1016,7 +1061,12 @@ fun ChatContextScreen(
                                     skill.content,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 2
+                                    maxLines = 2,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable(role = Role.Button, onClick = toggleSkill)
+                                        .padding(vertical = 2.dp)
                                 )
                             }
                             AnimatedVisibility(
@@ -1177,7 +1227,7 @@ internal fun DataSourceCatalogRow(
                 )
                 Spacer(Modifier.width(NolaSpacing.sm))
                 if (accessPolicy != null) {
-                    Switch(
+                    NolaSwitch(
                         checked = toggleChecked,
                         onCheckedChange = null,
                         enabled = canToggle

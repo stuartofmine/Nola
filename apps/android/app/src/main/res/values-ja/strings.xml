@@ -1365,4 +1365,25 @@
     <string name="expert_main_requires_tools">ツール対応のメインモデルで専門家ツールを有効にするか、専門家の選択を解除してください。下書きは保持されます。</string>
     <string name="chat_context_budget_exceeded">入力とツール説明がコンテキスト上限を超えています。上限を増やすか、添付・履歴・ツールを減らして再試行してください。</string>
     <string name="chat_run_blocked">タスクを続行できません。処理過程を開き、必要な情報や操作を確認してください。</string>
+    <string name="models_web_host_paste_setup">接続設定を貼り付け</string>
+    <string name="models_web_host_invalid_setup">ホスト側の Nola から接続設定をコピーして、ここに貼り付けてください。</string>
+    <string name="permission_review_unavailable">操作の詳細を取得できません。このリクエストを拒否するか、ホスト側に確認可能な操作情報の提供を依頼してください。</string>
+    <string name="common_more">その他</string>
+    <string name="models_config_save_failed">モデル設定を保存できませんでした。</string>
+    <string name="models_protocol_responses">Responses</string>
+    <string name="models_protocol_chat_completions">Chat Completions</string>
+    <string name="chat_rename_conversation">会話名を変更</string>
+    <string name="chat_conversation_title_hint">会話タイトル</string>
+    <string name="chat_local_mcp_servers">端末内 MCP サーバー</string>
+    <string name="chat_local_mcp_empty">端末内 MCP サーバーは設定されていません。</string>
+    <string name="goal_discard_pending">保留中のリクエストを破棄</string>
+    <string name="goal_constraints">制約（任意）</string>
+    <string name="goal_constraints_hint">1行に1つ、またはカンマ区切りで入力</string>
+    <string name="goal_next_wake_format">次回確認：%1$s</string>
+    <string name="expert_conflict_refresh">エキスパートが変更されました。更新してから再試行してください。</string>
+    <string name="task_detail_unavailable">タスクの詳細を利用できません</string>
+    <string name="chat_ui_host_submission_rejected">ホストが送信を拒否しました。フォームを更新して再試行してください。</string>
+    <string name="chat_ui_host_submission_unknown">ホストへの送信結果がまだ確認されていません。</string>
+    <string name="chat_ui_submission_rejected">送信が拒否されました。</string>
+    <string name="chat_ui_submission_unknown">送信結果がまだ確認されていません。</string>
 </resources>

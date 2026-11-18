@@ -29,7 +29,7 @@ export function parseGoalControl(value: unknown, owner: RunObservationOwner): Go
     if (!object(goal) || !id(goal.goal_id) || !id(goal.control_token)
         || !['running', 'paused', 'needs_user', 'completed', 'failed', 'cancelled'].includes(String(goal.status))
         || ['can_pause', 'can_resume', 'can_cancel'].some(key => typeof goal[key] !== 'boolean')
-        || typeof goal.can_submit !== 'boolean' || goal.can_submit && !['completed', 'cancelled', 'failed'].includes(String(goal.status)))
+        || typeof goal.can_submit !== 'boolean' || goal.can_submit && !['completed', 'cancelled', 'failed', 'paused', 'needs_user'].includes(String(goal.status)))
         throw new Error('Invalid Goal control observation');
     return goal as unknown as GoalControlObservation;
 }
@@ -51,8 +51,17 @@ export function parseRunObservation(value: unknown, owner: RunObservationOwner, 
     if (result.goal_execution !== null) {
         const goal = result.goal_execution;
         if (!object(goal) || !id(goal.goal_id) || !id(goal.contract_id) || goal.run_id !== result.run_id
-            || !id(goal.control_token)
-            || result.submission_receipt !== null) throw new Error('Invalid Goal execution ownership');
+            || !id(goal.control_token)) throw new Error('Invalid Goal execution ownership');
+        if (result.submission_receipt !== null) {
+            const receipt = result.submission_receipt;
+            const identity = object(receipt) && object(receipt.identity) ? receipt.identity : null;
+            if (!object(receipt) || receipt.protocol_version !== 1 || receipt.phase !== 'admitted' || !identity
+                || identity.source_host_id !== owner.hostId || identity.client_id !== owner.clientId
+                || identity.conversation_id !== owner.conversationId || identity.submission_id !== result.run_id
+                || identity.assistant_message_id !== result.assistant_message_id) {
+                throw new Error('Invalid Goal execution ownership');
+            }
+        }
     }
     if (result.task_execution != null) {
         const task = conversationExecutionOwnership(result.task_execution, owner.conversationId);
@@ -70,8 +79,12 @@ export function parseRunObservation(value: unknown, owner: RunObservationOwner, 
     }
     if (admission && (admission.identity.conversation_id !== owner.conversationId || admission.identity.run_id !== result.run_id
         || admission.identity.assistant_message_id !== result.assistant_message_id)) throw new Error('Observation admission owner changed');
+    const allowedPermissionClients = result.goal_execution
+        ? (result.submission_receipt !== null ? [owner.clientId, 'web-goal'] : ['web-goal'])
+        : [owner.clientId];
     for (const permission of result.permissions) {
-        if (!object(permission) || permission.host_id !== owner.hostId || permission.client_id !== (result.goal_execution ? 'web-goal' : owner.clientId)
+        if (!object(permission) || permission.host_id !== owner.hostId
+            || !allowedPermissionClients.includes(String(permission.client_id))
             || permission.session_id !== owner.conversationId || permission.canonical_run_id !== result.run_id
             || !id(permission.nonce) || !id(permission.request_id) || permission.protocol_version !== 1 || typeof permission.allow_conversation !== 'boolean'
             || typeof permission.expires_at !== 'number' || permission.expires_at <= Date.now() / 1000

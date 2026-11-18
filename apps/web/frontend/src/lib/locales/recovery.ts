@@ -25,6 +25,7 @@ const entries: Record<string, readonly [string, string, string, string, string, 
     unknown_preserved_blocked: ['已保留未知结果，正在读取最终运行记录。', 'Unknown result retained; reading the final run record.', 'Unbekanntes Ergebnis behalten; abschließender Eintrag wird gelesen.', 'Resultado desconocido conservado; leyendo registro final.', 'Résultat inconnu conservé ; lecture du résultat final.', '不明な結果を保持しました。最終記録を読み込みます。', 'Неизвестный результат сохранён; читается итоговая запись.'],
     rejected: ['决定被拒绝，请重新检查执行记录。', 'Decision rejected. Check the execution records again.', 'Entscheidung abgelehnt. Prüfe die Einträge erneut.', 'Decisión rechazada. Comprueba los registros de nuevo.', 'Décision refusée. Vérifiez à nouveau les enregistrements.', '判断は拒否されました。実行記録を再確認してください。', 'Решение отклонено. Проверьте записи снова.'],
     conflict: ['执行记录已变化，请重新检查后再决定。', 'Execution records changed. Check again before deciding.', 'Einträge wurden geändert. Prüfe sie vor einer neuen Entscheidung.', 'Los registros cambiaron. Comprueba antes de decidir.', 'Les enregistrements ont changé. Revérifiez avant de décider.', '実行記録が変わりました。確認してから判断してください。', 'Записи изменились. Проверьте их перед решением.'],
+    queuedFormAction: ['表单操作', 'Form action', 'Formularaktion', 'Acción de formulario', 'Action de formulaire', 'フォーム操作', 'Действие формы'],
 };
 export const recoveryMessages = Object.fromEntries(languages.map((language, index) => [language,
     Object.fromEntries(Object.entries(entries).map(([key, values]) => [`recovery.${key}`, values[index]])),

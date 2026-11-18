@@ -90,6 +90,36 @@ impl SkillRepository for Repository {
         self.selections.insert(id.into(), value.clone());
         Ok(())
     }
+    fn restore_built_in_package_version(
+        &mut self,
+        skill_id: &str,
+        expected_revision: i64,
+        package_version: &str,
+        updated_at_ms: i64,
+    ) -> Result<StoredSkill, String> {
+        let Some((record, revision)) = self.rows.get_mut(skill_id) else {
+            return Err(format!("Skill is missing: {skill_id}"));
+        };
+        if *revision != expected_revision {
+            return Err("skill_revision_conflict".into());
+        }
+        let package = self
+            .versions
+            .get(&(skill_id.into(), package_version.into()))
+            .cloned()
+            .ok_or_else(|| "missing package version".to_string())?;
+        record.version = package.version;
+        record.instructions_ref = package.instructions_ref;
+        record.instructions_text = package.instructions_text;
+        record.enabled = true;
+        record.deleted_at_ms = None;
+        record.updated_at_ms = record.updated_at_ms.max(updated_at_ms);
+        *revision += 1;
+        if let Some(sel) = self.selections.get_mut(skill_id) {
+            sel.override_version = None;
+        }
+        Ok(record.clone())
+    }
     fn skill_visibility(&self) -> Result<Option<SkillVisibilitySetting>, String> {
         Ok(self.visibility.clone())
     }
@@ -110,7 +140,6 @@ fn input(source: SkillSource) -> SkillInput {
         summary: "summary".into(),
         category: "test".into(),
         instructions_ref: "bundle://skill".into(),
-        instructions_digest: "digest".into(),
         instructions_text: "  original\n🙂  ".into(),
         required_tools: vec![],
         default_mode: None,
@@ -200,8 +229,8 @@ fn non_sqlite_package_selection_preserves_override_and_propagates_sync_failure()
         SkillCommand::SetBuiltInInstructionsChecked {
             id: "skill".into(),
             expected_revision: 1,
+            version: "override-v1".into(),
             instructions_ref: "override".into(),
-            instructions_digest: "override-v1".into(),
             instructions_text: " exact override\n".into(),
             updated_at_ms: 2,
         },
@@ -228,8 +257,8 @@ fn non_sqlite_package_selection_preserves_override_and_propagates_sync_failure()
         SkillCommand::SetBuiltInInstructionsChecked {
             id: "skill".into(),
             expected_revision: 2,
+            version: "override-v2".into(),
             instructions_ref: "override".into(),
-            instructions_digest: "override-v2".into(),
             instructions_text: "next override".into(),
             updated_at_ms: 3,
         },

@@ -18,5 +18,8 @@ test('light and dark semantic text retains AA contrast including primary buttons
             const a = luminance(palette[foreground]), b = luminance(palette[background]);
             assert.ok((Math.max(a, b) + .05) / (Math.min(a, b) + .05) >= 4.5, `${foreground}/${background}`);
         }
+        assert.ok(palette['switch-on'], 'switch-on token defined');
+        const thumbLum = luminance('ffffff'), trackLum = luminance(palette['switch-on']);
+        assert.ok((Math.max(thumbLum, trackLum) + .05) / (Math.min(thumbLum, trackLum) + .05) >= 4.0, 'white thumb on emerald switch-on track');
     }
 });

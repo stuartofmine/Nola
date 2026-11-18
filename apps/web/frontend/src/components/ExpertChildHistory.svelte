@@ -9,7 +9,7 @@
     import ChatMessageContent from './ChatMessageContent.svelte';
     import ChatReadOnlySurfacePart from './ChatReadOnlySurfacePart.svelte';
     let {parentId,disabled=false}:{parentId:string;disabled?:boolean}=$props();
-    let expanded=$state(false),loading=$state(false),error=$state(''),host=$state('');
+    let expanded=$state(false),loading=$state(false),preloaded=$state(false),error=$state(''),host=$state('');
     let children=$state<ExpertChildConversation[]>([]),next=$state<number|null>(0),roomId=$state('');
     let sourceEpoch=$state<string|null>(null);
     let sourceIdentity=$state(''),senders=$state<Record<string,{name:string;agentId:string}>>({});
@@ -18,9 +18,10 @@
     let dialog:HTMLDialogElement,closeButton:HTMLButtonElement;
     let alive=true,serial=0,historySerial=0;const controller=new AbortController();let opener:HTMLElement|undefined;
     onDestroy(()=>{alive=false;++serial;++historySerial;controller.abort();if(dialog?.open)dialog.close();});
+    $effect(()=>{if(!preloaded&&!loading&&!error){preloaded=true;void load(false,true);}});
     async function sessionHost(){const session=await api<{hostId:string}>('/api/web/session',{signal:controller.signal});if(!session.hostId)throw Error('Invalid Host');return session.hostId;}
-    async function load(reset=false){
-        if(loading||!reset&&next===null)return;const request=++serial,parent=parentId,offset=reset?0:next!;loading=true;error='';
+    async function load(reset=false,silent=false){
+        if(loading||!reset&&next===null)return;const request=++serial,parent=parentId,offset=reset?0:next!;loading=true;if(!silent)error='';
         try{const source=await sessionHost();if(host&&host!==source)throw Error('Host changed');
             const scoped=await roomCommandAtSource({type:'child_conversations',conversation_id:parent,offset,limit:40},sourceEpoch,controller.signal);
             const page=parseExpertChildPage(scoped.result,parent,offset);
@@ -29,7 +30,7 @@
             if(!reset&&page.children.some(c=>children.some(old=>old.conversation_id===c.conversation_id)))throw Error('History changed; reopen the list');
             if(roomId&&roomId!==page.room_id)throw Error('Room changed');
             host=source;sourceEpoch=scoped.sourceEpoch;roomId=page.room_id??'';children=reset?page.children:[...children,...page.children];next=page.next_offset;
-        }catch{if(alive&&request===serial)error=t($locale,'rooms.childLoadFailed');}finally{if(alive&&request===serial)loading=false;}
+        }catch{if(alive&&request===serial&&!silent)error=t($locale,'rooms.childLoadFailed');}finally{if(alive&&request===serial)loading=false;}
     }
     async function open(child:ExpertChildConversation,event:MouseEvent){
         opener=event.currentTarget as HTMLElement;selected=child;timeline=createChatTimeline({conversationId:child.conversation_id,generation:++historySerial});historyError='';sourceIdentity='';senders={};
@@ -52,8 +53,9 @@
     }
     function restartHistory(){if(!selected||historyLoading)return;timeline=createChatTimeline({conversationId:selected.conversation_id,generation:++historySerial});sourceIdentity='';senders={};void readHistory();}
 </script>
+{#if children.length > 0 || error || expanded}
 <div class="child-tree">
-    <button class="disclosure" {disabled} aria-expanded={expanded} onclick={()=>{expanded=!expanded;if(expanded&&!children.length)void load();}}>{t($locale,'rooms.childHistory')} <span aria-hidden="true">{expanded?'−':'+'}</span></button>
+    <button class="disclosure" {disabled} aria-expanded={expanded} onclick={()=>{expanded=!expanded;if(expanded&&!children.length)void load();}}><span>{t($locale,'rooms.childHistory')}</span><span class="chevron" aria-hidden="true">{expanded?'▴':'▾'}</span></button>
     {#if expanded}
         <div class="children" aria-busy={loading}>
             {#each children as child(child.conversation_id)}<button {disabled} class="child" onclick={event=>open(child,event)}><span>{child.title||t($locale,'rooms.experts')}</span><small>{t($locale,child.is_current?'rooms.childCurrent':'rooms.childArchived')} · {child.message_count}</small></button>{/each}
@@ -63,6 +65,7 @@
         </div>
     {/if}
 </div>
+{/if}
 <dialog bind:this={dialog} aria-label={t($locale,'rooms.childHistory')} oncancel={event=>{event.preventDefault();close();}}>
     <header><h2>{selected?.title||t($locale,'rooms.childHistory')}</h2><button disabled={historyLoading} onclick={restartHistory}>{t($locale,'rooms.refresh')}</button><button bind:this={closeButton} onclick={close}>{t($locale,'rooms.close')}</button></header>
     <p class="muted">{t($locale,'rooms.childReadOnly')}</p>
@@ -78,5 +81,5 @@
     </section>
 </dialog>
 <style>
-.child-tree{padding-inline-start:20px;min-width:0}.disclosure,.child{border:0;background:transparent;text-align:start;min-height:44px;width:100%;padding:8px 12px}.disclosure{display:flex;justify-content:space-between;color:var(--muted);font-size:12px}.children{border-inline-start:1px solid var(--border);margin:0 8px 8px}.child{display:grid;gap:4px}.child span{overflow-wrap:anywhere}.child small,.muted{color:var(--muted);font-size:12px}p{padding:8px 12px;margin:0}dialog{position:fixed;inset:0;box-sizing:border-box;width:min(880px,calc(100vw - 32px));height:85dvh;max-height:none;background:var(--panel);color:inherit;border:1px solid var(--border);border-radius:var(--radius);padding:16px}dialog[open]{display:flex;flex-direction:column;gap:12px}dialog::backdrop{background:rgb(0 0 0/.4)}header{display:flex;align-items:center;gap:12px}h2{flex:1;min-width:0;overflow-wrap:anywhere;font-size:16px;margin:0}button{min-height:44px}.transcript{min-height:0;overflow:auto;overscroll-behavior:contain;flex:1}article{padding:16px 8px;min-width:0;overflow-wrap:anywhere}.user{background:var(--canvas);border-radius:var(--radius)}@media(max-width:600px){dialog{width:100%;height:100dvh;max-width:none;margin:0;border-radius:0;padding:max(12px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left))}}
+.child-tree{padding:2px 12px 4px;min-width:0}.disclosure,.child{text-align:start;width:100%}.disclosure{display:flex;align-items:center;justify-content:space-between;min-height:34px;padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--muted);font-size:12px}.disclosure .chevron{font-size:11px}.child{border:0;background:transparent;min-height:44px;padding:8px 12px}.children{border-inline-start:1px solid var(--border);margin:4px 8px 8px}.child{display:grid;gap:4px}.child span{overflow-wrap:anywhere}.child small,.muted{color:var(--muted);font-size:12px}p{padding:8px 12px;margin:0}dialog{position:fixed;inset:0;box-sizing:border-box;width:min(880px,calc(100vw - 32px));height:85dvh;max-height:none;background:var(--panel);color:inherit;border:1px solid var(--border);border-radius:var(--radius);padding:16px}dialog[open]{display:flex;flex-direction:column;gap:12px}dialog::backdrop{background:rgb(0 0 0/.4)}header{display:flex;align-items:center;gap:12px}h2{flex:1;min-width:0;overflow-wrap:anywhere;font-size:16px;margin:0}button{min-height:44px}.transcript{min-height:0;overflow:auto;overscroll-behavior:contain;flex:1}article{padding:16px 8px;min-width:0;overflow-wrap:anywhere}.user{background:var(--canvas);border-radius:var(--radius)}@media(max-width:600px){dialog{width:100%;height:100dvh;max-width:none;margin:0;border-radius:0;padding:max(12px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left))}}
 </style>

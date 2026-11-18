@@ -150,6 +150,7 @@ struct ModelsView: View {
                         Text(NSLocalizedString("model.setup.configured", value: "Configured models", comment: "Configured models"))
                             .font(.headline).frame(minHeight: 44)
                     }
+                    .disclosureGroupStyle(NolaRowDisclosureStyle())
                 }
 
             }
@@ -352,6 +353,7 @@ struct ModelsView: View {
             .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
             .contentShape(Rectangle())
         }
+        .disclosureGroupStyle(NolaRowDisclosureStyle(isPlain: true))
         .buttonStyle(.plain)
         .accessibilityIdentifier("model.row.\(model.id)")
     }

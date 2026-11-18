@@ -106,15 +106,51 @@ fun ConversationListScreen(
     onLoadPreview: (String) -> Unit,
     error: String? = null,
     onRetry: () -> Unit = {},
-    expertChildren: @Composable (Conversation) -> Unit = {}
+    expertChildren: @Composable (Conversation) -> Unit = {},
+    onRenameConversation: (String, String) -> Unit = { _, _ -> }
 ) {
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     var deleteTarget by remember { mutableStateOf<Conversation?>(null) }
+    var menuTargetId by remember { mutableStateOf<String?>(null) }
+    var renameTarget by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var renameDraft by remember { mutableStateOf("") }
     var needsResponseOnly by remember { mutableStateOf(false) }
     val timeFmt = remember(Locale.getDefault()) { DateFormat.getTimeInstance(DateFormat.SHORT, Locale.getDefault()) }
     val dayFmt = remember(Locale.getDefault()) { DateFormat.getDateInstance(DateFormat.SHORT, Locale.getDefault()) }
 
+
+    renameTarget?.let { (targetId, _) ->
+        AlertDialog(
+            onDismissRequest = { renameTarget = null },
+            title = { Text(stringResource(R.string.chat_rename_conversation)) },
+            text = {
+                OutlinedTextField(
+                    value = renameDraft,
+                    onValueChange = { renameDraft = it },
+                    singleLine = true,
+                    label = { Text(stringResource(R.string.chat_conversation_title_hint)) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onRenameConversation(targetId, renameDraft)
+                        renameTarget = null
+                    },
+                    enabled = renameDraft.trim().isNotEmpty()
+                ) {
+                    Text(stringResource(R.string.common_save))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { renameTarget = null }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            }
+        )
+    }
 
     deleteTarget?.let { target ->
         AlertDialog(
@@ -193,12 +229,18 @@ fun ConversationListScreen(
                 }
                 items(visible, key = { it.id }) { conv ->
                     LaunchedEffect(conv.id, conv.lastActiveAt) { onLoadPreview(conv.id) }
-                    Row(Modifier.fillMaxWidth().combinedClickable(onClick = { onConversationSelected(conv.id) }, onLongClick = { if (activity[conv.id]?.processingState?.blocksInput != true) deleteTarget = conv })
+                    val displayedTitle = ConversationTitlePresentationPolicy.displayTitle(
+                        conv.title,
+                        conv.id,
+                        stringResource(R.string.chat_new_chat)
+                    )
+                    val isBusy = activity[conv.id]?.processingState?.blocksInput == true
+                    Row(Modifier.fillMaxWidth().combinedClickable(onClick = { onConversationSelected(conv.id) }, onLongClick = { if (!isBusy) deleteTarget = conv })
                         .testTag("chat.conversation.${conv.id}").padding(start = nolaPageGutter(), top = 15.dp, bottom = 16.dp, end = nolaPageGutter()),
                         verticalAlignment = Alignment.Top) {
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Row(verticalAlignment = Alignment.Top) {
-                                Text(ConversationTitlePresentationPolicy.displayTitle(conv.title, conv.id, stringResource(R.string.chat_new_chat)),
+                                Text(displayedTitle,
                                     modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium.copy(fontSize = 16.sp, lineHeight = 23.sp, fontWeight = FontWeight.Medium),
                                     maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Spacer(Modifier.width(8.dp))
@@ -224,9 +266,38 @@ fun ConversationListScreen(
                             }, style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 22.sp),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
-
+                        Box {
+                            IconButton(onClick = { menuTargetId = conv.id }) {
+                                Icon(
+                                    Icons.Filled.MoreVert,
+                                    contentDescription = displayedTitle,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = menuTargetId == conv.id,
+                                onDismissRequest = { menuTargetId = null }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.chat_rename_conversation)) },
+                                    onClick = {
+                                        val targetId = conv.id
+                                        menuTargetId = null
+                                        renameTarget = targetId to displayedTitle
+                                        renameDraft = displayedTitle
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.common_delete), color = NolaColors.danger) },
+                                    enabled = !isBusy,
+                                    onClick = {
+                                        menuTargetId = null
+                                        deleteTarget = conv
+                                    }
+                                )
+                            }
+                        }
                     }
-                    expertChildren(conv)
                     if (conv.id != visible.lastOrNull()?.id) HorizontalDivider(
                         modifier = Modifier.padding(horizontal = nolaPageGutter()), thickness = 0.5.dp,
                         color = MaterialTheme.colorScheme.outlineVariant)

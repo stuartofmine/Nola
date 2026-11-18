@@ -114,7 +114,6 @@ function contrast(a,b) {
         report.checks.push('search no results and recovery');
         // Multiple independent inspector sections retain an edited Wiki draft.
         await page.goto(`${base}/scenarios.html?scene=inspector&platform=mac&theme=dark`);
-        await page.locator('#device summary').filter({hasText:/^上下文预算$/}).click();
         await page.locator('#device summary').filter({hasText:/^会话 Wiki$/}).click();
         await page.locator('[data-wiki]').waitFor();
         await page.locator('[data-wiki]').fill('保留的 Wiki 草稿');

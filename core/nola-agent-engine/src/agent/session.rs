@@ -120,8 +120,6 @@ pub struct AgentInvokedSkill {
     #[serde(default)]
     pub instructions_ref: String,
     #[serde(default)]
-    pub instructions_digest: String,
-    #[serde(default)]
     pub base_directory: String,
     #[serde(default)]
     pub arguments: serde_json::Value,
@@ -628,11 +626,10 @@ impl AgentThreadState {
                     )),
                     role: AgentRole::System,
                     content: format!(
-                    "<invoked-skill name={:?}>\nSkill version: {}\nImmutable instructions ref: {}\nInstructions SHA-256: {}\nSkill resource directory: {}\nInvocation arguments: {}\n{}\n\n{}\n</invoked-skill>\nContinue following this Skill for the {}. Resolve only Skill-owned scripts, templates, and reference files from the Skill resource directory. User-provided paths, workspace files, and deliverable destinations remain relative to the active workspace. Do not invoke it again during that scope.",
+                    "<invoked-skill name={:?}>\nSkill version: {}\nImmutable instructions ref: {}\nSkill resource directory: {}\nInvocation arguments: {}\n{}\n\n{}\n</invoked-skill>\nContinue following this Skill for the {}. Resolve only Skill-owned scripts, templates, and reference files from the Skill resource directory. User-provided paths, workspace files, and deliverable destinations remain relative to the active workspace. Do not invoke it again during that scope.",
                     skill.skill_id,
                     skill.version,
                     skill.instructions_ref,
-                    skill.instructions_digest,
                     skill.base_directory,
                     rendered_arguments,
                     if skill.validation_steps.is_empty() {
@@ -675,72 +672,10 @@ impl AgentThreadState {
             .collect()
     }
 
-    /// Returns the concrete, still-unsatisfied completion records for Skills
-    /// owned by the active Turn. Unlike the static manifest prose, this is
-    /// derived from Core's SkillRuntime state and therefore becomes empty as
-    /// progress, artifacts, and verifier evidence are recorded.
+    /// Mandatory per-step `skill_update` completion gating has been removed;
+    /// Skills provide guidance and tool context without blocking turn completion.
     pub fn pending_skill_completion_steps(&self) -> Vec<String> {
-        let Some(turn) = self.execution.active_turn.as_ref() else {
-            return Vec::new();
-        };
-        self.skill_runtime
-            .runs
-            .values()
-            .filter(|run| {
-                run.owner.parent_turn_id == turn.turn_id.as_str() && !run.status.is_terminal()
-            })
-            .flat_map(|run| {
-                let contract = &run.descriptor.execution_contract;
-                let mut pending = Vec::new();
-                pending.extend(
-                    contract
-                        .progress_steps
-                        .iter()
-                        .filter(|step| {
-                            step.required && !run.completed_progress_steps.contains(&step.id)
-                        })
-                        .map(|step| {
-                            format!(
-                                "skill_update run_id={} action=progress step_id={} completed=true ({})",
-                                run.descriptor.skill_id, step.id, step.title
-                            )
-                        }),
-                );
-                pending.extend(
-                    contract
-                        .artifacts
-                        .iter()
-                        .filter(|artifact| {
-                            artifact.required && !run.artifacts.contains_key(&artifact.id)
-                        })
-                        .map(|artifact| {
-                            format!(
-                                "skill_update run_id={} action=artifact artifact_id={} artifact_ref=<canonical validated URI>",
-                                run.descriptor.skill_id, artifact.id
-                            )
-                        }),
-                );
-                pending.extend(
-                    contract
-                        .verifiers
-                        .iter()
-                        .filter(|verifier| {
-                            verifier.required
-                                && !run
-                                    .verifications
-                                    .get(&verifier.id)
-                                    .is_some_and(|result| result.passed)
-                        })
-                        .map(|verifier| {
-                            format!(
-                                "skill_update run_id={} action=verification verifier_id={} passed=true evidence=<structured {}; cite real execution_evidence or tool_call IDs, not invented refs> ({})",
-                                run.descriptor.skill_id, verifier.id, verifier.method.as_str(), verifier.description
-                            )
-                        }),
-                );
-                pending
-            })
-            .collect()
+        Vec::new()
     }
 
     /// Returns whether every required artifact for each nonterminal Skill
@@ -1414,9 +1349,7 @@ mod tests {
         state.record_invoked_skill(AgentInvokedSkill {
             skill_id: "extract-image-text".to_string(),
             version: "1.0.0".to_string(),
-            instructions_ref: "skill://extract-image-text/1.0.0/SKILL.md#sha256=fixture"
-                .to_string(),
-            instructions_digest: "fixture".to_string(),
+            instructions_ref: "skill://extract-image-text/1.0.0/SKILL.md".to_string(),
             base_directory: "/skills/extract-image-text".to_string(),
             arguments: serde_json::json!({
                 "path": "receipt.png",
@@ -1460,8 +1393,7 @@ mod tests {
         state.record_invoked_skill(AgentInvokedSkill {
             skill_id: "house-style".to_string(),
             version: "1.0.0".to_string(),
-            instructions_ref: "skill://house-style/1.0.0/SKILL.md#sha256=fixture".to_string(),
-            instructions_digest: "fixture".to_string(),
+            instructions_ref: "skill://house-style/1.0.0/SKILL.md".to_string(),
             base_directory: "/skills/house-style".to_string(),
             arguments: serde_json::Value::String(String::new()),
             instructions: "Use the approved house style.".to_string(),
@@ -1544,8 +1476,7 @@ mod tests {
         state.record_invoked_skill(AgentInvokedSkill {
             skill_id: "selected-skill".to_string(),
             version: "2.1.0".to_string(),
-            instructions_ref: "skill://selected-skill/2.1.0#sha256=selected".to_string(),
-            instructions_digest: "selected".to_string(),
+            instructions_ref: "skill://selected-skill/2.1.0".to_string(),
             base_directory: "/skills/selected-skill".to_string(),
             arguments: serde_json::json!({"input":"ACTUAL_SKILL_ARGUMENT"}),
             instructions: "SELECTED_SKILL_INSTRUCTIONS".to_string(),

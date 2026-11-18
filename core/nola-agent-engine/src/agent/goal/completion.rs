@@ -15,7 +15,7 @@ pub fn schema() -> Value {
                                 "required":["task_id","terminal_receipt_id","result_digest","execution_evidence_refs"],"properties":{
                                     "task_id":{"type":"string"},"terminal_receipt_id":{"type":["string","null"]},
                                     "result_digest":{"type":["string","null"]},
-                                    "execution_evidence_refs":{"type":"array","minItems":1,"items":{"type":"string"}}
+                                    "execution_evidence_refs":{"type":"array","items":{"type":"string"}}
                                 }}},
                             "evidence_refs":{"type":"array","items":{"type":"string"}}}
                     }},

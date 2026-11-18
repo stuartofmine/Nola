@@ -1153,8 +1153,7 @@ mod core_session_read_identity_e2e {
                 "owner":{"session_id":CORE_SESSION,"parent_turn_id":begun.begin.run_id},
                 "descriptor":{
                     "skill_id":"skill", "version":"1", "display_name":"Active skill",
-                    "instructions_ref":format!("skill#sha256={}", "a".repeat(64)),
-                    "instructions_digest":"a".repeat(64)
+                    "instructions_ref":"skill://skill/1"
                 },
                 "mode":"inline",
                 "budget":{"max_model_turns":100,"max_tool_calls":100,"max_elapsed_millis":null}

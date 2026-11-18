@@ -142,9 +142,9 @@ class AgentCoreSkillRuntimeProjectionTest {
         val malformed = Json.parseToJsonElement("""{"type":"verification_recorded","run_id":"run-1","result":{"verifierId":"check","passed":true,"evidence":{"kind":"host_check","sources":[]},"summary":"I checked"}}""") as JsonObject
         assertNull(decodeAgentCoreSkillRuntimeEnvelope(envelope(6, 6, 6, malformed)))
         val descriptor = skillRun()["descriptor"] as JsonObject
-        val missingDigest = JsonObject(skillRun() + ("descriptor" to JsonObject(descriptor - "instructions_digest")))
+        val missingRef = JsonObject(skillRun() + ("descriptor" to JsonObject(descriptor - "instructions_ref")))
         assertNull(decodeAgentCoreSkillRuntimeEnvelope(envelope(1, 1, 1, buildJsonObject {
-            put("type", "started"); put("run", missingDigest)
+            put("type", "started"); put("run", missingRef)
         })))
     }
 
@@ -180,7 +180,7 @@ class AgentCoreSkillRuntimeProjectionTest {
             put("session_id", ownerSession)
             put("parent_turn_id", "turn-1")
         })
-        put("descriptor", Json.parseToJsonElement("""{"skill_id":"documents","version":"1","display_name":"Word document","instructions_ref":"builtin://documents#sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","instructions_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","execution_contract":{"schemaVersion":1,"progressSteps":[{"id":"draft","title":"Draft","required":true}],"artifacts":[{"id":"report","mediaType":"text/plain","required":true,"description":"Report"}],"verifiers":[{"id":"check","description":"Check bytes","method":"host_check","required":true}],"resumePoints":["review"]}}"""))
+        put("descriptor", Json.parseToJsonElement("""{"skill_id":"documents","version":"1","display_name":"Word document","instructions_ref":"builtin://documents","execution_contract":{"schemaVersion":1,"progressSteps":[{"id":"draft","title":"Draft","required":true}],"artifacts":[{"id":"report","mediaType":"text/plain","required":true,"description":"Report"}],"verifiers":[{"id":"check","description":"Check bytes","method":"host_check","required":true}],"resumePoints":["review"]}}"""))
         put("mode", "inline")
         put("status", "running")
         put("usage", buildJsonObject {

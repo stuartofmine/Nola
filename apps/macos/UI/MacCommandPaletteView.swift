@@ -51,9 +51,8 @@ struct MacCommandPaletteView: View {
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundStyle(.tertiary)
-                            .frame(width: 32, height: 32)
                     }
-                    .buttonStyle(MacActionButtonStyle(contentInsets: .init()))
+                    .buttonStyle(MacInlineIconButtonStyle(size: 26))
                     .accessibilityIdentifier("command-palette.clear")
                     .accessibilityLabel(NSLocalizedString(
                         "mac.command_palette.clear_search",

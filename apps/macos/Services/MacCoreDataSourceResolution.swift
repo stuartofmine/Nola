@@ -101,27 +101,4 @@ nonisolated enum MacCoreDataSourceResolver {
         return nil
 #endif
     }
-
-    static func sealContract(
-        _ contract: [String: MacCoreDataSourceJSON]
-    ) -> [String: MacCoreDataSourceJSON]? {
-#if canImport(NolaCore)
-        guard isAvailable, let data = try? JSONEncoder().encode(contract) else { return nil }
-        let pointer = data.withUnsafeBytes { bytes in
-            nola_core_data_source_seal_contract(
-                bytes.bindMemory(to: UInt8.self).baseAddress,
-                bytes.count
-            )
-        }
-        guard let pointer else { return nil }
-        defer { nola_core_free_c_string(pointer) }
-        guard let raw = String(validatingUTF8: pointer) else { return nil }
-        return try? JSONDecoder().decode(
-            [String: MacCoreDataSourceJSON].self,
-            from: Data(raw.utf8)
-        )
-#else
-        return nil
-#endif
-    }
 }

@@ -10,8 +10,9 @@ struct MacConversationSidebar: View {
     @Binding var selectedSection: MacWorkspaceSection
     let selectConversation: (String) -> Void
     let loadParticipantNames: (String) async throws -> [String]
-    var openExpertLibrary: () -> Void = {}
+    var onOpenSettings: (() -> Void)? = nil
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isSearchHovering = false
     @State private var deletionTarget: MacConversation?
@@ -28,10 +29,29 @@ struct MacConversationSidebar: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            sidebarSectionLabel(String(localized: "Conversations"))
-                .padding(.horizontal, 12)
-                .padding(.top, 16)
-                .padding(.bottom, 10)
+            VStack(spacing: 3) {
+                ForEach(MacWorkspaceSection.allCases) { section in
+                    let isSelected = selectedSection == section
+                    Button {
+                        selectedSection = section
+                    } label: {
+                        Label(section.title, systemImage: section.symbol)
+                            .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
+                            .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
+                            .padding(.horizontal, 8)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(MacSidebarNavigationButtonStyle(isSelected: isSelected))
+                    .accessibilityIdentifier("workspace.nav." + section.rawValue)
+                }
+            }
+            .padding(.horizontal, 9)
+            .padding(.top, 10)
+            .padding(.bottom, 8)
+
+            Divider()
+                .opacity(0.55)
+                .padding(.horizontal, 10)
 
             HStack(spacing: 7) {
                 HStack(spacing: 7) {
@@ -48,7 +68,7 @@ struct MacConversationSidebar: View {
                             Image(systemName: "xmark.circle.fill")
                                 .foregroundStyle(.tertiary)
                         }
-                        .buttonStyle(MacActionButtonStyle(contentInsets: .init()))
+                        .buttonStyle(MacInlineIconButtonStyle(size: 22))
                         .help(String(localized: "Clear Search"))
                         .accessibilityLabel(String(localized: "Clear"))
                     }
@@ -70,6 +90,7 @@ struct MacConversationSidebar: View {
 
             }
             .padding(.horizontal, 10)
+            .padding(.top, 10)
             .padding(.bottom, 10)
 
             ScrollView {
@@ -105,18 +126,12 @@ struct MacConversationSidebar: View {
             Divider()
                 .opacity(0.55)
 
-            Button(action: openExpertLibrary) {
-                Label(String(localized: "Expert Library", table: "ExpertLibrary"), systemImage: "person.2")
-                    .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(MacActionButtonStyle())
-            .padding(.horizontal, 8)
-            .padding(.top, 7)
-            .accessibilityIdentifier("mac-expert-library")
-
-            MacWorkspaceSettingsRow(isSelected: selectedSection == .settings) {
-                selectedSection = .settings
+            MacWorkspaceSettingsRow(isSelected: false) {
+                if let onOpenSettings {
+                    onOpenSettings()
+                } else {
+                    openSettings()
+                }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 7)
@@ -181,20 +196,19 @@ struct MacConversationSidebar: View {
                 inlineRenameRow(conversation)
                     .transition(.opacity.combined(with: .scale(scale: 0.985)))
             } else {
+                let isSelected = selectedSection == .chat && model.selectedConversationID == conversation.id
                 Button {
                     selectConversation(conversation.id)
                 } label: {
                     MacConversationRow(
                         conversation: conversation,
-                        isSelected: selectedSection == .chat && model.selectedConversationID == conversation.id,
                         loadParticipantNames: loadParticipantNames
                     )
                 }
-                .buttonStyle(MacActionButtonStyle(contentInsets: .init()))
-                .accessibilityAddTraits(selectedSection == .chat && model.selectedConversationID == conversation.id ? .isSelected : [])
+                .buttonStyle(MacSidebarNavigationButtonStyle(isSelected: isSelected))
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
                 .accessibilityIdentifier("workspace.conversation." + conversation.id)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .contextMenu {
                     Button("Open in New Window") {
                         openWindow(value: conversation.id)
@@ -233,7 +247,7 @@ struct MacConversationSidebar: View {
                 Image(systemName: "checkmark")
                     .font(.system(size: 10.5, weight: .semibold))
             }
-            .buttonStyle(MacActionButtonStyle(contentInsets: .init()))
+            .buttonStyle(MacInlineIconButtonStyle(size: 24))
             .disabled(model.renameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             .help(String(localized: "Rename"))
             .accessibilityLabel(String(localized: "Rename"))
@@ -243,7 +257,7 @@ struct MacConversationSidebar: View {
                     .font(.system(size: 10.5, weight: .semibold))
                     .foregroundStyle(.secondary)
             }
-            .buttonStyle(MacActionButtonStyle(contentInsets: .init()))
+            .buttonStyle(MacInlineIconButtonStyle(size: 24))
             .help(String(localized: "Cancel"))
             .accessibilityLabel(String(localized: "Cancel"))
         }

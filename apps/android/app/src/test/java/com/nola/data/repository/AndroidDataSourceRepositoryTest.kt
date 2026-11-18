@@ -103,8 +103,7 @@ class AndroidDataSourceRepositoryTest {
                     operationId = "android.http.get",
                     configurationKeys = listOf("url", "maximumBytes"),
                     outputSchemaJson = "{\"type\":\"object\"}"
-                ),
-                validationDigest = "core-sealed-test"
+                )
             ),
             cachedContent = "{\"id\":\"$id\"}"
         )
@@ -152,8 +151,7 @@ class AndroidDataSourceRepositoryTest {
                     operationId = "android.http.get",
                     configurationKeys = listOf("url", "maximumBytes"),
                     outputSchemaJson = "{\"type\":\"object\"}"
-                ),
-                validationDigest = "core-sealed-test"
+                )
             ),
             cachedContent = "{\"signal\":7429}"
         )
@@ -190,8 +188,7 @@ class AndroidDataSourceRepositoryTest {
                     operationId = "android.http.get",
                     configurationKeys = listOf("url", "maximumBytes"),
                     outputSchemaJson = "{\"type\":\"object\"}"
-                ),
-                validationDigest = "core-sealed-test"
+                )
             ),
             cachedContent = "{\"ok\":true}",
             lastSuccessfulReadAt = 1_000
@@ -203,8 +200,7 @@ class AndroidDataSourceRepositoryTest {
         assertFalse(
             source.copy(
                 validationContract = source.validationContract?.copy(
-                    readRecipe = null,
-                    validationDigest = null
+                    readRecipe = null
                 )
             ).isUsable
         )

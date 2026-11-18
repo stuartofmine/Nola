@@ -21,9 +21,12 @@ mod language_service_transport;
 mod language_service_session;
 pub(crate) use process_execution::{enter_local_execution_identity, current_local_execution_identity};
 pub(crate) use permission_resolution::{builtin_permission_contract, resolve_permission_resources,
+    committed_work_step_outcome,
     current_browser_permission_resource_expectation,
     current_mcp_permission_resource_expectation,
-    enter_permission_resource_expectations, validate_permission_resource_execution, permission_resource_execution_failure};
+    enter_permission_resource_expectations,
+    grant_matches_committed_work_step,
+    validate_permission_resource_execution, permission_resource_execution_failure};
 pub use execution_policy::ToolExecutionPolicy;
 mod output_store;
 pub(crate) use output_store::ToolOutputStore;

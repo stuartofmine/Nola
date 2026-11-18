@@ -1086,10 +1086,9 @@ final class IOSSharedProtocolTests: XCTestCase {
     func testCancellationCarriesExactAdmissionOwnerWithoutClaimingTerminal() throws {
         let identity = AppleRemoteSubmissionIdentity(source_host_id: "host", client_id: "client",
             conversation_id: "conversation", submission_id: "run", user_message_id: "user", assistant_message_id: "assistant")
-        let object = try AppleRemoteCancellationRequest(identity: identity, requestDigest: "digest").object()
-        XCTAssertEqual(Set(object.keys), ["identity", "request_digest"])
+        let object = try AppleRemoteCancellationRequest(identity: identity).object()
+        XCTAssertEqual(Set(object.keys), ["identity"])
         XCTAssertEqual((object["identity"] as? [String: Any])?["submission_id"] as? String, "run")
-        XCTAssertThrowsError(try AppleRemoteCancellationRequest(identity: identity, requestDigest: ""))
     }
 
     func testPermissionWriteCarriesExplicitInactiveOwnerAndRevision() throws {

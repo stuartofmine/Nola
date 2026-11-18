@@ -48,10 +48,15 @@ fn response(task:&nola_store_port::runtime_task::StoredRuntimeTask,admitted:bool
         return Ok(HostResponse::ToolCompleted{call_id:call.0,output:json!({"exchange_id":task.id,"task_id":task.id,"status":task.status,"replayed":true}),
             outcome:nola_domain::host_effect::HostToolOutcome::Succeeded,activation:None,full_output_ref:None,artifacts:vec![]});
     }
+    let current_step = task
+        .progress_summary
+        .clone()
+        .or_else(|| task.prompt.as_deref().map(|prompt| prompt.chars().take(200).collect()));
     Ok(HostResponse::TaskPromoted{task_id:task.id.clone(),input_watermark:task.input_watermark,kind:TaskKind::Agent,state:TaskState::Queued,
-        progress:None,current_step:None,lineage:TaskLineage{parent_task_id:task.parent_task_id.clone(),resumed_from_task_id:None,
+        progress:None,current_step,lineage:TaskLineage{parent_task_id:task.parent_task_id.clone(),resumed_from_task_id:None,
             child_session_id:Some(SessionId::from_string(task.child_session_id.clone().ok_or("expert_task_child_missing")?)),
-            parent_call_id:Some(call),permission_scope_id:Some(format!("task:{}",task.id)),cancellation_scope_id:Some(format!("task:{}",task.id)),..Default::default()}})
+            parent_call_id:Some(call),permission_scope_id:Some(format!("task:{}",task.id)),cancellation_scope_id:Some(format!("task:{}",task.id)),
+            title:Some(task.title.clone())}})
 }
 fn target_snapshot<S:ApplicationCommandRepositories>(store:&mut S,material:&PeerMaterial,config:&mut AgentCoreConfig,
     supplied:Option<DelegatedInvocationSnapshot>,project:&str)->Result<DelegatedInvocationSnapshot,String> {
@@ -132,7 +137,7 @@ pub fn prepare<S:ApplicationCommandRepositories>(store:&mut S,input:PreparePeerT
     let source_task=store.runtime_task_binding_for_run(pin.source.context_conversation_id(),&pin.source_run_id).map_err(|e|e.to_string())?;
     let task=crate::CreateRuntimeTask{id:input.exchange_id.clone(),kind:"agent".into(),title:format!("{} → {}",material.view.source_display_name,material.view.target_display_name),
         project_root:input.project_root,owner_session_id:Some(owner),parent_task_id:source_task.map(|binding|binding.task_id),parent_tool_call_id:Some(call.0.clone()),child_session_id:Some(pin.target.context_conversation_id.clone()),
-        agent_type:Some("general".into()),prompt:Some(material.view.text.clone()),initial_progress_summary:None,initial_activity:None,output_path:None,initially_unread:false,
+        agent_type:Some("general".into()),prompt:Some(material.view.text.clone()),initial_progress_summary:Some(material.view.text.chars().take(200).collect()),initial_activity:None,output_path:None,initially_unread:false,
         input_watermark:Some(now),metadata,scheduling:crate::RuntimeTaskScheduling{priority:Default::default(),queued_at_ms:now,resource_budget:Default::default(),resource_usage:Default::default(),output_bytes:0,budget_exhaustion:None},created_at_ms:now};
     crate::assistant_publication_transaction::with_publication_transaction(store,|store| {
         expert_peer::freeze_task_configuration(store,&input.exchange_id,&config,&material.prompt_definitions,&input.authority,now)?;
@@ -256,7 +261,7 @@ pub fn action<S:ApplicationCommandRepositories>(store:&mut S,input:PeerTaskActio
             else {return Err("expert_task_use_prepare_for_request".into());}
     };
     let terminal=output.get("completion_confirmed").and_then(Value::as_bool).unwrap_or(false)||output.get("observation_terminal").and_then(Value::as_bool).unwrap_or(false);
-    let wait_ms=if operation=="wait"&&!terminal {args.get("timeout_ms").map(|v|v.as_u64().filter(|v|(1..=30_000).contains(v)).ok_or("expert_task_invalid_timeout")).transpose()?.unwrap_or(30_000)}else{0};
+    let wait_ms=if operation=="wait"&&!terminal {args.get("timeout_ms").map(|v|v.as_u64().filter(|v|(1..=300_000).contains(v)).ok_or("expert_task_invalid_timeout")).transpose()?.unwrap_or(300_000)}else{0};
     Ok(json!({"terminal":terminal,"wait_ms":wait_ms,"response":HostResponse::ToolCompleted{call_id:call.0,output,
         outcome:nola_domain::host_effect::HostToolOutcome::Succeeded,activation:None,full_output_ref:None,artifacts:vec![]}}))
 }

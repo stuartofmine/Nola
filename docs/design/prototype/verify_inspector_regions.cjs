@@ -25,11 +25,11 @@ const output = environment.artifactPath('ios-ui-protocol/prototype');
             const element = await locator.elementHandle(); assert.ok(element);
             try { await executor.perform(page, operation, args, element); } finally { await element.dispose(); }
         }
-        async function area(label, id, count) {
+        async function area(label, id) {
             const control = page.locator(`[data-action="sn-group:${label}"]`);
             if (await control.getAttribute('aria-pressed') !== 'true') await act(control);
             await page.locator(`[data-inspector-area="${id}"]`).waitFor();
-            assert.equal(await page.locator('[data-inspector-section]').count(), count);
+            assert.equal(await page.locator('[data-inspector-section]').count(), 0);
         }
         for (const scheme of ['light', 'dark']) {
             await page.setViewportSize({width: 1440, height: 900});
@@ -38,15 +38,15 @@ const output = environment.artifactPath('ios-ui-protocol/prototype');
             await executor.perform(page, 'navigate', {url: base});
             await page.locator('.topbar-left [data-action="new"]').waitFor();
             assert.equal(await page.locator('.topbar-left [data-action="new"]').count(), 1);
-            for (const [label, id, count] of [['任务', 'task', 3], ['产物', 'artifacts', 2], ['上下文', 'context', 4]]) {
-                await area(label, id, count);
+            for (const [label, id] of [['任务', 'task'], ['产物', 'artifacts'], ['上下文', 'context']]) {
+                await area(label, id);
                 assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
                 await page.screenshot({path: path.join(output, `${scheme}-${id}.png`)});
-                receipt.cases.push({scheme, id, count});
+                receipt.cases.push({scheme, id});
             }
-            await act(page.locator('.inspector-knowledge summary').filter({hasText: /^Wiki$/}));
+            await act(page.locator('.inspector-knowledge summary').filter({hasText: /^会话 Wiki$/}));
             await act(page.getByLabel('Wiki草稿', {exact: true}), 'type_text', {text: '保留独立区域中的未保存草稿'});
-            await area('任务', 'task', 3); await area('上下文', 'context', 4);
+            await area('任务', 'task'); await area('上下文', 'context');
             assert.equal(await page.getByLabel('Wiki草稿', {exact: true}).inputValue(), '保留独立区域中的未保存草稿');
             const owner = await page.locator('.studio-center').getAttribute('data-context');
             await act(page.locator('.topbar-left [data-action="new"]'));

@@ -44,11 +44,14 @@ pub(super) fn start(
     let source_host_id=core_config.host_catalog.as_ref().ok_or("Goal Host catalog unavailable")?.host_id.0.clone();
     let invocation=core_config.turn_identity.host_invocation.as_ref().ok_or("Goal requires a frozen invocation")?;
     let selected=nola_application::GoalSelectedModel {profile:request.runtime.selected_profile.clone(),
-        primary:invocation.primary.clone(),generation:invocation.generation.clone(),output_admission:invocation.output_admission.clone()};
+        primary:invocation.primary.clone(),fallbacks:invocation.fallbacks.clone(),
+        generation:invocation.generation.clone(),output_admission:invocation.output_admission.clone()};
     let result: serde_json::Value = application.execute(ApplicationCommand::StepGoal {
         conversation_id: session_id.into(), source_host_id,
         control: Some(envelope), start_configuration: Some(core_config), selected_model: Some(selected),
         user_prompt: String::new(), host_available: Some(true),
+        submitted_run_id: None, submitted_user_message_id: None, submitted_assistant_message_id: None,
+        stop_after_sealed_round: false,
     })?;
     if let Some(error) = result["error"].as_str() { return Err(error.into()); }
     let execution: nola_core::agent::HostExecutionState = application.execute(
@@ -98,14 +101,18 @@ pub(super) fn restore(conversation_id: &str, goal_id: &str) -> Result<HostInvoca
     }
 
     restore_host_memory_admission(&mut request, &binding.template.core_config.memory_policy)?;
-    original.require_exact(&host_invocation_binding(&request)?).map_err(str::to_string)?;
+    original
+        .require_exact_or_rotated_credential(&host_invocation_binding(&request)?)
+        .map_err(str::to_string)?;
     let profile = match binding.template.model_selection {
         GoalModelSelection::Profile {profile_id,revision} => Some(nola_host_protocol::HostModelProfileReference {
             profile_id,admitted_revision:revision,
         }),
         GoalModelSelection::DirectRoute => None,
     };
-    if request.runtime.selected_profile != profile {
+    if request.runtime.selected_profile.as_ref().map(|value| &value.profile_id)
+        != profile.as_ref().map(|value| &value.profile_id)
+    {
         return Err("Goal descriptor profile identity differs from Core binding".into());
     }
     request.session.goal_execution_id = Some(goal_id.into());
@@ -121,13 +128,111 @@ fn validated_binding(conversation_id: &str, goal_id: &str, request: &HostInvocat
         ApplicationCommand::PrepareGoalExecution {conversation_id:conversation_id.into(),goal_id:goal_id.into()})?;
     let expected = binding.template.core_config.turn_identity.host_invocation.as_ref()
         .ok_or("Goal has no frozen Host invocation")?;
-    expected.require_exact(&host_invocation_binding(request)?).map_err(str::to_string)?;
-    let selected = match &request.runtime.selected_profile {
-        Some(profile) => GoalModelSelection::Profile {profile_id:profile.profile_id.clone(),revision:profile.admitted_revision},
-        None => GoalModelSelection::DirectRoute,
+    expected
+        .require_exact_or_rotated_credential(&host_invocation_binding(request)?)
+        .map_err(str::to_string)?;
+    let selected_id = request
+        .runtime
+        .selected_profile
+        .as_ref()
+        .map(|profile| profile.profile_id.as_str());
+    let bound_id = match &binding.template.model_selection {
+        GoalModelSelection::Profile { profile_id, .. } => Some(profile_id.as_str()),
+        GoalModelSelection::DirectRoute => None,
     };
-    if selected != binding.template.model_selection { return Err("Goal Run profile differs from its original selection".into()); }
+    if selected_id != bound_id {
+        return Err("Goal Run profile differs from its original selection".into());
+    }
     Ok(binding)
+}
+
+pub(super) fn rebind(request: &HostInvocationRequest) -> Result<(), String> {
+    let session_id = request
+        .session
+        .session_id
+        .as_deref()
+        .filter(|id| !id.trim().is_empty())
+        .ok_or("Goal rebind requires a durable conversation identity")?;
+    if !request.session.save_session {
+        return Err("Goal rebind requires durable execution binding".into());
+    }
+    let Some(goal) = crate::session::load_session_goal_projection(session_id)?.and_then(|p| p.active) else {
+        return Ok(());
+    };
+    if goal.status.is_terminal() || goal.status == nola_core::agent::GoalStatus::Running {
+        return Ok(());
+    }
+    let core_config = capture_start_configuration(request)?;
+    let source_host_id = core_config
+        .host_catalog
+        .as_ref()
+        .ok_or("Goal Host catalog unavailable")?
+        .host_id
+        .0
+        .clone();
+    let invocation = core_config
+        .turn_identity
+        .host_invocation
+        .as_ref()
+        .ok_or("Goal requires a frozen invocation")?;
+    let selected = nola_application::GoalSelectedModel {
+        profile: request.runtime.selected_profile.clone(),
+        primary: invocation.primary.clone(),
+        fallbacks: invocation.fallbacks.clone(),
+        generation: invocation.generation.clone(),
+        output_admission: invocation.output_admission.clone(),
+    };
+    let mut application = crate::application_port::CliApplicationPort::persistent_default()?;
+    let result: serde_json::Value = application.execute(ApplicationCommand::StepGoal {
+        conversation_id: session_id.into(),
+        source_host_id,
+        control: None,
+        start_configuration: Some(core_config),
+        selected_model: Some(selected),
+        user_prompt: String::new(),
+        host_available: Some(false),
+        submitted_run_id: None,
+        submitted_user_message_id: None,
+        submitted_assistant_message_id: None,
+        stop_after_sealed_round: false,
+    })?;
+    if let Some(error) = result["error"].as_str() {
+        return Err(error.into());
+    }
+    Ok(())
+}
+
+pub(super) fn rebind_and_resume(
+    request: &HostInvocationRequest,
+    input: nola_application::goal_control_intent::PrepareGoalControlIntent,
+) -> Result<bool, String> {
+    if matches!(input.action, nola_application::goal_control_intent::GoalControlAction::Start) {
+        return Err("Goal Start requires an execution binding".into());
+    }
+    let session_id = request
+        .session
+        .session_id
+        .as_deref()
+        .filter(|id| !id.trim().is_empty())
+        .ok_or("Goal rebind requires a durable conversation identity")?;
+    if session_id != input.conversation_id {
+        return Err("Goal resume conversation differs from Host session".into());
+    }
+    let projection = crate::session::load_session_goal_projection(session_id)?
+        .ok_or("Goal is missing")?;
+    let active = projection.active.as_ref().ok_or("Goal is missing")?;
+    if active.status == nola_core::agent::GoalStatus::Running {
+        return Err("Running Goal cannot be rebound during resume".into());
+    }
+    if input.expected_goal_id.as_deref() != Some(active.id.as_str())
+        || input.expected_control_token.as_deref() != projection.control_token().as_deref()
+    {
+        return Err("Goal control token mismatch".into());
+    }
+    let _validated = crate::application_port::CliApplicationPort::persistent_default()?
+        .prepare_goal_control_intent(input.clone())?;
+    rebind(request)?;
+    crate::goal_control_port::submit_existing(input)
 }
 
 pub(super) fn validate_round(conversation_id: &str, goal_id: &str, request: &HostInvocationRequest) -> Result<(), String> {

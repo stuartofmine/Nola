@@ -81,6 +81,7 @@ import com.nola.domain.model.McpServerConfig
 import com.nola.domain.model.UploadedContent
 import com.nola.ui.components.NolaCompactEmptyState
 import com.nola.ui.components.NolaMotion
+import com.nola.ui.components.NolaSwitch
 import java.net.URI
 
 private data class IntelligenceEditor(
@@ -934,7 +935,7 @@ private fun CapabilityTile(
                     )
                 }
                 Spacer(Modifier.weight(1f))
-                Switch(
+                NolaSwitch(
                     checked = enabled,
                     onCheckedChange = onToggle,
                     enabled = canEdit,

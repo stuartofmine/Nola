@@ -52,7 +52,7 @@
                 controller.abort();
                 if (draftGeneration === generation && active()) {
                     validatedGeneration = 0;
-                    previewFailure = '草稿校验超时，请重试。';
+                    previewFailure = t($locale, 'a2ui.previewTimeout');
                 }
             }, 15000);
             const input = {identity, expected_surface_revision: revision, edits, draft_generation: generation};

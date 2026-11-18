@@ -116,51 +116,55 @@ struct MacConversationRecallRow: View {
         }
 
         var body: some View {
-            Button {
-                withAnimation(reduceMotion ? nil : MacDesignTokens.Motion.disclosureAnimation) {
-                    isExpanded.toggle()
-                }
-            } label: {
-                VStack(alignment: .leading, spacing: 7) {
-                    HStack(spacing: 7) {
-                        Image(systemName: symbol)
-                            .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .semibold))
-                            .foregroundStyle(result.source == .compactionSummary ? Color.orange : Color.accentColor)
-                            .frame(width: 16)
-                        Text(sourceTitle)
-                            .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .semibold))
-                        Spacer(minLength: 6)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .semibold))
-                            .foregroundStyle(.tertiary)
-                            .rotationEffect(.degrees(isExpanded ? 180 : 0))
+            VStack(alignment: .leading, spacing: 6) {
+                Button {
+                    withAnimation(reduceMotion ? nil : MacDesignTokens.Motion.disclosureAnimation) {
+                        isExpanded.toggle()
                     }
+                } label: {
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(spacing: 7) {
+                            Image(systemName: symbol)
+                                .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .semibold))
+                                .foregroundStyle(result.source == .compactionSummary ? Color.orange : Color.accentColor)
+                                .frame(width: 16)
+                            Text(sourceTitle)
+                                .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .semibold))
+                            Spacer(minLength: 6)
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 10.5, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                                .accessibilityHidden(true)
+                        }
 
-                    Group {
-                        if isExpanded {
-                            Text(result.content)
-                                .lineLimit(18)
-                                .macDisclosureTransition(reduceMotion: reduceMotion)
-                        } else {
+                        if !isExpanded {
                             Text(result.snippet)
-                                .lineLimit(3)
-                                .macDisclosureTransition(reduceMotion: reduceMotion)
+                                .font(.system(size: MacDesignTokens.Typography.inspectorCaption))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                                .lineSpacing(2)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
-                    .font(.system(size: MacDesignTokens.Typography.inspectorCaption))
-                    .foregroundStyle(.secondary)
-                    .lineSpacing(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
+                    .contentShape(Rectangle())
                 }
-                .padding(10)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .background(MacDesignColor.hover.opacity(0.65), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .stroke(Color.primary.opacity(0.065), lineWidth: 1)
+                .buttonStyle(MacHorizontalBarButtonStyle(isSubtle: true, isExpanded: isExpanded))
+                .accessibilityValue(Text(isExpanded ? "Expanded" : "Collapsed", tableName: "Chat"))
+
+                if isExpanded {
+                    Text(result.content)
+                        .font(.system(size: MacDesignTokens.Typography.inspectorCaption))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(18)
+                        .lineSpacing(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 8)
+                        .padding(.bottom, 4)
+                        .macDisclosureTransition(reduceMotion: reduceMotion)
+                }
             }
         }
     }
@@ -170,6 +174,8 @@ struct MacInspectorToggleRow: View {
         let title: String
         let detail: String?
         @Binding var isOn: Bool
+        @State private var isHovered = false
+        @Environment(\.isEnabled) private var isEnabled
 
         init(
             symbol: String,
@@ -184,46 +190,48 @@ struct MacInspectorToggleRow: View {
         }
 
         var body: some View {
-            HStack(alignment: .top, spacing: 9) {
-                Image(systemName: symbol)
-                    .font(.system(size: MacDesignTokens.Typography.inspectorDetail, weight: .semibold))
-                    .frame(width: 26, height: 26)
-                    .foregroundStyle(isOn ? MacDesignColor.brand : Color.secondary)
-                    .background(
-                        (isOn ? MacDesignColor.brand : Color.primary).opacity(isOn ? 0.085 : 0.035),
-                        in: RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    )
+            Toggle(isOn: $isOn) {
+                HStack(alignment: .top, spacing: 9) {
+                    Image(systemName: symbol)
+                        .font(.system(size: MacDesignTokens.Typography.inspectorDetail, weight: .semibold))
+                        .frame(width: 26, height: 26)
+                        .foregroundStyle(isOn ? MacDesignColor.brand : Color.secondary)
+                        .background(
+                            (isOn ? MacDesignColor.brand : Color.primary).opacity(isOn ? 0.085 : 0.035),
+                            in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        )
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title)
-                        .font(.system(size: MacDesignTokens.Typography.inspectorBody, weight: .medium))
-                        .lineLimit(2)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(title)
+                            .font(.system(size: MacDesignTokens.Typography.inspectorBody, weight: .medium))
+                            .lineLimit(2)
 
-                    if let detail {
-                        Text(detail)
-                            .font(.system(size: MacDesignTokens.Typography.inspectorCaption))
-                            .foregroundStyle(.secondary)
-                            .lineSpacing(1)
-                            .fixedSize(horizontal: false, vertical: true)
+                        if let detail {
+                            Text(detail)
+                                .font(.system(size: MacDesignTokens.Typography.inspectorCaption))
+                                .foregroundStyle(.secondary)
+                                .lineSpacing(1)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                Toggle("", isOn: $isOn)
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
-                    .frame(width: 38, height: 20, alignment: .trailing)
-                    .padding(.top, 2)
-                    .accessibilityLabel(Text(title))
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, detail == nil ? 5 : 7)
+            .toggleStyle(.macSwitch)
+            .accessibilityLabel(Text(title))
+            .padding(.horizontal, 8)
+            .padding(.vertical, detail == nil ? 6 : 8)
             .frame(
                 maxWidth: .infinity,
                 minHeight: detail == nil ? 38 : 52,
                 alignment: .leading
             )
+            .background(
+                isEnabled && isHovered ? MacDesignColor.hover.opacity(0.6) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+            )
+            .onHover { isHovered = isEnabled && $0 }
+            .onChange(of: isEnabled) { _, enabled in if !enabled { isHovered = false } }
             .contentShape(Rectangle())
             .animation(.easeOut(duration: 0.14), value: isOn)
         }

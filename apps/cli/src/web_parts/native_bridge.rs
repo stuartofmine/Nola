@@ -1025,7 +1025,10 @@ fn mobile_chat_agent_task_events_response(request: &mut Request) -> Response<Box
         .unwrap_or(25_000)
         .clamp(1_000, 30_000);
     let (tx, rx) = mpsc::channel::<Vec<u8>>();
-    thread::spawn(move || {
+    let _ = std::thread::Builder::new()
+        .name("web-agent-sse".into())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
         let started = Instant::now();
         let mut last_projection_revision: Option<u64> = None;
         let mut first = true;
@@ -2235,7 +2238,6 @@ fn chat_agent_cancel_result(body: &Value) -> (StatusCode, Value) {
     #[serde(deny_unknown_fields)]
     struct ExactCancel {
         identity: RemoteSubmissionIdentity,
-        request_digest: String,
     }
     let input: ExactCancel = match serde_json::from_value(body.clone()) {
         Ok(input) => input,
@@ -2253,7 +2255,7 @@ fn chat_agent_cancel_result(body: &Value) -> (StatusCode, Value) {
         }
         let mut application = crate::application_port::CliApplicationPort::persistent_default()?;
         let receipt: SourceSubmissionReceipt = serde_json::from_value(observation_command(&mut application, json!({
-            "type":"read_source_submission_receipt","identity":input.identity,"request_digest":input.request_digest
+            "type":"read_source_submission_receipt","identity":input.identity,"request_digest":""
         }))?).map_err(|e| e.to_string())?;
         receipt.validate()?;
         if receipt.phase != RemoteSubmissionPhase::Admitted {
@@ -3094,7 +3096,10 @@ fn chat_agent_stream_response_body_with_room_retry(
     let (heartbeat_stop_tx, heartbeat_stop_rx) = mpsc::channel::<()>();
     let heartbeat_handle =
         spawn_sse_heartbeat(tx.clone(), heartbeat_stop_rx, StdDuration::from_secs(15));
-    thread::spawn(move || {
+    let _ = std::thread::Builder::new()
+        .name("web-agent-sse".into())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
         // Dropping this sender wakes and stops the heartbeat thread on every
         // return path, including permission/device bridge failures.
         let _heartbeat_stop = heartbeat_stop_tx;
@@ -3110,7 +3115,7 @@ fn chat_agent_stream_response_body_with_room_retry(
                 client_id: client_id.clone(),
                 generation: run_registration.execution_id,
             });
-        let _run_registration = run_registration;
+        let mut run_registration = Some(run_registration);
         // The runtime nests this same canonical conversation owner. Client
         // identity remains frozen in the resolver/observation registration,
         // not encoded into a second, incompatible session identifier.
@@ -3313,6 +3318,7 @@ fn chat_agent_stream_response_body_with_room_retry(
             "run_id": dispatch.identity.submission_id,
         }));
         let dispatch_started = std::time::Instant::now();
+        let mut wake_goal_worker_after_stream = false;
         let run_result = agent_config.host_invocation_request().and_then(|mut request| {
             request.runtime.expert_template_authority=Some(expert_host_authority());
             if let Some(operation)=&edited_operation {
@@ -3333,6 +3339,135 @@ fn chat_agent_stream_response_body_with_room_retry(
                 let admission_request_id = format!("queued-admission:{}:{}", command_id, lease.delivery_attempt);
                 crate::core_agent_runtime::run_queued_user_input(&request, lease, admission_request_id,
                     &mut emitter, execution_cancellation, ContextPlatform::Web, Vec::new())
+            } else if edited_operation.is_none()
+                && should_persist_trace
+                && request.input.host_attachments.is_empty()
+                && request.input.context_files.is_empty()
+                && !external_prompt.trim().is_empty()
+                && crate::session::load_session_goal_projection(&host_session_id)?
+                    .and_then(|projection| projection.active)
+                    .is_some_and(|goal| matches!(goal.status, nola_core::agent::GoalStatus::NeedsUser | nola_core::agent::GoalStatus::Paused))
+            {
+                let goal = crate::session::load_session_goal_projection(&host_session_id)?
+                    .and_then(|projection| projection.active)
+                    .ok_or("Active Goal missing during resume")?;
+                crate::core_agent_runtime::rebind_goal_execution(&request)?;
+                let submitted_run_id = request.session.host_submission_id.clone();
+                let submitted_user_message_id = request.session.host_user_message_id.clone();
+                let submitted_assistant_message_id = request.session.host_assistant_message_id.clone();
+                let mut application =
+                    crate::application_port::CliApplicationPort::persistent_default()?;
+                let host = application
+                    .execute::<nola_core::agent::HostExecutionState>(
+                        nola_application::ApplicationCommand::LoadHostExecutionState {
+                            conversation_id: host_session_id.clone(),
+                        },
+                    )?
+                    .configuration
+                    .host_catalog
+                    .map(|catalog| catalog.host_id.0)
+                    .unwrap_or_else(|| host_id.clone());
+                let step_result: Value =
+                    application.execute(nola_application::ApplicationCommand::StepGoal {
+                        conversation_id: host_session_id.clone(),
+                        source_host_id: host.clone(),
+                        control: None,
+                        start_configuration: None,
+                        selected_model: None,
+                        user_prompt: external_prompt.clone(),
+                        host_available: Some(true),
+                        submitted_run_id: submitted_run_id.clone(),
+                        submitted_user_message_id,
+                        submitted_assistant_message_id,
+                        stop_after_sealed_round: true,
+                    })?;
+                if let Some(error) = step_result["error"].as_str() {
+                    return Err(error.to_string());
+                }
+                let run_id = step_result["instruction"]["run_id"]
+                    .as_str()
+                    .filter(|_| {
+                        matches!(
+                            step_result["instruction"]["type"].as_str(),
+                            Some("execute_run" | "needs_user")
+                        )
+                    })
+                    .ok_or_else(|| "Goal execution instruction has no Run".to_string())?
+                    .to_string();
+                if let Some(expected) = submitted_run_id.as_deref() {
+                    if run_id != expected {
+                        return Err(
+                            "Goal execution Run does not match the submitted request".to_string(),
+                        );
+                    }
+                }
+                let outcome = crate::core_agent_runtime::resume_frozen_core_agent_run(
+                    &host_session_id,
+                    &run_id,
+                    &mut emitter,
+                    execution_cancellation.clone(),
+                )?;
+                let cancelled = execution_cancellation.is_requested();
+                let seal: Value = application.execute(
+                    nola_application::ApplicationCommand::LocalAssistantRunTerminalSeal {
+                        conversation_id: host_session_id.clone(),
+                        run_id: run_id.clone(),
+                    },
+                )?;
+                if !seal.is_null()
+                    || outcome.as_ref().is_some_and(|core_outcome| {
+                        matches!(
+                            core_outcome.turn_status,
+                            nola_core::agent::AgentTurnStatus::AwaitingPermission
+                                | nola_core::agent::AgentTurnStatus::AwaitingInput
+                        )
+                    })
+                {
+                    let post_step: Value = application.execute(
+                        nola_application::ApplicationCommand::StepGoal {
+                            conversation_id: host_session_id.clone(),
+                            source_host_id: host,
+                            control: None,
+                            start_configuration: None,
+                            selected_model: None,
+                            user_prompt: String::new(),
+                            host_available: Some(true),
+                            submitted_run_id: None,
+                            submitted_user_message_id: None,
+                            submitted_assistant_message_id: None,
+                            stop_after_sealed_round: true,
+                        },
+                    )?;
+                    if let Some(error) = post_step["error"].as_str() {
+                        return Err(error.to_string());
+                    }
+                    if post_step.pointer("/goal/status").and_then(Value::as_str) == Some("running") {
+                        wake_goal_worker_after_stream = true;
+                    }
+                }
+                let _ = &goal.id;
+                Ok(match outcome {
+                    Some(mut core_outcome) => {
+                        if cancelled
+                            && matches!(
+                                core_outcome.turn_status,
+                                nola_core::agent::AgentTurnStatus::Completed
+                            )
+                        {
+                            core_outcome.turn_status = nola_core::agent::AgentTurnStatus::Cancelled;
+                        }
+                        core_outcome
+                    }
+                    None => crate::core_agent_runtime::CoreRunOutcome {
+                        turn_status: if cancelled {
+                            nola_core::agent::AgentTurnStatus::Cancelled
+                        } else {
+                            nola_core::agent::AgentTurnStatus::Completed
+                        },
+                        run_result: None,
+                        goal_signal: None,
+                    },
+                })
             } else {
                 run_agent_core_turn_with_cancellation(&request, initial_items, input_items,
                     ContextPlatform::Web, Vec::new(), execution_cancellation, &mut emitter)
@@ -3379,6 +3514,10 @@ fn chat_agent_stream_response_body_with_room_retry(
         drop(delegated_permissions);
         let _ = receipt_fence.deliver(&tx, mobile_crypto_token.as_deref());
         dispatch.finish_stream(&tx, mobile_crypto_token.as_deref());
+        drop(run_registration.take());
+        if wake_goal_worker_after_stream {
+            wake_web_goal_worker();
+        }
     });
 
     sse_response(rx)
@@ -4753,6 +4892,50 @@ fn apply_agent_tool_settings(config: &mut Config, settings: &AgentSettings) {
     }
 }
 
+fn resolve_web_builtin_skill_directory(
+    id: &str,
+    settings: &AgentSettings,
+) -> Result<PathBuf, String> {
+    let override_entry = settings
+        .builtin_skill_overrides
+        .iter()
+        .find(|entry| entry.get("id").and_then(Value::as_str) == Some(id));
+    if let Some(directory) = override_entry
+        .and_then(|entry| entry.get("instructions_ref"))
+        .and_then(Value::as_str)
+        .filter(|value| value.starts_with("file://"))
+        .and_then(|value| url::Url::parse(value).ok())
+        .and_then(|parsed| parsed.to_file_path().ok())
+        .filter(|path| path.is_file() && path.file_name().and_then(|n| n.to_str()) == Some("SKILL.md"))
+        .and_then(|path| path.parent().map(PathBuf::from))
+    {
+        return Ok(directory);
+    }
+    if let Some(directory) = builtin_skills::managed_directory_for_id(id)?
+        .filter(|directory| directory.join("SKILL.md").is_file())
+    {
+        return Ok(directory);
+    }
+    let core_admitted = override_entry.is_some_and(|entry| {
+        entry.get("revision").and_then(Value::as_i64).is_some()
+            && entry.get("enabled").and_then(Value::as_bool) == Some(true)
+            && entry.get("removed").and_then(Value::as_bool) != Some(true)
+    });
+    if core_admitted {
+        let content_override = override_entry
+            .and_then(|entry| entry.get("content"))
+            .and_then(Value::as_str);
+        if let Some(directory) = builtin_skills::materialize_single_builtin(id, content_override)?
+            .filter(|directory| directory.join("SKILL.md").is_file())
+        {
+            return Ok(directory);
+        }
+    }
+    Err(format!(
+        "Selected Skill {id:?} is not materialized; save its settings to activate it"
+    ))
+}
+
 fn web_skill_runtime_for_settings(
     configured_dirs: Option<&[PathBuf]>,
     settings: &AgentSettings,
@@ -4772,7 +4955,7 @@ fn web_skill_runtime_for_settings(
                     .get("id")
                     .and_then(Value::as_str)
                     .ok_or_else(|| "Skill catalog entry is missing its identity".to_string())?;
-                if item.get("source").and_then(Value::as_str) == Some("custom") {
+                let directory = if item.get("source").and_then(Value::as_str) == Some("custom") {
                     let resource = settings
                         .uploaded_skills
                         .iter()
@@ -4785,10 +4968,12 @@ fn web_skill_runtime_for_settings(
                     ) {
                         continue;
                     }
-                }
-                let directory = builtin_skills::managed_directory_for_id(id)?
-                    .filter(|directory| directory.join("SKILL.md").is_file())
-                    .ok_or_else(|| format!("Selected Skill {id:?} is not materialized; save its settings to activate it"))?;
+                    builtin_skills::managed_directory_for_id(id)?
+                        .filter(|directory| directory.join("SKILL.md").is_file())
+                        .ok_or_else(|| format!("Selected Skill {id:?} is not materialized; save its settings to activate it"))?
+                } else {
+                    resolve_web_builtin_skill_directory(id, settings)?
+                };
                 if !directories.contains(&directory) {
                     directories.push(directory);
                 }

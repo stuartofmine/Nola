@@ -3248,3 +3248,27 @@
 "main.experts.sourceChanged" = "Les données de l’hôte ont changé. Actualisez son annuaire et sélectionnez à nouveau les experts. Votre message est conservé.";
 
 "run.blocked.inputBudget" = "Cette demande dépasse le budget d’entrée du modèle. Réduisez la conversation, les pièces jointes ou les outils activés, ou choisissez un modèle avec une fenêtre de contexte plus grande.";
+"chat.task.state.retry_waiting" = "En attente de nouvelle tentative";
+"chat.host_tool.name.goal_complete" = "Terminer l’objectif";
+"chat.host_tool.name.ask_user" = "Demander une saisie";
+"chat.host_tool.name.mcp_list" = "Lister les ressources MCP";
+"chat.host_tool.name.mcp_read" = "Lire la ressource MCP";
+"chat.conversations.rename" = "Renommer la conversation";
+"chat.conversations.title_field" = "Titre";
+"a2ui.history.readOnly" = "Les formulaires historiques sont en lecture seule.";
+"a2ui.date.useShown" = "Utiliser la date ou l’heure affichée";
+"a2ui.date.clear" = "Effacer";
+"a2ui.component.unsupported" = "Composant indisponible : ";
+"a2ui.history.unavailable" = "Cette version n’est pas disponible.";
+"a2ui.history.mismatch" = "Version du formulaire historique incompatible.";
+"a2ui.reloadForm" = "Recharger le formulaire";
+"a2ui.submission.pending" = "L’envoi précédent n’est pas confirmé. Vérifiez le résultat initial.";
+"a2ui.intent.reconnectHost" = "Reconnectez-vous à l’Hôte initial pour confirmer l’envoi en attente.";
+"a2ui.intent.previousUnconfirmed" = "L’envoi précédent est non confirmé. Vérifiez d’abord l’original.";
+"a2ui.surface.source_changed" = "La source a changé. Revenez à la conversation d’origine.";
+"a2ui.intent.source_changed" = "La source a changé. Connectez-vous à l’Hôte initial pour vérifier l’envoi.";
+"a2ui.form.updated" = "Formulaire mis à jour. Confirmez à nouveau avant d’envoyer.";
+"a2ui.queue.not_executed" = "L’action n’a pas été exécutée car la demande a été refusée ou annulée.";
+"a2ui.queue.cancel_rejected" = "Supprimer l’action non exécutée";
+"chat.host.reconnect_bound" = "Reconnectez-vous à l’Hôte lié à cette conversation.";
+"chat.host.source_unavailable" = "Impossible de vérifier l’Hôte source.";

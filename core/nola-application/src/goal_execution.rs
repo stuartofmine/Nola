@@ -194,6 +194,45 @@ where
     })
 }
 
+pub(crate) fn rebind_goal_execution<R>(
+    store: &mut R,
+    identity: GoalExecutionBindingIdentity,
+    template: GoalExecutionTemplate,
+    now_ms: i64,
+) -> Result<GoalExecutionBinding, String>
+where
+    R: GoalExecutionRepository
+        + nola_store_port::model::ModelRepositoryProvider
+        + ?Sized,
+{
+    identity.validate()?;
+    template.validate()?;
+    validate_source_host(&identity, &template)?;
+    validate_model_selection(store, &template)?;
+    let json = serde_json::to_string(&StoredGoalExecutionPayload {
+        identity: identity.clone(),
+        template: template.clone(),
+        created_at_ms: now_ms,
+    })
+    .map_err(|_| "cannot encode Goal execution template")?;
+    let binding_sha256 = format!("{:x}", Sha256::digest(json.as_bytes()));
+    let row = StoredGoalExecutionBinding {
+        identity: identity.clone(),
+        binding_json: json,
+        binding_sha256: binding_sha256.clone(),
+        created_at_ms: now_ms,
+    };
+    store
+        .upsert_goal_execution_binding(&row)
+        .map_err(|e| e.to_string())?;
+    Ok(GoalExecutionBinding {
+        identity,
+        template,
+        binding_sha256,
+        created_at_ms: now_ms,
+    })
+}
+
 pub(crate) fn reject_unbound_goal_start(submission: &AgentSubmission) -> Result<(), String> {
     if matches!(submission, AgentSubmission::GoalRuntime { envelope } if matches!(envelope.command,GoalRuntimeCommand::Start { .. }))
     {
@@ -247,7 +286,7 @@ fn validate_model_selection<R: nola_store_port::model::ModelRepositoryProvider +
     use nola_store_port::model::ModelRepository;
     let GoalModelSelection::Profile {
         profile_id,
-        revision,
+        revision: _,
     } = &template.model_selection
     else {
         return Ok(());
@@ -257,8 +296,8 @@ fn validate_model_selection<R: nola_store_port::model::ModelRepositoryProvider +
         .model_profile(profile_id)
         .map_err(|e| e.to_string())?
         .ok_or("Goal selected model profile is unavailable")?;
-    if profile.revision != *revision || !profile.enabled || profile.deleted_at_ms.is_some() {
-        return Err("Goal selected model profile changed, was disabled or removed".into());
+    if !profile.enabled || profile.deleted_at_ms.is_some() {
+        return Err("Goal selected model profile was disabled or removed".into());
     }
     let primary = &template
         .core_config
@@ -274,9 +313,11 @@ fn validate_model_selection<R: nola_store_port::model::ModelRepositoryProvider +
             return Err("Goal selected profile differs from the admitted model route".into())
         }
         nola_host_protocol::HostModelRouteBinding::Native(route) => {
-            if route.profile_ref.as_ref().is_none_or(|reference| {
-                reference.profile_id != *profile_id || reference.admitted_revision != *revision
-            }) {
+            if route
+                .profile_ref
+                .as_ref()
+                .is_none_or(|reference| reference.profile_id != *profile_id)
+            {
                 return Err("Goal native profile differs from the admitted model route".into());
             }
         }
@@ -339,6 +380,7 @@ where
         + nola_store_port::run_effect::RunEffectRepository
         + ?Sized,
 {
+    let _ = now_ms;
     let stored = crate::load_current_checkpoint(store, conversation_id)?
         .ok_or("Goal round requires its admitted Goal")?;
     let checkpoint: nola_agent_engine::agent::recovery::CoreCheckpoint<
@@ -352,39 +394,30 @@ where
         .as_ref()
         .ok_or("Goal round requires its admitted Goal")?;
     let binding = prepare_goal_execution(store, conversation_id, &goal.id)?;
-    let fresh = crate::RunRecoveryAuthority {
-        host_catalog: current.host_catalog.clone(),
-        tools: current.tools.clone(),
-        permission_rules: current.permission_rules.clone(),
-        context_window: current.context_window.clone(),
-        host_invocation: current
-            .turn_identity
-            .host_invocation
-            .clone()
-            .ok_or("Goal round requires frozen Host identity")?,
-    };
-    let now = u64::try_from(now_ms).map_err(|_| "invalid Goal round time")?;
-    let frozen = &binding.template.core_config;
-    crate::run_recovery_authority::validate_facts(frozen, &fresh, now)?;
-    let stable = |config: &AgentCoreConfig| {
-        serde_json::to_value((
-            &config.model,
-            config.max_model_iterations,
-            config.max_strategy_recovery_attempts,
-            &config.memory_policy,
-            &config.turn_identity.plugin_revisions,
-            &config.turn_identity.workspace,
-            &config.turn_identity.execution_backend,
-            &config.turn_identity.model_capability,
-            config.turn_identity.skill_catalog_revision,
-            config.turn_identity.skill_invocation_revision,
-            config.turn_identity.memory_policy_revision,
-            config.turn_identity.permission_policy_revision,
-        ))
-        .map_err(|_| "invalid Goal execution policy")
-    };
-    if stable(frozen)? != stable(current)? {
-        return Err("Goal execution policy differs from Start".into());
+    if current
+        .host_catalog
+        .as_ref()
+        .map(|catalog| catalog.host_id.0.as_str())
+        != Some(binding.identity.source_host_id.as_str())
+    {
+        return Err("Goal source Host differs from its execution catalog".into());
+    }
+    let expected_primary = &binding
+        .template
+        .core_config
+        .turn_identity
+        .host_invocation
+        .as_ref()
+        .ok_or("Goal model binding is unavailable")?
+        .primary;
+    let current_invocation = current
+        .turn_identity
+        .host_invocation
+        .as_ref()
+        .ok_or("Goal round requires frozen Host identity")?;
+    current_invocation.validate().map_err(str::to_string)?;
+    if !expected_primary.same_route_authority(&current_invocation.primary) {
+        return Err("Goal round model authority changed".into());
     }
     Ok(())
 }

@@ -316,19 +316,27 @@ impl AgentRuntime {
             }
             validate_execution_claim(goal, requirement, &claim, expected_revision)?;
             let mut replaced = std::collections::BTreeSet::new();
+            let has_required_checks = !matches!(
+                requirement.acceptance_policy,
+                GoalAcceptancePolicy::ModelJudgment
+            );
             for replacement in &claim.task_replacements {
                 if !replaced.insert(&replacement.task_id) { return Err("Duplicate child result replacement".into()); }
                 let task = self.session.task_projection.tasks.get(&replacement.task_id).ok_or("Unknown child result")?;
                 if replacement.terminal_receipt_id != task.durability.terminal_receipt_id
                     || replacement.result_digest != task.durability.result_digest
-                    || replacement.execution_evidence_refs.is_empty() {
+                    || (has_required_checks && replacement.execution_evidence_refs.is_empty())
+                    || (replacement.execution_evidence_refs.is_empty()
+                        && claim.evidence_refs.is_empty()
+                        && claim.execution_evidence_refs.is_empty()) {
                     return Err("Replacement must bind the exact child result and actual parent execution evidence".into());
                 }
                 for reference in &replacement.execution_evidence_refs {
                     let observation = goal.execution_observations.get(reference).ok_or("Unknown replacement execution evidence")?;
-                    if !claim.execution_evidence_refs.contains(reference) || observation.turn_id != turn.turn_id.as_str()
+                    if !claim.execution_evidence_refs.contains(reference)
+                        || !goal.work.source_turn_ids.contains(observation.turn_id.as_str())
                         || !successful_execution_observation(observation) {
-                        return Err("Replacement must cite successful execution from this parent Turn".into());
+                        return Err("Replacement must cite successful execution from this Goal".into());
                     }
                 }
             }

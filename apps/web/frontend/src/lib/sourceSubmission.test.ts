@@ -36,7 +36,7 @@ test('cold persistence restores same identity, payload, digest and sent marker w
 test('only exact admitted receipt grants Run/root, replay is idempotent and cannot downgrade', () => {
     const admitted = acceptSourceReceipt(bound(), receipt('admitted'));
     assert.deepEqual(acceptSourceReceipt(admitted, receipt('admitted')), admitted);
-    assert.deepEqual(exactSubmissionCancel(admitted), { identity, request_digest: digest });
+    assert.deepEqual(exactSubmissionCancel(admitted), { identity });
     for (const phase of ['prepared', 'rejected', 'cancelled'] as const) assert.throws(() => acceptSourceReceipt(admitted, receipt(phase)));
     for (const changed of [{ source_host_id: 'other' }, { client_id: 'other' }, { user_message_id: 'other' }, { assistant_message_id: 'other' }])
         assert.throws(() => acceptSourceReceipt(bound(), { ...receipt('admitted'), identity: { ...identity, ...changed } }));

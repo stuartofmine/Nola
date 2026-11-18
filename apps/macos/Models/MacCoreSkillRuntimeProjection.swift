@@ -320,7 +320,6 @@ nonisolated struct MacCoreSkillDescriptor: Codable, Equatable, Hashable, Sendabl
     let version: String
     let displayName: String
     let instructionsRef: String
-    let instructionsDigest: String
     let requiredTools: [MacCoreCapabilityToolReference]
     let defaultMode: MacCoreSkillExecutionMode?
     let executionContract: MacCoreSkillExecutionContract
@@ -330,7 +329,6 @@ nonisolated struct MacCoreSkillDescriptor: Codable, Equatable, Hashable, Sendabl
         case skillID = "skill_id"
         case displayName = "display_name"
         case instructionsRef = "instructions_ref"
-        case instructionsDigest = "instructions_digest"
         case requiredTools = "required_tools"
         case defaultMode = "default_mode"
         case executionContract = "execution_contract"
@@ -342,16 +340,13 @@ nonisolated struct MacCoreSkillDescriptor: Codable, Equatable, Hashable, Sendabl
         version = try values.decode(String.self, forKey: .version)
         displayName = try values.decode(String.self, forKey: .displayName)
         instructionsRef = try values.decode(String.self, forKey: .instructionsRef)
-        instructionsDigest = try values.decode(String.self, forKey: .instructionsDigest)
         requiredTools = try values.decode([MacCoreCapabilityToolReference].self, forKey: .requiredTools)
         defaultMode = try values.decodeIfPresent(MacCoreSkillExecutionMode.self, forKey: .defaultMode)
         executionContract = try values.decode(MacCoreSkillExecutionContract.self, forKey: .executionContract)
-        guard instructionsDigest.utf8.count == 64,
-              instructionsDigest.allSatisfy({ "0123456789abcdef".contains($0) }),
-              instructionsRef.hasSuffix("#sha256=\(instructionsDigest)"),
+        guard !instructionsRef.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               executionContract.isValid else {
             throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
-                debugDescription: "Skill descriptor lacks a valid immutable content identity or execution contract."))
+                debugDescription: "Skill descriptor lacks a valid instructions reference or execution contract."))
         }
     }
 }

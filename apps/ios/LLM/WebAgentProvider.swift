@@ -1773,9 +1773,9 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         try Self.validateHTTP(response: response, data: data)
     }
 
-    func cancelHostGeneration(identity: IOSRemoteSubmissionIdentity, requestDigest: String) async throws {
+    func cancelHostGeneration(identity: IOSRemoteSubmissionIdentity) async throws {
         guard identity.source_host_id == journalSourceHostID,
-              identity.client_id == observationClientID, !requestDigest.isEmpty else {
+              identity.client_id == observationClientID else {
             throw NolaError.llm(.invalidResponse(reason: "Cancellation must retain its admitted submission owner."))
         }
         guard MobileHostTransportPolicy.allows(config.baseURL) else {
@@ -1788,7 +1788,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         request.timeoutInterval = 30
         request.httpBody = try JSONSerialization.data(
             withJSONObject: Self.encryptMobileJSON(
-                try AppleRemoteCancellationRequest(identity: identity, requestDigest: requestDigest).object(),
+                try AppleRemoteCancellationRequest(identity: identity).object(),
                 token: config.token
             )
         )
@@ -2084,6 +2084,11 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
             return try await pairedReadRequest(saved, path: "chat/agent/v2/goal", envelope: .goalControl,
                 acceptedStatusCodes: [200, 202, 409])
         }
+    }
+
+    func discardConversationGoalControl(conversationID: String, outbox: AppleGoalControlOutbox = .shared) async throws {
+        guard let source = config.expectedHostId, !source.isEmpty else { throw IOSApplicationRuntimeError.invalidResponse }
+        try await outbox.discard(hostID: source, conversationID: conversationID)
     }
 
     func taskChildWindow(_ query: AppleTaskChildWindowRequest) async throws -> IOSConversationProjectionWindowV1 {

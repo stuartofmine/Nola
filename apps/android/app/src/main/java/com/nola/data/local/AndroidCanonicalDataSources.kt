@@ -179,7 +179,7 @@ internal class AndroidCanonicalDataSources(
                 operationId = recipe.string("operationId"),
                 configurationKeys = recipe["configurationKeys"]?.jsonArray?.map { it.jsonPrimitive.content }.orEmpty(),
                 outputSchemaJson = recipe.getValue("outputSchema").toString(),
-            ), validationDigest = value.string("validationDigest"),
+            ),
         )
     }
 
@@ -201,5 +201,4 @@ internal fun DataSourceValidationContract.toCanonicalContract(): JsonObject = bu
     put("recordCount", recordCount); put("maximumAgeMinutes", maximumAgeMinutes)
     put("validationState", validationState.name.replaceFirstChar { it.lowercase() })
     put("validatedAt", Instant.ofEpochMilli(validatedAt).toString()); put("observedAt", Instant.ofEpochMilli(observedAt).toString())
-    put("validationDigest", validationDigest.orEmpty())
 }

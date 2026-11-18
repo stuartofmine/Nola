@@ -145,7 +145,7 @@
             {#each inventory.accounts.filter(item => item.account.id === connection.account_id) as item}<p class="muted">{item.account.display_name}</p>{/each}
             {#each snapshot.document.catalog?.models ?? [] as model (`${model.protocol}:${model.model_id}`)}
                 {@const key = `${model.protocol}:${model.model_id}`}
-                <label class="model"><input type="checkbox" disabled={busy} checked={modelEnabled(connection.id, key)} onchange={event => selectModel(event, snapshot, key)} />
+                <label class="model"><input type="checkbox" role="switch" disabled={busy} checked={modelEnabled(connection.id, key)} onchange={event => selectModel(event, snapshot, key)} />
                     <span>{model.display_name} <small>{model.protocol}{#if model.context_window} · {model.context_window.toLocaleString()}{/if}</small></span></label>
                 <ModelCapabilityProbe {snapshot} {model} {refresh} accountRevision={inventory.accounts.find(item => item.account.id === snapshot.document.connection.account_id)?.revision ?? null} />
             {/each}

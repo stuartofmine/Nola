@@ -38,3 +38,16 @@
 "goal.model_note" = "この会話で選択したモデルと現在のツール権限を使用します。";
 
 "inspector.conversation_needed" = "会話を開始するか開くと、進捗の確認や目標の設定ができます。";
+"goal.pending" = "Host の確認を待っています";
+"goal.retry" = "保存済みの操作を再試行";
+"goal.discard" = "破棄";
+"goal.pause" = "一時停止";
+"goal.resume" = "続行";
+"goal.paused_reply_hint" = "入力待ちで一時停止中です。チャットで返信するか「続行」をタップしてください。";
+"goal.schedule" = "続行を予約";
+"goal.cancel" = "目標をキャンセル";
+"goal.actions" = "目標の操作";
+"goal.start" = "目標を開始";
+"goal.sending" = "目標操作を送信中";
+"goal.objective" = "この目標で何を達成しますか？";
+"goal.wake" = "再開時刻";

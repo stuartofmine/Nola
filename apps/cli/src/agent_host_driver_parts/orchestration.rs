@@ -1566,6 +1566,7 @@ pub struct CliAgentHostDriver {
     bound_dispatch_run_id: Option<String>,
     boundary_submission_state: std::sync::Arc<std::sync::Mutex<DurableBoundarySubmissionState>>,
     mcp_tool_routes: BTreeMap<String, McpToolRoute>,
+    restored_mcp_servers: BTreeMap<String, RestoredMcpServer>,
     mcp_server_registry: Vec<Value>,
     plugin_mcp_session: Option<crate::plugin_runtime::SharedPluginSession>,
     // Already issued model requests may precede a concurrent Skill catalog
@@ -1617,6 +1618,16 @@ pub struct CliAgentHostDriver {
         Option<&nola_core::agent::host::EffectDeliveryLease>) -> Result<(), String>,
     quiescent_effects: BTreeMap<(String, String, Option<String>, String), ObservedHostStop>,
     base_allowed_dirs: Vec<std::path::PathBuf>,
+}
+
+#[derive(Clone)]
+struct RestoredMcpServer {
+    server_id: String,
+    transport: McpTransportKind,
+    connection_ref: String,
+    host_id: String,
+    session_id: String,
+    config_digest: String,
 }
 
 #[derive(Clone)]

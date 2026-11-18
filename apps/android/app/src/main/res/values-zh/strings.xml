@@ -1365,4 +1365,22 @@
     <string name="expert_main_requires_tools">请选择支持工具调用的主模型并启用专家工具，或移除所选专家后发送。草稿已保留。</string>
     <string name="chat_context_budget_exceeded">输入和工具说明超出当前上下文窗口。请提高模型上下文上限，或减少附件、历史和启用的工具后重试。</string>
     <string name="chat_run_blocked">任务暂时无法继续。请展开处理过程查看需要补充的信息或操作。</string>
+    <string name="common_more">更多</string>
+    <string name="models_config_save_failed">无法保存模型配置。</string>
+    <string name="models_protocol_responses">Responses</string>
+    <string name="models_protocol_chat_completions">Chat Completions</string>
+    <string name="chat_rename_conversation">重命名会话</string>
+    <string name="chat_conversation_title_hint">会话标题</string>
+    <string name="chat_local_mcp_servers">本机 MCP 服务</string>
+    <string name="chat_local_mcp_empty">尚未配置本机 MCP 服务。</string>
+    <string name="goal_discard_pending">放弃待确认请求</string>
+    <string name="goal_constraints">约束条件（可选）</string>
+    <string name="goal_constraints_hint">每行一条或用逗号分隔</string>
+    <string name="goal_next_wake_format">下次唤醒：%1$s</string>
+    <string name="expert_conflict_refresh">专家配置已变更，请刷新后再试。</string>
+    <string name="task_detail_unavailable">任务详情暂不可用</string>
+    <string name="chat_ui_host_submission_rejected">Host 拒绝了提交，请刷新表单后重试。</string>
+    <string name="chat_ui_host_submission_unknown">Host 提交结果尚未确认。</string>
+    <string name="chat_ui_submission_rejected">提交被拒绝。</string>
+    <string name="chat_ui_submission_unknown">提交结果尚未确认。</string>
 </resources>

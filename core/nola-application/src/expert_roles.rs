@@ -135,7 +135,7 @@ mod tests {
             }
             assert!(role.tool_pack.tools.len() <= 5, "Default role packs must stay compact");
             assert_eq!(role.tool_pack.tools.iter().collect::<std::collections::BTreeSet<_>>().len(), role.tool_pack.tools.len());
-            for protocol in ["Skill", "skill_update", "spawn_agent", "read_task", "wait_task", "code_mode_exec"] {
+            for protocol in ["Skill", "spawn_agent", "read_task", "wait_task", "code_mode_exec"] {
                 assert!(!role.tool_pack.tools.iter().any(|tool| tool == protocol), "Runtime support is not a role business pack");
             }
             let body = role.instructions();

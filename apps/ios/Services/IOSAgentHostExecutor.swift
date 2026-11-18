@@ -3,7 +3,6 @@
 // - Purpose: Executes the mobile-safe subset of shared agent host calls on iOS.
 
 import Foundation
-import CryptoKit
 import CoreLocation
 import EventKit
 import UIKit
@@ -216,12 +215,9 @@ public actor IOSAgentHostExecutor {
         guard instructionsData.count <= 256 * 1_024 else {
             throw HostExecutorError.outputTooLarge
         }
-        let digest = SHA256.hash(data: instructionsData)
-            .map { String(format: "%02x", $0) }
-            .joined()
         let activation = object["activation"]?.stringValue == "session" ? "session" : "turn"
         let declaredVersion = skill.version?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let version = declaredVersion?.isEmpty == false ? declaredVersion! : "sha256-\(digest.prefix(12))"
+        let version = declaredVersion?.isEmpty == false ? declaredVersion! : "local"
         return .object([
             "type": .string("invoked_skill"),
             "skill_id": .string(skill.id),
@@ -229,8 +225,7 @@ public actor IOSAgentHostExecutor {
             "display_name": .string(skill.name),
             "summary": .string(skill.summary),
             "version": .string(version),
-            "instructions_ref": .string("nola-skill://\(skill.id)#sha256=\(digest)"),
-            "instructions_digest": .string(digest),
+            "instructions_ref": .string("nola-skill://\(skill.id)/\(version)"),
             "base_directory": .string("ios://skills/\(skill.id)"),
             "activation": .string(activation),
             "mode": .string("inline"),

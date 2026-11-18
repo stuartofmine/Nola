@@ -96,6 +96,7 @@ pub(crate) fn core_task(
             parent_call_id: Some(nola_agent_engine::agent::CallId::from_string(
                 admission.parent_tool_call_id.clone(),
             )),
+            title: (!task.title.trim().is_empty()).then(|| task.title.clone()),
             ..Default::default()
         },
         durability: TaskDurability {

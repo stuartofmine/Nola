@@ -309,7 +309,6 @@ struct IOSApplicationRuntimeTests {
         func input(_ name: String, version: String = "v1") -> IOSCanonicalSkill {
             IOSCanonicalSkill(id: "review", source: "user", version: version, displayName: name,
                 summary: "Preserve summary", category: "user", instructionsRef: "skill://review/SKILL.md",
-                instructionsDigest: "3b7d3ff3c0cb68998d557a16e00de20ea6c57b4072cc9e1d6005fc0cf37e1d9f",
                 instructionsText: "Review the supplied text.", requiredTools: [], defaultMode: nil,
                 enabled: true, createdAtMs: 1, updatedAtMs: 2, deletedAtMs: nil)
         }
@@ -411,10 +410,9 @@ struct IOSApplicationRuntimeTests {
                 "maximumAgeMinutes": .number(60),
                 "validationState": .string("verified"),
                 "validatedAt": .string("2026-09-04T00:00:00Z"),
-                "observedAt": .string("2026-09-04T00:00:00Z"),
-                "validationDigest": .string("")
+                "observedAt": .string("2026-09-04T00:00:00Z")
             ]
-            let contract = try #require(AgentCoreDataSourceResolver.sealContract(unsigned))
+            let contract = unsigned
             let saved = try store.saveDataSource(IOSCanonicalDataSourceSubmission(
                 draft: IOSCanonicalDataSourceDraft(
                     id: "ios-real-source",

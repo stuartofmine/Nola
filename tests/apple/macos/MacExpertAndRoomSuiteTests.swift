@@ -757,6 +757,50 @@ final class MacAgentRoomWorkspaceTests: XCTestCase {
             "Core association peer order is stable regardless of arrival and timestamps")
     }
 
+    func testProductionExpertProjectionInlinesDelegatedPeerExchangesAfterSourceAssistantRun() throws {
+        let user = transcriptMessage("parent-a", role: .user, time: 1)
+        let assistant = transcriptMessage("run-main:assistant", role: .assistant, time: 2)
+        let exchangeChild = transcriptMessage("exchange-1:assistant", role: .assistant, time: 3)
+        let exchangeJSON = """
+        {
+          "version": 1,
+          "exchange_id": "exchange-1",
+          "room_id": "room",
+          "parent_conversation_id": "chat",
+          "source": { "kind": "main_agent", "context_conversation_id": "chat" },
+          "target": {
+            "participant_id": "a",
+            "agent_id": "agent-a",
+            "agent_revision": 1,
+            "context_conversation_id": "context-a"
+          },
+          "source_run_id": "run-main",
+          "source_call_id": "call-delegate-1",
+          "source_display_name": "Nola",
+          "target_display_name": "Expert a",
+          "kind": "request",
+          "text": "Review module",
+          "in_reply_to": null,
+          "root_exchange_id": "exchange-1",
+          "hop": 0,
+          "created_at_ms": 100,
+          "clarifications": []
+        }
+        """
+        let exchange = try JSONDecoder().decode(AppleExpertPeerView.self, from: Data(exchangeJSON.utf8))
+        let rows = MacExpertTranscriptProjector.rows(
+            conversationID: "chat",
+            parentMessages: [user, assistant],
+            association: transcriptAssociation(),
+            receipts: [],
+            contexts: ["context-a": [exchangeChild]],
+            peerExchanges: [exchange]
+        )
+        XCTAssertEqual(rows.map { $0.message.canonicalMessageID }, ["parent-a", "run-main:assistant", "exchange-1:assistant"])
+        XCTAssertEqual(rows.last?.name, "Expert a")
+        XCTAssertEqual(rows.last?.context, "context-a")
+    }
+
     func testProductionExpertProjectionScopesEqualUUIDsAndKeepsIdentityAcrossStreaming() {
         let sharedUIID = UUID()
         let parent = transcriptMessage("parent-a", role: .user)

@@ -50,7 +50,9 @@ pub(crate) fn restore_task_target_configuration(
     let reference = configuration.turn_identity.host_recovery.as_ref().ok_or("Expert Host reconstruction reference missing")?;
     let mut request = host_recovery::restore(reference, conversation_id, binding)?;
     restore_host_memory_admission(&mut request, &configuration.memory_policy)?;
-    binding.require_exact(&host_invocation_binding(&request)?).map_err(str::to_owned)?;
+    binding
+        .require_exact_or_rotated_credential(&host_invocation_binding(&request)?)
+        .map_err(str::to_owned)?;
     Ok(request)
 }
 
@@ -1337,7 +1339,8 @@ pub fn submit_agent_core_goal_command(
     let execution:nola_core::agent::HostExecutionState=application.execute(nola_application::ApplicationCommand::LoadHostExecutionState {conversation_id:owner.into()})?;
     let result:Value=application.execute(nola_application::ApplicationCommand::StepGoal {
         conversation_id:owner.into(),source_host_id:execution.configuration.host_catalog.ok_or("Goal Host unavailable")?.host_id.0,
-        control:Some(envelope),start_configuration:None,selected_model:None,user_prompt:String::new(),host_available:Some(true) })?;
+        control:Some(envelope),start_configuration:None,selected_model:None,user_prompt:String::new(),host_available:Some(true),
+        submitted_run_id:None,submitted_user_message_id:None,submitted_assistant_message_id:None,stop_after_sealed_round:false })?;
     if let Some(error)=result["error"].as_str(){return Err(error.into());}
     if let Some(host)=active_core_agent_host(owner)? {if let Ok(mut host)=host.try_lock(){host.runtime.requires_committed_restore=true;}}
     let execution:nola_core::agent::HostExecutionState=application.execute(nola_application::ApplicationCommand::LoadHostExecutionState {conversation_id:owner.into()})?;
@@ -1352,6 +1355,17 @@ pub(crate) fn validate_goal_round_request(conversation_id: &str, goal_id: &str, 
 pub(crate) fn restore_goal_execution_request(conversation_id: &str, goal_id: &str)
     -> Result<HostInvocationRequest, String> {
     goal_binding::restore(conversation_id, goal_id)
+}
+
+pub(crate) fn rebind_goal_execution(request: &HostInvocationRequest) -> Result<(), String> {
+    goal_binding::rebind(request)
+}
+
+pub(crate) fn rebind_and_resume_goal(
+    request: &HostInvocationRequest,
+    input: nola_application::goal_control_intent::PrepareGoalControlIntent,
+) -> Result<bool, String> {
+    goal_binding::rebind_and_resume(request, input)
 }
 
 fn commit_idle_agent_submission(
@@ -1695,18 +1709,26 @@ fn restore_checkpoint_host_configuration(
     let reference = checkpoint.state.configuration.turn_identity.host_recovery.as_ref()
         .ok_or_else(|| "Run has no durable Host reconstruction reference".to_string())?;
     let mut recovered_config = host_recovery::restore(reference, conversation_id, frozen)?;
-    crate::host_output_admission::validate_snapshot(&recovered_config.model_invocation_settings()?, &frozen.output_admission)
-        ?;
-    recovered_config.runtime.output_admission = Some(frozen.output_admission.clone());
+    if recovered_config.runtime.output_admission.is_none() {
+        recovered_config.runtime.output_admission = Some(frozen.output_admission.clone());
+    }
+    let admitted_output = recovered_config
+        .runtime
+        .output_admission
+        .as_ref()
+        .ok_or_else(|| "Run has no admitted output limit".to_string())?;
+    crate::host_output_admission::validate_snapshot(
+        &recovered_config.model_invocation_settings()?,
+        admitted_output,
+    )?;
     recovered_config.runtime.admitted_max_retries = Some(frozen.generation.max_retries);
     restore_host_memory_admission(
         &mut recovered_config,
         &checkpoint.state.configuration.memory_policy,
-    )
-    ?;
+    )?;
     let current = host_invocation_binding(&recovered_config)?;
     frozen
-        .require_exact(&current)
+        .require_exact_or_rotated_credential(&current)
         .map_err(str::to_string)?;
 
     Ok(recovered_config)
@@ -3922,6 +3944,48 @@ impl<'a, O: crate::runtime_output::RuntimeOutputPort + ?Sized> CoreEventPresente
     }
 }
 
+pub(crate) fn mcp_connect_tool_schema(
+    mcp_server_registry: &[Value],
+    session_id: Option<&str>,
+) -> Option<Value> {
+    let enabled = mcp_server_registry
+        .iter()
+        .filter(|server| server["enabled"] != false)
+        .cloned()
+        .collect::<Vec<_>>();
+    if enabled.is_empty() {
+        return None;
+    }
+    let needs_binding = enabled.iter().any(|server| {
+        server
+            .get("connection_ref")
+            .and_then(Value::as_str)
+            .is_none_or(|reference| reference.trim().is_empty())
+    });
+    let bound = if needs_binding {
+        let session = session_id.filter(|s| !s.trim().is_empty())?;
+        crate::mcp_connection_authority::bind_configurations(&enabled, "nola-cli-host", session)
+            .ok()?
+    } else {
+        enabled
+    };
+    let mut descriptor = nola_mcp_host::catalog::connect_descriptor(bound);
+    if !descriptor
+        .input_schema
+        .pointer("/properties/connection_ref/enum")
+        .and_then(Value::as_array)
+        .is_some_and(|items| !items.is_empty())
+    {
+        return None;
+    }
+    descriptor.input_normalization.permission_contract =
+        crate::tools::builtin_permission_contract(
+            crate::mcp_connection_authority::CONNECT_CAPABILITY,
+            false,
+        );
+    Some(crate::agent_host_driver::discovery_tool_schema(&descriptor))
+}
+
 fn selected_tool_schemas(config: &HostInvocationRequest, skills: &SkillRuntimeContext) -> Vec<Value> {
     if !config.tool_settings.tools_enabled {
         return Vec::new();
@@ -3952,6 +4016,10 @@ fn selected_tool_schemas(config: &HostInvocationRequest, skills: &SkillRuntimeCo
                 .into_iter()
                 .flat_map(|catalog| catalog.model_tool_definitions()),
         )
+        .chain(mcp_connect_tool_schema(
+            &config.tool_settings.mcp_server_registry,
+            config.session.session_id.as_deref(),
+        ))
         .filter(|schema| {
             let name = schema
                 .pointer("/function/name")

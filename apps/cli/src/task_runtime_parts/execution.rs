@@ -3093,6 +3093,7 @@ fn spawn_agent(
             progress: Some(0.0),
             current_step: Some(ui_text(UiText::Queued).to_string()),
             lineage: nola_core::agent::TaskLineage {
+                title: Some(description.to_string()),
                 parent_task_id,
                 resumed_from_task_id,
                 child_session_id: Some(nola_core::agent::SessionId::from_string(child_session_id)),

@@ -347,6 +347,7 @@ impl CliAgentHostDriver {
             bound_dispatch_run_id: None,
             boundary_submission_state: Default::default(),
             mcp_tool_routes: BTreeMap::new(),
+            restored_mcp_servers: BTreeMap::new(),
             mcp_server_registry: Vec::new(),
             plugin_mcp_session: None,
             retained_model_catalogs: BTreeMap::new(),
@@ -2488,14 +2489,59 @@ impl CliAgentHostDriver {
             Self::emit_failure(request,&mut sequence,"invalid_tool_input",error,false,emit)?;
             return Ok(());
         }
-        let checked = {
-            let grant = match &request.payload {HostRequest::ExecuteTool {grant,..} => grant.as_ref(),_ => None};
-            crate::tools::validate_permission_resource_execution(&self.tool_context,
-                &input_normalization.permission_contract,&request.host_id.0,input,grant)
+        let grant = match &request.payload {
+            HostRequest::ExecuteTool { grant, .. } => grant.as_ref(),
+            _ => None,
         };
+        let normalized_args = input.as_object().map(|map| {
+            let mut args = map.clone();
+            normalize_host_tool_args(&input_normalization, &mut args);
+            args
+        });
+        let checked = crate::tools::validate_permission_resource_execution(
+            &self.tool_context,
+            &input_normalization.permission_contract,
+            &request.host_id.0,
+            input,
+            grant,
+        );
         let browser_expectation = match checked {
             Ok(expected) => expected,
             Err(error) => {
+                if let (Some(args), true) = (
+                    normalized_args.as_ref(),
+                    crate::tools::grant_matches_committed_work_step(
+                        &self.tool_context,
+                        &input_normalization.permission_contract,
+                        &request.host_id.0,
+                        &request.session_id,
+                        capability_id,
+                        call_id,
+                        normalized_args.as_ref(),
+                        input,
+                        grant,
+                    ),
+                ) {
+                    if let Some(outcome) = crate::tools::committed_work_step_outcome(
+                        &self.tool_context,
+                        &request.session_id,
+                        capability_id,
+                        call_id,
+                        Some(args),
+                        input,
+                    ) {
+                        self.emit_direct_transaction_outcome(
+                            request,
+                            &mut sequence,
+                            capability_id,
+                            call_id,
+                            args,
+                            outcome,
+                            emit,
+                        )?;
+                        return Ok(());
+                    }
+                }
                 let outcome = crate::tools::permission_resource_execution_failure(error);
                 Self::emit(request,&mut sequence,HostResponse::ToolCompleted {
                     call_id:call_id.into(),output:serde_json::to_value(tool_result_contract(&outcome,None)).map_err(|error|error.to_string())?,
@@ -2529,7 +2575,7 @@ impl CliAgentHostDriver {
             return Ok(());
         }
 
-        let Some(mut args) = input.as_object().cloned() else {
+        let Some(args) = normalized_args else {
             Self::emit_failure(
                 request,
                 &mut sequence,
@@ -2540,7 +2586,29 @@ impl CliAgentHostDriver {
             )?;
             return Ok(());
         };
-        normalize_host_tool_args(&input_normalization, &mut args);
+        if !self.runtime_tool_ids.contains(capability_id)
+            && capability_id != crate::mcp_connection_authority::CONNECT_CAPABILITY
+        {
+            if let Some(outcome) = crate::tools::committed_work_step_outcome(
+                &self.tool_context,
+                &request.session_id,
+                capability_id,
+                call_id,
+                Some(&args),
+                input,
+            ) {
+                self.emit_direct_transaction_outcome(
+                    request,
+                    &mut sequence,
+                    capability_id,
+                    call_id,
+                    &args,
+                    outcome,
+                    emit,
+                )?;
+                return Ok(());
+            }
+        }
         // Register the exact effect before hooks and Code Memory preflight.
         // Cold/parallel cancellation must also reach initialization and lock waits.
         let invocation_cancellation = self.tool_context.cancellation.child();
@@ -2554,6 +2622,27 @@ impl CliAgentHostDriver {
             return self.execute_mcp_connection(request,call_id,&Value::Object(args),&mut sequence,emit);
         }
         if [MCP_RESOURCE_READ_CAPABILITY_ID,MCP_RESOURCE_TEMPLATE_READ_CAPABILITY_ID,MCP_PROMPT_GET_CAPABILITY_ID].contains(&capability_id) {
+            if let Some(server_id) = args.get("server_id").and_then(Value::as_str) {
+                let live_owned = self.capability_catalog.mcp.servers.get(server_id)
+                    .and_then(|server| crate::mcp_connection_authority::permission_resource(&server.connection_ref).ok())
+                    .is_some_and(|resource| resource.host_id == request.host_id.0 && resource.session_id == request.session_id && resource.generation.is_some());
+                let restored_owned = self.restored_mcp_servers.get(server_id)
+                    .is_some_and(|spec| spec.host_id == request.host_id.0 && spec.session_id == request.session_id);
+                if !live_owned && restored_owned {
+                    if let Err(err) = self.ensure_restored_mcp_server_connected(server_id) {
+                        Self::emit(request, &mut sequence, HostResponse::ToolCompleted {
+                            call_id: call_id.into(),
+                            output: external_tool_result(
+                                json!({"error": err.code, "message": err.message}),
+                                nola_host_protocol::tool_result::ExecutionState::NotStarted,
+                            ),
+                            outcome: HostToolOutcome::Failed,
+                            activation: None, full_output_ref: None, artifacts: Vec::new(),
+                        }, emit)?;
+                        return Ok(());
+                    }
+                }
+            }
             let owned = args.get("server_id").and_then(Value::as_str)
                 .and_then(|id|self.capability_catalog.mcp.servers.get(id))
                 .and_then(|server|crate::mcp_connection_authority::permission_resource(&server.connection_ref).ok());
@@ -2874,6 +2963,26 @@ impl CliAgentHostDriver {
             return Ok(());
         }
         if let Some(route) = self.mcp_tool_routes.get(capability_id).cloned() {
+            let initial_owned = crate::mcp_connection_authority::permission_resource(&route.connection_ref).ok();
+            if initial_owned.as_ref().is_some_and(|resource| {
+                resource.host_id == request.host_id.0
+                    && resource.session_id == request.session_id
+                    && resource.generation.is_none()
+            }) && self.restored_mcp_servers.contains_key(&route.server_id)
+            {
+                if let Err(err) = self.ensure_restored_mcp_server_connected(&route.server_id) {
+                    Self::emit(request, &mut sequence, HostResponse::ToolCompleted {
+                        call_id: call_id.into(),
+                        output: external_tool_result(
+                            json!({"error": err.code, "message": err.message}),
+                            nola_host_protocol::tool_result::ExecutionState::NotStarted,
+                        ),
+                        outcome: HostToolOutcome::Failed,
+                        activation: None, full_output_ref: None, artifacts: Vec::new(),
+                    }, emit)?;
+                    return Ok(());
+                }
+            }
             let owned = crate::mcp_connection_authority::permission_resource(&route.connection_ref).ok();
             let current_schema = self.capability_catalog.mcp.servers.get(&route.server_id)
                 .and_then(|server|server.tools.get(&route.tool_name)).map(mcp_tool_model_input_schema);

@@ -89,6 +89,7 @@ private enum MacBackgroundGoalRunner {
             }
             if event.kind == .finished {
                 reachedSuccessfulTerminal = true
+                terminalFailure = nil
             } else if event.kind == .failed || event.kind == .cancelled {
                 terminalFailure = event.detail ?? event.text
             }
@@ -96,8 +97,14 @@ private enum MacBackgroundGoalRunner {
         if let terminalFailure {
             throw failure(terminalFailure)
         }
-        guard reachedSuccessfulTerminal else {
-            throw failure("Scheduled Goal continuation ended without a successful terminal event.")
+        if !reachedSuccessfulTerminal {
+            Logger.shared.log(
+                .info,
+                "MacBackgroundGoal",
+                "Scheduled Goal continuation slice ended cleanly",
+                metadata: ["conversation": String(sessionID.prefix(12))]
+            )
+            return
         }
         Logger.shared.log(
             .info,
@@ -827,17 +834,16 @@ struct MacSettingsView: View {
     @AppStorage(MacRunNotificationPreferenceKeys.agentCompletion) private var agentCompletionNotifications = false
     @AppStorage(MacRunNotificationPreferenceKeys.notificationsEnabled) private var notificationsEnabled = true
     private let skipsAutomaticHostVerification: Bool
-    private let embedsInWorkspace: Bool
     private let initialCategory: String?
-    @State private var showsOverview: Bool
     private let openModels: ((String?) -> Void)?
 
-    init(snapshotHostState: MacRemoteHostConnectionState? = nil, embedsInWorkspace: Bool = false,
+    init(snapshotHostState: MacRemoteHostConnectionState? = nil,
          initialCategory: String? = nil, openModels: ((String?) -> Void)? = nil) {
-        self.embedsInWorkspace = embedsInWorkspace
         self.initialCategory = initialCategory
-        _showsOverview = State(initialValue: embedsInWorkspace && initialCategory == nil)
         self.openModels = openModels
+        if let initialCategory, let destination = MacSettingsCategory(rawValue: initialCategory) {
+            UserDefaults.standard.set(destination.navigationCategory.rawValue, forKey: "nola.mac.settings.category")
+        }
         if !MacProcessRuntimePolicy.usesEphemeralCredentials {
             let host = MacRemoteHostConfigurationStore.shared.displayValues()
             _hostURL = State(initialValue: host.url)
@@ -868,13 +874,9 @@ struct MacSettingsView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            if !embedsInWorkspace {
-                settingsSidebar
-                Rectangle().fill(MacDesignColor.borderSubtle).frame(width: 1)
-            }
+            settingsSidebar
+            Rectangle().fill(MacDesignColor.borderSubtle).frame(width: 1)
             VStack(spacing: 0) {
-                if embedsInWorkspace && showsOverview { settingsOverview }
-                else {
                 settingsHeader
                 Rectangle().fill(MacDesignColor.borderSubtle).frame(height: 1)
 
@@ -900,28 +902,24 @@ struct MacSettingsView: View {
                 .scrollContentBackground(.hidden)
                 .frame(maxWidth: 840, maxHeight: .infinity, alignment: .topLeading)
                 .frame(maxWidth: .infinity, alignment: .top)
-                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(MacPageBackground())
         }
         .frame(
-            minWidth: embedsInWorkspace ? 0 : 760,
-            idealWidth: embedsInWorkspace ? nil : 820,
+            minWidth: 760,
+            idealWidth: 820,
             minHeight: 540,
             idealHeight: 620
         )
         .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: settingsError)
         .onAppear { selectedCategory = selectedCategory.navigationCategory }
         .onChange(of: initialCategory, initial: true) { _, category in
-            guard embedsInWorkspace else { return }
             if let category, let destination = MacSettingsCategory(rawValue: category) {
                 selectedCategory = destination.navigationCategory
-                showsOverview = false
-            } else { showsOverview = true }
+            }
         }
-        .task(id: "\(selectedCategory.rawValue)/\(showsOverview)") {
-            guard !embedsInWorkspace || !showsOverview else { return }
+        .task(id: selectedCategory.rawValue) {
             if selectedCategory == .providers {
                 defaultChatModel.reload()
             }
@@ -1018,45 +1016,13 @@ struct MacSettingsView: View {
                     }
                 }
                 .id(category.id)
+                .accessibilityIdentifier("settings.category.\(category.rawValue)")
             }
-        }
-    }
-
-    private var settingsOverview: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                Text(String(localized: "Settings")).font(.system(size: 24, weight: .semibold))
-                    .padding(.bottom, 28)
-                ForEach(MacSettingsGroup.allCases.flatMap(\.categories)) { category in
-                    Divider()
-                    Button { selectedCategory = category; showsOverview = false } label: {
-                        HStack(spacing: 14) {
-                            category.image.renderingMode(.template).resizable().scaledToFit()
-                                .frame(width: 20, height: 20).foregroundStyle(.secondary)
-                            Text(category.title)
-                            Spacer(minLength: 8)
-                        }.frame(maxWidth: .infinity, minHeight: 64, alignment: .leading).contentShape(Rectangle())
-                    }
-                    .buttonStyle(MacPressFeedbackButtonStyle(contentInsets: EdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 12)))
-                    .accessibilityIdentifier("settings.category.\(category.rawValue)")
-                }
-            }.padding(24).frame(maxWidth: 840, alignment: .topLeading)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
         }
     }
 
     private var settingsHeader: some View {
         HStack(spacing: 9) {
-            if embedsInWorkspace {
-                Button { showsOverview = true } label: {
-                    Label { Text(String(localized: "Settings")) } icon: {
-                        Image("nola-back").renderingMode(.template).resizable().scaledToFit().frame(width: 14, height: 14)
-                    }
-                }.buttonStyle(MacPressFeedbackButtonStyle())
-                    .help(String(localized: "Settings"))
-                    .accessibilityIdentifier("settings.back")
-                Divider().frame(height: 16)
-            }
             selectedCategory.image.renderingMode(.template).resizable().scaledToFit()
                 .frame(width: 16, height: 16)
                 .foregroundStyle(.secondary)
@@ -1218,6 +1184,7 @@ struct MacSettingsView: View {
                 isOn: $managedServerEnabled
             )
             .font(.callout.weight(.semibold))
+            .toggleStyle(.macSwitch)
             .onChange(of: managedServerEnabled) { _, enabled in
                 Task {
                     if enabled {
@@ -1554,6 +1521,7 @@ struct MacSettingsView: View {
             Section { AppleSoftwareUpdateSection() }
             Section(macSettingsText("mac.settings.section.startup", "Startup")) {
                 Toggle(macSettingsText("mac.settings.launch_at_login", "Launch Nola at login"), isOn: $launchAtLogin)
+                    .toggleStyle(.macSwitch)
                     .onChange(of: launchAtLogin) { _, enabled in
                         do {
                             try MacLaunchAtLoginService.setEnabled(enabled)
@@ -1586,19 +1554,32 @@ struct MacSettingsView: View {
                         openWindow(id: "model-center")
                     }
                 }
-                Button {
-                    if let openModels { openModels(nil) }
-                    else {
-                        MacModelCenterNavigationState.shared.showRemoteModels()
-                        openWindow(id: "model-center")
+                HStack(spacing: 10) {
+                    Button {
+                        if let openModels { openModels(nil) }
+                        else {
+                            MacModelCenterNavigationState.shared.showRemoteModels()
+                            openWindow(id: "model-center")
+                        }
+                    } label: {
+                        Label(
+                            macSettingsText("mac.settings.provider.open_model_center", "Manage API Models"),
+                            systemImage: "arrow.up.forward.app"
+                        )
                     }
-                } label: {
-                    Label(
-                        macSettingsText("mac.settings.provider.open_model_center", "Manage API Models"),
-                        systemImage: "arrow.up.forward.app"
-                    )
+                    .buttonStyle(.borderedProminent)
+
+                    Button {
+                        MacModelCenterNavigationState.shared.showLocalModels()
+                        openWindow(id: "model-center")
+                    } label: {
+                        Label(
+                            macSettingsText("mac.settings.provider.manage_local_models", "Manage Local Models"),
+                            systemImage: "cpu"
+                        )
+                    }
+                    .buttonStyle(.bordered)
                 }
-                .buttonStyle(.borderedProminent)
             }
 
         case .agent:
@@ -1616,6 +1597,7 @@ struct MacSettingsView: View {
                         }
                     )
                 )
+                .toggleStyle(.macSwitch)
                 Toggle(
                     macSettingsText("mac.settings.agent.retrieval_default", "Use retrieval by default"),
                     isOn: Binding(
@@ -1626,6 +1608,7 @@ struct MacSettingsView: View {
                         }
                     )
                 )
+                .toggleStyle(.macSwitch)
             }
             Section(macSettingsText("mac.settings.section.context_window", "Context Window")) {
                 LabeledContent(macSettingsText("mac.settings.agent.context_default", "Default context window")) {
@@ -1823,6 +1806,11 @@ struct MacSettingsView: View {
                         symbol: "externaldrive",
                         tint: .orange
                     ) { openWindow(id: "data-management") }
+                    MacSettingsDestinationCard(
+                        title: String(localized: "System Access"),
+                        symbol: "wrench.and.screwdriver",
+                        tint: .green
+                    ) { openWindow(id: "capability-center") }
                 }
                 .padding(.vertical, 4)
             }
@@ -1830,6 +1818,7 @@ struct MacSettingsView: View {
         case .diagnostics:
             Section(macSettingsText("mac.settings.section.logging", "Logging")) {
                 Toggle(macSettingsText("mac.settings.diagnostics.enable_logging", "Enable debug logging"), isOn: $debugLoggingEnabled)
+                    .toggleStyle(.macSwitch)
                     .onChange(of: debugLoggingEnabled) { _, _ in
                         MacDebugLoggingConfiguration.apply()
                     }
@@ -1885,33 +1874,37 @@ struct MacSettingsView: View {
                     .macDisclosureTransition(reduceMotion: reduceMotion)
                 }
             }
-            HStack(spacing: 10) {
-                Toggle(macSettingsText("mac.settings.notifications.enable", "Enable notifications"), isOn: $notificationsEnabled)
-                    .disabled(isUpdatingNotificationSettings)
-                    .onChange(of: notificationsEnabled) { _, enabled in
-                        guard !isUpdatingNotificationSettings else { return }
-                        isUpdatingNotificationSettings = true
-                        Task {
-                            let actual = await MacRunNotificationService.shared.setNotificationsEnabled(enabled)
-                            notificationsEnabled = actual
-                            await refreshNotificationAuthorization()
-                            if enabled, !actual {
-                                notificationFeedback = notificationPermissionFailureMessage
-                            } else if !enabled {
-                                notificationFeedback = nil
-                            }
-                            isUpdatingNotificationSettings = false
-                        }
+            Toggle(isOn: $notificationsEnabled) {
+                HStack(spacing: 8) {
+                    Text(macSettingsText("mac.settings.notifications.enable", "Enable notifications"))
+                    if isUpdatingNotificationSettings {
+                        ProgressView()
+                            .controlSize(.small)
+                            .accessibilityLabel(macSettingsText("mac.settings.notifications.updating", "Updating notification permission"))
                     }
-                if isUpdatingNotificationSettings {
-                    ProgressView()
-                        .controlSize(.small)
-                        .accessibilityLabel(macSettingsText("mac.settings.notifications.updating", "Updating notification permission"))
+                }
+            }
+            .toggleStyle(.macSwitch)
+            .disabled(isUpdatingNotificationSettings)
+            .onChange(of: notificationsEnabled) { _, enabled in
+                guard !isUpdatingNotificationSettings else { return }
+                isUpdatingNotificationSettings = true
+                Task {
+                    let actual = await MacRunNotificationService.shared.setNotificationsEnabled(enabled)
+                    notificationsEnabled = actual
+                    await refreshNotificationAuthorization()
+                    if enabled, !actual {
+                        notificationFeedback = notificationPermissionFailureMessage
+                    } else if !enabled {
+                        notificationFeedback = nil
+                    }
+                    isUpdatingNotificationSettings = false
                 }
             }
         }
         Section(macSettingsText("mac.settings.section.events", "Events")) {
             Toggle(macSettingsText("mac.settings.notifications.agent_completion", "Agent completion notifications"), isOn: $agentCompletionNotifications)
+                .toggleStyle(.macSwitch)
                 .onChange(of: agentCompletionNotifications) { _, enabled in
                     Task {
                         let actual = await MacRunNotificationService.shared.setAgentCompletionEnabled(enabled)
@@ -1926,8 +1919,10 @@ struct MacSettingsView: View {
                 }
                 .disabled(!notificationsEnabled)
             Toggle(macSettingsText("mac.settings.notifications.step_guidance", "Step guidance"), isOn: $stepGuidanceEnabled)
+                .toggleStyle(.macSwitch)
                 .disabled(!notificationsEnabled)
             Toggle(macSettingsText("mac.settings.notifications.calendar", "Aggregate calendar notifications"), isOn: $aggregateCalendarNotifications)
+                .toggleStyle(.macSwitch)
                 .disabled(!notificationsEnabled)
         }
         Section(macSettingsText("mac.settings.section.delivery", "Delivery")) {

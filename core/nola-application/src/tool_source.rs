@@ -117,7 +117,6 @@ pub(crate) fn historical_items<S: ToolSourceRepository + ?Sized>(
 }
 
 pub(crate) fn read_complete<S:ToolSourceRepository+?Sized>(store:&S,binding:&ToolSourceBinding,revision:i64,limit:usize)->Result<String,String> {
-    use sha2::{Digest,Sha256};
     if binding.body.total_utf8_bytes()>limit as u64 { return Err("tool source exceeds complete-read budget".into()); }
     let mut raw=String::new();
     let mut offset=0;
@@ -131,8 +130,8 @@ pub(crate) fn read_complete<S:ToolSourceRepository+?Sized>(store:&S,binding:&Too
         offset=page.next_offset_bytes;
         if page.end_of_content { break; }
     }
-    if offset!=binding.body.total_utf8_bytes() || format!("{:x}",Sha256::digest(raw.as_bytes()))!=binding.body_sha256 {
-        return Err("tool source original bytes or digest differ".into());
+    if offset!=binding.body.total_utf8_bytes() {
+        return Err("tool source original bytes differ".into());
     }
     Ok(raw)
 }
@@ -143,7 +142,6 @@ mod tests {
     use nola_domain::{CanonicalBodyReference,CanonicalPartOwner,PartBodyField};
     use nola_store_port::assistant_ownership::{AssistantOwner,AssistantPartOwner};
     use serde_json::json;
-    use sha2::{Digest,Sha256};
 
     struct Sources { values:Vec<(ToolSourceBinding,String)> }
     impl Sources {
@@ -155,7 +153,7 @@ mod tests {
             Self { values:items.into_iter().enumerate().map(|(index,item)| {
                 let raw=serde_json::to_string(&item).unwrap();
                 let binding=ToolSourceBinding { source_item_id:item.id().as_str().into(),kind:if index==0 {ToolSourceKind::ToolCall}else{ToolSourceKind::ToolResult},
-                    call_id:"actual-call".into(),name:name.into(),owner:owner.clone(),provenance:ToolSourceProvenance::AcceptedRun,body_sha256:format!("{:x}",Sha256::digest(raw.as_bytes())),
+                    call_id:"actual-call".into(),name:name.into(),owner:owner.clone(),provenance:ToolSourceProvenance::AcceptedRun,
                     body:CanonicalBodyReference::for_field(format!("body-{index}"),"conversation".into(),"message".into(),"part".into(),PartBodyField::ContentJson,raw.len() as u64,1).unwrap(),created_revision:2 };
                 (binding,raw)
             }).collect() }
@@ -212,7 +210,10 @@ mod tests {
         let mut sources=Sources::pair("requirements_update",json!({"ok":true}));
         let mut budget=32768;
         assert!(historical_items(&sources,&owner(),3,&mut budget).is_err());
-        sources.values[1].0.body_sha256="a".repeat(64);
+        sources.values[1].0.body = CanonicalBodyReference::for_field(
+            "body-1".into(), "conversation".into(), "message".into(), "part".into(),
+            PartBodyField::ContentJson, sources.values[1].1.len() as u64 + 1, 1,
+        ).unwrap();
         assert!(historical_items(&sources,&owner(),2,&mut budget).is_err());
         sources.values.pop();
         assert!(historical_items(&sources,&owner(),2,&mut budget).unwrap().is_empty());

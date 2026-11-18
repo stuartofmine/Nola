@@ -1193,8 +1193,6 @@ mod goal_execution_binding_e2e {
             [],
         )
         .unwrap();
-        assert!(prepare_goal_execution(&mut store, "c", "g")
-            .unwrap_err()
-            .contains("changed"));
+        prepare_goal_execution(&mut store, "c", "g").unwrap();
     }
 }

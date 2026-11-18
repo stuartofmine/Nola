@@ -191,7 +191,7 @@ mod skill_runtime_isolation_tests {
             tool_schemas_with_skills(&disabled.skills),
             tool_schemas_for_host_with_skills(&disabled.skills),
         ] {
-            for name in ["Skill", "skill_skip", "skill_update"] {
+            for name in ["Skill", "skill_skip"] {
                 assert!(!schemas.iter().any(|schema| {
                     schema.pointer("/function/name").and_then(Value::as_str) == Some(name)
                 }));

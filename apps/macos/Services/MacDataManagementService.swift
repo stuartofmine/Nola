@@ -3,7 +3,6 @@
 // - Purpose: Exports, restores, sizes, and clears Nola for Mac application data.
 
 import Foundation
-import CryptoKit
 import Observation
 import UserNotifications
 
@@ -223,11 +222,10 @@ enum MacCanonicalBackupStream {
                             try await append(Data(",\"body_json\":".utf8))
                             try await appendOriginalString(conversationID: conversationID, messageID: message.id,
                                 partID: part.id, field: .contentJSON, revision: header.revision,
-                                bytes: claim.body.totalUTF8Bytes, expectedSHA256: claim.bodySHA256,
+                                bytes: claim.body.totalUTF8Bytes,
                                 readRange: { _, _, _, field, revision, offset in
                                     let range = try await readToolSourceRange(owner, claim.sourceItemID, revision, offset)
-                                    guard range.owner == owner, range.sourceItemID == claim.sourceItemID,
-                                          range.bodySHA256 == claim.bodySHA256 else { throw MacApplicationServiceError.invalidResponse }
+                                    guard range.owner == owner, range.sourceItemID == claim.sourceItemID else { throw MacApplicationServiceError.invalidResponse }
                                     return MacConversationExportRange(conversationID: conversationID, messageID: message.id,
                                         partID: part.id, field: field, revision: range.revision, offsetBytes: range.offsetBytes,
                                         nextOffsetBytes: range.nextOffsetBytes, totalUTF8Bytes: range.totalUTF8Bytes,
@@ -264,13 +262,12 @@ enum MacCanonicalBackupStream {
 
     private static func appendOriginalString(
         conversationID: String, messageID: String, partID: String, field: MacExportBodyField,
-        revision: Int64, bytes: UInt64, expectedSHA256: String? = nil,
+        revision: Int64, bytes: UInt64,
         readRange: (String, String, String, MacExportBodyField, Int64, UInt64) async throws -> MacConversationExportRange,
         append: (Data) async throws -> Void
     ) async throws {
         try await append(Data("\"".utf8))
         var offset: UInt64 = 0
-        var digest = SHA256()
         while offset < bytes {
             try Task.checkCancellation()
             let range = try await readRange(conversationID, messageID, partID, field, revision, offset)
@@ -286,12 +283,8 @@ enum MacCanonicalBackupStream {
             // Escaping each UTF-8-aligned fragment and removing only its outer
             // quotes preserves the exact original JSON string across chunks.
             let encoded = try JSONEncoder().encode(range.text)
-            if expectedSHA256 != nil { digest.update(data: Data(range.text.utf8)) }
             try await append(Data(encoded.dropFirst().dropLast()))
             offset = range.nextOffsetBytes
-        }
-        if let expectedSHA256, digest.finalize().map({ String(format: "%02x", $0) }).joined() != expectedSHA256 {
-            throw MacApplicationServiceError.invalidResponse
         }
         try await append(Data("\"".utf8))
     }

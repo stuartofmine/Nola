@@ -31,6 +31,7 @@ data class AndroidPreparedContext(
     val route: AndroidContextRoute,
     val modelInput: ModelInput,
     val output: AgentCoreContextPrepareOutput,
+    val turnContextComponents: List<AgentCoreContextComponent> = emptyList(),
 )
 
 class AndroidContextCoordinator(
@@ -67,6 +68,7 @@ class AndroidContextCoordinator(
                 contextPayloadDigest = finalOutput.payloadDigest,
             ),
             output = finalOutput,
+            turnContextComponents = request.components.filter { it.kind != "system" },
         )
     }
 

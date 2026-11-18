@@ -112,19 +112,9 @@ enum MacResponseStyle: String, CaseIterable, Identifiable {
 
 enum MacWorkspaceSection: String, CaseIterable, Identifiable {
     case chat
-    case data
-    case models
     case extensions
-    case capabilities
-    case memory
     case automations
-    case settings
-
-    /// Memory and automations live in Data Center; Activity has its own rail.
-    static let resourceNavigationSections: [Self] = [.data, .models, .extensions, .capabilities]
-    var resourceNavigationOwner: Self {
-        switch self { case .memory, .automations: .data; default: self }
-    }
+    case memory
 
     var id: String { rawValue }
 
@@ -134,27 +124,19 @@ enum MacWorkspaceSection: String, CaseIterable, Identifiable {
 
     var title: LocalizedStringKey {
         switch self {
-        case .chat: return "Chat"
-        case .data: return "Data Center"
-        case .models: return "Models"
-        case .extensions: return "Skills and MCP"
-        case .capabilities: return "System Access"
-        case .memory: return "Long-term Memory"
+        case .chat: return "Conversations"
+        case .extensions: return "Experts & Skills"
+        case .memory: return "Memory & Sources"
         case .automations: return "Automations"
-        case .settings: return "Settings"
         }
     }
 
     var symbol: String {
         switch self {
         case .chat: return "bubble.left.and.bubble.right"
-        case .data: return "square.stack.3d.up"
-        case .models: return "cpu"
-        case .extensions: return "shippingbox"
-        case .capabilities: return "wrench.and.screwdriver"
+        case .extensions: return "puzzlepiece.extension"
         case .memory: return "brain.head.profile"
-        case .automations: return "clock"
-        case .settings: return "gearshape"
+        case .automations: return "clock.arrow.circlepath"
         }
     }
 }

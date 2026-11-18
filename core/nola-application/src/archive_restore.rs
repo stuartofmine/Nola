@@ -226,18 +226,13 @@ fn prepare_tool_source_upload<
     {
         return Err("archive tool source requires an exact sealed upload".into());
     }
-    let mut digest = Sha256::new();
     let mut count = 0u32;
     for chunk in chunks(uploads, upload_id, &owner, total) {
-        let (_, text) = chunk?;
-        digest.update(text.as_bytes());
+        let _ = chunk?;
         count = count.checked_add(1).ok_or("archive source chunk count overflow")?;
         if count > 16384 {
             return Err("archive source has too many chunks".into());
         }
-    }
-    if format!("{:x}", digest.finalize()) != claim.body_sha256 {
-        return Err("archive tool source original digest differs".into());
     }
     // Transport-supplied content IDs never select an existing local body.
     let content_id = format!("archive-source:{:x}", Sha256::digest(

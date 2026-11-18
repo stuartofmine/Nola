@@ -264,7 +264,7 @@ struct AppleUISurfaceView<JSON: JournalJSONValue>: View {
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
                     Spacer()
-                    Button("关闭") { modal = nil }.keyboardShortcut(.cancelAction)
+                    Button(String(localized: "common.close", defaultValue: "Close")) { modal = nil }.keyboardShortcut(.cancelAction)
                 }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
@@ -366,7 +366,7 @@ struct AppleUIHistoryView<JSON: JournalJSONValue>: View {
             if let failure { Text(failure).foregroundStyle(.secondary) }
             if let snapshot {
                 AppleUISurfaceView(snapshot: snapshot,
-                    submit: { _ in .rejected("历史表单不可提交。") }, accepted: { _ in })
+                    submit: { _ in .rejected(String(localized: "a2ui.history.readOnly", defaultValue: "Historical forms are read-only.")) }, accepted: { _ in })
             }
         }
         .task(id: expanded ? reference : nil) {
@@ -377,11 +377,14 @@ struct AppleUIHistoryView<JSON: JournalJSONValue>: View {
             do {
                 let result = try await load(reference)
                 try Task.checkCancellation()
-                guard let result else { failure = "此版本不可用。"; return }
+                guard let result else {
+                    failure = String(localized: "a2ui.history.unavailable", defaultValue: "This version is unavailable.")
+                    return
+                }
                 guard result.identity == reference.identity, result.revision == reference.revision,
                       result.phase == .readOnly || result.phase == .deleted,
                       result.nodes.values.allSatisfy({ $0.actions.isEmpty && $0.bindings.isEmpty }) else {
-                    failure = "历史表单版本不匹配。"
+                    failure = String(localized: "a2ui.history.mismatch", defaultValue: "Historical form version mismatch.")
                     return
                 }
                 snapshot = result
@@ -440,7 +443,7 @@ struct AppleUIReferencedSurfaceView<JSON: JournalJSONValue>: View {
             }
             if let failure {
                 Text(failure).font(.caption).foregroundStyle(.secondary)
-                Button("重新读取表单") { retry &+= 1 }
+                Button(String(localized: "a2ui.reloadForm", defaultValue: "Reload form")) { retry &+= 1 }
             }
             if snapshot == nil { AppleUIHistoryView(reference: reference, load: readRevision) }
         }
@@ -457,7 +460,7 @@ struct AppleUIReferencedSurfaceView<JSON: JournalJSONValue>: View {
                             state.drafts["\(instanceID.utf8.count):\(instanceID)\(binding)"] = value
                         }
                     }
-                    state.failure = "上次表单提交尚未确认，请查询原提交结果。"
+                    state.failure = String(localized: "a2ui.submission.pending", defaultValue: "The previous submission is unconfirmed. Check the original result.")
                 }
                 intentReady = true
                 let base = snapshot

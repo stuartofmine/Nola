@@ -120,6 +120,8 @@ pub trait GoalRuntimePort {
     /// Embedded Hosts execute an already admitted round asynchronously. This
     /// yields transport, without converting that handoff into a retry schedule.
     fn round_handoff_pending(&self) -> bool { false }
+    fn claim_submitted_run_id(&mut self) -> Option<String> { None }
+    fn stop_after_sealed_round(&self) -> bool { false }
     fn now_epoch_ms(&self) -> i64;
     fn next_nonce(&self) -> String;
     fn new_lease_owner(&self) -> String;
@@ -550,6 +552,15 @@ pub fn run_goal_cycle_inner<H: Default>(
     );
     let runtime_limit = config.runtime_limit();
     let started = Instant::now();
+    let mut completion_rejection_retried = config
+        .load_projection()?
+        .and_then(|projection| projection.active)
+        .and_then(|goal| goal.audit_reports.last().cloned())
+        .is_some_and(|audit| {
+            audit.verdict == GoalAuditVerdict::Partial
+                && audit.summary.starts_with("Completion rejected:")
+        });
+    let mut handled_recovered_round = false;
     loop {
         if recovered_round.is_none() && config.stop_requested() {
             return pause_goal(config, GoalCyclePause::UserPaused);
@@ -574,9 +585,30 @@ pub fn run_goal_cycle_inner<H: Default>(
             return Ok(GoalCycleOutcome::Paused);
         }
         let (contract_id, result) = if let Some(recovered) = recovered_round.take() {
+            handled_recovered_round = true;
             recovered
         } else {
-            let run_id = format!("goal-run-{}", config.next_nonce());
+            if handled_recovered_round && config.stop_after_sealed_round() {
+                if let Some(owner) = lease_owner.as_deref() {
+                    submit_goal_command(
+                        config,
+                        format!("goal-handoff:{owner}:{}", config.now_epoch_ms()),
+                        GoalRuntimeCommand::Release {
+                            owner: owner.to_string(),
+                            wake_at_epoch_ms: None,
+                            now_epoch_ms: config.now_epoch_ms(),
+                        },
+                    )?;
+                }
+                return Ok(GoalCycleOutcome::Yielded(H::default()));
+            }
+            let run_id = if visible_user_round {
+                config
+                    .claim_submitted_run_id()
+                    .unwrap_or_else(|| format!("goal-run-{}", config.next_nonce()))
+            } else {
+                format!("goal-run-{}", config.next_nonce())
+            };
             let contract_id = begin_core_goal_round(config, &request, &run_id)?;
             let is_visible_user_round = visible_user_round;
             let visible_prompt = if is_visible_user_round { user_prompt } else { "" };
@@ -692,10 +724,19 @@ pub fn run_goal_cycle_inner<H: Default>(
                     return Ok(GoalCycleOutcome::Completed(std::mem::take(&mut result.handoff)));
                 }
                 let feedback = acceptance.err().unwrap();
-                apply_partial_goal_audit(config, &contract_id, &feedback)?;
-                // Rejected acceptance is not permission to repeatedly ask the
-                // model to certify the same missing or unsupported evidence.
-                // Preserve the partial record and allow explicit replanning.
+                apply_partial_goal_audit(config, &contract_id, &format!("Completion rejected: {feedback}"))?;
+                if !completion_rejection_retried && started.elapsed() < runtime_limit {
+                    completion_rejection_retried = true;
+                    request = compose_goal_prompt(
+                        goal_target,
+                        user_prompt,
+                        goal_requirements,
+                        true,
+                        Some(signal),
+                        Some(&feedback),
+                    );
+                    continue;
+                }
                 return pause_goal(config, GoalCyclePause::Incomplete);
             }
             apply_partial_goal_audit(config, &contract_id, &signal.summary)?;
@@ -992,6 +1033,88 @@ mod tests {
             assert_eq!(port.projection.borrow().active.as_ref().unwrap().status, GoalStatus::Running);
             assert_eq!(port.rounds,1);
         }
+    }
+
+    #[test]
+    fn submitted_run_id_and_stop_after_sealed_round_hand_off_after_first_audit() {
+        use std::cell::{Cell, RefCell};
+        struct Port {
+            projection: RefCell<GoalProjection>,
+            nonce: Cell<u64>,
+            submitted: Option<String>,
+            stop_after_sealed: bool,
+            sealed_result: RefCell<Option<GoalRoundResult<()>>>,
+            executed_runs: RefCell<Vec<String>>,
+        }
+        impl GoalRuntimePort for Port {
+            type Handoff = ();
+            fn session_id(&self) -> &str { "conversation" }
+            fn load_projection(&self) -> Result<Option<GoalProjection>, String> { Ok(Some(self.projection.borrow().clone())) }
+            fn submit(&self, command: GoalRuntimeCommandEnvelope) -> Result<(), String> { self.projection.borrow_mut().apply(command) }
+            fn active_run_id(&self) -> Result<Option<String>, String> { Ok(None) }
+            fn prepare_exact_run(&mut self, _: &str) -> Result<nola_agent_engine::agent::AgentInputOrigin, String> { unreachable!() }
+            fn claim_submitted_run_id(&mut self) -> Option<String> { self.submitted.take() }
+            fn stop_after_sealed_round(&self) -> bool { self.stop_after_sealed }
+            fn sealed_round_result(&self, _: &str) -> Result<Option<GoalRoundResult<()>>, String> {
+                Ok(self.sealed_result.borrow_mut().take())
+            }
+            fn execute_round(&mut self, run_id: &str, _: &str, _: &str, visible: bool) -> Result<GoalRoundResult<()>, String> {
+                self.executed_runs.borrow_mut().push(run_id.to_string());
+                assert!(visible);
+                Ok(GoalRoundResult {
+                    turn_status: AgentTurnStatus::AwaitingModel,
+                    output: String::new(),
+                    goal_signal: None,
+                    terminal_reason: None,
+                    pending_user_input: false,
+                    handoff: (),
+                })
+            }
+            fn resume_round(&mut self, _: &str) -> Result<GoalRoundResult<()>, String> { unreachable!() }
+            fn now_epoch_ms(&self) -> i64 { 100 }
+            fn next_nonce(&self) -> String { let n = self.nonce.get() + 1; self.nonce.set(n); n.to_string() }
+            fn new_lease_owner(&self) -> String { format!("owner-{}", self.next_nonce()) }
+            fn owner_is_dead(&self, _: &str) -> bool { false }
+            fn is_scheduled(&self) -> bool { true }
+            fn explicit_resume(&self) -> bool { false }
+            fn runtime_limit(&self) -> Duration { Duration::from_secs(60) }
+            fn stop_requested(&self) -> bool { false }
+            fn acknowledge_slice(&mut self) -> Result<(), String> { Ok(()) }
+            fn discard_slice_snapshot(&mut self) {}
+        }
+        let mut projection = GoalProjection::default();
+        projection.apply(create_goal_command("action", "Goal", "Finish", 1)).unwrap();
+        let mut port = Port {
+            projection: RefCell::new(projection),
+            nonce: Cell::new(0),
+            submitted: Some("web-sub-1".into()),
+            stop_after_sealed: true,
+            sealed_result: RefCell::new(None),
+            executed_runs: RefCell::new(Vec::new()),
+        };
+        begin_core_goal_round(&port, "User steering prompt", "web-sub-1").unwrap();
+        assert_eq!(port.claim_submitted_run_id().as_deref(), Some("web-sub-1"));
+        assert!(port.claim_submitted_run_id().is_none());
+        let mut round_port = Port {
+            projection: port.projection.clone(),
+            nonce: Cell::new(10),
+            submitted: Some("web-sub-2".into()),
+            stop_after_sealed: true,
+            sealed_result: RefCell::new(Some(GoalRoundResult {
+                turn_status: AgentTurnStatus::Completed,
+                output: "Partial step done".into(),
+                goal_signal: None,
+                terminal_reason: Some("completed".into()),
+                pending_user_input: false,
+                handoff: (),
+            })),
+            executed_runs: RefCell::new(Vec::new()),
+        };
+        assert!(matches!(run_goal_cycle(&mut round_port, "", "Goal", "Finish").unwrap(), GoalCycleOutcome::Yielded(())));
+        assert!(round_port.executed_runs.borrow().is_empty(), "sealed audit handoff must yield before starting a second round");
+        let active = round_port.projection.borrow().active.clone().unwrap();
+        assert_eq!(active.status, GoalStatus::Running);
+        assert!(active.lease.is_none());
     }
 
 }

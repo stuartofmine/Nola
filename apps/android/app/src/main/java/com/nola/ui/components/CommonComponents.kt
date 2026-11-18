@@ -46,6 +46,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.IconButton
@@ -68,6 +70,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalContext
@@ -1006,6 +1009,125 @@ fun PermissionDialog(
                 }
             }
         }
+    }
+}
+
+@Composable
+fun NolaSwitch(
+    checked: Boolean,
+    onCheckedChange: ((Boolean) -> Unit)?,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) {
+    val darkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    Switch(
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        modifier = modifier,
+        enabled = enabled,
+        colors = SwitchDefaults.colors(
+            checkedThumbColor = Color.White,
+            checkedTrackColor = if (darkTheme) Color(0xFF2E8B57) else Color(0xFF237047),
+            checkedBorderColor = Color.Transparent,
+            uncheckedThumbColor = if (darkTheme) Color(0xFFF2F0EB) else Color.White,
+            uncheckedTrackColor = if (darkTheme) Color(0xFF3A3935) else Color(0xFFDDDAD3),
+            uncheckedBorderColor = if (darkTheme) Color(0xFF52504B) else Color(0xFFC4C0B7),
+            disabledCheckedThumbColor = Color.White.copy(alpha = 0.72f),
+            disabledCheckedTrackColor = (if (darkTheme) Color(0xFF2E8B57) else Color(0xFF237047)).copy(alpha = 0.45f),
+            disabledCheckedBorderColor = Color.Transparent,
+            disabledUncheckedThumbColor = (if (darkTheme) Color(0xFFF2F0EB) else Color.White).copy(alpha = 0.72f),
+            disabledUncheckedTrackColor = (if (darkTheme) Color(0xFF3A3935) else Color(0xFFDDDAD3)).copy(alpha = 0.45f),
+            disabledUncheckedBorderColor = (if (darkTheme) Color(0xFF52504B) else Color(0xFFC4C0B7)).copy(alpha = 0.45f),
+        ),
+    )
+}
+
+@Composable
+fun NolaDisclosureBar(
+    title: String,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    subtitle: String? = null,
+) {
+    val reduceMotion = rememberReduceMotionEnabled()
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 44.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(10.dp))
+            .clickable(enabled = enabled, role = androidx.compose.ui.semantics.Role.Button, onClick = onToggle)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (!subtitle.isNullOrBlank()) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        NolaDisclosureChevron(expanded = expanded, reduceMotion = reduceMotion)
+    }
+}
+
+@Composable
+fun NolaDropdownBar(
+    value: String,
+    expanded: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    label: String? = null,
+    enabled: Boolean = true,
+) {
+    val reduceMotion = rememberReduceMotionEnabled()
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 44.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(10.dp))
+            .clickable(enabled = enabled, role = androidx.compose.ui.semantics.Role.DropdownList, onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (!label.isNullOrBlank()) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Text(
+            text = value,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        NolaDisclosureChevron(expanded = expanded, reduceMotion = reduceMotion)
     }
 }
 

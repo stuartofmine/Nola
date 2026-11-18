@@ -185,7 +185,7 @@
 </div>
 <style>
     .preferences-card :global(label){display:flex;align-items:center;justify-content:space-between;gap:24px;min-height:56px}
-    .preferences-card :global(select){width:min(240px,55%)}
+    .preferences-card :global(select){width:min(260px,55%);min-width:160px}
     .settings-layout.overview{display:block}
     .settings-sidebar[hidden]{display:none}
     .settings-layout{display:grid;grid-template-columns:180px minmax(0,1fr);gap:40px;align-items:start}

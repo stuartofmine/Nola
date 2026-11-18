@@ -445,10 +445,8 @@ struct MacComposerView: View {
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .semibold))
-                    .frame(width: MacDesignTokens.Control.iconButton, height: MacDesignTokens.Control.iconButton)
-                    .contentShape(Rectangle())
             }
-            .buttonStyle(MacActionButtonStyle(contentInsets: .init()))
+            .buttonStyle(MacInlineIconButtonStyle(size: 22))
             .help(String(format: String(localized: "Remove %@"), attachment.name))
             .accessibilityLabel(
                 String(
@@ -649,11 +647,12 @@ struct MacComposerView: View {
             } label: {
                 Label(state.permissionMode.title, systemImage: "shield.lefthalf.filled")
             }
+            .menuStyle(MacPillMenuStyle(height: 26))
+            .fixedSize(horizontal: true, vertical: false)
             .help(state.permissionMode.detail)
             .accessibilityLabel(String(localized: "Permission Mode"))
             .accessibilityIdentifier("mac-composer-permission-mode")
             .disabled(state.permissionConfigurationState == .saving)
-            .frame(minHeight: 28)
 
             Text(state.permissionConfigurationState.title)
                 .fixedSize(horizontal: false, vertical: true)
@@ -680,14 +679,17 @@ struct MacComposerView: View {
                         }
                     }
                 } label: {
-                    Label { Text(verbatim: reasoningTitle(state.reasoningPreference)) }
-                    icon: { Image(systemName: "brain") }
+                    Label {
+                        Text(verbatim: reasoningTitle(state.reasoningPreference))
+                    } icon: {
+                        Image(systemName: "brain")
+                    }
                 }
-                .menuStyle(.borderlessButton)
+                .menuStyle(MacPillMenuStyle(height: 26))
+                .fixedSize(horizontal: true, vertical: false)
                 .accessibilityLabel(String(localized: "Reasoning", table: "ModelCenter"))
                 .accessibilityIdentifier("mac-composer-reasoning")
                 .disabled(state.isRunning || state.isSubmissionBlocked)
-                .frame(minHeight: 28)
             }
     }
 

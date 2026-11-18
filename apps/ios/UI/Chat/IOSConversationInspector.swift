@@ -30,6 +30,7 @@ nonisolated struct IOSInspectorProgressFacts: Decodable, Sendable {
             let id: String
             let objective: String
             let status: String
+            let next_wake_at_epoch_ms: Int64?
             let requirements: [String: Requirement]
             let work: Work
         }
@@ -121,6 +122,7 @@ struct IOSConversationInspector: View {
     let conversationID: String?
     let loadProgress: @MainActor (String) async throws -> IOSInspectorProgressSnapshot
     var submitGoalControl: (@MainActor (String, AppleGoalControl?) async throws -> Bool)? = nil
+    var discardGoalControl: (@MainActor (String) async throws -> Void)? = nil
     let documents: [UserUploadedContextItem]
     let processingState: ChatProcessingState
     @Environment(\.dismiss) private var dismiss
@@ -136,6 +138,7 @@ struct IOSConversationInspector: View {
     @State private var sendingGoalControl = false
     @State private var showGoalStart = false
     @State private var goalObjective = ""
+    @State private var goalConstraints = ""
     @FocusState private var goalObjectiveFocused: Bool
     @State private var goalToCancel: AppleGoalControl?
     @State private var showSchedule = false
@@ -176,6 +179,16 @@ struct IOSConversationInspector: View {
                         Section {
                             Text(goal.objective).font(.headline)
                             status(goal.status)
+                            if let wake = goal.next_wake_at_epoch_ms, wake > 0 {
+                                LabeledContent(goalText("goal.wake", "Continue at")) {
+                                    Text(Date(timeIntervalSince1970: TimeInterval(wake) / 1_000.0), format: .dateTime.month().day().hour().minute())
+                                }
+                                .font(.caption).foregroundStyle(.secondary)
+                            }
+                            if ["paused", "needs_user"].contains(goal.status) {
+                                Text(goalText("goal.paused_reply_hint", "Paused for your input. Send a reply in chat or tap Continue."))
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
                         }
                         ForEach(goal.requirements.values.sorted { $0.id < $1.id }) { requirement in
                             VStack(alignment: .leading) { Text(requirement.description); status(requirement.status) }
@@ -193,7 +206,7 @@ struct IOSConversationInspector: View {
                         }
                         ForEach(currentTasks) { task in
                             VStack(alignment: .leading) {
-                                Text(task.currentStep ?? task.id)
+                                Text(taskDisplayTitle(task))
                                 status(task.state.rawValue)
                             }
                         }
@@ -217,7 +230,7 @@ struct IOSConversationInspector: View {
         .task(id: "\(conversationID ?? ""):\(retry)") {
             if loadedOwner != conversationID {
                 facts = nil; plan = nil; supportsGoalControl = false; pendingGoalControl = nil; goalControlNotice = nil
-                sendingGoalControl = false; showGoalStart = false; showSchedule = false; goalObjective = ""; goalToCancel = nil
+                sendingGoalControl = false; showGoalStart = false; showSchedule = false; goalObjective = ""; goalConstraints = ""; goalToCancel = nil
             }
             loadedOwner = conversationID; loading = true; failed = false
             guard pane != .resources, let owner = conversationID else { loading = false; return }
@@ -252,8 +265,17 @@ struct IOSConversationInspector: View {
             if let notice = goalControlNotice { Text(notice).font(.caption).foregroundStyle(.secondary) }
             if pendingGoalControl != nil {
                 Text(goalText("goal.pending", "Waiting for Host confirmation"))
-                Button(goalText("goal.retry", "Retry saved action")) { sendGoalControl(nil) }
-                    .disabled(sendingGoalControl)
+                HStack {
+                    Button(goalText("goal.retry", "Retry saved action")) { sendGoalControl(nil) }
+                        .disabled(sendingGoalControl)
+                    if discardGoalControl != nil {
+                        Spacer()
+                        Button(goalText("goal.discard", "Discard"), role: .destructive) {
+                            discardPendingControl()
+                        }
+                        .disabled(sendingGoalControl)
+                    }
+                }
             } else if let projection = facts?.goal_projection,
                       projection.can_pause || projection.can_resume || projection.can_cancel {
                 HStack {
@@ -276,7 +298,7 @@ struct IOSConversationInspector: View {
                     } label: { Image(systemName: "ellipsis.circle").accessibilityLabel(goalText("goal.actions", "Goal actions")) }
                 }
                 .disabled(sendingGoalControl || facts?.goal_projection?.control_token == nil)
-            } else {
+            } else if canStartNewGoal {
                 Button(goalText("goal.start", "Start a Goal")) { showGoalStart = true }
                     .disabled(sendingGoalControl)
             }
@@ -297,6 +319,8 @@ struct IOSConversationInspector: View {
                         .foregroundStyle(.secondary)
                     TextField(goalText("goal.objective", "What should this Goal achieve?"), text: $goalObjective, axis: .vertical)
                         .lineLimit(3...8).focused($goalObjectiveFocused)
+                    TextField(goalText("goal.optional_constraints", "Constraints (optional)"), text: $goalConstraints, axis: .vertical)
+                        .lineLimit(2...5)
                     Text(goalText("goal.example", "Example: review the CLI, fix interaction issues, and run tests."))
                         .font(.callout).foregroundStyle(.secondary)
                     Text(goalText("goal.model_note", "Uses this conversation’s selected model and current tool permissions."))
@@ -309,8 +333,12 @@ struct IOSConversationInspector: View {
                     ToolbarItem(placement: .confirmationAction) {
                         Button(goalText("goal.start", "Start")) {
                             let objective = goalObjective.trimmingCharacters(in: .whitespacesAndNewlines)
+                            let parsedConstraints = goalConstraints
+                                .components(separatedBy: .newlines)
+                                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                                .filter { !$0.isEmpty }
                             showGoalStart = false
-                            sendGoalControl(AppleGoalControl(action: .start, objective: objective, constraints: []))
+                            sendGoalControl(AppleGoalControl(action: .start, objective: objective, constraints: parsedConstraints))
                         }.disabled(goalObjective.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                 }
@@ -347,13 +375,57 @@ struct IOSConversationInspector: View {
                 let confirmed = try await submitGoalControl(owner, control)
                 guard loadedOwner == owner, conversationID == owner else { return }
                 if !confirmed { goalControlNotice = goalText("goal.pending", "Waiting for Host confirmation") }
-                else if control?.action == .start || pendingGoalControl?.control.action == .start { goalObjective = "" }
+                else if control?.action == .start || pendingGoalControl?.control.action == .start {
+                    goalObjective = ""
+                    goalConstraints = ""
+                }
             } catch {
                 guard loadedOwner == owner, conversationID == owner else { return }
                 goalControlNotice = error.localizedDescription
             }
             sendingGoalControl = false
             retry += 1
+        }
+    }
+
+    private func discardPendingControl() {
+        guard !sendingGoalControl, let owner = conversationID, let discardGoalControl else { return }
+        sendingGoalControl = true; goalControlNotice = nil
+        Task { @MainActor in
+            defer {
+                if loadedOwner == owner && conversationID == owner {
+                    sendingGoalControl = false
+                    retry += 1
+                }
+            }
+            do {
+                try await discardGoalControl(owner)
+                guard loadedOwner == owner, conversationID == owner else { return }
+                pendingGoalControl = nil
+            } catch {
+                guard loadedOwner == owner, conversationID == owner else { return }
+                goalControlNotice = error.localizedDescription
+            }
+        }
+    }
+
+    private var canStartNewGoal: Bool {
+        guard let goal = facts?.goal_projection?.active else { return true }
+        return ["completed", "failed", "cancelled"].contains(goal.status)
+    }
+
+    private func taskDisplayTitle(_ task: AgentCoreTaskHandle) -> String {
+        if let step = task.currentStep?.trimmingCharacters(in: .whitespacesAndNewlines), !step.isEmpty {
+            return step
+        }
+        if let custom = task.lineage?.title?.trimmingCharacters(in: .whitespacesAndNewlines), !custom.isEmpty {
+            return custom
+        }
+        switch task.kind {
+        case .agent: return NSLocalizedString("chat.task.agent", value: "Background agent", comment: "Core task kind")
+        case .tool: return NSLocalizedString("chat.task.tool", value: "Background tool", comment: "Core task kind")
+        case .skill: return NSLocalizedString("chat.task.skill", value: "Skill task", comment: "Core task kind")
+        case .dataRefresh: return NSLocalizedString("chat.task.data_refresh", value: "Data refresh", comment: "Core task kind")
         }
     }
 

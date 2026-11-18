@@ -103,11 +103,11 @@ struct AppleActivityView: View {
                     HStack {
                         snapshotCount.fixedSize()
                         Spacer(minLength: 8)
-                        Toggle("workspace.today.needsResponse", isOn: $attention).toggleStyle(.switch).fixedSize()
+                        attentionToggle.fixedSize()
                     }
                     VStack(alignment: .leading, spacing: 8) {
                         snapshotCount
-                        Toggle("workspace.today.needsResponse", isOn: $attention).toggleStyle(.switch)
+                        attentionToggle
                     }
                 }.font(.subheadline)
             }.padding()
@@ -221,6 +221,17 @@ struct AppleActivityView: View {
         return entries
         #endif
     }
+    @ViewBuilder
+    private var attentionToggle: some View {
+        #if os(macOS)
+        Toggle("workspace.today.needsResponse", isOn: $attention).toggleStyle(.macSwitch)
+        #else
+        Toggle("workspace.today.needsResponse", isOn: $attention)
+            .toggleStyle(.switch)
+            .tint(Color(red: 0x23 / 255.0, green: 0x70 / 255.0, blue: 0x47 / 255.0))
+        #endif
+    }
+
     private func reload(more: Bool) async {
         let key = requestKey
         guard activeRequestKey != key else { return }

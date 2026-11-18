@@ -266,7 +266,6 @@ fn execute_tool_inner(request: &ToolRequest, ctx: &ToolContext, enforce_availabi
         "project_overview" => project_overview(&request.args, ctx),
         "instruction_context" => instruction_context(&request.args, ctx),
         "Skill" | "skill_invoke" => skill_invoke(&request.args, ctx),
-        "skill_update" => skill_update(&request.args, ctx),
         "SOP" | "sop_invoke" => sop_invoke(&request.args, ctx),
         "sop_run_update" => sop_run_update(&request.args, ctx),
         "skill_skip" => skill_skip(&request.args),

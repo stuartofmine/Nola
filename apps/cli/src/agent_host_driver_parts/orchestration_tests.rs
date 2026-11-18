@@ -442,17 +442,17 @@ mod canonical_tool_output_tests {
     }
 
     #[test]
-    fn promotes_skill_runtime_updates_for_core_reduction() {
+    fn promotes_sop_runtime_updates_for_core_reduction() {
         let update = outcome(json!({
-            "type": "skill_runtime_update",
+            "type": "sop_runtime_update",
             "action": "progress",
             "step_id": "validate",
             "status": "completed",
             "summary": "Validated the generated document"
         }));
 
-        let output = canonical_tool_output("skill_update", &update, None);
-        assert_eq!(output["type"], "skill_runtime_update");
+        let output = canonical_tool_output("sop_run_update", &update, None);
+        assert_eq!(output["type"], "sop_runtime_update");
         assert_eq!(output["action"], "progress");
         assert_eq!(output["step_id"], "validate");
         assert_eq!(output["_nola_display"], "display");

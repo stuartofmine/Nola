@@ -50,6 +50,7 @@ internal fun TaskChildDetailSheet(load: suspend (Long?) -> ConversationProjectio
     var request by remember { mutableIntStateOf(0) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
+    val unavailableMessage = stringResource(R.string.task_detail_unavailable)
     LaunchedEffect(request) {
         loading = true; error = null
         try {
@@ -61,7 +62,7 @@ internal fun TaskChildDetailSheet(load: suspend (Long?) -> ConversationProjectio
             before = window.beforeOrdinal; hasMore = window.hasMore
         } catch (failure: Exception) {
             if (failure is kotlinx.coroutines.CancellationException) throw failure
-            error = failure.message ?: "Task detail unavailable"
+            error = failure.message ?: unavailableMessage
         } finally { loading = false }
     }
     ModalBottomSheet(onDismissRequest = close, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),

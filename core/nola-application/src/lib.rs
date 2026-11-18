@@ -3955,7 +3955,6 @@ use nola_domain::core_event::{EventCursor};
             skill_id: "actually-invoked-skill".to_string(),
             version: "1.0.0".to_string(),
             instructions_ref: "skill://actually-invoked-skill/1.0.0".to_string(),
-            instructions_digest: "actual-digest".to_string(),
             base_directory: "/skills/actually-invoked-skill".to_string(),
             arguments: serde_json::json!({"input": "ACTUAL_SKILL_RUN"}),
             instructions: "Run the selected skill.".to_string(),
@@ -3963,7 +3962,6 @@ use nola_domain::core_event::{EventCursor};
             validation_steps: Vec::new(),
             activation: AgentSkillActivation::Turn,
         });
-        let digest = "a".repeat(64);
         state
             .skill_runtime
             .apply(SkillRuntimeCommandEnvelope {
@@ -3979,10 +3977,8 @@ use nola_domain::core_event::{EventCursor};
                         skill_id: "actual-runtime-skill".to_string(),
                         version: "1.0.0".to_string(),
                         display_name: "Actual runtime Skill".to_string(),
-                        instructions_ref: format!(
-                            "skill://actual-runtime-skill/1.0.0/SKILL.md#sha256={digest}"
-                        ),
-                        instructions_digest: digest,
+                        instructions_ref: "skill://actual-runtime-skill/1.0.0/SKILL.md"
+                            .to_string(),
                         required_tools: Vec::new(),
                         default_mode: Some(SkillExecutionMode::Inline),
                         execution_contract: SkillExecutionContract::default(),

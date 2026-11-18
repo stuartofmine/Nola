@@ -225,7 +225,7 @@ impl DataSourceStore {
             DataSourceReadMethod::LocalFileRead => "cli.local-file.read",
             _ => unreachable!("CLI data source read method is exhaustive"),
         };
-        let mut contract = DataSourceContract {
+        let contract = DataSourceContract {
             source_id: id.clone(),
             connector_id: connector_id(draft.kind).to_string(),
             connector_version: CONNECTOR_VERSION,
@@ -247,9 +247,7 @@ impl DataSourceStore {
             },
             validated_at: now,
             observed_at: Some(payload.observed_at),
-            validation_digest: String::new(),
         };
-        contract.seal_validation();
         let timestamp = now.to_rfc3339();
         Ok(StoredDataSource {
             schema_version: DATA_SOURCE_SCHEMA_VERSION,
@@ -766,7 +764,6 @@ fn stored_data_source(source: &DataSource) -> Result<StoredDataSource, String> {
                 validation_state: DataSourceValidationState::Failed,
                 validated_at: Utc::now(),
                 observed_at: None,
-                validation_digest: String::new(),
             });
     Ok(StoredDataSource {
         schema_version: DATA_SOURCE_SCHEMA_VERSION,
@@ -1273,10 +1270,6 @@ mod tests {
             .read_recipe
             .output_schema
             .is_object());
-        assert_eq!(
-            source.validation_contract.validation_digest,
-            source.validation_contract.expected_validation_digest()
-        );
         let canonical = nola_store::NolaStore::open(state_path).unwrap();
         let persisted = canonical.list_data_sources().unwrap();
         assert_eq!(persisted.len(), 1);

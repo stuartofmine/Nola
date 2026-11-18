@@ -10,19 +10,27 @@ data class GoalControlObservation(val goalId: String?, val controlToken: String?
 data class ConversationProgressItem(val id: String, val text: String, val status: String)
 data class ConversationProgress(val conversationId: String, val objective: String?, val status: String?,
     val requirements: List<ConversationProgressItem>, val todos: List<ConversationProgressItem>,
-    val goalControl: GoalControlObservation? = null)
+    val goalControl: GoalControlObservation? = null, val nextWakeAtEpochMs: Long? = null)
 
 class ConversationProgressRepository(private val runtime: AndroidApplicationRuntime) {
     fun load(owner: String): ConversationProgress {
-        val projection = runtime.executeQuery(buildJsonObject { put("type", "load_session_projection"); put("conversation_id", owner) })
-        val plan = runtime.executeQuery(buildJsonObject {
-            put("type", "conversation_plan")
-            put("command", buildJsonObject { put("type", "get"); put("conversation_id", owner) })
-        })
-        val observation = runtime.executeQuery(buildJsonObject {
-            put("type", "load_goal_control_observation"); put("conversation_id", owner)
-        })
-        return decode(owner, withLocalControlObservation(projection, observation), plan)
+        var lastError: IllegalArgumentException? = null
+        repeat(2) {
+            try {
+                val projection = runtime.executeQuery(buildJsonObject { put("type", "load_session_projection"); put("conversation_id", owner) })
+                val plan = runtime.executeQuery(buildJsonObject {
+                    put("type", "conversation_plan")
+                    put("command", buildJsonObject { put("type", "get"); put("conversation_id", owner) })
+                })
+                val observation = runtime.executeQuery(buildJsonObject {
+                    put("type", "load_goal_control_observation"); put("conversation_id", owner)
+                })
+                return decode(owner, withLocalControlObservation(projection, observation), plan)
+            } catch (conflict: IllegalArgumentException) {
+                lastError = conflict
+            }
+        }
+        throw checkNotNull(lastError)
     }
 
     companion object {
@@ -111,7 +119,8 @@ class ConversationProgressRepository(private val runtime: AndroidApplicationRunt
             return ConversationProgress(owner, goal?.get("objective")?.jsonPrimitive?.content,
                 goal?.get("status")?.jsonPrimitive?.content,
                 goal?.get("requirements")?.jsonObject?.values?.map { item(it, "description") }.orEmpty(),
-                savedPlan?.get("todos")?.jsonArray?.map { item(it, "content") }.orEmpty(), control)
+                savedPlan?.get("todos")?.jsonArray?.map { item(it, "content") }.orEmpty(), control,
+                goal?.get("next_wake_at_epoch_ms")?.takeUnless { it is JsonNull }?.jsonPrimitive?.longOrNull)
         }
     }
 }

@@ -3370,3 +3370,27 @@
 "main.experts.sourceChanged" = "宿主机数据已变化。请刷新专家目录并重新选择专家。你的输入已保留。";
 
 "run.blocked.inputBudget" = "请求超出了模型的输入预算。请缩短对话或附件、减少启用的工具，或选择上下文窗口更大的模型。";
+"chat.task.state.retry_waiting" = "等待重试";
+"chat.host_tool.name.goal_complete" = "完成目标";
+"chat.host_tool.name.ask_user" = "请求用户输入";
+"chat.host_tool.name.mcp_list" = "列出 MCP 资源";
+"chat.host_tool.name.mcp_read" = "读取 MCP 资源";
+"chat.conversations.rename" = "重命名对话";
+"chat.conversations.title_field" = "标题";
+"a2ui.history.readOnly" = "历史表单不可提交。";
+"a2ui.date.useShown" = "使用所示日期或时间";
+"a2ui.date.clear" = "清除";
+"a2ui.component.unsupported" = "此组件暂不可显示：";
+"a2ui.history.unavailable" = "此版本不可用。";
+"a2ui.history.mismatch" = "历史表单版本不匹配。";
+"a2ui.reloadForm" = "重新读取表单";
+"a2ui.submission.pending" = "上次表单提交尚未确认，请查询原提交结果。";
+"a2ui.intent.reconnectHost" = "请重新连接原 Host，以确认待处理的表单提交。";
+"a2ui.intent.previousUnconfirmed" = "上一条表单提交结果未确认，请先查询原提交。";
+"a2ui.surface.source_changed" = "会话来源已改变，请返回原会话操作。";
+"a2ui.intent.source_changed" = "会话来源已改变，请连接原 Host 后查询提交结果。";
+"a2ui.form.updated" = "表单已更新，请重新确认后提交。";
+"a2ui.queue.not_executed" = "表单操作未执行，原请求已被拒绝或取消。可移除此排队操作。";
+"a2ui.queue.cancel_rejected" = "移除未执行的表单操作";
+"chat.host.reconnect_bound" = "请重新连接此会话绑定的 Host。";
+"chat.host.source_unavailable" = "无法确认此会话的来源 Host。";

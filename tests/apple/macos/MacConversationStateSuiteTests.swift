@@ -751,7 +751,7 @@ final class PersistenceTestRemoteHost: MacRemoteAgentRunning {
                                  taskID: String, target: MacRemoteSubmissionTarget) async throws -> AppleTaskCancellationReceipt {
         throw unexpectedPersistenceHostCall("remote.cancelTask")
     }
-    func cancelRun(identity: MacRemoteSubmissionIdentity, requestDigest: String) async throws {}
+    func cancelRun(identity: MacRemoteSubmissionIdentity) async throws {}
     func taskEvents(conversationID: String,
                     afterCursor: Int64) async -> AsyncThrowingStream<MacRemoteTaskProjectionEvent, Error> {
         AsyncThrowingStream { $0.finish(throwing: unexpectedPersistenceHostCall("remote.taskEvents")) }

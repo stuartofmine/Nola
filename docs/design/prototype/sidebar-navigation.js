@@ -1,20 +1,93 @@
 'use strict';
-window.sidebarNavigation=(()=>{
-let leftMode='conversations',leftQuery='';
-const paths={work:'M3 4h18v16H3zM9 4v16M9 9h12',overview:'M4 4h16v16H4zM8 9h8M8 13h5',review:'m8 7-5 5 5 5m8-10 5 5-5 5m-3-12-2 20',artifact:'M8 3h11v15H8zM5 7H3v14h12v-1',progress:'M5 5h2m3 0h9M5 12h2m3 0h9M5 19h2m3 0h9',goal:'M5 21V3m0 1h13l-3 4 3 4H5',more:'M5 12h.01M12 12h.01M19 12h.01'};
-const icon=n=>paths[n]?`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${paths[n]}"/></svg>`:svg(n);
-const entry=(label,i,action,selected,extra='')=>`<button class="strip-entry ${selected?'selected':''}" data-action="${action}" aria-label="${label}" aria-pressed="${selected}" title="${label}" ${extra}>${icon(i)}<span class="entry-tooltip" role="tooltip">${label}</span></button>`;
-function left(){const selected=architectureModule.snapshot().sidebarVisible===false?'':leftMode==='conversations'?'对话':'资源';return `<div class="global-navigation"><nav class="icon-strip" aria-label="左侧列表类别">${[['对话','chat','conversations'],['资源','folder','manage']].map(([label,i,p])=>entry(label,i,'sn-left:'+p,selected===label)).join('')}</nav></div>`}
-function list(){if(leftMode==='manage')return resources();return `<label class="rail-search"><span class="sr-only">搜索对话</span><input id="left-search" aria-label="搜索对话" placeholder="搜索对话" value="${esc(leftQuery)}">${leftQuery?`<button data-action="sn-clear-search" title="清除搜索" aria-label="清除搜索">${svg('close')}</button>`:''}</label><div class="rail-history">${conversations.filter(c=>(c.title+' '+c.preview).includes(leftQuery)).map(c=>`<button class="history-item ${activeId===c.id?'active':''}" data-action="dk-select:${c.id}">${esc(c.title)}</button>`).join('')}</div><button class="text-action" data-action="er:manage">专家库</button>`}
-function caption(){return `<div class="strip-caption">${leftMode==='conversations'?'对话':'资源'}</div>`}
-function resources(){const route=architectureModule.snapshot().canvasView?.id;const selected=['data','memory'].includes(route)?'data':route==='plans'?'plans':route==='capabilities'?(manageModule.snapshot().capTab==='系统访问'?'access':'capabilities'):route;return `<div class="rail-resource-links">${[['data','数据中心'],['plans','自动任务'],['models','模型'],['capabilities','Skills / MCP'],['access','系统访问']].map(([p,t])=>`<button title="${t}" data-action="sn-open:${p}" ${selected===p?'aria-current="page"':''}>${t}</button>`).join('')}</div>`}
-const toolGroups=[['任务','progress',['工作概览','进度','目标']],['产物','artifacts',['审阅','产物']],['上下文','file',['会话配置','上下文预算','执行','参与者']]];
-function tools(selected){return `<nav class="icon-strip context-tools grouped-tools" aria-label="对话工具">${toolGroups.map(([label,i,tabs])=>`<button class="strip-entry tool-group ${tabs.includes(selected)?'selected':''}" data-action="sn-group:${label}" aria-label="${label}" title="${label} · ${tabs.join(' · ')}" aria-pressed="${tabs.includes(selected)}">${svg(i)}<span class="entry-tooltip" role="tooltip">${label}</span></button>`).join('')}</nav>`}
+window.sidebarNavigation = (() => {
+    let leftQuery = '';
+    const paths = {
+        puzzle: 'M11 4a2 2 0 1 1 4 0h3a2 2 0 0 1 2 2v3a2 2 0 1 1 0 4v3a2 2 0 0 1-2 2h-3a2 2 0 1 1-4 0H6a2 2 0 0 1-2-2v-3a2 2 0 1 1 0-4V6a2 2 0 0 1 2-2Z',
+        brain: 'M9.5 4A3.5 3.5 0 0 0 6 7.5c0 .4.1.8.2 1.1A3.5 3.5 0 0 0 4 12a3.5 3.5 0 0 0 1.4 2.8A3.5 3.5 0 0 0 9 19.5c1 0 2-.4 2.7-1.1V5.2A3.5 3.5 0 0 0 9.5 4Zm5 0a3.5 3.5 0 0 0-2.2 1.2v13.2a3.5 3.5 0 0 0 2.7 1.1 3.5 3.5 0 0 0 3.6-4.7A3.5 3.5 0 0 0 20 12a3.5 3.5 0 0 0-2.2-3.4c.1-.3.2-.7.2-1.1A3.5 3.5 0 0 0 14.5 4Z',
+        progress: 'M5 5h2m3 0h9M5 12h2m3 0h9M5 19h2m3 0h9',
+        artifacts: 'M8 3h11v15H8zM5 7H3v14h12v-1',
+        file: 'M14 2H5v20h14V7Zm0 0v6h5M8 12h8M8 16h6'
+    };
+    const icon = n => paths[n] ? `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${paths[n]}"/></svg>` : svg(n);
+    const sections = [
+        ['chat', '对话', 'chat'],
+        ['extensions', '专家与技能', 'puzzle'],
+        ['automations', '自动化中心', 'clock'],
+        ['memory', '记忆与数据源', 'brain']
+    ];
+    const toolAreas = [
+        ['任务', 'task', 'progress'],
+        ['产物', 'artifacts', 'artifacts'],
+        ['上下文', 'context', 'file']
+    ];
+    const areaTitles = {task: '任务', artifacts: '产物', context: '上下文'};
 
-function focusTool(selected){const group=toolGroups.find(g=>g[2].includes(selected));if(group)document.querySelector('[data-action="sn-group:'+group[0]+'"]')?.focus()}
-function right(selected,width){const group=toolGroups.find(g=>g[2].includes(selected));return `<div class="panel-caption"><strong>${group?.[0]||'工作面板'}</strong><button class="text-action" title="调整工作面板宽度" data-action="dk-width">${width>360?'收窄':'展开'}</button><button class="strip-close" aria-label="关闭工作面板" title="关闭工作面板" data-action="dk-inspector">${svg('close')}</button></div>`}
-function handle(a){if(a==='sn-clear-search'){leftQuery='';render();document.querySelector('#left-search')?.focus();return true}if(a.startsWith('sn-group:')){const group=toolGroups.find(g=>g[0]===a.split(':')[1]);const current=architectureModule.snapshot().inspector;architectureModule.handle('dk-panel:'+(group[2].includes(current)?current:group[2][0]));return true}if(a.startsWith('sn-left:')){const next=a.split(':')[1];const visible=architectureModule.snapshot().sidebarVisible;if(leftMode===next&&visible){architectureModule.handle('dk-sidebar')}else{leftMode=next;if(!visible)architectureModule.handle('dk-sidebar');else render()}return true}if(a.startsWith('sn-open:')){const route=a.split(':')[1];architectureModule.openRoute(route==='access'?'capabilities':route);if(route==='access'||route==='capabilities')manageModule.handle('mg-cap-tab:'+(route==='access'?'系统访问':'技能'));return true}return false}
-function selectList(v){leftMode=['conversations','manage'].includes(v)?v:'conversations';render()}
-function bind(){const search=document.querySelector('#left-search');if(search)search.oninput=()=>{leftQuery=search.value;const pos=search.selectionStart;render();const next=document.querySelector('#left-search');next?.focus();next?.setSelectionRange(pos,pos)};document.querySelectorAll('.icon-strip').forEach(strip=>{const buttons=[...strip.querySelectorAll('button')];buttons.forEach((button,i)=>{button.onkeydown=e=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();const n=e.key==='Home'?0:e.key==='End'?buttons.length-1:(i+(e.key==='ArrowRight'?1:-1)+buttons.length)%buttons.length;buttons[n].focus()};const original=button.onclick;button.onclick=()=>{const action=button.dataset.action;original?.();document.querySelectorAll('.icon-strip button').forEach(b=>{if(b.dataset.action===action)b.focus()})}})})}
-return {caption,selectList,left,right,tools,list,resources,handle,bind,focusTool};
+    function conversationRow(c, currentSection) {
+        const active = currentSection === 'chat' && activeId === c.id;
+        return `<button class="history-item ${active ? 'active' : ''}" data-action="dk-select:${esc(c.id)}"><span class="history-row-top"><strong>${esc(c.title)}</strong><small>${esc(c.time)}</small></span><span class="history-row-sub">${esc(c.preview || '开始新对话')}</span>${c.experts?.length ? `<span class="history-row-experts">${icon('person')}${esc(c.experts.join(' · '))}</span>` : ''}</button>`;
+    }
+
+    function sidebar() {
+        const snap = architectureModule.snapshot();
+        const q = leftQuery.trim().toLowerCase();
+        const filtered = conversations.filter(c => !q || (c.title + ' ' + c.preview).toLowerCase().includes(q));
+        const pinned = filtered.filter(c => c.id === 'design');
+        const recent = filtered.filter(c => c.id !== 'design');
+        return `<nav class="rail-sections" aria-label="主导航">${sections.map(([id, label, ic]) => `<button class="nav-item ${snap.section === id ? 'active' : ''}" data-action="sn-section:${id}" ${snap.section === id ? 'aria-current="page"' : ''}>${icon(ic)}<span>${label}</span></button>`).join('')}</nav><div class="rail-divider" role="separator"></div><label class="rail-search">${svg('search')}<input id="left-search" aria-label="搜索对话" placeholder="搜索对话" value="${esc(leftQuery)}" autocomplete="off">${leftQuery ? `<button type="button" data-action="sn-clear-search" title="清除搜索" aria-label="清除搜索">${svg('close')}</button>` : ''}</label><div class="rail-history">${pinned.length ? `<div class="rail-caption">置顶</div>${pinned.map(c => conversationRow(c, snap.section)).join('')}` : ''}${recent.length ? `<div class="rail-caption">最近</div>${recent.map(c => conversationRow(c, snap.section)).join('')}` : (!pinned.length ? '<p class="muted" style="padding:12px;font-size:12px">没有匹配的对话</p>' : '')}</div>`;
+    }
+
+    function tools(selectedArea) {
+        return `<nav class="icon-strip context-tools grouped-tools" aria-label="对话工具">${toolAreas.map(([label, area, ic]) => `<button class="strip-entry tool-group ${selectedArea === area ? 'selected' : ''}" data-action="sn-group:${label}" aria-label="${label}" title="${label}" aria-pressed="${selectedArea === area}">${icon(ic)}<span class="entry-tooltip" role="tooltip">${label}</span></button>`).join('')}</nav>`;
+    }
+
+    function right(selectedArea) {
+        return `<div class="panel-caption"><strong data-inspector-area-title>${esc(areaTitles[selectedArea] || '任务')}</strong><button class="strip-close" aria-label="关闭工作面板" title="关闭工作面板" data-action="dk-inspector">${svg('close')}</button></div>`;
+    }
+
+    function handle(a) {
+        if (a === 'sn-clear-search') {
+            leftQuery = '';
+            render();
+            document.querySelector('#left-search')?.focus();
+            return true;
+        }
+        if (a.startsWith('sn-section:')) {
+            architectureModule.openSection(a.split(':')[1]);
+            return true;
+        }
+        if (a.startsWith('sn-group:')) {
+            const label = a.split(':')[1];
+            const area = toolAreas.find(item => item[0] === label)?.[1] || 'task';
+            architectureModule.toggleInspector(area);
+            return true;
+        }
+        return false;
+    }
+
+    function bind() {
+        const search = document.querySelector('#left-search');
+        if (search) {
+            search.oninput = () => {
+                leftQuery = search.value;
+                const pos = search.selectionStart;
+                render();
+                const next = document.querySelector('#left-search');
+                next?.focus();
+                next?.setSelectionRange(pos, pos);
+            };
+        }
+        document.querySelectorAll('.icon-strip').forEach(strip => {
+            const buttons = [...strip.querySelectorAll('button')];
+            buttons.forEach((button, i) => {
+                button.onkeydown = e => {
+                    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+                    e.preventDefault();
+                    const n = e.key === 'Home' ? 0 : e.key === 'End' ? buttons.length - 1 : (i + (e.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
+                    buttons[n].focus();
+                };
+            });
+        });
+    }
+
+    return {sidebar, right, tools, handle, bind, areaTitles};
 })();

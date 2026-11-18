@@ -109,7 +109,6 @@ fn skill_run() -> SkillRun {
             version: "1".into(),
             display_name: "Long title remains borrowed".repeat(100),
             instructions_ref: "opaque".into(),
-            instructions_digest: "a".repeat(64),
             required_tools: Vec::new(),
             default_mode: None,
             execution_contract: Default::default(),

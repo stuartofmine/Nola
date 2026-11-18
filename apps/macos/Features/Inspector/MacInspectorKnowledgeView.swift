@@ -68,13 +68,18 @@ struct MacInspectorKnowledgeView: View {
                 .font(.system(size: MacDesignTokens.Typography.inspectorDetail, weight: .medium))
                 .foregroundStyle(Color.secondary.opacity(0.84))
             }
-            .padding(5)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
             .background(
-                Color.primary.opacity(0.025),
-                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(MacDesignColor.subtleFill.opacity(0.6))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(MacDesignColor.borderSubtle, lineWidth: 0.75)
+                    }
             )
 
-            DisclosureGroup(String(localized: "Knowledge Points", table: "Chat"), isExpanded: Binding(
+            DisclosureGroup(isExpanded: Binding(
                 get: { navigation.expandedKnowledge.contains(.points) },
                 set: { expanded in
                     navigation.setKnowledgeExpanded(.points, expanded)
@@ -95,9 +100,12 @@ struct MacInspectorKnowledgeView: View {
                     )
                     knowledgeSaveStatus
                 }
+            } label: {
+                Label(MacInspectorKnowledgePane.points.title, systemImage: MacInspectorKnowledgePane.points.symbol)
+                    .font(.system(size: 13, weight: .medium))
             }
             .id("knowledge-points")
-            DisclosureGroup(String(localized: "Conversation Wiki", table: "Chat"), isExpanded: Binding(
+            DisclosureGroup(isExpanded: Binding(
                 get: { navigation.expandedKnowledge.contains(.wiki) },
                 set: { expanded in
                     navigation.setKnowledgeExpanded(.wiki, expanded)
@@ -118,9 +126,12 @@ struct MacInspectorKnowledgeView: View {
                     )
                     knowledgeSaveStatus
                 }
+            } label: {
+                Label(MacInspectorKnowledgePane.wiki.title, systemImage: MacInspectorKnowledgePane.wiki.symbol)
+                    .font(.system(size: 13, weight: .medium))
             }
             .id("knowledge-wiki")
-            DisclosureGroup(String(localized: "Conversation Recall", table: "Chat"), isExpanded: Binding(
+            DisclosureGroup(isExpanded: Binding(
                 get: { navigation.expandedKnowledge.contains(.recall) },
                 set: { expanded in
                     navigation.setKnowledgeExpanded(.recall, expanded)
@@ -194,10 +205,13 @@ struct MacInspectorKnowledgeView: View {
                         }
                     }
                 }
+            } label: {
+                Label(MacInspectorKnowledgePane.recall.title, systemImage: MacInspectorKnowledgePane.recall.symbol)
+                    .font(.system(size: 13, weight: .medium))
             }
             .id("knowledge-recall")
         }
-        .disclosureGroupStyle(MacRowDisclosureStyle(isPlain: true))
+        .disclosureGroupStyle(MacRowDisclosureStyle())
     }
 
     @ViewBuilder

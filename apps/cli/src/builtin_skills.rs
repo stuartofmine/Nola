@@ -88,6 +88,41 @@ pub(crate) fn materialize_managed_directory_for_id(id: &str) -> Result<Option<Pa
     Ok(directory.join("SKILL.md").is_file().then_some(directory))
 }
 
+pub(crate) fn materialize_single_builtin(
+    id: &str,
+    content_override: Option<&str>,
+) -> Result<Option<PathBuf>, String> {
+    let root = managed_root()?;
+    materialize_single_builtin_at(&root, id, content_override)
+}
+
+pub(crate) fn materialize_single_builtin_at(
+    root: &Path,
+    id: &str,
+    content_override: Option<&str>,
+) -> Result<Option<PathBuf>, String> {
+    let Some(skill) = EMBEDDED_SKILLS
+        .iter()
+        .find(|skill| skill.user_facing && skill.id == id)
+    else {
+        return Ok(None);
+    };
+    fs::create_dir_all(root).map_err(|error| {
+        format!(
+            "create built-in Skill root {} failed: {error}",
+            root.display()
+        )
+    })?;
+    for shared in EMBEDDED_SKILLS.iter().filter(|entry| !entry.user_facing) {
+        let shared_dir = root.join(shared.resource_dir);
+        materialize_embedded_skill(&shared_dir, shared, shared.instruction)?;
+    }
+    let directory = root.join(skill.resource_dir);
+    let instructions = content_override.unwrap_or(skill.instruction);
+    materialize_embedded_skill(&directory, skill, instructions)?;
+    Ok(Some(directory))
+}
+
 pub(crate) fn managed_root() -> Result<PathBuf, String> {
     let home = crate::platform_paths::home_dir()
         .ok_or_else(|| "cannot resolve the user home directory".to_string())?;
@@ -235,7 +270,6 @@ mod discovery_tests {
         SkillRuntimeCommand, SkillRuntimeCommandEnvelope, SkillRuntimeState,
     };
     use serde_json::Value;
-    use sha2::{Digest, Sha256};
 
     #[test]
     fn discovery_catalog_is_bounded_and_contains_no_full_skill_body() {
@@ -300,8 +334,6 @@ mod discovery_tests {
                     .unwrap_or(Value::Null),
             )
             .unwrap_or_else(|error| panic!("{} execution contract: {error}", skill.id));
-            let instructions = skill.instruction.as_bytes();
-            let digest = format!("{:x}", Sha256::digest(instructions));
             let mut runtime = SkillRuntimeState::default();
             runtime
                 .apply(SkillRuntimeCommandEnvelope {
@@ -318,10 +350,9 @@ mod discovery_tests {
                             version: "manifest-audit".to_string(),
                             display_name: skill.title.to_string(),
                             instructions_ref: format!(
-                                "skill://{}/manifest-audit/SKILL.md#sha256={digest}",
+                                "skill://{}/manifest-audit/SKILL.md",
                                 skill.id
                             ),
-                            instructions_digest: digest,
                             required_tools: Vec::new(),
                             default_mode: Some(SkillExecutionMode::Inline),
                             execution_contract: contract,
@@ -779,6 +810,10 @@ fn localized_name(id: &str) -> &'static str {
         "nature-statistics" => "统计报告审查",
         "nature-ref-verifier" => "学术参考文献核验",
         "nature-paper2ppt" => "论文转演示文稿",
+        "implement-code" => "代码编写",
+        "review-code" => "代码审查",
+        "test-software" => "软件测试",
+        "create-visual-art" => "视觉艺术创作",
         "install-open-source-model" => "开源模型安装",
         _ => "内置 Skill",
     }
@@ -790,12 +825,17 @@ fn category_id(id: &str) -> &'static str {
             "documents"
         }
         "analyze-data" | "excel-workbook-authoring" | "nature-statistics" => "data-analysis",
-        "powerpoint-presentation-authoring" | "collaborate-in-figma" | "nature-paper2ppt" => {
-            "design-presentations"
-        }
+        "powerpoint-presentation-authoring"
+        | "collaborate-in-figma"
+        | "nature-paper2ppt"
+        | "create-visual-art" => "design-presentations",
         "assist-email" | "assist-meetings" => "communication",
         "plan-schedule-tasks" | "design-automations" => "planning-automation",
-        "organize-files" | "install-open-source-model" => "workspace",
+        "organize-files"
+        | "install-open-source-model"
+        | "implement-code"
+        | "review-code"
+        | "test-software" => "workspace",
         _ => "knowledge-research",
     }
 }
@@ -834,9 +874,9 @@ mod tests {
 
     #[test]
     fn shared_catalog_contains_all_product_skills() {
-        assert_eq!(EMBEDDED_SKILLS.len(), 25);
-        assert_eq!(catalog_at(&temporary_root("catalog"), &[]).len(), 24);
-        assert_eq!(merged_catalog(&[], &[]).unwrap().len(), 24, "local built-in selections must survive the API ACL projection");
+        assert_eq!(EMBEDDED_SKILLS.len(), 29);
+        assert_eq!(catalog_at(&temporary_root("catalog"), &[]).len(), 28);
+        assert_eq!(merged_catalog(&[], &[]).unwrap().len(), 28, "local built-in selections must survive the API ACL projection");
         assert!(EMBEDDED_SKILLS
             .iter()
             .any(|skill| skill.id == "word-document-authoring"));
@@ -849,6 +889,14 @@ mod tests {
         assert!(EMBEDDED_SKILLS
             .iter()
             .any(|skill| skill.id == "install-open-source-model"));
+        for skill_id in [
+            "create-visual-art",
+            "implement-code",
+            "review-code",
+            "test-software",
+        ] {
+            assert!(EMBEDDED_SKILLS.iter().any(|skill| skill.id == skill_id));
+        }
         let pdf = EMBEDDED_SKILLS
             .iter()
             .find(|skill| skill.id == "work-with-pdf")
@@ -894,8 +942,12 @@ mod tests {
         assert_eq!(category_id("word-document-authoring"), "documents");
         assert_eq!(category_id("nature-statistics"), "data-analysis");
         assert_eq!(category_id("nature-paper2ppt"), "design-presentations");
+        assert_eq!(category_id("create-visual-art"), "design-presentations");
         assert_eq!(category_id("nature-reader"), "knowledge-research");
         assert_eq!(category_id("install-open-source-model"), "workspace");
+        assert_eq!(category_id("implement-code"), "workspace");
+        assert_eq!(category_id("review-code"), "workspace");
+        assert_eq!(category_id("test-software"), "workspace");
     }
 
     #[test]
@@ -911,6 +963,36 @@ mod tests {
         .unwrap();
         assert!(!root.join("word").exists());
         assert!(root.join("analyze-data/SKILL.md").is_file());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn materialize_single_builtin_populates_missing_upgrade_skill_without_reenabling_others() {
+        let root = temporary_root("single-materialize");
+        let _ = fs::remove_dir_all(&root);
+        materialize_enabled_at(
+            &root,
+            &[
+                json!({"id":"word-document-authoring", "enabled":false}),
+                json!({"id":"create-visual-art", "enabled":false}),
+            ],
+        )
+        .unwrap();
+        assert!(!root.join("word").exists());
+        assert!(!root.join("create-visual-art").exists());
+
+        let materialized = materialize_single_builtin_at(&root, "create-visual-art", None)
+            .unwrap()
+            .expect("create-visual-art should materialize");
+        assert_eq!(materialized, root.join("create-visual-art"));
+        assert!(root.join("create-visual-art/SKILL.md").is_file());
+        assert!(root.join("create-visual-art/NOLA_MANIFEST.json").is_file());
+        assert!(root.join("nature-shared/SKILL.md").is_file());
+        assert!(!root.join("word").exists(), "unrelated disabled skills must remain absent");
+
+        assert!(materialize_single_builtin_at(&root, "nature-shared", None)
+            .unwrap()
+            .is_none());
         let _ = fs::remove_dir_all(root);
     }
 

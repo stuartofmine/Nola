@@ -95,6 +95,14 @@ struct MacOnboardingView: View {
             }
         }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: step)
+        .background(alignment: .top) {
+            MacWindowDragRegion()
+                .frame(height: 44)
+        }
+        .background {
+            MacChatWindowChromeConfigurator(title: "Nola")
+                .frame(width: 0, height: 0)
+        }
 
     }
 
@@ -170,7 +178,7 @@ struct MacOnboardingView: View {
             )
         }
         .padding(.horizontal, 30)
-        .padding(.top, 24)
+        .padding(.top, 44)
         .frame(maxWidth: 840)
         .frame(maxWidth: .infinity)
     }

@@ -949,7 +949,7 @@ final class MacRemoteCancellationReceiptTests: XCTestCase {
         do { for try await _ in stream {} } catch MacRemoteHostError.transportInterrupted {}
         XCTAssertEqual(ticket.phase, .accepted, "Only the source admission receipt accepts this submission")
         let intent = try XCTUnwrap(port.remoteSubmissionIntent(conversationID: "conversation"))
-        try await service.cancelRun(identity: intent.identity, requestDigest: XCTUnwrap(intent.request_digest))
+        try await service.cancelRun(identity: intent.identity)
         let old = try await requestCounts(firstURL)
         let new = try await requestCounts(secondURL)
         XCTAssertEqual(old["streams"], 1)
@@ -1023,8 +1023,7 @@ final class MacRemoteCancellationReceiptTests: XCTestCase {
         }
         if mode == "cancel" {
         let intent = try XCTUnwrap(port.remoteSubmissionIntent(conversationID: "conversation"))
-        let digest = try XCTUnwrap(intent.request_digest)
-        let cancellation = Task { try await service.cancelRun(identity: intent.identity, requestDigest: digest) }
+        let cancellation = Task { try await service.cancelRun(identity: intent.identity) }
         if delayed {
             try await waitForObservation(baseURL)
             _ = try await URLSession.shared.data(from: baseURL.appendingPathComponent("finish-original"))
@@ -1462,7 +1461,6 @@ nonisolated final class CancellationJournalHTTPServer: @unchecked Sendable {
             } else if path.hasSuffix("/cancel") {
                 guard let identity = input["identity"] as? [String: Any],
                       let run = identity["submission_id"] as? String, let source = fixtures[run],
-                      input["request_digest"] as? String == source.requestDigest,
                       identity["assistant_message_id"] as? String == source.assistantMessageID else {
                     send(connection, status: 409, body: Data()); return
                 }
@@ -1694,7 +1692,7 @@ final class PermissionEnvelopeRemoteHost: MacRemoteAgentRunning {
         }
         throw unexpectedPermissionEnvelopeHostCall("remote.cancelTask")
     }
-    func cancelRun(identity: MacRemoteSubmissionIdentity, requestDigest: String) async throws {
+    func cancelRun(identity: MacRemoteSubmissionIdentity) async throws {
         cancellationRequests.append(identity.conversation_id)
         if failsCancellation { throw NSError(domain: "PermissionEnvelopeTest", code: 3) }
     }

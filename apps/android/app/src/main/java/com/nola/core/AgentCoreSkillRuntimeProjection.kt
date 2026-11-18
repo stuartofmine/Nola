@@ -48,7 +48,6 @@ data class AgentCoreSkillRun(
     val skillId: String,
     val version: String,
     val instructionsRef: String,
-    val instructionsDigest: String,
     val displayName: String,
     val mode: String,
     val status: AgentCoreSkillRunStatus,
@@ -387,17 +386,15 @@ private fun JsonObject.toSkillRuntimeUpdate(): AgentCoreSkillRuntimeUpdate? {
 private fun JsonObject.toSkillRun(): AgentCoreSkillRun? {
     val owner = objectValue("owner") ?: return null
     val descriptor = objectValue("descriptor") ?: return null
-    val digest = descriptor.stringValue("instructions_digest") ?: return null
-    if (digest.length != 64 || digest.any { it !in "0123456789abcdef" } ||
-        descriptor.stringValue("instructions_ref")?.endsWith("#sha256=$digest") != true) return null
+    val instructionsRef = descriptor.stringValue("instructions_ref")
+        ?.takeIf { it.isNotBlank() } ?: return null
     return AgentCoreSkillRun(
         runId = stringValue("run_id") ?: return null,
         ownerSessionId = owner.stringValue("session_id") ?: return null,
         ownerParentTurnId = owner.stringValue("parent_turn_id") ?: return null,
         skillId = descriptor.stringValue("skill_id") ?: return null,
         version = descriptor.stringValue("version") ?: return null,
-        instructionsRef = descriptor.stringValue("instructions_ref") ?: return null,
-        instructionsDigest = digest,
+        instructionsRef = instructionsRef,
         displayName = descriptor.stringValue("display_name") ?: return null,
         mode = stringValue("mode") ?: return null,
         status = AgentCoreSkillRunStatus.fromWireValue(stringValue("status")) ?: return null,

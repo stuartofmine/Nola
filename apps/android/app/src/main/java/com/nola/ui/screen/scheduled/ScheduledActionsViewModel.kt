@@ -68,6 +68,7 @@ class ScheduledActionsViewModel internal constructor(
                     )
                 }
             }.onFailure { error ->
+                if (error is CancellationException) throw error
                 _uiState.update {
                     it.copy(isLoading = false, errorMessage = error.localizedMessage.orEmpty())
                 }
@@ -139,6 +140,7 @@ class ScheduledActionsViewModel internal constructor(
                     loadActions()
                 }
                 .onFailure { error ->
+                    if (error is CancellationException) throw error
                     _uiState.update { state ->
                         state.copy(
                             errorMessage = error.localizedMessage.orEmpty(),

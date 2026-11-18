@@ -240,12 +240,6 @@ class AndroidAgentPermissionBroker(private val context: Context) {
             val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
                 (if (write) Intent.FLAG_GRANT_WRITE_URI_PERMISSION else 0)
             runCatching { context.contentResolver.takePersistableUriPermission(uri, flags) }
-                .getOrElse {
-                    return AndroidAgentPermissionDecision(
-                        requestId,
-                        AndroidAgentPermissionUserDecision.Deny
-                    )
-                }
         }
         return AndroidAgentPermissionDecision(
             requestId = requestId,

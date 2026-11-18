@@ -202,12 +202,11 @@ class WebHostApiServiceImpl @Inject constructor(
         hostBaseUrl: String,
         token: String,
         identity: RemoteSubmissionIdentity,
-        requestDigest: String,
         pinnedCertificateSha256: String
     ) {
         val url = webHostMobileUrl(hostBaseUrl, "chat/agent/v2/cancel")
         val payload = kotlinx.serialization.json.buildJsonObject {
-            put("identity", identity.wire()); put("request_digest", kotlinx.serialization.json.JsonPrimitive(requestDigest))
+            put("identity", identity.wire())
         }
         val encryptedBodyJson = json.encodeToString(MobileCrypto.encryptJsonObject(payload, token))
         val response = httpClientFactory

@@ -50,8 +50,16 @@ assert.doesNotMatch(mobileSource,/role:\s*['"]推理['"]/,'Mobile rich-demo must
 assert.doesNotMatch(archSource,/native-window-chrome/,'No fake OS traffic-light window chrome in architecture.js');
 assert.doesNotMatch(topbarCss,/native-window-chrome|\.app-topbar\s+\.app-topbar/,'No fake window chrome or duplicated .app-topbar selector');
 assert.doesNotMatch(expertRolesCss,/var\(--border\)/,'expert-roles.css must use var(--line), not undefined var(--border)');
-assert.match(navSource,/\['plans','自动任务'\]/,'Desktop resource navigation promotes automated tasks');
-assert.match(navSource,/\['会话配置','上下文预算','执行','参与者'\]/,'Inspector context group uses distinct sub-section labels');
+assert.match(navSource,/\['automations',\s*'自动化中心'/,'Desktop unified sidebar promotes Automations');
+assert.doesNotMatch(navSource,/左侧列表类别|sn-left:/,'Dual sidebar icon toggle is removed');
+assert.match(navSource,/\['任务',\s*'task'/,'Inspector tool group maps 任务');
+for(const [name,content] of [['app.js',appSource],['architecture.js',archSource],['sidebar-navigation.js',navSource]]){
+    assert.doesNotMatch(content,/会话沙盒|conversation-executor|conversation-host/,`${name} removes Session Sandbox and split executor/host controls`);
+}
+assert.match(archSource,/临时工作区/,'Workspace selector uses Temporary Workspace');
+assert.match(appSource,/data-action="dk-workspace"/,'Desktop composer exposes folder selector');
+assert.match(appSource,/data-action="choose-model"/,'Desktop composer exposes unified model/agent/host selector');
+assert.match(appSource,/data-action="experts"/,'Desktop composer exposes @ Experts button');
 assert.match(scenariosJs,/<input type="text"/,'Scenarios page renders single-line fields as text inputs');
 const childSource=fs.readFileSync(path.join(root,'expert-history.js'),'utf8');
 assert.ok(!/\bfetch\s*\(|new\s+WebSocket|XMLHttpRequest/.test(childSource));

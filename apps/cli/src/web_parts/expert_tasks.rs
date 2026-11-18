@@ -51,8 +51,43 @@ pub(crate) fn capture_expert_peer_material(
     )
 }
 
+fn apply_desktop_host_tool_environment(
+    config: &mut Config,
+    project_root: &std::path::Path,
+    host_tools: &crate::host_invocation_request::HostToolRequest,
+) {
+    config.skill_dirs = host_tools.skill_dirs.clone();
+    let mut allowed_dirs = vec![project_root.to_path_buf()];
+    for directory in &host_tools.allowed_dirs {
+        if !allowed_dirs.contains(directory) {
+            allowed_dirs.push(directory.clone());
+        }
+    }
+    config.allowed_dirs = allowed_dirs;
+    if config.bash_prefixes.is_empty() && !host_tools.bash_prefixes.is_empty() {
+        config.bash_prefixes = host_tools.bash_prefixes.clone();
+    }
+}
+
 pub(crate) fn expert_task_host_configuration(
     project_root: &std::path::Path,
+    host_tool_settings: Option<&crate::host_invocation_request::HostToolRequest>,
+    material: &nola_application::expert_peer::PeerMaterial,
+) -> Result<ExpertTaskHostConfiguration, String> {
+    let desktop_host =
+        crate::desktop_host_control::is_active() || std::env::var_os("NOLA_DESKTOP_HOST").is_some();
+    expert_task_host_configuration_with_host_mode(
+        project_root,
+        host_tool_settings,
+        desktop_host,
+        material,
+    )
+}
+
+fn expert_task_host_configuration_with_host_mode(
+    project_root: &std::path::Path,
+    host_tool_settings: Option<&crate::host_invocation_request::HostToolRequest>,
+    desktop_host: bool,
     material: &nola_application::expert_peer::PeerMaterial,
 ) -> Result<ExpertTaskHostConfiguration, String> {
     let store = NolaStore::open_default()?;
@@ -73,6 +108,11 @@ pub(crate) fn expert_task_host_configuration(
     ])?;
     let settings = load_agent_settings_from_store(&store)?;
     apply_agent_tool_settings(&mut config, &settings);
+    if desktop_host {
+        if let Some(host_tools) = host_tool_settings {
+            apply_desktop_host_tool_environment(&mut config, project_root, host_tools);
+        }
+    }
     let mut captured = entry.defaults.conversation_configuration();
     if captured
         .get("permissionModeRawValue")
@@ -100,7 +140,41 @@ pub(crate) fn expert_task_host_configuration(
     let (tools, _) = capture_current_host_tool_plan_tools(&config, target)?;
     config.tool_allowlist = Some(tools.into_iter().map(|tool| tool.tool_id).collect());
     config.tool_allowlist_is_authorization_only = true;
-    let own = config.host_invocation_request()?;
+    let raw_mcp_servers = if !settings.mcp_servers.is_empty() {
+        crate::resource_access::mcp_runtime_resources(&settings.mcp_servers)
+    } else if desktop_host {
+        host_tool_settings
+            .map(|host_tools| host_tools.mcp_server_registry.clone())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    bind_and_catalog_web_mcp(&mut config, &raw_mcp_servers, target)?;
+    let mut own = config.host_invocation_request()?;
+    if !own.tool_settings.mcp_server_registry.is_empty() {
+        if let Some(allowlist) = own.tool_settings.tool_allowlist.as_mut() {
+            if own
+                .tool_settings
+                .mcp_server_registry
+                .iter()
+                .any(|server| server["enabled"] != false)
+                && !allowlist
+                    .iter()
+                    .any(|id| id == crate::mcp_connection_authority::CONNECT_CAPABILITY)
+            {
+                allowlist.push(crate::mcp_connection_authority::CONNECT_CAPABILITY.to_string());
+            }
+            if let Some(catalog) = own.tool_settings.mcp_capability_catalog.as_ref() {
+                for schema in crate::agent_host_driver::remote_mcp_tool_schemas(catalog) {
+                    if let Some(name) = schema.pointer("/function/name").and_then(Value::as_str) {
+                        if !allowlist.iter().any(|id| id == name) {
+                            allowlist.push(name.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
     let configuration = crate::core_agent_runtime::capture_task_target_configuration(&own)?;
     Ok(ExpertTaskHostConfiguration {
         configuration,
@@ -339,5 +413,330 @@ fn mobile_expert_manifest_response(request: &mut Request) -> Response<Box<dyn Re
             json!({"code":"expert_receipt_unavailable"}),
             &token,
         ),
+    }
+}
+
+#[cfg(test)]
+mod expert_tasks_tests {
+    use super::*;
+
+    struct EnvironmentGuard {
+        previous: Vec<(&'static str, Option<std::ffi::OsString>)>,
+        conversation: Option<String>,
+        _root: tempfile::TempDir,
+    }
+
+    impl Drop for EnvironmentGuard {
+        fn drop(&mut self) {
+            if let Some(conversation) = &self.conversation {
+                let _ = crate::core_agent_runtime::invalidate_core_agent_session(conversation);
+            }
+            for (key, value) in &self.previous {
+                match value {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn expert_task_host_configuration_inherits_desktop_skill_and_allowed_dirs_without_clobbering_file_refs() {
+        std::thread::Builder::new()
+            .name("expert-task-host-config-test".into())
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                let _lock = crate::store::test_env_lock();
+                let root = tempfile::tempdir().unwrap();
+                let canonical_root = std::fs::canonicalize(root.path()).unwrap();
+                let previous = ["HOME", "NOLA_HOME", "NOLA_DB_PATH"]
+                    .into_iter()
+                    .map(|key| (key, std::env::var_os(key)))
+                    .collect();
+                let database = canonical_root.join("nola.sqlite");
+                std::env::set_var("HOME", &canonical_root);
+                std::env::set_var("NOLA_HOME", &canonical_root);
+                std::env::set_var("NOLA_DB_PATH", &database);
+                let mut guard = EnvironmentGuard {
+                    previous,
+                    conversation: None,
+                    _root: root,
+                };
+
+                let project_root = canonical_root.join("workspace");
+                let extra_authorized_dir = canonical_root.join("authorized-extra");
+                let bundle_skill_dir = canonical_root.join("NolaBuiltInSkills.bundle/create-visual-art");
+                std::fs::create_dir_all(&project_root).unwrap();
+                std::fs::create_dir_all(&extra_authorized_dir).unwrap();
+                std::fs::create_dir_all(&bundle_skill_dir).unwrap();
+                let skill_file = bundle_skill_dir.join("SKILL.md");
+                std::fs::write(
+                    &skill_file,
+                    "---\nname: create-visual-art\ndescription: Visual art creation\n---\nBundle visual art instructions.\n",
+                )
+                .unwrap();
+                let file_uri = url::Url::from_file_path(&skill_file).unwrap().to_string();
+
+                let mut store = nola_store::NolaStore::open(&database).unwrap();
+                let source_json = json!({
+                    "schemaVersion": 1,
+                    "endpointID": "ep-1",
+                    "endpointName": "Fixture",
+                    "baseURL": "https://fixture.invalid/v1",
+                    "endpointOrder": 0,
+                    "endpointEnabled": true,
+                    "modelEnabled": true,
+                    "modelOrder": 0,
+                    "priority": 100,
+                    "capabilities": ["chat"],
+                    "executionCapabilities": {
+                        "toolCalls": true,
+                        "imageInput": false,
+                        "reasoning": false,
+                        "samplingParameters": true
+                    },
+                    "wireProtocol": "responses"
+                })
+                .to_string();
+                store
+                    .upsert_model_profile(&nola_store_port::model::StoredModelProfile {
+                        id: "expert-profile".into(),
+                        display_name: "Expert Fixture".into(),
+                        provider: "openai-compatible".into(),
+                        model_name: "gpt-test".into(),
+                        runtime: "remote".into(),
+                        source_json,
+                        parameters_json: "{}".into(),
+                        selected: true,
+                        enabled: true,
+                        revision: 1,
+                        created_at_ms: 1,
+                        updated_at_ms: 1,
+                        deleted_at_ms: None,
+                    })
+                    .unwrap();
+                let identity =
+                    crate::host_credentials::identity("https://fixture.invalid/v1", "responses")
+                        .unwrap();
+                crate::host_credentials::HostCredentialVault::open(&database)
+                    .unwrap()
+                    .write("ep-1", &identity, 0, Some("fixture-secret"), || Ok(()))
+                    .unwrap();
+
+                use nola_application::{agent_room as rooms, persistent_agent as agents};
+                use nola_domain::persistent_agent::{AgentAvailability, AgentDefaults};
+                store.begin_write_unit_of_work().unwrap();
+                agents::configure(
+                    &mut store.product_setting_repository(),
+                    agents::ConfigureAgent {
+                        id: "leijun".to_string().try_into().unwrap(),
+                        expected_directory_revision: None,
+                        expected_agent_revision: None,
+                        name: "雷军".into(),
+                        description: "代码编写".into(),
+                        defaults: AgentDefaults::try_from(
+                            json!({"modelSelectionID": "configured:expert-profile"}),
+                        )
+                        .unwrap(),
+                        availability: AgentAvailability::Active,
+                        updated_at_ms: 1,
+                    },
+                )
+                .unwrap();
+                let room = rooms::create(
+                    &mut store.product_setting_repository(),
+                    "Expert Room".into(),
+                    1,
+                )
+                .unwrap();
+                let joined = rooms::join(
+                    &mut store,
+                    rooms::JoinAgent {
+                        room_id: room.room.id().into(),
+                        expected_room_revision: room.revision,
+                        agent_id: "leijun".to_string().try_into().unwrap(),
+                        expected_agent_revision: 1,
+                        at_ms: 2,
+                    },
+                )
+                .unwrap();
+                store.commit_write_unit_of_work().unwrap();
+                let participant = &joined.room.participants()[0];
+                let context_conversation_id = participant.context_conversation_id.clone();
+                guard.conversation = Some(context_conversation_id.clone());
+
+                let mut app =
+                    crate::application_port::CliApplicationPort::persistent(&database).unwrap();
+                let inputs = crate::builtin_skills::catalog(&[])
+                    .unwrap()
+                    .into_iter()
+                    .map(|item| {
+                        let id = item["id"].as_str().unwrap().to_owned();
+                        let content = item["content"].as_str().unwrap().to_owned();
+                        let instructions_ref = if id == "create-visual-art" {
+                            file_uri.clone()
+                        } else {
+                            format!("file:///Applications/Nola.app/Contents/Resources/NolaBuiltInSkills.bundle/{id}/SKILL.md")
+                        };
+                        nola_application::SkillInput {
+                            id: id.clone(),
+                            source: nola_application::SkillSource::BuiltIn,
+                            version: format!("ver-{id}"),
+                            display_name: id.clone(),
+                            summary: item["description"].as_str().unwrap().to_owned(),
+                            category: item["category_id"].as_str().unwrap().to_owned(),
+                            instructions_ref,
+                            instructions_text: content,
+                            required_tools: Vec::new(),
+                            default_mode: Some(nola_core::agent::capability::SkillExecutionMode::Inline),
+                            enabled: id == "create-visual-art",
+                            created_at_ms: 10,
+                            updated_at_ms: 10,
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                let _: Value = app
+                    .execute(nola_application::ApplicationCommand::Skill {
+                        command: nola_application::SkillCommand::SynchronizeBuiltIns { inputs },
+                    })
+                    .unwrap();
+                drop(app);
+                drop(store);
+
+                assert!(
+                    !canonical_root
+                        .join(".nola/cli/skills/built-in/create-visual-art")
+                        .exists(),
+                    "managed CLI directory must remain absent to prove bundle skill_dirs is used"
+                );
+
+                let exchange_id = uuid::Uuid::new_v4().to_string();
+                let material: nola_application::expert_peer::PeerMaterial =
+                    serde_json::from_value(json!({
+                        "view": {
+                            "version": 1,
+                            "exchange_id": exchange_id,
+                            "room_id": joined.room.id(),
+                            "parent_conversation_id": "main-conv",
+                            "source": {
+                                "kind": "main_agent",
+                                "context_conversation_id": "main-conv"
+                            },
+                            "target": {
+                                "participant_id": participant.id,
+                                "agent_id": participant.agent_id,
+                                "agent_revision": participant.agent_revision,
+                                "context_conversation_id": context_conversation_id
+                            },
+                            "source_run_id": "main-run",
+                            "source_call_id": "main-call",
+                            "source_display_name": "Nola",
+                            "target_display_name": "雷军",
+                            "kind": "request",
+                            "text": "你好",
+                            "in_reply_to": null,
+                            "root_exchange_id": exchange_id,
+                            "hop": 1,
+                            "created_at_ms": 100,
+                            "clarifications": []
+                        },
+                        "entry": {
+                            "participant": {
+                                "participant_id": participant.id,
+                                "agent_id": participant.agent_id,
+                                "agent_revision": participant.agent_revision,
+                                "context_conversation_id": context_conversation_id
+                            },
+                            "display_name": "雷军",
+                            "description": "代码编写",
+                            "defaults": {
+                                "modelSelectionID": "configured:expert-profile"
+                            },
+                            "model_declaration": {
+                                "profile_id": "expert-profile",
+                                "profile_revision": 1,
+                                "provider": "openai-compatible",
+                                "model_name": "gpt-test",
+                                "runtime": "remote",
+                                "parameters": {}
+                            },
+                            "context_configuration_revision": 1,
+                            "child_submission_id": exchange_id,
+                            "child_user_message_id": format!("{exchange_id}:user"),
+                            "child_assistant_message_id": format!("{exchange_id}:assistant"),
+                            "expected_prompt_definition": null,
+                            "model_witness": null,
+                            "instruction_witness": null
+                        },
+                        "prompt_definitions": []
+                    }))
+                    .unwrap();
+
+                let mut host_tools =
+                    crate::host_invocation_request::HostInvocationRequest::for_test()
+                        .unwrap()
+                        .tool_settings;
+                host_tools.project_root = project_root.clone();
+                host_tools.allowed_dirs = vec![
+                    project_root.clone(),
+                    extra_authorized_dir.clone(),
+                    bundle_skill_dir.clone(),
+                ];
+                host_tools.skill_dirs = Some(vec![bundle_skill_dir.clone()]);
+
+                let configured = expert_task_host_configuration_with_host_mode(
+                    &project_root,
+                    Some(&host_tools),
+                    true,
+                    &material,
+                )
+                .unwrap();
+
+                let store = nola_store::NolaStore::open(&database).unwrap();
+                let stored_skill = store.skill("create-visual-art").unwrap().unwrap();
+                assert_eq!(stored_skill.instructions_ref, file_uri);
+
+                let restored = crate::core_agent_runtime::restore_task_target_configuration(
+                    &configured.configuration,
+                    &context_conversation_id,
+                )
+                .unwrap();
+                assert_eq!(
+                    restored.tool_settings.skill_dirs,
+                    Some(vec![bundle_skill_dir])
+                );
+                assert!(restored
+                    .tool_settings
+                    .allowed_dirs
+                    .contains(&extra_authorized_dir));
+
+                for forbidden in [
+                    "delegate_expert",
+                    "expert_exchange",
+                    "spawn_agent",
+                    "request_user_input",
+                ] {
+                    assert!(
+                        configured.configuration.tools.iter().all(|schema| {
+                            nola_domain::expert_task_target::schema_tool_name(schema)
+                                != Some(forbidden)
+                        }),
+                        "leaf configuration must exclude {forbidden} tool schema"
+                    );
+                    assert!(
+                        !configured
+                            .configuration
+                            .host_catalog
+                            .as_ref()
+                            .unwrap()
+                            .capabilities
+                            .contains_key(forbidden),
+                        "leaf configuration must exclude {forbidden} capability"
+                    );
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
     }
 }

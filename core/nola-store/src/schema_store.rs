@@ -17,10 +17,18 @@ fn requires_initialization(connection: &Connection) -> StoreResult<bool> {
                 |row| row.get(0),
             )
             .optional()?;
-        return if epoch.as_deref() == Some(STORE_SCHEMA_EPOCH.to_string().as_str()) {
-            Ok(false)
-        } else {
+        if epoch.as_deref() != Some(STORE_SCHEMA_EPOCH.to_string().as_str()) {
+            return Err(StoreError::IncompatibleSchema);
+        }
+        let has_legacy_skill_digest: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('skill_versions') WHERE name='instructions_digest')",
+            [],
+            |row| row.get(0),
+        )?;
+        return if has_legacy_skill_digest {
             Err(StoreError::IncompatibleSchema)
+        } else {
+            Ok(false)
         };
     }
     if application_id != 0 || version != 0 {

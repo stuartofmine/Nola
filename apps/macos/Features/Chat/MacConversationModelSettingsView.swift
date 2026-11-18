@@ -87,20 +87,22 @@ struct MacConversationModelSettingsView: View {
                 .font(.callout).foregroundStyle(.secondary)
             ScrollView {
               Form {
-                Picker(String(localized: "Prompt"), selection: $promptTemplateID) {
-                    Text(String(localized: "None")).tag(UUID?.none)
-                    ForEach(promptTemplates.templates) { template in
-                        Text(template.name).tag(Optional(template.id))
-                    }
-                }
-                .accessibilityIdentifier("mac-model-prompt-template")
+                MacSelectionDropdownBar(
+                    title: String(localized: "Prompt"),
+                    identifier: "mac-model-prompt-template",
+                    selection: $promptTemplateID,
+                    options: [(UUID?.none, String(localized: "None"))]
+                        + promptTemplates.templates.map { (Optional($0.id), $0.name) }
+                )
                 Button(String(localized: "Open Prompt Library")) { openWindow(id: "prompt-library") }
 
                 if model.executionHost != .remote {
-                    Picker(String(localized: "API protocol"), selection: $draft.wireProtocol) {
-                        Text(String(localized: "Use model defaults")).tag(MacModelWireProtocol?.none)
-                        ForEach(MacModelWireProtocol.allCases) { value in Text(value.title).tag(Optional(value)) }
-                    }
+                    MacSelectionDropdownBar(
+                        title: String(localized: "API protocol"),
+                        selection: $draft.wireProtocol,
+                        options: [(MacModelWireProtocol?.none, String(localized: "Use model defaults"))]
+                            + MacModelWireProtocol.allCases.map { (Optional($0), $0.title) }
+                    )
                 }
                 Group {
                     parameter("Temperature", value: $draft.temperature, fallback: inheritedParameters.temperature, range: 0...2)
@@ -123,22 +125,26 @@ struct MacConversationModelSettingsView: View {
                     integerParameter("Top K", value: $draft.topK, fallback: LocalSamplingSettings(parameters: inheritedParameters).topK, range: 1...1_000_000)
                     parameter("Repetition penalty", value: $draft.repetitionPenalty, fallback: LocalSamplingSettings(parameters: inheritedParameters).repetitionPenalty, range: 0.8...1.4)
                 }
-                Picker("Seed", selection: Binding(get: {
-                    switch draft.seed {
-                    case .none: return 0
-                    case .clear: return 1
-                    case .value: return 2
-                    }
-                }, set: { selection in
-                    draft.seed = selection == 0 ? nil : selection == 1 ? .clear
-                        : .value(Int64(inheritedParameters.seed ?? 0))
-                    numericText.removeValue(forKey: "Seed")
-                    invalidNumericFields.remove("Seed")
-                })) {
-                    Text("Use model defaults").tag(0)
-                    Text("Disabled").tag(1)
-                    Text("Custom").tag(2)
-                }
+                MacSelectionDropdownBar(
+                    title: String(localized: "Seed"),
+                    selection: Binding(get: {
+                        switch draft.seed {
+                        case .none: return 0
+                        case .clear: return 1
+                        case .value: return 2
+                        }
+                    }, set: { selection in
+                        draft.seed = selection == 0 ? nil : selection == 1 ? .clear
+                            : .value(Int64(inheritedParameters.seed ?? 0))
+                        numericText.removeValue(forKey: "Seed")
+                        invalidNumericFields.remove("Seed")
+                    }),
+                    options: [
+                        (0, String(localized: "Use model defaults")),
+                        (1, String(localized: "Disabled")),
+                        (2, String(localized: "Custom"))
+                    ]
+                )
                 if case .value(let seed) = draft.seed {
                     TextField("Seed", text: Binding(get: {
                         numericText["Seed"] ?? String(seed)
@@ -158,6 +164,7 @@ struct MacConversationModelSettingsView: View {
                     }
                 }
                 Toggle(String(localized: "Override stop sequences"), isOn: Binding(get: { draft.stopSequences != nil }, set: { draft.stopSequences = $0 ? inheritedParameters.stopSequences : nil }))
+                    .toggleStyle(.macSwitch)
                 if draft.stopSequences != nil {
                     TextField(String(localized: "Stop sequences, one per line"), text: Binding(get: { draft.stopSequences ?? "" }, set: { draft.stopSequences = $0 }), axis: .vertical)
                 }
@@ -225,6 +232,7 @@ struct MacConversationModelSettingsView: View {
                 numericText.removeValue(forKey: title)
                 invalidNumericFields.remove(title)
             })) { Text(LocalizedStringKey(title)) }
+            .toggleStyle(.macSwitch)
             TextField(LocalizedStringKey(title), text: Binding(get: {
                 numericText[title] ?? (model.executionHost == .remote && value.wrappedValue == nil
                     ? String(localized: "Use model defaults") : String(value.wrappedValue ?? fallback))
@@ -255,6 +263,7 @@ struct MacConversationModelSettingsView: View {
                 numericText.removeValue(forKey: title)
                 invalidNumericFields.remove(title)
             })) { Text(LocalizedStringKey(title)) }
+            .toggleStyle(.macSwitch)
             TextField(LocalizedStringKey(title), text: Binding(get: {
                 numericText[title] ?? (model.executionHost == .remote && value.wrappedValue == nil
                     ? String(localized: "Use model defaults") : String(value.wrappedValue ?? fallback))
@@ -304,20 +313,29 @@ struct MacReasoningConfigurationEditor: View {
     @Binding var configuration: MacReasoningConfiguration
     let wireProtocol: MacModelWireProtocol
     @State private var budgetDraft = MacReasoningBudgetDraft()
+    private var thinkingControlOptions: [(MacReasoningConfiguration.Control, String)] {
+        var result: [(MacReasoningConfiguration.Control, String)] = [
+            (.automatic, String(localized: "Provider default"))
+        ]
+        if wireProtocol != .anthropic || configuration.control == .effort {
+            result.append((.effort, String(localized: "Effort")))
+        }
+        if wireProtocol == .anthropic || configuration.control == .budget {
+            result.append((.budget, String(localized: "Thinking budget (Anthropic)")))
+        }
+        return result
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Picker(String(localized: "Thinking control"), selection: Binding(
-                get: { configuration.control },
-                set: { configuration.control = $0 }
-            )) {
-                Text(String(localized: "Provider default")).tag(MacReasoningConfiguration.Control.automatic)
-                if wireProtocol != .anthropic || configuration.control == .effort {
-                    Text("Effort").tag(MacReasoningConfiguration.Control.effort)
-                }
-                if wireProtocol == .anthropic || configuration.control == .budget {
-                    Text(String(localized: "Thinking budget (Anthropic)")).tag(MacReasoningConfiguration.Control.budget)
-                }
-            }
+            MacSelectionDropdownBar(
+                title: String(localized: "Thinking control"),
+                selection: Binding(
+                    get: { configuration.control },
+                    set: { configuration.control = $0 }
+                ),
+                options: thinkingControlOptions
+            )
             if configuration.control == .effort {
                 Text(String(localized: "Supported reasoning levels")).font(.caption).foregroundStyle(.secondary)
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 90))], alignment: .leading) {
@@ -326,6 +344,7 @@ struct MacReasoningConfigurationEditor: View {
                             configuration.efforts.removeAll { $0 == value }
                             if enabled { configuration.efforts.append(value) }
                         }))
+                        .toggleStyle(.checkbox)
                     }
                 }
             }

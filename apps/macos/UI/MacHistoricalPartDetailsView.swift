@@ -56,7 +56,7 @@ struct MacHistoricalPartDetailsView: View {
             if selections.count > 1 {
                 Picker(selection: $selectedIndex) {
                     ForEach(selections.indices, id: \.self) { index in
-                        Text(verbatim: selections[index].owner.partID).tag(index)
+                        Text(verbatim: "#\(index + 1)").tag(index)
                     }
                 } label: { Text("history.details.part", tableName: "Chat") }
                 .accessibilityIdentifier("chat.historicalDetails.part")
@@ -79,7 +79,7 @@ struct MacHistoricalPartDetailsView: View {
                         }
                         ForEach(projection.fields.keys.sorted(), id: \.self) { name in
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(verbatim: name).font(.caption.bold())
+                                Text(verbatim: name.replacingOccurrences(of: "_", with: " ").capitalized).font(.caption.bold())
                                 switch projection.fields[name] {
                                 case .complete(let value):
                                     Text(verbatim: value.displayString).font(.system(.body, design: .monospaced))

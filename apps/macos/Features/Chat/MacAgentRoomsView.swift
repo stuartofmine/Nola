@@ -191,7 +191,8 @@ struct MacUnifiedExpertTranscript: View {
         MacExpertTranscriptProjector.rows(conversationID: model.selectedConversationID ?? "",
             parentMessages: model.selectedMessages, association: workspace.conversationAssociation,
             receipts: workspace.conversationAssociation.flatMap { workspace.submissions[$0.roomID] } ?? [],
-            contexts: workspace.executionService?.owners.mapValues(\.selectedMessages) ?? [:])
+            contexts: workspace.executionService?.owners.mapValues(\.selectedMessages) ?? [:],
+            peerExchanges: workspace.peerExchanges)
     }
 
     private var visibleParentIDs: [String] {
@@ -278,6 +279,7 @@ struct MacExpertPermissionDock: View {
 /// Directory management does not open conversations or change selected peers.
 struct MacExpertDirectoryManagementView: View {
     @ObservedObject var workspace: MacAgentRoomWorkspace
+    var showsCloseButton: Bool = true
     @Environment(\.dismiss) private var dismiss
     @State private var builtinPreview: AppleExpertRoleTemplate?
     @State private var hasChosenEditor = false
@@ -314,11 +316,13 @@ struct MacExpertDirectoryManagementView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text(String(localized: "Expert Library", table: "ExpertLibrary")).font(.headline)
-                Spacer()
-                Button("Done") { requestNavigation(.close) }.buttonStyle(MacActionButtonStyle()).keyboardShortcut(.cancelAction)
-                    .disabled(isSaving).accessibilityIdentifier("mac-expert-done")
+            if showsCloseButton {
+                HStack {
+                    Text(String(localized: "Expert Library", table: "ExpertLibrary")).font(.headline)
+                    Spacer()
+                    Button("Done") { requestNavigation(.close) }.buttonStyle(MacActionButtonStyle()).keyboardShortcut(.cancelAction)
+                        .disabled(isSaving).accessibilityIdentifier("mac-expert-done")
+                }
             }
             HSplitView {
                 VStack(alignment: .leading, spacing: 8) {
@@ -383,6 +387,7 @@ struct MacExpertDirectoryManagementView: View {
                             .font(.caption).foregroundStyle(.secondary)
                         if selected != nil {
                             Toggle("Enabled", isOn: $isEnabled)
+                                .toggleStyle(.macSwitch)
                                 .accessibilityIdentifier("mac-expert-enabled")
                             Text("Changes apply to future selections. Existing conversations retain their expert snapshot.")
                                 .font(.caption).foregroundStyle(.secondary)
@@ -446,12 +451,25 @@ struct MacExpertDirectoryManagementView: View {
                     }.formStyle(.grouped).frame(minWidth: 320)
                 }
             }.disabled(isSaving)
-        }.padding(16).frame(minWidth: 760, idealWidth: 860, minHeight: 560, idealHeight: 640)
-            .interactiveDismissDisabled(isSaving || hasUnsavedChanges)
-            .background(MacEditorWindowCloseGuard(
-                shouldPreventClose: { (isSaving || hasUnsavedChanges) && !allowsConfirmedClose },
-                onCloseAttempt: { requestNavigation(.close) }
-            ))
+        }
+        .padding(16)
+        .frame(
+            minWidth: showsCloseButton ? 760 : 0,
+            idealWidth: showsCloseButton ? 860 : nil,
+            maxWidth: showsCloseButton ? nil : .infinity,
+            minHeight: showsCloseButton ? 560 : 0,
+            idealHeight: showsCloseButton ? 640 : nil,
+            maxHeight: showsCloseButton ? nil : .infinity
+        )
+            .interactiveDismissDisabled(showsCloseButton && (isSaving || hasUnsavedChanges))
+            .background {
+                if showsCloseButton {
+                    MacEditorWindowCloseGuard(
+                        shouldPreventClose: { (isSaving || hasUnsavedChanges) && !allowsConfirmedClose },
+                        onCloseAttempt: { requestNavigation(.close) }
+                    )
+                }
+            }
             .confirmationDialog(String(localized: "Discard unsaved changes?"), isPresented: $showsDiscardConfirmation) {
                 Button(String(localized: "Discard Changes"), role: .destructive) {
                     let action = pendingNavigation; pendingNavigation = nil
@@ -540,61 +558,57 @@ struct MacExpertDirectoryManagementView: View {
         }
     }
 
-    private var reasoningControls: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Picker(String(localized: "reasoning.effort.title", table: "Reasoning"), selection: $configuration.reasoningEffort) {
-                Text(String(localized: "reasoning.effort.automatic", table: "Reasoning")).tag("automatic")
-                ForEach(reasoningEfforts, id: \.self) { effort in
-                    Text(String(localized: String.LocalizationValue("reasoning.effort." + effort), table: "Reasoning")).tag(effort)
-                }
-                if configuration.reasoningEffort != "automatic", !reasoningEfforts.contains(configuration.reasoningEffort) {
-                    Text("\(String(localized: "Unavailable")) · \(configuration.reasoningEffort)")
-                        .tag(configuration.reasoningEffort).disabled(true)
-                }
-            }.accessibilityIdentifier("mac-expert-reasoning-effort").disabled(!supportsExpertReasoning)
-            if reasoningEfforts.isEmpty {
-                Text("This model has no declared reasoning levels. Automatic inherits its configuration.")
-                    .font(.caption).foregroundStyle(.secondary)
+    @ViewBuilder private var reasoningControls: some View {
+        Picker(String(localized: "reasoning.effort.title", table: "Reasoning"), selection: $configuration.reasoningEffort) {
+            Text(String(localized: "reasoning.effort.automatic", table: "Reasoning")).tag("automatic")
+            ForEach(reasoningEfforts, id: \.self) { effort in
+                Text(String(localized: String.LocalizationValue("reasoning.effort." + effort), table: "Reasoning")).tag(effort)
             }
+            if configuration.reasoningEffort != "automatic", !reasoningEfforts.contains(configuration.reasoningEffort) {
+                Text("\(String(localized: "Unavailable")) · \(configuration.reasoningEffort)")
+                    .tag(configuration.reasoningEffort).disabled(true)
+            }
+        }.accessibilityIdentifier("mac-expert-reasoning-effort").disabled(!supportsExpertReasoning)
+        if reasoningEfforts.isEmpty {
+            Text("This model has no declared reasoning levels. Automatic inherits its configuration.")
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 
-    private var roleControls: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Picker("Role template", selection: $previewRoleID) {
-                Text("Choose a role").tag("")
-                ForEach(roleTemplates) { role in Text(role.localizedName(locale: locale)).tag(role.id) }
-            }.accessibilityIdentifier("mac-expert-role")
-            if let role = roleTemplates.first(where: { $0.id == previewRoleID }) {
-                Text(role.localizedDescription(locale: locale)).font(.caption).foregroundStyle(.secondary)
-                DisclosureGroup("Prompt") {
-                    Text(role.prompt).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-                        .fixedSize(horizontal: false, vertical: true)
-                }.disclosureGroupStyle(MacRowDisclosureStyle(toggleIdentifier: "mac-expert-role-prompt", isPlain: true))
-                DisclosureGroup("Tools") {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 130), alignment: .leading)], alignment: .leading, spacing: 6) {
-                        ForEach(role.toolPack.tools, id: \.self) { tool in
-                            Text(MacToolPresentationPolicy.displayTitle(for: tool)).font(.caption)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 8).padding(.vertical, 5)
-                                .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 6))
-                                .help(tool)
-                        }
+    @ViewBuilder private var roleControls: some View {
+        Picker("Role template", selection: $previewRoleID) {
+            Text("Choose a role").tag("")
+            ForEach(roleTemplates) { role in Text(role.localizedName(locale: locale)).tag(role.id) }
+        }.accessibilityIdentifier("mac-expert-role")
+        if let role = roleTemplates.first(where: { $0.id == previewRoleID }) {
+            Text(role.localizedDescription(locale: locale)).font(.caption).foregroundStyle(.secondary)
+            DisclosureGroup("Prompt") {
+                Text(role.prompt).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }.disclosureGroupStyle(MacRowDisclosureStyle(toggleIdentifier: "mac-expert-role-prompt", isPlain: true))
+            DisclosureGroup("Tools") {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 130), alignment: .leading)], alignment: .leading, spacing: 6) {
+                    ForEach(role.toolPack.tools, id: \.self) { tool in
+                        Text(MacToolPresentationPolicy.displayTitle(for: tool)).font(.caption)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 8).padding(.vertical, 5)
+                            .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 6))
+                            .help(tool)
                     }
-                    Text("Role tools guide the workflow; they do not grant permissions.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }.disclosureGroupStyle(MacRowDisclosureStyle(toggleIdentifier: "mac-expert-role-tools", isPlain: true))
-                ForEach(role.skills) { skill in
-                    DisclosureGroup(skill.localizedName(locale: locale)) {
-                        Text(skill.instructions).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                    }.disclosureGroupStyle(MacRowDisclosureStyle(toggleIdentifier: "mac-expert-role-skill-" + skill.id, isPlain: true))
                 }
-                Button("Apply role template") {
-                    if !configuration.templateID.isEmpty, configuration.templateID != role.id { confirmsRoleReplacement = true }
-                    else { applyPreviewRole() }
-                }.buttonStyle(MacActionButtonStyle()).accessibilityIdentifier("mac-expert-apply-role")
-                    .disabled(configuration.templateID == role.id)
+                Text("Role tools guide the workflow; they do not grant permissions.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }.disclosureGroupStyle(MacRowDisclosureStyle(toggleIdentifier: "mac-expert-role-tools", isPlain: true))
+            ForEach(role.skills) { skill in
+                DisclosureGroup(skill.localizedName(locale: locale)) {
+                    Text(skill.instructions).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                }.disclosureGroupStyle(MacRowDisclosureStyle(toggleIdentifier: "mac-expert-role-skill-" + skill.id, isPlain: true))
             }
+            Button("Apply role template") {
+                if !configuration.templateID.isEmpty, configuration.templateID != role.id { confirmsRoleReplacement = true }
+                else { applyPreviewRole() }
+            }.buttonStyle(MacActionButtonStyle()).accessibilityIdentifier("mac-expert-apply-role")
+                .disabled(configuration.templateID == role.id)
         }
     }
 

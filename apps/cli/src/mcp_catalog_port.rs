@@ -11,6 +11,7 @@ pub fn load_web_mcp_servers() -> Result<Vec<Value>, String> {
     })?;
     records
         .into_iter()
+        .filter(|record| !record.id.contains(":mcp:"))
         .map(|record| {
             let mut value = serde_json::from_str::<Value>(&record.configuration_json)
                 .map_err(|error| format!("decode MCP server {} failed: {error}", record.id))?;

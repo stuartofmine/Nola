@@ -175,7 +175,6 @@ fn internal_control_tool(name: &str) -> bool {
             | "skill_invoke"
             | "skill_list"
             | "skill_skip"
-            | "skill_update"
             | "sop"
             | "sop_invoke"
             | "sop_run_update"

@@ -49,7 +49,8 @@ struct MainTabView: View {
                         .environment(\.locale, locale)
                         .environment(\.layoutDirection, layoutDirection)
                         .environment(\.symbolVariants, .none)
-                        .tint(DesignTokens.actionColor))
+                        .tint(DesignTokens.actionColor)
+                        .toggleStyle(NolaSwitchToggleStyle()))
                 }
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         if selectedTabBinding.wrappedValue != .chat || !chatDetailPresented {
@@ -65,6 +66,7 @@ struct MainTabView: View {
         }
         .environmentObject(container)
         .tint(DesignTokens.actionColor)
+        .toggleStyle(NolaSwitchToggleStyle())
         .toolbarBackground(.visible, for: .tabBar)
         .toolbarBackground(DesignTokens.backgroundColor, for: .tabBar)
         .background(DesignTokens.backgroundColor.ignoresSafeArea())
@@ -105,7 +107,7 @@ struct MainTabView: View {
                     NotificationCenter.default.post(name: .nolaModelConfigured, object: model,
                         userInfo: ["owner": modelConfigurationOwner?.uuidString ?? "unsent"])
                     managementDestination = nil
-                }).environmentObject(container)
+                }).environmentObject(container).toggleStyle(NolaSwitchToggleStyle())
         }
     }
 

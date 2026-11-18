@@ -212,12 +212,9 @@ struct MacMemoryCenterView: View {
                         pendingDeletion = record
                     }
                 } label: {
-                    Image(systemName: "ellipsis").frame(width: 24, height: 24)
+                    Image(systemName: "ellipsis")
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .macToolbarIcon()
+                .menuStyle(MacToolbarMenuStyle(size: 28))
                 .help(macMemoryText("mac.memory.more", "More"))
                 .accessibilityLabel(macMemoryText("mac.memory.more", "More"))
                 .disabled(isDeleting)

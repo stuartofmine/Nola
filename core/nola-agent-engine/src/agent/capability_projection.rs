@@ -42,7 +42,6 @@ pub struct AgentTurnCapability {
     pub capability_id: String,
     pub model_definition: Value,
     pub descriptor: HostCapabilityDescriptor,
-    pub model_schema_digest: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -141,14 +140,12 @@ impl AgentTurnCapabilityProjection {
             }
 
             let model_definition = descriptor.model_tool_definition(configured);
-            let model_schema_digest = digest_json(&model_definition);
             enabled.insert(
                 capability_id.clone(),
                 AgentTurnCapability {
                     capability_id,
                     model_definition,
                     descriptor: descriptor.clone(),
-                    model_schema_digest,
                 },
             );
         }
@@ -173,7 +170,14 @@ impl AgentTurnCapabilityProjection {
             enabled,
             disabled,
         };
-        projection.projection_digest = digest_json(&projection_without_digest(&projection));
+        projection.projection_digest = digest_json(&(
+            projection.schema_version,
+            &projection.host_id,
+            projection.host_catalog_revision,
+            projection.host_availability_epoch,
+            &projection.model_schema_digest,
+            &projection.disabled,
+        ));
         projection
     }
 
@@ -442,14 +446,6 @@ fn configured_tool_id(value: &Value) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
-}
-
-fn projection_without_digest(projection: &AgentTurnCapabilityProjection) -> Value {
-    let mut value = serde_json::to_value(projection).unwrap_or(Value::Null);
-    if let Some(object) = value.as_object_mut() {
-        object.remove("projection_digest");
-    }
-    value
 }
 
 fn canonical_json(value: &Value) -> Value {

@@ -50,6 +50,7 @@ fn start_web_goal_worker(config: &Config) -> Result<WebGoalWorkerGuard, String> 
     let config = config.clone();
     std::thread::Builder::new()
         .name("web-goal-discovery".into())
+        .stack_size(16 * 1024 * 1024)
         .spawn(move || {
             while !state.stopped.load(std::sync::atomic::Ordering::SeqCst) {
                 if let Err(error) = scan_web_goals(&config) {
@@ -88,6 +89,7 @@ fn scan_web_goals(config: &Config) -> Result<(), String> {
         let config = config.clone();
         std::thread::Builder::new()
             .name("web-goal-execution".into())
+            .stack_size(16 * 1024 * 1024)
             .spawn(move || {
                 let session = due.session_id.clone();
                 let result = execute_web_goal(&config, &due, control, &registration);
@@ -146,6 +148,11 @@ fn new_web_goal_invocation(
     let settings = load_agent_settings_from_store(&store)?;
     let profile = permission_profile_for_request(&body, &settings)?;
     apply_agent_tool_settings(&mut config, &settings);
+    bind_and_catalog_web_mcp(
+        &mut config,
+        &crate::resource_access::mcp_runtime_resources(&settings.mcp_servers),
+        session,
+    )?;
     config.permission_profile = Some(profile);
     config.auto_approve = profile.auto_approve();
     config.network_policy = profile.network_policy().into();
@@ -159,6 +166,7 @@ fn new_web_goal_invocation(
     config.skill_dirs = skills.configured_dirs().map(<[PathBuf]>::to_vec);
     let (tools, _) = capture_current_host_tool_plan_tools(&config, session)?;
     config.tool_allowlist = Some(tools.into_iter().map(|tool| tool.tool_id).collect());
+    config.tool_allowlist_is_authorization_only = true;
     config.tools_enabled = config
         .tool_allowlist
         .as_ref()
@@ -362,21 +370,31 @@ fn bind_web_goal_worker(
 mod web_goal_worker_tests {
     use super::*;
     use std::io::{BufRead, Write};
+    fn spawn_large<F, T>(f: F) -> std::thread::JoinHandle<T>
+    where
+        F: FnOnce() -> T + Send + 'static,
+        T: Send + 'static,
+    {
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(f)
+            .unwrap()
+    }
     #[test]
     fn existing_conversation_goal_admits_real_http_run_and_guarded_pause() {
-        exercise_web_goal_stop(false, false, false);
+        spawn_large(|| exercise_web_goal_stop(false, false, false)).join().unwrap();
     }
     #[test]
     fn goal_permission_challenge_is_observable_and_stops_only_after_committed_interrupt() {
-        exercise_web_goal_stop(true, false, false);
+        spawn_large(|| exercise_web_goal_stop(true, false, false)).join().unwrap();
     }
     #[test]
     fn paused_goal_executes_second_http_round_with_its_frozen_catalog() {
-        exercise_web_goal_stop(false, true, false);
+        spawn_large(|| exercise_web_goal_stop(false, true, false)).join().unwrap();
     }
     #[test]
     fn goal_budget_blocker_stops_after_one_canonical_run() {
-        exercise_web_goal_stop(false, false, true);
+        spawn_large(|| exercise_web_goal_stop(false, false, true)).join().unwrap();
     }
     fn exercise_web_goal_stop(permission_wait: bool, resume_execution: bool, budget_blocked: bool) {
         let _lock = crate::store::test_env_lock();
@@ -550,7 +568,7 @@ mod web_goal_worker_tests {
         changed_defaults.tool_allowlist = Some(Vec::new());
         changed_defaults.network_policy = "deny".into();
         let worker_config = changed_defaults.clone();
-        let worker = std::thread::spawn(move || {
+        let worker = spawn_large(move || {
             let due = crate::session::DueGoalSession {
                 session_id: session.into(),
                 objective: "Summarize a result".into(),
@@ -638,7 +656,7 @@ mod web_goal_worker_tests {
             let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
             let url = format!("http://{}/goal", server.server_addr());
             let control_config = changed_defaults.clone();
-            let handler = std::thread::spawn(move || {
+            let handler = spawn_large(move || {
                 let mut request = server.recv().unwrap();
                 let response = control_conversation_goal_response(&mut request, session, &control_config);
                 request.respond(response).unwrap();
@@ -752,7 +770,7 @@ mod web_goal_worker_tests {
             let second_control = RuntimeExecutionControl::default();
             let second_registration = try_register_web_agent_run(session, second_control.clone()).unwrap();
             let (second_tx, second_rx) = mpsc::channel();
-            let second_worker = std::thread::spawn(move || {
+            let second_worker = spawn_large(move || {
                 let due = crate::session::DueGoalSession {session_id:session.into(),objective:"Summarize a result".into(),constraints:vec![]};
                 second_tx.send(execute_web_goal(&config, &due, second_control, &second_registration)).unwrap();
             });
@@ -799,5 +817,151 @@ mod web_goal_worker_tests {
         }
         stop.store(true, std::sync::atomic::Ordering::SeqCst);
         server.join().unwrap();
+    }
+
+    #[test]
+    fn paused_web_goal_user_submission_uses_client_submission_id_and_populates_mcp_catalog() {
+        spawn_large(|| {
+            let _lock = crate::store::test_env_lock();
+            let root = tempfile::tempdir().unwrap();
+            struct Env(Vec<(&'static str, Option<std::ffi::OsString>)>);
+            impl Drop for Env {
+                fn drop(&mut self) {
+                    let _ = crate::core_agent_runtime::invalidate_core_agent_session("web-goal-submitted");
+                    for (key, value) in &self.0 {
+                        match value {
+                            Some(value) => std::env::set_var(key, value),
+                            None => std::env::remove_var(key),
+                        }
+                    }
+                }
+            }
+            let _env = Env(["NOLA_HOME", "NOLA_DB_PATH"]
+                .into_iter()
+                .map(|key| (key, std::env::var_os(key)))
+                .collect());
+            std::env::set_var("NOLA_HOME", root.path());
+            std::env::set_var("NOLA_DB_PATH", root.path().join("product.sqlite"));
+
+            let store = NolaStore::open_default().unwrap();
+            let reconciled = crate::resource_access::reconcile_mcp_resources(
+                &[],
+                &[json!({
+                    "server_id": "docs",
+                    "name": "Docs",
+                    "command": "echo",
+                    "args": ["mcp"],
+                    "enabled": true,
+                })],
+            ).unwrap();
+            let described = crate::mcp_host::describe_configured_servers(&reconciled).unwrap();
+            crate::mcp_catalog_port::save_web_mcp_changes(&[], &described).unwrap();
+            store.upsert_model_profile(nola_application::ModelProfile {
+                id: "goal-sub-profile".into(),
+                display_name: "Fixture".into(),
+                model_name: "fixture-model".into(),
+                provider: "openai-compatible".into(),
+                runtime: "remote".into(),
+                source_json: json!({
+                    "baseURL": "https://fixture.invalid/v1",
+                    "endpointID": "ep",
+                    "wireProtocol": "chat_completions",
+                    "endpointEnabled": true,
+                    "modelEnabled": true,
+                    "capabilities": ["chat"],
+                    "executionCapabilities": {
+                        "toolCalls": true,
+                        "imageInput": false,
+                        "reasoning": false,
+                        "samplingParameters": true
+                    }
+                }).to_string(),
+                parameters_json: json!({
+                    "temperature": 0.7,
+                    "topP": 0.9,
+                    "maxOutputTokens": 4096,
+                    "maxContextLength": 32768
+                }).to_string(),
+                selected: true,
+                enabled: true,
+                revision: 1,
+                created_at_ms: 1,
+                updated_at_ms: 1,
+                deleted_at_ms: None,
+            }).unwrap();
+
+            let conversation = "web-goal-submitted";
+            let conv = WebConversation::new(conversation.into(), "Goal test".into(), now_string(), now_string());
+            store.create_web_conversation(&json!(conv)).unwrap();
+            let cfg = Config::for_test().unwrap();
+            let mut goal_inv = new_web_goal_invocation(&cfg, conversation).unwrap();
+            assert!(!goal_inv.tool_settings.mcp_server_registry.is_empty());
+            assert!(goal_inv.tool_settings.mcp_capability_catalog.is_some());
+            goal_inv.runtime.memory_enabled = Some(false);
+            let engine_seed = crate::core_agent_runtime::capture_task_target_configuration(&goal_inv).unwrap();
+            let host = engine_seed.host_catalog.as_ref().unwrap().host_id.0.clone();
+
+            let mut app = crate::application_port::CliApplicationPort::persistent_default().unwrap();
+            let goal_start = nola_application::goal_coordinator::create_goal_command("goal-start", "Inspect docs", "", 10);
+            let step_start: Value = app.execute(nola_application::ApplicationCommand::StepGoal {
+                conversation_id: conversation.into(),
+                source_host_id: host.clone(),
+                control: Some(goal_start),
+                start_configuration: Some(Box::new(engine_seed)),
+                selected_model: None,
+                user_prompt: String::new(),
+                host_available: Some(false),
+                submitted_run_id: None,
+                submitted_user_message_id: None,
+                submitted_assistant_message_id: None,
+                stop_after_sealed_round: false,
+            }).unwrap();
+            assert!(step_start["error"].is_null(), "{step_start}");
+            assert_eq!(step_start["goal"]["status"], "paused", "{step_start}");
+
+            let mut submit_body = json!({
+                "conversationId": conversation,
+                "expected_host_id": host_identity(),
+                "client_id": "web-client-1",
+                "submission_id": "web-goal-sub-1",
+                "user_message_id": "web-goal-sub-1:user",
+                "assistant_message_id": "web-goal-sub-1:assistant",
+                "message": "Continue with docs"
+            });
+            submit_body["request_digest"] = json!(
+                nola_domain::remote_submission::submission_request_digest(&submit_body).unwrap()
+            );
+            let (dispatch, _receipt, created) = register_stream_submission(&mut submit_body).unwrap();
+            assert!(created);
+            let step: Value = app.execute(nola_application::ApplicationCommand::StepGoal {
+                conversation_id: conversation.into(),
+                source_host_id: host,
+                control: None,
+                start_configuration: None,
+                selected_model: None,
+                user_prompt: "Continue with docs".into(),
+                host_available: Some(true),
+                submitted_run_id: Some("web-goal-sub-1".into()),
+                submitted_user_message_id: Some("web-goal-sub-1:user".into()),
+                submitted_assistant_message_id: Some("web-goal-sub-1:assistant".into()),
+                stop_after_sealed_round: true,
+            }).unwrap();
+            assert_eq!(step["instruction"]["run_id"], "web-goal-sub-1");
+            let admitted = dispatch.read().unwrap();
+            assert_eq!(admitted.phase, nola_domain::remote_submission::RemoteSubmissionPhase::Admitted);
+            let observed = read_run_observation(
+                &mut app,
+                host_identity(),
+                RunObservationRequest::Observe {
+                    conversation_id: conversation.into(),
+                    expected_host_id: host_identity().into(),
+                    client_id: "web-client-1".into(),
+                    expected_run_id: "web-goal-sub-1".into(),
+                    assistant_message_id: "web-goal-sub-1:assistant".into(),
+                },
+            ).unwrap();
+            assert_eq!(observed["result"]["goal_execution"]["run_id"], "web-goal-sub-1");
+            assert_eq!(observed["result"]["submission_receipt"]["phase"], "admitted");
+        }).join().unwrap();
     }
 }

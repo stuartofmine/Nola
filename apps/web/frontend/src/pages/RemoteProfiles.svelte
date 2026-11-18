@@ -213,7 +213,7 @@
             <header class="row between endpoint-head">
                 <div class="identity"><h2>{group.endpoint.name || group.endpoint.baseURL}</h2><p class="muted endpoint" title={group.endpoint.baseURL}>{group.endpoint.baseURL}</p><p class="muted">{protocolTitle(group.endpoint.wireProtocol || 'chat_completions')}</p></div>
                 {#if group.models.some(model => model.provider === 'openai-compatible')}
-                    <label class="inline-toggle"><input type="checkbox" checked={group.endpoint.enabled} disabled={busy} aria-label={t($locale, 'remote.enable_endpoint')} onchange={event => setEndpointEnabled(group.endpoint.id, event.currentTarget.checked)} />{t($locale, 'remote.enable_endpoint')}</label>
+                    <label class="inline-toggle"><input type="checkbox" role="switch" checked={group.endpoint.enabled} disabled={busy} aria-label={t($locale, 'remote.enable_endpoint')} onchange={event => setEndpointEnabled(group.endpoint.id, event.currentTarget.checked)} />{t($locale, 'remote.enable_endpoint')}</label>
                 {/if}
                 <div class="actions wide-actions">
                     {#if group.models.some(model => model.provider === 'openai-compatible')}
@@ -270,7 +270,7 @@
                             <button class="danger" disabled={busy || members.length <= 1} onclick={() => mutateCatalog('delete_model', model.id, model.displayName || model.modelName)}>{t($locale, 'remote.delete_model')}</button>
                         {/if}
                     </div></details></div>
-                    {#if model.provider === 'openai-compatible'}<label class="inline-toggle"><input type="checkbox" checked={model.enabled} disabled={busy} aria-label={`${t($locale, 'remote.enable_model')}: ${model.displayName || model.modelName}`} onchange={event => setModelEnabled(model, event.currentTarget.checked)} />{t($locale, 'remote.enable_model')}</label>{/if}
+                    {#if model.provider === 'openai-compatible'}<label class="inline-toggle"><input type="checkbox" role="switch" checked={model.enabled} disabled={busy} aria-label={`${t($locale, 'remote.enable_model')}: ${model.displayName || model.modelName}`} onchange={event => setModelEnabled(model, event.currentTarget.checked)} />{t($locale, 'remote.enable_model')}</label>{/if}
                     <p class="muted">{t($locale, 'remote.priority')} {model.priority}{primaryModelId === model.id ? ` · ${t($locale, 'remote.default_model')}` : ''}</p>
                     <p class="muted">{(model.capabilities || []).map(capabilityTitle).join(' · ')}</p>
                     {#if model.executionCapabilities == null}
@@ -296,7 +296,7 @@
                 <label>{t($locale, 'remote.display_name')}<input bind:value={metadata.displayName} maxlength="512" required /></label>
                 <label>{t($locale, 'remote.priority')}<input type="number" bind:value={metadata.priority} min="0" max="100" step="1" required /></label>
             </div>
-            <div class="efforts"><label><input type="checkbox" bind:checked={metadata.enabled} />{t($locale, 'remote.enable_model')}</label></div>
+            <div class="efforts"><label><input type="checkbox" role="switch" bind:checked={metadata.enabled} />{t($locale, 'remote.enable_model')}</label></div>
             <p class="muted">{t($locale, 'remote.capabilities_hint')}</p>
             <div class="efforts">{#each capabilities as capability}<label><input type="checkbox" value={capability} bind:group={metadata.capabilities} />{capabilityTitle(capability)}</label>{/each}</div>
             <p class="muted">{t($locale, 'remote.execution_capabilities_hint')}</p>

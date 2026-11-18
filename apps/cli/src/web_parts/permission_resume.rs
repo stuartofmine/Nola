@@ -77,7 +77,10 @@ fn host_run_resume_response_body(
     let (tx, rx) = mpsc::channel();
     let (stop_tx, stop_rx) = mpsc::channel();
     let heartbeat = spawn_sse_heartbeat(tx.clone(), stop_rx, StdDuration::from_secs(15));
-    thread::spawn(move || {
+    let _ = std::thread::Builder::new()
+        .name("web-permission-resume".into())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
         let observation_owner = (|| -> Result<ObservedWorkerOwner,String> {
             let mut application = crate::application_port::CliApplicationPort::persistent_default()?;
             let active = observation_command(&mut application,json!({"type":"active_run","conversation_id":input.conversation_id}))?;

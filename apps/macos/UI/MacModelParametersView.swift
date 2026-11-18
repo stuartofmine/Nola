@@ -98,8 +98,26 @@ struct MacModelParameterDraftForm: View {
                     decimal(String(localized: "model.parameters.temperature"), key: "temperature", path: \.temperature, range: 0...2)
                     decimal(String(localized: "model.parameters.top_p"), key: "topP", path: \.topP, range: 0...1)
                 }.disabled(!samplingAvailable)
-                Toggle(String(localized: "mac.model_parameters.stream"), isOn: value(\.streamOutput)).gridCellColumns(2)
-                Toggle(String(localized: "mac.model_parameters.thinking"), isOn: value(\.showThinking)).gridCellColumns(2)
+                GridRow {
+                    Text(String(localized: "mac.model_parameters.stream"))
+                    HStack {
+                        Spacer(minLength: 0)
+                        Toggle(String(localized: "mac.model_parameters.stream"), isOn: value(\.streamOutput))
+                            .labelsHidden()
+                            .toggleStyle(.macSwitchControl)
+                            .accessibilityLabel(String(localized: "mac.model_parameters.stream"))
+                    }
+                }
+                GridRow {
+                    Text(String(localized: "mac.model_parameters.thinking"))
+                    HStack {
+                        Spacer(minLength: 0)
+                        Toggle(String(localized: "mac.model_parameters.thinking"), isOn: value(\.showThinking))
+                            .labelsHidden()
+                            .toggleStyle(.macSwitchControl)
+                            .accessibilityLabel(String(localized: "mac.model_parameters.thinking"))
+                    }
+                }
             }
             if !samplingAvailable {
                 Text(String(localized: "Sampling controls are unavailable for this model.", table: "ModelCenter"))
@@ -581,7 +599,9 @@ struct MacModelParametersView: View {
                 Divider().opacity(0.45)
             }
             Toggle(String(localized: "mac.model_parameters.stream"), isOn: $parameters.streamOutput)
+                .toggleStyle(.macSwitch)
             Toggle(String(localized: "mac.model_parameters.thinking"), isOn: $parameters.showThinking)
+                .toggleStyle(.macSwitch)
             Divider().opacity(0.45)
             VStack(alignment: .leading, spacing: 7) {
                 Text(String(localized: "mac.model_parameters.custom_prompt"))

@@ -251,11 +251,18 @@ fn submit_interactive_goal_control(config: &Config, action: nola_application::go
     let projection = session::load_session_goal_projection(session)?.ok_or("Goal state is unavailable")?;
     let goal = projection.active.as_ref().filter(|goal| !goal.status.is_terminal())
         .ok_or_else(|| tr(Message::InteractiveGoalNoResumable).to_string())?;
-    let confirmed = crate::goal_control_port::submit_existing(nola_application::goal_control_intent::PrepareGoalControlIntent {
+    let intent = nola_application::goal_control_intent::PrepareGoalControlIntent {
         conversation_id: session.into(), operation_id: format!("cli-goal:{}", uuid::Uuid::new_v4()),
-        action, expected_goal_id: Some(goal.id.clone()), expected_control_token: projection.control_token(),
+        action: action.clone(), expected_goal_id: Some(goal.id.clone()), expected_control_token: projection.control_token(),
         objective: String::new(), constraints: Vec::new(), wake_at_epoch_ms: None,
-    })?;
+    };
+    let confirmed = if matches!(action, nola_application::goal_control_intent::GoalControlAction::Resume)
+        && goal.status != GoalStatus::Running
+    {
+        crate::core_agent_runtime::rebind_and_resume_goal(&config.host_invocation_request()?, intent)?
+    } else {
+        crate::goal_control_port::submit_existing(intent)?
+    };
     if !confirmed { terminal_notice!("  {}", tr(Message::InteractiveGoalControlPending)); }
     Ok(confirmed)
 }

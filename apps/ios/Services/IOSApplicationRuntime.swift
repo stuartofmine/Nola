@@ -2,7 +2,6 @@
 // Thin iOS adapter for the canonical Application command boundary.
 
 import Foundation
-import CryptoKit
 #if canImport(NolaCore)
 import NolaCore
 #endif
@@ -540,7 +539,6 @@ nonisolated struct IOSCanonicalSkill: Codable, Equatable {
     let summary: String
     let category: String
     let instructionsRef: String
-    let instructionsDigest: String
     let instructionsText: String
     let requiredTools: [AgentCoreSkillToolReference]
     let defaultMode: AgentCoreSkillExecutionMode?
@@ -553,7 +551,6 @@ nonisolated struct IOSCanonicalSkill: Codable, Equatable {
         case id, source, version, summary, category, enabled
         case displayName = "display_name"
         case instructionsRef = "instructions_ref"
-        case instructionsDigest = "instructions_digest"
         case instructionsText = "instructions_text"
         case requiredTools = "required_tools"
         case defaultMode = "default_mode"
@@ -2534,17 +2531,16 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
 
 nonisolated extension UserUploadedContextItem {
     var canonicalSkill: IOSCanonicalSkill {
-        let digest = SHA256.hash(data: Data(content.utf8)).map { String(format: "%02x", $0) }.joined()
         let tools = (requiredTools ?? []).map {
             AgentCoreSkillToolReference.builtin(toolName: $0)
         }
         let now = Int64(Date().timeIntervalSince1970 * 1_000)
         return IOSCanonicalSkill(
             id: id.uuidString.lowercased(), source: "user",
-            version: "\(version ?? "user")-\(digest.prefix(16))",
+            version: version ?? "user",
             displayName: name, summary: description, category: "user",
             instructionsRef: "nola://ios/skills/\(id.uuidString.lowercased())",
-            instructionsDigest: digest, instructionsText: content,
+            instructionsText: content,
             requiredTools: tools, defaultMode: nil, enabled: enabled,
             createdAtMs: now, updatedAtMs: now, deletedAtMs: nil
         )
@@ -2746,7 +2742,6 @@ private nonisolated struct IOSCanonicalValidationProjection: Decodable {
     let validationState: URLDataSourceValidationState
     let validatedAt: Date
     let observedAt: Date?
-    let validationDigest: String
 
     static func decode(_ contract: [String: AgentCoreDataSourceJSON]) throws -> URLDataSourceValidationContract {
         let decoder = JSONDecoder()
@@ -2784,8 +2779,7 @@ private nonisolated struct IOSCanonicalValidationProjection: Decodable {
             maximumAgeMinutes: wire.maximumAgeMinutes,
             validationState: wire.validationState,
             validatedAt: wire.validatedAt,
-            observedAt: wire.observedAt,
-            validationDigest: wire.validationDigest
+            observedAt: wire.observedAt
         )
     }
 }

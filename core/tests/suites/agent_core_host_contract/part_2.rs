@@ -461,7 +461,6 @@ fn skill_required_tool_descriptor_is_installed_before_skill_run_starts() {
         &dispatched.host_requests,
         |payload| matches!(payload, HostRequest::ExecuteTool { call_id, .. } if call_id == "skill-required-tool-call"),
     );
-    let digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     let write_file = capability("write_file", HostCapabilityRoute::Tool, None);
     let invoked = submit_response(
         &mut core,
@@ -474,8 +473,7 @@ fn skill_required_tool_descriptor_is_installed_before_skill_run_starts() {
                 "skill_id": "document-create",
                 "version": "1.0.0",
                 "display_name": "Document create",
-                "instructions_ref": format!("skill://document-create/1.0.0/SKILL.md#sha256={digest}"),
-                "instructions_digest": digest,
+                "instructions_ref": "skill://document-create/1.0.0/SKILL.md",
                 "required_tools": [{"provider": "builtin", "tool_name": "write_file"}],
                 "mode": "inline",
                 "execution_contract": {"schemaVersion": 1}
@@ -687,7 +685,6 @@ fn one_writer_artifact_satisfies_one_active_skill_artifact_without_uri_copying()
             AgentInputDelivery::CurrentTurn,
         ))
         .expect("start Skill Turn");
-    let digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     let invoked = complete_named_tool_round(
         &mut core,
         &model_request(&started.host_requests),
@@ -699,8 +696,7 @@ fn one_writer_artifact_satisfies_one_active_skill_artifact_without_uri_copying()
             "skill_id": "record-create",
             "version": "1.0.0",
             "display_name": "Record create",
-            "instructions_ref": format!("skill://record-create/1.0.0/SKILL.md#sha256={digest}"),
-            "instructions_digest": digest,
+            "instructions_ref": "skill://record-create/1.0.0/SKILL.md",
             "required_tools": [],
             "mode": "inline",
             "execution_contract": {
@@ -767,7 +763,6 @@ fn failed_skill_update_at_iteration_boundary_terminates_skill_before_final_synth
             AgentInputDelivery::CurrentTurn,
         ))
         .expect("start Skill Turn");
-    let digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     let invoked = complete_named_tool_round(
         &mut core,
         &model_request(&started.host_requests),
@@ -779,8 +774,7 @@ fn failed_skill_update_at_iteration_boundary_terminates_skill_before_final_synth
             "skill_id": "artifact-create",
             "version": "1.0.0",
             "display_name": "Artifact create",
-            "instructions_ref": format!("skill://artifact-create/1.0.0/SKILL.md#sha256={digest}"),
-            "instructions_digest": digest,
+            "instructions_ref": "skill://artifact-create/1.0.0/SKILL.md",
             "required_tools": [],
             "mode": "inline",
             "execution_contract": {
@@ -800,54 +794,24 @@ fn failed_skill_update_at_iteration_boundary_terminates_skill_before_final_synth
         .next()
         .expect("SkillRun id")
         .clone();
-    let dispatched = submit_response(
-        &mut core,
-        &model_request(&invoked.host_requests),
-        1,
-        empty_model_completion(vec![named_tool_call(
-            "invalid-skill-artifact-call",
-            "skill_update",
-            json!({
-                "run_id": run_id,
-                "action": "artifact",
-                "artifact_id": "artifact",
-                "artifact_ref": "relative-record-id"
-            }),
-        )]),
-    );
-    let request = request_matching(
-        &dispatched.host_requests,
-        |payload| matches!(payload, HostRequest::ExecuteTool { call_id, .. } if call_id == "invalid-skill-artifact-call"),
-    );
-    let recovery = submit_response(
-        &mut core,
-        &request,
-        1,
-        HostResponse::ToolCompleted {
-            call_id: "invalid-skill-artifact-call".to_string(),
-            output: json!({
-                "error": "invalid_skill_artifact_ref",
-                "message": "artifact_ref must be a canonical absolute URI",
-                "tool_execution_skipped": true,
-                "next_action": "Use a canonical artifact URI"
-            }),
-            outcome: nola_core::agent::host::HostToolOutcome::Failed,
-            activation: None,
-            full_output_ref: None,
-            artifacts: Vec::new(),
-        },
-    );
-
-    let run = &recovery.snapshot.skill_runtime.runs[&run_id];
+    let run = &invoked.snapshot.skill_runtime.runs[&run_id];
     assert_eq!(
         run.status,
-        nola_core::agent::capability::SkillRunStatus::Failed
+        nola_core::agent::capability::SkillRunStatus::Running
     );
-    let final_request = model_request(&recovery.host_requests);
-    let HostRequest::ModelStream { tools, .. } = &final_request.payload else {
+    let final_request = model_request(&invoked.host_requests);
+    let HostRequest::ModelStream {
+        response_mode,
+        tools,
+        ..
+    } = &final_request.payload
+    else {
         panic!("budget boundary must request final synthesis")
     };
-    assert_eq!(model_tool_names(tools), vec!["requirements_update"]);
+    assert_eq!(*response_mode, ModelResponseMode::Conversational);
+    assert!(tools
+        .iter()
+        .any(|tool| tool.pointer("/function/name").and_then(Value::as_str) == Some("requirements_update")));
 }
 
 #[test]
@@ -860,7 +824,6 @@ fn unique_active_skill_accepts_its_skill_id_as_update_alias() {
             AgentInputDelivery::CurrentTurn,
         ))
         .expect("start Skill Turn");
-    let digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     let invoked = complete_named_tool_round(
         &mut core,
         &model_request(&started.host_requests),
@@ -872,8 +835,7 @@ fn unique_active_skill_accepts_its_skill_id_as_update_alias() {
             "skill_id": "document-create",
             "version": "1.0.0",
             "display_name": "Document create",
-            "instructions_ref": format!("skill://document-create/1.0.0/SKILL.md#sha256={digest}"),
-            "instructions_digest": digest,
+            "instructions_ref": "skill://document-create/1.0.0/SKILL.md",
             "required_tools": [],
             "mode": "inline",
             "execution_contract": {

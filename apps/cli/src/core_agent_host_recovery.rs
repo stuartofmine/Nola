@@ -162,7 +162,7 @@ fn restore_at(
     let mut descriptor: Descriptor =
         serde_json::from_str(&encoded).map_err(|_| "Invalid frozen Host descriptor")?;
     binding
-        .require_exact(&descriptor.binding)
+        .require_exact_or_rotated_credential(&descriptor.binding)
         .map_err(str::to_owned)?;
     if descriptor.request.session.session_id.as_deref() != Some(conversation_id)
         || !descriptor.request.session.save_session
@@ -170,6 +170,7 @@ fn restore_at(
     {
         return Err("Frozen Host descriptor ownership mismatch".into());
     }
+    let mut secret_changed = false;
     for (index, route) in std::iter::once(&binding.primary)
         .chain(&binding.fallbacks)
         .enumerate()
@@ -195,7 +196,10 @@ fn restore_at(
             }
         };
         if sha(secret.as_bytes()) != route.credential_sha256 {
-            return Err("Frozen credential identity changed".into());
+            if secret.trim().is_empty() && route.credential_sha256 != nola_host_protocol::EMPTY_CREDENTIAL_SHA256 {
+                return Err("Frozen credential was removed".into());
+            }
+            secret_changed = true;
         }
         if index == 0 {
             descriptor.request.model_settings.api_key = secret;
@@ -217,7 +221,11 @@ fn restore_at(
         _ => None,
     };
     descriptor.request.runtime.mac_launch = binding.mac_launch.clone();
-    descriptor.request.runtime.output_admission = Some(binding.output_admission.clone());
+    descriptor.request.runtime.output_admission = Some(if secret_changed {
+        crate::host_output_admission::admit(&descriptor.request.model_invocation_settings()?, true)?
+    } else {
+        binding.output_admission.clone()
+    });
     descriptor.request.runtime.admitted_max_retries = Some(binding.generation.max_retries);
     Ok(descriptor.request)
 }
@@ -273,9 +281,25 @@ mod tests {
         let mut vault = crate::host_credentials::HostCredentialVault::open(store.path()).unwrap();
         let record = vault.record(endpoint_id).unwrap().unwrap();
         vault
-            .write(endpoint_id, &record.identity, record.revision, None, || {
-                Ok(())
-            })
+            .write(
+                endpoint_id,
+                &record.identity,
+                record.revision,
+                Some("rotated-secret"),
+                || Ok(()),
+            )
+            .unwrap();
+        let rotated = restore_at(&reference, "original-owner", &binding, &store).unwrap();
+        assert_eq!(rotated.model_settings.api_key, "rotated-secret");
+        let rotated_record = vault.record(endpoint_id).unwrap().unwrap();
+        vault
+            .write(
+                endpoint_id,
+                &rotated_record.identity,
+                rotated_record.revision,
+                None,
+                || Ok(()),
+            )
             .unwrap();
         assert!(restore_at(&reference, "original-owner", &binding, &store).is_err());
     }

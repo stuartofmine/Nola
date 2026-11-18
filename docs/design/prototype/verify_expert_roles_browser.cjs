@@ -24,9 +24,8 @@ const output=environment.artifactPath('expert-roles/prototype');
         async function openHistory(width) {
             if(width<700) await act(page.locator('[data-action="im:nav:im-details"]'));
             else {
-                await act(page.locator('[data-action="sn-group:上下文"]'));
-                const participants=page.locator('[data-action="dk-section:参与者"]');
-                if(await participants.getAttribute('aria-expanded')!=='true') await act(participants);
+                const taskBtn = page.locator('[data-action="sn-group:任务"]');
+                if(await taskBtn.getAttribute('aria-pressed')!=='true') await act(taskBtn);
             }
             const toggle=page.locator('[data-action="eh:toggle:design"]');
             if(await toggle.getAttribute('aria-expanded')!=='true') await act(toggle);

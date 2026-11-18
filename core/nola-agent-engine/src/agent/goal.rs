@@ -465,7 +465,7 @@ impl GoalProjection {
     pub fn control_observation(&self) -> Option<GoalControlObservation> {
         let goal = self.active.as_ref()?;
         Some(GoalControlObservation { goal_id: goal.id.clone(), control_token: self.control_token()?,
-            status: goal.status, can_submit: goal.status.is_terminal(),
+            status: goal.status, can_submit: goal.status != GoalStatus::Running,
             // A Goal can request user input while its canonical Run is still
             // draining or producing output. Pausing is legal in that state.
             can_pause: !goal.status.is_terminal() && goal.status != GoalStatus::Paused,
@@ -1416,7 +1416,7 @@ mod tests {
             assert_eq!((observation.can_pause, observation.can_resume, observation.can_cancel), (pause, resume, cancel));
             if pause { assert!(projection.clone().pause(GoalStatus::Paused, None, 2).is_ok()); }
             assert_eq!(projection.clone().resume(2).is_ok(), resume);
-            assert_eq!(observation.can_submit, status.is_terminal());
+            assert_eq!(observation.can_submit, status != GoalStatus::Running);
         }
     }
 
@@ -2047,7 +2047,7 @@ mod tests {
         }).unwrap();
         assert_eq!(projection.active.as_ref().unwrap().status, GoalStatus::Paused);
         assert_eq!(projection.applied_operations["current-pause"].rejection, None);
-        assert!(!projection.control_observation().unwrap().can_submit);
+        assert!(projection.control_observation().unwrap().can_submit);
     }
 
     #[test]

@@ -40,7 +40,6 @@ import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
-import java.security.MessageDigest
 import java.time.Instant
 import java.time.ZoneId
 import java.util.concurrent.ConcurrentHashMap
@@ -107,8 +106,8 @@ class AndroidAgentHostExecutor(
                     output = searchMemory(request),
                     isError = false,
                 )
-                request.capability == "files_read" -> readScopedFile(request)
-                request.capability == "files_write" -> writeScopedFile(request)
+                request.capability == "files_read" -> readScopedFile(request, toolPlan)
+                request.capability == "files_write" -> writeScopedFile(request, toolPlan)
                 request.capability == "clipboard" -> accessClipboard(request)
                 request.capability == "location" -> currentLocation(request)
                 request.capability == "calendar" -> accessCalendar(request)
@@ -250,26 +249,27 @@ class AndroidAgentHostExecutor(
                 AndroidManagedResourceAccess.canReadContent(it, resourcePrincipalId)
         }
         require(matches.size == 1) { "Unknown, disabled, or ambiguous Skill id: $skillId" }
-        val instructions = matches.single().content
+        val matched = matches.single()
+        val instructions = matched.content
         val bytes = instructions.encodeToByteArray()
         require(bytes.size <= MAX_SKILL_BYTES) { "Skill instructions exceed the Android size limit" }
-        val digest = MessageDigest.getInstance("SHA-256")
-            .digest(bytes)
-            .joinToString(separator = "") { byte -> "%02x".format(byte) }
-        val version = matches.single().version?.trim()?.takeIf(String::isNotEmpty)
-            ?: "sha256-${digest.take(12)}"
+        val version = matched.version?.trim()?.takeIf(String::isNotEmpty) ?: "local"
+        val canonicalId = matched.resourceId?.trim()?.takeIf(String::isNotEmpty) ?: skillId
+        val encodedId = Uri.encode(canonicalId)
+        val encodedVersion = Uri.encode(version)
         val activation = request.arguments.text("activation")
             ?.trim()
             ?.takeIf { it == "session" }
             ?: "turn"
         val payload = buildJsonObject {
             put("type", "invoked_skill")
-            put("skill_id", skillId)
-            put("display_name", matches.single().name)
+            put("skill_id", canonicalId)
+            put("name", matched.name)
+            put("display_name", matched.name)
+            put("summary", matched.description)
             put("version", version)
-            put("instructions_ref", "skill://$skillId/$version/SKILL.md#sha256=$digest")
-            put("instructions_digest", digest)
-            put("base_directory", "android://skills/$skillId")
+            put("instructions_ref", "skill://$encodedId/$encodedVersion/SKILL.md")
+            put("base_directory", "android://skills/$encodedId")
             put("mode", "inline")
             put("budget", buildJsonObject {
                 put("max_model_turns", 8)
@@ -278,13 +278,13 @@ class AndroidAgentHostExecutor(
             })
             put("arguments", request.arguments["args"] ?: JsonObject(emptyMap()))
             put("instructions", instructions)
-            put("required_tools", JsonArray(matches.single().requiredTools.map { toolName ->
+            put("required_tools", JsonArray(matched.requiredTools.map { toolName ->
                 buildJsonObject {
                     put("provider", "builtin")
                     put("tool_name", toolName)
                 }
             }))
-            put("validation_steps", JsonArray(matches.single().validationSteps.map(::JsonPrimitive)))
+            put("validation_steps", JsonArray(matched.validationSteps.map(::JsonPrimitive)))
             put("activation", activation)
         }
         return AndroidAgentHostCallResult(
@@ -294,9 +294,12 @@ class AndroidAgentHostExecutor(
         )
     }
 
-    private suspend fun readScopedFile(request: AndroidAgentHostCallRequest): AndroidAgentHostCallResult =
+    private suspend fun readScopedFile(
+        request: AndroidAgentHostCallRequest,
+        toolPlan: AgentCoreAndroidToolPlan,
+    ): AndroidAgentHostCallResult =
         withContext(Dispatchers.IO) {
-            val uri = request.scopedUri()
+            val uri = request.scopedUri(toolPlan)
             val stream = context.contentResolver.openInputStream(uri)
                 ?: error("Unable to open the granted document")
             val bytes = stream.use { readLimited(it, MAX_FILE_BYTES) }
@@ -312,9 +315,12 @@ class AndroidAgentHostExecutor(
             )
         }
 
-    private suspend fun writeScopedFile(request: AndroidAgentHostCallRequest): AndroidAgentHostCallResult =
+    private suspend fun writeScopedFile(
+        request: AndroidAgentHostCallRequest,
+        toolPlan: AgentCoreAndroidToolPlan,
+    ): AndroidAgentHostCallResult =
         withContext(Dispatchers.IO) {
-            val uri = request.scopedUri()
+            val uri = request.scopedUri(toolPlan)
             val content = request.arguments.text("content")
                 ?: request.arguments.text("text")
                 ?: error("A write host call requires content")
@@ -425,8 +431,8 @@ class AndroidAgentHostExecutor(
         }
 
     private fun listCalendarEvents(request: AndroidAgentHostCallRequest): AndroidAgentHostCallResult {
-        val start = request.arguments.instant("start_iso") ?: Instant.now()
-        val end = request.arguments.instant("end_iso") ?: start.plusSeconds(86_400)
+        val start = request.arguments.calendarInstant("start_iso", "start_ms") ?: Instant.now()
+        val end = request.arguments.calendarInstant("end_iso", "end_ms") ?: start.plusSeconds(86_400)
         require(end.isAfter(start) && end.epochSecond - start.epochSecond <= 31L * 86_400L) {
             "The calendar time range must be positive and no longer than 31 days"
         }
@@ -468,8 +474,10 @@ class AndroidAgentHostExecutor(
     private fun createCalendarEvent(request: AndroidAgentHostCallRequest): AndroidAgentHostCallResult {
         val title = request.arguments.text("title")?.trim().orEmpty()
         require(title.isNotEmpty()) { "A calendar event requires title" }
-        val start = request.arguments.instant("start_iso") ?: error("A calendar event requires start_iso")
-        val end = request.arguments.instant("end_iso") ?: error("A calendar event requires end_iso")
+        val start = request.arguments.calendarInstant("start_iso", "start_ms")
+            ?: error("A calendar event requires start_ms or start_iso")
+        val end = request.arguments.calendarInstant("end_iso", "end_ms")
+            ?: error("A calendar event requires end_ms or end_iso")
         require(end.isAfter(start) && end.epochSecond - start.epochSecond <= 31L * 86_400L) {
             "The calendar event must have a positive duration of at most 31 days"
         }
@@ -507,8 +515,24 @@ class AndroidAgentHostExecutor(
         )?.use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else null }
     }
 
-    private fun AndroidAgentHostCallRequest.scopedUri(): Uri {
-        val raw = grant?.text("uri") ?: error("The host call has no scoped URI grant")
+    private fun AndroidAgentHostCallRequest.scopedUri(toolPlan: AgentCoreAndroidToolPlan): Uri {
+        val explicit = grant?.text("uri")
+        val resolved = if (explicit != null) {
+            explicit
+        } else {
+            val nowMs = System.currentTimeMillis()
+            val valid = toolPlan.scopedGrants.filter {
+                it.capability == capability && it.route == "device" && it.expiresAtMs > nowMs && it.scope.isNotBlank()
+            }
+            val requested = arguments.text("path") ?: arguments.text("uri")
+            valid.firstOrNull { it.scope == requested }?.scope
+                ?: if (requested == null || !requested.startsWith("content://")) {
+                    valid.singleOrNull()?.scope
+                } else {
+                    null
+                }
+        }
+        val raw = resolved ?: error("The host call has no scoped URI grant")
         val uri = Uri.parse(raw)
         require(uri.scheme == "content") { "Only Android content URI grants are accepted" }
         return uri
@@ -517,8 +541,14 @@ class AndroidAgentHostExecutor(
     private fun JsonObject.text(key: String): String? =
         this[key]?.jsonPrimitive?.contentOrNull
 
+    private fun JsonObject.longValue(key: String): Long? =
+        this[key]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
+
     private fun JsonObject.instant(key: String): Instant? =
         text(key)?.let { raw -> runCatching { Instant.parse(raw) }.getOrElse { error("$key must be ISO 8601") } }
+
+    private fun JsonObject.calendarInstant(isoKey: String, msKey: String): Instant? =
+        instant(isoKey) ?: longValue(msKey)?.let(Instant::ofEpochMilli)
 
 
     private fun readLimited(input: java.io.InputStream, limit: Int): ByteArray {

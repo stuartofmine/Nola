@@ -267,8 +267,9 @@ static void reset_long_term_states(const bool clear_kv_cache = true) {
     system_prompt_position = 0;
     current_position = 0;
 
-    if (clear_kv_cache)
-        llama_memory_clear(llama_get_memory(g_context), false);
+    if (clear_kv_cache && g_context != nullptr) {
+        llama_memory_clear(llama_get_memory(g_context), true);
+    }
 }
 
 /**
@@ -409,8 +410,17 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_processUserPrompt(
         jstring juser_prompt,
         jint n_predict
 ) {
-    // Reset short-term states
+    // Reset short-term states and any previous turn past the system prompt (full conversation arrives per turn)
     reset_short_term_states();
+    if (g_context != nullptr && current_position > system_prompt_position) {
+        llama_memory_seq_rm(llama_get_memory(g_context), 0, system_prompt_position, -1);
+        current_position = system_prompt_position;
+    }
+    if (!chat_msgs.empty() && chat_msgs.front().role == ROLE_SYSTEM) {
+        chat_msgs.resize(1);
+    } else {
+        chat_msgs.clear();
+    }
 
     // Obtain and tokenize user prompt
     const auto *const user_prompt = env->GetStringUTFChars(juser_prompt, nullptr);
@@ -432,7 +442,8 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_processUserPrompt(
 
     // Ensure user prompt doesn't exceed the context size by truncating if necessary.
     const int user_prompt_size = (int) user_tokens.size();
-    const int max_batch_size = DEFAULT_CONTEXT_SIZE - OVERFLOW_HEADROOM;
+    const int context_limit = (g_context ? (int) llama_n_ctx(g_context) : DEFAULT_CONTEXT_SIZE) - OVERFLOW_HEADROOM;
+    const int max_batch_size = std::max(1, context_limit - current_position);
     if (user_prompt_size > max_batch_size) {
         const int skipped_tokens = user_prompt_size - max_batch_size;
         user_tokens.resize(max_batch_size);
@@ -445,8 +456,8 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_processUserPrompt(
         return 2;
     }
 
-    // Update position
-    current_position += user_prompt_size;
+    // Update position with the actual number of decoded tokens
+    current_position += (int) user_tokens.size();
     stop_generation_position = current_position + n_predict;
     return 0;
 }
@@ -492,7 +503,8 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_generateNextToken(
         jobject /*unused*/
 ) {
     // Infinite text generation via context shifting
-    if (current_position >= DEFAULT_CONTEXT_SIZE - OVERFLOW_HEADROOM) {
+    const int context_limit = (g_context ? (int) llama_n_ctx(g_context) : DEFAULT_CONTEXT_SIZE) - OVERFLOW_HEADROOM;
+    if (current_position >= context_limit) {
         LOGw("%s: Context full! Shifting...", __func__);
         shift_context();
     }
@@ -549,15 +561,27 @@ extern "C"
 JNIEXPORT void JNICALL
 Java_com_arm_aichat_internal_InferenceEngineImpl_unload(JNIEnv * /*unused*/, jobject /*unused*/) {
     // Reset long-term & short-term states
-    reset_long_term_states();
+    reset_long_term_states(false);
     reset_short_term_states();
 
-    // Free up resources
-    common_sampler_free(g_sampler);
+    // Free up resources and clear pointers to prevent double-free
+    if (g_sampler != nullptr) {
+        common_sampler_free(g_sampler);
+        g_sampler = nullptr;
+    }
     g_chat_templates.reset();
-    llama_batch_free(g_batch);
-    llama_free(g_context);
-    llama_model_free(g_model);
+    if (g_batch.token != nullptr) {
+        llama_batch_free(g_batch);
+    }
+    g_batch = {};
+    if (g_context != nullptr) {
+        llama_free(g_context);
+        g_context = nullptr;
+    }
+    if (g_model != nullptr) {
+        llama_model_free(g_model);
+        g_model = nullptr;
+    }
 }
 
 extern "C"

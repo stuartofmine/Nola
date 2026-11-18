@@ -689,7 +689,7 @@ final class EndToEndFlowTests: XCTestCase {
                         sentCancellation = true
                         let receipt = try XCTUnwrap(submissionReceipt)
                         XCTAssertEqual(receipt.phase, "admitted")
-                        try await provider.cancelHostGeneration(identity: receipt.identity, requestDigest: receipt.request_digest)
+                        try await provider.cancelHostGeneration(identity: receipt.identity)
                     }
                 } else if trace.kind == .runCancelled {
                     cancelled += 1

@@ -47,6 +47,7 @@ struct DesignTokens {
     static let elevatedColor = mobileColor(0xF1F0EC, 0x232320)
     static let rowFillColor = mobileColor(0xF1F0EC, 0x232320)
     static let mutedFillColor = Color(.tertiarySystemFill)
+    static let switchTintColor = mobileColor(0x237047, 0x2E8B57)
     static let borderColor = mobileColor(0xE5E3DD, 0x2E2D2A)
     static let strongBorderColor = Color("NolaControlOutline")
     static let separatorColor = mobileColor(0xE5E3DD, 0x2E2D2A)
@@ -597,13 +598,24 @@ struct NolaActionButtonStyle: ButtonStyle {
     }
 }
 
+struct NolaSwitchToggleStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Toggle(isOn: configuration.$isOn) {
+            configuration.label
+        }
+        .toggleStyle(.switch)
+        .tint(DesignTokens.switchTintColor)
+    }
+}
+
 /// The title, chevron and trailing whitespace are one accessible disclosure action.
 struct NolaRowDisclosureStyle: DisclosureGroupStyle {
+    var isPlain: Bool = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Button {
+            let toggleButton = Button {
                 withAnimation(reduceMotion ? nil : DesignTokens.disclosureAnimation) {
                     configuration.isExpanded.toggle()
                 }
@@ -620,8 +632,12 @@ struct NolaRowDisclosureStyle: DisclosureGroupStyle {
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(NolaActionButtonStyle())
             .accessibilityValue(configuration.isExpanded ? String(localized: "Expanded") : String(localized: "Collapsed"))
+            if isPlain {
+                toggleButton.buttonStyle(.plain)
+            } else {
+                toggleButton.buttonStyle(NolaActionButtonStyle())
+            }
             if configuration.isExpanded {
                 configuration.content.nolaDisclosureTransition(reduceMotion: reduceMotion)
             }

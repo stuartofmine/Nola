@@ -140,17 +140,17 @@ final class MacCoreBridgeSuiteTests: XCTestCase {
             mutableRun.removeValue(forKey: key)
             XCTAssertThrowsError(try decodeSkillUpdate(["type": "started", "run": mutableRun]), key)
         }
-        for key in ["instructions_digest", "execution_contract"] {
+        for key in ["instructions_ref", "execution_contract"] {
             var mutableRun = skillRunObject()
             var descriptor = try XCTUnwrap(mutableRun["descriptor"] as? [String: Any])
             descriptor.removeValue(forKey: key)
             mutableRun["descriptor"] = descriptor
             XCTAssertThrowsError(try decodeSkillUpdate(["type": "started", "run": mutableRun]), key)
         }
-        for digest in [String(repeating: "A", count: 64), String(repeating: "b", count: 64), "short"] {
+        for emptyRef in ["", "   "] {
             var mutableRun = skillRunObject()
             var descriptor = try XCTUnwrap(mutableRun["descriptor"] as? [String: Any])
-            descriptor["instructions_digest"] = digest
+            descriptor["instructions_ref"] = emptyRef
             mutableRun["descriptor"] = descriptor
             XCTAssertThrowsError(try decodeSkillUpdate(["type": "started", "run": mutableRun]))
         }
@@ -171,12 +171,11 @@ final class MacCoreBridgeSuiteTests: XCTestCase {
     }
 
     private func skillRunObject() -> [String: Any] {
-        let digest = String(repeating: "a", count: 64)
         return [
             "run_id": "skill-run", "owner": ["session_id": "session", "parent_turn_id": "turn", "child_turn_id": NSNull()],
             "descriptor": [
                 "skill_id": "documents", "version": "1", "display_name": "Documents",
-                "instructions_ref": "skill://documents/1/SKILL.md#sha256=\(digest)", "instructions_digest": digest,
+                "instructions_ref": "skill://documents/1/SKILL.md",
                 "required_tools": [], "default_mode": "inline",
                 "execution_contract": [
                     "schemaVersion": 1,

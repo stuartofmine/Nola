@@ -14,7 +14,6 @@ pub enum ToolSourceProvenance {
         operation_id: String,
         target_owner: CanonicalPartOwner,
         source_owner: CanonicalPartOwner,
-        source_binding_sha256: String,
         source_provenance: nola_domain::PartDerivationProvenance,
     },
     Replica { claim:ToolSourceClaim, replica_id:String, operation_id:String },
@@ -30,7 +29,6 @@ pub struct ToolSourceBinding {
     pub name: String,
     pub owner: AssistantPartOwner,
     pub provenance: ToolSourceProvenance,
-    pub body_sha256: String,
     /// Independent immutable object; not the visible Part's JSON body reference.
     pub body: CanonicalBodyReference,
     pub created_revision: i64,
@@ -49,8 +47,8 @@ impl ToolSourceBinding {
             ToolSourceProvenance::Replica {claim,..} | ToolSourceProvenance::Archive {claim,..} => Ok(claim.clone()),
             _=> {
                 let derivation=match &self.provenance {
-                    ToolSourceProvenance::VerifiedLocalDerivation {operation_id,source_owner,source_binding_sha256,..}=>Some(ToolSourceDerivationClaim {
-                        operation_id:operation_id.clone(),source_owner:source_owner.clone(),source_binding_sha256:source_binding_sha256.clone(),
+                    ToolSourceProvenance::VerifiedLocalDerivation {operation_id,source_owner,..}=>Some(ToolSourceDerivationClaim {
+                        operation_id:operation_id.clone(),source_owner:source_owner.clone(),
                     }),
                     _=>None,
                 };
@@ -59,7 +57,7 @@ impl ToolSourceBinding {
                     original_owner:ToolSourceOriginalOwner {part_owner:CanonicalPartOwner::new(self.owner.owner.conversation_id.clone(),
                         self.owner.owner.assistant_message_id.clone(),self.owner.part_id.clone()).map_err(|e|e.to_string())?,
                         run_id:self.owner.owner.run_id.clone(),turn_id:self.owner.turn_id.clone().ok_or("original tool source lacks Turn")?},
-                    body:self.body.clone(),body_sha256:self.body_sha256.clone(),derivation};
+                    body:self.body.clone(),derivation};
                 claim.validate()?;
                 Ok(claim)
             }

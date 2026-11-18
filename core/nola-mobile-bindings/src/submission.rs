@@ -348,7 +348,6 @@ mod tests {
             "display_name":"Review","summary":"Review text","category":"custom",
             "instructions_ref":"skill://review/SKILL.md",
             "instructions_text":"Review the supplied text.",
-            "instructions_digest":"3b7d3ff3c0cb68998d557a16e00de20ea6c57b4072cc9e1d6005fc0cf37e1d9f",
             "required_tools":[],"default_mode":null,"enabled":true,
             "created_at_ms":1,"updated_at_ms":2});
         let create = resource_command(

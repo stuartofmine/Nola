@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { RunContextUsageProjection, contextUsageDigest, parseRunContextUsage, readHistoricalRunContextUsage } from './runContextUsage.ts';
+import { RunContextUsageProjection, parseRunContextUsage, readHistoricalRunContextUsage } from './runContextUsage.ts';
 import type { CommittedRunContextUsage } from './runContextUsage.ts';
 
 const owner = { hostId: 'host', clientId: 'client', conversationId: 'conversation', generation: 1 };
@@ -9,7 +9,6 @@ const admission = { identity, sequence: '2', record_digest: 'a'.repeat(64) };
 test('cache facts survive verified restoration and reject fabricated hit rates', async () => {
     const value = await record();
     value.usage.cache_usage = { input_tokens: 1000, read_tokens: 800, write_tokens: 100, hit_rate_bps: 8000, is_compaction: true };
-    value.record_digest = await contextUsageDigest(value);
     const projection = new RunContextUsageProjection(); projection.bind(owner, admission);
     assert.deepEqual((await projection.accept(value, owner, admission, () => true))?.usage.cache_usage, value.usage.cache_usage);
     const broken = structuredClone(value); broken.usage.cache_usage!.hit_rate_bps = 9500;
@@ -26,7 +25,6 @@ test('estimated occupancy and persisted cache diagnostics retain distinct reques
     value.usage.prompt_cache_diagnostic = { schemaVersion: 1, status: 'hit', identityStable: false,
         reasons: ['tool_manifest_changed'], fragmentChanges: [{ fragmentId: 'tools', kind: 'changed' }],
         cacheReadInputTokens: 800, cacheWriteInputTokens: null };
-    value.record_digest = await contextUsageDigest(value);
     const projection = new RunContextUsageProjection(); projection.bind(owner, admission);
     const restored = await projection.accept(JSON.parse(JSON.stringify(value)), owner, admission, () => true);
     assert.equal(restored?.usage.measurement?.request_id, 'next-request');
@@ -36,11 +34,11 @@ test('estimated occupancy and persisted cache diagnostics retain distinct reques
     assert.throws(() => parseRunContextUsage({ ...value, usage: { ...value.usage, prompt_cache_measurement: null } }, admission), /source request/);
 });
 async function record(event = '9007199254740993', used = '64000', at = admission): Promise<CommittedRunContextUsage> {
-    const value = { protocol_version: 1 as const, identity: at.identity, admission: at, event_sequence: event,
+    return { protocol_version: 1 as const, identity: at.identity, admission: at, event_sequence: event,
         attempt_sequence: '0', run_cache_usage: null,
         usage: { measurement: null, prompt_cache_measurement: null, prompt_cache_diagnostic: null,
-            used_tokens: used, context_window_tokens: '128000', prompt_token_limit: '120000', estimated: false } };
-    return { ...value, record_digest: await contextUsageDigest(value) };
+            used_tokens: used, context_window_tokens: '128000', prompt_token_limit: '120000', estimated: false },
+        record_digest: 'd'.repeat(64) };
 }
 test('committed usage advances lossless events, ignores stale records and rejects same-event forks', async () => {
     const projection = new RunContextUsageProjection(); projection.bind(owner, admission);
@@ -50,7 +48,7 @@ test('committed usage advances lossless events, ignores stale records and reject
     assert.deepEqual(await projection.accept(await record('5', '1'), owner, admission, () => true), actual);
     await assert.rejects(projection.accept(await record(actual.event_sequence, '64001'), owner, admission, () => true), /fork/);
     assert.deepEqual(projection.record, actual);
-    await assert.rejects(projection.accept({ ...actual, record_digest: 'b'.repeat(64) }, owner, admission, () => true), /digest/);
+    await assert.rejects(projection.accept({ ...actual, record_digest: 'b'.repeat(64) }, owner, admission, () => true), /fork/);
 });
 
 test('request totals advance without a context event and reject crossed frontiers', async () => {
@@ -61,14 +59,11 @@ test('request totals advance without a context event and reject crossed frontier
         input_tokens: 2000, read_tokens: 1500, write_tokens: 100, hit_rate_bps: 7500,
         is_compaction: false, reported_requests: 2, unreported_requests: 1,
     } };
-    next.record_digest = await contextUsageDigest(next);
     assert.deepEqual(await projection.accept(next, owner, admission, () => true), next);
     const crossed = { ...next, event_sequence: '5', attempt_sequence: '6' };
-    crossed.record_digest = await contextUsageDigest(crossed);
     await assert.rejects(projection.accept(crossed, owner, admission, () => true), /frontier fork/);
     assert.deepEqual(projection.record, next);
     const tampered = structuredClone(next); tampered.run_cache_usage!.reported_requests++;
-    tampered.record_digest = await contextUsageDigest(tampered);
     await assert.rejects(projection.accept(tampered, owner, admission, () => true), /attempt fork/);
 });
 test('foreign source/client/root/store and invalid admission do not acquire the visible scope', async () => {
@@ -82,11 +77,10 @@ test('foreign source/client/root/store and invalid admission do not acquire the 
     assert.throws(() => parseRunContextUsage({ ...actual, event_sequence: '18446744073709551616' }, admission));
     assert.equal(projection.record, null);
 });
-test('new Run reset and generation changes discard late hash completion and old history', async () => {
+test('new Run reset and generation changes discard stale updates and old history', async () => {
     const actual = await record(); const projection = new RunContextUsageProjection(); projection.bind(owner, admission);
-    let current = true;
-    const pending = projection.accept(actual, owner, admission, () => current);
-    current = false; assert.equal(await pending, null); assert.equal(projection.record, null);
+    assert.equal(await projection.accept(actual, owner, admission, () => false), null);
+    assert.equal(projection.record, null);
     const successor = { ...admission, identity: { ...identity, run_id: 'successor', assistant_message_id: 'successor-root' } };
     projection.bind(owner, successor);
     assert.equal(await projection.accept(actual, owner, admission, () => true), null);

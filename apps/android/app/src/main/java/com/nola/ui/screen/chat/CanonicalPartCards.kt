@@ -48,6 +48,7 @@ import com.nola.ui.components.ThinkingBody
 import com.nola.ui.components.thinkingExpandedAfterStatusChange
 import com.nola.ui.components.ThinkingBodyVisibleCharactersKey
 import androidx.compose.ui.semantics.semantics
+import com.nola.ui.components.NolaDisclosureBar
 import com.nola.ui.components.NolaDisclosureChevron
 import com.nola.ui.components.nolaDisclosureEnter
 import com.nola.ui.components.nolaDisclosureExit
@@ -129,9 +130,11 @@ internal fun CanonicalErrorPart(part: ConversationProjectionV1.Part.Error, onRea
     var details by remember(part.partId, part.code, part.displayKey) { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth().testTag("chat.error.${part.partId}")) {
         Text(stringResource(R.string.canonical_part_error), color = MaterialTheme.colorScheme.error)
-        TextButton(onClick = { details = !details }) {
-            Text(stringResource(if (details) R.string.canonical_hide_details else R.string.canonical_details))
-        }
+        NolaDisclosureBar(
+            title = stringResource(if (details) R.string.canonical_hide_details else R.string.canonical_details),
+            expanded = details,
+            onToggle = { details = !details }
+        )
         if (details) {
             Fact(part.partId, CanonicalPartReadField.ErrorIdentity, onReadText, stringResource(R.string.canonical_identity), part.partId)
             Fact(part.partId, CanonicalPartReadField.ErrorMetadata, onReadText, stringResource(R.string.canonical_preview), buildJsonObject {
@@ -153,9 +156,11 @@ private fun CanonicalActivityRow(part: ConversationProjectionV1.Part.Tool, detai
         }
         facts.summary?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         facts.artifacts.forEach { ArtifactCard(it) }
-        TextButton(onClick = { onDetailsChanged(!details) }) {
-            Text(stringResource(if (details) R.string.canonical_hide_details else R.string.canonical_details))
-        }
+        NolaDisclosureBar(
+            title = stringResource(if (details) R.string.canonical_hide_details else R.string.canonical_details),
+            expanded = details,
+            onToggle = { onDetailsChanged(!details) }
+        )
         AnimatedVisibility(visible = details, enter = nolaDisclosureEnter(reduceMotion), exit = nolaDisclosureExit(reduceMotion)) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(listOfNotNull(facts.capabilityId, facts.origin.providerTitle, facts.origin.namespace).joinToString(" · "),

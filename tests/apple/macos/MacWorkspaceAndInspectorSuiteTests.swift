@@ -22,47 +22,11 @@ final class MacWorkspaceTabsLayoutAndComposerContractTests: XCTestCase {
         XCTAssertNil(ComposerCommand.parse("/stop extra")?.command)
         XCTAssertEqual(ComposerCommand.parse("/stop ")?.command, .stop)
 
-        XCTAssertEqual(MacWorkspaceSidebarArea.allCases, [.conversations, .resources])
-        XCTAssertNil(MacWorkspaceSidebarArea(rawValue: "activity"))
-        XCTAssertEqual(MacWorkspaceSection.resourceNavigationSections, [.data, .models, .extensions, .capabilities])
-        XCTAssertEqual(MacWorkspaceSection.memory.resourceNavigationOwner, .data)
-        XCTAssertEqual(MacWorkspaceSection.automations.resourceNavigationOwner, .data)
+        XCTAssertEqual(MacWorkspaceSection.allCases, [.chat, .extensions, .automations, .memory])
         XCTAssertTrue(MacDataCenterSection.allCases.contains(.memory))
-        XCTAssertTrue(MacDataCenterSection.allCases.contains(.plans))
-        XCTAssertEqual(MacChatInspector.InspectorTab.allCases, [.overview, .progress, .goal, .review, .artifacts, .context, .execution, .participants])
+        XCTAssertFalse(MacDataCenterSection.allCases.contains { $0.rawValue == "plans" })
+        XCTAssertEqual(MacChatInspector.InspectorTab.allCases, [.task, .artifacts, .context])
 
-        let url = URL(fileURLWithPath: "/tmp/example.swift")
-        var state = MacConversationContentWorkspace()
-        state.open(.section(.models))
-        state.open(.file(MacCodeReference(url: url, line: 4, column: nil)))
-        state.open(.file(MacCodeReference(url: url, line: 9, column: 2)))
-        XCTAssertEqual(state.objects.count, 2)
-        state.close(state.selection)
-        XCTAssertEqual(state.selectedObject, .section(.models))
-        state.close(state.selection)
-        XCTAssertEqual(state.selection, MacConversationContentWorkspace.conversationID)
-        state.close(MacConversationContentWorkspace.conversationID)
-        XCTAssertTrue(state.objects.isEmpty)
-
-        var first = MacConversationContentWorkspace()
-        first.open(.section(.data)); first.open(.section(.models))
-        let selected = first.selection
-        first.close(MacWorkspaceContentObject.section(.data).id)
-        XCTAssertEqual(first.selection, selected)
-        var second = MacConversationContentWorkspace()
-        second.select(selected)
-        XCTAssertEqual(second.selection, MacConversationContentWorkspace.conversationID)
-        first.select(MacConversationContentWorkspace.conversationID)
-        XCTAssertEqual(first.objects.count, 1)
-
-        let entry = AppleActivityEntry(run_id: UUID().uuidString, conversation_id: "owner",
-            assistant_message_id: "message", source: "conversation", title: "Activity",
-            created_at_ms: 0, completed_at_ms: nil, status: "running", needs_response: false, is_current: true)
-        var typedState = MacConversationContentWorkspace()
-        typedState.open(.activity(entry)); typedState.open(.activity(entry))
-        let projectURL = URL(fileURLWithPath: "/tmp/project")
-        typedState.open(.review(projectURL)); typedState.open(.file(.init(url: projectURL, line: nil, column: nil)))
-        XCTAssertEqual(typedState.objects.count, 3)
         let positions = MacDetailScrollPositions()
         positions.save(NSPoint(x: 2, y: 140), for: "first/file")
         positions.save(NSPoint(x: 5, y: 800), for: "second/file")
@@ -158,7 +122,7 @@ final class MacWorkspaceTabsLayoutAndComposerContractTests: XCTestCase {
         let data = MacDataCenterNavigationState()
         data.section = .usage; data.showWebSources()
         let otherData = MacDataCenterNavigationState()
-        XCTAssertEqual(data.section, .usage); XCTAssertEqual(otherData.section, .sources); XCTAssertEqual(otherData.route, .overview)
+        XCTAssertEqual(data.section, .usage); XCTAssertEqual(otherData.section, .memory); XCTAssertEqual(otherData.route, .overview)
         let automations = MacAutomationCenterNavigationState()
         automations.showRunHistory(); automations.searchText = "daily"; automations.selectedFilter = .paused
         let otherAutomations = MacAutomationCenterNavigationState()
@@ -259,7 +223,7 @@ final class MacWorkspaceTabsLayoutAndComposerContractTests: XCTestCase {
         let navigation = MacInspectorNavigationState()
         let firstDraft = navigation.goalDrafts.draft(for: "first")
         firstDraft.objective = "Research with sources"; firstDraft.constraints = "Keep the original files"; firstDraft.isSubmitting = true
-        navigation.expandedSections.remove(.goal); navigation.expandedSections.insert(.goal)
+        navigation.selectedTab = .artifacts; navigation.selectedTab = .task
         XCTAssertTrue(firstDraft === navigation.goalDrafts.draft(for: "first"))
         let secondDraft = navigation.goalDrafts.draft(for: "second")
         secondDraft.objective = "Another task"
@@ -791,24 +755,21 @@ final class MacComposerAndInspectorLayoutTests: XCTestCase {
     }
 
     func testInspectorManualExpansionKeepsRevealPositionAndCurrentSelection() {
+        XCTAssertEqual(MacInspectorNavigationState(captureTab: "task").selectedTab, .task)
+        XCTAssertEqual(MacInspectorNavigationState(captureTab: "artifacts").selectedTab, .artifacts)
+        XCTAssertEqual(MacInspectorNavigationState(captureTab: "context").selectedTab, .context)
+        XCTAssertEqual(MacInspectorNavigationState(captureTab: "unknown").selectedTab, .task)
+
         let navigation = MacInspectorNavigationState()
         let revision = navigation.revealRevision
-        for section in [MacChatInspector.InspectorTab.goal, .context, .progress, .execution] {
-            navigation.setExpanded(section, true)
-            XCTAssertEqual(navigation.selectedTab, section)
-            XCTAssertEqual(navigation.revealRevision, revision, "Local disclosure must not request an automatic scroll")
-        }
         navigation.setKnowledgeExpanded(.wiki, true)
         XCTAssertEqual(navigation.selectedTab, .context)
-        XCTAssertEqual(navigation.revealRevision, revision)
-        navigation.setExpanded(.context, false)
-        XCTAssertFalse(navigation.expandedSections.contains(.context))
-        XCTAssertTrue(navigation.expandedSections.contains(.goal))
-        XCTAssertTrue(navigation.select(.context, isVisible: true))
+        XCTAssertEqual(navigation.revealRevision, revision, "Local knowledge disclosure must not request an automatic scroll")
+        XCTAssertTrue(navigation.select(.artifacts, isVisible: true))
         XCTAssertGreaterThan(navigation.revealRevision, revision)
-        XCTAssertEqual(navigation.revealID, "context")
-        XCTAssertEqual(MacChatInspector.InspectorTab.allCases,
-            [.overview, .progress, .goal, .review, .artifacts, .context, .execution, .participants])
+        XCTAssertEqual(navigation.revealID, "artifacts")
+        XCTAssertFalse(navigation.select(.artifacts, isVisible: true))
+        XCTAssertEqual(MacChatInspector.InspectorTab.allCases, [.task, .artifacts, .context])
     }
 
     func testMountedInspectorHeadersFollowVisualOrderAndToggleOnlyTheirOwnSection() async throws {
@@ -830,7 +791,6 @@ final class MacComposerAndInspectorLayoutTests: XCTestCase {
             webSources: MacWebSourceStore(storeURL: root.appendingPathComponent("sources.json"), registry: registry),
             chromeMessaging: LayoutTestChromeMessaging())
         let navigation = MacInspectorNavigationState()
-        navigation.expandedSections = []
         let host = NSHostingView(rootView: MacChatInspector(model: model, hostDisplayName: "Fixture",
             dependencies: deps, navigation: navigation).environment(\.accessibilityEnabled, true)
             .frame(width: 360, height: 900))
@@ -841,22 +801,19 @@ final class MacComposerAndInspectorLayoutTests: XCTestCase {
         window.orderFrontRegardless()
         defer { window.orderOut(nil); window.contentView = nil; window.close() }
         try await Task.sleep(for: .milliseconds(200))
-        func header(_ section: MacChatInspector.InspectorTab) throws -> AnyObject {
-            try XCTUnwrap(objects(host).first { ($0.accessibilityIdentifier?() ?? nil) == "mac-inspector-section-" + section.rawValue })
-        }
         for area in MacChatInspector.InspectorArea.allCases {
             navigation.selectedTab = area.sections[0]
-            navigation.expandedSections = []
             try await Task.sleep(for: .milliseconds(100))
-            let positions = try area.sections.map { try XCTUnwrap(header($0).accessibilityFrame?()).midY }
-            XCTAssertEqual(positions, positions.sorted(by: >), "Each area owns its own section order")
             let visible = objects(host).compactMap { $0.accessibilityIdentifier?() ?? nil }
-            for other in MacChatInspector.InspectorTab.allCases where other.area != area {
-                XCTAssertFalse(visible.contains("mac-inspector-section-" + other.rawValue), "Other areas are not rows in the current area")
+            XCTAssertTrue(visible.contains("mac-inspector-region-" + area.rawValue))
+            if area == .context {
+                XCTAssertTrue(visible.contains("mac-inspector-context-summary"))
+            } else {
+                XCTAssertFalse(visible.contains("mac-inspector-context-summary"),
+                    "mac-inspector-context-summary belongs only in .context, not in \(area)")
             }
             for dark in [false, true] {
                 window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-                navigation.setExpanded(area.sections[0], true)
                 try await Task.sleep(for: .milliseconds(100))
                 host.layoutSubtreeIfNeeded()
                 let title = try XCTUnwrap(objects(host).first { ($0.accessibilityIdentifier?() ?? nil) == "mac-inspector-area-title" })
@@ -872,27 +829,6 @@ final class MacComposerAndInspectorLayoutTests: XCTestCase {
                 attachment.lifetime = .keepAlways; add(attachment)
             }
         }
-        for section in [MacChatInspector.InspectorTab.goal, .context, .execution, .progress, .artifacts, .review, .participants, .overview] {
-            navigation.selectedTab = section
-            navigation.expandedSections = []
-            try await Task.sleep(for: .milliseconds(100))
-            let revision = navigation.revealRevision
-            let control = try header(section)
-            XCTAssertTrue(control.accessibilityPerformPress?() ?? false, section.rawValue)
-            try await Task.sleep(for: .milliseconds(80))
-            XCTAssertEqual(navigation.expandedSections, [section])
-            XCTAssertEqual(navigation.selectedTab, section)
-            let contents = objects(host)
-            for (identifier, owningSection) in [("mac-inspector-workspace", MacChatInspector.InspectorTab.overview),
-                                               ("mac-inspector-context-summary", .context), ("mac-inspector-browser", .execution)] {
-                XCTAssertEqual(contents.contains { ($0.accessibilityIdentifier?() ?? nil) == identifier }, section == owningSection,
-                    "\(identifier) belongs only in \(owningSection), not repeated in \(section)")
-            }
-            XCTAssertEqual(navigation.revealRevision, revision)
-            XCTAssertTrue(try header(section).accessibilityPerformPress?() ?? false, section.rawValue)
-            try await Task.sleep(for: .milliseconds(80))
-            XCTAssertTrue(navigation.expandedSections.isEmpty)
-        }
     }
 
     func testLeftSidebarDestinationsAndSettingsStayUniqueInBothAppearances() async throws {
@@ -907,16 +843,20 @@ final class MacComposerAndInspectorLayoutTests: XCTestCase {
         defer { model.presentationDidDetach() }
         let output = URL(fileURLWithPath: "/tmp/nola-mac-sidebar-pages")
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-        for dark in [false, true] { for width: CGFloat in [240, 340] { for resources in [false, true] {
-            var opened: MacWorkspaceSection?
-            let content = Group {
-                if resources {
-                    MacWorkspaceResourceNavigation(search: .constant(""), selection: .memory) { opened = $0 }
-                } else {
-                    MacConversationSidebar(model: model, selectedSection: .constant(.chat), selectConversation: { _ in },
-                        loadParticipantNames: { _ in [] })
-                }
-            }.frame(width: width, height: 650).background(MacDesignColor.sidebar)
+        for dark in [false, true] { for width: CGFloat in [240, 340] {
+            var selectedSection = MacWorkspaceSection.chat
+            var openedSettingsCount = 0
+            let sectionBinding = Binding<MacWorkspaceSection>(
+                get: { selectedSection },
+                set: { selectedSection = $0 }
+            )
+            let content = MacConversationSidebar(
+                model: model,
+                selectedSection: sectionBinding,
+                selectConversation: { _ in },
+                loadParticipantNames: { _ in [] },
+                onOpenSettings: { openedSettingsCount += 1 }
+            ).frame(width: width, height: 650).background(MacDesignColor.sidebar)
                 .environment(\.colorScheme, dark ? .dark : .light).environment(\.accessibilityEnabled, true)
             let host = NSHostingView(rootView: content)
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 650),
@@ -927,26 +867,21 @@ final class MacComposerAndInspectorLayoutTests: XCTestCase {
             host.layoutSubtreeIfNeeded()
             let controls = objects(host)
             let settings = controls.filter { ($0.accessibilityIdentifier?() ?? nil) == "workspace.settings" }
-            XCTAssertEqual(settings.count, 1, "Each sidebar has exactly one settings entry")
-            if !resources {
-                XCTAssertEqual(controls.filter { ($0.accessibilityIdentifier?() ?? nil) == "mac-expert-library" }.count, 1)
-                XCTAssertFalse(controls.contains { ($0.accessibilityIdentifier?() ?? nil)?.hasPrefix("expert.children.toggle.") == true },
-                    "The conversation list must not contain expert history subtrees")
-            }
-            if resources {
-                let destinations = controls.filter { ($0.accessibilityIdentifier?() ?? nil)?.hasPrefix("workspace.resource.") == true }
-                XCTAssertEqual(destinations.count, 4)
-                let models = try XCTUnwrap(destinations.first { ($0.accessibilityIdentifier?() ?? nil) == "workspace.resource.models" })
-                XCTAssertTrue(models.accessibilityPerformPress?() ?? false)
-                XCTAssertEqual(opened, .models)
-                XCTAssertTrue(try XCTUnwrap(settings.first).accessibilityPerformPress?() ?? false)
-                XCTAssertEqual(opened, .settings)
-            }
+            XCTAssertEqual(settings.count, 1, "Sidebar has exactly one settings entry")
+            let navDestinations = controls.filter { ($0.accessibilityIdentifier?() ?? nil)?.hasPrefix("workspace.nav.") == true }
+            XCTAssertEqual(navDestinations.count, 4)
+            XCTAssertFalse(controls.contains { ($0.accessibilityIdentifier?() ?? nil)?.hasPrefix("expert.children.toggle.") == true },
+                "The conversation list must not contain expert history subtrees")
+            let extensionsNav = try XCTUnwrap(navDestinations.first { ($0.accessibilityIdentifier?() ?? nil) == "workspace.nav.extensions" })
+            XCTAssertTrue(extensionsNav.accessibilityPerformPress?() ?? false)
+            XCTAssertEqual(selectedSection, .extensions)
+            XCTAssertTrue(try XCTUnwrap(settings.first).accessibilityPerformPress?() ?? false)
+            XCTAssertEqual(openedSettingsCount, 1)
             let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
             host.cacheDisplay(in: host.bounds, to: bitmap)
             try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to:
-                output.appendingPathComponent("\(resources ? "resources" : "conversations")-\(Int(width))-\(dark ? "dark" : "light").png"))
-        } } }
+                output.appendingPathComponent("sidebar-\(Int(width))-\(dark ? "dark" : "light").png"))
+        } }
     }
 
     private func objects(_ root: AnyObject) -> [AnyObject] {
@@ -1004,39 +939,36 @@ final class MacInspectorInteractionTests: XCTestCase {
         let areas = MacChatInspector.InspectorArea.allCases
         XCTAssertEqual(areas.flatMap(\.sections), MacChatInspector.InspectorTab.allCases)
         XCTAssertEqual(Set(areas.flatMap(\.sections)).count, MacChatInspector.InspectorTab.allCases.count)
-        state.setExpanded(.goal, true)
-        _ = state.select(.artifacts, isVisible: true)
-        XCTAssertEqual(state.selectedTab.area, .artifacts)
-        XCTAssertTrue(state.expandedSections.contains(.goal))
-        _ = state.select(.context, isVisible: true)
+        state.setKnowledgeExpanded(.wiki, true)
         XCTAssertEqual(state.selectedTab.area, .context)
-        XCTAssertTrue(state.expandedSections.contains(.artifacts))
-        XCTAssertTrue(state.expandedSections.contains(.goal))
+        XCTAssertTrue(state.select(.artifacts, isVisible: true))
+        XCTAssertEqual(state.selectedTab.area, .artifacts)
+        XCTAssertTrue(state.expandedKnowledge.contains(.wiki))
+        XCTAssertTrue(state.select(.context, isVisible: true))
+        XCTAssertEqual(state.selectedTab.area, .context)
+        XCTAssertTrue(state.expandedKnowledge.contains(.wiki))
     }
 
     func testOpeningSectionsKeepsOtherSectionsExpanded() {
         let state = MacInspectorNavigationState()
-        state.selectedTab = .context
-        state.selectedTab = .progress
-        XCTAssertEqual(state.expandedSections, [.overview, .context, .progress])
-        state.expandedSections.remove(.context)
+        state.setKnowledgeExpanded(.points, true)
+        state.selectedTab = .artifacts
         let revision = state.revealRevision
         state.selectedTab = .context
-        XCTAssertTrue(state.expandedSections.contains(.context))
+        XCTAssertTrue(state.expandedKnowledge.contains(.points))
         XCTAssertGreaterThan(state.revealRevision, revision)
     }
 
     func testOpeningContextDoesNotOpenAnUnrequestedEditor() {
-        let state = MacInspectorNavigationState(initialPane: "context")
+        let state = MacInspectorNavigationState(captureTab: "context")
         XCTAssertTrue(state.expandedKnowledge.isEmpty)
         state.knowledgePane = .points
         XCTAssertEqual(state.expandedKnowledge, [.points])
     }
 
     func testDirectKnowledgeEntryExpandsTheRequestedEditor() {
-        let state = MacInspectorNavigationState(initialPane: "wiki")
+        let state = MacInspectorNavigationState(captureTab: "wiki")
         XCTAssertEqual(state.selectedTab, .context)
-        XCTAssertTrue(state.expandedSections.contains(.context))
         XCTAssertTrue(state.expandedKnowledge.contains(.wiki))
         state.knowledgePane = .recall
         XCTAssertTrue(state.expandedKnowledge.contains(.wiki))
@@ -1050,22 +982,20 @@ final class MacInspectorInteractionTests: XCTestCase {
     }
 
     func testKnowledgeNavigationRevealsTheExactEditorFromAnotherSection() {
-        let state = MacInspectorNavigationState(initialPane: "wiki")
+        let state = MacInspectorNavigationState(captureTab: "wiki")
         XCTAssertEqual(state.revealID, "knowledge-wiki")
-        state.selectedTab = .execution
-        XCTAssertEqual(state.revealID, "execution")
+        state.selectedTab = .artifacts
+        XCTAssertEqual(state.revealID, "artifacts")
         state.knowledgePane = .recall
         XCTAssertEqual(state.selectedTab, .context)
         XCTAssertEqual(state.revealID, "knowledge-recall")
-        XCTAssertTrue(state.expandedSections.contains(.execution))
     }
 
     func testToolbarReopensCollapsedSelectedSectionInsteadOfHidingInspector() {
         let state = MacInspectorNavigationState()
-        state.expandedSections.remove(.overview)
-        XCTAssertTrue(state.select(.overview, isVisible: true))
-        XCTAssertTrue(state.expandedSections.contains(.overview))
-        XCTAssertFalse(state.select(.overview, isVisible: true))
+        XCTAssertTrue(state.select(.task, isVisible: false))
+        XCTAssertFalse(state.select(.task, isVisible: true))
+        XCTAssertTrue(state.select(.context, isVisible: true))
     }
 
     func testChromeInstallOpensOnceAndReportsFailuresWithoutOpening() {
@@ -1166,7 +1096,7 @@ final class MacInspectorInteractionTests: XCTestCase {
                 let pages = MacChatInspector.InspectorTab.allCases.map { ($0.rawValue, $0) }
                     + MacInspectorKnowledgePane.allCases.map { ($0.rawValue, MacChatInspector.InspectorTab.context) }
                 for (page, section) in pages {
-                    let navigation = MacInspectorNavigationState(initialPane: page)
+                    let navigation = MacInspectorNavigationState(captureTab: page)
                     let inspector = MacChatInspector(model: model, hostDisplayName: "Local test Host", dependencies: deps, navigation: navigation)
                     let view = VStack(alignment: .leading, spacing: 12) {
                         Text(section.title).font(.headline)

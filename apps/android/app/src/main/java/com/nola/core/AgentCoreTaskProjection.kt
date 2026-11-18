@@ -80,6 +80,7 @@ data class AgentCoreTaskLineage(
     val parentCallId: String? = null,
     val permissionScopeId: String? = null,
     val cancellationScopeId: String? = null,
+    val title: String? = null,
 )
 
 data class AgentCoreTaskHandle(
@@ -393,6 +394,7 @@ private fun JsonObject.toAgentCoreTaskLineage(): AgentCoreTaskLineage =
         parentCallId = stringValue("parent_call_id"),
         permissionScopeId = stringValue("permission_scope_id"),
         cancellationScopeId = stringValue("cancellation_scope_id"),
+        title = stringValue("title"),
     )
 
 private fun JsonObject.toAgentCoreTaskDurability(): AgentCoreTaskDurability =

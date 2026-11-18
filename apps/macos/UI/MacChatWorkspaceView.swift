@@ -131,7 +131,10 @@ struct MacDeferredTextReader: View {
                 .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
                 Spacer()
                 if let page {
-                    Text(verbatim: "\(page.nextOffsetBytes.formatted()) / \(page.totalUTF8Bytes.formatted()) B")
+                    let progress = page.totalUTF8Bytes > 0
+                        ? min(100, max(1, Int((Double(page.nextOffsetBytes) / Double(page.totalUTF8Bytes)) * 100.0)))
+                        : 100
+                    Text(verbatim: "#\(previous.count + 1) · \(progress)%")
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
@@ -262,7 +265,6 @@ private final class MacWorkspaceModelOwner: ObservableObject {
 }
 
 struct MacChatWorkspaceView: View {
-    private let initialInspectorCaptureTab: String?
     private let forcesInspectorVisible: Bool
     private let remoteHost: any MacRemoteAgentRunning
     private let inspectorDependencies: MacInspectorDependencies
@@ -287,9 +289,7 @@ struct MacChatWorkspaceView: View {
     private var sectionSelection: Binding<MacWorkspaceSection> {
         Binding(get: { selectedSection }, set: { section in
             guard section != selectedSection else { return }
-            navigationActions.navigate(to: section) {
-                if section == .settings { settingsDestination = nil }
-            }
+            navigationActions.navigate(to: section)
         })
     }
     @State private var pendingPaletteNavigation: (() -> Void)?
@@ -302,9 +302,6 @@ struct MacChatWorkspaceView: View {
     @StateObject private var dataNavigation = MacDataCenterNavigationState()
     @StateObject private var automationNavigation = MacAutomationCenterNavigationState()
     @StateObject private var extensionsNavigation = MacExtensionsNavigationState()
-    @StateObject private var modelNavigation = MacModelCenterNavigationState(selectedTab: .api)
-    @StateObject private var remoteModelDraft = MacRemoteModelEditingState()
-    @StateObject private var localModelEditing = MacLocalModelEditingState()
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     @AppStorage("nola.mac.sidebar.width") private var storedSidebarWidth = Double(
         MacWorkspaceColumnMetrics.preferredSidebarWidth
@@ -317,67 +314,15 @@ struct MacChatWorkspaceView: View {
     @State private var hasResolvedLayout = false
     @State private var activeOverlay: MacWorkspaceOverlay?
     @State private var codeReference: MacCodeReference?
+    @State private var detailScrollPositions = MacDetailScrollPositions()
     @State private var localPreviewOwner: String?
     @State private var localPreviewSourceConfirmed = false
     private var canReadLocalConversationFiles: Bool {
         localPreviewSourceConfirmed && localPreviewOwner == model.selectedConversationID && model.executionHost == .local
     }
-    @State private var hasActivatedContentOwner = false
-    @State private var sidebarArea = MacWorkspaceSidebarArea.conversations
-    @State private var resourceSearch = ""
-    @State private var settingsDestination: String?
-    @State private var detailScrollPositions = MacDetailScrollPositions()
-    @State private var contentWorkspaces: [String: MacConversationContentWorkspace] = [:]
-    @FocusState private var focusedContentTab: String?
-    private var contentOwner: String { model.selectedConversationID ?? "new-conversation" }
-    private var contentWorkspace: MacConversationContentWorkspace { contentWorkspaces[contentOwner] ?? MacConversationContentWorkspace() }
-    private func changeContent(_ change: (inout MacConversationContentWorkspace) -> Void) {
-        var workspace = contentWorkspace
-        change(&workspace)
-        contentWorkspaces[contentOwner] = workspace
-        if let object = workspace.selectedObject, case .section(let section) = object { selectedSection = section }
-        else { selectedSection = .chat }
-    }
-    private func navigateContent(_ change: (inout MacConversationContentWorkspace) -> Void, afterNavigation: (() -> Void)? = nil) {
-        let owner = contentOwner, previous = contentWorkspace
-        var next = previous; change(&next)
-        let target: MacWorkspaceSection
-        if let object = next.selectedObject, case .section(let section) = object { target = section }
-        else { target = .chat }
-        navigationActions.navigate(to: target, ifStillValid: { contentOwner == owner && contentWorkspace == previous }) {
-            contentWorkspaces[owner] = next
-            activeOverlay = nil
-            focusedContentTab = next.selection
-            afterNavigation?()
-        }
-    }
     private var isManagementContent: Bool {
-        guard let object = contentWorkspace.selectedObject else { return false }
-        switch object {
-        case .section, .activity: return true
-        default: return false
-        }
+        selectedSection != .chat
     }
-
-    private func openActivitySource(_ id: String) {
-        navigationActions.navigate(to: .chat,
-            ifStillValid: { model.conversations.contains { $0.id == id } }) {
-            model.selectedConversationID = id
-            var workspace = contentWorkspaces[id] ?? MacConversationContentWorkspace()
-            workspace.select(MacConversationContentWorkspace.conversationID)
-            contentWorkspaces[id] = workspace
-            sidebarArea = .conversations
-            activeOverlay = nil
-            if layoutMode != .threeColumn { showsInspector = false }
-        }
-    }
-    private func openContent(_ object: MacWorkspaceContentObject) {
-        navigateContent({ $0.open(object) }, afterNavigation: {
-            if object == .section(.settings) { settingsDestination = nil }
-        })
-    }
-    private func selectContent(_ id: String) { navigateContent { $0.select(id) } }
-    private func closeContent(_ id: String) { navigateContent { $0.close(id) } }
     @State private var sidebarDragStartWidth: CGFloat?
     @State private var inspectorDragStartWidth: CGFloat?
     @State private var showsCommandPalette = false
@@ -392,9 +337,15 @@ struct MacChatWorkspaceView: View {
     @State private var remoteHostVerificationRevision = 0
     @FocusState private var composerFocused: Bool
     @State private var isEditingTitle = false
+    @State private var editingTitleConversationID: String?
     @State private var inlineTitleDraft = ""
+    @State private var isTitleHovered = false
+    @State private var isSidebarDividerHovered = false
+    @State private var isInspectorDividerHovered = false
+    @State private var leadingTrafficLightInset: CGFloat = 76
     @FocusState private var titleFocused: Bool
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
 
@@ -408,7 +359,6 @@ struct MacChatWorkspaceView: View {
         inspectorDependencies: MacInspectorDependencies,
         model injectedModel: MacWorkspaceModel? = nil
     ) {
-        self.initialInspectorCaptureTab = initialInspectorCaptureTab
         self.forcesInspectorVisible = forcesInspectorVisible
         _showsInspector = State(initialValue: forcesInspectorVisible)
         self.remoteHost = remoteHost
@@ -432,7 +382,7 @@ struct MacChatWorkspaceView: View {
         let roomRouting = canonicalRepository.makeRoomRoutingService()
         roomWorkspace.routeSubmission = { try await roomRouting.route($0, room: $1) }
         _roomWorkspace = StateObject(wrappedValue: roomWorkspace)
-        _inspectorNavigation = StateObject(wrappedValue: MacInspectorNavigationState(initialPane: initialInspectorCaptureTab))
+        _inspectorNavigation = StateObject(wrappedValue: MacInspectorNavigationState(captureTab: initialInspectorCaptureTab))
         _modelOwner = StateObject(
             wrappedValue: MacWorkspaceModelOwner(
                 model: injectedModel
@@ -462,16 +412,13 @@ struct MacChatWorkspaceView: View {
                     .ignoresSafeArea()
 
                 VStack(spacing: 0) {
-                workspaceHeader
+                workspaceHeader(availableWidth: geometry.size.width, resolvedLayoutMode: resolvedLayoutMode)
                 HStack(spacing: 0) {
                     if resolvedLayoutMode != .compactOverlay,
                        columnVisibility != .detailOnly {
                         workspaceSidebar
                             .frame(width: sidebarWidth(availableWidth: geometry.size.width))
                             .background(MacDesignColor.sidebar)
-                            .overlay(alignment: .trailing) {
-                                Rectangle().fill(MacDesignColor.borderSubtle.opacity(0.55)).frame(width: 0.5)
-                            }
                             .transition(.move(edge: .leading).combined(with: .opacity))
                         sidebarResizeHandle(availableWidth: geometry.size.width)
                     }
@@ -557,9 +504,8 @@ struct MacChatWorkspaceView: View {
         .alert(String(localized: "Edit and resend"), isPresented: Binding(get: { messageEditError != nil }, set: { if !$0 { messageEditError = nil } })) {
             Button("OK", role: .cancel) { messageEditError = nil }
         } message: { Text(messageEditError ?? "") }
-        .environment(\.macFileReferenceBaseURL, model.effectiveWorkspaceURL)
         .environment(\.macDetailScrollPositions, detailScrollPositions)
-        .environment(\.macDetailScrollScope, contentOwner)
+        .environment(\.macFileReferenceBaseURL, model.effectiveWorkspaceURL)
         .environment(
             \.macOpenFileReference,
             MacOpenFileReferenceAction { reference in
@@ -567,8 +513,10 @@ struct MacChatWorkspaceView: View {
             }
         )
         .background {
-            MacChatWindowChromeConfigurator(title: model.selectedConversationDisplayTitle)
-                .frame(width: 0, height: 0)
+            MacChatWindowChromeConfigurator(title: model.selectedConversationDisplayTitle) { inset in
+                leadingTrafficLightInset = inset
+            }
+            .frame(width: 0, height: 0)
         }
         // Mounting loads the initial selection. Subsequent selections are
         // loaded by MacWorkspaceModel.selectedConversationID's observer;
@@ -612,10 +560,8 @@ struct MacChatWorkspaceView: View {
             Task { await refreshRemoteHostConnection() }
         }
         .onChange(of: selectedSection) { _, section in
-            if section != .chat, contentWorkspace.selectedObject != .section(section) {
-                changeContent { $0.open(.section(section)) }
-            }
             if section != .chat { activeOverlay = nil }
+            if section == .memory { dataNavigation.section = .memory }
         }
         .task(id: "\(model.selectedConversationID ?? "")/\(model.executionHost)/\(model.selectedMessages.count)") {
             localPreviewSourceConfirmed = false
@@ -625,10 +571,6 @@ struct MacChatWorkspaceView: View {
             localPreviewSourceConfirmed = (try? previewRepository.conversationSourceOwner(conversationID: owner)) == .local
         }
         .task(id: model.selectedConversationID) {
-            if !hasActivatedContentOwner, selectedSection != .chat {
-                changeContent { $0.open(.section(selectedSection)) }
-            } else { changeContent { $0.select(MacConversationContentWorkspace.conversationID) } }
-            hasActivatedContentOwner = true
             if let id = model.selectedConversationID, model.selectedConversation?.isPersisted == true {
                 await roomWorkspace.restoreConversation(id)
                 if !Task.isCancelled {
@@ -642,7 +584,19 @@ struct MacChatWorkspaceView: View {
                 }
             }
         }
+        .task(id: "\(model.selectedConversationID ?? "")/\(model.isRunning)/\(model.selectedMessages.count)") {
+            guard let id = model.selectedConversationID,
+                  model.selectedConversation?.isPersisted == true else { return }
+            await roomWorkspace.refreshPeerExchanges(for: id)
+            while model.isRunning, !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                guard !Task.isCancelled else { return }
+                await roomWorkspace.refreshPeerExchanges(for: id)
+            }
+        }
         .onChange(of: model.selectedConversationID) { _, selectedID in
+            if isEditingTitle { commitInlineTitle() }
+            isTitleHovered = false
             if let returningExpertChild, returningExpertChild.parentID == selectedID {
                 expertSelection = [returningExpertChild.agentID]
             } else {
@@ -658,11 +612,20 @@ struct MacChatWorkspaceView: View {
                 }
             }
         }
+        .onChange(of: selectedSection) { _, _ in
+            if isEditingTitle { cancelInlineTitle() }
+            isTitleHovered = false
+        }
+        .onChange(of: titleFocused) { _, focused in
+            if !focused && isEditingTitle {
+                commitInlineTitle()
+            }
+        }
         .focusedSceneValue(
             \.nolaMacCommandActions,
             MacCommandActions(
                 newConversation: navigationActions.newConversation,
-                focusComposer: { selectContent(MacConversationContentWorkspace.conversationID); composerFocused = true },
+                focusComposer: { navigationActions.navigate(to: .chat) { composerFocused = true } },
                 openWorkspace: model.chooseWorkspace,
                 reviewWorkspace: reviewWorkspace,
                 showCommandPalette: { showsCommandPalette = true },
@@ -697,7 +660,11 @@ struct MacChatWorkspaceView: View {
                     manage: model.executionHost == .remote ? nil : { opensLibraryAfterPicker = true; showsAgentRooms = false }, selected: { agent in
                         if let owner = model.selectedConversationID { roomWorkspace.recordMainExpertSelection(agent, conversationID: owner) }
                     })
-                if let error = roomWorkspace.directoryError { Text(error).foregroundStyle(.red).padding() }
+                if let error = roomWorkspace.directoryError {
+                    MacInlineNotice(message: error, kind: .failure, dismiss: { roomWorkspace.directoryError = nil })
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 12)
+                }
             }.frame(minWidth: 420, minHeight: 400)
                 .task(id: roomWorkspace.mainSourceReady) { await roomWorkspace.refreshExpertDirectory() }
         }
@@ -736,14 +703,12 @@ struct MacChatWorkspaceView: View {
             MacCodeReferenceInspector(
                 reference: codeReference,
                 canReadLocally: canReadLocalConversationFiles,
-                close: { self.codeReference = nil },
-                openInTab: { openContent(.file(codeReference)) }
+                close: { self.codeReference = nil }
             )
         } else {
             MacChatInspector(
                 model: model,
                 hostDisplayName: hostSelectorTitle,
-                initialKnowledgePaneRawValue: initialInspectorCaptureTab,
                 dependencies: inspectorDependencies,
                 navigation: inspectorNavigation,
                 close: { activeOverlay = nil; showsInspector = false; codeReference = nil },
@@ -752,7 +717,7 @@ struct MacChatWorkspaceView: View {
                 expertHistory: AnyView(expertHistory),
                 canReadLocalFiles: canReadLocalConversationFiles,
                 inspectFile: openCodeReference,
-                openReview: { openContent(.review($0)) }
+                openReview: { openWindow(value: MacWorkspaceReviewRoute(path: $0.path)) }
             )
         }
     }
@@ -797,19 +762,21 @@ struct MacChatWorkspaceView: View {
 
     private func sidebarResizeHandle(availableWidth: CGFloat) -> some View {
         Rectangle()
-            .fill(MacDesignColor.borderSubtle)
+            .fill((isSidebarDividerHovered || sidebarDragStartWidth != nil) ? MacDesignColor.controlOutline : MacDesignColor.borderSubtle)
             .frame(width: 1)
             .overlay {
                 Rectangle()
                     .fill(Color.clear)
                     .frame(width: 10)
                     .contentShape(Rectangle())
+                    .background {
+                        MacResizeCursorRectView()
+                    }
                     .onHover { hovering in
-                        if hovering {
-                            NSCursor.resizeLeftRight.push()
-                        } else {
-                            NSCursor.pop()
-                        }
+                        isSidebarDividerHovered = hovering
+                    }
+                    .onDisappear {
+                        isSidebarDividerHovered = false
                     }
                     .gesture(
                         DragGesture(minimumDistance: 1)
@@ -841,13 +808,22 @@ struct MacChatWorkspaceView: View {
 
     private func inspectorResizeHandle(availableWidth: CGFloat) -> some View {
         Rectangle()
-            .fill(MacDesignColor.borderSubtle)
+            .fill((isInspectorDividerHovered || inspectorDragStartWidth != nil) ? MacDesignColor.controlOutline : MacDesignColor.borderSubtle)
             .frame(width: 1)
             .overlay {
                 Rectangle()
                     .fill(Color.clear)
                     .frame(width: 10)
                     .contentShape(Rectangle())
+                    .background {
+                        MacResizeCursorRectView()
+                    }
+                    .onHover { hovering in
+                        isInspectorDividerHovered = hovering
+                    }
+                    .onDisappear {
+                        isInspectorDividerHovered = false
+                    }
                     .gesture(
                         DragGesture(minimumDistance: 1)
                             .onChanged { value in
@@ -936,28 +912,39 @@ struct MacChatWorkspaceView: View {
         }
     }
 
+    @ViewBuilder
     private var workspaceContent: some View {
-        ZStack {
+        switch selectedSection {
+        case .chat:
             conversationContent
-                .opacity(contentWorkspace.selection == MacConversationContentWorkspace.conversationID ? 1 : 0)
-                .allowsHitTesting(contentWorkspace.selection == MacConversationContentWorkspace.conversationID)
-                .accessibilityHidden(contentWorkspace.selection != MacConversationContentWorkspace.conversationID)
-            ForEach(contentWorkspace.objects) { object in
-                contentObjectView(object)
-                    .environment(\.macDetailScrollScope, contentOwner + "/" + object.id)
-                    .id(contentOwner + "/" + object.id)
-                    .opacity(contentWorkspace.selection == object.id ? 1 : 0)
-                    .allowsHitTesting(contentWorkspace.selection == object.id)
-                    .accessibilityHidden(contentWorkspace.selection != object.id)
-            }
+        case .extensions:
+            MacExpertsAndSkillsCenterView(
+                roomWorkspace: roomWorkspace,
+                remoteHost: remoteHost,
+                skillsNavigation: extensionsNavigation,
+                activeWorkspaceURL: model.workspaceURL
+            )
+            .transition(.opacity)
+        case .automations:
+            MacAutomationCenterView(navigation: automationNavigation)
+                .transition(.opacity)
+        case .memory:
+            MacDataCenterView(navigation: dataNavigation, automationNavigation: automationNavigation)
+                .transition(.opacity)
         }
     }
 
     private var conversationContent: some View {
             VStack(spacing: 0) {
                 if let error = roomWorkspace.admissionError ?? roomWorkspace.directoryError {
-                    Text(error).font(.callout).foregroundStyle(.red).textSelection(.enabled).padding(8)
-                        .accessibilityIdentifier("chat.expert-admission-error")
+                    MacInlineNotice(
+                        message: error,
+                        kind: .failure,
+                        dismiss: roomWorkspace.admissionError == nil ? { roomWorkspace.directoryError = nil } : nil
+                    )
+                    .padding(.horizontal, 24)
+                    .padding(.top, 10)
+                    .accessibilityIdentifier("chat.expert-admission-error")
                 }
                 MacConversationCanvas(
                     model: model,
@@ -982,9 +969,15 @@ struct MacChatWorkspaceView: View {
                     onCommand: { command in
                         switch command {
                         case .experts: showsAgentRooms = true
-                        case .resources: inspectorNavigation.selectedTab = .artifacts; showsInspector = true
-                        case .permissions: inspectorNavigation.selectedTab = .context; showsInspector = true
-                        case .plan: dataNavigation.section = .plans; selectedSection = .data
+                        case .resources:
+                            inspectorNavigation.selectedTab = .artifacts
+                            showsInspector = true
+                            activeOverlay = layoutMode == .threeColumn ? nil : .inspector
+                        case .permissions:
+                            inspectorNavigation.selectedTab = .context
+                            showsInspector = true
+                            activeOverlay = layoutMode == .threeColumn ? nil : .inspector
+                        case .plan: navigationActions.navigate(to: .automations)
                         default: break
                         }
                     }
@@ -992,208 +985,138 @@ struct MacChatWorkspaceView: View {
             }
     }
 
-    @ViewBuilder
-    private func contentObjectView(_ object: MacWorkspaceContentObject) -> some View {
-        switch object {
-        case .file(let reference):
-            MacCodeReferenceInspector(reference: reference, canReadLocally: canReadLocalConversationFiles, close: { closeContent(object.id) })
-        case .section(let section):
-            sectionContent(section)
-        case .review(let url):
-            MacWorkspaceReviewView(route: .init(path: url.path), embedsInWorkspace: true)
-        case .activity(let entry):
-            let client = activityClient
-            AppleActivityDetailView(entry: entry, load: { target in
-                try await Task.detached { try client.activityDetail(target) }.value
-            }, openSource: openActivitySource, embedded: true)
-        }
-    }
+    private func workspaceHeader(availableWidth: CGFloat, resolvedLayoutMode: MacWorkspaceLayoutMode) -> some View {
+        let sidebarOpen = resolvedLayoutMode != .compactOverlay && columnVisibility != .detailOnly
+        let inspectorColumnOpen = resolvedLayoutMode == .threeColumn
+            && !isManagementContent
+            && (showsInspector || forcesInspectorVisible)
+        let leadingPadding = max(10, leadingTrafficLightInset)
 
-    @ViewBuilder
-    private func sectionContent(_ section: MacWorkspaceSection) -> some View {
-        switch section {
-        case .chat: EmptyView()
-        case .data:
-            MacDataCenterView(navigationAction: toggleSidebar, navigation: dataNavigation, automationNavigation: automationNavigation)
-                .transition(.opacity)
-        case .models:
-            MacModelCenterView(
-                remoteHost: remoteHost,
-                navigationAction: toggleSidebar,
-                navigation: modelNavigation,
-                remoteDraft: remoteModelDraft,
-                localEditing: localModelEditing
-            )
-                .transition(.opacity)
-        case .extensions:
-            MacExtensionsCenterView(remoteHost: remoteHost, kinds: [.skill, .mcp], navigationAction: toggleSidebar, navigation: extensionsNavigation)
-                .transition(.opacity)
-        case .capabilities:
-            MacCapabilityCenterView(navigationAction: toggleSidebar)
-                .transition(.opacity)
-        case .memory:
-            MacMemoryCenterPage()
-        case .automations:
-            MacAutomationCenterView()
-        case .settings:
-            MacSettingsView(embedsInWorkspace: true, initialCategory: settingsDestination) { profileID in
-                if let profileID { modelNavigation.showSelectedModel(remoteProfileID: profileID) }
-                else { modelNavigation.showRemoteModels() }
-                openContent(.section(.models))
+        return HStack(spacing: 0) {
+            if sidebarOpen {
+                HStack(spacing: 4) {
+                    sidebarToggleButton
+                        .accessibilityIdentifier("workspace.toggleSidebar")
+                    Spacer(minLength: 4)
+                    newConversationButton
+                }
+                .padding(.leading, leadingPadding)
+                .padding(.trailing, 10)
+                .frame(width: sidebarWidth(availableWidth: availableWidth) + 1, height: 48)
+                .overlay(alignment: .trailing) {
+                    Rectangle().fill(MacDesignColor.borderSubtle).frame(width: 1)
+                }
+            } else {
+                HStack(spacing: 4) {
+                    sidebarToggleButton
+                        .accessibilityIdentifier("workspace.toggleSidebar")
+                    newConversationButton
+                }
+                .padding(.leading, max(12, leadingTrafficLightInset))
+                .padding(.trailing, 10)
+                Rectangle()
+                    .fill(MacDesignColor.borderSubtle)
+                    .frame(width: 1, height: 48)
             }
-        }
-    }
 
-    private var workspaceHeader: some View {
-        HStack(spacing: 6) {
-            HStack(spacing: 2) {
-                ForEach(MacWorkspaceSidebarArea.allCases) { area in
-                    Button {
-                        let visible = layoutMode == .compactOverlay
-                            ? activeOverlay == .sidebar : columnVisibility != .detailOnly
-                        if visible && sidebarArea == area { toggleSidebar() }
-                        else {
-                            sidebarArea = area
-                            withAnimation(reduceMotion ? nil : MacDesignTokens.Motion.structure) {
-                                if layoutMode == .compactOverlay { activeOverlay = .sidebar }
-                                else { columnVisibility = .all }
-                            }
-                        }
-                    } label: {
-                        Image(area.iconAsset).renderingMode(.template).resizable().scaledToFit().frame(width: 18, height: 18)
-                            .frame(width: 36, height: 36)
+            HStack(spacing: 8) {
+                if selectedSection == .chat {
+                    conversationTitleControl
+                } else {
+                    HStack(spacing: 7) {
+                        Image(systemName: selectedSection.symbol)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Text(selectedSection.title)
+                            .font(.system(size: 14.5, weight: .semibold))
+                            .lineLimit(1)
                     }
-                    .macToolbarIcon(isActive: sidebarArea == area && (layoutMode == .compactOverlay
-                        ? activeOverlay == .sidebar : columnVisibility != .detailOnly))
-                    .help(area.title).accessibilityLabel(area.title)
-                    .accessibilityIdentifier("workspace.area.\(area.rawValue)")
                 }
-                Spacer(minLength: 0)
-                Button(action: navigationActions.newConversation) {
-                    Image("nola-edit").renderingMode(.template).resizable().scaledToFit()
-                        .frame(width: 18, height: 18).frame(width: 36, height: 36)
-                }.macToolbarIcon().help(String(localized: "New Conversation"))
-                    .accessibilityLabel(String(localized: "New Conversation"))
-                    .accessibilityIdentifier("workspace.newConversation")
-                Button(action: toggleSidebar) {
-                    Image("nola-sidebar").renderingMode(.template).resizable().scaledToFit()
-                        .frame(width: 18, height: 18).frame(width: 36, height: 36)
+                Spacer(minLength: 8)
+                if selectedSection == .chat && inspectorColumnOpen {
+                    searchConversationButton
                 }
-                .macToolbarIcon()
-                .help(String(localized: "Toggle Sidebar"))
-                .accessibilityLabel(String(localized: "Toggle Sidebar"))
-                .accessibilityIdentifier("workspace.toggleSidebar")
             }
-            .padding(.leading, 12)
-            .padding(.trailing, 8)
-            .frame(width: columnVisibility == .detailOnly || layoutMode == .compactOverlay
-                ? 220 : CGFloat(storedSidebarWidth), alignment: .leading)
-            contentTabStrip
-            Button { model.isTranscriptSearchVisible.toggle() } label: {
-                Image("nola-search").renderingMode(.template).resizable().scaledToFit()
-                    .frame(width: 18, height: 18).frame(width: 36, height: 36)
+            .padding(.leading, 14)
+            .padding(.trailing, inspectorColumnOpen ? 10 : 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if selectedSection == .chat {
+                if inspectorColumnOpen {
+                    HStack(spacing: 4) {
+                        Spacer(minLength: 0)
+                        inspectorButtons
+                    }
+                    .padding(.horizontal, 10)
+                    .frame(width: inspectorWidth(availableWidth: availableWidth) + 1, height: 48)
+                    .overlay(alignment: .leading) {
+                        Rectangle().fill(MacDesignColor.borderSubtle).frame(width: 1)
+                    }
+                } else {
+                    HStack(spacing: 4) {
+                        searchConversationButton
+                        Rectangle()
+                            .fill(MacDesignColor.borderSubtle)
+                            .frame(width: 1, height: 18)
+                            .padding(.horizontal, 2)
+                        inspectorButtons
+                    }
+                    .padding(.trailing, 10)
+                }
             }
-            .macToolbarIcon(isActive: model.isTranscriptSearchVisible)
-            .help(String(localized: "Search Conversation"))
-            .accessibilityLabel(String(localized: "Search Conversation"))
-            .accessibilityIdentifier("workspace.searchConversation")
-            inspectorButtons
         }
-        .padding(.trailing, 10)
         .frame(height: 48)
+        .background {
+            MacWindowDragRegion()
+        }
         .background(MacDesignColor.chrome)
-        .overlay(alignment: .bottom) { Rectangle().fill(MacDesignColor.borderSubtle).frame(height: 0.5) }
+        .overlay(alignment: .bottom) { Rectangle().fill(MacDesignColor.borderSubtle).frame(height: 1) }
         .accessibilityElement(children: .contain)
     }
 
-    private var contentTabStrip: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal) {
-                HStack(spacing: 2) {
-                    contentTab(id: MacConversationContentWorkspace.conversationID,
-                        title: model.selectedConversationDisplayTitle, closeable: false)
-                    ForEach(contentWorkspace.objects) { object in
-                        contentTab(id: object.id, title: object.title, closeable: true)
-                            .onAppear {
-                                if contentWorkspace.selection == object.id {
-                                    proxy.scrollTo(object.id, anchor: .center)
-                                }
-                            }
-                    }
-                }
-                .fixedSize(horizontal: true, vertical: false)
-            }
-            .defaultScrollAnchor(.leading)
-            .onChange(of: contentWorkspace.selection) { _, selection in
-                // A newly opened tab needs its layout before it can be scrolled into view.
-                DispatchQueue.main.async { proxy.scrollTo(selection, anchor: .center) }
-            }
+    private var searchConversationButton: some View {
+        Button { model.isTranscriptSearchVisible.toggle() } label: {
+            Image("nola-search").renderingMode(.template).resizable().scaledToFit()
+                .frame(width: 18, height: 18).frame(width: 36, height: 36)
         }
-        .scrollIndicators(.visible)
-        .padding(.top, 5)
-        .frame(maxWidth: .infinity, minHeight: 48, maxHeight: 48, alignment: .leading)
-        .accessibilityIdentifier("workspace.contentTabs")
+        .macToolbarIcon(isActive: model.isTranscriptSearchVisible)
+        .help(String(localized: "Search Conversation"))
+        .accessibilityLabel(String(localized: "Search Conversation"))
+        .accessibilityIdentifier("workspace.searchConversation")
     }
 
-    private func contentTab(id: String, title: String, closeable: Bool) -> some View {
-        HStack(spacing: 0) {
-            Button { selectContent(id) } label: {
-                Text(title).font(.system(size: 12)).lineLimit(1)
-                    .padding(.horizontal, 12).frame(minWidth: 82, maxWidth: closeable ? 202 : 230, minHeight: 43, alignment: .leading)
-                    .contentShape(Rectangle())
-            }.buttonStyle(.plain).focused($focusedContentTab, equals: id)
-                .accessibilityAddTraits(contentWorkspace.selection == id ? .isSelected : [])
-                .onMoveCommand { direction in moveContentTab(from: id, direction: direction) }
-                .onDeleteCommand { if closeable { closeContent(id) } }
-            if closeable {
-                Button { closeContent(id) } label: { Image("nola-close").renderingMode(.template).resizable().scaledToFit().frame(width: 10, height: 10).frame(width: 28, height: 32) }
-                    .buttonStyle(.plain).help(String(localized: "Close"))
-                    .accessibilityLabel(String(localized: "Close") + " " + title)
-            }
+    private var newConversationButton: some View {
+        Button(action: navigationActions.newConversation) {
+            Image("nola-edit").renderingMode(.template).resizable().scaledToFit()
+                .frame(width: 18, height: 18).frame(width: 36, height: 36)
         }
-        .frame(minWidth: 110, minHeight: 43, maxHeight: 43)
-        .background(contentWorkspace.selection == id ? MacDesignColor.selected : Color.clear,
-            in: UnevenRoundedRectangle(topLeadingRadius: 7, topTrailingRadius: 7))
-        .id(id)
-        .help(title)
+        .macToolbarIcon()
+        .help(String(localized: "New Conversation"))
+        .accessibilityLabel(String(localized: "New Conversation"))
+        .accessibilityIdentifier("workspace.newConversation")
     }
 
-    private func moveContentTab(from id: String, direction: MoveCommandDirection) {
-        let ids = [MacConversationContentWorkspace.conversationID] + contentWorkspace.objects.map(\.id)
-        guard let index = ids.firstIndex(of: id) else { return }
-        let offset = direction == .left ? -1 : direction == .right ? 1 : 0
-        guard offset != 0 else { return }
-        let next = ids[(index + ids.count + offset) % ids.count]
-        selectContent(next); focusedContentTab = next
-    }
-
-    @ViewBuilder
     private var workspaceSidebar: some View {
-        switch sidebarArea {
-        case .conversations:
-            MacConversationSidebar(model: model, selectedSection: sectionSelection,
-                selectConversation: { id in
-                    navigationActions.selectConversation(id)
-                    if model.selectedConversationID == id { selectContent(MacConversationContentWorkspace.conversationID) }
-                }, loadParticipantNames: { id in
-                    let service = roomWorkspace.service
-                    return try await Task.detached {
-                        try service.forConversation(id)?.room.room.participants
-                            .filter(\.active).map(\.displayName) ?? []
-                    }.value
-                }, openExpertLibrary: { showsExpertManagement = true })
-        case .resources:
-            MacWorkspaceResourceNavigation(search: $resourceSearch, selection: selectedSection) { section in
-                openContent(.section(section))
-            }
-        }
+        MacConversationSidebar(model: model, selectedSection: sectionSelection,
+            selectConversation: { id in
+                navigationActions.selectConversation(id)
+                activeOverlay = nil
+            }, loadParticipantNames: { id in
+                let service = roomWorkspace.service
+                return try await Task.detached {
+                    try service.forConversation(id)?.room.room.participants
+                        .filter(\.active).map(\.displayName) ?? []
+                }.value
+            }, onOpenSettings: {
+                openSettings()
+            })
     }
 
     private var inspectorButtons: some View {
         MacConversationInspectorButtons(selection: inspectorNavigation.selectedTab,
             isVisible: !isManagementContent && (layoutMode == .threeColumn ? showsInspector : activeOverlay == .inspector)) { tab in
                     if isManagementContent {
-                        navigateContent({ $0.select(MacConversationContentWorkspace.conversationID) }) {
+                        navigationActions.navigate(to: .chat) {
                             inspectorNavigation.selectedTab = tab
                             showsInspector = true
                             activeOverlay = layoutMode == .threeColumn ? nil : .inspector
@@ -1231,29 +1154,77 @@ struct MacChatWorkspaceView: View {
 
     @ViewBuilder
     private var conversationTitleControl: some View {
-        if isEditingTitle {
-            TextField(String(localized: "Conversation name"), text: $inlineTitleDraft)
-                .textFieldStyle(.plain)
-                .font(.system(size: 14.5, weight: .semibold))
-                .multilineTextAlignment(.center)
-                .focused($titleFocused)
-                .onSubmit { commitInlineTitle() }
-                .onExitCommand { cancelInlineTitle() }
-        } else {
+        let canRename = model.selectedConversation?.isPersisted == true
+        if isEditingTitle, canRename {
+            HStack(spacing: 6) {
+                TextField(String(localized: "Conversation name"), text: $inlineTitleDraft)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 14, weight: .semibold))
+                    .multilineTextAlignment(.leading)
+                    .focused($titleFocused)
+                    .onSubmit { commitInlineTitle() }
+                    .onExitCommand { cancelInlineTitle() }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .frame(maxWidth: 460, alignment: .leading)
+            .background(
+                MacDesignColor.panel,
+                in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(MacDesignColor.controlOutline, lineWidth: 1)
+            }
+        } else if canRename {
             Button(action: beginInlineTitle) {
-                Text(model.selectedConversationDisplayTitle)
-                    .font(.system(size: 14.5, weight: .semibold))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .minimumScaleFactor(0.82)
-                    .contentShape(Rectangle())
+                HStack(spacing: 6) {
+                    Text(model.selectedConversationDisplayTitle)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .minimumScaleFactor(0.85)
+                    if isTitleHovered {
+                        Image(systemName: "pencil")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    isTitleHovered ? MacDesignColor.hover : MacDesignColor.panel,
+                    in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(
+                            isTitleHovered ? MacDesignColor.controlOutline.opacity(0.6) : MacDesignColor.borderSubtle,
+                            lineWidth: 0.75
+                        )
+                }
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(
-                model.selectedConversation == nil
-                    ? String(localized: "Rename Conversation")
-                    : model.selectedConversationDisplayTitle
-            )
+            .onHover { isTitleHovered = $0 }
+            .help(model.selectedConversationDisplayTitle)
+        } else {
+            Text(model.selectedConversationDisplayTitle)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    MacDesignColor.panel.opacity(0.65),
+                    in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(MacDesignColor.borderSubtle.opacity(0.75), lineWidth: 0.75)
+                }
         }
     }
 
@@ -1283,10 +1254,10 @@ struct MacChatWorkspaceView: View {
                     model.useSessionSandbox()
                 } label: {
                     Label(
-                        String(localized: "Session Sandbox"),
+                        String(localized: "Temporary Workspace"),
                         systemImage: model.usesSessionSandbox
                             ? "checkmark"
-                            : "shippingbox"
+                            : "folder.badge.questionmark"
                     )
                 }
                 .disabled(model.isSelectedConversationVisiblyRunning)
@@ -1334,100 +1305,23 @@ struct MacChatWorkspaceView: View {
                 }
             }
         } label: {
-            HStack(spacing: 5) {
+            Label {
+                Text(model.usesSessionSandbox ? String(localized: "Choose Folder") : model.workspaceDisplayName)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: 168, alignment: .leading)
+            } icon: {
                 conversationMenuIcon("nola-folder")
-                Text(model.workspaceDisplayName).lineLimit(1).truncationMode(.middle)
-                Image("nola-chevron").renderingMode(.template).resizable().scaledToFit()
-                    .frame(width: 8, height: 8).rotationEffect(.degrees(90))
             }
-            .font(.system(size: 11.5, weight: .medium)).foregroundStyle(.secondary)
-            .padding(.horizontal, 8).frame(maxWidth: 180).frame(height: 28)
-            .background(MacDesignColor.hover, in: RoundedRectangle(cornerRadius: 7))
+            .font(.system(size: 11.5, weight: .medium))
+            .foregroundStyle(.secondary)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .tint(.secondary)
+        .menuStyle(MacPillMenuStyle(height: 28))
         .fixedSize(horizontal: true, vertical: false)
         .help(model.effectiveWorkspaceURL.path)
         .accessibilityLabel(
             "\(String(localized: "Workspace")): \(model.workspaceDisplayName)"
         )
-    }
-
-    private var executionBackendSelector: some View {
-        Menu {
-            Text(model.executionHost == .local ? String(localized: "execution.scope.local", table: "Chat") : String(localized: "execution.scope.host", table: "Chat"))
-            Text(String(localized: "execution.scope.child", table: "Chat"))
-            if activeExecutionBackendCatalog.first(where: { $0.id == model.executionBackend.id })?.capabilities?.supportsPermissionBridge == false {
-                Text(String(localized: "execution.scope.noApprovalBridge", table: "Chat"))
-            }
-            Divider()
-            if model.executionHost == .local {
-                Button {
-                    Task { await refreshLocalExecutionBackends() }
-                } label: {
-                    Label(String(localized: "Discover or Refresh Local Execution Units", table: "Chat"),
-                          systemImage: "arrow.clockwise")
-                }
-                .disabled(isDiscoveringLocalExecutionBackends)
-                .accessibilityIdentifier("chat.discoverExecutionBackends")
-                if isDiscoveringLocalExecutionBackends {
-                    Text(String(localized: "Discovering Local Execution Units…", table: "Chat"))
-                }
-                if let error = localExecutionBackendDiscoveryError {
-                    Text(error)
-                }
-                Divider()
-            }
-            Section(String(localized: "Execution Unit")) {
-                ForEach(activeExecutionBackendCatalog) { descriptor in
-                    let option = MacExecutionBackendOption(
-                        id: descriptor.id,
-                        displayName: descriptor.displayName
-                    )
-                    let available = descriptor.isAvailable
-                    Button {
-                        model.selectExecutionBackend(option, available: available)
-                        if option.id != "nola",
-                           let initialModel = descriptor.models.first(where: {
-                               $0.id == descriptor.defaultModelID
-                           }) ?? descriptor.models.first {
-                            model.selectExternalModel(initialModel, backendID: option.id)
-                        }
-                    } label: {
-                        Label(
-                            available
-                                ? executionBackendLabel(option, descriptor: descriptor)
-                                : "\(option.displayName) · \(executionBackendAvailabilityLabel(descriptor))",
-                            systemImage: model.executionBackend.id == option.id
-                                ? "checkmark"
-                                : "terminal"
-                        )
-                    }
-                    .disabled(!available)
-                    .help(descriptor.diagnostic ?? executionBackendAvailabilityLabel(descriptor))
-                }
-            }
-        } label: {
-            HStack(spacing: 5) {
-                conversationMenuIcon("nola-execution")
-                Text(String(localized: "Execution Unit") + ": " + selectedExecutionBackendDisplayName)
-                    .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 7, weight: .semibold))
-            }
-            .font(.system(size: 11.5, weight: .medium))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 8)
-            .frame(height: 28)
-            .background(MacDesignColor.hover, in: RoundedRectangle(cornerRadius: 7))
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .tint(.secondary)
-        .fixedSize(horizontal: true, vertical: false)
-        .help("\(String(localized: "Execution Unit")): \(selectedExecutionBackendDisplayName)")
-        .accessibilityIdentifier("chat.executionBackendPicker")
     }
 
     private var selectedExecutionBackendDisplayName: String {
@@ -1444,55 +1338,6 @@ struct MacChatWorkspaceView: View {
 
     private var activeExecutionBackendDescriptor: MacRemoteExecutionBackend? {
         activeExecutionBackendCatalog.first(where: { $0.id == model.executionBackend.id })
-    }
-
-    private var externalExecutionModelSelector: some View {
-        let descriptor = activeExecutionBackendDescriptor
-        let selected = model.selectedExternalModel(in: descriptor)
-        return Menu {
-            if let descriptor, !descriptor.models.isEmpty {
-                Section(String(localized: "Execution Model")) {
-                    ForEach(descriptor.models) { option in
-                        Button {
-                            model.selectExternalModel(option, backendID: descriptor.id)
-                        } label: {
-                            Label(
-                                option.displayName,
-                                systemImage: selected?.id == option.id ? "checkmark" : "cpu"
-                            )
-                        }
-                    }
-                }
-            } else {
-                Text(String(localized: "Managed by execution unit"))
-            }
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "cpu")
-                    .font(.system(size: 10, weight: .medium))
-                Text(selected?.displayName ?? String(localized: "Default Model"))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
-            }
-            .font(.system(size: 11.5, weight: .medium))
-            .foregroundStyle(.primary)
-            .padding(.horizontal, 8)
-            .frame(minWidth: 132, idealWidth: 156, maxWidth: 180)
-            .frame(height: 28)
-            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 7))
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .tint(.secondary)
-        .help(String(localized: "Choose the model used by this execution unit"))
-    }
-
-    private func executionBackendDescriptor(
-        _ option: MacExecutionBackendOption
-    ) -> MacRemoteExecutionBackend? {
-        activeExecutionBackendCatalog.first(where: { $0.id == option.id })
     }
 
     private func executionBackendLabel(
@@ -1519,34 +1364,36 @@ struct MacChatWorkspaceView: View {
     private var expertManagementButton: some View {
         Button { showsAgentRooms = true } label: {
             HStack(spacing: 5) {
-                Image("nola-person").renderingMode(.template).resizable().scaledToFit().frame(width: 16, height: 16)
+                Text(verbatim: "@")
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
                 Text("chat.experts.title")
-            }.padding(.horizontal, 8).frame(height: 28)
+                    .lineLimit(1)
+                if !expertSelection.isEmpty {
+                    Text(verbatim: "· \(expertSelection.count)")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(MacDesignColor.brand)
+                }
+            }
+            .font(.system(size: 11.5, weight: .medium))
+            .foregroundStyle(expertSelection.isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(MacDesignColor.brand))
+            .padding(.horizontal, 8)
+            .frame(height: 28)
+            .macComposerPill(isActive: !expertSelection.isEmpty)
         }
         .buttonStyle(.plain)
-        .background(MacDesignColor.hover, in: RoundedRectangle(cornerRadius: 7))
         .accessibilityIdentifier("chat.experts")
     }
 
     private var composerConversationControls: some View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 8) {
-                expertManagementButton
-                executionBackendSelector
-                hostSelector
+                modelSelector
                 workspaceSelector
-                if MacExecutionBackendPolicy.requiresNolaModel(model.executionBackend.id) {
-                    if !modelSetupRequired { modelSelector }
-                } else { externalExecutionModelSelector }
+                expertManagementButton
             }.fixedSize(horizontal: true, vertical: false)
             VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) { expertManagementButton; executionBackendSelector; hostSelector }
-                HStack(spacing: 8) {
-                    workspaceSelector
-                    if MacExecutionBackendPolicy.requiresNolaModel(model.executionBackend.id) {
-                        if !modelSetupRequired { modelSelector }
-                    } else { externalExecutionModelSelector }
-                }
+                HStack(spacing: 8) { modelSelector; workspaceSelector }
+                expertManagementButton
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1606,19 +1453,51 @@ struct MacChatWorkspaceView: View {
             }
         } else {
             if let option = model.selectedModelOption {
-                modelNavigation.showSelectedModel(remoteProfileID: option.isLocal ? nil : option.configurationID)
+                MacModelCenterNavigationState.shared.showSelectedModel(
+                    remoteProfileID: option.isLocal ? nil : option.configurationID
+                )
             } else {
-                modelNavigation.showRemoteModels()
+                MacModelCenterNavigationState.shared.showRemoteModels()
             }
-            openContent(.section(.models))
+            openWindow(id: "model-center")
         }
     }
 
+    private var usesNolaModelBackend: Bool {
+        MacExecutionBackendPolicy.requiresNolaModel(model.executionBackend.id)
+    }
+
+    private var modelSelectorTitle: String {
+        let baseTitle: String
+        if usesNolaModelBackend {
+            baseTitle = model.activeModelName
+        } else {
+            let selectedExternal = model.selectedExternalModel(in: activeExecutionBackendDescriptor)?.displayName
+                ?? String(localized: "Default Model")
+            baseTitle = "\(selectedExecutionBackendDisplayName) · \(selectedExternal)"
+        }
+        guard model.executionHost == .remote else { return baseTitle }
+        return "\(hostSelectorTitle) · \(baseTitle)"
+    }
+
+    private var showsHostInModelMenu: Bool {
+        model.canUseRemoteHost || model.executionHost == .remote || remoteHostConnectionState.isConfigured
+    }
+
     private var modelSelector: some View {
-        Menu {
-            Button { model.restoreDefaultModelInheritance() } label: {
+        let externalBackends = activeExecutionBackendCatalog.filter { $0.id != "nola" }
+        return Menu {
+            Button {
+                if !usesNolaModelBackend {
+                    model.selectExecutionBackend(
+                        MacExecutionBackendOption(id: "nola", displayName: "Nola"),
+                        available: true
+                    )
+                }
+                model.restoreDefaultModelInheritance()
+            } label: {
                 Label(String(localized: "Use default chat model", table: "ModelCenter"),
-                      systemImage: model.inheritsDefaultModel ? "checkmark" : "arrow.uturn.backward")
+                      systemImage: usesNolaModelBackend && model.inheritsDefaultModel ? "checkmark" : "arrow.uturn.backward")
             }
             Divider()
             if model.configuredModelOptions.isEmpty && model.downloadedModelOptions.isEmpty {
@@ -1639,12 +1518,116 @@ struct MacChatWorkspaceView: View {
                     }
                 }
             }
+            if !externalBackends.isEmpty || model.executionHost == .local {
+                Divider()
+                Section(String(localized: "External Agents")) {
+                    ForEach(externalBackends) { descriptor in
+                        let option = MacExecutionBackendOption(
+                            id: descriptor.id,
+                            displayName: descriptor.displayName
+                        )
+                        let available = descriptor.isAvailable
+                        Button {
+                            model.selectExecutionBackend(option, available: available)
+                            if let initialModel = descriptor.models.first(where: {
+                                $0.id == descriptor.defaultModelID
+                            }) ?? descriptor.models.first {
+                                model.selectExternalModel(initialModel, backendID: option.id)
+                            }
+                        } label: {
+                            Label(
+                                available
+                                    ? executionBackendLabel(option, descriptor: descriptor)
+                                    : "\(option.displayName) · \(executionBackendAvailabilityLabel(descriptor))",
+                                systemImage: model.executionBackend.id == option.id
+                                    ? "checkmark"
+                                    : "terminal"
+                            )
+                        }
+                        .disabled(!available)
+                        .help(descriptor.diagnostic ?? executionBackendAvailabilityLabel(descriptor))
+                    }
+                    if model.executionHost == .local {
+                        Button {
+                            Task { await refreshLocalExecutionBackends() }
+                        } label: {
+                            Label(
+                                isDiscoveringLocalExecutionBackends
+                                    ? String(localized: "Discovering Local Execution Units…", table: "Chat")
+                                    : String(localized: "Refresh External Agents"),
+                                systemImage: "arrow.clockwise"
+                            )
+                        }
+                        .disabled(isDiscoveringLocalExecutionBackends)
+                        .accessibilityIdentifier("chat.discoverExecutionBackends")
+                        if let error = localExecutionBackendDiscoveryError {
+                            Text(error)
+                        }
+                    }
+                }
+                if !usesNolaModelBackend,
+                   let descriptor = activeExecutionBackendDescriptor,
+                   !descriptor.models.isEmpty {
+                    let selected = model.selectedExternalModel(in: descriptor)
+                    Section(String(localized: "Execution Model")) {
+                        ForEach(descriptor.models) { option in
+                            Button {
+                                model.selectExternalModel(option, backendID: descriptor.id)
+                            } label: {
+                                Label(
+                                    option.displayName,
+                                    systemImage: selected?.id == option.id ? "checkmark" : "cpu"
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            if showsHostInModelMenu {
+                Divider()
+                Section(String(localized: "Execution")) {
+                    Button {
+                        model.selectExecutionHost(.local)
+                    } label: {
+                        Label(MacExecutionHost.local.title, systemImage: model.executionHost == .local ? "checkmark" : "desktopcomputer")
+                    }
+                    Button {
+                        model.selectExecutionHost(.remote)
+                        Task { await refreshRemoteHostConnection() }
+                    } label: {
+                        Label(MacExecutionHost.remote.title, systemImage: model.executionHost == .remote ? "checkmark" : "network")
+                    }
+                    .disabled(!model.canUseRemoteHost)
+                    Label(hostConnectionStatusTitle, systemImage: hostConnectionStatusSymbol)
+                    if remoteHostConnectionState.isConfigured {
+                        Button {
+                            Task { await refreshRemoteHostConnection() }
+                        } label: {
+                            Label(macHostText("mac.host.action.retry", "Test Again"), systemImage: "arrow.clockwise")
+                        }
+                        .disabled({
+                            if case .checking = remoteHostConnectionState { return true }
+                            return false
+                        }())
+                    }
+                    Button {
+                        openHostSettings()
+                    } label: {
+                        Label(
+                            remoteHostConnectionState.isConfigured
+                                ? macHostText("mac.host.action.edit", "Edit Host Connection…")
+                                : macHostText("mac.host.action.configure", "Set Up Host…"),
+                            systemImage: "gearshape"
+                        )
+                    }
+                }
+            }
             Divider()
             Button(String(localized: "Conversation model parameters", table: "ModelCenter")) {
                 model.isModelSettingsPresented = true
             }
-            .disabled(model.selectedModelOption == nil)
-            if model.executionHost == .remote {
+            .disabled(!usesNolaModelBackend || model.selectedModelOption == nil)
+            if model.executionHost == .remote && !showsHostInModelMenu {
                 Button {
                     Task { await refreshRemoteHostConnection() }
                 } label: {
@@ -1655,100 +1638,29 @@ struct MacChatWorkspaceView: View {
                 Label(String(localized: "Manage Models…"), systemImage: "slider.horizontal.3")
             }
         } label: {
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 5) {
-                    Text(model.activeModelName)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .semibold))
-                }
-                if let status = model.selectedModelCapabilityStatus, let label = status.label {
-                    Text(label)
-                        .font(.system(size: 9.5, weight: .regular))
-                        .foregroundStyle(status == .needsConfirmation ? Color.orange : Color.secondary)
-                        .lineLimit(1)
-                }
-            }
-            .font(.system(size: 11.5, weight: .medium))
-            .foregroundStyle(.primary)
-            .padding(.horizontal, 8)
-            .frame(minWidth: 132, idealWidth: 190, maxWidth: 230, alignment: .leading)
-            .frame(height: 28)
-            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 7))
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .tint(.secondary)
-        .layoutPriority(1)
-        .help(model.activeModelName)
-    }
-
-    private var hostSelector: some View {
-        Menu {
-            Section(String(localized: "Execution")) {
-                Button {
-                    model.selectExecutionHost(.local)
-                } label: {
-                    Label(MacExecutionHost.local.title, systemImage: model.executionHost == .local ? "checkmark" : "desktopcomputer")
-                }
-                Button {
-                    model.selectExecutionHost(.remote)
-                    Task { await refreshRemoteHostConnection() }
-                } label: {
-                    Label(MacExecutionHost.remote.title, systemImage: model.executionHost == .remote ? "checkmark" : "network")
-                }
-                .disabled(!model.canUseRemoteHost)
-            }
-            Section(macHostText("mac.host.menu.status", "Host Status")) {
-                Label(hostConnectionStatusTitle, systemImage: hostConnectionStatusSymbol)
-                if case .failed(let message) = remoteHostConnectionState {
-                    Text(message)
-                }
-            }
-            if remoteHostConnectionState.isConfigured {
-                Button {
-                    Task { await refreshRemoteHostConnection() }
-                } label: {
-                    Label(macHostText("mac.host.action.retry", "Test Again"), systemImage: "arrow.clockwise")
-                }
-                .disabled({
-                    if case .checking = remoteHostConnectionState { return true }
-                    return false
-                }())
-            }
-            Divider()
-            Button {
-                openHostSettings()
-            } label: {
-                Label(
-                    remoteHostConnectionState.isConfigured
-                        ? macHostText("mac.host.action.edit", "Edit Host Connection…")
-                        : macHostText("mac.host.action.configure", "Set Up Host…"),
-                    systemImage: "gearshape"
-                )
-            }
-        } label: {
-            HStack(spacing: 5) {
-                conversationMenuIcon("nola-host", tint: NSColor(hostSelectorColor).withAlphaComponent(0.92))
-                Text(hostSelectorTitle)
+            Label {
+                Text(modelSelectorTitle)
                     .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 7, weight: .semibold))
+                    .truncationMode(.middle)
+                    .frame(maxWidth: 220, alignment: .leading)
+            } icon: {
+                Image(systemName: model.executionHost == .remote ? "network" : "cpu")
             }
             .font(.system(size: 11.5, weight: .medium))
-            .foregroundStyle(hostSelectorColor.opacity(0.92))
-            .padding(.horizontal, 8)
-            .frame(height: 28)
-            .background(hostSelectorColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
+            .foregroundStyle(model.executionHost == .remote ? hostSelectorColor : .primary)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .tint(hostSelectorColor)
+        .menuStyle(MacPillMenuStyle(height: 28))
         .fixedSize(horizontal: true, vertical: false)
-        .help(
-            "\(String(localized: "Execution")): \(hostConnectionStatusTitle)"
-        )
+        .layoutPriority(1)
+        .help({
+            if usesNolaModelBackend,
+               let status = model.selectedModelCapabilityStatus,
+               let label = status.label {
+                return "\(modelSelectorTitle) · \(label)"
+            }
+            return modelSelectorTitle
+        }())
+        .accessibilityIdentifier("chat.modelSelector")
     }
 
     private var hostSelectorTitle: String {
@@ -1851,26 +1763,34 @@ struct MacChatWorkspaceView: View {
     }
 
     private func openHostSettings() {
-        navigateContent({ $0.open(.section(.settings)) }, afterNavigation: {
-            settingsDestination = "connections"
-        })
+        UserDefaults.standard.set("connections", forKey: "nola.mac.settings.category")
+        openSettings()
     }
 
     private func modelOptionButton(_ option: MacChatModelOption) -> some View {
         Button {
+            if !usesNolaModelBackend {
+                model.selectExecutionBackend(
+                    MacExecutionBackendOption(id: "nola", displayName: "Nola"),
+                    available: true
+                )
+            }
             model.selectModel(option)
         } label: {
             Label(
                 option.displayName,
-                systemImage: model.selectedModelOption?.id == option.id ? "checkmark" : option.symbol
+                systemImage: usesNolaModelBackend && model.selectedModelOption?.id == option.id ? "checkmark" : option.symbol
             )
         }
     }
 
     private func beginInlineTitle() {
-        inlineTitleDraft = model.selectedConversation.map {
-            MacConversationTitlePolicy.displayTitle($0.title, conversationID: $0.id)
-        } ?? ""
+        guard let conversation = model.selectedConversation, conversation.isPersisted else { return }
+        editingTitleConversationID = conversation.id
+        inlineTitleDraft = MacConversationTitlePolicy.displayTitle(
+            conversation.title,
+            conversationID: conversation.id
+        )
         isEditingTitle = true
         Task { @MainActor in
             await Task.yield()
@@ -1879,14 +1799,21 @@ struct MacChatWorkspaceView: View {
     }
 
     private func commitInlineTitle() {
-        model.renameSelectedConversation(to: inlineTitleDraft)
+        let targetID = editingTitleConversationID
+        let draft = inlineTitleDraft
         isEditingTitle = false
+        editingTitleConversationID = nil
         titleFocused = false
+        isTitleHovered = false
+        guard let targetID else { return }
+        model.renameConversation(id: targetID, to: draft)
     }
 
     private func cancelInlineTitle() {
         isEditingTitle = false
+        editingTitleConversationID = nil
         titleFocused = false
+        isTitleHovered = false
     }
 
     private func toggleSidebar() {

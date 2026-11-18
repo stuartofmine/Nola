@@ -531,9 +531,9 @@ nonisolated public final class CanonicalChatMemoryProfileStore: ChatMemoryProfil
             let current = expected.record
             let input = IOSCanonicalSkill(
                 id: proposed.id, source: current.source,
-                version: proposed.instructionsDigest == current.instructionsDigest ? current.version : UUID().uuidString,
+                version: proposed.instructionsText == current.instructionsText ? current.version : UUID().uuidString,
                 displayName: proposed.displayName, summary: proposed.summary, category: current.category,
-                instructionsRef: current.instructionsRef, instructionsDigest: proposed.instructionsDigest,
+                instructionsRef: current.instructionsRef,
                 instructionsText: proposed.instructionsText, requiredTools: current.requiredTools,
                 defaultMode: current.defaultMode, enabled: current.enabled,
                 createdAtMs: current.createdAtMs, updatedAtMs: proposed.updatedAtMs, deletedAtMs: nil

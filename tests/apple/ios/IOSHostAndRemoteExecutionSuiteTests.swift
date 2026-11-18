@@ -959,6 +959,25 @@ final class AppleGoalControlOutboxTests: XCTestCase {
         XCTAssertNil(clearedDraft)
     }
 
+    func testDiscardClearsWedgedPendingIntentWhilePreservingStartDraft() async throws {
+        let directory = directory(); defer { try? FileManager.default.removeItem(at: directory) }
+        let start = AppleGoalControlIntent(hostID: "host", conversationID: "conversation",
+            control: AppleGoalControl(action: .start, objective: "Preserve draft text", constraints: ["Rule 1"]))
+        let outbox = AppleGoalControlOutbox(directory: directory)
+        do {
+            _ = try await outbox.submit(start) { _ in throw URLError(.timedOut) }
+            XCTFail("Expected transport timeout to leave pending intent")
+        } catch {}
+        let beforeDiscard = try await outbox.pending(hostID: "host", conversationID: "conversation")
+        XCTAssertNotNil(beforeDiscard)
+        try await outbox.discard(hostID: "host", conversationID: "conversation")
+        let afterDiscard = try await outbox.pending(hostID: "host", conversationID: "conversation")
+        XCTAssertNil(afterDiscard)
+        let savedDraft = try await outbox.draft(hostID: "host", conversationID: "conversation")
+        XCTAssertEqual(savedDraft?.objective, "Preserve draft text")
+        XCTAssertEqual(savedDraft?.constraints, ["Rule 1"])
+    }
+
 }
 
 struct RemoteModelEndpointURLTests {

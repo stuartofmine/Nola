@@ -1363,4 +1363,25 @@
     <string name="expert_main_requires_tools">Choisissez un modèle principal compatible avec les outils et activez les outils experts, ou retirez les experts sélectionnés. Le brouillon est conservé.</string>
     <string name="chat_context_budget_exceeded">L’entrée et les outils dépassent le contexte. Augmentez la limite ou réduisez pièces jointes, historique et outils.</string>
     <string name="chat_run_blocked">La tâche ne peut pas continuer. Développez le processus pour voir les informations ou actions requises.</string>
+    <string name="models_web_host_paste_setup">Coller la configuration de connexion</string>
+    <string name="models_web_host_invalid_setup">Copiez la configuration de connexion depuis Nola sur l’hôte, puis collez-la ici.</string>
+    <string name="permission_review_unavailable">Les détails de l’opération sont indisponibles. Refusez cette demande ou demandez à l’hôte une opération vérifiable.</string>
+    <string name="common_more">Plus</string>
+    <string name="models_config_save_failed">Impossible d’enregistrer la configuration du modèle.</string>
+    <string name="models_protocol_responses">Responses</string>
+    <string name="models_protocol_chat_completions">Chat Completions</string>
+    <string name="chat_rename_conversation">Renommer la conversation</string>
+    <string name="chat_conversation_title_hint">Titre de la conversation</string>
+    <string name="chat_local_mcp_servers">Serveurs MCP de l’appareil</string>
+    <string name="chat_local_mcp_empty">Aucun serveur MCP configuré sur l’appareil.</string>
+    <string name="goal_discard_pending">Annuler la demande en attente</string>
+    <string name="goal_constraints">Contraintes (facultatif)</string>
+    <string name="goal_constraints_hint">Une contrainte par ligne ou séparées par des virgules</string>
+    <string name="goal_next_wake_format">Prochaine vérification : %1$s</string>
+    <string name="expert_conflict_refresh">L’expert a été modifié. Actualisez avant de réessayer.</string>
+    <string name="task_detail_unavailable">Détails de la tâche indisponibles</string>
+    <string name="chat_ui_host_submission_rejected">L’hôte a rejeté l’envoi. Actualisez le formulaire et réessayez.</string>
+    <string name="chat_ui_host_submission_unknown">Le résultat de l’envoi à l’hôte n’est pas encore confirmé.</string>
+    <string name="chat_ui_submission_rejected">L’envoi a été rejeté.</string>
+    <string name="chat_ui_submission_unknown">Le résultat de l’envoi n’est pas encore confirmé.</string>
 </resources>

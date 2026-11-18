@@ -9,12 +9,43 @@ use nola_domain::{
 use nola_agent_engine::agent::capability::{SkillExecutionMode, SkillRun, SkillRunStatus};
 use nola_agent_engine::agent::task::{TaskHandle, TaskState};
 
+pub(crate) fn sanitize_task_display_key(raw: &str) -> String {
+    let mut sanitized = String::new();
+    let mut prev_space = false;
+    let mut char_count = 0usize;
+    for ch in raw.chars() {
+        let ch = if ch.is_control() || ch.is_whitespace() { ' ' } else { ch };
+        if ch == ' ' {
+            if sanitized.is_empty() || prev_space {
+                continue;
+            }
+            prev_space = true;
+        } else {
+            prev_space = false;
+        }
+        if char_count >= 200 || sanitized.len() + ch.len_utf8() > 512 {
+            break;
+        }
+        sanitized.push(ch);
+        char_count += 1;
+    }
+    let trimmed = sanitized.trim_end();
+    if trimmed.len() != sanitized.len() {
+        sanitized.truncate(trimmed.len());
+    }
+    if sanitized.is_empty() {
+        "task.background".to_string()
+    } else {
+        sanitized
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct PublicTaskPart<'a> {
     pub task_id: &'a str,
     /// Ordinary DTO source revision, not proof that visible fields changed.
     pub revision: u64,
-    pub display_key: &'static str,
+    pub display_key: &'a str,
     pub state: ActivityState,
     pub progress: Option<f64>,
     pub current_step: Option<&'a str>,
@@ -31,7 +62,7 @@ impl PublicTaskPart<'_> {
             part_id: MessagePartId(self.part_id()),
             revision: self.revision,
             task_id: self.task_id.into(),
-            display_key: self.display_key.into(),
+            display_key: sanitize_task_display_key(self.display_key),
             state: self.state,
             progress: self.progress,
             current_step: self.current_step.map(str::to_owned),
@@ -55,13 +86,17 @@ pub(crate) fn task_part(task: &TaskHandle, revision: u64) -> PublicTaskPart<'_> 
         owner_turn_id: _,
         kind: _,
         cancel_requested_at_epoch_ms: _,
-        lineage: _,
+        lineage,
         durability: _,
     } = task;
     PublicTaskPart {
         task_id: id,
         revision,
-        display_key: "task.background",
+        display_key: lineage
+            .title
+            .as_deref()
+            .filter(|title| !title.chars().all(|ch| ch.is_whitespace() || ch.is_control()))
+            .unwrap_or("task.background"),
         state: match state {
             TaskState::Queued => ActivityState::Pending,
             TaskState::Running => ActivityState::Running,
@@ -275,7 +310,7 @@ mod tests {
         serde_json::from_value(json!({"run_id":"skill-run", "owner": {
             "session_id":"session", "parent_turn_id":"turn"}, "descriptor": {
             "skill_id":"document", "version":"1", "display_name":"文档整理",
-            "instructions_ref":"private-instructions", "instructions_digest":"a".repeat(64)},
+            "instructions_ref":"private-instructions"},
             "mode":"inline", "status":"running",
             "budget":{"max_model_turns":10,"max_tool_calls":20},
             "usage":{"model_turns":3,"tool_calls":5,"elapsed_millis":u64::MAX},
@@ -371,6 +406,24 @@ mod tests {
         }
         let serialized = serde_json::to_string(&task_part(&source, 12).to_message_part()).unwrap();
         assert!(!serialized.contains("private-lease-token"));
+    }
+
+    #[test]
+    fn task_mapper_sanitizes_multiline_and_overlong_titles_and_control_chars() {
+        let mut source = task();
+        source.lineage.title = Some(format!("  First line\n\tSecond\u{0000}line {} ", "x".repeat(600)));
+        let part = task_part(&source, 1);
+        let sanitized = sanitize_task_display_key(part.display_key);
+        assert!(sanitized.starts_with("First line Second line "));
+        assert!(!sanitized.chars().any(char::is_control));
+        assert!(sanitized.len() <= 512);
+        assert!(sanitized.chars().count() <= 200);
+        let MessagePartView::Task { display_key, .. } = part.to_message_part() else {
+            panic!("Task DTO");
+        };
+        assert_eq!(display_key, sanitized);
+        source.lineage.title = Some("\n\t\r  ".into());
+        assert_eq!(task_part(&source, 1).display_key, "task.background");
     }
 
     #[test]

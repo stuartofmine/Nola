@@ -85,13 +85,14 @@ final class MacExtensionContentTrustTests: XCTestCase {
         root = nil
     }
 
-    func testChangingSkillContentInvalidatesPreviousActivation() throws {
+    func testSkillIdentityRemainsStableAcrossContentEdits() throws {
         let skill = root.appendingPathComponent("SKILL.md")
         try "# Skill: Review\nRead only.".write(to: skill, atomically: true, encoding: .utf8)
         let originalID = MacLocalSkillActivationStore.itemID(
             source: .workspace,
             instructionURL: skill
         )
+        XCTAssertFalse(originalID.contains("#sha256="))
         try MacLocalSkillActivationStore.setEnabled(
             true,
             itemID: originalID,
@@ -102,7 +103,7 @@ final class MacExtensionContentTrustTests: XCTestCase {
             store: applicationPort
         ))
 
-        try "# Skill: Review\nRun an unreviewed command.".write(
+        try "# Skill: Review\nUpdated content.".write(
             to: skill,
             atomically: true,
             encoding: .utf8
@@ -111,14 +112,14 @@ final class MacExtensionContentTrustTests: XCTestCase {
             source: .workspace,
             instructionURL: skill
         )
-        XCTAssertNotEqual(originalID, modifiedID)
-        XCTAssertFalse(MacLocalSkillActivationStore.isEnabled(
+        XCTAssertEqual(originalID, modifiedID)
+        XCTAssertTrue(MacLocalSkillActivationStore.isEnabled(
             itemID: modifiedID,
             store: applicationPort
         ))
     }
 
-    func testChangingMCPServerConfigurationInvalidatesPreviousActivation() throws {
+    func testMCPIdentityRemainsStableAcrossConfigurationEdits() throws {
         let configuration = root.appendingPathComponent(".mcp.json")
         try #"{"mcpServers":{"files":{"command":"safe-server","args":["--readonly"]}}}"#
             .write(to: configuration, atomically: true, encoding: .utf8)
@@ -127,6 +128,7 @@ final class MacExtensionContentTrustTests: XCTestCase {
             configurationURL: configuration,
             serverName: "files"
         )
+        XCTAssertFalse(originalID.contains("#sha256="))
         try MacLocalMCPActivationStore.setEnabled(
             true,
             itemID: originalID,
@@ -137,18 +139,57 @@ final class MacExtensionContentTrustTests: XCTestCase {
             store: applicationPort
         ))
 
-        try #"{"mcpServers":{"files":{"command":"different-server","args":[]}}}"#
+        try #"{"mcpServers":{"files":{"command":"updated-server","args":["--strict"]}}}"#
             .write(to: configuration, atomically: true, encoding: .utf8)
         let modifiedID = MacLocalMCPActivationStore.itemID(
             source: .workspace,
             configurationURL: configuration,
             serverName: "files"
         )
-        XCTAssertNotEqual(originalID, modifiedID)
-        XCTAssertFalse(MacLocalMCPActivationStore.isEnabled(
+        XCTAssertEqual(originalID, modifiedID)
+        XCTAssertTrue(MacLocalMCPActivationStore.isEnabled(
             itemID: modifiedID,
             store: applicationPort
         ))
+    }
+
+    func testManagedSQLiteMCPServerCRUDProjectsIntoLocalCatalogAndActiveSnapshot() async throws {
+        let draft = MacManagedMCPServerDraft(
+            displayName: "Local Docs",
+            transport: .http,
+            commandOrURL: "https://docs.example.test/mcp",
+            headersText: "Authorization: Bearer secret",
+            enabled: true
+        )
+        let created = try await MacExtensionsService.shared.createManagedMCPServer(draft, store: applicationPort)
+        let itemID = "managed-mcp:\(created.id)"
+        let item = try await MacExtensionsService.shared
+            .localExtensions(workspaceURL: root, store: applicationPort)
+            .first { $0.id == itemID }
+        let unwrappedItem = try XCTUnwrap(item)
+        XCTAssertEqual(unwrappedItem.title, "Local Docs")
+        XCTAssertTrue(unwrappedItem.isEnabled)
+
+        let activeData = try XCTUnwrap(MacLocalMCPActivationStore.activeServerConfigurationData(
+            workspaceURL: root,
+            store: applicationPort
+        ))
+        let activeServers = try XCTUnwrap(JSONSerialization.jsonObject(with: activeData) as? [[String: Any]])
+        XCTAssertEqual(activeServers.count, 1)
+        XCTAssertEqual(activeServers[0]["name"] as? String, "Local Docs")
+        XCTAssertEqual(activeServers[0]["endpoint"] as? String, "https://docs.example.test/mcp")
+
+        try MacLocalMCPActivationStore.setEnabled(false, itemID: itemID, store: applicationPort)
+        XCTAssertFalse(MacLocalMCPActivationStore.isEnabled(itemID: itemID, store: applicationPort))
+        XCTAssertNil(MacLocalMCPActivationStore.activeServerConfigurationData(
+            workspaceURL: root,
+            store: applicationPort
+        ))
+
+        let deleted = try await MacExtensionsService.shared.deleteManagedMCPServer(itemID: itemID, store: applicationPort)
+        XCTAssertTrue(deleted)
+        let remaining = try await MacExtensionsService.shared.localExtensions(workspaceURL: root, store: applicationPort)
+        XCTAssertFalse(remaining.contains { $0.id == itemID })
     }
 
     func testSkillActivationUsesRevisionAndCannotResurrectDeletedIdentity() throws {
@@ -568,6 +609,41 @@ final class MacBuiltInSkillRegistryTests: XCTestCase {
         XCTAssertEqual(try store.skillEditor(editor.record.id)?.revision, editor.revision)
     }
 
+    func testMaterializedNolaSkillDoesNotFalsifyOverride() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("nola-skill-cache-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cacheRoot = root.appendingPathComponent("BuiltInSkillsCache", isDirectory: true)
+        let overridesRoot = root.appendingPathComponent("BuiltInSkills", isDirectory: true)
+        let skillJSON = """
+        {
+          "id": "word-document-authoring",
+          "source": "built_in",
+          "version": "1",
+          "display_name": "Create Word Document",
+          "summary": "Word docs",
+          "category": "documents",
+          "instructions_ref": "nola://skills/built-in/word-document-authoring",
+          "instructions_text": "# Word\\nCached content.",
+          "required_tools": [],
+          "default_mode": "inline",
+          "enabled": true,
+          "created_at_ms": 1,
+          "updated_at_ms": 1,
+          "deleted_at_ms": null
+        }
+        """
+        let record = try JSONDecoder().decode(MacCanonicalSkill.self, from: Data(skillJSON.utf8))
+        let url = try MacBuiltInSkillRegistry.materializedInstructionURL(
+            for: .word,
+            record: record,
+            cacheRootURL: cacheRoot
+        )
+        XCTAssertTrue(url.isFileURL)
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "# Word\nCached content.")
+        XCTAssertFalse(MacBuiltInSkillRegistry.hasOverride(for: .word, overridesRootURL: overridesRoot))
+    }
+
     func testMissingBundleFailsStartupWithoutReplacingInstalledCatalog() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("nola-incomplete-bundle-\(UUID().uuidString)", isDirectory: true)
@@ -609,7 +685,6 @@ final class MacBuiltInSkillRegistryTests: XCTestCase {
             overridesRootURL: overrides, store: store, resourceRootURL: relocated
         )
         let after = try XCTUnwrap(store.skillEditor(before.id)).record
-        XCTAssertEqual(after.instructionsDigest, before.instructionsDigest)
         XCTAssertEqual(after.instructionsText, before.instructionsText)
         XCTAssertNotEqual(after.instructionsRef, before.instructionsRef)
         XCTAssertNotEqual(after.version, before.version)
@@ -631,7 +706,7 @@ final class MacBuiltInSkillRegistryTests: XCTestCase {
             id: original.id, source: .builtIn, version: original.version,
             displayName: original.displayName, summary: "Outdated package description",
             category: "outdated-category", instructionsRef: original.instructionsRef,
-            instructionsDigest: original.instructionsDigest, instructionsText: original.instructionsText,
+            instructionsText: original.instructionsText,
             requiredTools: original.requiredTools, defaultMode: original.defaultMode,
             enabled: original.enabled, createdAtMs: original.createdAtMs, updatedAtMs: original.updatedAtMs
         )]).first)
@@ -639,7 +714,6 @@ final class MacBuiltInSkillRegistryTests: XCTestCase {
         let refreshed = try XCTUnwrap(store.skillEditor(original.id))
         XCTAssertEqual(refreshed.record.summary, original.summary)
         XCTAssertEqual(refreshed.record.category, original.category)
-        XCTAssertEqual(refreshed.record.instructionsDigest, original.instructionsDigest)
         XCTAssertGreaterThan(refreshed.revision, stale.revision)
         let revisions = try store.skillEditors().map(\.revision)
         try MacBuiltInSkillRegistry.synchronizeCatalog(store: store)
@@ -895,16 +969,20 @@ final class MacBuiltInSkillRegistryTests: XCTestCase {
             .statisticsAudit: ["experimental unit", "effect sizes", "AUTHOR_INPUT_NEEDED"],
             .referenceVerifier: ["多源", "DOI", "Zotero"],
             .paperToPresentation: ["paper_type", "audit_pptx_quality.py", "source"],
-            .implementCode: ["task_worktree_selection", "current callers", "skill_update"],
-            .reviewCode: ["severity", "reproducible evidence", "skill_update"],
-            .testSoftware: ["isolated fixtures", "explicit oracles", "skill_update"],
-            .createVisualArt: ["composition", "transparency", "skill_update"],
+            .implementCode: ["task_worktree_selection", "current callers", "read_task"],
+            .reviewCode: ["severity", "reproducible evidence", "plausible failure paths"],
+            .testSoftware: ["isolated fixtures", "explicit oracles", "untested scope"],
+            .createVisualArt: ["composition", "transparency", "text legibility"],
             .openSourceModel: ["hardware profile", "NVIDIA CUDA", "AMD ROCm", "execution_mode: background", "bash_background_status", "Content-Range", "ETag", "cross-process lock", "task.json", "catalog.json", "64K", "peak memory", "SHA-256", "smoke inference"],
         ]
 
         XCTAssertEqual(Set(requiredTerms.keys), Set(MacBuiltInSkillID.allCases))
         for descriptor in MacBuiltInSkillRegistry.descriptors {
             let content = try String(contentsOf: descriptor.instructionURL, encoding: .utf8)
+            XCTAssertFalse(
+                content.localizedCaseInsensitiveContains("skill_update"),
+                "\(descriptor.id.rawValue): unexpected skill_update instruction"
+            )
             for term in try XCTUnwrap(requiredTerms[descriptor.id]) {
                 XCTAssertTrue(
                     content.localizedCaseInsensitiveContains(term),

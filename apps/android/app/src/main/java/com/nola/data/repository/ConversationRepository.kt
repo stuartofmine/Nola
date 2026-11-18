@@ -30,6 +30,8 @@ import kotlinx.serialization.json.jsonPrimitive
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 interface ConversationRepository {
     suspend fun createConversation(
@@ -92,7 +94,7 @@ class ConversationRepositoryImpl @Inject constructor(
     private val json = Json { ignoreUnknownKeys = true }
     private val sourceOverrides = CanonicalDataSourceOverrides { applicationRuntime.execute(it.jsonObject) }
 
-    override suspend fun createConversation(title: String?, language: String?, modelInfo: ModelInfo?, promptResponseStyle: String?, permissionMode: String?, parameters: com.nola.domain.model.ModelParameters?, hostBinding: com.nola.domain.model.ExecutionHostBinding?): Conversation {
+    override suspend fun createConversation(title: String?, language: String?, modelInfo: ModelInfo?, promptResponseStyle: String?, permissionMode: String?, parameters: com.nola.domain.model.ModelParameters?, hostBinding: com.nola.domain.model.ExecutionHostBinding?): Conversation = withContext(Dispatchers.IO) {
         com.nola.domain.model.requireValidPromptResponseStyle(promptResponseStyle)
         permissionMode?.let(::requireValidConversationPermissionMode)
         val now = System.currentTimeMillis()
@@ -114,22 +116,26 @@ class ConversationRepositoryImpl @Inject constructor(
         initial["knowledge"] = JsonObject(mapOf("keyPointsMarkdown" to JsonPrimitive(settings.knowledgePoints),
             "wikiMarkdown" to JsonPrimitive(settings.wiki), "updatedAt" to kotlinx.serialization.json.JsonNull))
         applicationRuntime.createConversation(id, title.orEmpty(), now, now, JsonObject(initial).toString())
-        return requireNotNull(getConversation(id))
+        requireNotNull(getConversation(id))
     }
 
-    override suspend fun getConversation(id: String): Conversation? = applicationRuntime
-        .loadConversation(id)
-        ?.let { it.toDomain(resolveModel(it.settings().modelSelectionID, it.settings().executionHostBinding)) }
-        ?.let { conversation ->
-            val selected = sourceOverrides.resolve(id, System.currentTimeMillis())
-                .filter { it.enabled }.map { "data_source:${it.sourceId}" }
-            conversation.copy(dataSourceIds = conversation.dataSourceIds
-                .filterNot { it.startsWith("data_source:") } + selected)
-        }
+    override suspend fun getConversation(id: String): Conversation? = withContext(Dispatchers.IO) {
+        applicationRuntime
+            .loadConversation(id)
+            ?.let { it.toDomain(resolveModel(it.settings().modelSelectionID, it.settings().executionHostBinding)) }
+            ?.let { conversation ->
+                val selected = sourceOverrides.resolve(id, System.currentTimeMillis())
+                    .filter { it.enabled }.map { "data_source:${it.sourceId}" }
+                conversation.copy(dataSourceIds = conversation.dataSourceIds
+                    .filterNot { it.startsWith("data_source:") } + selected)
+            }
+    }
 
-    override suspend fun getAllConversations(): List<Conversation> = applicationRuntime
-        .listRootConversations()
-        .mapNotNull { item -> applicationRuntime.loadConversation(item.id)?.let { it.toDomain(resolveModel(it.settings().modelSelectionID, it.settings().executionHostBinding)) } }
+    override suspend fun getAllConversations(): List<Conversation> = withContext(Dispatchers.IO) {
+        applicationRuntime
+            .listRootConversations()
+            .mapNotNull { item -> applicationRuntime.loadConversation(item.id)?.let { it.toDomain(resolveModel(it.settings().modelSelectionID, it.settings().executionHostBinding)) } }
+    }
 
     private suspend fun resolveModel(identity: String?, binding: com.nola.domain.model.ExecutionHostBinding? = null): ModelInfo? {
         if (binding != null) return if (identity == null) ModelInfo("web-host", "Nola Web Host", ModelInfo.ModelSource.WebHost) else null
@@ -140,21 +146,24 @@ class ConversationRepositoryImpl @Inject constructor(
         } else emptyList())
     }
 
-    override suspend fun getProjection(id: String): ConversationProjectionV1 =
+    override suspend fun getProjection(id: String): ConversationProjectionV1 = withContext(Dispatchers.IO) {
         applicationRuntime.loadConversationProjectionV1(id)
+    }
 
-    override suspend fun getContextUsage(id: String): ConversationProjectionV1.ContextUsage =
+    override suspend fun getContextUsage(id: String): ConversationProjectionV1.ContextUsage = withContext(Dispatchers.IO) {
         com.nola.domain.projection.ConversationProjectionV1Decoder.decodeContextUsage(applicationRuntime.execute(buildJsonObject {
             put("type", "load_conversation_context_usage_v1"); put("conversation_id", id)
         }).jsonObject)
+    }
 
-    override suspend fun getProjectionWindow(id: String, beforeOrdinal: Long?): ConversationProjectionWindowV1 =
+    override suspend fun getProjectionWindow(id: String, beforeOrdinal: Long?): ConversationProjectionWindowV1 = withContext(Dispatchers.IO) {
         applicationRuntime.loadConversationProjectionWindowV1(
             id = id,
             beforeOrdinal = beforeOrdinal,
             limit = 80,
             contentByteLimit = 512_000,
         ).let { it.copy(projection = assistantJournal.overlay(it.projection, it.assistantJournalHeads)) }
+    }
 
     override suspend fun prepareRemoteSubmission(
         sourceHostId: String,
@@ -166,7 +175,8 @@ class ConversationRepositoryImpl @Inject constructor(
         userMeta: Map<String, String>?,
         createdAtMs: Long,
         userMessageId: String,
-    ): com.nola.data.remote.api.RemoteSubmissionIntent = applicationRuntime.prepareRemoteSubmission(
+    ): com.nola.data.remote.api.RemoteSubmissionIntent = withContext(Dispatchers.IO) {
+        applicationRuntime.prepareRemoteSubmission(
             sourceHostId = sourceHostId,
             clientId = clientId,
             conversationId = conversationId,
@@ -177,98 +187,111 @@ class ConversationRepositoryImpl @Inject constructor(
             createdAtMs = createdAtMs,
             userMessageId = userMessageId,
         )
+    }
 
-    override suspend fun bindRemoteSubmissionRequest(identity: com.nola.data.remote.api.RemoteSubmissionIdentity, request: kotlinx.serialization.json.JsonObject) =
+    override suspend fun bindRemoteSubmissionRequest(identity: com.nola.data.remote.api.RemoteSubmissionIdentity, request: kotlinx.serialization.json.JsonObject) = withContext(Dispatchers.IO) {
         applicationRuntime.bindRemoteSubmissionRequest(identity, request)
-    override suspend fun readRemoteSubmissionIntent(conversationId: String) = applicationRuntime.readRemoteSubmissionIntent(conversationId)
-    override suspend fun readRemoteSubmissionRequest(identity: com.nola.data.remote.api.RemoteSubmissionIdentity, requestDigest: String) =
+    }
+    override suspend fun readRemoteSubmissionIntent(conversationId: String) = withContext(Dispatchers.IO) {
+        applicationRuntime.readRemoteSubmissionIntent(conversationId)
+    }
+    override suspend fun readRemoteSubmissionRequest(identity: com.nola.data.remote.api.RemoteSubmissionIdentity, requestDigest: String) = withContext(Dispatchers.IO) {
         applicationRuntime.readRemoteSubmissionRequest(identity, requestDigest)
-    override suspend fun acceptRemoteSubmissionReceipt(receipt: com.nola.data.remote.api.RemoteSubmissionReceipt) = applicationRuntime.acceptRemoteSubmissionReceipt(receipt)
-    override suspend fun abandonPreparedRemoteSubmission(identity: com.nola.data.remote.api.RemoteSubmissionIdentity) = applicationRuntime.abandonPreparedRemoteSubmission(identity)
-    override suspend fun adoptObservedRemoteRun(receipt: com.nola.data.remote.api.RemoteSubmissionReceipt) = applicationRuntime.adoptObservedRemoteRun(receipt)
-
-
-    override suspend fun getMessages(convId: String): List<ConversationMessage> = canonicalMessages(convId)
-
-    override suspend fun getActiveMessages(convId: String): List<ConversationMessage> {
-        val archived = archivedMessageIDs(convId)
-        return canonicalMessages(convId).filterNot { it.id in archived }
+    }
+    override suspend fun acceptRemoteSubmissionReceipt(receipt: com.nola.data.remote.api.RemoteSubmissionReceipt) = withContext(Dispatchers.IO) {
+        applicationRuntime.acceptRemoteSubmissionReceipt(receipt)
+    }
+    override suspend fun abandonPreparedRemoteSubmission(identity: com.nola.data.remote.api.RemoteSubmissionIdentity) = withContext(Dispatchers.IO) {
+        applicationRuntime.abandonPreparedRemoteSubmission(identity)
+    }
+    override suspend fun adoptObservedRemoteRun(receipt: com.nola.data.remote.api.RemoteSubmissionReceipt) = withContext(Dispatchers.IO) {
+        applicationRuntime.adoptObservedRemoteRun(receipt)
     }
 
-    override suspend fun getArchivedMessages(convId: String): List<ConversationMessage> {
+
+    override suspend fun getMessages(convId: String): List<ConversationMessage> = withContext(Dispatchers.IO) { canonicalMessages(convId) }
+
+    override suspend fun getActiveMessages(convId: String): List<ConversationMessage> = withContext(Dispatchers.IO) {
         val archived = archivedMessageIDs(convId)
-        return canonicalMessages(convId).filter { it.id in archived }
+        canonicalMessages(convId).filterNot { it.id in archived }
     }
 
-    override suspend fun deleteConversation(id: String) {
+    override suspend fun getArchivedMessages(convId: String): List<ConversationMessage> = withContext(Dispatchers.IO) {
+        val archived = archivedMessageIDs(convId)
+        canonicalMessages(convId).filter { it.id in archived }
+    }
+
+    override suspend fun deleteConversation(id: String) = withContext(Dispatchers.IO) {
         applicationRuntime.deleteConversation(id)
     }
 
-    override suspend fun updateTitle(id: String, title: String) {
+    override suspend fun updateTitle(id: String, title: String) = withContext(Dispatchers.IO) {
         applicationRuntime.renameConversation(id, title, System.currentTimeMillis())
     }
 
-    override suspend fun updateSessionMemory(id: String, memory: String) {
+    override suspend fun updateSessionMemory(id: String, memory: String) = withContext(Dispatchers.IO) {
         applicationRuntime.replaceContextSummary(applicationRuntime.prepareContextCompaction(id), memory)
     }
 
-    override suspend fun updateKnowledge(id: String, knowledgePoints: String, wiki: String) =
+    override suspend fun updateKnowledge(id: String, knowledgePoints: String, wiki: String) = withContext(Dispatchers.IO) {
         updateSettings(id) { copy(knowledgePoints = knowledgePoints, wiki = wiki) }
+    }
 
-    override suspend fun selectModel(id: String, model: ModelInfo, parameters: com.nola.domain.model.ModelParameters, expectedRevision: Long): Conversation {
+    override suspend fun selectModel(id: String, model: ModelInfo, parameters: com.nola.domain.model.ModelParameters, expectedRevision: Long): Conversation = withContext(Dispatchers.IO) {
         val identity = conversationModelIdentity(model)
         requireNotNull(resolveModel(identity)) { "Selected model is unavailable" }
         val stored = applicationRuntime.loadConversation(id) ?: error("Conversation is missing: $id")
         if (stored.configurationRevision != expectedRevision) throw ConcurrentModificationException("Conversation changed while selecting model")
         val selection = conversationModelSelection(stored.settingsJson, model, parameters)
         applicationRuntime.selectConversationExecution(id, expectedRevision, selection).requireCommitted()
-        return requireNotNull(getConversation(id))
+        requireNotNull(getConversation(id))
     }
 
-    override suspend fun modelParameters(id: String, model: ModelInfo): com.nola.domain.model.ModelParameters? {
+    override suspend fun modelParameters(id: String, model: ModelInfo): com.nola.domain.model.ModelParameters? = withContext(Dispatchers.IO) {
         val stored = applicationRuntime.loadConversation(id) ?: error("Conversation is missing: $id")
-        if (model.source == ModelInfo.ModelSource.WebHost) return readHostParameters(stored.settingsJson).takeIf { stored.settings().executionHostBinding != null }
-        return readConversationParameters(stored.settingsJson, model)
+        if (model.source == ModelInfo.ModelSource.WebHost) readHostParameters(stored.settingsJson).takeIf { stored.settings().executionHostBinding != null }
+        else readConversationParameters(stored.settingsJson, model)
     }
 
-    override suspend fun selectHost(id: String, binding: com.nola.domain.model.ExecutionHostBinding, parameters: com.nola.domain.model.ModelParameters, expectedRevision: Long): Conversation {
+    override suspend fun selectHost(id: String, binding: com.nola.domain.model.ExecutionHostBinding, parameters: com.nola.domain.model.ModelParameters, expectedRevision: Long): Conversation = withContext(Dispatchers.IO) {
         val selection = conversationHostSelection(binding, parameters)
         applicationRuntime.selectConversationExecution(id, expectedRevision, selection).requireCommitted()
-        return requireNotNull(getConversation(id))
+        requireNotNull(getConversation(id))
     }
 
-    override suspend fun saveModelParameters(id: String, model: ModelInfo, value: com.nola.domain.model.ModelParameters, expectedBaseline: com.nola.domain.model.ModelParameters?, expectedRevision: Long): Conversation {
+    override suspend fun saveModelParameters(id: String, model: ModelInfo, value: com.nola.domain.model.ModelParameters, expectedBaseline: com.nola.domain.model.ModelParameters?, expectedRevision: Long): Conversation = withContext(Dispatchers.IO) {
         val stored = applicationRuntime.loadConversation(id) ?: error("Conversation is missing: $id")
         if (model.source == ModelInfo.ModelSource.WebHost) {
             if (stored.configurationRevision != expectedRevision || stored.settings().modelSelectionID != null ||
                 (expectedBaseline != null && readHostParameters(stored.settingsJson) != expectedBaseline))
                 throw ConcurrentModificationException("Host configuration changed while editing")
-            return selectHost(id, requireNotNull(stored.settings().executionHostBinding), value, expectedRevision)
+            selectHost(id, requireNotNull(stored.settings().executionHostBinding), value, expectedRevision)
+        } else {
+            if (stored.configurationRevision != expectedRevision || stored.settings().modelSelectionID != conversationModelIdentity(model))
+                throw ConcurrentModificationException("Conversation model changed while editing parameters")
+            if (expectedBaseline != null && readConversationParameters(stored.settingsJson, model) != expectedBaseline) {
+                throw ConcurrentModificationException("Conversation parameters changed while editing; reload and retry")
+            }
+            val updated = Json.parseToJsonElement(writeConversationParameters(stored.settingsJson, model, value)).jsonObject
+            val patch = JsonObject(updated.filterKeys { it == "modelOverrides" || it == "clientModelPresentation" })
+            applicationRuntime.patchConversationConfiguration(id, expectedRevision, patch.toString()).requireCommitted()
+            requireNotNull(getConversation(id))
         }
-        if (stored.configurationRevision != expectedRevision || stored.settings().modelSelectionID != conversationModelIdentity(model))
-            throw ConcurrentModificationException("Conversation model changed while editing parameters")
-        if (expectedBaseline != null && readConversationParameters(stored.settingsJson, model) != expectedBaseline) {
-            throw ConcurrentModificationException("Conversation parameters changed while editing; reload and retry")
-        }
-        val updated = Json.parseToJsonElement(writeConversationParameters(stored.settingsJson, model, value)).jsonObject
-        val patch = JsonObject(updated.filterKeys { it == "modelOverrides" || it == "clientModelPresentation" })
-        applicationRuntime.patchConversationConfiguration(id, expectedRevision, patch.toString()).requireCommitted()
-        return requireNotNull(getConversation(id))
     }
 
-    override suspend fun updateGenerationOverride(id: String, model: ModelInfo, value: ConversationGenerationOverride) {
+    override suspend fun updateGenerationOverride(id: String, model: ModelInfo, value: ConversationGenerationOverride) = withContext(Dispatchers.IO) {
         value.validate()
         val key = ConversationGenerationOverride.modelKey(model)
         patchConfiguration(id, conversationGenerationPatch(key, value))
     }
 
-    override suspend fun updateResponseStyle(id: String, style: String?) {
+    override suspend fun updateResponseStyle(id: String, style: String?) = withContext(Dispatchers.IO) {
         com.nola.domain.model.requireValidPromptResponseStyle(style)
         updateSettings(id) { copy(promptResponseStyle = style) }
     }
 
     override suspend fun updatePermissionMode(id: String, mode: String, expectedRevision: Long,
-        owner: com.nola.data.local.PermissionConfigurationOwner) {
+        owner: com.nola.data.local.PermissionConfigurationOwner) = withContext(Dispatchers.IO) {
         requireValidConversationPermissionMode(mode)
         val runId = when (owner) {
             com.nola.data.local.PermissionConfigurationOwner.Inactive -> null
@@ -277,6 +300,7 @@ class ConversationRepositoryImpl @Inject constructor(
         }
         val source = (owner as? com.nola.data.local.PermissionConfigurationOwner.Remote)?.identity?.sourceHostId
         applicationRuntime.setConversationPermission(id, expectedRevision, runId, source, mode).requireCommitted()
+        Unit
     }
 
     private fun patchConfiguration(id: String, patch: JsonObject) {
@@ -284,10 +308,11 @@ class ConversationRepositoryImpl @Inject constructor(
         applicationRuntime.patchConversationConfiguration(id, requireNotNull(current.configurationRevision), patch.toString()).requireCommitted()
     }
 
-    override suspend fun updateExecutionBackend(id: String, backend: String, sessions: Map<String, String>) =
+    override suspend fun updateExecutionBackend(id: String, backend: String, sessions: Map<String, String>) = withContext(Dispatchers.IO) {
         updateSettings(id) { copy(executionBackend = backend, externalExecutionSessions = sessions) }
+    }
 
-    override suspend fun setDataSourceEnabled(id: String, sourceId: String, enabled: Boolean?) {
+    override suspend fun setDataSourceEnabled(id: String, sourceId: String, enabled: Boolean?) = withContext(Dispatchers.IO) {
         if (sourceId.startsWith("data_source:")) {
             val canonicalId = sourceId.removePrefix("data_source:")
             require(sourceOverrides.resolve(id, System.currentTimeMillis()).any { it.sourceId == canonicalId }) {
@@ -307,7 +332,7 @@ class ConversationRepositoryImpl @Inject constructor(
         }
     }
 
-    override suspend fun touchLastActive(id: String) {
+    override suspend fun touchLastActive(id: String) = withContext(Dispatchers.IO) {
         updateSettings(id) { this }
     }
 

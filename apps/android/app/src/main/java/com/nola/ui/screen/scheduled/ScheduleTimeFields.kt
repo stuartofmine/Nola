@@ -14,6 +14,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.nola.R
+import com.nola.ui.components.NolaDropdownBar
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -42,18 +43,36 @@ internal fun ScheduleTimeFields(
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (frequency == "once") {
-            OutlinedButton(onClick = { picker = "date" }, enabled = enabled, modifier = Modifier.fillMaxWidth().testTag("schedule-date")) {
-                Text(stringResource(R.string.scheduled_pick_date, date?.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM))
-                    ?: stringResource(R.string.scheduled_not_selected)))
-            }
+            NolaDropdownBar(
+                value = stringResource(
+                    R.string.scheduled_pick_date,
+                    date?.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM))
+                        ?: stringResource(R.string.scheduled_not_selected)
+                ),
+                expanded = picker == "date",
+                onClick = { picker = "date" },
+                enabled = enabled,
+                modifier = Modifier.testTag("schedule-date")
+            )
         }
-        OutlinedButton(onClick = { picker = "time" }, enabled = enabled, modifier = Modifier.fillMaxWidth().testTag("schedule-time")) {
-            Text(stringResource(R.string.scheduled_pick_time, time?.format(DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT))
-                ?: stringResource(R.string.scheduled_not_selected)))
-        }
-        OutlinedButton(onClick = { picker = "zone" }, enabled = enabled, modifier = Modifier.fillMaxWidth().testTag("schedule-zone")) {
-            Text(stringResource(R.string.scheduled_pick_zone, zone))
-        }
+        NolaDropdownBar(
+            value = stringResource(
+                R.string.scheduled_pick_time,
+                time?.format(DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT))
+                    ?: stringResource(R.string.scheduled_not_selected)
+            ),
+            expanded = picker == "time",
+            onClick = { picker = "time" },
+            enabled = enabled,
+            modifier = Modifier.testTag("schedule-time")
+        )
+        NolaDropdownBar(
+            value = stringResource(R.string.scheduled_pick_zone, zone),
+            expanded = picker == "zone",
+            onClick = { picker = "zone" },
+            enabled = enabled,
+            modifier = Modifier.testTag("schedule-zone")
+        )
         Text(stringResource(R.string.scheduled_zone_wall_time), style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (frequency != "once") {

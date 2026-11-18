@@ -77,7 +77,8 @@ struct MacHostPermissionCard: View {
                     Text(
                         MacToolPresentationPolicy.displayTitle(
                             for: request.toolName,
-                            arguments: request.arguments
+                            arguments: request.arguments,
+                            mcpDescriptorData: request.mcpDescriptorData
                         )
                     )
                         .font(.system(size: 14, weight: .semibold))

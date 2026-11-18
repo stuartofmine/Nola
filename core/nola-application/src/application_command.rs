@@ -25,6 +25,8 @@ use crate::{
 pub struct GoalSelectedModel {
     pub profile: Option<nola_host_protocol::HostModelProfileReference>,
     pub primary: nola_host_protocol::HostModelRouteBinding,
+    #[serde(default)]
+    pub fallbacks: Vec<nola_host_protocol::HostModelRouteBinding>,
     pub generation: nola_host_protocol::HostGenerationBinding,
     pub output_admission: nola_host_protocol::HostOutputAdmission,
 }
@@ -188,7 +190,11 @@ pub enum ApplicationCommand {
     },
     StepGoal { conversation_id: String, source_host_id: String, control: Option<nola_agent_engine::agent::GoalRuntimeCommandEnvelope>,
         start_configuration: Option<Box<nola_agent_engine::agent::protocol::AgentCoreConfig>>, selected_model: Option<GoalSelectedModel>,
-        #[serde(default)] user_prompt: String, host_available: Option<bool> },
+        #[serde(default)] user_prompt: String, host_available: Option<bool>,
+        #[serde(default)] submitted_run_id: Option<String>,
+        #[serde(default)] submitted_user_message_id: Option<String>,
+        #[serde(default)] submitted_assistant_message_id: Option<String>,
+        #[serde(default)] stop_after_sealed_round: bool },
     StartGoalExecution { input: crate::goal_execution::StartGoalExecution },
     PrepareGoalControlIntent { input: crate::goal_control_intent::PrepareGoalControlIntent },
     LoadGoalExecutionBinding { conversation_id: String, goal_id: String },

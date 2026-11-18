@@ -76,6 +76,6 @@
 <style>
     .surface-reference { min-width: 0; }
     button { min-height: 44px; padding: .5rem .75rem; }
-    section { border-inline-start: 2px solid var(--border-color, #8885); padding-inline-start: .75rem; }
+    section { border-inline-start: 2px solid var(--border, #8885); padding-inline-start: .75rem; }
     .historical-label { opacity: .65; font-size: .85rem; }
 </style>

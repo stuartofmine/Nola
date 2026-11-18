@@ -85,6 +85,20 @@ impl SkillRepository for SqliteSkillRepository<'_> {
         self.store
             .set_skill_instruction_selection(id, selection, updated_at_ms)
     }
+    fn restore_built_in_package_version(
+        &mut self,
+        skill_id: &str,
+        expected_revision: i64,
+        package_version: &str,
+        updated_at_ms: i64,
+    ) -> Result<StoredSkill, Self::Error> {
+        self.store.restore_built_in_package_version(
+            skill_id,
+            expected_revision,
+            package_version,
+            updated_at_ms,
+        )
+    }
     fn skill_visibility(&self) -> Result<Option<SkillVisibilitySetting>, Self::Error> {
         self.store
             .product_setting("skill.builtin.hidden")
@@ -109,7 +123,6 @@ impl SkillRepository for SqliteSkillRepository<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sha2::{Digest, Sha256};
 
     fn skill(id: &str, updated_at_ms: i64) -> UpsertSkillInput {
         let instructions = "Use the typed test capability.";
@@ -121,7 +134,6 @@ mod tests {
             summary: "Contract fixture".to_string(),
             category: "test".to_string(),
             instructions_ref: "skill://test/instructions".to_string(),
-            instructions_digest: format!("{:x}", Sha256::digest(instructions.as_bytes())),
             instructions_text: instructions.to_string(),
             required_tools_json: Some("[]".to_string()),
             default_mode: Some("inline".to_string()),

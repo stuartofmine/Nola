@@ -38,6 +38,7 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nola.R
 import com.nola.data.local.TodayConversationFact
+import com.nola.domain.model.ConversationTitlePresentationPolicy
 import java.text.DateFormat
 import java.util.Date
 
@@ -139,7 +140,14 @@ internal fun TodayScreen(
 private fun TodayConversationRow(fact: TodayConversationFact, onOpenConversation: (String) -> Unit) {
     Column(Modifier.fillMaxWidth().heightIn(min = 64.dp).clickable { onOpenConversation(fact.conversationId) }
         .padding(horizontal = nolaPageGutter(), vertical = 12.dp).testTag("today.conversation.${fact.conversationId}")) {
-        Text(fact.title.ifBlank { stringResource(R.string.tab_chat) }, style = MaterialTheme.typography.titleMedium)
+        Text(
+            ConversationTitlePresentationPolicy.displayTitle(
+                fact.title,
+                fact.conversationId,
+                stringResource(R.string.tab_chat)
+            ),
+            style = MaterialTheme.typography.titleMedium
+        )
         val experts = fact.expertContexts.map { it.displayName }.distinct()
         if (experts.isNotEmpty()) Text(experts.joinToString(" · "),
             style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

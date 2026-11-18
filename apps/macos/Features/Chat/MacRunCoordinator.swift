@@ -212,6 +212,18 @@ final class MacRunCoordinator {
         state = .awaitingRecovery
     }
 
+    @discardableResult
+    func advanceGoalRound(generationID: UInt64, identity: Identity) -> Bool {
+        guard generationID == self.generationID,
+              self.identity?.conversationID == identity.conversationID else { return false }
+        releaseFinishWaiters(generationID: generationID, completed: true)
+        self.identity = identity
+        finishingGenerationID = nil
+        finalizedGenerationID = nil
+        state = cancellationRequestedGenerationID == generationID ? .cancelRequested : .running
+        return true
+    }
+
     func releaseTask(generationID: UInt64) {
         guard generationID == self.generationID else { return }
         task = nil

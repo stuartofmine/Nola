@@ -30,7 +30,6 @@ struct MacWorkspaceReviewRoute: Codable, Hashable {
 
 struct MacWorkspaceReviewView: View {
     let route: MacWorkspaceReviewRoute
-    var embedsInWorkspace = false
 
     @State private var snapshot: MacGitWorkspaceSnapshot?
     @State private var selectedChangeID: String?
@@ -125,14 +124,13 @@ struct MacWorkspaceReviewView: View {
                     )
                 }
             }
-            .frame(minWidth: embedsInWorkspace ? 240 : 520, maxWidth: .infinity, maxHeight: .infinity)
+            .frame(minWidth: 520, maxWidth: .infinity, maxHeight: .infinity)
             .background(MacDesignColor.canvas)
         }
         .background(MacDesignColor.canvas)
         .navigationTitle(macWorkspaceReviewText("mac.workspace.title", "Workspace Changes"))
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-              if !embedsInWorkspace {
                 if let snapshot {
                     Button {
                         showsPushConfirmation = true
@@ -155,10 +153,8 @@ struct MacWorkspaceReviewView: View {
                 .disabled(isLoading || operation != nil)
                 .help(macWorkspaceReviewText("mac.workspace.refresh", "Refresh Changes"))
                 .accessibilityLabel(macWorkspaceReviewText("mac.workspace.refresh", "Refresh Changes"))
-              }
             }
         }
-        .toolbar(embedsInWorkspace ? .hidden : .automatic, for: .windowToolbar)
         .task { await loadSnapshot() }
         .onChange(of: selectedChangeID) { _, _ in
             Task { await loadDiff() }

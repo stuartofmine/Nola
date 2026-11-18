@@ -2029,250 +2029,6 @@ fn legacy_skill_context_reads_only_the_runtime_owned_roots() {
     assert!(outcome.text.contains("OWNED_CONTEXT_BODY"));
 }
 
-fn skill_update_artifact(
-    artifact_ref: &str,
-    ctx: &ToolContext,
-) -> Result<nola_core::agent::host::HostArtifact, String> {
-    let parsed = url::Url::parse(artifact_ref)
-        .map_err(|_| "artifact_ref must be a canonical absolute URI".to_string())?;
-    if parsed.as_str() != artifact_ref {
-        return Err("artifact_ref must be normalized and percent-encoded".to_string());
-    }
-    let (uri, name, mime_type) = if parsed.scheme() == "file" {
-        let path = parsed
-            .to_file_path()
-            .map_err(|_| "artifact_ref is not an absolute file URI".to_string())?;
-        let path = path
-            .canonicalize()
-            .map_err(|error| format!("Skill artifact does not exist: {error}"))?;
-        if !path.is_file() {
-            return Err("Skill artifact must identify an existing file".to_string());
-        }
-        let allowed = ctx.allowed_dirs.iter().any(|root| {
-            let root = root.canonicalize().unwrap_or_else(|_| root.clone());
-            path.starts_with(root)
-        });
-        if !allowed {
-            return Err("Skill artifact is outside the active workspace".to_string());
-        }
-        (
-            url::Url::from_file_path(&path)
-                .map_err(|_| "Skill artifact path cannot be represented as a file URI".to_string())?
-                .to_string(),
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("artifact")
-                .to_string(),
-            mime_guess::from_path(&path).first_raw().map(str::to_string),
-        )
-    } else {
-        (
-            parsed.to_string(),
-            parsed
-                .path_segments()
-                .and_then(|segments| segments.filter(|segment| !segment.is_empty()).next_back())
-                .unwrap_or("artifact")
-                .to_string(),
-            None,
-        )
-    };
-    let artifact = nola_core::agent::host::HostArtifact {
-        uri,
-        name,
-        mime_type,
-        operation: None,
-    };
-    artifact.validate()?;
-    Ok(artifact)
-}
-
-fn skill_update(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
-    let required_string = |key: &str| -> Result<String, ToolOutcome> {
-        args.get(key)
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-            .ok_or_else(|| error(format!("{key} is required for this skill_update action")))
-    };
-    let action = match args.get("action").and_then(Value::as_str) {
-        Some(action) => action,
-        None => return error("action is required".to_string()),
-    };
-    let run_id = match required_string("run_id") {
-        Ok(value) => value,
-        Err(outcome) => return outcome,
-    };
-    let mut registered_artifact = None;
-    let payload = match action {
-        "progress" => {
-            let step_id = match required_string("step_id") {
-                Ok(value) => value,
-                Err(outcome) => return outcome,
-            };
-            let Some(completed) = args.get("completed").and_then(Value::as_bool) else {
-                return error("completed is required for progress".to_string());
-            };
-            json!({"type": "skill_runtime_update", "run_id": run_id, "action": "progress", "step_id": step_id, "completed": completed})
-        }
-        "artifact" => {
-            let artifact_id = match required_string("artifact_id") {
-                Ok(value) => value,
-                Err(outcome) => return outcome,
-            };
-            let artifact_ref = match required_string("artifact_ref") {
-                Ok(value) => value,
-                Err(outcome) => return outcome,
-            };
-            let artifact = match skill_update_artifact(&artifact_ref, ctx) {
-                Ok(artifact) => artifact,
-                Err(message) => {
-                    return error_data_with_display(json!({
-                            "error": "invalid_skill_artifact_ref",
-                            "message": message,
-                            "tool_execution_skipped": true,
-                            "next_action": "Use the canonical artifact_uri returned by the successful producing tool. If no such URI exists, stop the Skill as failed instead of retrying an invented reference."
-                        }),
-                        "Skill artifact was not registered".to_string(),
-                    )
-                }
-            };
-            let artifact_ref = artifact.uri.clone();
-            registered_artifact = Some(artifact);
-            json!({"type": "skill_runtime_update", "run_id": run_id, "action": "artifact", "artifact_id": artifact_id, "artifact_ref": artifact_ref})
-        }
-        "verification" => {
-            let verifier_id = match required_string("verifier_id") {
-                Ok(value) => value,
-                Err(outcome) => return outcome,
-            };
-            let evidence = match args.get("evidence").cloned()
-                .ok_or_else(|| "evidence is required for verification".to_string())
-                .and_then(|value| serde_json::from_value::<nola_core::agent::capability::SkillVerificationEvidence>(value).map_err(|error| error.to_string())) {
-                Ok(value) => value,
-                Err(message) => return error(message),
-            };
-            if let Err(message) = evidence.validate() { return error(message); }
-            let replaces_evidence = match args.get("replaces_evidence").cloned()
-                .map(serde_json::from_value::<nola_core::agent::capability::SkillVerificationEvidence>).transpose() {
-                Ok(value) => value,
-                Err(message) => return error(message.to_string()),
-            };
-            let Some(passed) = args.get("passed").and_then(Value::as_bool) else {
-                return error("passed is required for verification".to_string());
-            };
-            let summary = args
-                .get("summary")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .trim();
-            json!({"type": "skill_runtime_update", "run_id": run_id, "action": "verification", "verifier_id": verifier_id, "passed": passed, "evidence": evidence, "replaces_evidence": replaces_evidence, "summary": summary})
-        }
-        "resume_point" => {
-            let resume_point = match required_string("resume_point") {
-                Ok(value) => value,
-                Err(outcome) => return outcome,
-            };
-            json!({"type": "skill_runtime_update", "run_id": run_id, "action": "resume_point", "resume_point": resume_point})
-        }
-        _ => return error("unsupported skill_update action".to_string()),
-    };
-    let mut outcome = ok_data(payload.clone(), "Skill progress recorded".to_string());
-    if let Some(artifact) = registered_artifact {
-        outcome.artifacts.push(artifact);
-    }
-    outcome
-}
-
-#[cfg(test)]
-#[test]
-fn skill_update_emits_strict_runtime_protocol_payloads() {
-    let root = std::env::temp_dir().join(format!("nola-skill-update-{}", uuid::Uuid::new_v4()));
-    fs::create_dir_all(&root).expect("Skill update workspace");
-    let artifact_path = root.join("report.docx");
-    fs::write(&artifact_path, "document").expect("Skill artifact fixture");
-    let artifact_ref = url::Url::from_file_path(&artifact_path)
-        .expect("Skill artifact URI")
-        .to_string();
-    let ctx = ToolContext {
-        memory_binding: nola_domain::memory_owner::MemoryExecutionBinding::local_profile(),
-        language_services: Default::default(),
-        skills: SkillRuntimeContext::default(),
-        allowed_dirs: vec![root.clone()],
-        policy: crate::tools::ToolExecutionPolicy::new(Vec::new(), true, "allow".to_string(), Vec::new()),
-        permission_scope: SessionPermissionScope::default(),
-        cancellation: Default::default(),
-        plan_state: Default::default(),
-        output_store: crate::tools::ToolOutputStore::for_test(),
-        browser: BrowserRuntime::new(root.join("browser")),
-    };
-    let cases = vec![
-        json!({"run_id": "skill-run", "action": "progress", "step_id": "render", "completed": true}),
-        json!({"run_id": "skill-run", "action": "artifact", "artifact_id": "document", "artifact_ref": artifact_ref}),
-        json!({"run_id": "skill-run", "action": "verification", "verifier_id": "render-check", "passed": true, "evidence": {"kind":"model_judgment","sources":[]}, "summary": "3 pages"}),
-        json!({"run_id": "skill-run", "action": "resume_point", "resume_point": "after-render"}),
-    ];
-    for arguments in cases {
-        let outcome = skill_update(arguments.as_object().expect("arguments"), &ctx);
-        assert!(!outcome.error, "{}", outcome.text);
-        let payload: Value = serde_json::from_str(&outcome.text).expect("protocol JSON");
-        assert_eq!(
-            payload.get("type").and_then(Value::as_str),
-            Some("skill_runtime_update")
-        );
-        assert_eq!(
-            payload.get("action").and_then(Value::as_str),
-            arguments.get("action").and_then(Value::as_str)
-        );
-        assert_eq!(payload.get("run_id").and_then(Value::as_str), Some("skill-run"));
-        assert_eq!(
-            outcome.artifacts.len(),
-            usize::from(arguments.get("action").and_then(Value::as_str) == Some("artifact"))
-        );
-    }
-    assert!(
-        skill_update(
-            json!({"run_id": "skill-run", "action": "artifact", "artifact_id": "document"})
-                .as_object()
-                .expect("arguments"),
-            &ctx,
-        )
-        .error
-    );
-    assert!(
-        skill_update(
-            json!({"run_id": "skill-run", "action": "verification", "verifier_id": "render-check", "passed": true})
-                .as_object()
-                .expect("arguments"),
-            &ctx,
-        )
-        .error
-    );
-    assert!(skill_update(
-        json!({"run_id":"skill-run","action":"artifact","artifact_id":"document","artifact_ref":"file:///outside.docx"})
-            .as_object()
-            .expect("arguments"),
-        &ctx,
-    )
-    .error);
-    let invalid_reference = skill_update(
-        json!({"run_id":"skill-run","action":"artifact","artifact_id":"document","artifact_ref":"record-42"})
-            .as_object()
-            .expect("arguments"),
-        &ctx,
-    );
-    assert!(invalid_reference.error);
-    let recovery: Value =
-        serde_json::from_str(&invalid_reference.text).expect("structured recovery payload");
-    assert_eq!(recovery["error"], "invalid_skill_artifact_ref");
-    assert_eq!(recovery["tool_execution_skipped"], true);
-    assert!(recovery["next_action"]
-        .as_str()
-        .expect("next action")
-        .contains("canonical artifact_uri"));
-    let _ = fs::remove_dir_all(root);
-}
-
 fn skill_invoke(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
     let skill_id = tool_try!(required_string(args, "skill")).trim().to_string();
     if !host_skill_enabled(ctx, &skill_id) {
@@ -2331,16 +2087,14 @@ fn skill_invoke(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
         .ok()
         .and_then(|content| serde_json::from_str::<Value>(&content).ok())
         .unwrap_or(Value::Null);
-    let instructions_digest = sha256_hex(instructions.as_bytes());
     let version = manifest
         .get("version")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
-        .unwrap_or_else(|| format!("sha256-{}", &instructions_digest[..12]));
-    let instructions_ref =
-        format!("skill://{skill_id}/{version}/SKILL.md#sha256={instructions_digest}");
+        .unwrap_or_else(|| "local".to_string());
+    let instructions_ref = format!("skill://{skill_id}/{version}/SKILL.md");
     let validation_steps = manifest
         .get("validation")
         .and_then(Value::as_array)
@@ -2420,7 +2174,6 @@ fn skill_invoke(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
         "version": version,
         "display_name": display_name,
         "instructions_ref": instructions_ref,
-        "instructions_digest": instructions_digest,
         "mode": mode,
         // A Host may relay a Skill-authored explicit budget, but it must not
         // invent one. Core owns the default lifecycle policy and interprets a

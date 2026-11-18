@@ -3,19 +3,16 @@
     /* Opening a panel must not replay entrance motion on the whole transcript. */
     .studio #transcript .message{animation:none}
     .rail-footer .profile,.rail-footer .profile-label{display:none}
-    .rail-footer{padding:8px 0;border-top:1px solid var(--line)}
-    .sidebar-settings{display:flex;align-items:center;gap:10px;width:100%;min-height:44px;padding:8px 12px;text-align:left;border-radius:8px}
-    .sidebar-settings svg{width:18px;height:18px;flex:none}
+    .rail-footer{padding:8px 0 0;border-top:1px solid var(--line)}
+    .sidebar-settings{display:flex;align-items:center;gap:10px;width:100%;min-height:40px;padding:8px 10px;text-align:left;border-radius:8px;font-size:13px;font-weight:500}
+    .sidebar-settings svg{width:17px;height:17px;flex:none;color:var(--muted)}
     .sidebar-settings:hover{background:var(--hover)}
-    .prototype-data-center>header{padding:16px 24px;border-bottom:1px solid var(--line)}
-    .prototype-data-center nav{display:flex;flex-wrap:wrap;gap:6px}
-    .prototype-data-center nav button{min-height:36px;padding:7px 12px;border-radius:8px}
-    .prototype-data-center nav button[aria-pressed=true]{background:var(--soft);font-weight:600}
-    .prototype-workspace>div,.context-usage{display:flex;align-items:center;justify-content:space-between;gap:10px}
-    .context-usage{padding:7px 0;font-size:13px}
+    .prototype-data-center>header{padding:0 0 16px}
+    .prototype-workspace>div,.context-usage,.inspector-kv{display:flex;align-items:center;justify-content:space-between;gap:10px}
+    .context-usage{padding:5px 0;font-size:13px}
     .context-usage>span{color:var(--muted)}
-    .context-diagnostics,.execution-history{padding:8px 0}
-    .context-diagnostics>summary,.execution-history>summary{cursor:pointer;min-height:36px;align-content:center}
+    .context-diagnostics{padding:6px 0}
+    .context-diagnostics>summary{cursor:pointer;min-height:32px;align-content:center;font-size:12.5px;color:var(--muted)}
     .studio-inspector .work-status{padding:4px 0;line-height:1.6}
 }
 .flowing-status{position:relative;display:inline-block;color:var(--muted);line-height:1.6}

@@ -153,18 +153,17 @@ class RemoteObservationTransportTest {
     @Test fun admittedCancellationCarriesExactSubmissionNotOnlyConversation() = runTest {
         val token = "fixture-mobile-token"
         val identity = RemoteSubmissionIdentity("host", "client", "conversation", "original-submission", "original-user", "original-root")
-        val digest = "b".repeat(64)
         val requests = java.util.concurrent.atomic.AtomicInteger()
         EncryptedControlLoopback(token) { path, clear ->
             requests.incrementAndGet()
             assertEquals("/api/mobile/chat/agent/v2/cancel", path)
-            assertEquals(buildJsonObject { put("identity", identity.wire()); put("request_digest", digest) }, clear)
+            assertEquals(buildJsonObject { put("identity", identity.wire()) }, clear)
             "application/json" to Json.encodeToString(MobileCrypto.encryptJsonObject(buildJsonObject { put("cancelRequested", true) }, token))
         }.use { server ->
             val client = HttpClient(io.ktor.client.engine.cio.CIO) { install(ContentNegotiation) { json() } }
             try {
                 WebHostApiServiceImpl(client, SseClient(client), WebHostHttpClientFactory(client))
-                    .cancelAdmittedRemoteSubmission(server.baseUrl, token, identity, digest)
+                    .cancelAdmittedRemoteSubmission(server.baseUrl, token, identity)
                 assertEquals(1, requests.get())
                 server.assertHealthy()
             } finally { client.close() }

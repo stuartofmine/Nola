@@ -107,7 +107,7 @@ pub(crate) fn prepare_expert_task_admission(
         .host_invocation
         .as_ref()
         .ok_or("Expert actual Host binding missing")?;
-    expected.require_exact(actual).map_err(str::to_owned)?;
+    expected.require_exact_or_rotated_credential(actual).map_err(str::to_owned)?;
     // History is read from the existing target conversation at this actual
     // admission boundary. Security policy and model facts remain the frozen
     // target's; no source transcript or current defaults enter this Run.
@@ -271,6 +271,7 @@ fn execute_expert_task_tool(
             } else {
                 crate::web::expert_task_host_configuration(
                     &config.tool_settings.project_root,
+                    Some(&config.tool_settings),
                     &material,
                 )?
             };
@@ -287,15 +288,27 @@ fn execute_expert_task_tool(
         // The same supervisor owns wake/recovery; observing never creates a
         // second execution owner, including after a bounded wait times out.
         reconcile_supervised_tasks(config);
+        let mut last_reconcile = Instant::now();
+        let mut application = crate::application_port::CliApplicationPort::persistent_default()
+            .map_err(|error| ExpertTaskHostError::Rejected(error))?;
         let mut deadline = None;
         loop {
             if context.cancellation.is_requested() {
                 return Err("Expert wait cancelled; the separate task was not stopped".into());
             }
-            let observation: Value = expert_host_operation(
+            if last_reconcile.elapsed() >= Duration::from_secs(2) {
+                reconcile_supervised_tasks(config);
+                last_reconcile = Instant::now();
+            }
+            let wake_generation = task_wake_generation();
+            let operation = serde_json::from_value(
                 json!({"kind":"peer_task_action","request":request,"authority":authority}),
-            )?;
-            let wait_ms = observation["wait_ms"].as_u64().unwrap_or(0).min(30_000);
+            )
+            .map_err(|error| format!("Invalid expert Host operation: {error}"))?;
+            let observation: Value = application
+                .execute_expert_host_operation(&uuid::Uuid::new_v4().to_string(), operation)
+                .map_err(ExpertTaskHostError::from)?;
+            let wait_ms = observation["wait_ms"].as_u64().unwrap_or(0).min(300_000);
             let until =
                 *deadline.get_or_insert_with(|| Instant::now() + Duration::from_millis(wait_ms));
             if observation["terminal"] == true || wait_ms == 0 || Instant::now() >= until {
@@ -305,8 +318,9 @@ fn execute_expert_task_tool(
                 )
                 .map_err(ExpertTaskHostError::from);
             }
-            std::thread::sleep(
-                Duration::from_millis(100).min(until.saturating_duration_since(Instant::now())),
+            wait_for_task_wake(
+                wake_generation,
+                Duration::from_millis(500).min(until.saturating_duration_since(Instant::now())),
             );
         }
     })();

@@ -10,6 +10,10 @@ enum class AndroidAgentPermissionMode(val wireValue: String) {
     Cautious("cautious"),
     AllowAll("allow_all");
 
+    /** Recovery keeps the frozen Run mode; widening may resume Cautious, while tightening blocks resume. */
+    fun permitsResuming(frozen: AndroidAgentPermissionMode): Boolean =
+        this == frozen || this == AllowAll
+
     companion object {
         fun fromWireValue(value: String?): AndroidAgentPermissionMode = when (value) {
             null, Cautious.wireValue -> Cautious

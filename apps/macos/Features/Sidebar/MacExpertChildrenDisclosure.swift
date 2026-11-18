@@ -17,20 +17,42 @@ struct MacExpertChildrenDisclosure: View {
     @State private var requestID = UUID()
     @State private var request: Task<Void, Never>?
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 6) {
             Button {
-                expanded.toggle()
+                withAnimation(reduceMotion ? nil : MacDesignTokens.Motion.disclosureAnimation) {
+                    expanded.toggle()
+                }
                 if expanded { reload() }
                 else { cancel() }
             } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: expanded ? "chevron.down" : "chevron.right").font(.system(size: 9, weight: .semibold))
-                    Text("Expert conversations").font(.system(size: 11))
+                HStack(spacing: 8) {
+                    Image(systemName: "person.2")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Text("Expert conversations")
+                        .font(.system(size: 13, weight: .medium))
                     if loading { ProgressView().controlSize(.mini) }
-                    Spacer(minLength: 0)
-                }.foregroundStyle(.secondary).frame(minHeight: 28).contentShape(Rectangle())
-            }.buttonStyle(.plain).accessibilityIdentifier("expert.children.toggle." + parentID)
+                    Spacer(minLength: 8)
+                    if !children.isEmpty {
+                        Text(children.count.formatted())
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(expanded ? 180 : 0))
+                        .accessibilityHidden(true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(MacHorizontalBarButtonStyle(isSubtle: true, isExpanded: expanded))
+            .accessibilityIdentifier("expert.children.toggle." + parentID)
+            .accessibilityValue(Text(expanded ? "Expanded" : "Collapsed", tableName: "Chat"))
             if expanded {
                 ForEach(children) { child in
                     Button { open(child) } label: {
@@ -46,15 +68,15 @@ struct MacExpertChildrenDisclosure: View {
                 }
                 if let error {
                     Text(error).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-                    Button("Retry") { reload() }.buttonStyle(.plain).disabled(loading)
+                    Button("Retry") { reload() }.buttonStyle(MacActionButtonStyle()).disabled(loading)
                 } else if children.isEmpty && !loading {
                     Text("No expert conversations yet").font(.caption).foregroundStyle(.secondary).padding(.vertical, 5)
                 }
                 if let nextOffset {
-                    Button("Load more") { fetch(offset: nextOffset) }.font(.caption).buttonStyle(.plain).disabled(loading)
+                    Button("Load more") { fetch(offset: nextOffset) }.font(.caption).buttonStyle(MacActionButtonStyle()).disabled(loading)
                 }
             }
-        }.padding(.leading, 13)
+        }
             .onChange(of: refreshRevision) { _, _ in if expanded { reload() } }
             .onChange(of: roomRevision) { _, _ in if expanded { reload() } }
             .onChange(of: parentID) { _, _ in cancel(); expanded = false; children = []; nextOffset = nil; error = nil }

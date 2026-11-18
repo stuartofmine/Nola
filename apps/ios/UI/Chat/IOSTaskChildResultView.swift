@@ -36,7 +36,9 @@ struct IOSTaskChildResultView: View {
                         if !message.thinking.isEmpty {
                             DisclosureGroup(String(localized: "Reasoning")) {
                                 ChatMarkdownView(content: message.thinking)
-                            }.font(.callout).foregroundStyle(.secondary)
+                            }
+                            .disclosureGroupStyle(NolaRowDisclosureStyle())
+                            .font(.callout).foregroundStyle(.secondary)
                         }
                         if !message.content.isEmpty { ChatMarkdownView(content: message.content) }
                         ForEach(message.hostToolEvents, id: \.id) { event in

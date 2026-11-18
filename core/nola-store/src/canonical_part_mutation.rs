@@ -158,25 +158,24 @@ pub(super) fn apply_part_mutation(
         }
         PartMutation::AppendText {
             part_id,
-            expected_content_digest,
+            expected_prefix_bytes,
             text,
             updated_at_ms,
         } => {
-            let content_text: String = transaction
+            let actual_bytes: u64 = transaction
                 .query_row(
-                    "SELECT content_text FROM message_parts
+                    "SELECT length(CAST(content_text AS BLOB)) FROM message_parts
                      WHERE id = ?1 AND message_id = ?2 AND state = 'open'",
                     params![part_id, assistant_message_id],
-                    |row| row.get(0),
+                    |row| row.get::<_, i64>(0),
                 )
                 .optional()?
                 .ok_or_else(|| {
                     StoreError::Invariant(format!("open Part {part_id} does not exist"))
-                })?;
-            let actual_digest = format!("{:x}", Sha256::digest(content_text.as_bytes()));
-            if actual_digest != *expected_content_digest {
+                })? as u64;
+            if actual_bytes != *expected_prefix_bytes {
                 return Err(StoreError::Conflict(format!(
-                    "Part {part_id} append prefix mismatch: stored={actual_digest}, expected={expected_content_digest}"
+                    "Part {part_id} append prefix mismatch: stored_bytes={actual_bytes}, expected_bytes={expected_prefix_bytes}"
                 )));
             }
             transaction.execute(

@@ -503,7 +503,11 @@ mod effect_delivery_start_barrier_tests {
         let identity=(target.host_id.0.clone(),target.session_id.clone(),target.turn_id.clone(),target.effect_id.0.clone());
         let (control_tx, _) = std::sync::mpsc::channel();
         let (output_tx, output_rx) = std::sync::mpsc::sync_channel(1);
-        let worker = std::thread::spawn(move || { output_tx.send(DelegatedAgentWorkerOutput::PhysicalStopObserved).unwrap(); });
+        let worker = std::thread::Builder::new()
+            .name("delegated-agent-worker".into())
+            .stack_size(16 * 1024 * 1024)
+            .spawn(move || { output_tx.send(DelegatedAgentWorkerOutput::PhysicalStopObserved).unwrap(); })
+            .unwrap();
         driver.insert_delegated_agent_session(target.effect_id.0.clone(), DelegatedAgentWorkerSession {
             effect_id:target.effect_id.0.clone(),permission_delivery_ids:Default::default(),request:target.clone(),
             next_sequence:0,control_tx,output_rx,cancellation:Default::default(),worker:Some(worker),
@@ -538,12 +542,16 @@ mod effect_delivery_start_barrier_tests {
             let (output_tx, output_rx) = std::sync::mpsc::sync_channel(1);
             let exited = Arc::new(AtomicBool::new(false));
             let worker_exited = Arc::clone(&exited);
-            let worker = std::thread::spawn(move || {
+            let worker = std::thread::Builder::new()
+            .name("delegated-agent-worker".into())
+            .stack_size(16 * 1024 * 1024)
+            .spawn(move || {
                 assert!(matches!(control_rx.recv().unwrap(), DelegatedAgentWorkerControl::Cancel));
                 output_tx.send(if finished { DelegatedAgentWorkerOutput::Finished }
                     else { DelegatedAgentWorkerOutput::Suspended }).unwrap();
                 worker_exited.store(true, Ordering::Release);
-            });
+            })
+            .unwrap();
             driver.insert_delegated_agent_session(target.effect_id.0.clone(), DelegatedAgentWorkerSession {
                 effect_id: target.effect_id.0.clone(), permission_delivery_ids: Default::default(),
                 request: target.clone(), next_sequence: 0, control_tx, output_rx,
@@ -3611,7 +3619,10 @@ impl CliAgentHostDriver {
             .delegated_invocation_id
             .clone()
             .ok_or("missing delegated invocation")?;
-        let worker = std::thread::spawn(move || {
+        let worker = std::thread::Builder::new()
+            .name("delegated-agent-worker".into())
+            .stack_size(16 * 1024 * 1024)
+            .spawn(move || {
             let owner_session_id = tool_context.permission_scope.owner_session_id();
             let lease = match crate::task_runtime::ExternalExecutionTaskLease::acquire(
                 &config.external,
@@ -3775,7 +3786,8 @@ impl CliAgentHostDriver {
             {
                 return;
             }
-        });
+        })
+        .map_err(|error| format!("failed to spawn delegated agent worker: {error}"))?;
         Ok(DelegatedAgentWorkerSession {
             effect_id: envelope.effect_id.0.clone(),
             permission_delivery_ids: Default::default(),

@@ -126,16 +126,6 @@ export function parseRunContextUsage(value: unknown, admission: JournalCursor): 
         record_digest: value.record_digest };
 }
 
-/** Same fixed-order typed tuple and domain-separated byte length as Rust. */
-export async function contextUsageDigest(value: Omit<CommittedRunContextUsage, 'record_digest'>): Promise<string> {
-    const bytes = new TextEncoder().encode(JSON.stringify([value.protocol_version, identityWire(value.identity), cursorWire(value.admission),
-        value.event_sequence, value.attempt_sequence, parseCumulativeCacheUsage(value.run_cache_usage), usageWire(value.usage)]));
-    const tag = new TextEncoder().encode('NOLA-RUN-CONTEXT-USAGE-V1');
-    const input = new Uint8Array(tag.length + 8 + bytes.length); input.set(tag);
-    new DataView(input.buffer).setBigUint64(tag.length, BigInt(bytes.length), false); input.set(bytes, tag.length + 8);
-    return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', input)), byte => byte.toString(16).padStart(2, '0')).join('');
-}
-
 const scope = (owner: ChatTurnOwner, identity: JournalIdentity) => JSON.stringify([owner.hostId, owner.clientId, owner.conversationId,
     owner.generation, journalIdentityKey(identity)]);
 
@@ -170,7 +160,6 @@ export class RunContextUsageProjection {
         if (raw === null) return this.value;
         const captured = scope(this.owner, this.admission.identity);
         const record = parseRunContextUsage(raw, admission);
-        if (await contextUsageDigest(record) !== record.record_digest) throw new Error('Context usage digest mismatch');
         if (!current() || !this.owner || !this.admission || scope(this.owner, this.admission.identity) !== captured) return null;
         if (this.value) {
             const event = BigInt(record.event_sequence) - BigInt(this.value.event_sequence);

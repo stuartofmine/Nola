@@ -3,7 +3,6 @@
 use serde::{Deserialize,Serialize};
 use serde_json::Value;
 use chrono::{DateTime, Duration, Utc};
-use sha2::{Digest,Sha256};
 pub const DATA_SOURCE_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,8 +23,6 @@ pub struct DataSourceContract {
     pub validated_at: DateTime<Utc>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub observed_at: Option<DateTime<Utc>>,
-    #[serde(default)]
-    pub validation_digest: String,
 }
 
 impl DataSourceContract {
@@ -43,31 +40,6 @@ impl DataSourceContract {
                     .and_then(Value::as_str)
                     .is_some_and(|kind| kind != "object" && kind != "array"))
             && self.validation_state != DataSourceValidationState::Failed
-            && self.validation_digest == self.expected_validation_digest()
-    }
-
-    pub fn seal_validation(&mut self) {
-        self.validation_digest = self.expected_validation_digest();
-    }
-
-    pub fn expected_validation_digest(&self) -> String {
-        let material = serde_json::to_vec(&serde_json::json!({
-            "schemaVersion": DATA_SOURCE_SCHEMA_VERSION,
-            "sourceId": self.source_id,
-            "connectorId": self.connector_id,
-            "connectorVersion": self.connector_version,
-            "readerDescription": self.reader_description,
-            "readRecipe": self.read_recipe,
-            "schemaFields": self.schema_fields,
-            "redactedSample": self.redacted_sample,
-            "recordCount": self.record_count,
-            "maximumAgeMinutes": self.maximum_age_minutes,
-            "validationState": self.validation_state,
-            "validatedAt": self.validated_at,
-            "observedAt": self.observed_at,
-        }))
-        .unwrap_or_default();
-        Sha256::digest(material).iter().map(|byte| format!("{byte:02x}")).collect()
     }
 
     pub fn is_fresh_at(&self, now: DateTime<Utc>) -> bool {

@@ -1134,7 +1134,7 @@ protocol MacRemoteAgentRunning: MacRemoteHostManaging {
         taskID: String,
         target: MacRemoteSubmissionTarget
     ) async throws -> AppleTaskCancellationReceipt
-    func cancelRun(identity: MacRemoteSubmissionIdentity, requestDigest: String) async throws
+    func cancelRun(identity: MacRemoteSubmissionIdentity) async throws
     func taskEvents(
         conversationID: String,
         afterCursor: Int64
@@ -1834,7 +1834,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         if accepted.phase == .admitted {
             _ = try await synchronizeRunAssistantJournals(conversationID: conversationID,
                 runID: intent.identity.submission_id, configuration: target.configuration)
-            if cancel { try await cancelRun(identity: intent.identity, requestDigest: digest, configuration: target.configuration) }
+            if cancel { try await cancelRun(identity: intent.identity, configuration: target.configuration) }
         }
         return accepted
     }
@@ -2565,7 +2565,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         }
     }
 
-    func cancelRun(identity: MacRemoteSubmissionIdentity, requestDigest: String) async throws {
+    func cancelRun(identity: MacRemoteSubmissionIdentity) async throws {
         // Cancellation is a control request, not evidence that the Run ended.
         // Keep its permission receipt on failure and on acceptance; a delayed
         // HTTP completion must also never retire a newer Run's receipt.
@@ -2573,12 +2573,11 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
                 ?? configuration(for: identity.conversation_id) else {
             throw MacRemoteHostError.notConfigured
         }
-        try await cancelRun(identity: identity, requestDigest: requestDigest, configuration: configuration)
+        try await cancelRun(identity: identity, configuration: configuration)
     }
 
     func cancelRun(
         identity: MacRemoteSubmissionIdentity,
-        requestDigest: String,
         configuration: MacRemoteHostConfiguration
     ) async throws {
         guard identity.source_host_id == configuration.expectedHostID,
@@ -2586,7 +2585,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
             throw MacRemoteHostError.invalidResponse
         }
         let envelope = try encrypt(
-            try AppleRemoteCancellationRequest(identity: identity, requestDigest: requestDigest).object(),
+            try AppleRemoteCancellationRequest(identity: identity).object(),
             token: configuration.token
         )
         let body = try JSONSerialization.data(withJSONObject: envelope)

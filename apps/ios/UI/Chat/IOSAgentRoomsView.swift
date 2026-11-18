@@ -187,7 +187,9 @@ struct IOSAgentRoomsView: View {
                     }
                     Text("experts.role.permissions").font(.footnote).foregroundStyle(.secondary)
                 }
-            }.accessibilityIdentifier("experts.role.details")
+            }
+            .disclosureGroupStyle(NolaRowDisclosureStyle())
+            .accessibilityIdentifier("experts.role.details")
         }
     }
 
@@ -365,6 +367,7 @@ struct IOSAgentRoomTimeline: View {
     var showsOwnerControls = true
     var allowsLiveExecution = true
     var peerInputAuthors: [String: IOSExpertPeerInputAuthor] = [:]
+    var peerExchanges: [AppleExpertPeerView] = []
     var loadOlderHistory: (@MainActor () async throws -> Void)? = nil
     @State private var isLoadingOlderHistory = false
     var association: IOSConversationRoomAssociation?
@@ -403,10 +406,16 @@ struct IOSAgentRoomTimeline: View {
         })
         let rows = workspace.rows.filter { row in
             if let association {
-                return row.message.role != .user && submissions.contains {
+                guard row.message.role != .user else { return false }
+                let matchesSubmission = submissions.contains {
                     IOSAgentRoomService.sender(for: $0, association: association)?.id == row.participant.id &&
                     $0.executionID.map { $0 + ":assistant" } == row.projected.messageID
                 }
+                let matchesExchange = peerExchanges.contains {
+                    $0.target.context_conversation_id == row.participant.contextConversationID &&
+                    row.projected.messageID == $0.exchangeID + ":assistant"
+                }
+                return matchesSubmission || matchesExchange
             }
             return row.message.role != .user || !representedUsers.contains(row.id)
         }.map { TimelineItem(id: $0.id, atMs: $0.projected.createdAtMs, row: $0, receiptID: nil) }
@@ -424,10 +433,21 @@ struct IOSAgentRoomTimeline: View {
                 ordinaryID: { $0.ordinary.map { $0.metadata["nola.canonicalMessageID"] ?? $0.id.uuidString } },
                 parentID: { child in
                     guard let row = child.row else { return nil }
-                    return submissions.first {
+                    if let matched = submissions.first(where: {
                         $0.contextConversationID == row.participant.contextConversationID &&
                         $0.executionID.map { $0 + ":assistant" } == row.projected.messageID
-                    }?.input.parentMessageID
+                    })?.input.parentMessageID {
+                        return matched
+                    }
+                    if let exchange = peerExchanges.first(where: {
+                        $0.target.context_conversation_id == row.participant.contextConversationID &&
+                        row.projected.messageID == $0.exchangeID + ":assistant"
+                    }) {
+                        return exchange.inReplyTo
+                            ?? submissions.first { $0.executionID == exchange.sourceRunID }?.input.parentMessageID
+                            ?? (exchange.sourceRunID + ":assistant")
+                    }
+                    return nil
                 }) + receipts
         }
 
@@ -799,10 +819,25 @@ struct IOSUnifiedExpertConversation: View {
             }
     }
     var body: some View {
+        let roomExchanges = workspace.room.flatMap { submission.peerExchanges[$0.room.id] } ?? []
+        let peerAuthors: [String: IOSExpertPeerInputAuthor] = {
+            guard let parent = conversationID?.uuidString, let room = workspace.room?.room else { return [:] }
+            var merged: [String: IOSExpertPeerInputAuthor] = [:]
+            for participant in room.participants {
+                if let mapped = try? IOSExpertPeerInputAuthor.map(roomExchanges, ownerID: participant.contextConversationID,
+                    parentID: parent, roomID: room.id) {
+                    merged.merge(mapped) { current, _ in current }
+                }
+            }
+            return merged
+        }()
         VStack(spacing: 0) {
             IOSAgentRoomTimeline(workspace: workspace, ordinaryMessages: ordinaryMessages,
                 ordinaryMessageTimes: ordinaryMessageTimes,
-                ordinaryConversationID: conversationID, showsOwnerControls: false, association: submission.conversationAssociation,
+                ordinaryConversationID: conversationID, showsOwnerControls: false,
+                peerInputAuthors: peerAuthors,
+                peerExchanges: roomExchanges,
+                association: submission.conversationAssociation,
                 submissions: workspace.room.flatMap { submission.submissions[$0.room.id] } ?? [],
                 pending: workspace.room.flatMap { submission.pending[$0.room.id] } ?? [],
                 onRetry: submission.retry, onCancelPending: submission.cancelPending)

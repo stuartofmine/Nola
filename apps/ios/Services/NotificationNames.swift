@@ -11,6 +11,7 @@ import Foundation
 extension Notification.Name {
     static let showTaskConfirmation = Notification.Name("showTaskConfirmation")
     static let nolaOpenChatTab = Notification.Name("nola.openChatTab")
+    static let nolaConversationRenamed = Notification.Name("nola.conversationRenamed")
     static let nolaModelConfigured = Notification.Name("nola.modelConfigured")
     static let nolaOpenModelTab = Notification.Name("nola.openModelTab")
     static let nolaOpenSettingsTab = Notification.Name("nola.openSettingsTab")

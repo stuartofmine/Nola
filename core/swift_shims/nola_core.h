@@ -102,11 +102,10 @@ char* nola_core_memory_select_json(const unsigned char* input_json, size_t input
 char* nola_core_context_plan(const unsigned char* input_json, size_t input_len);
 uint32_t nola_core_context_engine_abi_version(void);
 char* nola_core_context_prepare(const unsigned char* input_json, size_t input_len);
-// Data-source access, validation-contract sealing, and freshness resolution
+// Data-source access, validation-contract, and freshness resolution
 // (ABI v1/schema v1). Hosts retain all source I/O and secret material.
 uint32_t nola_core_data_source_abi_version(void);
 char* nola_core_data_source_resolve(const unsigned char* input_json, size_t input_len);
-char* nola_core_data_source_seal_contract(const unsigned char* input_json, size_t input_len);
 // Trusted observation-only lifecycle Hook registry, planner, and execution
 // projection (ABI v1/schema v1). The output
 // never authorizes I/O and cannot mutate or block an Agent operation.

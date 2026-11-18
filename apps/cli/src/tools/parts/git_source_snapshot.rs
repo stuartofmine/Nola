@@ -76,11 +76,11 @@ fn source_state(root:&Path,capture:Option<&Path>,cancel:Option<&RuntimeExecution
     let head=git_commit_text(root,&["rev-parse","HEAD"])?;
     let index=git_command_output(root,&["ls-files","--stage","-z"])?;
     if !git_command_output(root,&["ls-files","--unmerged","-z"])?.is_empty() {return Err("Source has unresolved index conflicts".into());}
-    let status=git_command_output(root,&["--no-optional-locks","status","--porcelain=v1","-z","--untracked-files=normal","--no-renames"])?;
-    let mut entries=Vec::new();let mut untracked=false;
+    let status=git_command_output(root,&["--no-optional-locks","status","--porcelain=v1","-z","--untracked-files=no","--no-renames"])?;
+    let mut entries=Vec::new();let untracked=false;
     for record in status.split(|byte|*byte==0).filter(|record|!record.is_empty()) {
         if record.len()<4 || record[2]!=b' ' {return Err("Unsupported source status record".into());}
-        if &record[..2]==b"??" {untracked=true;continue;}
+        if &record[..2]==b"??" {continue;}
         let path=std::str::from_utf8(&record[3..]).map_err(|_|"Non-UTF8 changed path")?;
         entries.push(source_entry(root,path,capture,cancel)?);
     }
@@ -111,7 +111,7 @@ fn prepare_source_snapshot(root:&Path,expected:&nola_domain::task_workspace::Sou
     expected.validate()?;
     let directory=tempfile::tempdir().map_err(|error|error.to_string())?;
     let state=source_state(root,Some(directory.path()),Some(cancel))?;
-    if state.plan!=*expected || !state.dirty || state.untracked {return Err("Source snapshot changed, is unnecessary, or contains untracked files requiring explicit review".into());}
+    if state.plan!=*expected || !state.dirty {return Err("Source snapshot changed or is unnecessary".into());}
     let tree=snapshot_tree(root,&state,directory.path())?;
     if source_state(root,None,Some(cancel))?.plan!=*expected {return Err("Source changed during snapshot; no working checkout was overwritten".into());}
     let output=git_operation_command(root).args(["-c","user.name=Nola","-c","user.email=nola@local.invalid","-c","commit.gpgsign=false",
@@ -134,7 +134,7 @@ fn verify_source_snapshot(binding:&nola_domain::task_workspace::TaskWorktreeBind
     }
     if fresh_source {
         let state=source_state(root,None,None)?;
-        if state.plan!=snapshot.plan || state.untracked || worktree_repository(root)?.0!=Path::new(&binding.selection.expected_common_directory) {
+        if state.plan!=snapshot.plan || worktree_repository(root)?.0!=Path::new(&binding.selection.expected_common_directory) {
             return Err("Source changed since the frozen snapshot; inspect before integration".into());
         }
         let changed=git_command_output(root,&["diff","--name-only","--no-renames","--no-ext-diff","--no-textconv","-z",&snapshot.plan.source_head,base,"--","."])?;
@@ -190,10 +190,11 @@ mod git_worktree_source_snapshot_tests {
             let child=parent.join("child");
             let input=json!({"root":root,"destination":child,"expected_head":info["head"],"expected_common_directory":info["common_directory"],"source_snapshot":info["source_snapshot_plan"]});
             fs::write(root.join("private-untracked.txt"),"must not be copied").unwrap();
-            assert!(inspect_git_worktrees(&root).unwrap()["source_snapshot_plan"].is_null());
-            assert!(git_worktree_create(input.as_object().unwrap(),&ctx).error);assert!(!child.exists());
-            fs::remove_file(root.join("private-untracked.txt")).unwrap(); // Only this owned synthetic marker.
+            let info_with_untracked=inspect_git_worktrees(&root).unwrap();
+            assert_eq!(info_with_untracked["source_snapshot_plan"],info["source_snapshot_plan"]);
             let made=git_worktree_create(input.as_object().unwrap(),&ctx);assert!(!made.error,"{}",made.text);
+            assert!(!child.join("private-untracked.txt").exists());
+            fs::remove_file(root.join("private-untracked.txt")).unwrap(); // Only this owned synthetic marker.
             let created=made.data.unwrap();let selection=created["task_worktree_selection"].clone();
             assert_ne!(selection["expected_head"],info["head"]);
             assert_eq!(fs::read_to_string(child.join("code.txt")).unwrap(),"user working\n");

@@ -3380,3 +3380,27 @@
 "main.experts.sourceChanged" = "The Host data changed. Reload its expert directory and select the experts again. Your message is kept.";
 
 "run.blocked.inputBudget" = "This request exceeds the model’s input budget. Shorten the conversation or attachments, reduce enabled tools, or choose a model with a larger context window.";
+"chat.task.state.retry_waiting" = "Waiting to retry";
+"chat.host_tool.name.goal_complete" = "Complete goal";
+"chat.host_tool.name.ask_user" = "Request user input";
+"chat.host_tool.name.mcp_list" = "List MCP resources";
+"chat.host_tool.name.mcp_read" = "Read MCP resource";
+"chat.conversations.rename" = "Rename Conversation";
+"chat.conversations.title_field" = "Title";
+"a2ui.history.readOnly" = "Historical forms are read-only.";
+"a2ui.date.useShown" = "Use shown date or time";
+"a2ui.date.clear" = "Clear";
+"a2ui.component.unsupported" = "Component unavailable: ";
+"a2ui.history.unavailable" = "This version is unavailable.";
+"a2ui.history.mismatch" = "Historical form version mismatch.";
+"a2ui.reloadForm" = "Reload form";
+"a2ui.submission.pending" = "The previous submission is unconfirmed. Check the original result.";
+"a2ui.intent.reconnectHost" = "Reconnect to the original Host to confirm the pending form submission.";
+"a2ui.intent.previousUnconfirmed" = "The previous form submission is unconfirmed. Check the original submission first.";
+"a2ui.surface.source_changed" = "Conversation source changed. Return to the original conversation.";
+"a2ui.intent.source_changed" = "Conversation source changed. Connect to the original Host to check the submission.";
+"a2ui.form.updated" = "Form updated. Confirm again before submitting.";
+"a2ui.queue.not_executed" = "The form action was not executed because the original request was rejected or cancelled.";
+"a2ui.queue.cancel_rejected" = "Remove unexecuted form action";
+"chat.host.reconnect_bound" = "Reconnect to the Host bound to this conversation.";
+"chat.host.source_unavailable" = "Unable to verify the source Host for this conversation.";

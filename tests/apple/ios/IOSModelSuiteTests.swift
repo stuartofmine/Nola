@@ -876,7 +876,7 @@ struct ModelServiceConfigurationInstallationTests {
                 user_message_id: "user", assistant_message_id: "assistant"
             )
             await #expect(throws: FixtureTransportReached.self) {
-                try await provider.cancelHostGeneration(identity: identity, requestDigest: "fixture-digest")
+                try await provider.cancelHostGeneration(identity: identity)
             }
             service.usePlaceholderProvider()
             #expect(service.currentProvider() is PlaceholderLocalProvider)

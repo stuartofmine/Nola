@@ -26,7 +26,6 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.io.File
-import java.security.MessageDigest
 import java.util.UUID
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -847,14 +846,11 @@ class AndroidApplicationRuntime(
 
     fun configureUserSkill(original: SkillEditorSnapshot, name: String, content: String): SkillEditorSnapshot {
         require(name.isNotBlank() && content.isNotBlank())
-        val digest = MessageDigest.getInstance("SHA-256").digest(content.encodeToByteArray())
-            .joinToString("") { "%02x".format(it) }
         // Preserve the complete canonical record, including non-builtin tool references.
         val input = JsonObject(original.record.toMutableMap().apply {
             remove("deleted_at_ms")
             put("display_name", kotlinx.serialization.json.JsonPrimitive(name))
             put("instructions_text", kotlinx.serialization.json.JsonPrimitive(content))
-            put("instructions_digest", kotlinx.serialization.json.JsonPrimitive(digest))
             if (original.record.getValue("instructions_text").jsonPrimitive.content != content) {
                 put("version", kotlinx.serialization.json.JsonPrimitive(UUID.randomUUID().toString()))
             }
@@ -896,8 +892,6 @@ class AndroidApplicationRuntime(
         decodeSkillEditor(writeNewSkill(skill))
 
     private fun writeNewSkill(skill: UploadedContent): kotlinx.serialization.json.JsonElement {
-        val digest = MessageDigest.getInstance("SHA-256").digest(skill.content.encodeToByteArray())
-            .joinToString("") { "%02x".format(it) }
         val id = skill.resourceId ?: UUID.randomUUID().toString()
         val now = System.currentTimeMillis()
         return submitMutation(buildJsonObject {
@@ -907,12 +901,11 @@ class AndroidApplicationRuntime(
                 put("input", buildJsonObject {
                 put("id", id)
                 put("source", "user")
-                put("version", "${skill.version ?: "user"}-${digest.take(16)}")
+                put("version", skill.version ?: "user")
                 put("display_name", skill.name)
                 put("summary", skill.description)
                 put("category", "user")
                 put("instructions_ref", "nola://android/skills/$id")
-                put("instructions_digest", digest)
                 put("instructions_text", skill.content)
                 put("required_tools", JsonArray(skill.requiredTools.map { toolName ->
                     buildJsonObject {

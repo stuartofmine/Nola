@@ -218,7 +218,7 @@
                     <label>{t($locale, field.label)}<input type="number" bind:value={draft[field.key]} min={field.min} max={field.max} step={field.step < 1 ? 'any' : field.step} disabled={!!busy} required /></label>
                 {/each}
             </div>
-            <label class="row"><input class="check" type="checkbox" bind:checked={draft.flashAttention} disabled={!!busy} />{t($locale, 'modelDisplay.flashAttention')}</label>
+            <label class="row"><input class="check" type="checkbox" role="switch" bind:checked={draft.flashAttention} disabled={!!busy} />{t($locale, 'modelDisplay.flashAttention')}</label>
             <div class="actions"><button type="button" onclick={() => closeEditor()} disabled={!!busy}>{t($locale, 'models.cancel')}</button><button class="primary" disabled={!!busy || !dirty}>{t($locale, busy ? 'models.saving' : 'models.save')}</button></div>
         </form>
     {/if}

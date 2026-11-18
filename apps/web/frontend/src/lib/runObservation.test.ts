@@ -108,6 +108,47 @@ test('a temporarily unavailable terminal manifest is observed again for the same
         assert.throws(() => parseRunObservation({ source_host_id: 'host', conversation_id: owner.conversationId, client_id: owner.clientId, goal_control: null, result: { ...observed, goal_execution: changed } }, owner));
     }
     assert.throws(() => parseRunObservation({ source_host_id: 'host', conversation_id: owner.conversationId, client_id: owner.clientId, goal_control: null, result: { ...observed, submission_receipt: {} } }, owner));
+    const validReceipt = {
+        protocol_version: 1,
+        request_digest: '0'.repeat(64),
+        phase: 'admitted',
+        admission: null,
+        rejection_code: null,
+        identity: {
+            source_host_id: owner.hostId,
+            client_id: owner.clientId,
+            conversation_id: owner.conversationId,
+            submission_id: 'run',
+            user_message_id: 'run:user',
+            assistant_message_id: 'assistant',
+        },
+    };
+    assert.deepEqual(
+        parseRunObservation({
+            source_host_id: owner.hostId,
+            conversation_id: owner.conversationId,
+            client_id: owner.clientId,
+            goal_control: null,
+            result: {
+                ...observed,
+                submission_receipt: validReceipt,
+                worker: { state: 'running', generation: '1' },
+                permissions: [{
+                    protocol_version: 1, allow_conversation: true, nonce: 'nonce', request_id: 'request',
+                    host_id: owner.hostId, client_id: owner.clientId, session_id: owner.conversationId,
+                    canonical_run_id: 'run', expires_at: Date.now() / 1000 + 60,
+                }],
+            },
+        }, owner)?.goal_execution,
+        goal,
+    );
+    assert.throws(() => parseRunObservation({
+        source_host_id: owner.hostId,
+        conversation_id: owner.conversationId,
+        client_id: owner.clientId,
+        goal_control: null,
+        result: { ...observed, submission_receipt: { ...validReceipt, identity: { ...validReceipt.identity, client_id: 'other-client' } } },
+    }, owner));
     const { goal_execution, ...missing } = observed;
     assert.throws(() => parseRunObservation({ source_host_id: 'host', conversation_id: owner.conversationId, client_id: owner.clientId, goal_control: null, result: missing }, owner));
 });
@@ -116,6 +157,13 @@ test('Goal between rounds retains Core admission control without inventing a Run
     const goal = { goal_id: 'goal', control_token: 'core-token', status: 'running', can_submit: false, can_pause: true, can_resume: false, can_cancel: true };
     assert.deepEqual(parseGoalControl({ source_host_id: 'host', conversation_id: owner.conversationId, client_id: owner.clientId, goal_control: goal, result: null }, owner), goal);
     assert.throws(() => parseGoalControl({ source_host_id: 'host', conversation_id: owner.conversationId, client_id: owner.clientId, goal_control: {...goal, can_submit: true} }, owner));
+    for (const status of ['paused', 'needs_user']) {
+        assert.deepEqual(
+            parseGoalControl({ source_host_id: 'host', conversation_id: owner.conversationId, client_id: owner.clientId,
+                goal_control: { ...goal, status, can_submit: true, can_pause: false, can_resume: true }, result: null }, owner)?.can_submit,
+            true
+        );
+    }
     assert.throws(() => parseGoalControl({ source_host_id: 'host' }, owner));
     assert.throws(() => parseGoalControl({ source_host_id: 'other', goal_control: goal }, owner));
     const {can_pause, ...missingPause} = goal;

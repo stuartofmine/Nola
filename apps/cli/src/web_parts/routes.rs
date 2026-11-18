@@ -573,12 +573,15 @@ pub fn run_web_server(config: &Config) -> Result<(), String> {
             continue;
         };
         let config = config.clone();
-        thread::spawn(move || {
-            let _request_guard = request_guard;
-            if let Err(err) = handle_request(request, &config) {
-                eprintln!("web request failed: {err}");
-            }
-        });
+        let _ = std::thread::Builder::new()
+            .name("web-http".into())
+            .stack_size(16 * 1024 * 1024)
+            .spawn(move || {
+                let _request_guard = request_guard;
+                if let Err(err) = handle_request(request, &config) {
+                    eprintln!("web request failed: {err}");
+                }
+            });
     }
     Ok(())
 }
@@ -3592,6 +3595,10 @@ fn dispatch_conversation_goal_control(
         new_web_goal_invocation(config, conversation_id)
             .and_then(|request| submit_agent_core_goal_command(&request, envelope))
             .map(|_| ())
+    } else if input.action.trim() == "resume" {
+        new_web_goal_invocation(config, conversation_id)
+            .and_then(|request| crate::core_agent_runtime::rebind_goal_execution(&request))
+            .and_then(|_| apply_idle_web_goal_control(conversation_id, envelope))
     } else {
         apply_idle_web_goal_control(conversation_id, envelope)
     };

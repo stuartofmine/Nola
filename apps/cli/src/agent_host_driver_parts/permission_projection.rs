@@ -78,8 +78,24 @@ impl CliAgentHostDriver {
                 if request.catalog_revision != self.catalog.revision {
                     return Err("permission request catalog revision mismatch".into());
                 }
-                let mcp_descriptor = (descriptor.input_normalization.origin.kind == nola_core::agent::host::HostCapabilityOriginKind::Mcp)
-                    .then(|| serde_json::to_value(descriptor)).transpose().map_err(|error| error.to_string())?;
+                let mcp_descriptor = if descriptor.input_normalization.origin.kind == nola_core::agent::host::HostCapabilityOriginKind::Mcp {
+                    let mut value = serde_json::to_value(descriptor).map_err(|error| error.to_string())?;
+                    if capability_id == crate::mcp_connection_authority::CONNECT_CAPABILITY {
+                        if let Some(reference) = input.get("connection_ref").and_then(Value::as_str) {
+                            if let Some(server) = self.mcp_server_registry.iter().find(|item| item["connection_ref"].as_str() == Some(reference)) {
+                                let server_name = server["display_name"]
+                                    .as_str()
+                                    .or_else(|| server["server_id"].as_str())
+                                    .unwrap_or("MCP");
+                                value["mcp_connect_server_name"] = Value::String(server_name.to_string());
+                                value["mcp_connect_server_id"] = server["server_id"].clone();
+                            }
+                        }
+                    }
+                    Some(value)
+                } else {
+                    None
+                };
                 let _catalog_evidence = crate::host_tool_permission_evidence::enter_with_mcp(json!({
                     "catalog_revision": self.catalog.revision,
                     "tool": {"tool_id": capability_id, "route": if descriptor.input_normalization.origin.kind

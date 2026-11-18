@@ -83,7 +83,7 @@ struct MacInspectorContextSummaryView: View {
             }
 
             if model.contextMeasurement != nil || model.promptCacheStatusText != nil {
-                DisclosureGroup(String(localized: "Details")) {
+                DisclosureGroup {
                     if let measurement = model.contextMeasurement {
                         Text("\(String(localized: "Request", table: "Permissions")): \(measurement.requestID)")
                             .font(.caption.monospaced())
@@ -162,8 +162,11 @@ struct MacInspectorContextSummaryView: View {
                             .font(.system(size: MacDesignTokens.Typography.inspectorCaption, weight: .medium, design: .monospaced))
                         }
                     }
+                } label: {
+                    Label(String(localized: "Details"), systemImage: "info.circle")
+                        .font(.system(size: 12.5, weight: .medium))
                 }
-                .disclosureGroupStyle(MacRowDisclosureStyle(toggleIdentifier: "mac-inspector-context-details", isPlain: true))
+                .disclosureGroupStyle(MacRowDisclosureStyle(toggleIdentifier: "mac-inspector-context-details"))
             }
         }
         .padding(.vertical, 3)

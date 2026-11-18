@@ -1344,7 +1344,6 @@ mod tool_source_lifecycle {
     use nola_store_port::content_upload::UploadOwner;
     use nola_store_port::replica_sync::{ApplyRemoteSyncPageInput, RemoteSyncChangeInput};
     use nola_store_port::tool_source::{ToolSourceProvenance, ToolSourceRepository};
-    use sha2::{Digest, Sha256};
 
     fn owner() -> CanonicalPartOwner {
         CanonicalPartOwner::new("c".into(), "m".into(), "p".into()).unwrap()
@@ -1403,7 +1402,6 @@ mod tool_source_lifecycle {
                 chunks(&raw).len() as u32,
             )
             .unwrap(),
-            body_sha256: format!("{:x}", Sha256::digest(raw.as_bytes())),
             derivation: None,
         };
         (claim, raw)
@@ -1546,10 +1544,19 @@ mod tool_source_lifecycle {
         upload(&mut uploads, "call-upload", &call.1);
         upload(&mut uploads, "result-upload", &result.1);
 
-        // 1. Bad upload digest is rejected before preparing any canonical text or archive reference.
+        // 1. Mismatched upload length is rejected before preparing any canonical text or archive reference.
         let before_progress = store.archive_restore_progress("restore").unwrap();
         let mut bad_claim = call.0.clone();
-        bad_claim.body_sha256 = "0".repeat(64);
+        bad_claim.body = CanonicalBodyReference::for_field(
+            bad_claim.body.content_id().into(),
+            "c".into(),
+            "m".into(),
+            "p".into(),
+            PartBodyField::ContentJson,
+            call.1.len() as u64 + 1,
+            chunks(&call.1).len() as u32,
+        )
+        .unwrap();
         assert!(stage_source(&mut store, &uploads, bad_claim, "call-upload", 2).is_err());
         assert_eq!(
             store.archive_restore_progress("restore").unwrap(),
@@ -1627,7 +1634,6 @@ mod tool_source_lifecycle {
             bindings.iter().zip([&call, &result]).enumerate()
         {
             assert_eq!(binding.source_item_id, claim.source_item_id);
-            assert_eq!(binding.body_sha256, claim.body_sha256);
             assert_ne!(binding.body.content_id(), claim.body.content_id());
             match &binding.provenance {
                 ToolSourceProvenance::Archive {

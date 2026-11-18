@@ -346,7 +346,7 @@ mod tests {
         assert!(!crate::tools::tool_schemas().iter().any(|schema| {
             schema.pointer("/function/name").and_then(Value::as_str) == Some("skill_update")
         }));
-        assert!(crate::tools::tool_schemas_for_host().iter().any(|schema| {
+        assert!(!crate::tools::tool_schemas_for_host().iter().any(|schema| {
             schema.pointer("/function/name").and_then(Value::as_str) == Some("skill_update")
         }));
     }

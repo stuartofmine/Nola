@@ -214,7 +214,7 @@ export function createConversationSubmissionController(options: {
                 retryQueuedWake(500);
                 return;
             }
-            await submit({text: '表单操作', attachments: [], language: get(locale)}, head.command_id);
+            await submit({text: t(get(locale), 'recovery.queuedFormAction'), attachments: [], language: get(locale)}, head.command_id);
         } catch {
             if (!disposed && !controller.signal.aborted && queuedWakeController === controller) {
                 state.error = 'chatPage.uncertain';

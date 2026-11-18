@@ -47,7 +47,7 @@
     {#if loading}<p role="status">{t($locale, 'chatPage.loading')}</p>{/if}
     {#if error}<p role="alert">{t($locale, error)}</p>{/if}
     {#if snapshot}
-        <label><input type="checkbox" checked={draft} onchange={change} disabled={loading || saving || uncertain} />{t($locale, 'settings.retrieval.enabled')}</label>
+        <label><input type="checkbox" role="switch" checked={draft} onchange={change} disabled={loading || saving || uncertain} />{t($locale, 'settings.retrieval.enabled')}</label>
         {#if saving}<p role="status">{t($locale, 'agentAccess.saving')}</p>{/if}
     {/if}
 </section>

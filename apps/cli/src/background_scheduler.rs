@@ -471,7 +471,7 @@ mod tests {
                 .unwrap(),
             )
             .unwrap();
-            let mut contract: nola_core::data_source::DataSourceContract =
+            let contract: nola_core::data_source::DataSourceContract =
                 serde_json::from_value(json!({
                     "sourceId": "web:fixture",
                     "connectorId": "test.web",
@@ -489,10 +489,8 @@ mod tests {
                     "maximumAgeMinutes": 60,
                     "validationState": "verified",
                     "validatedAt": "2026-07-16T09:30:00Z",
-                    "observedAt": "2026-07-16T09:30:00Z",
-                    "validationDigest": ""
+                    "observedAt": "2026-07-16T09:30:00Z"
                 })).unwrap();
-            contract.seal_validation();
             let validated: nola_application::DataSource = serde_json::from_value(
                 nola_application::execute_application_command(
                     &mut store,

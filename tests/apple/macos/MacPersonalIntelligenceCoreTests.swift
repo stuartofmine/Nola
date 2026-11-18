@@ -410,11 +410,12 @@ final class MacAgentHostEventContractTests: XCTestCase {
         XCTAssertEqual(plan.output.manifestDigest.count, 64)
         XCTAssertFalse(plan.output.enabledTools.isEmpty)
         for toolId in ["terminal_input", "language_service_list", "language_service_query",
-                       "append_file", "git_commit", "environment_probe", "skill_update", "skill_skip",
+                       "append_file", "git_commit", "environment_probe", "skill", "skill_skip",
                        "spawn_agent", "list_tasks", "read_task", "wait_task", "stop_task", "send_agent_message"] {
             XCTAssertTrue(plan.output.enabledTools.contains { $0.toolId == toolId },
                           "Native tool plan must retain the shared Host capability: \(toolId)")
         }
+        XCTAssertFalse(plan.output.enabledTools.contains { $0.toolId == "skill_update" })
         XCTAssertNotNil(plan.resolvedPermissionTool(
             toolId: "workspace_access", hostId: "local", clientId: "mac",
             sessionId: "local-session",

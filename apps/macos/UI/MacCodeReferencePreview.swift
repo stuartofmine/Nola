@@ -732,13 +732,8 @@ struct MacCodeReferenceInspector: View {
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 11, weight: .medium))
-                    .frame(width: 26, height: 26)
-                    .contentShape(Rectangle())
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .macToolbarIcon()
+            .menuStyle(MacToolbarMenuStyle(size: 32))
             .help(String(localized: "More"))
             .accessibilityLabel(String(localized: "More"))
 
@@ -752,7 +747,12 @@ struct MacCodeReferenceInspector: View {
         .padding(.horizontal, MacDesignTokens.Spacing.md)
         .padding(.vertical, MacDesignTokens.Spacing.sm)
         .frame(minHeight: MacDesignTokens.Control.pageHeader)
-        .background(MacDesignColor.chrome.opacity(0.96))
+        .background(MacDesignColor.inspector)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(MacDesignColor.borderSubtle)
+                .frame(height: 1)
+        }
     }
 
     @ViewBuilder

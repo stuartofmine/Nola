@@ -76,7 +76,7 @@ pub enum PartMutation {
     },
     AppendText {
         part_id: String,
-        expected_content_digest: String,
+        expected_prefix_bytes: u64,
         text: String,
         updated_at_ms: i64,
     },
@@ -133,7 +133,7 @@ mod tests {
             "messages":[{"execution_ownership":{"kind":"user"},"ordinal":2,"input":{"id":"m","run_id":"r","role":"assistant","status":"streaming",
                 "created_at_ms":3,"completed_at_ms":null,"initial_parts":[]}}],
             "parts":[{"message_id":"m","run_id":"r","mutation":{"type":"append_text","part_id":"p",
-                "expected_content_digest":"prefix","text":"next","updated_at_ms":3}}],"assistant_status":null})
+                "expected_prefix_bytes":6,"text":"next","updated_at_ms":3}}],"assistant_status":null})
     }
     #[test]
     fn source_execution_ownership_is_required() {

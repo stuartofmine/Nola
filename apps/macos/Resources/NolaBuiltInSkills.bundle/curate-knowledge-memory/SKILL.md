@@ -32,9 +32,9 @@ description: Propose, store, organize, merge, correct, expire, retrieve, export,
 - Separate transient context, current task state, inferred beliefs, and durable user-provided knowledge.
 - For every candidate, capture subject, fact, provenance, observed-at time, confidence, sensitivity, and intended retrieval scope. Set an expiry or review date only when the user or source explicitly supplied one; age alone is never evidence that a durable historical fact expires.
 
-## Progress contract
+## Execution record
 
-Use stable stages internally: identifying candidates, checking existing memory, resolving conflicts, requesting consent, writing changes, and verifying memory. The applicable stages depend on the operating mode, so do not create synthetic `skill_update` records for them. The actual memory tool calls and their canonical receipts are the execution record. Do not expose private memory content in generic progress text.
+Use stable stages internally: identifying candidates, checking existing memory, resolving conflicts, requesting consent, writing changes, and verifying memory. The actual memory tool calls and their canonical receipts are the execution record. Do not expose private memory content in generic progress text.
 
 ## Workflow
 

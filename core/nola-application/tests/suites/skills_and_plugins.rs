@@ -18,8 +18,6 @@ mod skill_catalog_e2e {
             summary: "Create a verified document".into(),
             category: "documents".into(),
             instructions_ref: format!("nola-skill://{id}/2026.08.17"),
-            instructions_digest: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
-                .into(),
             instructions_text: "hello".into(),
             required_tools: vec![CapabilityToolReference::Builtin {
                 tool_name: "write_file".into(),
@@ -70,7 +68,6 @@ mod skill_editor_receipt_e2e {
         SkillInput, SkillSource,
     };
     use serde_json::Value;
-    use sha2::{Digest, Sha256};
     use support::ApplicationRuntime;
 
     fn input(source: SkillSource, version: &str) -> SkillInput {
@@ -83,7 +80,6 @@ mod skill_editor_receipt_e2e {
             summary: "Read-only review".into(),
             category: "custom".into(),
             instructions_ref: "skill://review/SKILL.md".into(),
-            instructions_digest: format!("{:x}", Sha256::digest(instructions.as_bytes())),
             instructions_text: instructions.into(),
             required_tools: vec![],
             default_mode: None,
@@ -173,7 +169,7 @@ mod skill_editor_receipt_e2e {
         let mut valid = input(SkillSource::BuiltIn, "v1");
         valid.id = "new-builtin".into();
         let mut invalid = input(SkillSource::BuiltIn, "v1");
-        invalid.instructions_digest = "invalid".into();
+        invalid.instructions_text = "   ".into();
         assert!(submit(
             &mut runtime,
             "invalid-batch",
@@ -383,8 +379,8 @@ mod skill_editor_receipt_e2e {
         let edit = |revision, text: &str| SkillCommand::SetBuiltInInstructionsChecked {
             id: "review".into(),
             expected_revision: revision,
+            version: format!("override-{revision}"),
             instructions_ref: "skill://review/immutable-version/SKILL.md".into(),
-            instructions_digest: format!("{:x}", Sha256::digest(text.as_bytes())),
             instructions_text: text.into(),
             updated_at_ms: 60,
         };
@@ -410,11 +406,11 @@ mod skill_editor_receipt_e2e {
         assert!(submit(&mut runtime, "stale-save", edit(revision, "Lost update")).is_none());
         let mut invalid = edit(saved["revision"].as_i64().unwrap(), "Another update");
         if let SkillCommand::SetBuiltInInstructionsChecked {
-            instructions_digest,
+            instructions_text,
             ..
         } = &mut invalid
         {
-            *instructions_digest = "invalid".into();
+            *instructions_text = "   ".into();
         }
         assert!(submit(&mut runtime, "invalid-save", invalid).is_none());
         assert_eq!(editor(&mut runtime, "review"), saved);
@@ -454,8 +450,8 @@ mod skill_editor_receipt_e2e {
             SkillCommand::SetBuiltInInstructionsChecked {
                 id: "review".into(),
                 expected_revision: installed[0]["revision"].as_i64().unwrap(),
+                version: "override-v1".into(),
                 instructions_ref: "skill://review/user-version/SKILL.md".into(),
-                instructions_digest: format!("{:x}", Sha256::digest(text.as_bytes())),
                 instructions_text: text.into(),
                 updated_at_ms: 50,
             },
@@ -960,8 +956,8 @@ mod skill_editor_receipt_e2e {
         let command = SkillCommand::SetBuiltInInstructionsChecked {
             id: "review".into(),
             expected_revision: installed[0]["revision"].as_i64().unwrap(),
+            version: "override-v1".into(),
             instructions_ref: "skill://override".into(),
-            instructions_digest: format!("{:x}", Sha256::digest(text.as_bytes())),
             instructions_text: text.into(),
             updated_at_ms: 50,
         };

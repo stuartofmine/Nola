@@ -1363,4 +1363,25 @@
     <string name="expert_main_requires_tools">Elige un modelo principal con herramientas y habilita las herramientas de expertos, o quita los expertos seleccionados. Se conserva el borrador.</string>
     <string name="chat_context_budget_exceeded">La entrada y las herramientas superan el contexto. Amplía el límite o reduce adjuntos, historial y herramientas.</string>
     <string name="chat_run_blocked">La tarea no puede continuar. Abre el proceso para ver la información o acción necesaria.</string>
+    <string name="models_web_host_paste_setup">Pegar configuración de conexión</string>
+    <string name="models_web_host_invalid_setup">Copia la configuración de conexión desde Nola en el anfitrión y pégala aquí.</string>
+    <string name="permission_review_unavailable">Los detalles de la operación no están disponibles. Rechaza esta solicitud o pide al anfitrión una operación revisable.</string>
+    <string name="common_more">Más</string>
+    <string name="models_config_save_failed">No se pudo guardar la configuración del modelo.</string>
+    <string name="models_protocol_responses">Responses</string>
+    <string name="models_protocol_chat_completions">Chat Completions</string>
+    <string name="chat_rename_conversation">Renombrar conversación</string>
+    <string name="chat_conversation_title_hint">Título de la conversación</string>
+    <string name="chat_local_mcp_servers">Servidores MCP del dispositivo</string>
+    <string name="chat_local_mcp_empty">No hay servidores MCP del dispositivo configurados.</string>
+    <string name="goal_discard_pending">Descartar solicitud pendiente</string>
+    <string name="goal_constraints">Restricciones (opcional)</string>
+    <string name="goal_constraints_hint">Una restricción por línea o separadas por comas</string>
+    <string name="goal_next_wake_format">Próxima revisión: %1$s</string>
+    <string name="expert_conflict_refresh">El experto ha cambiado. Actualiza antes de intentarlo de nuevo.</string>
+    <string name="task_detail_unavailable">Detalles de la tarea no disponibles</string>
+    <string name="chat_ui_host_submission_rejected">El anfitrión rechazó el envío. Actualiza el formulario e inténtalo de nuevo.</string>
+    <string name="chat_ui_host_submission_unknown">El resultado del envío al anfitrión aún no se ha confirmado.</string>
+    <string name="chat_ui_submission_rejected">Se rechazó el envío.</string>
+    <string name="chat_ui_submission_unknown">El resultado del envío aún no se ha confirmado.</string>
 </resources>

@@ -64,8 +64,8 @@ struct MacUnknownEffectRecoveryView: View {
                 Picker(String(localized: "Operation to retry", table: "Chat"), selection: $selectedIndex) {
                     Text(String(localized: "Choose an operation", table: "Chat")).tag(nil as Int?)
                     ForEach(presentation.inspection.targets.indices, id: \.self) { index in
-                        // Only the public effect identity is shown, never lease or worker fences.
-                        Text(presentation.inspection.targets[index].effectID).tag(Optional(index))
+                        // Present user-friendly indexed labels rather than internal effect hashes/IDs.
+                        Text(String(format: "#%lld", Int64(index + 1))).tag(Optional(index))
                     }
                 }
                 TextField(String(localized: "Reason for this recovery decision", table: "Chat"), text: $reason, axis: .vertical)
@@ -92,7 +92,9 @@ struct MacUnknownEffectRecoveryView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     Text(String(localized: "Retry an operation with an unknown result?", table: "Chat")).font(.headline)
                     Text(String(localized: "The earlier attempt may already have changed files or external systems. Retrying can repeat those changes and cannot undo the earlier attempt.", table: "Chat"))
-                    Text(frozen.targets[0].effectID).textSelection(.enabled)
+                    let selectedStep = presentation.inspection.targets.firstIndex(of: frozen.targets[0])
+                        .map { String(format: "#%lld", Int64($0 + 1)) } ?? "#1"
+                    Text(verbatim: selectedStep).font(.callout.weight(.medium))
                     HStack {
                         Button(String(localized: "Cancel", table: "Chat")) { confirmation = nil }
                             .keyboardShortcut(.cancelAction)

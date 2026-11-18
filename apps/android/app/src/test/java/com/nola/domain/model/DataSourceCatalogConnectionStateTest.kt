@@ -69,8 +69,7 @@ class DataSourceCatalogConnectionStateTest {
                 method = DataSourceReadMethod.HttpGet,
                 operationId = "android.http.get",
                 outputSchemaJson = "{\"type\":\"string\"}"
-            ),
-            validationDigest = "catalog-fixture"
+            )
         )
     )
 }

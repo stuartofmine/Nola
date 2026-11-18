@@ -136,10 +136,10 @@
         {#if workerError}<p class="error" role="alert">{t($locale, workerError)}</p>{/if}
         {#if workerNotice}<p role="status">{t($locale, workerNotice)}</p>{/if}
         {#if draft && settings}<fieldset disabled={busy || workerLoading || !!editing}>
-            <label class="toggle"><input type="checkbox" bind:checked={draft.enabled} />{t($locale, 'messaging.enabled')}</label>
+            <label class="toggle"><input type="checkbox" role="switch" bind:checked={draft.enabled} />{t($locale, 'messaging.enabled')}</label>
             <label>{t($locale, 'messaging.backend_url')}<input bind:value={draft.backend_url} placeholder="https://api.example.com" autocomplete="off" /></label>
             <label>{t($locale, 'messaging.token')}<input type="password" bind:value={token} disabled={clearToken} autocomplete="new-password" spellcheck="false" /></label>
-            <label class="toggle"><input type="checkbox" bind:checked={clearToken} onchange={() => { if (clearToken) token = ''; }} />{t($locale, 'messaging.clearToken')}</label>
+            <label class="toggle"><input type="checkbox" role="switch" bind:checked={clearToken} onchange={() => { if (clearToken) token = ''; }} />{t($locale, 'messaging.clearToken')}</label>
             <p class="muted">{t($locale, settings.has_access_token ? 'messaging.tokenSaved' : 'messaging.tokenMissing')} · {t($locale, 'messaging.tokenHint')}</p>
             <label>{t($locale, 'messaging.execution_backend')}<select bind:value={draft.execution_backend}><option value="nola">Nola</option>{#if draft.execution_backend !== 'nola'}<option value={draft.execution_backend}>{draft.execution_backend}</option>{/if}</select></label>
             <div class="fields">{#each workerFields as field}<label>{t($locale, `messaging.${field}`)}<input bind:value={draft[field]} inputmode={field === 'project_root' ? 'text' : 'numeric'} /></label>{/each}</div>
@@ -162,7 +162,7 @@
         </select></label>{#if !baseline}<p class="muted">{t($locale, 'messaging.providerReset')}</p>{/if}
         <div class="fields">{#each commonFields as field}<label>{t($locale, `messaging.${field}`)}<input bind:value={editing[field]} readonly={field === 'connection_id' && !!baseline} autocomplete="off" spellcheck="false" /></label>{/each}
             {#each Object.hasOwn(providerFields, editing.kind) ? providerFields[editing.kind] : [] as field}<label>{t($locale, `messaging.${field}`)}<input value={typeof editing.provider_config[field] === 'string' ? editing.provider_config[field] : ''} oninput={event => { if (editing) editing.provider_config[field] = event.currentTarget.value; }} autocomplete="off" /></label>{/each}
-        </div><label class="toggle"><input type="checkbox" bind:checked={editing.enabled} />{t($locale, 'messaging.enableConnection')}</label></fieldset>
+        </div><label class="toggle"><input type="checkbox" role="switch" bind:checked={editing.enabled} />{t($locale, 'messaging.enableConnection')}</label></fieldset>
         {#if callback}<div><p class="muted">{t($locale, 'messaging.callback')}</p><code>{callback}</code><button type="button" onclick={copyCallback}>{t($locale, 'shell.markdown.copy')}</button>{#if copyNotice}<p role="status">{t($locale, copyNotice)}</p>{/if}</div>{/if}
         <p class="muted">{t($locale, 'messaging.applyHint')}</p><div class="actions"><button type="button" disabled={busy} onclick={() => close()}>{t($locale, 'shell.cancel')}</button><button class="primary" disabled={busy}>{t($locale, saving ? 'models.saving' : editing.enabled ? 'messaging.apply' : 'models.save')}</button></div>
     </form>{/if}

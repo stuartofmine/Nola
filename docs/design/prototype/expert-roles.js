@@ -299,7 +299,7 @@ const experts = [
     {id:'expert-code',name:'代码助手',description:'代码实现与验证',revision:1,defaults:{modelSelectionID:'five-level',selectedPromptTemplateID:catalog.templates[0].id}}
 ];
 const selections = {}, members = {}, observed = {}, retainedContexts = [];
-let editor = null, pendingRole = null, pendingMention = null, counter = 0, highlighted = 0, closing = null;
+let editor = null, inlineMode = 'builtin', inlineBuiltinId = catalog.templates[0]?.id || '', inlineExpertId = experts[0]?.id || '', inlineDraft = null, pendingRole = null, pendingMention = null, counter = 0, highlighted = 0, closing = null;
 const title = role => role.name.zh || role.name.en;
 const roleFor = id => catalog.templates.find(role=>role.id===id);
 const owner = () => current()?.id;
@@ -413,6 +413,10 @@ function bind(root) {
         root.querySelector('#er-model').onchange=()=>{readEditor();root.querySelector('#er-effort').innerHTML=effortOptions();root.querySelector('#er-effort-note').textContent=efforts(editor.modelID).length?'档位仅来自所选演示模型的声明。':'未声明推理档位，仅可选择自动。';};
         root.querySelector('#er-editor').onsubmit=e=>{e.preventDefault();save();};
     }
+    if(root.querySelector('#er-inline-editor')) {
+        root.querySelector('#er-in-role').onchange=()=>{readInlineEditor();render();};
+        root.querySelector('#er-in-model').onchange=()=>{readInlineEditor();render();};
+    }
     const input=root.querySelector('#compose');if(!input)return;
     if(!input.dataset.expertRoleBound){input.dataset.expertRoleBound='true';input.addEventListener('input',()=>{highlighted=0;paintComposer();});input.addEventListener('keydown',e=>{const panel=input.closest('form')?.querySelector('.er-mentions');if(!panel)return;const candidates=[...panel.querySelectorAll('[data-er-mention]')];if(['ArrowDown','ArrowUp','Enter','Escape'].includes(e.key)){e.preventDefault();e.stopImmediatePropagation();if(e.key==='Escape'){panel.remove();return;}if(e.key==='Enter'){if(candidates[highlighted])choose(candidates[highlighted].dataset.erMention,input);return;}highlighted=(highlighted+(e.key==='ArrowDown'?1:-1)+candidates.length)%Math.max(1,candidates.length);paintComposer();}},true);}
     paintComposer();
@@ -426,6 +430,26 @@ function handle(a) {
     }
     if(a==='im:agents'){directory();return true;}
     if(a==='experts'||a==='im:participants'){picker();return true;}
+    if(a.startsWith('er-inline:')){
+        const [sub,val]=a.slice('er-inline:'.length).split(':');
+        if(sub==='builtin'){inlineMode='builtin';inlineBuiltinId=val;inlineDraft=null;render();}
+        else if(sub==='edit'){const ex=experts.find(e=>e.id===val);if(ex){inlineMode='edit';inlineExpertId=val;inlineDraft={id:ex.id,isNew:false,name:ex.name,description:ex.description,modelID:ex.defaults.modelSelectionID||'inherit',effort:ex.defaults.expertReasoningEffort||'automatic',templateID:ex.defaults.selectedPromptTemplateID||'',previewRole:roleFor(ex.defaults.selectedPromptTemplateID)?.id||''};render();}}
+        else if(sub==='new'||sub==='copy'){const base=sub==='copy'?roleFor(val):null;inlineMode='edit';inlineExpertId='expert-created-'+(++counter);inlineDraft={id:inlineExpertId,isNew:true,name:base?title(base)+'（副本）':'',description:base?(base.description.zh||base.description.en):'',modelID:'inherit',effort:'automatic',templateID:base?base.id:'',previewRole:base?base.id:''};render();}
+        else if(sub==='apply-role'&&inlineDraft){const role=roleFor(inlineDraft.previewRole);if(role){inlineDraft.templateID=role.id;if(!inlineDraft.name.trim())inlineDraft.name=title(role);if(!inlineDraft.description.trim())inlineDraft.description=role.description.zh||role.description.en;render();}}
+        else if(sub==='save'&&inlineDraft){
+            readInlineEditor();
+            if(!inlineDraft.name.trim()){toast('请填写专家名称');return true;}
+            if(inlineDraft.effort!=='automatic'&&!efforts(inlineDraft.modelID).includes(inlineDraft.effort)){toast('请选择此模型声明的档位，或使用自动');return true;}
+            let ex=experts.find(e=>e.id===inlineDraft.id);
+            if(!ex){ex={id:inlineDraft.id,revision:0,defaults:{}};experts.push(ex);}
+            ex.name=inlineDraft.name.trim();ex.description=inlineDraft.description.trim();ex.revision++;
+            ex.defaults={...ex.defaults,modelSelectionID:inlineDraft.modelID};
+            if(inlineDraft.templateID)ex.defaults.selectedPromptTemplateID=inlineDraft.templateID;else delete ex.defaults.selectedPromptTemplateID;
+            if(inlineDraft.effort==='automatic')delete ex.defaults.expertReasoningEffort;else ex.defaults.expertReasoningEffort=inlineDraft.effort;
+            inlineDraft.isNew=false;render();toast('专家配置已更新；已有上下文保留原快照');
+        }
+        return true;
+    }
     if(!a.startsWith('er:'))return false;
     const [kind,id]=a.slice(3).split(':');
     if(kind==='builtin')builtin(id);if(kind==='copy'){editor=null;edit();editor.previewRole=id;applyRole();}if(kind==='manage')directory();if(kind==='picker')picker();if(kind==='edit')edit(id);if(kind==='new'){editor=null;edit();}
@@ -469,5 +493,25 @@ function sendContext(id) {
     for(const agentID of selected(id))if(!map[agentID]){const e=experts.find(e=>e.id===agentID);if(e)map[agentID]={revision:e.revision,contextID:'demo-context:'+id+':'+e.id+':'+e.revision,participantID:'demo-member:'+id+':'+e.id+':'+e.revision,displayName:e.name,messages:[]};}
     return {mainExpertSelection:{version:1,selected_experts:selected(id).map(agentID=>({agent_id:agentID,agent_revision:map[agentID]?.revision,participant_id:map[agentID]?.participantID||null,context_conversation_id:map[agentID]?.contextID||null}))}};
 }
-return {demoMainReply:id=>(selections[id]||[]).includes('expert-code')?'我请代码审查专家核对了重试与取消流程，并整理出两处优先修改的问题。\n\n1. 取消后，较早请求的回调仍可能覆盖新结果。应按会话与请求版本校验，再提交状态。\n\n2. 保存失败时，编辑稿被提前清空。应收到持久保存回执后再消费草稿，失败保留输入。\n\n建议先修这两处，再验证取消后重试、保存失败恢复和快速切换会话。专家的核对记录可在本会话的任务详情中查看。': '我整理了专家返回的核对结果。先保留用户正在做的事与现有草稿，再把需要确认的权限和失败恢复放到对应操作旁；详细核对记录可在本会话的专家任务中查看。',handle,bind,validateSend,sendContext,childContexts,continueChild,fixtures:{catalog,profiles,defaultProfileID},snapshot:()=>({experts:structuredClone(experts),selections:structuredClone(selections),members:structuredClone(members),retainedContexts:structuredClone(retainedContexts)})};
+function readInlineEditor() {
+    if(!inlineDraft)return;
+    const root=document.querySelector('#er-inline-editor');if(!root)return;
+    inlineDraft.name=root.querySelector('#er-in-name')?.value??inlineDraft.name;
+    inlineDraft.description=root.querySelector('#er-in-description')?.value??inlineDraft.description;
+    inlineDraft.modelID=root.querySelector('#er-in-model')?.value??inlineDraft.modelID;
+    inlineDraft.effort=root.querySelector('#er-in-effort')?.value??inlineDraft.effort;
+    inlineDraft.previewRole=root.querySelector('#er-in-role')?.value??inlineDraft.previewRole;
+}
+function embeddedEffortOptions(modelID, effort) {
+    const declared=efforts(modelID),valid=effort==='automatic'||declared.includes(effort);
+    return `<option value="automatic" ${effort==='automatic'?'selected':''}>${effortNames.automatic}</option>${declared.map(v=>`<option value="${v}" ${effort===v?'selected':''}>${effortNames[v]||esc(v)}</option>`).join('')}${valid?'':`<option value="${esc(effort)}" selected disabled>当前值不受此模型支持 · ${esc(effort)}</option>`}`;
+}
+function embeddedView() {
+    const builtinRole = roleFor(inlineBuiltinId) || catalog.templates[0];
+    const draft = inlineDraft;
+    const currentRole = draft ? roleFor(draft.templateID) : null;
+    const previewRole = draft ? roleFor(draft.previewRole) : null;
+    return `<div class="er-embedded"><aside class="er-embedded-list" aria-label="专家目录"><div class="er-list-head"><h3>系统内置角色</h3></div><div class="er-list-group">${catalog.templates.map(r=>`<button type="button" class="er-list-row ${inlineMode==='builtin'&&inlineBuiltinId===r.id?'selected':''}" data-action="er-inline:builtin:${esc(r.id)}"><strong>${esc(title(r))}</strong><small>${esc(r.description.zh||r.description.en)}</small></button>`).join('')}</div><div class="er-list-head"><h3>自定义专家</h3><button type="button" class="text-action" data-action="er-inline:new">+ 新建专家</button></div><div class="er-list-group">${experts.map(e=>`<button type="button" class="er-list-row ${inlineMode==='edit'&&inlineExpertId===e.id?'selected':''}" data-action="er-inline:edit:${esc(e.id)}"><strong>${esc(e.name)}</strong><small>${esc(e.description)}</small></button>`).join('')}</div></aside><section class="er-embedded-detail" aria-label="专家配置详情">${inlineMode==='builtin'&&builtinRole?`<div class="er-detail-head"><div><div class="eyebrow">内置角色模板 · 只读</div><h2>${esc(title(builtinRole))}</h2><p class="muted">${esc(builtinRole.description.zh||builtinRole.description.en)}</p></div><button type="button" class="primary" data-action="er-inline:copy:${esc(builtinRole.id)}">创建可编辑副本</button></div><div class="er-detail-block"><h3>系统提示词</h3><pre>${esc(builtinRole.prompt)}</pre></div><div class="er-detail-block"><h3>工作流工具组合 · ${esc(builtinRole.tool_pack.id)}</h3><ul class="er-tools">${builtinRole.tool_pack.tools.map(t=>`<li><code>${esc(t)}</code></li>`).join('')}</ul><p class="dialog-note">工作流指引不等于直接授予系统权限。</p></div><div class="er-detail-block"><h3>配套 Skill（${builtinRole.skills.length}）</h3>${builtinRole.skills.map(s=>`<article class="er-skill-card"><strong>${esc(s.name.zh||s.name.en)}</strong><p>${esc(s.instructions)}</p></article>`).join('')}</div>`:(draft?`<form id="er-inline-editor"><div class="er-detail-head"><div><div class="eyebrow">${draft.isNew?'新建专家':'自定义专家'}</div><h2>${esc(draft.name||'未命名专家')}</h2></div><button type="button" class="primary" data-action="er-inline:save">保存专家</button></div><label class="er-field" for="er-in-name"><span>专家名称</span><input id="er-in-name" value="${esc(draft.name)}"></label><label class="er-field" for="er-in-description"><span>职责与擅长</span><textarea id="er-in-description">${esc(draft.description)}</textarea></label><div class="er-form-row"><label class="er-field" for="er-in-model"><span>模型</span><select id="er-in-model">${profiles.map(p=>`<option value="${p.id}" ${draft.modelID===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select></label><label class="er-field" for="er-in-effort"><span>推理档位</span><select id="er-in-effort">${embeddedEffortOptions(draft.modelID,draft.effort)}</select></label></div><label class="er-field" for="er-in-role"><span>角色模板</span><select id="er-in-role"><option value="">保留当前配置</option>${catalog.templates.map(r=>`<option value="${r.id}" ${draft.previewRole===r.id?'selected':''}>${esc(title(r))}</option>`).join('')}</select></label><p class="er-template-state">当前提示词：${esc(currentRole?title(currentRole):draft.templateID?'自定义模板':'继承默认模板')}</p>${previewRole?`<div class="er-role-preview"><p>${esc(previewRole.description.zh||previewRole.description.en)}</p><button type="button" class="text-action" data-action="er-inline:apply-role">${draft.templateID===previewRole.id?'已应用此角色':'应用此角色模板'}</button></div>`:''}<p class="dialog-note">修改仅影响此后引入的新上下文；已加入会话的专家保留原配置快照。</p></form>`:'<p class="muted">从左侧选择角色或专家。</p>')}</section></div>`;
+}
+return {demoMainReply:id=>(selections[id]||[]).includes('expert-code')?'我请代码审查专家核对了重试与取消流程，并整理出两处优先修改的问题。\n\n1. 取消后，较早请求的回调仍可能覆盖新结果。应按会话与请求版本校验，再提交状态。\n\n2. 保存失败时，编辑稿被提前清空。应收到持久保存回执后再消费草稿，失败保留输入。\n\n建议先修这两处，再验证取消后重试、保存失败恢复和快速切换会话。专家的核对记录可在本会话的任务详情中查看。': '我整理了专家返回的核对结果。先保留用户正在做的事与现有草稿，再把需要确认的权限和失败恢复放到对应操作旁；详细核对记录可在本会话的专家任务中查看。',embeddedView,readInlineEditor,handle,bind,validateSend,sendContext,childContexts,continueChild,fixtures:{catalog,profiles,defaultProfileID},snapshot:()=>({experts:structuredClone(experts),selections:structuredClone(selections),members:structuredClone(members),retainedContexts:structuredClone(retainedContexts)})};
 })();

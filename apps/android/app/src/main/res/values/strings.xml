@@ -1376,4 +1376,22 @@
     <string name="expert_main_requires_tools">Choose a main model that supports tools and enable expert tools, or remove the selected experts. Your draft is preserved.</string>
     <string name="chat_context_budget_exceeded">The input and tool descriptions exceed the context window. Increase the model context limit, or reduce attachments, history, and enabled tools before retrying.</string>
     <string name="chat_run_blocked">The task cannot continue yet. Expand the process to review the required information or action.</string>
+    <string name="common_more">More</string>
+    <string name="models_config_save_failed">The model configuration could not be saved.</string>
+    <string name="models_protocol_responses">Responses</string>
+    <string name="models_protocol_chat_completions">Chat Completions</string>
+    <string name="chat_rename_conversation">Rename conversation</string>
+    <string name="chat_conversation_title_hint">Conversation title</string>
+    <string name="chat_local_mcp_servers">Device MCP servers</string>
+    <string name="chat_local_mcp_empty">No device MCP servers configured.</string>
+    <string name="goal_discard_pending">Discard pending request</string>
+    <string name="goal_constraints">Constraints (optional)</string>
+    <string name="goal_constraints_hint">One constraint per line or comma-separated</string>
+    <string name="goal_next_wake_format">Next check: %1$s</string>
+    <string name="expert_conflict_refresh">The expert changed. Refresh before trying again.</string>
+    <string name="task_detail_unavailable">Task detail unavailable</string>
+    <string name="chat_ui_host_submission_rejected">The host rejected the submission. Refresh the form and try again.</string>
+    <string name="chat_ui_host_submission_unknown">The host submission outcome has not been confirmed yet.</string>
+    <string name="chat_ui_submission_rejected">The submission was rejected.</string>
+    <string name="chat_ui_submission_unknown">The submission outcome has not been confirmed yet.</string>
 </resources>

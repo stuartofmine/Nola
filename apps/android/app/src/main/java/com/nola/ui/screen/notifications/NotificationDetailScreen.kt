@@ -2,6 +2,7 @@ package com.nola.ui.screen.notifications
 
 import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -18,12 +20,11 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -42,6 +43,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -51,9 +53,11 @@ import com.nola.R
 import com.nola.data.local.db.entity.NotificationEntity
 import com.nola.ui.components.NolaCard
 import com.nola.ui.components.NolaColors
+import com.nola.ui.components.NolaDisclosureChevron
 import com.nola.ui.components.NolaIconBadge
 import com.nola.ui.components.NolaSpacing
 import com.nola.ui.components.NolaTopAppBar
+import com.nola.ui.components.rememberReduceMotionEnabled
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
@@ -153,7 +157,29 @@ fun NotificationDetailScreen(
                 Spacer(Modifier.height(NolaSpacing.md))
 
                 NolaCard {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    val toggleLabel = stringResource(
+                        if (showsTechnicalDetails) R.string.notifications_hide_technical
+                        else R.string.notifications_show_technical
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .then(
+                                if (hasTechnicalDetails) {
+                                    Modifier.clickable(
+                                        role = Role.Button,
+                                        onClickLabel = toggleLabel,
+                                        onClick = { showsTechnicalDetails = !showsTechnicalDetails }
+                                    )
+                                } else {
+                                    Modifier
+                                }
+                            )
+                            .padding(horizontal = 4.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text(
                             stringResource(R.string.notifications_details),
                             style = MaterialTheme.typography.titleSmall,
@@ -161,15 +187,10 @@ fun NotificationDetailScreen(
                             modifier = Modifier.weight(1f)
                         )
                         if (hasTechnicalDetails) {
-                            IconButton(onClick = { showsTechnicalDetails = !showsTechnicalDetails }) {
-                                Icon(
-                                    if (showsTechnicalDetails) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                                    stringResource(
-                                        if (showsTechnicalDetails) R.string.notifications_hide_technical
-                                        else R.string.notifications_show_technical
-                                    )
-                                )
-                            }
+                            NolaDisclosureChevron(
+                                expanded = showsTechnicalDetails,
+                                reduceMotion = rememberReduceMotionEnabled()
+                            )
                         }
                     }
                     InfoRow(stringResource(R.string.notifications_source), notificationDetailSourceLabel(notification.source))

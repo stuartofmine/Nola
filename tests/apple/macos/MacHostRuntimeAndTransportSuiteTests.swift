@@ -90,10 +90,9 @@ final class MacTransportGateProtocolAndRuntimePolicySuiteTests: XCTestCase {
 
         let subIdentity = AppleRemoteSubmissionIdentity(source_host_id: "host", client_id: "client",
             conversation_id: "conversation", submission_id: "run", user_message_id: "user", assistant_message_id: "assistant")
-        let cancelObj = try AppleRemoteCancellationRequest(identity: subIdentity, requestDigest: "digest").object()
-        XCTAssertEqual(Set(cancelObj.keys), ["identity", "request_digest"])
+        let cancelObj = try AppleRemoteCancellationRequest(identity: subIdentity).object()
+        XCTAssertEqual(Set(cancelObj.keys), ["identity"])
         XCTAssertEqual((cancelObj["identity"] as? [String: Any])?["submission_id"] as? String, "run")
-        XCTAssertThrowsError(try AppleRemoteCancellationRequest(identity: subIdentity, requestDigest: ""))
 
         let permCmd = SetConversationPermissionCommand(conversationID: "conversation", expectedRevision: 7,
             expectedRunID: nil, expectedSourceHostID: nil, profile: "cautious", updatedAtMs: 100)

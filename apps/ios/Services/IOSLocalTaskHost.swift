@@ -136,18 +136,29 @@ actor IOSLocalTaskHost {
                 throw IOSExpertTaskPreparationError(exchangeID: request.objectFields?["payload"]?.objectFields?["input"]?.objectFields?["exchange_id"]?.stringScalar ?? "",
                     reason: "The expert Task action outcome could not be confirmed", taskMayExist: true)
             }
-            let wait: Int64
-            switch fields["wait_ms"] {
-            case .number(let value): guard let count = Int64(exactly: value) else { throw IOSApplicationRuntimeError.invalidResponse }; wait = count
-            case .signedInteger(let value): wait = value
-            case .unsignedInteger(let value): guard let count = Int64(exactly: value) else { throw IOSApplicationRuntimeError.invalidResponse }; wait = count
-            default: throw IOSApplicationRuntimeError.invalidResponse
-            }
-            guard (0...30_000).contains(wait) else { throw IOSApplicationRuntimeError.invalidResponse }
+            let wait = try Self.boundedWaitMilliseconds(from: fields["wait_ms"])
             if deadline == nil { deadline = clock.now.advanced(by: .milliseconds(wait)) }
             if terminal || wait == 0 || clock.now >= deadline! { return response }
             try await clock.sleep(until: min(deadline!, clock.now.advanced(by: .milliseconds(250))))
         }
+    }
+
+    private static func boundedWaitMilliseconds(from value: AgentCoreJSONValue?) throws -> Int64 {
+        let wait: Int64
+        switch value {
+        case .number(let number):
+            guard let count = Int64(exactly: number) else { throw IOSApplicationRuntimeError.invalidResponse }
+            wait = count
+        case .signedInteger(let integer):
+            wait = integer
+        case .unsignedInteger(let integer):
+            guard let count = Int64(exactly: integer) else { throw IOSApplicationRuntimeError.invalidResponse }
+            wait = count
+        default:
+            throw IOSApplicationRuntimeError.invalidResponse
+        }
+        guard (0...300_000).contains(wait) else { throw IOSApplicationRuntimeError.invalidResponse }
+        return wait
     }
 
     func guide(_ request: AgentCoreJSONValue) throws -> AgentCoreJSONValue {
@@ -163,10 +174,10 @@ actor IOSLocalTaskHost {
             let value = try store.executeAgentCommand(.object(["type": .string("observe_mobile_task"),
                 "input": .object(["request": request, "now_ms": .signedInteger(Self.now())])]))
             guard let fields = value.objectFields, let response = fields["response"],
-                  case .bool(let terminal)? = fields["terminal"],
-                  case .number(let wait)? = fields["wait_ms"] else { throw IOSApplicationRuntimeError.invalidResponse }
-            if deadline == nil { deadline = clock.now.advanced(by: .milliseconds(Int64(wait))) }
-            if terminal || clock.now >= deadline! { return response }
+                  case .bool(let terminal)? = fields["terminal"] else { throw IOSApplicationRuntimeError.invalidResponse }
+            let wait = try Self.boundedWaitMilliseconds(from: fields["wait_ms"])
+            if deadline == nil { deadline = clock.now.advanced(by: .milliseconds(wait)) }
+            if terminal || wait == 0 || clock.now >= deadline! { return response }
             try await clock.sleep(until: min(deadline!, clock.now.advanced(by: .milliseconds(250))))
         }
     }

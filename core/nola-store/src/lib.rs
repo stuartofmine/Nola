@@ -623,7 +623,7 @@ fn permission_grant_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredPermi
 
 const SKILL_SELECT_SQL_BASE: &str =
     "SELECT d.id, d.source, d.current_version, d.display_name, d.summary, d.category,
-            v.instructions_ref, v.instructions_digest, v.instructions_text,
+            v.instructions_ref, v.instructions_text,
             v.required_tools_json, v.default_mode, d.enabled, d.created_at_ms,
             d.updated_at_ms, d.deleted_at_ms, d.revision
      FROM skill_definitions d
@@ -631,7 +631,7 @@ const SKILL_SELECT_SQL_BASE: &str =
        ON v.skill_id = d.id AND v.version = d.current_version";
 const SKILL_SELECT_SQL: &str =
     "SELECT d.id, d.source, d.current_version, d.display_name, d.summary, d.category,
-            v.instructions_ref, v.instructions_digest, v.instructions_text,
+            v.instructions_ref, v.instructions_text,
             v.required_tools_json, v.default_mode, d.enabled, d.created_at_ms,
             d.updated_at_ms, d.deleted_at_ms, d.revision
      FROM skill_definitions d
@@ -647,12 +647,6 @@ fn validate_skill_input(input: &UpsertSkillInput) -> StoreResult<()> {
     if input.instructions_text.trim().is_empty() {
         return Err(StoreError::Invariant(
             "Skill instructions must not be empty".to_string(),
-        ));
-    }
-    let actual_digest = format!("{:x}", Sha256::digest(input.instructions_text.as_bytes()));
-    if input.instructions_digest != actual_digest {
-        return Err(StoreError::Invariant(
-            "Skill instructions_digest does not match instructions_text".to_string(),
         ));
     }
     if let Some(required_tools_json) = &input.required_tools_json {
@@ -674,15 +668,14 @@ fn register_immutable_skill_version(
     connection: &Connection,
     input: &UpsertSkillInput,
 ) -> StoreResult<()> {
-    let existing: Option<(String, String, String, Option<String>, Option<String>)> = connection.query_row(
-        "SELECT instructions_ref,instructions_digest,instructions_text,required_tools_json,default_mode
+    let existing: Option<(String, String, Option<String>, Option<String>)> = connection.query_row(
+        "SELECT instructions_ref,instructions_text,required_tools_json,default_mode
          FROM skill_versions WHERE skill_id=?1 AND version=?2",
         params![input.id, input.version],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
     ).optional()?;
     let incoming = (
         input.instructions_ref.clone(),
-        input.instructions_digest.clone(),
         input.instructions_text.clone(),
         input.required_tools_json.clone(),
         input.default_mode.clone(),
@@ -697,14 +690,13 @@ fn register_immutable_skill_version(
         return Ok(());
     }
     connection.execute(
-        "INSERT INTO skill_versions(skill_id,version,instructions_ref,instructions_digest,
+        "INSERT INTO skill_versions(skill_id,version,instructions_ref,
             instructions_text,required_tools_json,default_mode,created_at_ms)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+         VALUES (?1,?2,?3,?4,?5,?6,?7)",
         params![
             input.id,
             input.version,
             input.instructions_ref,
-            input.instructions_digest,
             input.instructions_text,
             input.required_tools_json,
             input.default_mode,
@@ -735,14 +727,13 @@ fn skill_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredSkill> {
         summary: row.get(4)?,
         category: row.get(5)?,
         instructions_ref: row.get(6)?,
-        instructions_digest: row.get(7)?,
-        instructions_text: row.get(8)?,
-        required_tools_json: row.get(9)?,
-        default_mode: row.get(10)?,
-        enabled: row.get::<_, i64>(11)? != 0,
-        created_at_ms: row.get(12)?,
-        updated_at_ms: row.get(13)?,
-        deleted_at_ms: row.get(14)?,
+        instructions_text: row.get(7)?,
+        required_tools_json: row.get(8)?,
+        default_mode: row.get(9)?,
+        enabled: row.get::<_, i64>(10)? != 0,
+        created_at_ms: row.get(11)?,
+        updated_at_ms: row.get(12)?,
+        deleted_at_ms: row.get(13)?,
     })
 }
 
@@ -758,7 +749,7 @@ fn skill_projection_with_revision(
 ) -> StoreResult<Option<(StoredSkill, i64)>> {
     transaction
         .query_row(SKILL_SELECT_SQL, params![id], |row| {
-            Ok((skill_row(row)?, row.get(15)?))
+            Ok((skill_row(row)?, row.get(14)?))
         })
         .optional()
         .map_err(StoreError::from)
@@ -777,7 +768,6 @@ fn replace_skill_projection(
         summary: skill.summary.clone(),
         category: skill.category.clone(),
         instructions_ref: skill.instructions_ref.clone(),
-        instructions_digest: skill.instructions_digest.clone(),
         instructions_text: skill.instructions_text.clone(),
         required_tools_json: skill.required_tools_json.clone(),
         default_mode: skill.default_mode.clone(),
@@ -801,16 +791,15 @@ fn replace_skill_projection(
             "a Skill cannot change ownership source".to_string(),
         ));
     }
-    let existing_version: Option<(String, String, String, Option<String>, Option<String>)> = transaction
+    let existing_version: Option<(String, String, Option<String>, Option<String>)> = transaction
         .query_row(
-            "SELECT instructions_ref,instructions_digest,instructions_text,required_tools_json,default_mode
+            "SELECT instructions_ref,instructions_text,required_tools_json,default_mode
              FROM skill_versions WHERE skill_id=?1 AND version=?2",
             params![skill.id, skill.version],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         ).optional()?;
     let incoming = (
         skill.instructions_ref.clone(),
-        skill.instructions_digest.clone(),
         skill.instructions_text.clone(),
         skill.required_tools_json.clone(),
         skill.default_mode.clone(),
@@ -838,14 +827,13 @@ fn replace_skill_projection(
     )?;
     if existing_version.is_none() {
         transaction.execute(
-            "INSERT INTO skill_versions(skill_id,version,instructions_ref,instructions_digest,
+            "INSERT INTO skill_versions(skill_id,version,instructions_ref,
                 instructions_text,required_tools_json,default_mode,created_at_ms)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+             VALUES(?1,?2,?3,?4,?5,?6,?7)",
             params![
                 skill.id,
                 skill.version,
                 skill.instructions_ref,
-                skill.instructions_digest,
                 skill.instructions_text,
                 skill.required_tools_json,
                 skill.default_mode,

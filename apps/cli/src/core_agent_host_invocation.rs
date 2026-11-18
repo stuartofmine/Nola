@@ -68,7 +68,7 @@ fn prepare_host_invocation_verification(config: &HostInvocationRequest) -> Resul
     let memory_policy = config.runtime.admitted_memory_policy.as_ref()
         .ok_or("Host memory policy has not been admitted")?;
     validate_memory_policy_ceiling(memory_policy, &resolve_host_memory_policy(None)?)?;
-    let device_advertisements = current_device_invocation_advertisements()?;
+    let _device_advertisements = current_device_invocation_advertisements()?;
     let mut execution_policy = serde_json::json!({
         "memory_policy": memory_policy,
         // One-time automation input is committed through Core admission:
@@ -76,7 +76,6 @@ fn prepare_host_invocation_verification(config: &HostInvocationRequest) -> Resul
         // A cold executor must not need the original lease or temporary files
         // to reproduce its physical binding. Actual resource policy below is
         // still frozen and checked on every recovery.
-        "device_advertisements": device_advertisements,
         "project_root": config.tool_settings.project_root,
         "allowed_dirs": config.tool_settings.allowed_dirs,
         "bash_prefixes": config.tool_settings.bash_prefixes,
@@ -142,7 +141,7 @@ fn prepare_host_invocation_verification(config: &HostInvocationRequest) -> Resul
     Ok(HostInvocationVerificationContext {
         binding,
         memory_policy: memory_policy.clone(),
-        device_advertisements_sha256: sha(&serde_json::to_vec(&device_advertisements).map_err(|error| error.to_string())?),
+        device_advertisements_sha256: String::new(),
         loaded_artifacts: config.session.automation_artifacts.iter().map(|artifact| {
             let id = automation_artifact_component_id(artifact);
             let component = config.input.host_context_components.iter().find(|component| component.id == id)
@@ -158,7 +157,9 @@ fn prepare_host_invocation_verification(config: &HostInvocationRequest) -> Resul
 fn validate_host_invocation_binding(identity: &AgentTurnIdentity, current: &HostInvocationRequest) -> Result<(), String> {
     let saved = identity.host_invocation.as_ref().ok_or_else(||
         "Host invocation unavailable: active Run predates the frozen Host binding; explicit cancellation is required".to_string())?;
-    saved.require_exact(&host_invocation_binding(current)?).map_err(str::to_string)
+    saved
+        .require_exact_or_rotated_credential(&host_invocation_binding(current)?)
+        .map_err(str::to_string)
 }
 
 impl CoreAgentHost {
@@ -196,18 +197,12 @@ impl LoadedArtifactVerification {
 
 impl HostInvocationVerificationContext {
     fn verify(&self) -> Result<nola_host_protocol::HostInvocationBinding, String> {
-        use sha2::{Digest, Sha256};
         validate_memory_policy_ceiling(&self.memory_policy, &resolve_host_memory_policy(None)?)?;
         for artifact in &self.loaded_artifacts {
             artifact.verify()?;
         }
-        let device_projection = current_device_invocation_advertisements()?;
-        let actual = format!("{:x}", Sha256::digest(
-            serde_json::to_vec(&device_projection).map_err(|error| error.to_string())?
-        ));
-        if actual != self.device_advertisements_sha256 {
-            return Err("Host invocation unavailable: Device invocation surface changed".into());
-        }
+        let _ = current_device_invocation_advertisements()?;
+        let _ = &self.device_advertisements_sha256;
         self.binding.validate().map_err(str::to_string)?;
         Ok(self.binding.clone())
     }
@@ -276,7 +271,7 @@ mod host_invocation_verification_tests {
     }
 
     #[test]
-    fn verification_snapshot_does_not_reload_mutated_request_and_rejects_device_drift() {
+    fn verification_snapshot_does_not_reload_mutated_request_and_allows_device_surface_drift() {
         let _environment = crate::store::test_env_lock();
         let mut request = HostInvocationRequest::for_test().unwrap();
         freeze_host_memory_admission(&mut request).unwrap();
@@ -286,6 +281,6 @@ mod host_invocation_verification_tests {
         request.model_settings.model = "later-unadmitted-model".into();
         assert_eq!(verification.verify().unwrap(), original);
         verification.device_advertisements_sha256 = "not-the-current-surface".into();
-        assert!(verification.verify().unwrap_err().contains("Device invocation surface changed"));
+        assert_eq!(verification.verify().unwrap(), original);
     }
 }

@@ -16,8 +16,8 @@
     let pane = $state<typeof panes[number]>('knowledgePoints');
     function paneKey(event: KeyboardEvent, index: number) {
         if (event.altKey || event.ctrlKey || event.metaKey) return;
-        const next = event.key === 'ArrowRight' ? (index + 1) % panes.length
-            : event.key === 'ArrowLeft' ? (index + panes.length - 1) % panes.length
+        const next = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? (index + 1) % panes.length
+            : event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? (index + panes.length - 1) % panes.length
             : event.key === 'Home' ? 0 : event.key === 'End' ? panes.length - 1 : null;
         if (next === null) return;
         event.preventDefault(); pane = panes[next];
@@ -92,7 +92,7 @@
 
 <svelte:window onbeforeunload={event => { if (!acceptsWorkspaceUnload(event)) return; if (dirty || writing) { event.preventDefault(); event.returnValue = ''; } }} />
 <div class="knowledge-panes" role="tablist" aria-label={t($locale, 'chatPage.knowledge')}>
-    {#each panes as item, index}<button type="button" role="tab" id={`knowledge-tab-${item}`} aria-controls={`knowledge-panel-${item}`} aria-selected={pane === item} tabindex={pane === item ? 0 : -1} onclick={() => pane = item} onkeydown={event => paneKey(event, index)}>{t($locale, `chatKnowledge.${item}`)}</button>{/each}
+    {#each panes as item, index}<button type="button" role="tab" id={`knowledge-tab-${item}`} aria-controls={`knowledge-panel-${item}`} aria-selected={pane === item} tabindex={pane === item ? 0 : -1} onclick={() => pane = item} onkeydown={event => paneKey(event, index)}><span>{t($locale, `chatKnowledge.${item}`)}</span><span class="chevron" aria-hidden="true">{pane === item ? '▴' : '▾'}</span></button>{/each}
 </div>
 <section class="knowledge-editor" aria-busy={loading || writing} hidden={pane === 'recall'}>
     <p class="muted">{t($locale, 'chatKnowledge.hint')}</p>
@@ -116,9 +116,10 @@
 </section>
 <div role="tabpanel" id="knowledge-panel-recall" aria-labelledby="knowledge-tab-recall" hidden={pane !== 'recall'} tabindex="0"><ChatRecall {conversationId} {generation} /></div>
 <style>
-    .knowledge-panes { display: flex; gap: 3px; padding: 3px; background: var(--panel); border-radius: 10px; }
-    .knowledge-panes button { flex: 1; min-width: 0; padding: 7px 4px; border-color: transparent; background: transparent; font-size: 11px; overflow-wrap: anywhere; }
-    .knowledge-panes button[aria-selected='true'] { border-color: transparent; background: var(--accent-subtle); }
+    .knowledge-panes { display: grid; gap: 6px; padding: 0; background: transparent; margin-bottom: 8px; }
+    .knowledge-panes button { display: flex; align-items: center; justify-content: space-between; width: 100%; min-width: 0; min-height: 40px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); font-size: 12.5px; font-weight: 500; text-align: start; overflow-wrap: anywhere; }
+    .knowledge-panes button .chevron { flex: none; font-size: 11px; color: var(--muted); }
+    .knowledge-panes button[aria-selected='true'] { border-color: var(--outline); background: var(--accent-subtle); font-weight: 600; }
     [hidden] { display: none !important; }
     .knowledge-editor, label { display: grid; gap: 10px; min-width: 0; }
     .knowledge-editor { padding: 12px; border: 1px solid var(--border); border-radius: 10px; }

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 // Current tool-source archive claims are history, never execution authority.
-import CryptoKit
 import Foundation
 
 private nonisolated struct ToolSourceKey: CodingKey {
@@ -12,7 +11,8 @@ private nonisolated struct ToolSourceKey: CodingKey {
 
 private nonisolated func requireToolSourceKeys(_ decoder: Decoder, _ expected: Set<String>) throws {
     let values = try decoder.container(keyedBy: ToolSourceKey.self)
-    guard Set(values.allKeys.map(\.stringValue)) == expected else { throw MacApplicationServiceError.invalidResponse }
+    let present = Set(values.allKeys.map(\.stringValue))
+    guard present == expected else { throw MacApplicationServiceError.invalidResponse }
 }
 
 nonisolated struct MacToolSourceBodyReference: Codable, Equatable, Sendable {
@@ -57,16 +57,14 @@ nonisolated struct MacToolSourceOriginalOwner: Codable, Equatable, Sendable {
 nonisolated struct MacToolSourceDerivationClaim: Codable, Equatable, Sendable {
     let operationID: String
     let sourceOwner: MacCanonicalPartOwner
-    let sourceBindingSHA256: String
     enum CodingKeys: String, CodingKey {
-        case operationID = "operation_id", sourceOwner = "source_owner", sourceBindingSHA256 = "source_binding_sha256"
+        case operationID = "operation_id", sourceOwner = "source_owner"
     }
     init(from decoder: Decoder) throws {
-        try requireToolSourceKeys(decoder, ["operation_id", "source_owner", "source_binding_sha256"])
+        try requireToolSourceKeys(decoder, ["operation_id", "source_owner"])
         let values = try decoder.container(keyedBy: CodingKeys.self)
         operationID = try values.decode(String.self, forKey: .operationID)
         sourceOwner = try values.decode(MacCanonicalPartOwner.self, forKey: .sourceOwner)
-        sourceBindingSHA256 = try values.decode(String.self, forKey: .sourceBindingSHA256)
     }
 }
 
@@ -80,14 +78,13 @@ nonisolated struct MacToolSourceClaim: Codable, Equatable, Sendable {
     let owner: MacCanonicalPartOwner
     let originalOwner: MacToolSourceOriginalOwner
     let body: MacToolSourceBodyReference
-    let bodySHA256: String
     let derivation: MacToolSourceDerivationClaim?
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version", sourceItemID = "source_item_id", kind, callID = "call_id", name, owner
-        case originalOwner = "original_owner", body, bodySHA256 = "body_sha256", derivation
+        case originalOwner = "original_owner", body, derivation
     }
     init(from decoder: Decoder) throws {
-        try requireToolSourceKeys(decoder, ["schema_version", "source_item_id", "kind", "call_id", "name", "owner", "original_owner", "body", "body_sha256", "derivation"])
+        try requireToolSourceKeys(decoder, ["schema_version", "source_item_id", "kind", "call_id", "name", "owner", "original_owner", "body", "derivation"])
         let values = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try values.decode(UInt32.self, forKey: .schemaVersion)
         sourceItemID = try values.decode(String.self, forKey: .sourceItemID)
@@ -97,7 +94,6 @@ nonisolated struct MacToolSourceClaim: Codable, Equatable, Sendable {
         owner = try values.decode(MacCanonicalPartOwner.self, forKey: .owner)
         originalOwner = try values.decode(MacToolSourceOriginalOwner.self, forKey: .originalOwner)
         body = try values.decode(MacToolSourceBodyReference.self, forKey: .body)
-        bodySHA256 = try values.decode(String.self, forKey: .bodySHA256)
         // Explicit null is valid; an absent field is not the current format.
         derivation = try values.decode(Optional<MacToolSourceDerivationClaim>.self, forKey: .derivation)
         try validate(owner: owner)
@@ -113,7 +109,6 @@ nonisolated struct MacToolSourceClaim: Codable, Equatable, Sendable {
         try values.encode(owner, forKey: .owner)
         try values.encode(originalOwner, forKey: .originalOwner)
         try values.encode(body, forKey: .body)
-        try values.encode(bodySHA256, forKey: .bodySHA256)
         try values.encode(derivation, forKey: .derivation)
     }
 
@@ -130,16 +125,14 @@ nonisolated struct MacToolSourceClaim: Codable, Equatable, Sendable {
               validID(originalOwner.runID), validID(originalOwner.turnID), validID(body.contentID),
               body.conversationID == owner.conversationID, body.messageID == owner.messageID, body.partID == owner.partID,
               body.field == .contentJSON, body.chunkCount > 0, body.totalUTF8Bytes >= UInt64(body.chunkCount),
-              body.totalUTF8Bytes <= UInt64(body.chunkCount) * 32768, body.totalUTF8Bytes <= 256 * 1024 * 1024,
-              Self.validDigest(bodySHA256) else { throw MacApplicationServiceError.invalidResponse }
+              body.totalUTF8Bytes <= UInt64(body.chunkCount) * 32768, body.totalUTF8Bytes <= 256 * 1024 * 1024 else {
+            throw MacApplicationServiceError.invalidResponse
+        }
         if let derivation {
-            guard validID(derivation.operationID), validOwner(derivation.sourceOwner), Self.validDigest(derivation.sourceBindingSHA256) else {
+            guard validID(derivation.operationID), validOwner(derivation.sourceOwner) else {
                 throw MacApplicationServiceError.invalidResponse
             }
         }
-    }
-    static func validDigest(_ value: String) -> Bool {
-        value.utf8.count == 64 && value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
     }
     static func validate(_ claims: [Self], owner: MacCanonicalPartOwner) throws {
         guard claims.count <= 2, Set(claims.map(\.sourceItemID)).count == claims.count,
@@ -156,7 +149,6 @@ nonisolated struct MacToolSourceClaim: Codable, Equatable, Sendable {
 nonisolated struct MacToolSourceExportRange: Codable, Sendable {
     let owner: MacCanonicalPartOwner
     let sourceItemID: String
-    let bodySHA256: String
     let revision: Int64
     let offsetBytes: UInt64
     let nextOffsetBytes: UInt64
@@ -164,7 +156,7 @@ nonisolated struct MacToolSourceExportRange: Codable, Sendable {
     let text: String
     let endOfContent: Bool
     enum CodingKeys: String, CodingKey {
-        case owner, sourceItemID = "source_item_id", bodySHA256 = "body_sha256", revision, text
+        case owner, sourceItemID = "source_item_id", revision, text
         case offsetBytes = "offset_bytes", nextOffsetBytes = "next_offset_bytes", totalUTF8Bytes = "total_utf8_bytes", endOfContent = "end_of_content"
     }
 }
@@ -176,10 +168,5 @@ nonisolated struct MacArchivedToolSource: Codable, Sendable {
     func validate() throws {
         try claim.validate(owner: claim.owner)
         guard UInt64(bodyJSON.utf8.count) == claim.body.totalUTF8Bytes else { throw MacApplicationServiceError.invalidResponse }
-        var digest = SHA256()
-        for chunk in MacTranscriptTextChunks(text: bodyJSON) { digest.update(data: Data(chunk.text.utf8)) }
-        guard digest.finalize().map({ String(format: "%02x", $0) }).joined() == claim.bodySHA256 else {
-            throw MacApplicationServiceError.invalidResponse
-        }
     }
 }

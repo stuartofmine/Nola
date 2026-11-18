@@ -192,9 +192,13 @@ fn execute_plan_before_deadline(request: &MemoryWorkerRequest) -> Result<Value, 
     }
     let (sender, receiver) = mpsc::sync_channel(1);
     let owned_request = request.clone();
-    thread::spawn(move || {
-        let _ = sender.send(execute_plan_with_retry(&owned_request));
-    });
+    thread::Builder::new()
+        .name("nola-memory-worker".to_string())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
+            let _ = sender.send(execute_plan_with_retry(&owned_request));
+        })
+        .map_err(|error| format!("failed to spawn memory worker: {error}"))?;
     receiver
         .recv_timeout(remaining)
         .map_err(|error| match error {

@@ -17,7 +17,6 @@ nonisolated struct MacCanonicalSkillInput: Codable, Sendable {
     let summary: String
     let category: String
     let instructionsRef: String
-    let instructionsDigest: String
     let instructionsText: String
     let requiredTools: [MacCoreCapabilityToolReference]
     let defaultMode: MacCoreSkillExecutionMode?
@@ -34,7 +33,6 @@ nonisolated struct MacCanonicalSkill: Codable, Equatable, Sendable {
     let summary: String
     let category: String
     let instructionsRef: String
-    let instructionsDigest: String
     let instructionsText: String
     let requiredTools: [MacCoreCapabilityToolReference]
     let defaultMode: MacCoreSkillExecutionMode?
@@ -47,7 +45,6 @@ nonisolated struct MacCanonicalSkill: Codable, Equatable, Sendable {
         case id, source, version, summary, category, enabled
         case displayName = "display_name"
         case instructionsRef = "instructions_ref"
-        case instructionsDigest = "instructions_digest"
         case instructionsText = "instructions_text"
         case requiredTools = "required_tools"
         case defaultMode = "default_mode"

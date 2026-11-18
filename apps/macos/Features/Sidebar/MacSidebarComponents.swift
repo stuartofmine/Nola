@@ -83,37 +83,6 @@ struct MacSidebarIconButtonBody<Label: View>: View {
     }
 }
 
-/// App-wide destinations have a single home; contained features remain searchable.
-struct MacWorkspaceResourceNavigation: View {
-    @Binding var search: String
-    let selection: MacWorkspaceSection
-    let open: (MacWorkspaceSection) -> Void
-    private var destinations: [MacWorkspaceSection] {
-        let candidates = search.isEmpty ? MacWorkspaceSection.resourceNavigationSections
-            : MacWorkspaceSection.resourceNavigationSections + [.memory, .automations]
-        return candidates.filter { search.isEmpty || String(localized: String.LocalizationValue($0.titleKey))
-            .localizedCaseInsensitiveContains(search) }
-    }
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            TextField(String(localized: "Search"), text: $search).textFieldStyle(.roundedBorder)
-                .padding(.bottom, 8)
-            ForEach(destinations) { section in
-                Button { open(section) } label: {
-                    Label(section.title, systemImage: section.symbol)
-                        .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
-                        .padding(.horizontal, 8).contentShape(Rectangle())
-                }
-                .buttonStyle(MacSidebarNavigationButtonStyle(isSelected: selection == section || selection.resourceNavigationOwner == section))
-                .accessibilityIdentifier("workspace.resource." + section.rawValue)
-            }
-            Spacer()
-            Divider()
-            MacWorkspaceSettingsRow(isSelected: selection == .settings) { open(.settings) }
-        }.padding(12)
-    }
-}
-
 struct MacWorkspaceSettingsRow: View {
     let isSelected: Bool
     let action: () -> Void
@@ -131,11 +100,8 @@ struct MacWorkspaceSettingsRow: View {
 
 struct MacConversationRow: View {
     let conversation: MacConversation
-    let isSelected: Bool
     let loadParticipantNames: (String) async throws -> [String]
     @State private var participantNames: [String] = []
-    @State private var isHovering = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 8) {
@@ -176,12 +142,7 @@ struct MacConversationRow: View {
         .padding(.vertical, 8)
         .frame(minHeight: 40)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(!isSelected && isHovering ? MacDesignColor.hover : .clear,
-                    in: RoundedRectangle(cornerRadius: MacDesignTokens.Radius.control))
-        .macSelectionHighlight(isSelected: isSelected)
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .onHover { isHovering = $0 }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.17), value: isHovering)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(MacConversationTitlePolicy.displayTitle(
             conversation.title,

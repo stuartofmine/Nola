@@ -33,7 +33,7 @@
 <style>
     .permission-mode { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; min-width: 0; padding: 0; color: var(--muted); font-size: 12px; }
     label { display: flex; align-items: center; gap: 8px; min-height: var(--control-hit-size); font-weight: 600; white-space: nowrap; }
-    select { width: auto; max-width: 150px; min-width: 0; padding: 3px 7px; font-size: 12px; }
+    select { width: auto; max-width: 200px; min-width: 0; padding: 4px 28px 4px 10px; font-size: 12px; }
     button { padding: 3px 8px; font-size: 12px; }
     .scope { white-space: normal; }
     select, button { min-height: max(28px, var(--control-hit-size)); }

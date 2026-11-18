@@ -4,7 +4,6 @@ fn concise_discovery_and_saved_output_descriptions_preserve_contracts() {
     for (name, budget, required) in [
         ("tool_search", 300, vec!["activate", "does not execute or grant permission", "exposed schemas"]),
         ("Skill", 220, vec!["exact advertised Skill ID", "neither executes nor delegates"]),
-        ("skill_update", 260, vec!["Core-supplied", "Never invent IDs"]),
         ("tool_output_read", 600, vec!["exact full_output_ref", "preview_end_byte_offset", "next_offset", "unread ranges do not prove full coverage"]),
     ] {
         let spec = specs.iter().find(|spec| spec.name == name).unwrap();

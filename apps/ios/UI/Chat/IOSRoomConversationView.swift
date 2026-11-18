@@ -32,6 +32,7 @@ struct IOSRoomConversationView: View {
     var body: some View {
         VStack(spacing: 0) {
             IOSAgentRoomTimeline(workspace: roomWorkspace,
+                peerExchanges: roomWorkspace.room.flatMap { submission.peerExchanges[$0.room.id] } ?? [],
                 submissions: roomWorkspace.room.flatMap { submission.submissions[$0.room.id] } ?? [],
                 pending: roomWorkspace.room.flatMap { submission.pending[$0.room.id] } ?? [],
                 onRetry: submission.retry, onCancelPending: submission.cancelPending)

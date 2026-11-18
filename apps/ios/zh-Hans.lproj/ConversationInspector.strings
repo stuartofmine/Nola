@@ -49,3 +49,5 @@
 "goal.cancel_explanation" = "此目标的自动执行将停止，对话和已完成的结果会保留。";
 
 "inspector.conversation_needed" = "请先开始或打开一个对话，再查看进度或设置目标。";
+"goal.discard" = "放弃";
+"goal.paused_reply_hint" = "已暂停等待补充。可在聊天中直接回复或点击继续。";

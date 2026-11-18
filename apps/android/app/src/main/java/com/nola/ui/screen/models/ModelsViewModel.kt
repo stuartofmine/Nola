@@ -282,6 +282,8 @@ class ModelsViewModel @Inject constructor(
                         connectionTestSucceeded = true
                     )
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 publishStatus(context.getString(R.string.models_test_failed_format, e.message ?: ""), false)
             } finally {
@@ -306,6 +308,8 @@ class ModelsViewModel @Inject constructor(
 
                 val modelCount = openAiProvider.testConnection(endpoint, apiKey)
                 publishStatus(context.getString(R.string.models_test_ok_format, modelCount), true)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 publishStatus(context.getString(R.string.models_test_failed_format, e.message ?: ""), false)
             } finally {
@@ -482,8 +486,10 @@ class ModelsViewModel @Inject constructor(
                     openAiProvider.config = openAiProvider.config?.copy(executionCapabilities = capabilities)
                 }
                 null
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (failure: Exception) {
-                failure.localizedMessage ?: "The model configuration could not be saved"
+                failure.localizedMessage ?: context.getString(R.string.models_config_save_failed)
             }
             onResult(error)
         }
@@ -505,6 +511,8 @@ class ModelsViewModel @Inject constructor(
                         connectionTestSucceeded = true,
                     )
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (error: Throwable) {
                 publishStatus(context.getString(R.string.models_test_failed_format, error.message.orEmpty()), false)
             } finally {
@@ -514,10 +522,12 @@ class ModelsViewModel @Inject constructor(
     }
 
     fun stopLocalModel() {
-        localLlamaProvider.stop()
-        if (_uiState.value.selectedModelSource == ModelInfo.ModelSource.Local) {
-            modelService.usePlaceholder()
-            _uiState.update { it.copy(selectedModelId = null, selectedModelSource = null) }
+        viewModelScope.launch {
+            localLlamaProvider.stopAsync()
+            if (_uiState.value.selectedModelSource == ModelInfo.ModelSource.Local) {
+                modelService.usePlaceholder()
+                _uiState.update { it.copy(selectedModelId = null, selectedModelSource = null) }
+            }
         }
     }
 
@@ -526,6 +536,8 @@ class ModelsViewModel @Inject constructor(
             try {
                 deviceModelStore.delete(model.id, _uiState.value.runningLocalModelId)
                 loadModels()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (error: Throwable) {
                 publishStatus(context.getString(R.string.models_delete_failed_format, error.message.orEmpty()), false)
             }
@@ -559,6 +571,8 @@ class ModelsViewModel @Inject constructor(
                 }
                 loadModels()
                 publishStatus(context.getString(R.string.models_download_complete_format, entry.displayName), true)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (error: Throwable) {
                 publishStatus(context.getString(R.string.models_download_failed_format, error.message.orEmpty()), false)
             } finally {

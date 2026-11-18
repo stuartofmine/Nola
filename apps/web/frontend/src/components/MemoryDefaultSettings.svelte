@@ -47,7 +47,7 @@
     {#if loading}<p role="status">{t($locale, 'chatPage.loading')}</p>{/if}
     {#if error}<p role="alert">{t($locale, error)}</p>{/if}
     {#if snapshot}
-        <label><input type="checkbox" checked={draft} onchange={change} disabled={loading || saving || uncertain || (!snapshot.hostAllowed && !draft)} />{t($locale, 'settings.memory.enabled')}</label>
+        <label><input type="checkbox" role="switch" checked={draft} onchange={change} disabled={loading || saving || uncertain || (!snapshot.hostAllowed && !draft)} />{t($locale, 'settings.memory.enabled')}</label>
         {#if !snapshot.hostAllowed}<p role="status">{t($locale, 'settings.memory.denied')}</p>{/if}
         {#if saving}<p role="status">{t($locale, 'agentAccess.saving')}</p>{/if}
     {/if}

@@ -254,6 +254,14 @@ nonisolated final class MacAgentRoomService: Sendable {
         return page
     }
 
+    func peerExchanges(conversationID: String, limit: Int = 100, offset: Int = 0) throws -> AppleExpertPeerExchanges {
+        let result: AppleExpertPeerExchanges = try command(["type": .string("peer_exchanges"),
+            "conversation_id": .string(conversationID), "limit": .signedInteger(Int64(limit)),
+            "offset": .signedInteger(Int64(offset))])
+        try result.validate(contextID: conversationID, offset: offset)
+        return result
+    }
+
     struct UserMessageAdmission: Codable, Equatable, Sendable {
         let conversationID: String
         let messageID: String

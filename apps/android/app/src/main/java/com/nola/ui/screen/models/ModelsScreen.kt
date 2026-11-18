@@ -66,7 +66,8 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import com.nola.ui.components.NolaRadioOption
 import com.nola.ui.components.NolaIconButton
-import androidx.compose.material3.Switch
+import com.nola.ui.components.NolaSwitch
+import com.nola.ui.components.NolaDisclosureBar
 import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -515,7 +516,7 @@ private fun ModelExecutionCapabilitiesSheet(
             ).forEach { (label, checked, update) ->
                 Row(Modifier.fillMaxWidth().toggleable(value = checked, enabled = !saving, role = Role.Switch, onValueChange = update).heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(stringResource(label), modifier = Modifier.weight(1f))
-                    Switch(checked = checked, onCheckedChange = null, enabled = !saving)
+                    NolaSwitch(checked = checked, onCheckedChange = null, enabled = !saving)
                 }
             }
             Text(stringResource(R.string.models_execution_output_field), style = MaterialTheme.typography.titleSmall)
@@ -712,6 +713,9 @@ fun ModelRow(
                 Column(
                     modifier = Modifier
                         .weight(1f)
+                        .clip(RoundedCornerShape(NolaRadius.md))
+                        .clickable(enabled = !isActivating) { onClick() }
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
                         .testTag(MODEL_ROW_COPY_TEST_TAG_PREFIX + model.id)
                 ) {
                     Text(
@@ -1147,11 +1151,21 @@ private fun EndpointConfigFields(
             keyboardOptions = KeyboardOptions(autoCorrect = false, imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus(); keyboard?.hide() }),
             modifier = Modifier.fillMaxWidth().testTag("model.setup.modelID"))
-        TextButton(modifier = Modifier.heightIn(min = 48.dp), onClick = { advanced = !advanced }) { Text(stringResource(R.string.models_advanced_configuration)) }
+        NolaDisclosureBar(
+            title = stringResource(R.string.models_advanced_configuration),
+            expanded = advanced,
+            onToggle = { advanced = !advanced }
+        )
         if (advanced) {
             ModelWireProtocol.entries.forEach { value ->
-                NolaRadioOption(label = if (value == ModelWireProtocol.Responses) "Responses" else "Chat Completions",
-                    selected = protocol == value, enabled = !saving) { protocol = value }
+                NolaRadioOption(
+                    label = stringResource(
+                        if (value == ModelWireProtocol.Responses) R.string.models_protocol_responses
+                        else R.string.models_protocol_chat_completions
+                    ),
+                    selected = protocol == value,
+                    enabled = !saving
+                ) { protocol = value }
             }
         }
         Text(stringResource(R.string.models_manual_setup_summary), style = MaterialTheme.typography.bodySmall,

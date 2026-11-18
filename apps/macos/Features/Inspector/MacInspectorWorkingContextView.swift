@@ -84,21 +84,40 @@ struct MacInspectorWorkingContextView: View {
                 }
             }
           } else {
-            VStack(alignment: .leading, spacing: 4) {
-                Picker(String(localized: "Long-term Memory"), selection: $model.memoryEnabledOverride) {
-                    Text(String(localized: "Default")).tag(Bool?.none)
-                    Text(String(localized: "Enabled")).tag(Optional(true))
-                    Text(String(localized: "Disabled")).tag(Optional(false))
-                }
-                .accessibilityIdentifier("mac-inspector-memory-override")
+            VStack(alignment: .leading, spacing: 6) {
+                MacHorizontalDropdownBar(
+                    symbol: "brain.head.profile",
+                    title: String(localized: "Long-term Memory"),
+                    selectionTitle: memoryOverrideDisplayTitle,
+                    identifier: "mac-inspector-memory-override",
+                    options: [
+                        MacDropdownOption(
+                            id: "default",
+                            title: String(localized: "Default"),
+                            isSelected: model.memoryEnabledOverride == nil
+                        ) {
+                            model.memoryEnabledOverride = nil
+                        },
+                        MacDropdownOption(
+                            id: "enabled",
+                            title: String(localized: "Enabled"),
+                            isSelected: model.memoryEnabledOverride == true
+                        ) {
+                            model.memoryEnabledOverride = true
+                        },
+                        MacDropdownOption(
+                            id: "disabled",
+                            title: String(localized: "Disabled"),
+                            isSelected: model.memoryEnabledOverride == false
+                        ) {
+                            model.memoryEnabledOverride = false
+                        }
+                    ]
+                )
                 Text(String(localized: "Use long-term memory and preferences learned across conversations."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                if model.memoryEnabledOverride == nil {
-                    Text("\(String(localized: "Default")): \(displayedMemoryDefault.map { $0 ? String(localized: "Enabled") : String(localized: "Disabled") } ?? String(localized: "Loading"))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                    .padding(.horizontal, 2)
             }
             MacInspectorToggleRow(
                 symbol: "text.magnifyingglass",
@@ -120,6 +139,21 @@ struct MacInspectorWorkingContextView: View {
             let retrieval = await model.retrievalDefaultForDisplay()
             guard !Task.isCancelled else { return }
             displayedRetrievalDefault = retrieval
+        }
+    }
+
+    private var memoryOverrideDisplayTitle: String {
+        switch model.memoryEnabledOverride {
+        case .some(true):
+            return String(localized: "Enabled")
+        case .some(false):
+            return String(localized: "Disabled")
+        case .none:
+            if let displayedMemoryDefault {
+                let fallback = displayedMemoryDefault ? String(localized: "Enabled") : String(localized: "Disabled")
+                return "\(String(localized: "Default")) · \(fallback)"
+            }
+            return String(localized: "Default")
         }
     }
 }

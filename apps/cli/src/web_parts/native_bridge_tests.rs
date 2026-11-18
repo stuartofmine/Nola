@@ -374,10 +374,6 @@ mod host_permission_broker_tests {
         }))).unwrap().contains("Content SHA-256:"));
         assert!(host_permission_safe_review_text(&request("bash", json!({"command":"python3 -m unittest discover -s tests", "cwd":"/tmp/owned-project", "operation_kind":"execute"})))
             .unwrap().contains("Command: python3 -m unittest"));
-        let skill_progress = host_permission_safe_review_text(&request("skill_update", json!({
-            "action":"progress", "run_id":"analyze-data", "step_id":"inspect", "completed":true
-        }))).unwrap();
-        assert!(skill_progress.contains("analyze-data"));
         let source = "text(12.50 + 7.50 - 2);\ntext('done');";
         assert!(host_permission_safe_review_text(&request("code_mode_exec", json!({"source":source})))
             .unwrap().contains(source));
@@ -739,6 +735,50 @@ fn web_skill_runtime_honors_host_roots_without_granting_filesystem_access() {
     apply_agent_tool_settings(&mut config, &settings);
     assert_eq!(config.allowed_dirs, allowed);
     assert_eq!(config.skill_dirs, Some(vec![root]));
+}
+
+#[cfg(test)]
+#[test]
+fn web_skill_runtime_resolves_canonical_file_reference_when_managed_root_lacks_skill() {
+    let fixture = tempfile::tempdir().unwrap();
+    let bundle_dir = fixture.path().join("bundle").join("create-visual-art");
+    std::fs::create_dir_all(&bundle_dir).unwrap();
+    let skill_file = bundle_dir.join("SKILL.md");
+    std::fs::write(
+        &skill_file,
+        "---\nname: create-visual-art\ndescription: Bundle visual art skill\n---\nBundle instructions.\n",
+    )
+    .unwrap();
+    let file_uri = url::Url::from_file_path(&skill_file).unwrap().to_string();
+
+    let mut settings = AgentSettings::default();
+    settings.builtin_skill_overrides = crate::builtin_skills::user_facing_ids()
+        .into_iter()
+        .map(|id| {
+            if id == "create-visual-art" {
+                json!({
+                    "id": id,
+                    "enabled": true,
+                    "removed": false,
+                    "revision": 19,
+                    "instructions_ref": file_uri,
+                })
+            } else {
+                json!({
+                    "id": id,
+                    "enabled": false,
+                    "removed": false,
+                })
+            }
+        })
+        .collect();
+
+    let skills = web_skill_runtime_for_settings(None, &settings).unwrap();
+    assert_eq!(skills.configured_dirs(), Some(std::slice::from_ref(&bundle_dir)));
+    let indexed = skills.index().unwrap();
+    assert_eq!(indexed.len(), 1);
+    assert_eq!(indexed[0]["id"], "create-visual-art");
+    assert_eq!(indexed[0]["description"], "Bundle visual art skill");
 }
 
 #[cfg(test)]

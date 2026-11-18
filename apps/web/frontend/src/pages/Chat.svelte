@@ -367,7 +367,7 @@
         const selected = owner();
         if (!canInteract) return { status: 'rejected', message: t($locale, 'chatPage.taskReadOnly') };
         if (!selected || interaction.identity.owner.conversation_id !== selected.conversationId)
-            return { status: 'rejected', message: '会话已切换，请返回原会话操作。' };
+            return { status: 'rejected', message: t($locale, 'chatPage.conversationSwitched') };
         const controller = submissionController;
         const result = await api<UiSubmissionOutcome & { receipt?: { snapshot: UiSnapshot; queued_submission_id?: string | null } }>(
             `/api/chat/conversations/${encodeURIComponent(selected.conversationId)}/ui-interactions`, {
@@ -715,7 +715,7 @@
             }
             if(!current())return;
             expertSubmissions=incoming.sort((a,b)=>a.input.at_ms-b.input.at_ms||a.input.submission_id.localeCompare(b.input.submission_id));
-        } catch {if(current())expertError='Unable to refresh the complete expert history.';}
+        } catch {if(current())expertError=t($locale, 'chatPage.expertHistoryRefreshFailed');}
     }
     async function toggleExpert(agentId: string, mentionDraft?: string) {
         if (!canInteract || !active || !expertDirectory || expertsLoading) return;
@@ -925,7 +925,7 @@
         if (attachmentsReading || knowledgeSavePending || busy || expertAdmissionPending || !active || (!draft.trim() && !attachments.length)) return;
         try { expertRetryIntent=loadExpertIntent(localStorage,{hostId,clientId},active.conversationId);expertIntentStorageError=''; }
         catch(cause){expertIntentStorageError=cause instanceof Error?cause.message:String(cause);return;}
-        if (expertRetryIntent) { expertError = 'Retry the original pending expert message before sending a new message.'; return; }
+        if (expertRetryIntent) { expertError = t($locale, 'chatPage.expertRetryPendingFirst'); return; }
         const selected = [...selectedExperts], conversationId = active.conversationId;
         let selectedReferences:ReturnType<typeof mainExpertSelections>;
         try { selectedReferences=mainExpertSelections(expertRoom,selected); }
@@ -994,14 +994,14 @@
             const deliveries = await Promise.allSettled(receipts.map(receipt => roomCommand<RoomSubmission>({type:'submit',input:receipt.input})));
             if (!current()) return;
             deliveries.forEach((result,index)=>{
-                if (result.status === 'rejected') throw new Error('Some expert deliveries are unconfirmed. Retry the complete original intent.');
+                if (result.status === 'rejected') throw new Error(t($locale, 'chatPage.expertDeliveriesUnconfirmed'));
                 if (result.value.input.submission_id !== receipts[index].input.submission_id
                     || result.value.context_conversation_id !== receipts[index].context_conversation_id) throw new Error('Expert dispatch owner changed');
             });
             await sourceController?.loadHistory('replace');
             if (!current()) return;
             if (!timeline?.messages.some(message => message.id === input.user_message_id && message.canonical?.role === 'user')) {
-                throw new Error('The message is admitted, but history confirmation is pending. Retry the original intent.');
+                throw new Error(t($locale, 'chatPage.expertHistoryConfirmPending'));
             }
             // Persist the revision-checked draft acknowledgement before deleting
             // the durable expert intent. An ABA edit remains a newer draft.
@@ -1255,6 +1255,7 @@
 {/if}
 {#snippet inspectorControls()}
 <div class="inspector-controls">
+            <button class="panel-toggle" title={t($locale, 'chatPage.find')} aria-label={t($locale, 'chatPage.find')} aria-pressed={searchVisible} onclick={openSearch}><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="7" /><path d="m16 16 5 5" /></svg></button>
             {#each inspectorGroups as group}
                 {@const selected = inspectorTab !== null && group.tabs.includes(inspectorTab)}
                 <button class="panel-toggle" data-panel={group.label} title={t($locale, `chatInspector.${group.label}`)} aria-label={t($locale, `chatInspector.${group.label}`)} aria-controls="chat-details" aria-expanded={selected} aria-pressed={selected} onclick={() => toggleInspector(selected ? inspectorTab ?? group.tabs[0] : group.tabs[0])}>
@@ -1282,12 +1283,15 @@
 {/snippet}
 <div class="chat-page" ontouchstart={beginEdgeSwipe} ontouchend={finishEdgeSwipe} ontouchcancel={() => edgeSwipe = undefined} role="presentation" style:--sidebar-width={`${widths.sidebar}px`}>
     <header class="chat-header">
-        <div class="global-navigation"><a class="desktop-mark" href="/today" aria-label="Nola">n</a><WorkspaceListNavigation category={listCategory} visible={navigationExpanded} onchange={setListCategory} /><button class="sidebar-toggle panel-toggle" title={t($locale, 'shell.toggleSidebar')} aria-label={t($locale, 'shell.toggleSidebar')} aria-expanded={navigationExpanded} onclick={() => navigationExpanded = !navigationExpanded}><PrototypeIcon name="sidebar" size={18} /></button></div>
+        <div class="global-navigation" class:collapsed={viewportWidth > 700 && !navigationExpanded}><a class="desktop-mark" href="/today" aria-label="Nola">n</a><WorkspaceListNavigation category={listCategory} visible={navigationExpanded} onchange={setListCategory} /><button class="sidebar-toggle panel-toggle" title={t($locale, 'shell.toggleSidebar')} aria-label={t($locale, 'shell.toggleSidebar')} aria-expanded={navigationExpanded} onclick={() => navigationExpanded = !navigationExpanded}><PrototypeIcon name="sidebar" size={18} /></button></div>
         <button class="navigation-toggle" aria-label={t($locale, contentTabs.selected === conversationTabKey ? 'shell.workspace' : 'chatPage.title')} onclick={() => contentTabs.selected === conversationTabKey ? navigateWorkspace('/conversations') : updateContentTabs(selectContentTab(contentTabs, conversationTabKey))}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 5-7 7 7 7" /></svg></button>
         <h1 class="sr-only">{selectedContentTab ? selectedContentTab.kind === 'pdf' ? selectedContentTab.resource.displayName : t($locale, selectedContentTab.titleKey) : active?.title || t($locale, 'chatPage.title')}</h1>
         {#if viewportWidth <= 700}<div class="mobile-chat-heading"><strong>{selectedContentTab ? selectedContentTab.kind === 'pdf' ? selectedContentTab.resource.displayName : t($locale, selectedContentTab.titleKey) : active?.title || t($locale, 'chatPage.title')}</strong><small>Nola</small></div>{#if selectedContentTab}<button class="panel-toggle mobile-content-close" aria-label={t($locale, 'chatInspector.closeTab')} onclick={() => closeWorkspaceContentTab(contentTabs.selected)}>×</button>{:else}<button class="panel-toggle" aria-label={t($locale, 'chatInspector.context')} disabled={!active} onclick={() => toggleInspector('resources')}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6m-6 4h6"/></svg></button><button class="panel-toggle" aria-label={t($locale, 'rooms.experts')} onclick={() => void openExperts()}><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="7" r="4"/><path d="M5 22v-4a7 7 0 0 1 14 0v4"/></svg></button>{/if}{:else}<ContentTabStrip ownerKey={contentWorkspaceKey} state={contentTabs} title={active?.title || t($locale, 'chatPage.title')}
+            conversationId={active?.conversationId ?? null}
+            canRename={!!active?.conversationId && canInteract && !conversationWriting && !busy && contentTabs.selected === conversationTabKey}
             onselect={key => updateContentTabs(selectContentTab(contentTabs, key))}
-            onclose={closeWorkspaceContentTab} />{/if}
+            onclose={closeWorkspaceContentTab}
+            onrename={(id, nextTitle) => conversationManager?.renameConversationById(id, nextTitle)} />{/if}
         {#if active}{@render inspectorControls()}{/if}
         {#if active}<ToolbarPopover label={t($locale, 'chatInspector.more')}>
             {#if canInteract}<ChatModelMenu selection={modelState} onopen={() => sessionSettings?.refreshModelCatalog()} onselect={choice => sessionSettings?.selectModel(choice)} onsettings={() => { inspectorTab = 'settings'; }} onreload={() => sessionSettings?.reloadSettings()} />{/if}
@@ -1478,7 +1482,7 @@
                 </div>
                 {#if expertIntentStorageError}<p role="alert">{expertIntentStorageError}</p>{/if}
                 {#if expertRetryIntent && expertRetryIntent.conversation_id === active.conversationId}
-                    <aside class="reply-notice"><p role="status">{expertError || 'Expert delivery is pending. Retry preserves the complete original message and selection.'}</p><p>{expertRetryIntent.text}</p>
+                    <aside class="reply-notice"><p role="status">{expertError || t($locale, 'chatPage.expertDeliveryPendingNotice')}</p><p>{expertRetryIntent.text}</p>
                         <button type="button" disabled={expertAdmissionPending || !canInteract} onclick={retryCompleteExpertIntent}>{t($locale,'shell.retry')}</button>
                     </aside>
                 {:else if expertError}<p role="alert">{expertError}</p>{#if expertRejoin}<button type="button" disabled={expertsLoading} onclick={rejoinExpert}>{t($locale,'rooms.rejoinExpert')}</button>{/if}{/if}
@@ -1586,9 +1590,10 @@
     @media(max-width:359px) { .selected-mentions { width:calc(100% - 32px); } }
 
     .chat-page { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 0; height: 100dvh; padding: 0; overflow: hidden; }
-    .chat-header { position: relative; height: 48px; min-height: 48px; padding: 0 12px; min-width: 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-    .sidebar-toggle { margin-inline-start:auto; flex:none; }
-    .global-navigation { display:flex; align-items:center; gap:12px; flex: none; width: calc(var(--sidebar-width) - 24px); min-width: 0; }
+    .chat-header { position: relative; height: 48px; min-height: 48px; padding: 0 12px 0 0; min-width: 0; display: flex; justify-content: space-between; align-items: center; gap: 8px; isolation: isolate; z-index: 1; background: var(--panel); border-bottom: 1px solid var(--border); }
+    .sidebar-toggle { margin-inline-start: auto; flex: none; }
+    .global-navigation { display: flex; align-items: center; gap: 10px; flex: none; width: var(--sidebar-width); height: 100%; padding-inline: 12px; box-sizing: border-box; background: var(--rail); border-inline-end: 1px solid var(--border); min-width: 0; }
+    .global-navigation.collapsed { width: auto; background: transparent; border-inline-end-color: transparent; padding-inline: 12px 4px; }
     .desktop-mark { font:bold 30px Georgia,serif; color:var(--content); }
     .mobile-chat-heading { flex:1; min-width:0; display:grid; gap:2px; }
     .mobile-chat-heading strong { font-size:16px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -1596,11 +1601,9 @@
     .compact-list-categories, .compact-inspector-tools { display: none; }
     .sidebar-section { min-width: 0; flex:1; overflow:auto; }
     .sidebar-section[hidden] { display: none; }
-    .chat-header::before { content: ""; position: absolute; inset: 0 auto 0 0; width: var(--sidebar-width); background: var(--rail); z-index: -1; }
-    .chat-header { isolation:isolate; z-index:1; background:var(--panel); border-bottom:1px solid var(--border); }
     .chat-header h1 { flex: 1; margin: 0; font-size: 15px; font-weight: 550; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .navigation-toggle { display: none; flex-shrink: 0; min-height: 44px; }
-    .inspector-controls { display: flex; gap: 4px; margin-inline-start: auto; flex-shrink: 0; }
+    .inspector-controls { display: flex; gap: 4px; margin-inline-start: auto; flex-shrink: 0; padding-inline-start: 8px; border-inline-start: 1px solid var(--border); }
     .panel-toggle { display: inline-flex; align-items: center; justify-content: center; width: max(36px, var(--control-hit-size)); height: max(36px, var(--control-hit-size)); padding: 0; border: 1px solid transparent; background: transparent; box-shadow: none; color: var(--muted); }
     .panel-toggle[aria-pressed="true"] { background: var(--accent-subtle); border-color: transparent; color: var(--content); }
     .inspector-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -1677,7 +1680,7 @@
     .inspector-section > summary::-webkit-details-marker { display:none; }
     .inspector-section > summary::before { content:'›'; font-size:1.1rem; transition:transform 180ms ease; }
     .inspector-section[open] > summary::before { transform:rotate(90deg); }
-    .inspector-section > summary:hover { background:var(--hover); }
+    .inspector-section > summary:hover { background:var(--accent-subtle); }
     .inspector-section > summary:focus-visible { outline:2px solid var(--primary); outline-offset:-2px; }
     .inspector-heading { position:sticky; top:-12px; z-index:2; background:var(--canvas); padding-block:6px; }
     @media (prefers-reduced-motion: reduce) { .inspector-section > summary::before, .inspector-section::details-content { transition:none; } }
@@ -1693,8 +1696,9 @@
         .chat-page { padding: env(safe-area-inset-top, 0px) 0 env(safe-area-inset-bottom, 0px); gap: 0; background: var(--canvas); }
         .chat-columns, .chat-columns.without-conversation { grid-template-columns: minmax(0, 1fr); gap: 0; }
         .chat-header { height:76px; gap:2px; padding:8px 12px; flex-wrap:nowrap; background:var(--canvas); }
-        .global-navigation, .chat-header::before { display: none; }
+        .global-navigation { display: none; }
         .compact-list-categories, .compact-inspector-tools { display: block; }
+        .compact-inspector-tools .inspector-controls { border-inline-start: 0; padding-inline-start: 0; }
         .chat-header :global(.model-menu) { display: none; }
         .chat-header > .inspector-controls { display: none; }
         .empty-navigation { display: inline-flex; }

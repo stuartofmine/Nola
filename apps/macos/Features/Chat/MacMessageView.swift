@@ -1049,12 +1049,7 @@ private struct MacAssistantCompactionReferencesView: View {
                             )
                         }
                         .buttonStyle(.link)
-                        .disabled(reference.sourceItemIDs.isEmpty || reference.sourceFingerprint.isEmpty)
-
-                        Spacer()
-                        Text("SHA-256 · \(reference.sourceFingerprint.prefix(12))")
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundStyle(Color("NolaTextSecondary"))
+                        .disabled(reference.sourceItemIDs.isEmpty)
                     }
                 }
                 .padding(11)

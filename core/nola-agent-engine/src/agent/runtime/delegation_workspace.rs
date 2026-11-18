@@ -9,40 +9,6 @@ use nola_host_protocol::delegation::DelegationParentSnapshot;
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-pub(super) fn source_effect_requires_worker<'a>(
-    root: &Path,
-    tool: &str,
-    resources: impl Iterator<Item = &'a nola_domain::permission_scope::PermissionResource>,
-) -> bool {
-    use nola_domain::permission_scope::PermissionResource;
-    if tool == "git_worktree_integrate" {
-        return false;
-    }
-    let source = root
-        .components()
-        .filter_map(|part| {
-            if let std::path::Component::Normal(value) = part {
-                value.to_str().map(str::to_owned)
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<_>>();
-    resources.into_iter().any(|resource| match resource {
-        PermissionResource::File {
-            components, access, ..
-        } => {
-            matches!(access.as_str(), "write" | "overwrite" | "remove")
-                && components.starts_with(&source)
-        }
-        // An invocation's cwd establishes neither a write effect nor a read
-        // guarantee. Keep its normal Host risk/permission/sandbox admission;
-        // declared source-file effects above still require a worker. Inferring
-        // edits from cwd alone prevents verification of the integrated result.
-        _ => false,
-    })
-}
-
 fn eligible(parent: &DelegationParentSnapshot, arguments: &Value) -> bool {
     if parent.project_repository_identity.is_none()
         || parent.task_worktree.is_some()
@@ -69,16 +35,27 @@ fn eligible(parent: &DelegationParentSnapshot, arguments: &Value) -> bool {
 
 fn destination(parent: &DelegationParentSnapshot, identity: &str) -> Result<String, String> {
     let root = Path::new(&parent.project_root);
-    // Prefer the narrowest independent Host scope. A project root alone does
-    // not authorize its parent; the Host prepares a private scratch container.
+    let repo_root = parent
+        .project_repository_identity
+        .as_ref()
+        .and_then(|identity| Path::new(&identity.common_directory).parent());
+    // Prefer the narrowest independent Host scope outside both project_root and repository root.
     let directory = parent.authorized_workspace_roots.iter()
         .map(Path::new)
-        .filter(|allowed| allowed.is_absolute() && !allowed.starts_with(root))
+        .filter(|allowed| {
+            allowed.is_absolute()
+                && !allowed.starts_with(root)
+                && repo_root.is_none_or(|repo| !allowed.starts_with(repo))
+        })
         .max_by_key(|allowed| allowed.components().count())
         .ok_or("No independent Host-authorized workspace directory is available. Configure a private managed workspace scope outside the project before retrying; OS directory access alone cannot expand frozen write authority.")?;
-    let directory = if root.parent().is_some_and(|parent| parent.starts_with(directory)) {
+    let directory = if root.parent().is_some_and(|parent_dir| {
+        parent_dir.starts_with(directory) && repo_root.is_none_or(|repo| !parent_dir.starts_with(repo))
+    }) {
         root.parent().unwrap()
-    } else { directory };
+    } else {
+        directory
+    };
     let suffix = format!("{:x}", Sha256::digest(identity.as_bytes()));
     Ok(directory
         .join(format!(".nola-task-{}", &suffix[..24]))
@@ -157,13 +134,6 @@ fn plan_workspace_preparation(
                 .ok_or("Workspace preparation has no result")?;
             match preparation {
                 Preparation::Inspect { destination, .. } => {
-                    if output
-                        .get("root_is_repository_root")
-                        .and_then(Value::as_bool)
-                        != Some(true)
-                    {
-                        return Err("Automatic preparation requires the project Git checkout root, not a nested source directory".into());
-                    }
                     let source_snapshot = match output
                         .get("source_has_uncommitted_changes")
                         .and_then(Value::as_bool)
@@ -226,7 +196,8 @@ fn plan_workspace_preparation(
                         }
                     }
                     let source_root = output
-                        .get("root")
+                        .get("repository_root")
+                        .or_else(|| output.get("root"))
                         .and_then(Value::as_str)
                         .ok_or("Missing source checkout root witness")?
                         .to_owned();
@@ -234,7 +205,7 @@ fn plan_workspace_preparation(
                         .checked_add(1)
                         .ok_or("Core ID sequence exhausted")?;
                     let call_id = preparation_call_id(identity, "create", *next_id_sequence);
-                    let mut arguments = json!({"root":parent.project_root,"destination":destination,
+                    let mut arguments = json!({"root":source_root,"destination":destination,
                                     "expected_head":selection.expected_head,"expected_common_directory":selection.expected_common_directory});
                     if let Some(plan) = &source_snapshot {
                         arguments["source_snapshot"] =
@@ -522,22 +493,6 @@ impl AgentRuntime {
         Ok(())
     }
 
-    /// Native Git conversations coordinate edits through one managed worker chain.
-    /// This does not migrate a live Run or attest process sandbox enforcement.
-    pub(super) fn primary_native_workspace_root(&self) -> Result<Option<String>, String> {
-        let Some(turn) = self.session.execution.active_turn.as_ref() else {
-            return Ok(None);
-        };
-        let Some(parent) = turn.context.configuration.turn_identity.delegation.as_ref() else {
-            return Ok(None);
-        };
-        let parent = parent.snapshot()?;
-        Ok((parent.execution_backend == "nola"
-            && parent.task_worktree.is_none()
-            && parent.project_repository_identity.is_some())
-        .then_some(parent.project_root))
-    }
-
     /// Preparation consumes exact Host metadata, never the bounded model preview.
     /// Keep only the fields needed by this Core contract, not an entire worktree list.
     pub(super) fn workspace_preparation_observation(
@@ -557,6 +512,7 @@ impl AgentRuntime {
         }
         let fields = [
             "root",
+            "repository_root",
             "head",
             "repository_identity",
             "root_is_repository_root",
@@ -741,57 +697,9 @@ mod tests {
     use nola_host_protocol::delegation::ValidatedDelegationParent;
 
     #[test]
-    fn primary_code_guard_uses_resolved_resources_without_granting_delivery_authority() {
-        use nola_domain::permission_scope::PermissionResource;
-        let root = std::env::temp_dir().join("source-project");
-        let components = root
-            .components()
-            .filter_map(|part| {
-                if let std::path::Component::Normal(value) = part {
-                    Some(value.to_string_lossy().into_owned())
-                } else {
-                    None
-                }
-            })
-            .chain(["code.rs".into()])
-            .collect();
-        let write = PermissionResource::File {
-            filesystem_id: "fixture".into(),
-            components,
-            access: "overwrite".into(),
-        };
-        assert!(source_effect_requires_worker(
-            &root,
-            "edit_file",
-            [&write].into_iter()
-        ));
-        assert!(!source_effect_requires_worker(
-            &root,
-            "git_worktree_integrate",
-            [&write].into_iter()
-        )); // Its normal overwrite approval still applies.
-        let process = |cwd: std::path::PathBuf| PermissionResource::ProcessInvocation {
-            invocation_digest: nola_domain::assistant_journal::AssistantDigest::parse_hex(
-                &"a".repeat(64),
-            )
-            .unwrap(),
-            command: "synthetic command".into(),
-            cwd: cwd.to_string_lossy().into_owned(),
-        };
-        assert!(!source_effect_requires_worker(
-            &root,
-            "bash",
-            [&process(root.clone())].into_iter()
-        ));
-        assert!(!source_effect_requires_worker(
-            &root,
-            "bash",
-            [&process(std::env::temp_dir().join("managed-child"))].into_iter()
-        ));
-        assert!(source_effect_requires_worker(&root, "bash",
-            [&process(root.clone()), &write].into_iter())); // Concrete writes still coordinate.
-        let mut runtime = runtime();
-        let original = runtime
+    fn nested_subdirectory_preparation_uses_repository_root_and_avoids_repo_destination() {
+        let runtime = runtime();
+        let mut parent = runtime
             .session
             .execution
             .active_turn
@@ -805,37 +713,32 @@ mod tests {
             .unwrap()
             .snapshot()
             .unwrap();
-        for swe_mode in [false, true] {
-            let mut parent = original.clone();
-            parent.model.swe_mode = swe_mode;
-            runtime
-                .session
-                .execution
-                .active_turn
-                .as_mut()
-                .unwrap()
-                .context
-                .configuration
-                .turn_identity
-                .delegation = Some(ValidatedDelegationParent::new(parent.clone()).unwrap());
-            assert_eq!(
-                runtime.primary_native_workspace_root().unwrap(),
-                Some(parent.project_root)
-            );
-        }
-        let mut non_git = original;
-        non_git.project_repository_identity = None;
-        runtime
-            .session
-            .execution
-            .active_turn
-            .as_mut()
-            .unwrap()
-            .context
-            .configuration
-            .turn_identity
-            .delegation = Some(ValidatedDelegationParent::new(non_git).unwrap());
-        assert!(runtime.primary_native_workspace_root().unwrap().is_none());
+        let repo_root = Path::new(&parent.project_root).to_path_buf();
+        let nested = repo_root.join("apps/macos");
+        let scratch = std::env::temp_dir().join("private-host-workspaces");
+        parent.project_root = nested.to_string_lossy().into_owned();
+        parent.authorized_workspace_roots = vec![
+            nested.to_string_lossy().into_owned(),
+            repo_root.to_string_lossy().into_owned(),
+            scratch.to_string_lossy().into_owned(),
+        ];
+        let dest = destination(&parent, "nested-fixture").unwrap();
+        assert_eq!(Path::new(&dest).parent(), Some(scratch.as_path()));
+        let inspected_nested = json!({
+            "head": "a".repeat(40),
+            "root": nested,
+            "repository_root": repo_root,
+            "root_is_repository_root": false,
+            "source_has_uncommitted_changes": false,
+            "repository_identity": {
+                "common_directory": repo_root.join(".git"),
+                "common_directory_identity": "fixture-common"
+            }
+        });
+        assert_eq!(
+            inspected_nested.get("repository_root").and_then(Value::as_str),
+            Some(repo_root.to_string_lossy().as_ref())
+        );
     }
 
     #[test]

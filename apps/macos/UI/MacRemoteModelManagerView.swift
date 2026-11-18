@@ -82,13 +82,14 @@ private struct MacModelCenterDisclosure<Content: View>: View {
                         .font(.callout.weight(.medium))
                     Spacer(minLength: 8)
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(.secondary)
                         .rotationEffect(.degrees(isExpanded ? 180 : 0))
                 }
-                .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(MacHorizontalBarButtonStyle(isSubtle: true, isExpanded: isExpanded))
             .accessibilityValue(isExpanded ? String(localized: "Expanded") : String(localized: "Collapsed"))
             if isExpanded { content }
         }
@@ -918,14 +919,18 @@ struct MacRemoteModelManagerView: View {
                 Text(endpoint.wrappedValue.wireProtocol.title)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Toggle(String(localized: "Enable Endpoint", table: "ModelCenter"), isOn: endpoint.isEnabled)
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .tint(MacDesignColor.brand)
+                HStack(spacing: 8) {
+                    Text(String(localized: "Enabled", table: "ModelCenter"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Toggle(String(localized: "Enable Endpoint", table: "ModelCenter"), isOn: endpoint.isEnabled)
+                        .toggleStyle(.macSwitchControl)
+                        .accessibilityLabel(String(localized: "Enable Endpoint", table: "ModelCenter"))
+                }
                 Button(role: .destructive) { deletionEndpointID = endpoint.wrappedValue.id } label: {
                     Image(systemName: "trash")
                 }
-                .buttonStyle(MacActionButtonStyle(contentInsets: .init()))
+                .buttonStyle(MacInlineIconButtonStyle(size: 28))
                 .help(String(localized: "Delete Endpoint", table: "ModelCenter"))
                 .accessibilityLabel(String(localized: "Delete Endpoint", table: "ModelCenter"))
             }
@@ -939,10 +944,7 @@ struct MacRemoteModelManagerView: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             Toggle("", isOn: endpoint.isEnabled)
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .tint(MacDesignColor.brand)
-                .labelsHidden()
+                .toggleStyle(.macSwitchControl)
                 .accessibilityLabel(String(localized: "Enable Endpoint", table: "ModelCenter"))
             Spacer(minLength: 0)
             Menu {
@@ -952,6 +954,7 @@ struct MacRemoteModelManagerView: View {
             } label: {
                 Label(String(localized: "More"), systemImage: "ellipsis.circle")
             }
+            .menuStyle(MacToolbarMenuStyle(size: 28))
         }
     }
 
@@ -1407,8 +1410,7 @@ struct MacRemoteModelManagerView: View {
             } label: {
                 Image(systemName: "ellipsis.circle")
             }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
+            .menuStyle(MacToolbarMenuStyle(size: 28))
             .accessibilityLabel(String(localized: "Model", table: "ModelCenter") + ": " + model.wrappedValue.displayName)
             .accessibilityIdentifier("model-actions-\(model.wrappedValue.id)")
         }
@@ -1417,11 +1419,8 @@ struct MacRemoteModelManagerView: View {
 
     private func modelEnabledControl(_ model: Binding<MacRemoteModelConfiguration>) -> some View {
         Toggle("", isOn: model.isEnabled)
-            .labelsHidden()
             .accessibilityLabel(String(localized: "Enable Model", table: "ModelCenter"))
-            .toggleStyle(.switch)
-            .controlSize(.mini)
-            .tint(MacDesignColor.brand)
+            .toggleStyle(.macSwitchControl)
     }
 
     private func modelNameField(_ model: Binding<MacRemoteModelConfiguration>) -> some View {
@@ -1504,28 +1503,28 @@ struct MacRemoteModelManagerView: View {
             Text(String(localized: "Enable only capabilities supported by this exact endpoint and model.", table: "ModelCenter"))
                 .font(.caption).foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 14) {
-                    Toggle(String(localized: "Tool calls", table: "ModelCenter"), isOn: model.executionCapabilities.toolCalls)
-                    Toggle(String(localized: "Image input", table: "ModelCenter"), isOn: model.executionCapabilities.imageInput)
-                    Toggle(String(localized: "Reasoning", table: "ModelCenter"), isOn: model.executionCapabilities.reasoning)
-                }
-                HStack(spacing: 14) {
-                    Toggle(String(localized: "Sampling parameters", table: "ModelCenter"), isOn: model.executionCapabilities.samplingParameters)
-                    Toggle(String(localized: "Sampling only with reasoning off", table: "ModelCenter"), isOn: model.executionCapabilities.samplingRequiresNoReasoning)
-                        .disabled(!model.wrappedValue.executionCapabilities.samplingParameters)
-                }
+                Toggle(String(localized: "Tool calls", table: "ModelCenter"), isOn: model.executionCapabilities.toolCalls)
+                    .toggleStyle(.macSwitch)
+                Toggle(String(localized: "Image input", table: "ModelCenter"), isOn: model.executionCapabilities.imageInput)
+                    .toggleStyle(.macSwitch)
+                Toggle(String(localized: "Reasoning", table: "ModelCenter"), isOn: model.executionCapabilities.reasoning)
+                    .toggleStyle(.macSwitch)
+                Toggle(String(localized: "Sampling parameters", table: "ModelCenter"), isOn: model.executionCapabilities.samplingParameters)
+                    .toggleStyle(.macSwitch)
+                Toggle(String(localized: "Sampling only with reasoning off", table: "ModelCenter"), isOn: model.executionCapabilities.samplingRequiresNoReasoning)
+                    .toggleStyle(.macSwitch)
+                    .disabled(!model.wrappedValue.executionCapabilities.samplingParameters)
                 if wireProtocol == .chatCompletions {
-                Picker(String(localized: "Chat output limit field", table: "ModelCenter"), selection: Binding(
-                    get: { model.wrappedValue.executionCapabilities.chatOutputTokenField ?? .auto },
-                    set: { model.wrappedValue.executionCapabilities.chatOutputTokenField = $0 }
-                )) {
-                    Text(String(localized: "Automatic", table: "ModelCenter")).tag(MacChatOutputTokenField.auto)
-                    Text("max_tokens").tag(MacChatOutputTokenField.maxTokens)
-                    Text("max_completion_tokens").tag(MacChatOutputTokenField.maxCompletionTokens)
-                }
+                    Picker(String(localized: "Chat output limit field", table: "ModelCenter"), selection: Binding(
+                        get: { model.wrappedValue.executionCapabilities.chatOutputTokenField ?? .auto },
+                        set: { model.wrappedValue.executionCapabilities.chatOutputTokenField = $0 }
+                    )) {
+                        Text(String(localized: "Automatic", table: "ModelCenter")).tag(MacChatOutputTokenField.auto)
+                        Text("max_tokens").tag(MacChatOutputTokenField.maxTokens)
+                        Text("max_completion_tokens").tag(MacChatOutputTokenField.maxCompletionTokens)
+                    }
                 }
             }
-            .toggleStyle(.checkbox)
             .font(.caption)
             Text(String(localized: "Unchecked capabilities are explicitly unsupported. Allowed uses do not enable tools.", table: "ModelCenter"))
                 .font(.caption).foregroundStyle(.secondary)
@@ -2207,9 +2206,13 @@ struct MacAddRemoteModelSheet: View {
                 Text(String(localized: "Enable only capabilities supported by this exact endpoint and model.", table: "ModelCenter"))
                     .font(.caption).foregroundStyle(.secondary)
                 Toggle(String(localized: "Tool calls", table: "ModelCenter"), isOn: $executionCapabilities.toolCalls)
+                    .toggleStyle(.macSwitch)
                 Toggle(String(localized: "Image input", table: "ModelCenter"), isOn: $executionCapabilities.imageInput)
+                    .toggleStyle(.macSwitch)
                 Toggle(String(localized: "Reasoning", table: "ModelCenter"), isOn: $executionCapabilities.reasoning)
+                    .toggleStyle(.macSwitch)
                 Toggle(String(localized: "Sampling parameters", table: "ModelCenter"), isOn: $executionCapabilities.samplingParameters)
+                    .toggleStyle(.macSwitch)
                 Picker(String(localized: "Chat output limit field", table: "ModelCenter"), selection: Binding(
                     get: { executionCapabilities.chatOutputTokenField ?? .auto },
                     set: { executionCapabilities.chatOutputTokenField = $0 }
@@ -2334,7 +2337,7 @@ struct MacAddRemoteModelSheet: View {
             Label(title, systemImage: symbol)
                 .foregroundStyle(capabilities.contains(capability) ? MacDesignColor.brand : Color.primary)
         }
-        .tint(MacDesignColor.brand)
+        .toggleStyle(.macSwitch)
     }
 
     private var parameterSummary: some View {

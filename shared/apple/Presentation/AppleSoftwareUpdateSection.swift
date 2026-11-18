@@ -80,7 +80,7 @@ struct AppleSoftwareUpdateSection: View {
             Text("softwareUpdate.title").font(.headline)
             if let snapshot {
                 Text("Nola \(snapshot.current_version) (\(snapshot.current_build))").font(.subheadline)
-                Text(LocalizedStringKey("softwareUpdate.status.\(snapshot.status)")).foregroundStyle(.secondary)
+                Text(String(localized: String.LocalizationValue("softwareUpdate.status." + snapshot.status))).foregroundStyle(.secondary)
                 if let release = snapshot.release {
                     Text("\(release.version) (\(release.build))").font(.subheadline.weight(.medium))
                     if !release.notes.isEmpty { Text(release.notes).textSelection(.enabled) }

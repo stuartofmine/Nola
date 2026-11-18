@@ -868,7 +868,6 @@ final class MacCanonicalConversationRepositoryEndToEndTests: XCTestCase {
                 summary: "Create a document",
                 category: "documents",
                 instructionsRef: "nola-skill://word/1",
-                instructionsDigest: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
                 instructionsText: "hello",
                 requiredTools: [],
                 defaultMode: .inline,
@@ -900,10 +899,7 @@ final class MacCanonicalConversationRepositoryEndToEndTests: XCTestCase {
                 id: id, source: .builtIn, version: version,
                 displayName: id, summary: "Catalog transaction fixture", category: "documents",
                 instructionsRef: "nola-skill://\(id)/\(version)",
-                instructionsDigest: valid
-                    ? "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
-                    : "invalid",
-                instructionsText: "hello", requiredTools: [], defaultMode: .inline,
+                instructionsText: valid ? "hello" : "   ", requiredTools: [], defaultMode: .inline,
                 enabled: true, createdAtMs: 1, updatedAtMs: 3
             )
         }

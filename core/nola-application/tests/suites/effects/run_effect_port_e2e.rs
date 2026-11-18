@@ -2251,6 +2251,12 @@ impl nola_store_port::goal_execution::GoalExecutionRepository for MemoryCreation
         } else { self.goal_bindings.insert(key,binding.clone()); }
         Ok(())
     }
+    fn upsert_goal_execution_binding(&mut self, binding: &nola_store_port::goal_execution::StoredGoalExecutionBinding) -> Result<(),String> {
+        if self.transaction_backup.is_none() { return Err("Goal binding outside transaction".into()); }
+        let key=(binding.identity.conversation_id.clone(),binding.identity.goal_id.clone());
+        self.goal_bindings.insert(key,binding.clone());
+        Ok(())
+    }
 }
 impl nola_store_port::model::ModelRepositoryProvider for MemoryCreation {
     type Error = nola_store::StoreError;

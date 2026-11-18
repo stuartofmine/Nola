@@ -14,14 +14,21 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.time.Duration
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -41,6 +48,7 @@ class LocalLlamaProvider @Inject constructor(
     private val engine: InferenceEngine = AiChat.getInferenceEngine(context)
     private val json = Json { prettyPrint = false }
     private val engineOperation = Mutex()
+    private val stopScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _state = MutableStateFlow<LocalModelRuntimeState>(LocalModelRuntimeState.Stopped)
     val state: StateFlow<LocalModelRuntimeState> = _state.asStateFlow()
 
@@ -73,6 +81,12 @@ class LocalLlamaProvider @Inject constructor(
                 this.parameters = parameters
                 _state.value = LocalModelRuntimeState.Ready(model.id)
             } catch (error: Throwable) {
+                if (error is CancellationException) {
+                    engine.cleanUp()
+                    activeModel = null
+                    _state.value = LocalModelRuntimeState.Stopped
+                    throw error
+                }
                 engine.cleanUp()
                 activeModel = null
                 _state.value = LocalModelRuntimeState.Failed(model.id, error.message ?: error::class.java.simpleName)
@@ -82,13 +96,31 @@ class LocalLlamaProvider @Inject constructor(
     }
 
     fun stop() {
-        check(engineOperation.tryLock()) { "Wait for the local model operation before stopping" }
-        try { stopLocked() } finally { engineOperation.unlock() }
+        if (engineOperation.tryLock()) {
+            try {
+                stopLocked()
+            } finally {
+                engineOperation.unlock()
+            }
+        } else {
+            stopScope.launch {
+                engineOperation.withLock {
+                    stopLocked()
+                }
+            }
+        }
+    }
+
+    suspend fun stopAsync() {
+        engineOperation.withLock {
+            withContext(Dispatchers.IO) {
+                stopLocked()
+            }
+        }
     }
 
     private fun stopLocked() {
         val engineState = engine.state.value
-        check(engineState !is InferenceEngine.State.Generating) { "Wait for generation to finish before stopping the model" }
         if (engineState is InferenceEngine.State.ModelReady || engineState is InferenceEngine.State.Error) {
             engine.cleanUp()
         }
@@ -111,6 +143,10 @@ class LocalLlamaProvider @Inject constructor(
                     .collect { emit(it) }
                 _state.value = LocalModelRuntimeState.Ready(model.id)
             } catch (error: Throwable) {
+                if (error is CancellationException) {
+                    _state.value = LocalModelRuntimeState.Ready(model.id)
+                    throw error
+                }
                 _state.value = LocalModelRuntimeState.Failed(model.id, error.message ?: error::class.java.simpleName)
                 throw error
             }

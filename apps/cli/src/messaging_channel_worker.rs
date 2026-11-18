@@ -95,6 +95,7 @@ pub fn start_if_configured() -> Result<Option<MessagingChannelWorkerHandle>, Str
     let worker_cancelled = cancelled.clone();
     let thread = thread::Builder::new()
         .name("nola-messaging-channel-worker".to_string())
+        .stack_size(16 * 1024 * 1024)
         .spawn(move || run_loop(path, worker_cancelled))
         .map_err(|error| format!("failed to start messaging channel worker: {error}"))?;
     Ok(Some(MessagingChannelWorkerHandle {

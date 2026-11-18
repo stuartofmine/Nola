@@ -3654,11 +3654,19 @@ fn recovered_agent_tool_schemas(
     for descriptor in nola_core::agent::code_mode::capability_descriptors(&child_config.runtime.code_mode_limits)? {
         host.capabilities.insert(descriptor.id.clone(), descriptor);
     }
-    let catalog = host.capabilities.values().filter(|capability|
+    let mut catalog = host.capabilities.values().filter(|capability|
         capability.route == nola_core::agent::host::HostCapabilityRoute::Tool
             && capability.availability == nola_core::agent::host::CapabilityAvailability::Available
             && capability.exposure.is_model_discoverable())
         .map(crate::agent_host_driver::discovery_tool_schema).collect::<Vec<_>>();
+    if let Some(mcp_catalog) = &child_config.tool_settings.mcp_capability_catalog {
+        catalog.extend(crate::agent_host_driver::remote_mcp_tool_schemas(mcp_catalog));
+    } else if let Some(schema) = crate::core_agent_runtime::mcp_connect_tool_schema(
+        &child_config.tool_settings.mcp_server_registry,
+        child_config.session.session_id.as_deref(),
+    ) {
+        catalog.push(schema);
+    }
     Ok(registry.tool_schemas_for(agent_type, &catalog).into_iter().filter(|schema| {
         let Some(name) = schema.pointer("/function/name").and_then(Value::as_str) else { return false };
         child_config.tool_settings.tool_allowlist.as_ref()
@@ -3759,8 +3767,19 @@ fn spawn_recovered_agent_task(
     } else {
     if child_config.tool_settings.task_worktree.is_none() {
         child_config.tool_settings.project_root = std::path::PathBuf::from(&task.project_root);
+        if !child_config
+            .tool_settings
+            .allowed_dirs
+            .contains(&child_config.tool_settings.project_root)
+        {
+            child_config
+                .tool_settings
+                .allowed_dirs
+                .insert(0, child_config.tool_settings.project_root.clone());
+        }
+    } else {
+        child_config.tool_settings.allowed_dirs = vec![child_config.tool_settings.project_root.clone()];
     }
-    child_config.tool_settings.allowed_dirs = vec![child_config.tool_settings.project_root.clone()];
     child_config.session.session_id = Some(child_session_id.to_string());
     child_config.session.save_session = true;
     child_config.input.message.clear();
@@ -4076,7 +4095,7 @@ mod recovered_agent_catalog_tests {
         let disabled = config_with_skills(Vec::new());
         let registry = AgentRegistry::from_profiles(&disabled.runtime.agents);
         let schemas = recovered_agent_tool_schemas(&registry, "general", &disabled, false).unwrap();
-        for name in ["Skill", "skill_skip", "skill_update"] {
+        for name in ["Skill", "skill_skip"] {
             assert!(!schemas
                 .iter()
                 .any(
@@ -4159,14 +4178,14 @@ fn notify_parent_task_waiter() {
     let _ = stdout.flush();
 }
 
-fn task_wake_generation() -> u64 {
+pub(super) fn task_wake_generation() -> u64 {
     let (generation, _) = task_wake();
     *generation
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-fn wait_for_task_wake(observed_generation: u64, timeout: Duration) {
+pub(super) fn wait_for_task_wake(observed_generation: u64, timeout: Duration) {
     let (generation, condvar) = task_wake();
     let guard = generation
         .lock()

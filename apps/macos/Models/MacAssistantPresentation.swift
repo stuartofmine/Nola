@@ -3,7 +3,6 @@
 // - Purpose: Models persistent assistant traces and assembles raw model deltas into stable semantic reveal nodes.
 
 import Foundation
-import CryptoKit
 
 nonisolated struct MacAssistantCompactionReference: Codable, Hashable, Identifiable, Sendable {
     let id: String
@@ -1245,7 +1244,7 @@ nonisolated struct MacAgentTraceReducer {
     private var runID: String?
     private var conversationID: String?
     private var lastSequence: UInt64 = 0
-    private var seenEventIDs: [String: SHA256.Digest] = [:]
+    private var seenEventIDs: [String: MacAgentTraceEnvelope] = [:]
     private var projectedToolProgress: [String: String] = [:]
 
     mutating func apply(
@@ -1270,14 +1269,8 @@ nonisolated struct MacAgentTraceReducer {
         if let runID, runID != event.runID {
             return .ignored(.identityMismatch)
         }
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        guard let bytes = try? encoder.encode(event) else {
-            return .ignored(.invalidEvent)
-        }
-        let digest = SHA256.hash(data: bytes)
         if let previous = seenEventIDs[event.eventID] {
-            return .ignored(previous == digest ? .duplicate : .eventConflict)
+            return .ignored(previous == event ? .duplicate : .eventConflict)
         }
         guard event.sequence > lastSequence else {
             return .ignored(.outOfOrder(last: lastSequence, received: event.sequence))
@@ -1296,7 +1289,7 @@ nonisolated struct MacAgentTraceReducer {
             ? .applied
             : .gap(expected: expectedSequence, received: event.sequence)
 
-        seenEventIDs[event.eventID] = digest
+        seenEventIDs[event.eventID] = event
         lastSequence = event.sequence
         // Core Parts are the canonical presentation projection for Agent Host
         // sessions. Trace still advances its cursor and exposes usage and

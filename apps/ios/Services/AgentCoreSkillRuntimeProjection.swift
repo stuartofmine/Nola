@@ -67,7 +67,6 @@ nonisolated public struct AgentCoreSkillDescriptor: Codable, Equatable, Sendable
     public let version: String
     public let displayName: String
     public let instructionsRef: String
-    public let instructionsDigest: String
     public let requiredTools: [AgentCoreSkillToolReference]
     public let defaultMode: AgentCoreSkillExecutionMode?
     public let executionContract: AgentCoreSkillExecutionContract
@@ -77,7 +76,6 @@ nonisolated public struct AgentCoreSkillDescriptor: Codable, Equatable, Sendable
         case skillID = "skill_id"
         case displayName = "display_name"
         case instructionsRef = "instructions_ref"
-        case instructionsDigest = "instructions_digest"
         case requiredTools = "required_tools"
         case defaultMode = "default_mode"
         case executionContract = "execution_contract"
@@ -89,15 +87,13 @@ nonisolated public struct AgentCoreSkillDescriptor: Codable, Equatable, Sendable
         version = try values.decode(String.self, forKey: .version)
         displayName = try values.decode(String.self, forKey: .displayName)
         instructionsRef = try values.decode(String.self, forKey: .instructionsRef)
-        instructionsDigest = try values.decode(String.self, forKey: .instructionsDigest)
         requiredTools = try values.decode([AgentCoreSkillToolReference].self, forKey: .requiredTools)
         defaultMode = try values.decodeIfPresent(AgentCoreSkillExecutionMode.self, forKey: .defaultMode)
         executionContract = try values.decode(AgentCoreSkillExecutionContract.self, forKey: .executionContract)
-        guard instructionsDigest.utf8.count == 64,
-              instructionsDigest.allSatisfy({ "0123456789abcdef".contains($0) }),
-              instructionsRef.hasSuffix("#sha256=\(instructionsDigest)"), executionContract.isValid else {
+        guard !instructionsRef.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              executionContract.isValid else {
             throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
-                debugDescription: "Invalid current Skill content identity or execution contract"))
+                debugDescription: "Invalid current Skill instructions reference or execution contract"))
         }
     }
 }
@@ -504,8 +500,6 @@ nonisolated public struct AgentCoreSkillRuntimeProjectionReducer: Sendable {
         case .started(let run):
             guard run.runID.isEmpty == false,
                   run.descriptor.executionContract.schemaVersion == 1,
-                  run.descriptor.instructionsDigest.count == 64,
-                  run.descriptor.instructionsDigest.allSatisfy({ "0123456789abcdef".contains($0) }),
                   run.owner.sessionID == envelope.sessionID,
                   run.owner.parentTurnID == envelope.turnID,
                   projection.runs[run.runID] == nil else { return false }

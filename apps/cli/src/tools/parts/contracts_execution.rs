@@ -81,7 +81,7 @@ const MAX_PROJECT_SCAN_FILES: i64 = 20_000;
 const MAX_RELATED_RESULTS: i64 = 500;
 const MAX_REPLACE_FILES: i64 = 500;
 const MAX_INSTRUCTION_BYTES: i64 = 100_000;
-const MAX_SKILL_BYTES: i64 = 100_000;
+const MAX_SKILL_BYTES: i64 = 2 * 1024 * 1024;
 const MAX_SKILL_FILES: i64 = 30;
 const MAX_AGENT_BYTES: i64 = 100_000;
 const MAX_COMMAND_BYTES: i64 = 100_000;
@@ -478,7 +478,7 @@ impl HostCapabilityAvailability {
         if !self.manifest_valid { return false; }
         match name {
             "language_service_query" | "terminal_input" => cfg!(unix),
-            "Skill" | "skill_invoke" | "skill_update" | "skill_skip" => self.skills_enabled,
+            "Skill" | "skill_invoke" | "skill_skip" => self.skills_enabled,
             "memory_search" | "memory_save" => self.memory_enabled,
             name if name.starts_with("computer_") => self.native_computer_enabled,
             name if name.starts_with("chrome_native_") => self.native_browser_enabled,
@@ -2828,11 +2828,6 @@ fn tool_schemas_with_host_availability(
     specs_with_skills(skills)
         .into_iter()
         .filter(|spec| spec.name != "skill_context")
-        // Host protocol mutations are valid only inside an active Agent Host
-        // execution contract. Do not leak them into the legacy generic schema
-        // surface, where Core correctly rejects tools without static built-in
-        // metadata. `tool_schemas_for_host()` retains them.
-        .filter(|spec| include_host_metadata || spec.name != "skill_update")
         .filter(|spec| availability.enabled(spec.name))
         .map(|spec| {
             let mut parameters = spec.parameters;
@@ -2966,7 +2961,6 @@ pub fn tool_effect_declaration_with_read_only(
         "list_tasks" | "read_task" | "wait_task" | "bash_background_wait" => HostCapabilityEffect::Investigate,
         "Skill"
         | "skill_invoke"
-        | "skill_update"
         | "SOP"
         | "sop_invoke"
         | "sop_run_update"
@@ -4594,7 +4588,7 @@ fn transaction_replay_retains_code_provenance_and_execution_receipt() {
 }
 
 
-fn tool_outcome_from_transaction(value: &Value) -> Option<ToolOutcome> {
+pub(crate) fn tool_outcome_from_transaction(value: &Value) -> Option<ToolOutcome> {
     Some(ToolOutcome {
         full_output_ref: value.get("full_output_ref").and_then(Value::as_str).map(str::to_string),
         data: value.get("data").filter(|v| !v.is_null()).cloned(),

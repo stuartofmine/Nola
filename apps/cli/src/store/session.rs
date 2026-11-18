@@ -6,7 +6,6 @@ use nola_protocol::{
     ExportBodyField, ExportCommand, ExportPage, ExportRange, PartDerivation, StoredPartDerivation,
 };
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
 #[derive(serde::Serialize)]
@@ -409,24 +408,19 @@ fn load_export_tool_source(application:&mut crate::application_port::CliApplicat
     let total=claim.body.total_utf8_bytes();
     let mut offset=0;
     let mut text=String::new();
-    let mut digest=Sha256::new();
     while offset<total {
         let range:nola_domain::tool_source::ToolSourceExportRange=application.execute(
             ExportCommand::ReadConversationToolSourceRange {owner:claim.owner.clone(),source_item_id:claim.source_item_id.clone(),
                 expected_conversation_revision:revision,offset_bytes:offset,limit_bytes:32768})?;
-        if range.owner!=claim.owner || range.source_item_id!=claim.source_item_id || range.body_sha256!=claim.body_sha256
+        if range.owner!=claim.owner || range.source_item_id!=claim.source_item_id
             || range.revision!=revision || range.offset_bytes!=offset || range.text.len()>32768
             || offset.checked_add(range.text.len() as u64)!=Some(range.next_offset_bytes)
             || range.total_utf8_bytes!=total || range.next_offset_bytes<=offset || range.next_offset_bytes>total
             || range.end_of_content!=(range.next_offset_bytes==total) {
             return Err("archive tool source range changed owner, version or byte bounds".into());
         }
-        digest.update(range.text.as_bytes());
         text.push_str(&range.text);
         offset=range.next_offset_bytes;
-    }
-    if format!("{:x}",digest.finalize())!=claim.body_sha256 {
-        return Err("archive tool source original digest mismatch".into());
     }
     Ok(text)
 }

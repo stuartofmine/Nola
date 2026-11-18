@@ -29,11 +29,6 @@ fn invoked_skill_from_output(output: &Value) -> Option<AgentInvokedSkill> {
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string(),
-            instructions_digest: output
-                .get("instructions_digest")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
             base_directory: output
                 .get("base_directory")
                 .and_then(Value::as_str)
@@ -118,8 +113,7 @@ mod invoked_skill_output_tests {
             "type": "invoked_skill",
             "skill_id": "word-document-authoring",
             "version": "1.0.0",
-            "instructions_ref": "skill://word-document-authoring/1.0.0/SKILL.md#sha256=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-            "instructions_digest": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "instructions_ref": "skill://word-document-authoring/1.0.0/SKILL.md",
             "base_directory": "/tmp/skills/word-document-authoring",
             "arguments": "create report.docx",
             "instructions": "Follow the Word workflow",
@@ -133,7 +127,6 @@ mod invoked_skill_output_tests {
         let skill = invoked_skill_from_output(&output).expect("structured Skill payload");
         assert_eq!(skill.skill_id, "word-document-authoring");
         assert_eq!(skill.version, "1.0.0");
-        assert!(skill.instructions_ref.ends_with(&skill.instructions_digest));
         assert_eq!(skill.instructions, "Follow the Word workflow");
         assert!(skill.required_tools.is_empty());
         assert_eq!(
@@ -238,7 +231,6 @@ impl AgentRuntime {
         effects: &mut Vec<AgentEffect>,
     ) -> Result<(), String> {
         self.prepare_delegation_workspaces(turn_id)?;
-        let primary_workspace_root=self.primary_native_workspace_root()?;
         let model_in_flight = self.model_request_is_in_flight(turn_id, effects);
         let permission_rules = self.session.execution.permission_rules.clone();
         let host_catalog = self
@@ -279,17 +271,6 @@ impl AgentRuntime {
                 .chain(turn.primary_workspace_preparation.as_ref())
                 .map(|preparation| { let (id,name)=preparation.call(); (id.as_str().to_owned(),name) })
                 .collect::<std::collections::BTreeMap<_,_>>()).unwrap_or_default();
-        let completed_skill_runs = self
-            .session
-            .skill_runtime
-            .runs
-            .values()
-            .filter(|run| {
-                run.owner.parent_turn_id == turn_id.as_str()
-                    && run.status == crate::agent::capability::SkillRunStatus::Completed
-            })
-            .map(|run| (run.run_id.clone(), run.descriptor.skill_id.clone()))
-            .collect::<Vec<_>>();
         let execution_target_admission = self.execution_target_admission();
         let code_calls = self.session.execution.active_turn.as_ref()
             .map(|turn| turn.code_cells.values().flat_map(|cell| cell.pending_calls().map(|call|
@@ -344,13 +325,6 @@ impl AgentRuntime {
                 };
                 if tool.status != ToolCallStatus::Pending {
                     continue;
-                }
-                if primary_workspace_root.as_ref().is_some_and(|root|tool.permission_resolution.as_ref().is_some_and(|(_,facts)|
-                    super::delegation_workspace::source_effect_requires_worker(std::path::Path::new(root),&tool.name,facts.bindings.iter().map(|binding|&binding.resource)))) {
-                    tool.admission_error=Some(json!({"error":"dedicated_tool_required","tool_execution_skipped":true,
-                        "message":"Code mode keeps the primary conversation as coordinator; source-checkout edits execute in a managed workspace worker.",
-                        "recovery":{"tool":"spawn_agent","agent_type":"workspace"},
-                        "next_action":"Delegate implementation, inspect the returned workspace paths, verify there and use git_worktree_integrate only for reviewed delivery. Do not evade source protection through another cwd or an absolute source path. Ordinary approvals remain required."}));
                 }
                 // Invalid execution lineage is a rejected call, not permission
                 // to run the same business arguments without their owner.
@@ -410,53 +384,6 @@ impl AgentRuntime {
                         call_id: tool.call_id.clone(), tool_name: tool.name.clone(), output,
                         outcome: if failed { HostToolOutcome::Failed } else { HostToolOutcome::Succeeded },
                         full_output_ref: None, artifacts: Vec::new(),
-                    });
-                    continue;
-                }
-                let settled_skill_update = if tool.name == "skill_update" {
-                    tool.arguments
-                        .get("run_id")
-                        .and_then(Value::as_str)
-                        .is_some_and(|requested| {
-                            completed_skill_runs
-                                .iter()
-                                .any(|(run_id, _)| run_id == requested)
-                                || completed_skill_runs
-                                    .iter()
-                                    .filter(|(_, skill_id)| skill_id == requested)
-                                    .count()
-                                    == 1
-                        })
-                } else {
-                    false
-                };
-                if settled_skill_update {
-                    let output = json!({
-                        "type": "skill_runtime_update",
-                        "status": "already_completed",
-                        "tool_execution_skipped": true,
-                        "next_action": "The Skill execution contract is already satisfied and closed. Provide the final answer without another skill_update."
-                    });
-                    tool.status = ToolCallStatus::Completed;
-                    tool.output = Some(output.clone());
-                    tool.is_error = false;
-                    terminal_results.push(AgentItem::ToolResult {
-                        id: ItemId::from_string(allocate_id("tool_result")),
-                        call_id: tool.call_id.clone(),
-                        name: tool.name.clone(),
-                        output: output.clone(),
-                        is_error: false,
-                        full_output_ref: None,
-                        artifacts: Vec::new(),
-                    });
-                    events.push(RuntimeEvent::ToolCompleted {
-                        turn_id: turn_id.clone(),
-                        call_id: tool.call_id.clone(),
-                        tool_name: tool.name.clone(),
-                        output,
-                        outcome: HostToolOutcome::Succeeded,
-                        full_output_ref: None,
-                        artifacts: Vec::new(),
                     });
                     continue;
                 }

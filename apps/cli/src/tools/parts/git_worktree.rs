@@ -252,14 +252,14 @@ pub(crate) fn inspect_git_worktrees(root: &Path) -> Result<Value, String> {
     if !row.is_empty() {
         rows.push(Value::Object(row));
     }
-    let source=source_state(root,None,None);
-    let snapshot_plan=source.as_ref().ok().filter(|state|state.dirty&&!state.untracked).map(|state|&state.plan);
+    let source=source_state(&repository_root,None,None);
+    let snapshot_plan=source.as_ref().ok().filter(|state|state.dirty).map(|state|&state.plan);
     Ok(
         json!({"root":root,"repository_root":repository_root,"root_is_repository_root":root_is_repository_root,"head":head,"common_directory":common,"worktrees":rows,
             "repository_identity":observe_task_repository(root)?,
             "source_snapshot_plan":snapshot_plan,
-            "snapshot_unavailable_reason":source.as_ref().err().cloned().or_else(||source.as_ref().ok().filter(|state|state.untracked).map(|_|"Untracked files require explicit source review; they were not copied".into())),
-            "source_has_uncommitted_changes":!git_commit_text(root,&["status","--porcelain","--untracked-files=normal"])?.is_empty(),
+            "snapshot_unavailable_reason":source.as_ref().err().cloned(),
+            "source_has_uncommitted_changes":!git_commit_text(&repository_root,&["status","--porcelain","--untracked-files=no"])?.is_empty(),
             "provides_os_sandbox":false,"shared_git_metadata":true,
             "task_workspace_binding_changed":false}),
     )
@@ -272,7 +272,11 @@ fn git_worktree_list(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcom
             return Err("root must be absolute".into());
         }
         let root = resolve_configured_allowed(&raw, &ctx.allowed_dirs, true).map_err(|e| e.text)?;
-        inspect_git_worktrees(&root)
+        let info = inspect_git_worktrees(&root)?;
+        if let Some(repo) = info.get("repository_root").and_then(Value::as_str) {
+            resolve_configured_allowed(repo, &ctx.allowed_dirs, true).map_err(|e| e.text)?;
+        }
+        Ok(info)
     })();
     match result {
         Ok(value) => ok_data(value, "Inspected Git worktrees".into()),
@@ -323,18 +327,27 @@ fn git_worktree_create(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutc
         if ctx.cancellation.is_requested() {
             return Err("Worktree creation cancelled before execution".into());
         }
-        require_nonexecuting_worktree_preparation(&root)?;
+        let repository_root = PathBuf::from(git_commit_text(&root, &["rev-parse", "--show-toplevel"])?)
+            .canonicalize()
+            .map_err(|e| e.to_string())?;
+        resolve_configured_allowed(
+            &repository_root.to_string_lossy(),
+            &ctx.allowed_dirs,
+            true,
+        )
+        .map_err(|e| e.text)?;
+        require_nonexecuting_worktree_preparation(&repository_root)?;
         let source_has_uncommitted_changes = !git_commit_text(
-            &root, &["status", "--porcelain", "--untracked-files=normal"],
+            &repository_root, &["status", "--porcelain", "--untracked-files=no"],
         )?.is_empty();
         let source_snapshot_plan=args.get("source_snapshot").filter(|value|!value.is_null())
             .map(|value|serde_json::from_value::<nola_domain::task_workspace::SourceSnapshotPlan>(value.clone()))
             .transpose().map_err(|_|"Invalid source snapshot plan")?;
         if let Some(plan)=&source_snapshot_plan {
             plan.validate()?;
-            let state=source_state(&root,None,Some(&ctx.cancellation))?;
-            if plan.source_head!=expected_head || state.plan!=*plan || state.untracked || !state.dirty || destination.starts_with(&root) {
-                return Err("Source snapshot is stale, has untracked files, or has no independent destination".into());
+            let state=source_state(&repository_root,None,Some(&ctx.cancellation))?;
+            if plan.source_head!=expected_head || state.plan!=*plan || !state.dirty || destination.starts_with(&repository_root) {
+                return Err("Source snapshot is stale or has no independent destination".into());
             }
         }
         // Claim the new directory atomically before Git starts. Two creators
@@ -344,7 +357,7 @@ fn git_worktree_create(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutc
         })?;
         started = true;
         let (checkout_head,source_snapshot)=if let Some(plan)=source_snapshot_plan.as_ref() {
-            let (head,snapshot)=prepare_source_snapshot(&root,plan,&ctx.cancellation)?;
+            let (head,snapshot)=prepare_source_snapshot(&repository_root,plan,&ctx.cancellation)?;
             (head,Some(snapshot))
         } else {(expected_head.clone(),None)};
         let target = crate::platform_paths::shell_path(&destination);
@@ -397,7 +410,7 @@ fn git_worktree_create(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutc
         if selection.source_snapshot.is_some() {
             let binding=observe_task_worktree(&selection)?;
             verify_source_snapshot(&binding,true)?;
-            let state=source_state(&root,None,Some(&ctx.cancellation))?;
+            let state=source_state(&repository_root,None,Some(&ctx.cancellation))?;
             for entry in &state.entries {
                 let actual=source_entry(&destination,&entry.path,None,Some(&ctx.cancellation))?;
                 if actual.mode!=entry.mode || actual.sha256!=entry.sha256 {return Err("Checkout could not preserve source bytes/modes; retained worktree was not admitted".into());}
@@ -410,7 +423,7 @@ fn git_worktree_create(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutc
             return Err("Source HEAD or Git directory changed during checkout; inspect the retained worktree".into());
         }
         let source_has_uncommitted_changes = source_has_uncommitted_changes || !git_commit_text(
-            &root,&["status","--porcelain","--untracked-files=normal"],
+            &repository_root,&["status","--porcelain","--untracked-files=no"],
         )?.is_empty();
         Ok(
             json!({"root":root,"worktree":destination,"head":checkout_head,"source_head":expected_head,"common_directory":common,
@@ -488,7 +501,7 @@ fn git_worktree_integrate(args: &Map<String, Value>, ctx: &ToolContext) -> ToolO
         let child = Path::new(&selection.root);
         let child_head = required_string(args,"expected_child_head").map_err(|error|error.text)?;
         let source_head=selection.source_snapshot.as_ref().map(|snapshot|snapshot.plan.source_head.as_str()).unwrap_or(&selection.expected_head);
-        let validate = || -> Result<(),String> {
+        let validate_checkout = |colliding_relatives: &[PathBuf]| -> Result<(),String> {
             verify_task_worktree(&binding)?;
             if root == child || PathBuf::from(git_commit_text(&root,&["rev-parse","--show-toplevel"])?).canonicalize().map_err(|error|error.to_string())? != root || worktree_repository(&root)? != (PathBuf::from(&selection.expected_common_directory),source_head.into())
                 || observe_task_repository(&root)? != binding.repository_identity() {
@@ -501,15 +514,31 @@ fn git_worktree_integrate(args: &Map<String, Value>, ctx: &ToolContext) -> ToolO
             if git_commit_text(child,&["rev-parse","HEAD"])? != child_head {
                 return Err("Child commit changed since review".into());
             }
-            for directory in [root.as_path(),child] {
-                if directory==root && selection.source_snapshot.is_some() {continue;}
-                if !git_commit_text(directory,&["status","--porcelain","--untracked-files=all"])?.is_empty() {
+            if !git_commit_text(child,&["status","--porcelain","--untracked-files=all"])?.is_empty() {
+                return Err("Source and child must be clean; review and commit the child delivery first. User changes were not overwritten".into());
+            }
+            if selection.source_snapshot.is_none() {
+                if !git_commit_text(&root,&["status","--porcelain","--untracked-files=no"])?.is_empty() {
                     return Err("Source and child must be clean; review and commit the child delivery first. User changes were not overwritten".into());
+                }
+                if !colliding_relatives.is_empty() {
+                    let untracked_bytes = git_command_output(&root, &["status", "--porcelain", "-z", "--untracked-files=all"])?;
+                    for entry in untracked_bytes.split(|byte| *byte == 0).filter(|entry| entry.starts_with(b"?? ")) {
+                        let Ok(rel_str) = std::str::from_utf8(&entry[3..]) else { continue };
+                        let untracked_rel = Path::new(rel_str);
+                        if colliding_relatives.iter().any(|target| {
+                            untracked_rel == target
+                                || untracked_rel.starts_with(target)
+                                || target.starts_with(untracked_rel)
+                        }) {
+                            return Err("Source and child must be clean; review and commit the child delivery first. User changes were not overwritten".into());
+                        }
+                    }
                 }
             }
             Ok(())
         };
-        validate()?;
+        validate_checkout(&[])?;
         let patch = git_command_output(child,&["diff","--binary","--no-ext-diff","--no-textconv","--full-index",
             "--src-prefix=a/","--dst-prefix=b/",&selection.expected_head,&child_head,"--","."])?;
         if patch.is_empty() {return Err("Reviewed child has no committed changes to integrate".into());}
@@ -520,21 +549,23 @@ fn git_worktree_integrate(args: &Map<String, Value>, ctx: &ToolContext) -> ToolO
         std::io::Write::write_all(&mut file,&patch).map_err(|error|error.to_string())?;
         let patch_argument = git_path_argument(file.path())?;
         let patch_path = patch_argument.as_str();
-        git_command_output(&root,&["apply","--check","--binary","--",patch_path])?;
         // The repository patch identity cannot stand in for the bytes of the
         // delivered files. Observe each exact changed path, including both
         // ends of renames and deletion tombstones, before and after apply.
         let names = git_command_output(child,&["diff","--name-only","-z","--no-renames",
             "--no-ext-diff","--no-textconv",&selection.expected_head,&child_head,"--","."])?;
-        let paths = names.split(|byte| *byte == 0).filter(|name| !name.is_empty())
+        let relative_paths = names.split(|byte| *byte == 0).filter(|name| !name.is_empty())
             .map(|name| {
                 let relative = Path::new(std::str::from_utf8(name).map_err(|_| "Non-UTF-8 delivery path")?);
                 if !relative.components().all(|part| matches!(part,std::path::Component::Normal(_))) {
                     return Err("Unsafe delivery path".to_string());
                 }
-                Ok(root.join(relative))
+                Ok(relative.to_path_buf())
             }).collect::<Result<Vec<_>,String>>()?;
-        if paths.is_empty() || paths.len() > 4096 { return Err("Delivery exceeds the 4096-file evidence bound".into()); }
+        if relative_paths.is_empty() || relative_paths.len() > 4096 { return Err("Delivery exceeds the 4096-file evidence bound".into()); }
+        validate_checkout(&relative_paths)?;
+        git_command_output(&root,&["apply","--check","--binary","--",patch_path])?;
+        let paths = relative_paths.iter().map(|relative| root.join(relative)).collect::<Vec<_>>();
         let capture = || -> Result<Vec<String>,String> {
             let mut remaining = 256 * 1024 * 1024u64;
             paths.iter().map(|path| {
@@ -544,7 +575,7 @@ fn git_worktree_integrate(args: &Map<String, Value>, ctx: &ToolContext) -> ToolO
             }).collect()
         };
         let before = capture()?;
-        validate()?;
+        validate_checkout(&relative_paths)?;
         if ctx.cancellation.is_requested() {return Err("Integration cancelled before apply".into());}
         started = true;
         git_mutation_process(&root,&["apply","--binary","--whitespace=nowarn","--",patch_path],&ctx.cancellation,"Reviewed worktree integration")?;

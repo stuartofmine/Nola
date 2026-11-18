@@ -8,39 +8,56 @@ pub(crate) enum EntryIdentity {
     AgentHost,
 }
 
+const ENTRY_STACK_BYTES: usize = 16 * 1024 * 1024;
+
+fn run_with_expanded_stack(name: &str, f: impl FnOnce() + Send + 'static) {
+    let handle = std::thread::Builder::new()
+        .name(name.to_string())
+        .stack_size(ENTRY_STACK_BYTES)
+        .spawn(f)
+        .expect("spawn main execution thread");
+    if let Err(payload) = handle.join() {
+        std::panic::resume_unwind(payload);
+    }
+}
+
 #[cfg(any(feature = "terminal-ui", test))]
 pub fn run_cli() {
-    let arguments=std::env::args().skip(1).collect::<Vec<_>>();
-    // Updating must work even when the model or conversation configuration is invalid.
-    if let Some(result) = crate::software_update::run_if_requested(&arguments) {
-        if let Err(error) = result { eprintln!("{error}"); std::process::exit(1); }
-        return;
-    }
-    if let Some(result)=crate::tailcat_web_client::run_if_requested(&arguments) {
-        if let Err(error)=result {eprintln!("{error}");std::process::exit(1);}
-        return;
-    }
-    if let Some(result)=crate::tailcat_transport::run_if_requested(&arguments) {
-        if let Err(error)=result {eprintln!("{error}");std::process::exit(1);}
-        return;
-    }
-    crate::CliApplication::run(EntryIdentity::Cli);
+    run_with_expanded_stack("nola-cli-main", || {
+        let arguments = std::env::args().skip(1).collect::<Vec<_>>();
+        // Updating must work even when the model or conversation configuration is invalid.
+        if let Some(result) = crate::software_update::run_if_requested(&arguments) {
+            if let Err(error) = result { eprintln!("{error}"); std::process::exit(1); }
+            return;
+        }
+        if let Some(result) = crate::tailcat_web_client::run_if_requested(&arguments) {
+            if let Err(error) = result { eprintln!("{error}"); std::process::exit(1); }
+            return;
+        }
+        if let Some(result) = crate::tailcat_transport::run_if_requested(&arguments) {
+            if let Err(error) = result { eprintln!("{error}"); std::process::exit(1); }
+            return;
+        }
+        crate::CliApplication::run(EntryIdentity::Cli);
+    });
 }
 
 pub fn run_agent_host() {
-    let arguments = std::env::args().skip(1).collect::<Vec<_>>();
-    if crate::native_host_launch::is_native_run(&arguments) {
-        crate::native_host_launch::configure_surface();
-        if let Err(error) = crate::native_host_launch::run(&arguments) {
-            if !error.is_empty() { eprintln!("{error}"); }
+    run_with_expanded_stack("nola-host-main", || {
+        let arguments = std::env::args().skip(1).collect::<Vec<_>>();
+        if crate::native_host_launch::is_native_run(&arguments) {
+            crate::native_host_launch::configure_surface();
+            if let Err(error) = crate::native_host_launch::run(&arguments) {
+                if !error.is_empty() { eprintln!("{error}"); }
+                std::process::exit(1);
+            }
+            return;
+        }
+        if let Err(error) = crate::native_host_commands::run() {
+            eprintln!("{error}");
             std::process::exit(1);
         }
-        return;
-    }
-    if let Err(error) = crate::native_host_commands::run() {
-        eprintln!("{error}");
-        std::process::exit(1);
-    }
+    });
 }
 
 #[cfg(test)]

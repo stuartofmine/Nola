@@ -239,6 +239,8 @@ struct Port<'a, R> {
     now: i64,
     handoff: Cell<bool>,
     run: RefCell<Option<String>>,
+    submitted_turn: RefCell<Option<(String, String, String)>>,
+    stop_after_sealed_round: bool,
     // This Port lives inside one publication transaction. Avoid reparsing the
     // full frozen catalog for repeated Goal-only reads between mutations.
     projection: RefCell<Option<GoalProjection>>,
@@ -428,6 +430,18 @@ impl<R: AgentRuntimeCommandRepositories> GoalRuntimePort for Port<'_, R> {
             json!({"type":"automated_input","origin":"goal_continuation","items":items,"turn_context_items":context_items,
             "turn_context_platform":platform,"turn_context_components":[],"submission_id":run,"submitted_at_epoch_ms":self.now})
         };
+        let claimed = {
+            let mut slot = self.submitted_turn.borrow_mut();
+            if slot.as_ref().is_some_and(|(id, _, _)| id == run) {
+                slot.take()
+            } else {
+                None
+            }
+        };
+        let (user_message_id, assistant_message_id) = match claimed {
+            Some((_, user_id, assistant_id)) => (user_id, assistant_id),
+            None => (format!("{run}:user"), format!("{run}:assistant")),
+        };
         let conversation = self
             .store
             .borrow()
@@ -436,9 +450,9 @@ impl<R: AgentRuntimeCommandRepositories> GoalRuntimePort for Port<'_, R> {
             .map(|window| window.conversation);
         let input=serde_json::from_value::<crate::BeginAssistantTurn>(json!({
             "conversation_id":self.owner,"conversation_title":conversation.as_ref().map(|c|c.title.clone()).unwrap_or_else(||prompt.chars().take(80).collect()),"expected_configuration_revision":conversation.as_ref().map(|c|c.configuration_revision),
-            "expected_parent_message_id":conversation.as_ref().and_then(|c|c.messages.last().map(|m|m.id.clone())),"user_message_id":format!("{run}:user"),
+            "expected_parent_message_id":conversation.as_ref().and_then(|c|c.messages.last().map(|m|m.id.clone())),"user_message_id":user_message_id,
             "user_part_id":format!("{run}:user:text"),"user_text":if visible{prompt}else{""},"user_content_json":null,
-            "assistant_message_id":format!("{run}:assistant"),"context_checkpoint_id":null,"core_config":core,"submission":submission,"created_at_ms":self.now}))
+            "assistant_message_id":assistant_message_id,"context_checkpoint_id":null,"core_config":core,"submission":submission,"created_at_ms":self.now}))
             .map_err(|_|"invalid embedded Goal admission")?;
         self.projection.borrow_mut().take();
         crate::begin_assistant_turn(&mut **self.store.borrow_mut(), input)?;
@@ -454,6 +468,15 @@ impl<R: AgentRuntimeCommandRepositories> GoalRuntimePort for Port<'_, R> {
     }
     fn round_handoff_pending(&self) -> bool {
         self.handoff.get()
+    }
+    fn claim_submitted_run_id(&mut self) -> Option<String> {
+        self.submitted_turn
+            .borrow()
+            .as_ref()
+            .map(|(run_id, _, _)| run_id.clone())
+    }
+    fn stop_after_sealed_round(&self) -> bool {
+        self.stop_after_sealed_round
     }
     fn now_epoch_ms(&self) -> i64 {
         self.now
@@ -496,6 +519,10 @@ pub(super) fn advance<R: AgentRuntimeCommandRepositories>(
     selected_model: Option<super::GoalSelectedModel>,
     user_prompt: String,
     host_available: bool,
+    submitted_run_id: Option<String>,
+    submitted_user_message_id: Option<String>,
+    submitted_assistant_message_id: Option<String>,
+    stop_after_sealed_round: bool,
 ) -> Result<Value, String> {
     // Native execution starts only after this command returns its committed
     // receipt. No scheduler lease or half-planned round escapes a crash here.
@@ -509,10 +536,15 @@ pub(super) fn advance<R: AgentRuntimeCommandRepositories>(
             selected_model,
             user_prompt,
             host_available,
+            submitted_run_id,
+            submitted_user_message_id,
+            submitted_assistant_message_id,
+            stop_after_sealed_round,
         )
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn advance_in_transaction<R: AgentRuntimeCommandRepositories>(
     store: &mut R,
     owner: String,
@@ -522,7 +554,30 @@ fn advance_in_transaction<R: AgentRuntimeCommandRepositories>(
     selected_model: Option<super::GoalSelectedModel>,
     user_prompt: String,
     host_available: bool,
+    submitted_run_id: Option<String>,
+    submitted_user_message_id: Option<String>,
+    submitted_assistant_message_id: Option<String>,
+    stop_after_sealed_round: bool,
 ) -> Result<Value, String> {
+    let submitted_turn = match submitted_run_id {
+        Some(run) => {
+            let trimmed_run = run.trim();
+            if trimmed_run.is_empty() || trimmed_run.len() > 512 {
+                return Err("invalid submitted Goal Run identity".into());
+            }
+            let run_id = trimmed_run.to_string();
+            let user_id = submitted_user_message_id
+                .map(|id| id.trim().to_string())
+                .filter(|id| !id.is_empty())
+                .unwrap_or_else(|| format!("{run_id}:user"));
+            let assistant_id = submitted_assistant_message_id
+                .map(|id| id.trim().to_string())
+                .filter(|id| !id.is_empty())
+                .unwrap_or_else(|| format!("{run_id}:assistant"));
+            Some((run_id, user_id, assistant_id))
+        }
+        None => None,
+    };
     let now = crate::goal_coordinator::monotonic_epoch_millis();
     if store
         .is_runtime_task_child_session(&owner)
@@ -538,6 +593,7 @@ fn advance_in_transaction<R: AgentRuntimeCommandRepositories>(
             json!({"instruction":{"type":"terminal"},"goal":null,"interrupted_run_id":null,"error":null}),
         );
     }
+    let has_fresh_config = start_configuration.is_some();
     let mut config = match start_configuration {
         Some(config) => *config,
         None => configuration(&checkpoint(store, &owner)?.state),
@@ -545,10 +601,23 @@ fn advance_in_transaction<R: AgentRuntimeCommandRepositories>(
     if config.host_catalog.as_ref().map(|c| c.host_id.0.as_str()) != Some(host.as_str()) {
         return Err("Goal execution belongs to another Host".into());
     }
+    if !has_fresh_config {
+        if let Some(selected) = selected_model.as_ref() {
+            if let Some(frozen) = config.turn_identity.host_invocation.as_mut() {
+                frozen.primary = selected.primary.clone();
+                frozen.fallbacks = selected.fallbacks.clone();
+                frozen.generation = selected.generation.clone();
+                frozen.output_admission = selected.output_admission.clone();
+            }
+        }
+    }
     let mut interrupted_run = None;
+    let mut stopping = false;
+    let mut start_command = false;
+    let mut submitted_operation_id = None;
     if let Some(envelope) = control {
         use nola_agent_engine::agent::GoalRuntimeCommand;
-        let stopping = match &envelope.command {
+        stopping = match &envelope.command {
             GoalRuntimeCommand::GuardedControl { control, .. } => matches!(
                 control.as_ref(),
                 GoalRuntimeCommand::Pause { .. } | GoalRuntimeCommand::Cancel { .. }
@@ -573,21 +642,16 @@ fn advance_in_transaction<R: AgentRuntimeCommandRepositories>(
             }
         }
         let operation_id = envelope.operation_id.clone();
+        submitted_operation_id = Some(operation_id.clone());
         if let nola_agent_engine::agent::GoalRuntimeCommand::Start { id, .. } = &envelope.command {
-            if let Some(selected) = selected_model.as_ref() {
-                let frozen = config
+            start_command = true;
+            if config.turn_identity.host_recovery.is_none()
+                || config
                     .turn_identity
-                    .host_invocation
+                    .host_recovery
                     .as_ref()
-                    .ok_or("Goal requires a frozen model")?;
-                if selected.primary != frozen.primary
-                    || selected.generation != frozen.generation
-                    || selected.output_admission != frozen.output_admission
-                {
-                    return Err("Model settings changed since the last Run. Send a message with the selected settings before starting a Goal.".into());
-                }
-            }
-            if config.turn_identity.host_recovery.is_none() {
+                    .is_some_and(|r| r.adapter == "embedded-goal-invocation")
+            {
                 config.turn_identity.host_recovery = Some(descriptor(&config, &owner, id)?);
             }
             let profile = selected_model
@@ -633,6 +697,8 @@ fn advance_in_transaction<R: AgentRuntimeCommandRepositories>(
                 now,
                 handoff: Cell::new(false),
                 run: RefCell::new(None),
+                submitted_turn: RefCell::new(None),
+                stop_after_sealed_round: false,
                 projection: RefCell::new(None),
             };
             port.submit(envelope)?;
@@ -653,6 +719,58 @@ fn advance_in_transaction<R: AgentRuntimeCommandRepositories>(
             );
         }
     }
+    if !start_command && !stopping && (has_fresh_config || selected_model.is_some()) {
+        if let Some(active) = checkpoint(store, &owner)?
+            .state
+            .goal_projection
+            .active
+            .filter(|goal| !goal.status.is_terminal())
+        {
+            if config.turn_identity.host_recovery.is_none()
+                || config
+                    .turn_identity
+                    .host_recovery
+                    .as_ref()
+                    .is_some_and(|r| r.adapter == "embedded-goal-invocation")
+            {
+                config.turn_identity.host_recovery = Some(descriptor(&config, &owner, &active.id)?);
+            }
+            let profile = selected_model
+                .as_ref()
+                .and_then(|model| model.profile.clone())
+                .or(config
+                    .turn_identity
+                    .delegation
+                    .as_ref()
+                    .map(|value| value.snapshot())
+                    .transpose()?
+                    .and_then(|value| value.runtime.selected_profile));
+            let selection = profile
+                .map(
+                    |profile| nola_domain::goal_execution::GoalModelSelection::Profile {
+                        profile_id: profile.profile_id,
+                        revision: profile.admitted_revision,
+                    },
+                )
+                .unwrap_or(nola_domain::goal_execution::GoalModelSelection::DirectRoute);
+            let operation_id = submitted_operation_id
+                .unwrap_or_else(|| format!("goal-rebind:{}", uuid::Uuid::new_v4()));
+            crate::goal_execution::rebind_goal_execution(
+                store,
+                nola_domain::goal_execution::GoalExecutionBindingIdentity {
+                    conversation_id: owner.clone(),
+                    goal_id: active.id,
+                    operation_id,
+                    source_host_id: host.clone(),
+                },
+                crate::goal_execution::GoalExecutionTemplate {
+                    model_selection: selection,
+                    core_config: config.clone(),
+                },
+                now,
+            )?;
+        }
+    }
     if !host_available {
         let goal = checkpoint(store, &owner)?.state.goal_projection.active;
         if goal
@@ -667,6 +785,8 @@ fn advance_in_transaction<R: AgentRuntimeCommandRepositories>(
                 now,
                 handoff: Cell::new(false),
                 run: RefCell::new(None),
+                submitted_turn: RefCell::new(None),
+                stop_after_sealed_round: false,
                 projection: RefCell::new(None),
             };
             interrupted_run = port.active_run_id()?.filter(|run| {
@@ -701,12 +821,39 @@ fn advance_in_transaction<R: AgentRuntimeCommandRepositories>(
             now,
             handoff: Cell::new(false),
             run: RefCell::new(None),
+            submitted_turn: RefCell::new(None),
+            stop_after_sealed_round: false,
             projection: RefCell::new(None),
         };
         port.submit(nola_agent_engine::agent::GoalRuntimeCommandEnvelope {
             operation_id: format!("embedded-due:{}:{now}", goal.id),
             command: nola_agent_engine::agent::GoalRuntimeCommand::ResumeDue { now_epoch_ms: now },
         })?;
+    }
+    if !user_prompt.trim().is_empty() {
+        let before = checkpoint(store, &owner)?.state.goal_projection.active;
+        if let Some(goal) = before
+            .as_ref()
+            .filter(|goal| matches!(goal.status, GoalStatus::NeedsUser | GoalStatus::Paused))
+        {
+            let binding = crate::goal_execution::prepare_goal_execution(store, &owner, &goal.id)?;
+            let port = Port {
+                store: RefCell::new(&mut *store),
+                owner: owner.clone(),
+                host: host.clone(),
+                config: binding.template.core_config,
+                now,
+                handoff: Cell::new(false),
+                run: RefCell::new(None),
+                submitted_turn: RefCell::new(None),
+                stop_after_sealed_round: false,
+                projection: RefCell::new(None),
+            };
+            port.submit(nola_agent_engine::agent::GoalRuntimeCommandEnvelope {
+                operation_id: format!("user-prompt-resume:{}:{now}", goal.id),
+                command: nola_agent_engine::agent::GoalRuntimeCommand::Resume { now_epoch_ms: now },
+            })?;
+        }
     }
     let goal = checkpoint(store, &owner)?.state.goal_projection.active;
     let Some(goal) = goal.as_ref().filter(|g| g.status == GoalStatus::Running) else {
@@ -721,6 +868,8 @@ fn advance_in_transaction<R: AgentRuntimeCommandRepositories>(
         now,
         handoff: Cell::new(false),
         run: RefCell::new(None),
+        submitted_turn: RefCell::new(submitted_turn),
+        stop_after_sealed_round,
         projection: RefCell::new(None),
     };
     // A scheduled wake cannot implicitly resume paused/needs-user/incomplete work.

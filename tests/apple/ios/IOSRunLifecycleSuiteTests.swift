@@ -251,21 +251,19 @@ private actor PermissionGETAttemptCounter {
         let identity = IOSRemoteSubmissionIdentity(source_host_id: "host", client_id: "client",
             conversation_id: "conversation", submission_id: "original", user_message_id: "user",
             assistant_message_id: "assistant")
-        let digest = String(repeating: "a", count: 64)
         let provider = WebAgentProvider(config: .init(baseURL: URL(string: "http://127.0.0.1:8123")!,
             token: "fixture", expectedHostId: "host", clientId: "client")) { request in
             XCTAssertEqual(request.url?.path, "/api/mobile/chat/agent/v2/cancel")
             let wire = try XCTUnwrap(JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any])
             let input = try WebAgentProvider.decryptMobileJSON(wire, token: "fixture")
-            XCTAssertEqual(Set(input.keys), ["identity", "request_digest"])
-            XCTAssertEqual(input["request_digest"] as? String, digest)
+            XCTAssertEqual(Set(input.keys), ["identity"])
             let sent = try JSONDecoder().decode(IOSRemoteSubmissionIdentity.self,
                 from: JSONSerialization.data(withJSONObject: input["identity"]!))
             XCTAssertEqual(sent, identity)
             return WebAgentTransportResponse(bytes: AsyncThrowingStream { $0.finish() },
                 response: HTTPURLResponse(url: request.url!, statusCode: 202, httpVersion: nil, headerFields: nil)!)
         }
-        try await provider.cancelHostGeneration(identity: identity, requestDigest: digest)
+        try await provider.cancelHostGeneration(identity: identity)
     }
 
     nonisolated private static func object(recovery: String = "observe", worker: String = "running") -> [String: Any] {

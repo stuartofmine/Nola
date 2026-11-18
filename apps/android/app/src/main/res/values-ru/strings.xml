@@ -1363,4 +1363,25 @@
     <string name="expert_main_requires_tools">Выберите основную модель с поддержкой инструментов и включите инструменты экспертов либо снимите выбор экспертов. Черновик сохранён.</string>
     <string name="chat_context_budget_exceeded">Ввод и инструменты превышают контекст. Увеличьте лимит либо сократите вложения, историю и инструменты.</string>
     <string name="chat_run_blocked">Задача пока не может продолжиться. Разверните процесс и проверьте необходимые сведения или действия.</string>
+    <string name="models_web_host_paste_setup">Вставить настройки подключения</string>
+    <string name="models_web_host_invalid_setup">Скопируйте настройки подключения из Nola на хосте и вставьте их сюда.</string>
+    <string name="permission_review_unavailable">Сведения об операции недоступны. Отклоните этот запрос или попросите хост предоставить проверяемое описание операции.</string>
+    <string name="common_more">Ещё</string>
+    <string name="models_config_save_failed">Не удалось сохранить конфигурацию модели.</string>
+    <string name="models_protocol_responses">Responses</string>
+    <string name="models_protocol_chat_completions">Chat Completions</string>
+    <string name="chat_rename_conversation">Переименовать беседу</string>
+    <string name="chat_conversation_title_hint">Название беседы</string>
+    <string name="chat_local_mcp_servers">Локальные MCP-серверы</string>
+    <string name="chat_local_mcp_empty">Локальные MCP-серверы не настроены.</string>
+    <string name="goal_discard_pending">Отменить ожидающий запрос</string>
+    <string name="goal_constraints">Ограничения (необязательно)</string>
+    <string name="goal_constraints_hint">По одному в строке или через запятую</string>
+    <string name="goal_next_wake_format">Следующая проверка: %1$s</string>
+    <string name="expert_conflict_refresh">Профиль эксперта изменился. Обновите перед повторной попыткой.</string>
+    <string name="task_detail_unavailable">Сведения о задаче недоступны</string>
+    <string name="chat_ui_host_submission_rejected">Хост отклонил отправку. Обновите форму и повторите попытку.</string>
+    <string name="chat_ui_host_submission_unknown">Результат отправки на хост ещё не подтверждён.</string>
+    <string name="chat_ui_submission_rejected">Отправка была отклонена.</string>
+    <string name="chat_ui_submission_unknown">Результат отправки ещё не подтверждён.</string>
 </resources>

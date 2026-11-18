@@ -35,7 +35,7 @@
     <p role="status">{t($locale, `settings.notifications.${status.permission}`)}</p>
     {#if status.permission === 'denied'}<p class="muted">{t($locale, 'settings.notifications.deniedHint')}</p>{/if}
     {#if error}<p role="alert">{t($locale, error)}</p>{/if}
-    <label><input type="checkbox" checked={enabled} onchange={change} disabled={busy || (!status.enabled && (!status.supported || status.permission === 'denied'))} />{t($locale, 'settings.notifications.enable')}</label>
+    <label><input type="checkbox" role="switch" checked={enabled} onchange={change} disabled={busy || (!status.enabled && (!status.supported || status.permission === 'denied'))} />{t($locale, 'settings.notifications.enable')}</label>
     <div class="actions"><button disabled={busy} onclick={refresh}>{t($locale, 'models.reload')}</button><button disabled={busy || status.permission !== 'granted'} onclick={test}>{t($locale, 'settings.notifications.test')}</button></div>
     <details><summary>{t($locale, 'settings.notifications.details')}</summary><p class="muted">{t($locale, 'settings.notifications.scope')}</p></details>
 </section>

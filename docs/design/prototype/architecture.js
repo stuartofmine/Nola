@@ -1,51 +1,377 @@
 'use strict';
-window.architectureModule=(()=>{
-const media=window.matchMedia?.('(max-width: 700px)');let mode=media?.matches?'mobile':'desktop';
-const states={mobile:{page:'conversations',id:'design',settings:''},desktop:{page:'workspace',id:'design',settings:''}};
-let sidebarVisible=true;let canvasView=null,inspectorWidth=360;let deskTab='对话',inspector='工作概览',showInspector=new URLSearchParams(location.search).get('models')!=='empty';
-const btn=(t,a,cls='text-action')=>`<button class="${cls}" data-action="${a}">${t}</button>`;
-const sessions={};const scrolls={};const panelScrolls={};let dataPane='data';const browserStates={},processReading={};const expandedPanels={},knowledgeDrafts={},knowledgeExpanded={};
-const panelGroups=[{id:'task',title:'任务',names:['工作概览','进度','目标']},{id:'artifacts',title:'产物',names:['审阅','产物']},{id:'context',title:'上下文',names:['会话配置','上下文预算','执行','参与者']}];
-function panelGroup(){return panelGroups.find(g=>g.names.includes(inspector))||panelGroups[0]}
-function panelState(){return expandedPanels[activeId]||(expandedPanels[activeId]=new Set(['工作概览']));}
+window.architectureModule = (() => {
+    const media = window.matchMedia?.('(max-width: 700px)');
+    let mode = media?.matches ? 'mobile' : 'desktop';
+    const states = {
+        mobile: {page: 'conversations', id: 'design', settings: ''},
+        desktop: {page: 'workspace', id: 'design', settings: ''}
+    };
+    let sidebarVisible = true,
+        inspectorWidth = 360,
+        section = 'chat',
+        extTab = 'experts',
+        dataPane = 'memory',
+        inspector = 'task',
+        showInspector = new URLSearchParams(location.search).get('models') !== 'empty',
+        settingsOpen = false,
+        settingsCategory = '',
+        settingsScroll = 0;
 
-function session(){return sessions[activeId]||(sessions[activeId]={tabs:[{key:'chat',kind:'chat',title:'对话'}],active:'chat'})}
-function activeTab(){const x=session();return x.tabs.find(t=>t.key===x.active)||x.tabs[0]}
-function capture(){const panel=document.querySelector('.inspector-content');if(panel)panelScrolls[panel.dataset.panelKey]=panel.scrollTop;document.querySelectorAll('[data-knowledge-field]').forEach(el=>{const owner=el.dataset.owner;(knowledgeDrafts[owner]||(knowledgeDrafts[owner]={}))[el.dataset.knowledgeField]=el.value;});const knowledge=document.querySelector('[data-knowledge-owner]');if(knowledge)knowledgeExpanded[knowledge.dataset.knowledgeOwner]=new Set([...knowledge.querySelectorAll('details[open]')].map(el=>el.dataset.knowledgePane));const el=document.querySelector('.studio-center');if(el){scrolls[el.dataset.context+':'+el.dataset.tabkey]={main:el.scrollTop,detail:el.querySelector('.rv-canvas,.studio-document,.page')?.scrollTop||0,chat:el.querySelector('#transcript')?.scrollTop||0};const input=el.querySelector('#compose');if(input)drafts[el.dataset.context]=input.value}}
-function selectTab(key){capture();session().active=key;syncTab();render();document.querySelector('[role=tab][aria-selected=true]')?.focus()}
-function syncTab(){session().tabs[0].title=current().title;const t=activeTab();deskTab=t.kind==='chat'?'对话':t.kind==='materials'?'产物与资料':t.kind==='execution'?'执行与结果':'详情';canvasView=t.kind==='chat'?null:{kind:t.kind,id:t.id}}
-function openTab(kind,id,title){capture();const x=session(),key=kind+'~'+(id||'');if(!x.tabs.some(t=>t.key===key))x.tabs.push({key,kind,id,title});x.active=key;page='workspace';syncTab();render()}
-function openRoute(route){if(matchMedia('(min-width:701px) and (max-width:1179px)').matches)showInspector=false;const names={manage:'资源与能力',data:'数据中心',models:'模型与提供方',capabilities:'Skills / MCP',memory:'长期记忆',plans:'计划',activity:'活动与结果',settings:'设置',updates:'软件更新',review:'代码审阅',knowledge:'整理要点'};openTab('route',route,names[route]||route)}
-function tabbar(){syncTab();const x=session();return `<header class="main-tabbar app-topbar" aria-label="应用顶栏"><div class="topbar-left"><span class="topbar-mark" title="Nola · 演示">n</span>${sidebarNavigation.left()}<button class="strip-entry" aria-label="新对话" title="新对话" data-action="new">${svg('edit')}</button><button class="strip-entry" aria-label="显示或隐藏侧栏" title="显示或隐藏侧栏" aria-pressed="${sidebarVisible}" data-action="dk-sidebar">${svg('sidebar')}</button></div><div class="content-tabs" role="tablist" aria-label="打开的内容">${x.tabs.map(t=>`<div class="content-tab ${t.key===x.active?'active':''}"><button role="tab" aria-controls="main-content" aria-selected="${t.key===x.active}" tabindex="${t.key===x.active?'0':'-1'}" title="${esc(t.title)}" data-action="dk-content:${t.key}">${esc(t.title)}</button>${t.kind!=='chat'?`<button class="tab-close" title="关闭 ${esc(t.title)}" aria-label="关闭 ${esc(t.title)}" data-action="dk-close-tab:${t.key}">${svg('close')}</button>`:''}</div>`).join('')}</div><button class="topbar-add" aria-label="搜索对话" title="搜索对话" data-action="conversation-search">${svg('search')}</button>${sidebarNavigation.tools(showInspector&&activeTab().kind!=='route'?inspector:'')}</header>`}
-function baseRouteBody(p){return window.updatePreview?.view(p)||window.workspaceModule?.view(p)||window.manageModule?.view(p)||window.enhancedModule?.view(p)||(p==='models'?modelsView():p==='data'?dataView():p==='plans'?plansView():p==='settings'?settingsView():p==='conversations'?listView():execution())}
-function dataCenter(){return `<section class="prototype-data-center"><header><nav aria-label="数据中心分类">${[['data','资料'],['memory','长期记忆'],['plans','自动任务']].map(([id,title])=>`<button data-action="dk-data-pane:${id}" aria-pressed="${dataPane===id}">${title}</button>`).join('')}</nav></header>${baseRouteBody(dataPane)}</section>`}
-function routeBody(p){return p==='data'?dataCenter():baseRouteBody(p)}
-function workspaceOverview(){const waiting=current().messages.some(m=>m.permission==='pending'),goal=deliveryModule.snapshot().goal;return `<div class="work-status" role="status"><strong>${waiting?'等待确认':goal?.status==='running'?'正在处理':'就绪'}</strong><span>本地 Host · 演示</span></div>${waiting?'<p class="muted">请在对话中处理当前请求。</p>':''}<section class="desk-section prototype-workspace"><h3>工作区</h3><div><span>${esc(current().workspace||'会话沙盒')}</span>${btn('更改…','dk-workspace')}</div></section>`}
-function executionPanel(){const items=manageModule.snapshot().activities.filter(a=>a.chat===activeId),pending=items.find(a=>['待确认','待补充'].includes(a.status));return `<div class="desk-section">${pending?`<div class="work-status"><strong>${esc(pending.status)}</strong>${btn('查看当前请求','mg-activity:'+pending.id)}</div>`:''}<details class="execution-history" data-process-history data-process-owner="${esc(activeId)}" ${processReading[activeId]?'open':''}><summary>执行过程</summary>${items.map(a=>`<button class="desk-resource" data-action="mg-activity:${a.id}"><strong>${esc(a.title)}</strong><span>${esc(a.status)}</span></button>`).join('')||'<p>此会话暂无执行记录。</p>'}</details></div><section class="desk-section"><h3>浏览器</h3><div class="work-status"><span>${browserStates[activeId]?'已连接（演示）':'未连接'}</span>${btn(browserStates[activeId]?'断开演示连接':'连接演示浏览器','dk-browser')}</div></section>`}
-function content(){const t=activeTab();return t.kind==='chat'?chatView():t.kind==='route'?routeBody(t.id):t.kind==='materials'?artifacts():t.kind==='execution'?execution():t.kind==='progress'?organizerModule.canvas():deliverablesModule.canvas(t.kind,t.id)}
+    const btn = (t, a, cls = 'text-action') => `<button class="${cls}" data-action="${a}">${t}</button>`;
+    const scrolls = {},
+        panelScrolls = {},
+        browserStates = {},
+        knowledgeDrafts = {},
+        knowledgeExpanded = {},
+        recallQueries = {},
+        memoryMode = {},
+        retrievalOn = {},
+        sourceEnabled = {};
 
-function stash(){states[mode]={page,id:activeId,settings:settingsSection,query,searchScroll};}
-function activate(next){if(next===mode)return;saveDraft();stash();if(dialog.open)closeDialog();mode=next;let s=states[mode];page=s.page;activeId=conversations.some(c=>c.id===s.id)?s.id:'design';settingsSection=s.settings;query=s.query||'';searchScroll=s.searchScroll||0;selectedExperts=[...(current()?.experts||[])];document.documentElement.dataset.experience=mode;history.replaceState({page,id:activeId,mode},'',`#${mode}/${page}`);render();}
-function start(){mode=media?.matches?'mobile':'desktop';let s=states[mode];page=s.page;activeId=s.id;selectedExperts=[...current().experts];document.documentElement.dataset.experience=mode;history.replaceState({page,id:activeId,mode},'',`#${mode}/${page}`);media?.addEventListener('change',e=>activate(e.matches?'mobile':'desktop'));render();}
-function record(){return workspaceModule.records.find(r=>r.id===activeId)}
-function inspectorBody(selected){const r=record(),c=current();if(selected==='工作概览')return workspaceOverview();if(selected==='会话配置')return `<section class="desk-section prototype-workspace"><h3>会话沙盒</h3><div><span>${esc(c.workspace||'会话沙盒')}</span>${btn('更改…','dk-workspace')}</div></section><div class="desk-section inspector-session-instructions"><label for="session-instructions-${encodeURIComponent(c.id)}"><strong>会话指令</strong><span class="meta">仅作用于主 Agent（Nola）在本会话的后续回复，不混入运行笔记。</span></label><textarea id="session-instructions-${encodeURIComponent(c.id)}" data-knowledge-field="instructions" data-owner="${esc(c.id)}" rows="3" placeholder="例如：先给结论，再列出可核对的文件路径">${esc((knowledgeDrafts[c.id]?.instructions)??(c.instructions||''))}</textarea>${btn('保存会话指令','dk-knowledge-save:instructions')}</div>`;if(selected==='上下文预算')return `<div class="desk-section"><div class="context-usage"><strong>上下文用量</strong><span>尚未测量</span></div><div class="context-usage"><span>缓存命中率</span><span>未知（未上报）</span></div><details class="context-diagnostics"><summary>详细信息</summary><p>请求编号、尝试编号及缓存片段变化在这里展开。当前没有真实测量。</p></details></div>${knowledgeEditors(r,c.id)}<div class="desk-section"><h3>会话资料</h3>${documents.filter(d=>!d.sourceId||d.sourceId===c.id).slice(0,3).map(d=>btn(esc(d.name),'ex-source:'+documents.indexOf(d),'desk-resource')).join('')}${btn('添加引用','attach')}</div>`;if(selected==='执行')return executionPanel();if(selected==='参与者')return `<div class="desk-section"><h3>Nola</h3><p>${c.experts.length?esc(c.experts.join(' · ')):'此会话暂无额外专家。'}</p>${btn('调整参与专家','experts')}${window.expertHistoryModule?.rows(c.id)||''}</div>`;return window.organizerModule?.panel(selected,deskTab==='详情'?canvasView?.kind:null)||'';}
+    const sectionTitles = {
+        extensions: '专家与技能',
+        automations: '自动化中心',
+        memory: '记忆与数据源'
+    };
 
-function knowledgeEditors(record,owner){
- const drafts=knowledgeDrafts[owner]||{},expanded=knowledgeExpanded[owner]||new Set();
- return `<div class="inspector-knowledge" data-knowledge-owner="${esc(owner)}"><details data-knowledge-pane="keyPointsMarkdown" ${expanded.has('keyPointsMarkdown')?'open':''}><summary>会话要点（只读摘要）</summary><p class="meta">与「会话指令」分离的阶段要点归纳，点击下方进入完整整理视图。</p><p>${esc(record?.keyPointsMarkdown||'尚未整理会话要点。')}</p>${btn('查看完整整理','ws-context:'+owner)}</details><details data-knowledge-pane="wiki" ${expanded.has('wiki')?'open':''}><summary>Wiki</summary><label for="knowledge-${encodeURIComponent(owner)}-wiki">Wiki草稿</label><p class="meta">供查阅整理的运行笔记，不作为会话指令注入模型。</p><textarea id="knowledge-${encodeURIComponent(owner)}-wiki" data-knowledge-field="wiki" data-owner="${esc(owner)}" rows="5">${esc(drafts.wiki??record?.wiki??'')}</textarea><button class="text-action" data-action="dk-knowledge-save:wiki">保存Wiki演示稿</button></details><details data-knowledge-pane="recall" ${expanded.has('recall')?'open':''}><summary>历史召回</summary>${(record?.history||[]).map(text=>`<p>${esc(text)}</p>`).join('')||'<p>暂无可召回的演示记录。</p>'}</details><p class="meta">仅本页演示草稿；不会修改真实会话、Wiki 或摘要。</p></div>`;
-}
-function contextPane(){const expanded=panelState(),group=panelGroup();return `<aside class="studio-inspector" aria-label="当前工作上下文" style="--inspector-width:${inspectorWidth}px"><div class="inspector-resize" role="separator" tabindex="0" aria-label="调整工作面板宽度" aria-orientation="vertical" aria-valuemin="320" aria-valuemax="480" aria-valuenow="${inspectorWidth}"></div>${window.sidebarNavigation.right(inspector,inspectorWidth)}<div class="inspector-content" data-panel-key="${activeId}:${group.id}" data-inspector-area="${group.id}">${group.names.map((name,index)=>`<section class="inspector-inline-section" data-inspector-section="${name}"><button type="button" class="inspector-section-toggle" data-action="dk-section:${name}" aria-expanded="${expanded.has(name)}" aria-controls="inspector-inline-${index}"><span>${name}</span>${svg(expanded.has(name)?'down':'chevron')}</button>${expanded.has(name)?`<div class="inspector-section-body" id="inspector-inline-${index}" role="region" aria-label="${name}">${inspectorBody(name)}</div>`:''}</section>`).join('')}<p class="desk-footnote">本地演示 · 与真实执行、文件和仓库无连接</p></div></aside>`;}
+    function capture() {
+        const panel = document.querySelector('.inspector-content');
+        if (panel) panelScrolls[panel.dataset.panelKey] = panel.scrollTop;
+        const settingsDetail = document.querySelector('.settings-window-detail');
+        if (settingsDetail) settingsScroll = settingsDetail.scrollTop;
+        if (window.expertRolesModule?.readInlineEditor) window.expertRolesModule.readInlineEditor();
+        document.querySelectorAll('[data-knowledge-field]').forEach(el => {
+            const owner = el.dataset.owner;
+            (knowledgeDrafts[owner] || (knowledgeDrafts[owner] = {}))[el.dataset.knowledgeField] = el.value;
+        });
+        const knowledge = document.querySelector('[data-knowledge-owner]');
+        if (knowledge) {
+            knowledgeExpanded[knowledge.dataset.knowledgeOwner] = new Set([...knowledge.querySelectorAll('details[open]')].map(el => el.dataset.knowledgePane));
+        }
+        const el = document.querySelector('.studio-center');
+        if (el) {
+            scrolls[el.dataset.context + ':' + el.dataset.tabkey] = {
+                main: el.scrollTop,
+                detail: el.querySelector('.studio-document,.page')?.scrollTop || 0,
+                chat: el.querySelector('#transcript')?.scrollTop || 0
+            };
+            const input = el.querySelector('#compose');
+            if (input) drafts[el.dataset.context] = input.value;
+        }
+    }
 
-function artifacts(){let r=record();return `<div class="studio-document"><div class="eyebrow">工作产物 / 源会话知识点</div><h1>${esc(r?.title||current().title)}</h1><p class="meta">${esc(r?.updated||'尚未整理')} · 与来源会话保持关联</p><div class="prose">${(r?.keyPointsMarkdown||'还没有产物。你可以先在对话中展开想法，再决定哪些内容值得留下。').split('\n\n').map(p=>`<p>${esc(p)}</p>`).join('')}</div><div class="action-wrap">${btn('编辑源知识点','ws-context:'+activeId,'primary')}${btn('查看独立 Wiki','dk-wiki')}${btn('来源对话','dk-tab:对话')}</div><div class="section-heading"><h2>相关资料</h2>${btn('管理资料','nav:data')}</div>${documents.slice(0,3).map((d,i)=>`<button class="object-row" data-action="ex-source:${i}">${svg('file')}<div class="object-copy"><h3>${esc(d.name)}</h3><p>${esc(d.type)} · ${esc(d.info)}</p></div>${svg('chevron')}</button>`).join('')}</div>`}
-function execution(){let items=manageModule.snapshot().activities.filter(a=>a.chat===activeId);return `<div class="studio-document"><div class="eyebrow">执行记录</div><h1>过程与结果</h1><p class="muted" style="margin:12px 0 24px">工具请求、等待与结果，留在同一工作上下文中。</p><div class="objects">${items.length?items.map(a=>`<button class="object-row" data-action="mg-activity:${a.id}"><div class="object-copy"><h3>${esc(a.title)}</h3><p>${esc(a.detail)}</p></div><span class="object-meta">${esc(a.status)}</span></button>`).join(''):'<div class="empty-state"><h2>当前没有执行记录</h2><p>普通聊天不需要自动创建任务。</p></div>'}</div><div class="action-wrap">${btn('所有活动','nav:activity')}${btn('工具与连接','nav:capabilities')}${btn('代码变更审阅','nav:review')}</div></div>`}
-function desktop(){syncTab();const c=current(),t=activeTab(),visible=showInspector&&t.kind!=='route';return `<section class="studio ${visible?'has-inspector':''}"><div class="studio-body"><div class="studio-center" id="main-content" role="tabpanel" aria-label="${esc(t.title)}" data-context="${activeId}" data-tabkey="${t.key}" data-canvas-kind="${t.kind}">${content()}</div>${visible?contextPane():''}</div></section>`}
-function view(p){if(p==='knowledge')return workspaceModule.view('workspace');if(mode==='mobile'&&p==='workspace')return window.assistantModule?.view(p);if(mode==='desktop'&&['workspace','chat'].includes(p))return desktop();return null}
-function handle(a){if(a==='dk-sidebar'){sidebarVisible=!sidebarVisible;render();return true}if(!a.startsWith('dk-'))return false;if(a==='dk-workspace'){capture();openDialog('更改工作区',`<p class="dialog-note">仅选择本页演示目录，不读取真实文件。</p>${['会话沙盒','演示项目'].map(name=>btn(name,'dk-workspace-set:'+name)).join('')}`);return true}if(a.startsWith('dk-workspace-set:')){current().workspace=a.split(':')[1];closeDialog();render();return true}if(a==='dk-browser'){browserStates[activeId]=!browserStates[activeId];render();return true}if(a.startsWith('dk-data-pane:')){dataPane=a.split(':')[1];render();return true}let [key,v]=a.split(':');saveDraft();if(key==='dk-tab'){if(dialog.open)closeDialog();if(v==='对话')selectTab('chat');else openTab(v==='产物与资料'?'materials':'execution','',v)}if(key==='dk-content'){selectTab(v)}if(key==='dk-close-tab'){capture();const x=session(),i=x.tabs.findIndex(t=>t.key===v);if(i>0){x.tabs.splice(i,1);if(x.active===v)x.active=x.tabs[Math.max(0,i-1)].key;syncTab();render();document.querySelector('[role=tab][aria-selected=true]')?.focus()}}if(key==='dk-panel'){if(dialog.open)closeDialog();if(v==='上下文')v='会话配置';const expanded=panelState(),wasVisible=showInspector&&activeTab().kind!=='route';if(activeTab().kind==='route'){session().active='chat';syncTab()}showInspector=!(wasVisible&&inspector===v&&expanded.has(v));if(showInspector){if(['会话配置','上下文预算'].includes(v)&&!expanded.has('会话配置')&&!expanded.has('上下文预算')){expanded.add('会话配置');expanded.add('上下文预算');}expanded.add(v);}inspector=v;render();if(showInspector)document.querySelector('[data-inspector-section="'+CSS.escape(v)+'"]')?.scrollIntoView({block:'nearest',behavior:reduced||matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});sidebarNavigation.focusTool(v)}if(key==='dk-section'){const expanded=panelState();if(expanded.has(v))expanded.delete(v);else{expanded.add(v);inspector=v;}render()}if(key==='dk-knowledge-save'&&['keyPointsMarkdown','wiki','instructions'].includes(v)){capture();const r=record(),draft=knowledgeDrafts[activeId]?.[v];if(v==='instructions'){current().instructions=draft??'';toast('已保存本会话指令（演示）');}else if(r&&draft!==undefined){r[v]=draft;r.version=(r.version||1)+1;toast('已保存本页演示稿');}}if(key==='dk-width'){inspectorWidth=inspectorWidth>360?360:480;render()}if(key==='dk-detail'){deskTab='详情';render()}if(key==='dk-inspector'){showInspector=!showInspector;render()}if(key==='dk-project'){openDialog('切换工作上下文',`<p class="dialog-note">选择一段对话，关联资料、产物和执行状态随之切换。</p>${conversations.map(c=>`<button class="choice-row" data-action="dk-select:${c.id}"><div><h3>${esc(c.title)}</h3><p>${esc(c.preview)}</p></div>${c.id===activeId?svg('check'):''}</button>`).join('')}`)}if(key==='dk-select'){if(dialog.open)closeDialog();capture();activeId=v;canvasView=null;selectedExperts=[...current().experts];session().active='chat';deskTab='对话';inspector='工作概览';navigate('workspace',v)}if(key==='dk-wiki'){handleExternal('ws-context:'+activeId);handleExternal('ws-tab:Wiki')}return true}
-function openCanvas(kind,id){const d=deliverablesModule.snapshot();const title=kind==='review'?d.review?.files[Number(id)]?.name:kind==='artifact'?d.artifacts.find(a=>a.id===id)?.name:'执行日志';openTab(kind,id,title||'详情')}
-function afterRender(){const panel=document.querySelector('.inspector-content');if(panel)panel.scrollTop=panelScrolls[panel.dataset.panelKey]||0;const process=document.querySelector('[data-process-history]');if(process){const owner=process.dataset.processOwner;process.ontoggle=()=>{if(process.isConnected)processReading[owner]=process.open;};}document.querySelector('.shell')?.classList.toggle('sidebar-collapsed',!sidebarVisible);document.querySelector('[role=tab][aria-selected=true]')?.closest('.content-tab')?.scrollIntoView({block:'nearest',inline:'nearest'});const el=document.querySelector('.studio-center');if(el){const saved=scrolls[activeId+':'+activeTab().key];el.scrollTop=saved?.main||0;const detail=el.querySelector('.rv-canvas,.studio-document,.page');if(detail)detail.scrollTop=saved?.detail||0;const transcript=el.querySelector('#transcript');if(transcript)transcript.scrollTop=saved?.chat||0}document.querySelectorAll('[role=tab]').forEach((b,i,all)=>{b.onkeydown=e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();const n=e.key==='Home'?0:e.key==='End'?all.length-1:(i+(e.key==='ArrowRight'?1:-1)+all.length)%all.length;all[n].focus()}if(e.key==='Delete'&&i>0)handle('dk-close-tab:'+session().tabs[i].key)}});const picker=document.querySelector('#work-tool');if(picker)picker.onchange=()=>{saveDraft();inspector=picker.value;render();document.querySelector('#work-tool')?.focus()};const grip=document.querySelector('.inspector-resize');if(!grip)return;const apply=w=>{inspectorWidth=Math.max(320,Math.min(480,w));const pane=document.querySelector('.studio-inspector');pane?.style.setProperty('--inspector-width',inspectorWidth+'px');grip.setAttribute('aria-valuenow',inspectorWidth)};grip.onkeydown=e=>{if(['ArrowLeft','ArrowRight'].includes(e.key)){e.preventDefault();apply(inspectorWidth+(e.key==='ArrowLeft'?20:-20))}};grip.onpointerdown=e=>{const x=e.clientX,w=inspectorWidth;grip.setPointerCapture(e.pointerId);grip.onpointermove=ev=>apply(w+x-ev.clientX);grip.onpointerup=()=>{grip.onpointermove=null}}}
-function handleExternal(a){window.workspaceModule.handle(a)}
-function restore(e){saveDraft();if(dialog.open)closeDialog();const s=e.state?.mode===mode?e.state:states[mode];page=s.page||'workspace';activeId=conversations.some(c=>c.id===s.id)?s.id:'design';settingsSection=s.settings||'';query=s.query||'';searchScroll=s.searchScroll||0;selectedExperts=[...(current()?.experts||[])];render();if(page==='conversations')window.scrollTo(0,searchScroll);stash()}
-function nav(){stash();history.replaceState({page,id:activeId,mode},'',`#${mode}/${page}${page==='chat'?'/'+activeId:''}`)}
-document.addEventListener('keydown',e=>{if(mode!=='desktop'||!['workspace','chat'].includes(page)||dialog.open)return;if((e.metaKey||e.ctrlKey)&&['1','2','3'].includes(e.key)){e.preventDefault();saveDraft();if(e.key==='1'){session().active='chat';syncTab()}else{inspector=e.key==='2'?'产物':'执行';showInspector=true}render()}});
-return {topbar:()=>mode==='desktop'?tabbar():'',capture,openRoute,openTab,view,handle,openCanvas,afterRender,start,nav,restore,activate,beforeNavigate:p=>{if(p==='chat'){session().active='chat';deskTab='对话'}},getMode:()=>mode,snapshot:()=>({mode,states,deskTab,inspector,showInspector,canvasView,inspectorWidth,sidebarVisible})};
+    function tabbar() {
+        return `<header class="main-tabbar app-topbar" aria-label="应用顶栏"><div class="topbar-left"><button class="strip-entry" aria-label="显示或隐藏侧栏" title="显示或隐藏侧栏" aria-pressed="${sidebarVisible}" data-action="dk-sidebar">${svg('sidebar')}</button><button class="strip-entry" aria-label="新对话" title="新对话" data-action="new">${svg('edit')}</button></div><div class="topbar-title">${section === 'chat' ? `<button type="button" class="topbar-chat-title" data-action="rename" title="点击修改对话标题">${esc(current().title)}</button>` : `<span class="topbar-section-title">${esc(sectionTitles[section] || 'Nola')}</span>`}</div>${section === 'chat' ? `<div class="topbar-right"><button class="topbar-add" aria-label="搜索对话" title="搜索对话" data-action="conversation-search">${svg('search')}</button>${sidebarNavigation.tools(showInspector ? inspector : '')}</div>` : ''}</header>`;
+    }
+
+    function usageCenterView() {
+        return `<section class="page"><header class="page-head"><div><h1>使用记录</h1><p>查看本页原型会话的本地演示记录。</p></div></header><div class="objects">${conversations.slice(0, 5).map(c => `<button class="object-row" data-action="dk-select:${esc(c.id)}"><div class="object-copy"><h3>${esc(c.title)}</h3><p>${c.messages.length} 条消息 · ${esc(c.model || defaultModel)}</p></div><span class="object-meta">${esc(c.time)}</span>${svg('chevron')}</button>`).join('')}</div><div class="demo-banner">演示统计只记录消息与模型名称，不展示或校验内部摘要哈希。</div></section>`;
+    }
+
+    function extensionsHub() {
+        const tabs = [['experts', '专家'], ['skills', '技能'], ['mcp', 'MCP']];
+        return `<section class="studio-document center-hub" aria-label="专家与技能"><header class="hub-header"><div class="tabs" role="tablist" aria-label="专家与技能分类">${tabs.map(([id, title]) => `<button type="button" role="tab" aria-selected="${extTab === id}" class="${extTab === id ? 'selected' : ''}" data-action="dk-ext-tab:${id}">${title}</button>`).join('')}</div></header><div class="hub-body">${extTab === 'experts' ? window.expertRolesModule.embeddedView() : window.manageModule.capabilitiesForKind(extTab)}</div></section>`;
+    }
+
+    function memoryHub() {
+        const tabs = [['memory', '记忆'], ['sources', '来源'], ['usage', '使用记录']];
+        return `<section class="prototype-data-center studio-document center-hub" aria-label="记忆与数据源"><header class="hub-header"><div class="tabs" role="tablist" aria-label="数据中心分类">${tabs.map(([id, title]) => `<button type="button" role="tab" aria-selected="${dataPane === id}" class="${dataPane === id ? 'selected' : ''}" data-action="dk-data-pane:${id}">${title}</button>`).join('')}</div></header><div class="hub-body">${dataPane === 'memory' ? workspaceModule.view('memory') : dataPane === 'sources' ? enhancedModule.view('data') : usageCenterView()}</div></section>`;
+    }
+
+    function content() {
+        if (section === 'extensions') return extensionsHub();
+        if (section === 'automations') return `<section class="studio-document center-hub" aria-label="自动化中心">${plansView()}</section>`;
+        if (section === 'memory') return memoryHub();
+        return chatView();
+    }
+
+    function record() {
+        return workspaceModule.records.find(r => r.id === activeId);
+    }
+
+    function recallMatchesHTML(c, r, q) {
+        const needle = (q || '').trim().toLowerCase();
+        const rawItems = [
+            ...(r?.history || []),
+            ...c.messages.map(m => `${m.role === 'user' ? '你' : 'Nola'}：${m.text}`)
+        ];
+        const matches = rawItems.filter(text => !needle || text.toLowerCase().includes(needle));
+        return matches.length
+            ? matches.slice(0, 6).map(text => `<p class="recall-hit">${esc(text)}</p>`).join('')
+            : '<p class="meta">没有匹配的原始消息。</p>';
+    }
+
+    function knowledgeEditors(r, c) {
+        const owner = c.id,
+            draftsMap = knowledgeDrafts[owner] || {},
+            expanded = knowledgeExpanded[owner] || new Set(),
+            hasSummary = !!(r?.summary && r.summary !== '尚无压缩摘要。');
+        return `<div class="inspector-knowledge" data-knowledge-owner="${esc(owner)}"><div class="knowledge-counts" aria-label="会话消息与摘要统计"><span>${c.messages.length} 条原始消息</span><span>${hasSummary ? 1 : 0} 份摘要</span></div><details data-knowledge-pane="keyPointsMarkdown" ${expanded.has('keyPointsMarkdown') ? 'open' : ''}><summary>知识点</summary><label for="knowledge-${encodeURIComponent(owner)}-points">知识点草稿</label><textarea id="knowledge-${encodeURIComponent(owner)}-points" data-knowledge-field="keyPointsMarkdown" data-owner="${esc(owner)}" rows="4" placeholder="每行添加一条知识点…">${esc(draftsMap.keyPointsMarkdown ?? r?.keyPointsMarkdown ?? '')}</textarea><button class="text-action" data-action="dk-knowledge-save:keyPointsMarkdown">保存知识点演示稿</button></details><details data-knowledge-pane="wiki" ${expanded.has('wiki') ? 'open' : ''}><summary>会话 Wiki</summary><label for="knowledge-${encodeURIComponent(owner)}-wiki">Wiki草稿</label><textarea id="knowledge-${encodeURIComponent(owner)}-wiki" data-knowledge-field="wiki" data-owner="${esc(owner)}" rows="5" placeholder="用 Markdown 编写会话 Wiki…">${esc(draftsMap.wiki ?? r?.wiki ?? '')}</textarea><button class="text-action" data-action="dk-knowledge-save:wiki">保存Wiki演示稿</button></details><details data-knowledge-pane="recall" ${expanded.has('recall') ? 'open' : ''}><summary>会话回忆</summary><label for="knowledge-${encodeURIComponent(owner)}-recall">搜索原始会话</label><input id="knowledge-${encodeURIComponent(owner)}-recall" type="search" data-recall-owner="${esc(owner)}" placeholder="检索原始消息，不包含压缩摘要" value="${esc(recallQueries[owner] || '')}"><div class="recall-list">${recallMatchesHTML(c, r, recallQueries[owner] || '')}</div></details><p class="meta">仅本页演示草稿；不会修改真实会话或记忆。</p></div>`;
+    }
+
+    function contextPane() {
+        const r = record(), c = current();
+        let body = '';
+        if (inspector === 'task') {
+            body = `<section class="inspector-block" aria-label="进度">${organizerModule.panel('进度')}</section><hr class="inspector-divider"><section class="inspector-block" aria-label="目标">${organizerModule.panel('目标')}</section>${c.experts.length ? `<hr class="inspector-divider"><section class="inspector-block" aria-label="协作参与者"><div class="inspector-row-head"><h3>协作参与者</h3>${btn('调整', 'experts')}</div><p class="muted" style="margin-top:4px;font-size:12px">Nola · ${esc(c.experts.join(' · '))}</p></section>` : ''}${window.expertHistoryModule?.rows(c.id) ? `<hr class="inspector-divider"><section class="inspector-block" aria-label="专家会话">${window.expertHistoryModule.rows(c.id)}</section>` : ''}`;
+        } else if (inspector === 'artifacts') {
+            body = `<section class="inspector-block" aria-label="产物与资料">${deliverablesModule.panel('产物')}<div class="inspector-subsection"><div class="inspector-row-head"><h3>会话资料</h3>${btn('添加引用', 'attach')}</div>${documents.filter(d => !d.sourceId || d.sourceId === c.id).slice(0, 3).map(d => btn(esc(d.name), 'ex-source:' + documents.indexOf(d), 'desk-resource')).join('')}</div></section><hr class="inspector-divider"><section class="inspector-block" aria-label="工作区变更">${deliverablesModule.panel('审阅')}</section>`;
+        } else {
+            const mem = memoryMode[c.id] || '默认', ret = retrievalOn[c.id] !== false;
+            const dsList = documents.map((d, idx) => ({d, idx})).filter(x => x.d.type === '数据源');
+            body = `<section class="inspector-block" aria-label="记忆与检索"><div class="inspector-kv"><label for="ctx-memory-${esc(c.id)}">长期记忆</label><select id="ctx-memory-${esc(c.id)}" data-action-change="dk-memory-mode">${['默认', '启用', '停用'].map(m => `<option ${mem === m ? 'selected' : ''}>${m}</option>`).join('')}</select></div><div class="inspector-kv"><span>使用检索</span><button role="switch" class="toggle" aria-label="在此对话中使用检索" aria-checked="${ret}" data-action="dk-retrieval-toggle"></button></div></section><hr class="inspector-divider"><section class="inspector-block" aria-label="上下文用量"><div class="context-usage"><strong>上下文用量</strong><span>尚未测量</span></div><div class="context-usage"><span>窗口上限</span><span>128k tokens（演示）</span></div><div class="context-usage"><span>缓存命中率（本会话）</span><span>未知（未上报）</span></div><details class="context-diagnostics"><summary>详细信息</summary><p>请求 #1 · 尝试 #1 · 提示缓存未上报。当前为本地静态演示，不记录内部摘要哈希。</p></details></section><hr class="inspector-divider"><section class="inspector-block" aria-label="会话知识">${knowledgeEditors(r, c)}</section><hr class="inspector-divider"><section class="inspector-block" aria-label="数据源"><div class="inspector-row-head"><h3>数据源</h3>${btn('管理', 'dk-open-sources')}</div>${dsList.map(({d, idx}) => `<div class="inspector-kv"><span>${esc(d.name)}</span><button role="switch" class="toggle" aria-label="在此对话中启用${esc(d.name)}" aria-checked="${sourceEnabled[c.id + ':' + idx] !== false}" data-action="dk-source-toggle:${idx}"></button></div>`).join('')}</section>${!browserStates[activeId] ? `<hr class="inspector-divider"><section class="inspector-block inspector-browser-setup" aria-label="托管浏览器"><div class="inspector-row-head"><h3>托管浏览器</h3><span class="badge">需要设置</span></div><p class="muted" style="font-size:12px;margin:4px 0 8px">Chrome 扩展尚未连接。仅在未连接或出错时显示此提示。</p>${btn('连接演示扩展', 'dk-browser')}</section>` : ''}`;
+        }
+        return `<aside class="studio-inspector" aria-label="当前工作上下文" style="--inspector-width:${inspectorWidth}px"><div class="inspector-resize" role="separator" tabindex="0" aria-label="调整工作面板宽度" aria-orientation="vertical" aria-valuemin="320" aria-valuemax="480" aria-valuenow="${inspectorWidth}"></div>${window.sidebarNavigation.right(inspector)}<div class="inspector-content" data-panel-key="${activeId}:${inspector}" data-inspector-area="${inspector}">${body}<p class="desk-footnote">本地演示 · 与真实执行、文件和仓库无连接</p></div></aside>`;
+    }
+
+    function desktop() {
+        const visible = section === 'chat' && showInspector;
+        return `<section class="studio ${visible ? 'has-inspector' : ''}"><div class="studio-body"><div class="studio-center" id="main-content" data-context="${activeId}" data-tabkey="${section}" data-canvas-kind="${section}">${content()}</div>${visible ? contextPane() : ''}</div></section>`;
+    }
+
+    function stash() {
+        states[mode] = {page, id: activeId, settings: settingsSection, query, searchScroll};
+    }
+
+    function activate(next) {
+        if (next === mode) return;
+        saveDraft();
+        stash();
+        if (dialog.open) closeDialog();
+        mode = next;
+        const s = states[mode];
+        page = s.page;
+        activeId = conversations.some(c => c.id === s.id) ? s.id : 'design';
+        settingsSection = s.settings;
+        query = s.query || '';
+        searchScroll = s.searchScroll || 0;
+        selectedExperts = [...(current()?.experts || [])];
+        document.documentElement.dataset.experience = mode;
+        history.replaceState({page, id: activeId, mode}, '', `#${mode}/${page}`);
+        render();
+    }
+
+    function start() {
+        mode = media?.matches ? 'mobile' : 'desktop';
+        const s = states[mode];
+        page = s.page;
+        activeId = s.id;
+        selectedExperts = [...current().experts];
+        document.documentElement.dataset.experience = mode;
+        history.replaceState({page, id: activeId, mode}, '', `#${mode}/${page}`);
+        media?.addEventListener('change', e => activate(e.matches ? 'mobile' : 'desktop'));
+        render();
+    }
+
+    function openSection(nextSection, subTab) {
+        capture();
+        section = ['chat', 'extensions', 'automations', 'memory'].includes(nextSection) ? nextSection : 'chat';
+        if (section === 'extensions' && subTab) extTab = subTab;
+        if (section === 'memory' && subTab) dataPane = subTab;
+        settingsOpen = false;
+        page = 'workspace';
+        render();
+    }
+
+    function toggleInspector(area, forceOpen = false) {
+        capture();
+        if (dialog.open) closeDialog();
+        const target = ['task', 'artifacts', 'context'].includes(area) ? area : 'task';
+        const switchingFromOtherSection = section !== 'chat';
+        section = 'chat';
+        settingsOpen = false;
+        page = 'workspace';
+        if (!forceOpen && !switchingFromOtherSection && showInspector && inspector === target) {
+            showInspector = false;
+        } else {
+            showInspector = true;
+            inspector = target;
+        }
+        render();
+    }
+
+    function openSettings(category = '') {
+        if (mode !== 'desktop') {navigate('settings'); return;}
+        capture();
+        settingsOpen = true;
+        settingsCategory = category;
+        settingsScroll = 0;
+        render();
+    }
+
+    function closeSettings() {
+        settingsOpen = false;
+        render();
+    }
+
+    function view(p) {
+        if (mode === 'mobile' && p === 'workspace') return window.assistantModule?.view(p);
+        if (mode === 'desktop' && ['workspace', 'chat'].includes(p)) return desktop();
+        return null;
+    }
+
+    function handle(a) {
+        if (a === 'dk-sidebar') {sidebarVisible = !sidebarVisible; render(); return true;}
+        if (a === 'dk-settings-close') {closeSettings(); return true;}
+        if (!a.startsWith('dk-')) return false;
+        if (a === 'dk-workspace') {
+            capture();
+            const cur = current().workspace || '临时工作区';
+            openDialog('工作环境', `<p class="dialog-note">选择当前对话的演示工作目录；不授予或读取真实系统目录。</p><button class="choice-row" data-action="dk-workspace-set:临时工作区"><div><h3>临时工作区</h3><p>不绑定本地项目文件夹，保持轻量隔离</p></div>${cur === '临时工作区' ? svg('check') : ''}</button><button class="choice-row" data-action="dk-workspace-set:演示项目"><div><h3>选择文件夹…（演示项目）</h3><p>关联示例工程目录并显示变更审阅入口</p></div>${cur === '演示项目' ? svg('check') : ''}</button><div class="action-wrap">${btn('在 Finder 中打开（演示）', 'dk-workspace-finder')}${btn('审阅工作区更改', 'rv-open-review')}${cur !== '临时工作区' ? btn('断开文件夹连接', 'dk-workspace-set:临时工作区') : ''}</div>`);
+            return true;
+        }
+        if (a === 'dk-workspace-finder') {toast('演示模式不打开 Finder 或读取本地目录'); return true;}
+        if (a.startsWith('dk-workspace-set:')) {current().workspace = a.split(':')[1]; closeDialog(); render(); return true;}
+        if (a === 'dk-browser') {browserStates[activeId] = !browserStates[activeId]; render(); toast(browserStates[activeId] ? 'Chrome 演示扩展已连接，提示已收起' : '演示扩展已断开'); return true;}
+        if (a === 'dk-retrieval-toggle') {capture(); retrievalOn[activeId] = !(retrievalOn[activeId] !== false); render(); return true;}
+        if (a.startsWith('dk-source-toggle:')) {capture(); const idx = a.split(':')[1]; const key = activeId + ':' + idx; sourceEnabled[key] = !(sourceEnabled[key] !== false); render(); return true;}
+        if (a === 'dk-open-sources') {openSection('memory', 'sources'); return true;}
+        if (a.startsWith('dk-ext-tab:')) {extTab = a.split(':')[1]; render(); return true;}
+        if (a.startsWith('dk-data-pane:')) {dataPane = a.split(':')[1]; render(); return true;}
+        const [key, v] = a.split(':');
+        saveDraft();
+        if (key === 'dk-area' || key === 'dk-panel') {
+            const area = ({任务: 'task', 产物: 'artifacts', 上下文: 'context', 进度: 'task', 目标: 'task', 审阅: 'artifacts', task: 'task', artifacts: 'artifacts', context: 'context'})[v] || 'task';
+            toggleInspector(area, true);
+            return true;
+        }
+        if (key === 'dk-knowledge-save' && ['keyPointsMarkdown', 'wiki'].includes(v)) {
+            capture();
+            const r = record(), draft = knowledgeDrafts[activeId]?.[v];
+            if (r && draft !== undefined) {
+                r[v] = draft;
+                r.version = (r.version || 1) + 1;
+                toast('已保存本页演示稿');
+            }
+            return true;
+        }
+        if (key === 'dk-inspector') {showInspector = !showInspector; render(); return true;}
+        if (key === 'dk-select') {
+            if (dialog.open) closeDialog();
+            capture();
+            activeId = v;
+            section = 'chat';
+            settingsOpen = false;
+            selectedExperts = [...current().experts];
+            navigate('workspace', v);
+            return true;
+        }
+        if (key === 'dk-wiki') {toggleInspector('context', true); return true;}
+        return true;
+    }
+
+    function afterRender() {
+        const panel = document.querySelector('.inspector-content');
+        if (panel) panel.scrollTop = panelScrolls[panel.dataset.panelKey] || 0;
+        const settingsDetail = document.querySelector('.settings-window-detail');
+        if (settingsDetail) settingsDetail.scrollTop = settingsScroll || 0;
+        document.querySelector('.shell')?.classList.toggle('sidebar-collapsed', !sidebarVisible);
+        const el = document.querySelector('.studio-center');
+        if (el) {
+            const saved = scrolls[activeId + ':' + section];
+            el.scrollTop = saved?.main || 0;
+            const detail = el.querySelector('.studio-document,.page');
+            if (detail) detail.scrollTop = saved?.detail || 0;
+            const transcript = el.querySelector('#transcript');
+            if (transcript) transcript.scrollTop = saved?.chat || 0;
+        }
+        const memSelect = document.querySelector('[data-action-change="dk-memory-mode"]');
+        if (memSelect) {
+            memSelect.onchange = () => {
+                memoryMode[activeId] = memSelect.value;
+                toast('已切换本会话记忆模式：' + memSelect.value);
+            };
+        }
+        const recallInput = document.querySelector('[data-recall-owner]');
+        if (recallInput) {
+            recallInput.oninput = () => {
+                const owner = recallInput.dataset.recallOwner;
+                recallQueries[owner] = recallInput.value;
+                const listEl = recallInput.parentElement?.querySelector('.recall-list');
+                if (listEl) listEl.innerHTML = recallMatchesHTML(current(), record(), recallQueries[owner]);
+            };
+        }
+        window.deliveryModule?.bind?.(document);
+        const backdrop = document.querySelector('[data-settings-backdrop]');
+        if (backdrop) {
+            backdrop.onclick = e => {if (e.target === backdrop) closeSettings();};
+        }
+        const grip = document.querySelector('.inspector-resize');
+        if (!grip) return;
+        const apply = w => {
+            inspectorWidth = Math.max(320, Math.min(480, w));
+            const pane = document.querySelector('.studio-inspector');
+            pane?.style.setProperty('--inspector-width', inspectorWidth + 'px');
+            grip.setAttribute('aria-valuenow', inspectorWidth);
+        };
+        grip.onkeydown = e => {if (['ArrowLeft', 'ArrowRight'].includes(e.key)) {e.preventDefault(); apply(inspectorWidth + (e.key === 'ArrowLeft' ? 20 : -20));}};
+        grip.onpointerdown = e => {
+            const x = e.clientX, w = inspectorWidth;
+            grip.setPointerCapture(e.pointerId);
+            grip.onpointermove = ev => apply(w + x - ev.clientX);
+            grip.onpointerup = () => {grip.onpointermove = null;};
+        };
+    }
+
+    function restore(e) {
+        saveDraft();
+        if (dialog.open) closeDialog();
+        const s = e.state?.mode === mode ? e.state : states[mode];
+        page = s.page || 'workspace';
+        activeId = conversations.some(c => c.id === s.id) ? s.id : 'design';
+        settingsSection = s.settings || '';
+        query = s.query || '';
+        searchScroll = s.searchScroll || 0;
+        selectedExperts = [...(current()?.experts || [])];
+        render();
+        if (page === 'conversations') window.scrollTo(0, searchScroll);
+        stash();
+    }
+
+    function nav() {
+        stash();
+        history.replaceState({page, id: activeId, mode}, '', `#${mode}/${page}${page === 'chat' ? '/' + activeId : ''}`);
+    }
+
+    document.addEventListener('keydown', e => {
+        if (mode !== 'desktop') return;
+        if (e.key === 'Escape' && settingsOpen && !dialog.open) {e.preventDefault(); closeSettings(); return;}
+        if ((e.metaKey || e.ctrlKey) && e.key === ',' && !dialog.open) {e.preventDefault(); openSettings(''); return;}
+        if (!['workspace', 'chat'].includes(page) || dialog.open || settingsOpen) return;
+        if ((e.metaKey || e.ctrlKey) && ['1', '2', '3'].includes(e.key)) {
+            e.preventDefault();
+            saveDraft();
+            if (e.key === '1') openSection('chat');
+            else toggleInspector(e.key === '2' ? 'artifacts' : 'task', true);
+        }
+    });
+
+    return {
+        topbar: () => mode === 'desktop' ? tabbar() : '',
+        settingsOverlay: () => mode === 'desktop' && settingsOpen ? window.enhancedModule.settingsWindowHTML(settingsCategory) : '',
+        capture,
+        openSection,
+        syncExtTab: t => {extTab = t;},
+        toggleInspector,
+        openSettings,
+        closeSettings,
+        openRoute: route => {
+            if (route === 'settings') {openSettings(''); return;}
+            if (['capabilities', 'skills', 'mcp'].includes(route)) {openSection('extensions', route === 'mcp' ? 'mcp' : 'skills'); return;}
+            if (['plans', 'automations'].includes(route)) {openSection('automations'); return;}
+            if (['data', 'memory'].includes(route)) {openSection('memory', route === 'data' ? 'sources' : 'memory'); return;}
+            if (route === 'models') {openSettings('providers'); return;}
+            openSection('chat');
+        },
+        view,
+        handle,
+        afterRender,
+        start,
+        nav,
+        restore,
+        activate,
+        beforeNavigate: p => {if (p === 'chat') {section = 'chat'; settingsOpen = false;}},
+        getMode: () => mode,
+        snapshot: () => ({mode, states, section, extTab, dataPane, inspector, showInspector, inspectorWidth, sidebarVisible, settingsOpen, settingsCategory})
+    };
 })();

@@ -1817,7 +1817,7 @@ mod work_step_transaction_host_tests {
                 "status": "in_progress",
                 "priority": "high",
                 "dependencyIds": [],
-                "capabilityRefs": ["skill_update"],
+                "capabilityRefs": ["write_file", "bash"],
                 "successCriteria": ["Every generated artifact is linked"],
                 "expectedArtifactRefs": ["report.docx", "analysis.xlsx", "briefing.pptx"],
                 "approvalStatus": "approved",
@@ -1869,16 +1869,45 @@ mod work_step_transaction_host_tests {
             parallel_tool_calls: None,
         };
         let mut driver = CliAgentHostDriver::new("office-skill-host", llm, context);
-        let skill_run_id = "run-office-artifacts";
         let mut artifact_uris = Vec::new();
-        for (index, (artifact_id, output_path, _receipt_path)) in generated.iter().enumerate() {
+        for (index, (artifact_id, output_path, receipt_path)) in generated.iter().enumerate() {
             let canonical_output_path = output_path
                 .canonicalize()
                 .expect("canonical office artifact path");
-            let artifact_uri = url::Url::from_file_path(&canonical_output_path)
+            let output_uri = url::Url::from_file_path(&canonical_output_path)
                 .expect("office artifact URI")
                 .to_string();
+            let delivery_receipt_path = root.join(format!("{artifact_id}-delivery.json"));
+            let receipt_body = serde_json::to_string_pretty(&json!({
+                "artifact_id": artifact_id,
+                "artifact_uri": output_uri,
+                "validation_receipt": receipt_path,
+            }))
+            .expect("serialize delivery receipt");
             let call_id = format!("call-office-artifact-{index}");
+            let write_args = json!({
+                "path": delivery_receipt_path,
+                "content": receipt_body,
+            });
+            let plan = driver.catalog.capabilities["write_file"]
+                .input_normalization
+                .permission_contract
+                .resource_plan_for(&write_args)
+                .expect("office delivery resource plan");
+            let resolution = nola_domain::permission_resource_plan::PermissionResolutionRequest {
+                resolution_id: format!("fixture-office-artifact-{index}"),
+                execution_target: "office-skill-host".into(),
+                invocation_digest:
+                    nola_domain::permission_resource_plan::PermissionResolutionRequest::input_digest(
+                        &write_args,
+                    ),
+                capability: plan.capability.clone(),
+                operation: plan.operation.clone(),
+                demands: plan.extract(&write_args).unwrap(),
+            };
+            let facts =
+                crate::tools::resolve_permission_resources(&driver.tool_context, &resolution, &write_args)
+                    .unwrap();
             let request = HostRequestEnvelope {
                 attempt_started: false,
                 delegated_invocation_id: None,
@@ -1897,16 +1926,11 @@ mod work_step_transaction_host_tests {
                 resume_after_sequence: None,
                 delivery: None,
                 payload: HostRequest::ExecuteTool {
-                    permission_profile: nola_domain::PermissionProfile::Cautious,
-                    capability_id: "skill_update".to_string(),
+                    permission_profile: nola_domain::PermissionProfile::AllowAll,
+                    capability_id: "write_file".to_string(),
                     call_id: call_id.clone(),
-                    input: json!({
-                        "run_id": skill_run_id,
-                        "action": "artifact",
-                        "artifact_id": artifact_id,
-                        "artifact_ref": artifact_uri,
-                    }),
-                    grant: None,
+                    input: write_args.clone(),
+                    grant: Some(json!({"permission_resolution": {"request": resolution, "facts": facts}})),
                     permission_instructions: Vec::new(),
                 },
             };
@@ -1914,14 +1938,9 @@ mod work_step_transaction_host_tests {
             driver
                 .execute_tool(
                     &request,
-                    "skill_update",
+                    "write_file",
                     &call_id,
-                    &json!({
-                        "run_id": skill_run_id,
-                        "action": "artifact",
-                        "artifact_id": artifact_id,
-                        "artifact_ref": artifact_uri,
-                    }),
+                    &write_args,
                     &mut |response| {
                         first.push(response);
                         Ok(())
@@ -1936,20 +1955,22 @@ mod work_step_transaction_host_tests {
                 })
                 .expect("office ToolCompleted");
             assert_eq!(first_artifacts.len(), 1);
-            assert_eq!(first_artifacts[0].uri, artifact_uri);
+            let expected_delivery_uri = url::Url::from_file_path(
+                delivery_receipt_path
+                    .canonicalize()
+                    .expect("canonical delivery receipt path"),
+            )
+            .expect("delivery receipt URI")
+            .to_string();
+            assert_eq!(first_artifacts[0].uri, expected_delivery_uri);
 
             let mut replay = Vec::new();
             driver
                 .execute_tool(
                     &request,
-                    "skill_update",
+                    "write_file",
                     &call_id,
-                    &json!({
-                        "run_id": skill_run_id,
-                        "action": "artifact",
-                        "artifact_id": artifact_id,
-                        "artifact_ref": artifact_uri,
-                    }),
+                    &write_args,
                     &mut |response| {
                         replay.push(response);
                         Ok(())
@@ -1964,69 +1985,7 @@ mod work_step_transaction_host_tests {
                 })
                 .expect("replayed office ToolCompleted");
             assert_eq!(replay_artifacts, first_artifacts);
-
-            let verification_call_id = format!("call-office-verification-{index}");
-            let verification_request = HostRequestEnvelope {
-                attempt_started: false,
-                delegated_invocation_id: None,
-                attempt_id: None,
-                request_id: format!("request-office-verification-{index}"),
-                effect_id: HostEffectId(format!("effect-office-verification-{index}")),
-                host_id: HostId("office-skill-host".to_string()),
-                lease_id: None,
-                session_id: session_id.to_string(),
-                turn_id: Some("turn-office-artifacts".to_string()),
-                catalog_revision: driver.catalog.revision,
-                availability_epoch: driver.catalog.availability_epoch,
-                created_at_ms: 0,
-                deadline_ms: None,
-                batch: None,
-                resume_after_sequence: None,
-                delivery: None,
-                payload: HostRequest::ExecuteTool {
-                    permission_profile: nola_domain::PermissionProfile::Cautious,
-                    capability_id: "skill_update".to_string(),
-                    call_id: verification_call_id.clone(),
-                    input: json!({
-                        "run_id": skill_run_id,
-                        "action": "verification",
-                        "verifier_id": "completion-audit",
-                        "passed": true,
-                        "evidence": {"kind":"model_judgment","sources":[]},
-                        "summary": "Bundled OOXML validator passed"
-                    }),
-                    grant: None,
-                    permission_instructions: Vec::new(),
-                },
-            };
-            let mut verification = Vec::new();
-            driver
-                .execute_tool(
-                    &verification_request,
-                    "skill_update",
-                    &verification_call_id,
-                    &json!({
-                        "run_id": skill_run_id,
-                        "action": "verification",
-                        "verifier_id": "completion-audit",
-                        "passed": true,
-                        "evidence": {"kind":"model_judgment","sources":[]},
-                        "summary": "Bundled OOXML validator passed"
-                    }),
-                    &mut |response| {
-                        verification.push(response);
-                        Ok(())
-                    },
-                )
-                .unwrap();
-            assert!(verification.iter().any(|response| matches!(
-                response.payload,
-                HostResponse::ToolCompleted {
-                    outcome: HostToolOutcome::Succeeded,
-                    ..
-                }
-            )));
-            artifact_uris.push(artifact_uri);
+            artifact_uris.push(expected_delivery_uri);
         }
 
         let restored_plan_state = crate::tools::AgentPlanState::default();

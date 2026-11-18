@@ -80,4 +80,65 @@ impl NolaStore {
         transaction.commit()?;
         Ok(())
     }
+
+    pub fn restore_built_in_package_version(
+        &mut self,
+        skill_id: &str,
+        expected_revision: i64,
+        package_version: &str,
+        updated_at_ms: i64,
+    ) -> StoreResult<StoredSkill> {
+        if !self.has_write_unit_of_work() {
+            return Err(StoreError::Invariant(
+                "Skill restore requires command admission".into(),
+            ));
+        }
+        require_id("skill.id", skill_id)?;
+        require_id("skill.package_version", package_version)?;
+        let transaction = self.write_transaction()?;
+        let (current, revision) =
+            skill_projection_with_revision(&transaction, skill_id)?.ok_or_else(|| {
+                StoreError::Invariant(format!("Skill is missing: {skill_id}"))
+            })?;
+        if current.source != SkillSourceKind::BuiltIn || current.deleted_at_ms.is_some() {
+            return Err(StoreError::Conflict(
+                "Only active built-in Skills can restore package instructions".into(),
+            ));
+        }
+        if revision != expected_revision {
+            return Err(StoreError::Conflict(format!(
+                "skill_revision_conflict: {skill_id}: expected {expected_revision}, actual {revision}"
+            )));
+        }
+        transaction.execute(
+            "UPDATE skill_definitions
+             SET current_version=?2, enabled=1, deleted_at_ms=NULL,
+                 updated_at_ms=MAX(updated_at_ms,?3), revision=revision+1
+             WHERE id=?1",
+            params![skill_id, package_version, updated_at_ms],
+        )?;
+        transaction.execute(
+            "UPDATE skill_instruction_selections SET override_version=NULL WHERE skill_id=?1",
+            params![skill_id],
+        )?;
+        let (record, new_revision) =
+            skill_projection_with_revision(&transaction, skill_id)?.ok_or_else(|| {
+                StoreError::Invariant("Restored built-in Skill is unavailable".into())
+            })?;
+        let payload = serde_json::to_string(&SkillSyncProjection {
+            record: record.clone(),
+            revision: new_revision,
+        })?;
+        enqueue_sync_change(
+            &transaction,
+            "skill",
+            skill_id,
+            new_revision,
+            false,
+            &payload,
+            record.updated_at_ms,
+        )?;
+        transaction.commit()?;
+        Ok(record)
+    }
 }

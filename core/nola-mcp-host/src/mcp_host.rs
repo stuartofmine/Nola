@@ -13,7 +13,7 @@ use reqwest::blocking::{Client, Response};
 use reqwest::header::{HeaderName, HeaderValue, ACCEPT, CONTENT_TYPE, USER_AGENT};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, RwLock};
 use std::time::Duration;
 
 const DEFAULT_PROTOCOL_VERSION: &str = "2025-06-18";
@@ -41,6 +41,8 @@ struct McpConnectionEntry {
     config: McpConnectionConfig,
     client: Option<StreamableHttpMcpClient>,
     retired: bool,
+    connecting: bool,
+    connect_signal: Arc<Condvar>,
     generation: Option<String>,
     descriptor: Option<McpServerDescriptor>,
     admission_id: String,
@@ -168,8 +170,16 @@ fn install_connection(
     }
     registry.insert(
         connection_ref,
-        Arc::new(Mutex::new(McpConnectionEntry { config, client, retired: false, generation:None, descriptor:None,
-            admission_id:uuid::Uuid::new_v4().to_string() })),
+        Arc::new(Mutex::new(McpConnectionEntry {
+            config,
+            client,
+            retired: false,
+            connecting: false,
+            connect_signal: Arc::new(Condvar::new()),
+            generation: None,
+            descriptor: None,
+            admission_id: uuid::Uuid::new_v4().to_string(),
+        })),
     );
     Ok(())
 }
@@ -240,9 +250,15 @@ pub struct McpRetirement {
 impl Drop for McpRetirement {
     fn drop(&mut self) {
         if let Some(entry) = self.http.take() {
-            let mut entry = entry.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            entry.retired = true;
-            entry.client = None;
+            let signal;
+            let _old_client;
+            {
+                let mut guard = entry.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                guard.retired = true;
+                signal = guard.connect_signal.clone();
+                _old_client = guard.client.take();
+            }
+            signal.notify_all();
         }
     }
 }
@@ -580,36 +596,173 @@ fn cached_descriptor(transport:McpTransportKind, reference:&str) -> Result<Optio
     Ok((!connection.retired && connection.client.is_some()).then(||connection.descriptor.clone()).flatten())
 }
 
-/// Only an admitted mcp_connect may enter this operation. Recheck the exact
-/// immutable owner/config and generation while holding the original entry.
-pub fn connect_approved(reference:&str, expected:&crate::mcp_connection_authority::ConnectionResource)
-    -> Result<crate::mcp_connection_authority::ConnectionEstablished,McpHostError> {
-    if expected.transport == "stdio" { return crate::mcp_stdio::connect_approved(reference,expected); }
-    let connection = connection_registry().read().map_err(|_|McpHostError::new("mcp_registry_unavailable","MCP registry unavailable"))?
-        .get(reference).cloned().ok_or_else(||McpHostError::new("mcp_connection_required","MCP target is not registered"))?;
-    let mut connection = connection.lock().map_err(|_|McpHostError::new("mcp_connection_unavailable","MCP connection unavailable"))?;
-    let mut actual = connection.config.resource.clone();
-    actual.admission_id = connection.admission_id.clone();
-    actual.generation = connection.client.as_ref().and(connection.generation.clone());
-    if connection.retired || reference != expected.connection_ref || actual != *expected {
-        return Err(McpHostError::new("mcp_connection_changed","MCP resource changed; connection was not started"));
+struct HttpConnectingGuard {
+    connection: Arc<Mutex<McpConnectionEntry>>,
+    signal: Arc<Condvar>,
+    armed: bool,
+}
+
+impl Drop for HttpConnectingGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        if let Ok(mut guard) = self.connection.lock() {
+            guard.connecting = false;
+        }
+        self.signal.notify_all();
     }
-    if connection.client.is_some() {
-        let server = connection.descriptor.clone().ok_or_else(||McpHostError::new("mcp_descriptor_missing","Active MCP descriptor is missing"))?;
-        return Ok(crate::mcp_connection_authority::ConnectionEstablished {server,resource:actual});
+}
+
+fn wait_while_http_connecting(
+    mut guard: MutexGuard<'_, McpConnectionEntry>,
+) -> Result<MutexGuard<'_, McpConnectionEntry>, McpHostError> {
+    while guard.connecting {
+        let signal = guard.connect_signal.clone();
+        guard = signal.wait(guard).map_err(|_| {
+            McpHostError::new("mcp_connection_unavailable", "MCP connection unavailable")
+        })?;
+    }
+    Ok(guard)
+}
+
+fn establish_http_entry(
+    connection: &Arc<Mutex<McpConnectionEntry>>,
+    mut guard: MutexGuard<'_, McpConnectionEntry>,
+    reference: &str,
+) -> Result<crate::mcp_connection_authority::ConnectionEstablished, McpHostError> {
+    if guard.client.is_some() {
+        let mut actual = guard.config.resource.clone();
+        actual.admission_id = guard.admission_id.clone();
+        actual.generation = guard.generation.clone();
+        let server = guard.descriptor.clone().ok_or_else(|| {
+            McpHostError::new("mcp_descriptor_missing", "Active MCP descriptor is missing")
+        })?;
+        return Ok(crate::mcp_connection_authority::ConnectionEstablished {
+            server,
+            resource: actual,
+        });
     }
     // Consume this absent-connection admission before any physical handshake.
     // Failure/loss/cold restart cannot reuse the old pending approval identity.
-    connection.admission_id = uuid::Uuid::new_v4().to_string();
-    let config = connection.config.clone();
-    let mut client = StreamableHttpMcpClient::connect(&config.endpoint,config.timeout_ms,config.headers)?;
-    let descriptor = client.discover(config.server_id,config.display_name,reference.into())?;
-    connection.generation = Some(uuid::Uuid::new_v4().to_string());
-    connection.descriptor = Some(descriptor.clone());
-    connection.client = Some(client);
-    actual.generation = connection.generation.clone();
-    actual.admission_id = connection.admission_id.clone();
-    Ok(crate::mcp_connection_authority::ConnectionEstablished {server:descriptor,resource:actual})
+    let admission_id = uuid::Uuid::new_v4().to_string();
+    guard.admission_id = admission_id.clone();
+    guard.connecting = true;
+    let config = guard.config.clone();
+    let signal = guard.connect_signal.clone();
+    let mut reset_guard = HttpConnectingGuard {
+        connection: Arc::clone(connection),
+        signal: Arc::clone(&signal),
+        armed: true,
+    };
+    drop(guard);
+
+    let mut client =
+        StreamableHttpMcpClient::connect(&config.endpoint, config.timeout_ms, config.headers)?;
+    let descriptor = client.discover(config.server_id, config.display_name, reference.into())?;
+
+    let mut guard = connection.lock().map_err(|_| {
+        McpHostError::new("mcp_connection_unavailable", "MCP connection unavailable")
+    })?;
+    guard.connecting = false;
+    reset_guard.armed = false;
+    signal.notify_all();
+    if guard.retired || guard.admission_id != admission_id || guard.config.resource != config.resource {
+        drop(guard);
+        drop(client);
+        return Err(McpHostError::new(
+            "mcp_connection_changed",
+            "MCP resource changed; connection was not retained",
+        ));
+    }
+    let generation = uuid::Uuid::new_v4().to_string();
+    guard.generation = Some(generation.clone());
+    guard.descriptor = Some(descriptor.clone());
+    guard.client = Some(client);
+    let mut actual = guard.config.resource.clone();
+    actual.generation = Some(generation);
+    actual.admission_id = admission_id;
+    Ok(crate::mcp_connection_authority::ConnectionEstablished {
+        server: descriptor,
+        resource: actual,
+    })
+}
+
+/// Only an admitted mcp_connect may enter this operation. Recheck the exact
+/// immutable owner/config and generation after waiting for any in-flight connect.
+pub fn connect_approved(
+    reference: &str,
+    expected: &crate::mcp_connection_authority::ConnectionResource,
+) -> Result<crate::mcp_connection_authority::ConnectionEstablished, McpHostError> {
+    if expected.transport == "stdio" {
+        return crate::mcp_stdio::connect_approved(reference, expected);
+    }
+    let connection = connection_registry()
+        .read()
+        .map_err(|_| McpHostError::new("mcp_registry_unavailable", "MCP registry unavailable"))?
+        .get(reference)
+        .cloned()
+        .ok_or_else(|| McpHostError::new("mcp_connection_required", "MCP target is not registered"))?;
+    let guard = connection
+        .lock()
+        .map_err(|_| McpHostError::new("mcp_connection_unavailable", "MCP connection unavailable"))?;
+    let guard = wait_while_http_connecting(guard)?;
+    let mut actual = guard.config.resource.clone();
+    actual.admission_id = guard.admission_id.clone();
+    actual.generation = guard.client.as_ref().and(guard.generation.clone());
+    if guard.retired || reference != expected.connection_ref || actual != *expected {
+        return Err(McpHostError::new(
+            "mcp_connection_changed",
+            "MCP resource changed; connection was not started",
+        ));
+    }
+    establish_http_entry(&connection, guard, reference)
+}
+
+/// Reconnect an owner-verified MCP connection when a lazy restored session has no live client.
+pub fn ensure_connected(
+    transport: McpTransportKind,
+    reference: &str,
+    expected_host_id: &str,
+    expected_session_id: &str,
+    expected_config_digest: &str,
+) -> Result<crate::mcp_connection_authority::ConnectionEstablished, McpHostError> {
+    if transport == McpTransportKind::Stdio {
+        return crate::mcp_stdio::ensure_connected(
+            reference,
+            expected_host_id,
+            expected_session_id,
+            expected_config_digest,
+        );
+    }
+    if transport != McpTransportKind::StreamableHttp {
+        return Err(McpHostError::new(
+            "mcp_transport_unsupported",
+            "Cannot reconnect this MCP transport",
+        ));
+    }
+    let connection = connection_registry()
+        .read()
+        .map_err(|_| McpHostError::new("mcp_registry_unavailable", "MCP registry unavailable"))?
+        .get(reference)
+        .cloned()
+        .ok_or_else(|| McpHostError::new("mcp_connection_required", "MCP target is not registered"))?;
+    let guard = connection
+        .lock()
+        .map_err(|_| McpHostError::new("mcp_connection_unavailable", "MCP connection unavailable"))?;
+    let guard = wait_while_http_connecting(guard)?;
+    if guard.retired
+        || guard.config.resource.connection_ref != reference
+        || guard.config.resource.host_id != expected_host_id
+        || guard.config.resource.session_id != expected_session_id
+        || guard.config.resource.config_digest != expected_config_digest
+    {
+        return Err(McpHostError::new(
+            "mcp_connection_changed",
+            "MCP resource changed; connection was not started",
+        ));
+    }
+    establish_http_entry(&connection, guard, reference)
 }
 
 /// List changes are observed on the existing admitted logical connection only.

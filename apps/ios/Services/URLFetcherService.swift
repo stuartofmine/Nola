@@ -21,7 +21,6 @@
 //
 
 import Foundation
-import CryptoKit
 import Combine
 
 /// Supported URL data formats
@@ -106,7 +105,6 @@ public struct URLDataSourceValidationContract: Codable, Hashable {
     public var validationState: URLDataSourceValidationState
     public var validatedAt: Date
     public var observedAt: Date?
-    public var validationDigest: String? = nil
 
     public var isUsable: Bool {
         validationState != .failed
@@ -115,13 +113,6 @@ public struct URLDataSourceValidationContract: Codable, Hashable {
             && !readerDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && readRecipe?.isUsable == true
             && !schemaFields.isEmpty
-            && validationDigest == expectedValidationDigest
-    }
-
-    public var expectedValidationDigest: String? {
-        guard let sealed = AgentCoreDataSourceResolver.sealContract(coreContractJSON),
-              case .string(let digest)? = sealed["validationDigest"] else { return nil }
-        return digest
     }
 
     var coreContractJSON: [String: AgentCoreDataSourceJSON] {
@@ -152,8 +143,7 @@ public struct URLDataSourceValidationContract: Codable, Hashable {
             "maximumAgeMinutes": .number(Double(maximumAgeMinutes)),
             "validationState": .string(validationState.rawValue),
             "validatedAt": .string(Self.coreDateString(validatedAt)),
-            "observedAt": observedAt.map { .string(Self.coreDateString($0)) } ?? .null,
-            "validationDigest": .string(validationDigest ?? "")
+            "observedAt": observedAt.map { .string(Self.coreDateString($0)) } ?? .null
         ]
     }
 
@@ -183,7 +173,6 @@ public struct URLDataSourceValidationContract: Codable, Hashable {
             outputSchemaJSON: schemaData.flatMap { String(data: $0, encoding: .utf8) }
                 ?? "{\"type\":\"array\",\"items\":{\"type\":\"object\"}}"
         )
-        validationDigest = expectedValidationDigest
     }
 }
 

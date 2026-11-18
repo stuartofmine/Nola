@@ -1296,8 +1296,8 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
             throw AppleTaskGuidanceOutbox.Failure.invalidOwner
         }
         try await AppleTaskGuidanceOutbox.shared.recover(
-            hostId: "local-store:" + SHA256.hash(data: Data(port.databaseURL.standardizedFileURL.path.utf8))
-                .map { String(format: "%02x", $0) }.joined(), conversationId: conversationID,
+            hostId: "local-store:" + port.databaseURL.standardizedFileURL.path,
+            conversationId: conversationID,
             parentRunId: admitted.runID
         ) { path, payload in
             try port.taskGuidanceTransport(path: path, payload: payload,

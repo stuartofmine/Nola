@@ -8,9 +8,6 @@ export interface AdmittedMessage {
 }
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const same = (a: JournalCursor, b: JournalCursor) => journalIdentityKey(a.identity) === journalIdentityKey(b.identity) && a.sequence === b.sequence && a.record_digest === b.record_digest;
-async function digest(text: string): Promise<string> {
-    return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))), byte => byte.toString(16).padStart(2, '0')).join('');
-}
 
 /** Browser is a source-local read client. Fixed authenticated declarations only
  * supply message shells; they never supply assistant completion authority. */
@@ -62,7 +59,7 @@ export class MessageAdmissionReader {
                 if (pending.id !== value.message_id || pending.size !== offset || pending.total !== total || pending.digest !== value.declaration_digest) throw new Error('Message declaration fragments differ');
                 pending.text += value.text; pending.size += BigInt(bytes); cursor = at;
                 if (pending.size === pending.total) {
-                    if (await digest(pending.text) !== pending.digest || !this.current()) throw new Error('Message declaration digest mismatch');
+                    if (!this.current()) throw new Error('Stale message admission owner');
                     const declaration = JSON.parse(pending.text);
                     if (!object(declaration) || !Number.isSafeInteger(declaration.ordinal) || (declaration.ordinal as number) < 0 || !object(declaration.input)) throw new Error('Invalid message declaration');
                     const input = declaration.input;

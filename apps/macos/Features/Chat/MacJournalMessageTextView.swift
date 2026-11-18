@@ -1026,6 +1026,13 @@ struct MacJournalMessageTextView: View {
         }
     }
 
+    private static func segmentHasTasks(_ parts: [MacAssistantJournalPart]) -> Bool {
+        parts.contains { part in
+            if case .task = part.metadata { return true }
+            return false
+        }
+    }
+
     var body: some View {
         // Derive page-wide rendering decisions once from the same snapshot.
         // ForEach must not rescan all Parts (and reread the observable owner)
@@ -1054,6 +1061,7 @@ struct MacJournalMessageTextView: View {
                             requiresAttention: processDelivery == .running && process.requiresAttention,
                             toolCount: process.toolCount, attentionState: process.attentionState,
                             reasoningOnly: process.toolCount == 0,
+                            hasTasks: Self.segmentHasTasks(segment.parts),
                             currentActivityTitle: processDelivery == .running ? process.currentActivityTitle : nil) {
                             journalParts(segment.parts, allParts: ordered,
                                 reference: loadedReference, inlineReasoning: true)
@@ -1302,11 +1310,17 @@ private struct MacJournalTaskView: View {
     @Environment(\.macTranscriptReadOnly) private var readOnly
     @State private var draft = ""
     private var terminal: Bool { task.isTerminal }
+    private var taskTitle: String {
+        let trimmed = task.display_key.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (!trimmed.isEmpty && trimmed != task.task_id && trimmed != "task.background")
+            ? trimmed
+            : String(localized: "Task")
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Label { Text("Task") } icon: { Image(systemName: "list.bullet.rectangle") }
+                Label { Text(verbatim: taskTitle) } icon: { Image(systemName: "list.bullet.rectangle") }
                 Spacer(minLength: 8)
                 MacJournalStatusText(state: task.state)
             }
@@ -1528,7 +1542,7 @@ private struct MacJournalModelAttemptView: View {
             } label: {
                 Text("Diagnostic details", tableName: "Chat")
             }
-            .disclosureGroupStyle(MacRowDisclosureStyle())
+            .disclosureGroupStyle(MacRowDisclosureStyle(isPlain: true))
             // A recorded retryable failure does not authorize an automatic
             // retry; the next committed attempt owns that transition.
         }.accessibilityIdentifier("chat.journal.modelAttempt")
@@ -1569,7 +1583,7 @@ private struct MacJournalFailureView: View {
                 } label: {
                     Text("Diagnostic details", tableName: "Chat")
                 }
-                .disclosureGroupStyle(MacRowDisclosureStyle())
+                .disclosureGroupStyle(MacRowDisclosureStyle(isPlain: true))
             } else {
                 failureBody
                 Text(verbatim: failure.code).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
@@ -1721,7 +1735,7 @@ struct MacJournalToolView: View {
                         Text("Technical details", tableName: "Chat")
                             .font(.caption).foregroundStyle(.secondary)
                     }
-                    .disclosureGroupStyle(MacRowDisclosureStyle())
+                    .disclosureGroupStyle(MacRowDisclosureStyle(isPlain: true))
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("chat.journal.tool.technicalDetails")
                 }.padding(.top, 6)
@@ -1746,7 +1760,7 @@ struct MacJournalToolView: View {
             .font(.body)
             .frame(minHeight: 28)
         }
-        .disclosureGroupStyle(MacRowDisclosureStyle())
+        .disclosureGroupStyle(MacRowDisclosureStyle(isPlain: true))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chat.journal.tool")
     }
@@ -1817,6 +1831,7 @@ struct MacJournalProcessView<Content: View>: View {
     let toolCount: Int
     let attentionState: String?
     let reasoningOnly: Bool
+    var hasTasks: Bool = false
     var currentActivityTitle: String? = nil
     @ViewBuilder var content: () -> Content
     @Environment(\.journalPresentationOwner) private var owner
@@ -1825,7 +1840,7 @@ struct MacJournalProcessView<Content: View>: View {
     @State private var hovering = false
     private var expanded: Bool {
         AppleMessagePartFlow.isExpanded(choices: partIDs.compactMap { (owner?.processChoices ?? localChoices)[$0] },
-            defaultExpanded: false)
+            defaultExpanded: hasTasks)
     }
 
     private var heading: String {

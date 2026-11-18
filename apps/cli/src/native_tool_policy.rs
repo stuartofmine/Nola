@@ -69,20 +69,80 @@ pub(crate) fn decode_desktop_host_tool_allowlist(
     Ok(tools)
 }
 
+fn authorized_expert_room_child(parent: &str, session: &str) -> bool {
+    let Ok(mut app) = crate::application_port::CliApplicationPort::persistent_default() else {
+        return false;
+    };
+    let Ok(Some(raw_settings)) = app.load_conversation_settings(session) else {
+        return false;
+    };
+    let Ok(settings) = serde_json::from_str::<Value>(&raw_settings) else {
+        return false;
+    };
+    let Some(raw_owner) = settings.get(nola_domain::agent_room::CONTEXT_OWNER_FIELD) else {
+        return false;
+    };
+    let Ok(owner) = serde_json::from_value::<nola_domain::agent_room::ContextOwner>(raw_owner.clone()) else {
+        return false;
+    };
+    let Ok(association) = app.execute::<Option<nola_application::agent_room::ConversationRoomAssociation>>(
+        nola_application::ApplicationCommand::AgentRoom {
+            command: nola_application::agent_room::AgentRoomCommand::ForConversation {
+                conversation_id: parent.to_string(),
+            },
+        },
+    ) else {
+        return false;
+    };
+    association.is_some_and(|item| {
+        item.conversation_id == parent
+            && item.room_id == owner.room_id
+            && item.room.room.participants().iter().any(|member| {
+                member.id == owner.participant_id
+                    && member.agent_id == owner.agent_id
+                    && member.context_conversation_id == session
+            })
+    })
+}
+
 pub(crate) fn desktop_mcp_policy(session: &str) -> Result<Option<nola_core::tool_policy::ToolPolicyInput>, String> {
     if std::env::var_os("NOLA_DESKTOP_HOST").is_none() { return Ok(None); }
     let encoded = std::env::var("NOLA_CORE_TOOL_POLICY_RECEIPT").map_err(|_| "Missing desktop policy")?;
     let receipt: Value = serde_json::from_slice(&base64::engine::general_purpose::STANDARD.decode(encoded.trim())
         .map_err(|_| "Invalid desktop policy")?).map_err(|_| "Invalid desktop policy")?;
-    // Child sessions need their own policy; a parent receipt cannot widen them.
-    if receipt.pointer("/expected_identity/session_id").and_then(Value::as_str) != Some(session) { return Ok(None); }
+    // Child sessions inherit their owner session's desktop policy; unrelated
+    // sessions cannot adopt another session's receipt.
+    let expected_session = receipt
+        .pointer("/expected_identity/session_id")
+        .and_then(Value::as_str);
+    let authorized_child = expected_session.is_some_and(|parent| {
+        parent != session
+            && (crate::store::NolaStore::open_default()
+                .and_then(|store| store.list_all_runtime_tasks())
+                .map(|tasks| {
+                    tasks.iter().any(|task| {
+                        task.child_session_id.as_deref() == Some(session)
+                            && task.owner_session_id.as_deref() == Some(parent)
+                    })
+                })
+                .unwrap_or(false)
+                || authorized_expert_room_child(parent, session))
+    });
+    if expected_session != Some(session) && !authorized_child {
+        return Ok(None);
+    }
+    let validation_session = if authorized_child {
+        expected_session.ok_or("Missing expected session identity")?
+    } else {
+        session
+    };
     let policy: nola_core::tool_policy::ToolPolicyInput = serde_json::from_value(receipt["policy_input"].clone())
         .map_err(|_| "Invalid desktop policy input")?;
     // Native entry checks expiry at admission. Later rounds in that same
     // owned process retain its policy; each concrete approval is revalidated.
     decode_desktop_host_tool_allowlist(&encoded,
         &std::env::var("NOLA_CORE_TOOL_POLICY_DIGEST").map_err(|_| "Missing desktop policy digest")?,
-        &std::env::var("NOLA_CORE_TOOL_MANIFEST_DIGEST").map_err(|_| "Missing desktop manifest digest")?,session,policy.now_ms)?;
+        &std::env::var("NOLA_CORE_TOOL_MANIFEST_DIGEST").map_err(|_| "Missing desktop manifest digest")?,validation_session,policy.now_ms)?;
     Ok(Some(policy))
 }
 

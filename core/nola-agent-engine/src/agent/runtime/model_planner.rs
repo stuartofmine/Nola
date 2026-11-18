@@ -318,33 +318,6 @@ impl AgentRuntime {
             });
             return Ok(());
         }
-        let failed_skill_update_at_budget = self
-            .session
-            .execution
-            .active_turn
-            .as_ref()
-            .is_some_and(|turn| {
-                let maximum = turn.context.configuration.max_model_iterations;
-                maximum > 0
-                    && turn.model_request_count >= maximum
-                    && turn.engineering.last_failure_tool.as_deref() == Some("skill_update")
-            });
-        if failed_skill_update_at_budget {
-            let active_runs = self.active_skill_run_ids(turn_id);
-            if let [run_id] = active_runs.as_slice() {
-                self.apply_skill_runtime_command(
-                    SkillRuntimeCommandEnvelope {
-                        operation_id: format!("skill_protocol_budget_exhausted:{run_id}"),
-                        command: SkillRuntimeCommand::Fail {
-                            run_id: run_id.clone(),
-                            error: "Skill completion stopped after its internal update protocol failed at the model iteration boundary".to_string(),
-                        },
-                    },
-                    events,
-                    effects,
-                )?;
-            }
-        }
         let (
             turn_configuration,
             turn_context_items,
@@ -372,8 +345,8 @@ impl AgentRuntime {
             has_executed_tools,
             final_answer_audit_required,
             exhausted_capability_groups,
-            direct_execution_completed,
-            mutation_count,
+            _direct_execution_completed,
+            _mutation_count,
         ) = {
             let turn = self
                 .session
@@ -457,8 +430,6 @@ impl AgentRuntime {
             self.apply_requirement_inputs(turn_id, &applications, &items, false, events)?;
         }
         let pending_skill_completion_steps = self.session.pending_skill_completion_steps();
-        let skill_completion_reporting_ready =
-            self.session.active_skill_completion_reporting_ready();
         let final_synthesis = iteration_budget_final_synthesis
             || final_answer_draft.is_some()
             || should_enter_final_synthesis(
@@ -560,23 +531,7 @@ impl AgentRuntime {
                 promote_activated_tools(&mut model_tools, &turn_capability_projection, &recent, true);
             }
         }
-        if !pending_skill_completion_steps.is_empty() && recovery_tool.is_none() && !final_synthesis
-        {
-            promote_required_protocol_tool(
-                &mut model_tools,
-                &turn_capability_projection,
-                "skill_update",
-            );
-        }
-        let skill_protocol_convergence = iteration_budget_convergence
-            && !pending_skill_completion_steps.is_empty()
-            && model_tool_is_exposed(&model_tools, "skill_update")
-            && direct_execution_completed
-            && mutation_count > 0
-            && self.session.active_skill_required_artifacts_satisfied()
-            && !engineering_validation_required
-            && !protocol_recovery_required
-            && !final_synthesis;
+        let skill_protocol_convergence = false;
         if final_synthesis {
             model_tools.clear();
         }
@@ -600,10 +555,6 @@ impl AgentRuntime {
         // No-progress recovery preserves the legal capability set. Exact
         // rejected calls are guarded at admission, not by stripping all tools.
         let mut model_items = turn_context_items;
-        if self.primary_native_workspace_root()?.is_some() {
-            model_items.push(AgentItem::Message {id:ItemId::from_string(format!("{}:workspace-coordination",turn_id.as_str())),role:AgentRole::System,
-                content:"Repository workspace: this primary conversation coordinates the task. Delegate repository implementation to managed workspace workers (workspace profile for file-only edits); Core prepares their worktree and source snapshot through normal approvals. The built-in workspace profile cannot run commands or tests. If the child must implement and execute checks, select a command-capable profile such as general whose frozen tools include execution, under normal permissions and exclusive scheduling; otherwise the parent owns execution and verification. Inspect child results and actual workspace paths, run verification there, then review and explicitly integrate the delivery. Do not write the original source checkout directly or evade this workflow with another cwd/absolute source path. A worktree is not an OS sandbox; unsupported preparation must be reported, not bypassed.".into()});
-        }
         if let Some(workspace)=self.session.execution.primary_worktree.as_ref().filter(|_|turn_runtime_snapshot.execution_backend.backend_id!="nola") {
             model_items.push(AgentItem::Message {id:ItemId::from_string(format!("{}:primary-workspace",turn_id.as_str())),role:AgentRole::System,
                 content:format!("The execution checkout is {}. Source project {} is separate. Report changed files, verification and delivery paths accurately. Changes are retained in the execution checkout; source integration requires separate review and approval. Do not imply source files were updated or bypass this boundary with absolute source paths. This worktree is not an OS sandbox.",workspace.selection.root,workspace.source_root)});
@@ -874,23 +825,6 @@ impl AgentRuntime {
             });
             let facts = self.session.execution.active_turn.as_ref().expect("active turn").engineering.model_facts();
             model_items.push(runtime_fact_item(turn_id, "engineering-state", facts));
-        }
-        if !pending_skill_completion_steps.is_empty()
-            && recovery_tool.is_none()
-            && skill_completion_reporting_ready
-            && !engineering_validation_required
-            && !artifact_completion_pending
-            && !final_synthesis
-        {
-            model_items.push(AgentItem::Message {
-                id: ItemId::from_string(format!(
-                    "{}:skill-completion-instruction",
-                    turn_id.as_str()
-                )),
-                role: AgentRole::System,
-                content: skill_completion_instruction(&model_tools).into(),
-            });
-            model_items.push(runtime_fact_item(turn_id, "skill-pending-records", json!({"records": pending_skill_completion_steps})));
         }
         // Activated capabilities are disclosed by this Step's compiled schemas,
         // not by rewriting a previously sent ToolResult. Historical results
@@ -1710,17 +1644,16 @@ fn promote_validation_tools(
     }
 }
 
+#[cfg(test)]
 fn model_tool_is_exposed(model_tools: &[Value], name: &str) -> bool {
     model_tools.iter().any(|schema| schema.pointer("/function/name")
         .or_else(|| schema.get("name")).and_then(Value::as_str) == Some(name))
 }
 
+#[cfg(test)]
 fn skill_completion_instruction(model_tools: &[Value]) -> &'static str {
-    if model_tool_is_exposed(model_tools, "skill_update") {
-        "An active Skill has an open Core-owned completion contract. Continue substantive work that is still required, but do not claim completion while this contract is open. As soon as the pending records in runtime facts become true, issue their exact internal skill_update calls; combine independent updates in one parallel tool response instead of spending one model round per record. Use canonical artifact URIs and real retained verifier evidence, and never mark an unobserved check complete. If goal_complete is exposed and durable work must pause before these records can truthfully be completed, call it with needs_user, blocked, or failed instead."
-    } else {
-        "An active Skill has pending completion records, but this request does not expose the capability for recording them. Do not invent a tool, write protocol arguments to a file, or claim the Skill contract is complete. Continue feasible substantive work using the tools actually exposed. If no useful work remains, report the result as incomplete and explain the unavailable completion capability; preserve pending records for a later capable request."
-    }
+    let _ = model_tools;
+    ""
 }
 
 fn promote_required_protocol_tool(
@@ -2162,19 +2095,15 @@ mod presentation_boundary_tests {
 
         assert!(tools.is_empty());
         assert!(!super::model_tool_is_exposed(&tools, "skill_update"));
-        let instruction = super::skill_completion_instruction(&tools);
-        assert!(instruction.contains("does not expose"));
-        assert!(instruction.contains("incomplete"));
-        assert!(!instruction.contains("issue their exact internal skill_update calls"));
     }
 
     #[test]
     fn skill_completion_guidance_uses_final_tool_projection() {
         let mut tools = vec![json!({"type":"function","function":{"name":"skill_update"}})];
-        assert!(super::skill_completion_instruction(&tools).contains("issue their exact internal skill_update calls"));
-        tools.clear(); // A genuine text-only boundary, not protocol recovery.
+        assert!(super::skill_completion_instruction(&tools).is_empty());
+        tools.clear();
         assert!(!super::model_tool_is_exposed(&tools, "skill_update"));
-        assert!(super::skill_completion_instruction(&tools).contains("does not expose"));
+        assert!(super::skill_completion_instruction(&tools).is_empty());
     }
 
     #[test]

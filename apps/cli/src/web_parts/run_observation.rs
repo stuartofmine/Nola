@@ -180,7 +180,7 @@ fn read_run_observation(application: &mut crate::application_port::CliApplicatio
     let seal = observation_command(application,json!({"type":"local_assistant_run_terminal_seal","conversation_id":conversation,"run_id":run}))?;
     let goal_execution = goal_projection.as_ref().and_then(|projection| projection.execution_owner(&run));
     let goal_allows_submit = goal_execution.is_none() || goal_projection.as_ref().and_then(|p| p.active.as_ref())
-        .is_some_and(|goal| goal.status.is_terminal());
+        .is_some_and(|goal| goal.status.is_terminal() || matches!(goal.status, nola_core::agent::GoalStatus::Paused | nola_core::agent::GoalStatus::NeedsUser));
     let bound = generation.and_then(|id| OBSERVED_WORKERS.get_or_init(||Mutex::new(HashMap::new())).lock().ok()?.get(&id).cloned());
     let matching = bound.as_ref().filter(|o|o.conversation_id==conversation && o.run_id==run && o.assistant_message_id==assistant && (o.client_id==client || (goal_execution.is_some() && o.client_id=="web-goal")));
     let state = match (generation, bound.as_ref(), matching) { (None,_,_)=>"absent",(Some(_),None,_)=>"starting",(_,_,Some(_))=>"running",_=>"unknown" };
@@ -232,8 +232,30 @@ fn read_run_observation(application: &mut crate::application_port::CliApplicatio
     if submission_receipt.is_null() && goal_execution.is_none() && task_execution.is_none() {
         return Err(RunObservationFailure::control("Run has no confirmed source submission owner for this client"));
     }
-    if !submission_receipt.is_null() && goal_execution.is_some() {
-        return Err("Run cannot have both remote source and local Goal ownership".into());
+    if let (Some(receipt), Some(goal)) = (
+        (!submission_receipt.is_null())
+            .then(|| {
+                serde_json::from_value::<nola_domain::remote_submission::SourceSubmissionReceipt>(
+                    submission_receipt.clone(),
+                )
+            })
+            .transpose()
+            .map_err(|_| "invalid source submission receipt")?,
+        goal_execution.as_ref(),
+    ) {
+        receipt
+            .validate()
+            .map_err(|_| "invalid source submission receipt")?;
+        if receipt.phase != nola_domain::remote_submission::RemoteSubmissionPhase::Admitted
+            || receipt.identity.source_host_id != host
+            || receipt.identity.client_id != client
+            || receipt.identity.conversation_id != conversation
+            || receipt.identity.submission_id != run
+            || receipt.identity.assistant_message_id != assistant
+            || goal.run_id != run
+        {
+            return Err("Run cannot have both remote source and local Goal ownership".into());
+        }
     }
     let context_usage = observation_command(application,json!({"type":"local_run_context_usage",
         "identity":admission.get("identity").ok_or("missing admission root")?}))?;

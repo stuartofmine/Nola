@@ -3218,3 +3218,27 @@
 "main.experts.sourceChanged" = "Данные хоста изменились. Обновите каталог и выберите экспертов заново. Сообщение сохранено.";
 
 "run.blocked.inputBudget" = "Запрос превышает входной бюджет модели. Сократите диалог или вложения, уменьшите число инструментов либо выберите модель с большим контекстом.";
+"chat.task.state.retry_waiting" = "Ожидание повтора";
+"chat.host_tool.name.goal_complete" = "Завершить цель";
+"chat.host_tool.name.ask_user" = "Запросить ввод пользователя";
+"chat.host_tool.name.mcp_list" = "Список ресурсов MCP";
+"chat.host_tool.name.mcp_read" = "Прочитать ресурс MCP";
+"chat.conversations.rename" = "Переименовать диалог";
+"chat.conversations.title_field" = "Название";
+"a2ui.history.readOnly" = "Исторические формы доступны только для чтения.";
+"a2ui.date.useShown" = "Использовать указанную дату или время";
+"a2ui.date.clear" = "Очистить";
+"a2ui.component.unsupported" = "Компонент недоступен: ";
+"a2ui.history.unavailable" = "Эта версия недоступна.";
+"a2ui.history.mismatch" = "Несоответствие версии исторической формы.";
+"a2ui.reloadForm" = "Перезагрузить форму";
+"a2ui.submission.pending" = "Предыдущая отправка не подтверждена. Проверьте исходный результат.";
+"a2ui.intent.reconnectHost" = "Переподключитесь к исходному Host для подтверждения отправки формы.";
+"a2ui.intent.previousUnconfirmed" = "Предыдущая отправка формы не подтверждена. Сначала проверьте её.";
+"a2ui.surface.source_changed" = "Источник диалога изменился. Вернитесь к исходному диалогу.";
+"a2ui.intent.source_changed" = "Источник изменился. Подключитесь к исходному Host для проверки.";
+"a2ui.form.updated" = "Форма обновлена. Подтвердите заново перед отправкой.";
+"a2ui.queue.not_executed" = "Действие формы не выполнено: исходный запрос отклонён или отменён.";
+"a2ui.queue.cancel_rejected" = "Удалить невыполненное действие";
+"chat.host.reconnect_bound" = "Переподключитесь к Host, привязанному к этому диалогу.";
+"chat.host.source_unavailable" = "Не удалось подтвердить исходный Host.";

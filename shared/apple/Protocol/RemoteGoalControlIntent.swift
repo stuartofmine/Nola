@@ -160,4 +160,12 @@ public actor AppleGoalControlOutbox {
         try FileManager.default.removeItem(at: file(hostID: hostID, conversationID: conversationID))
         return true
     }
+
+    public func discard(hostID: String, conversationID: String) throws {
+        let target = try file(hostID: hostID, conversationID: conversationID)
+        guard !inFlight.contains(target.path) else { throw Failure.inFlight }
+        if FileManager.default.fileExists(atPath: target.path) {
+            try FileManager.default.removeItem(at: target)
+        }
+    }
 }

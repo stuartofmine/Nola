@@ -131,7 +131,6 @@ final class URLDataSourceMetadataTests: XCTestCase {
         XCTAssertTrue(contract.isUsable)
         XCTAssertEqual(contract.readRecipe?.method, .localFileRead)
         XCTAssertEqual(contract.readRecipe?.operationID, "ios.local-readable.read")
-        XCTAssertNotNil(contract.validationDigest)
         XCTAssertTrue(contract.schemaFields.contains("title"))
         XCTAssertFalse(contract.redactedSample.contains("secret-value"))
     }
@@ -533,7 +532,6 @@ final class URLDataSourceMetadataTests: XCTestCase {
         let record = try XCTUnwrap(reopened.listDataSources().first)
         let projected = try XCTUnwrap(record.iosURLSource?.validationContract)
         XCTAssertTrue(projected.isUsable)
-        XCTAssertEqual(projected.validationDigest, contract.validationDigest)
         XCTAssertEqual(projected.validatedAt.timeIntervalSince1970, timestamp.timeIntervalSince1970, accuracy: 0.000_01)
         XCTAssertEqual(try XCTUnwrap(projected.observedAt).timeIntervalSince1970, timestamp.timeIntervalSince1970, accuracy: 0.000_01)
     }

@@ -401,15 +401,14 @@
                   }
                 },
                 "type": "function"
-              },
-              "model_schema_digest": "b4124d5bdba942471fa7a34887d23448430e214a6d1062edd517ae447703a1c9"
+              }
             }
           ],
           "host_availability_epoch": 1,
           "host_catalog_revision": 1,
           "host_id": "canonical-fixture-host",
           "model_schema_digest": "0213762f15ec1562573b495f25e22fe0ef583df4fa40d297e14e6901e129ddfb",
-          "projection_digest": "6a28e7044efef6dafaea006df2b731d6c835c0abffb1e28993eb010725b6123e",
+          "projection_digest": "dcf78a91f0e3ae8f11d9ceb952cd131b7ee3cf68cf19cda0806183f4a0e4b769",
           "schema_version": 1
         },
         "context_component_count": 0,
@@ -1985,15 +1984,14 @@
                   }
                 },
                 "type": "function"
-              },
-              "model_schema_digest": "b4124d5bdba942471fa7a34887d23448430e214a6d1062edd517ae447703a1c9"
+              }
             }
           ],
           "host_availability_epoch": 1,
           "host_catalog_revision": 1,
           "host_id": "canonical-fixture-host",
           "model_schema_digest": "0213762f15ec1562573b495f25e22fe0ef583df4fa40d297e14e6901e129ddfb",
-          "projection_digest": "6a28e7044efef6dafaea006df2b731d6c835c0abffb1e28993eb010725b6123e",
+          "projection_digest": "dcf78a91f0e3ae8f11d9ceb952cd131b7ee3cf68cf19cda0806183f4a0e4b769",
           "schema_version": 1
         },
         "context_component_count": 0,

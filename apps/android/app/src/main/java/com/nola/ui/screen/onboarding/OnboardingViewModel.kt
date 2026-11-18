@@ -62,7 +62,8 @@ class OnboardingViewModel @Inject constructor(
                 prefs.setOnboardingCompleted()
             }.onSuccess {
                 _uiState.update { it.copy(isCompleted = true, isCompleting = false) }
-            }.onFailure {
+            }.onFailure { error ->
+                if (error is kotlinx.coroutines.CancellationException) throw error
                 _uiState.update { it.copy(isCompleting = false, completionFailed = true) }
             }
         }

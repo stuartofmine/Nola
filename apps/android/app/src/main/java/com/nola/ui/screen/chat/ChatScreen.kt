@@ -110,8 +110,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import com.nola.ui.components.NolaSwitch
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
@@ -312,6 +312,8 @@ internal fun ChatScreen(
     var showIMSearch by rememberSaveable { mutableStateOf(false) }
     var imSearch by rememberSaveable { mutableStateOf("") }
     var showActions by remember { mutableStateOf(false) }
+    var renameTarget by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var renameDraft by remember { mutableStateOf("") }
     var showExecutionBackendMenu by remember { mutableStateOf(false) }
     var inspector by rememberSaveable(state.conversationId, state.executionHostBinding) { mutableStateOf<ConversationInspector?>(null) }
     val showMoreSettings = inspector == ConversationInspector.Settings
@@ -324,6 +326,37 @@ internal fun ChatScreen(
             load = { before -> viewModel.loadExpertChildHistory(target, before) },
             onContinue = { viewModel.continueExpertChildHistory(target.parentId, target.child); showConversations = false },
             onClose = { expertHistoryTarget = null }) }
+    }
+    renameTarget?.let { (targetId, _) ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { renameTarget = null },
+            title = { Text(stringResource(R.string.chat_rename_conversation)) },
+            text = {
+                androidx.compose.material3.OutlinedTextField(
+                    value = renameDraft,
+                    onValueChange = { renameDraft = it },
+                    singleLine = true,
+                    label = { Text(stringResource(R.string.chat_conversation_title_hint)) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.renameConversation(targetId, renameDraft)
+                        renameTarget = null
+                    },
+                    enabled = renameDraft.trim().isNotEmpty()
+                ) {
+                    Text(stringResource(R.string.common_save))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { renameTarget = null }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            }
+        )
     }
     LaunchedEffect(requestedConversationId, requestedNewConversation) {
         if (requestedNewConversation) {
@@ -664,7 +697,26 @@ internal fun ChatScreen(
         ModalBottomSheet(onDismissRequest = { inspector = null; showContextSheetOpen = false }, sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Box(Modifier.fillMaxWidth().fillMaxHeight(0.92f)) {
         if (inspector == ConversationInspector.Progress) {
-            ConversationProgressPanel(state, viewModel::loadConversationProgress, viewModel::pendingGoalControl, viewModel::submitGoalControl, onClose = { inspector = null })
+            ConversationProgressPanel(
+                state = state,
+                load = viewModel::loadConversationProgress,
+                pendingControl = viewModel::pendingGoalControl,
+                submitControl = viewModel::submitGoalControl,
+                onClose = { inspector = null },
+                discardControl = viewModel::discardPendingGoalControl,
+                expertChildren = { convId ->
+                    androidx.compose.runtime.key(convId, state.executionHostBinding) {
+                        ExpertChildTree(
+                            convId,
+                            load = { viewModel.loadExpertChildren(convId, it) },
+                            onOpen = {
+                                inspector = null
+                                expertHistoryTarget = it
+                            }
+                        )
+                    }
+                }
+            )
         }
         if (inspector == ConversationInspector.Resources) {
             ConversationResourcesPanel(state, onClose = { inspector = null })
@@ -843,6 +895,7 @@ internal fun ChatScreen(
                 showConversations = false
             },
             onDeleteConversation = { viewModel.deleteConversation(it) },
+            onRenameConversation = viewModel::renameConversation,
             search = conversationSearch,
             onSearchChange = { conversationSearch = it },
             listState = conversationListState,
@@ -852,10 +905,7 @@ internal fun ChatScreen(
             activity = conversationActivity,
             onLoadPreview = viewModel::loadConversationPreview,
             error = conversationListError,
-            onRetry = viewModel::loadConversations,
-            expertChildren = { conversation -> androidx.compose.runtime.key(conversation.id, conversation.executionHostBinding) {
-                ExpertChildTree(conversation.id, load = { viewModel.loadExpertChildren(conversation.id, it) }, onOpen = { expertHistoryTarget = it })
-            } }
+            onRetry = viewModel::loadConversations
         )
     } else {
 
@@ -864,53 +914,116 @@ internal fun ChatScreen(
             .fillMaxSize()
             .background(NolaColors.chatBackground)
     ) {
+        val conversationTitle = ConversationTitlePresentationPolicy.displayTitle(
+            state.conversations.find { it.id == state.conversationId }?.title,
+            state.conversationId,
+            stringResource(R.string.chat_new_chat)
+        )
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(MaterialTheme.colorScheme.background)
-                .padding(horizontal = NolaSpacing.sm, vertical = 4.dp),
+                .padding(horizontal = NolaSpacing.sm, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            NolaIconButton(label = stringResource(R.string.common_back), onClick = { dismissNavigationKeyboard(); viewModel.loadConversations(); showConversations = true }, modifier = Modifier.testTag("chat.conversation.back")) {
-                Icon(painterResource(R.drawable.nola_back), contentDescription = stringResource(R.string.common_back))
+            Row(
+                modifier = Modifier.widthIn(min = 96.dp),
+                horizontalArrangement = Arrangement.Start,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                NolaIconButton(
+                    label = stringResource(R.string.common_back),
+                    onClick = { dismissNavigationKeyboard(); viewModel.loadConversations(); showConversations = true },
+                    modifier = Modifier.testTag("chat.conversation.back")
+                ) {
+                    Icon(painterResource(R.drawable.nola_back), contentDescription = stringResource(R.string.common_back))
+                }
             }
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    .heightIn(min = 48.dp)
-                    .testTag("chat.modelPicker")
-                    .clickable { showActions = true },
+                    .padding(horizontal = 6.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.widthIn(max = 220.dp)) {
-                    Text(
-                        state.conversations.find { it.id == state.conversationId }?.title
-                            ?: stringResource(R.string.chat_new_chat),
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Center
-                    )
-                    Text(when {
-                        !presentationReady && state.processingState == ProcessingState.BuildingContext -> stringResource(R.string.chat_loading_conversation)
-                        state.permissionRequest != null -> stringResource(R.string.conversations_waiting)
-                        state.processingState == ProcessingState.AwaitingRecovery -> stringResource(R.string.chat_awaiting_recovery)
-                        state.processingState.blocksInput -> stringResource(R.string.conversations_running)
-                        else -> "Nola"
-                    }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
-
+                Row(
+                    modifier = Modifier
+                        .widthIn(max = 260.dp)
+                        .heightIn(min = 44.dp)
+                        .nolaSurface(
+                            radius = NolaRadius.lg,
+                            raised = false,
+                            fill = MaterialTheme.colorScheme.surfaceContainer,
+                            border = MaterialTheme.colorScheme.outlineVariant
+                        )
+                        .testTag("chat.topbar.title")
+                        .clickable { showActions = true }
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.weight(1f, fill = false)
+                    ) {
+                        Text(
+                            conversationTitle,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Center
+                        )
+                        Text(
+                            when {
+                                !presentationReady && state.processingState == ProcessingState.BuildingContext -> stringResource(R.string.chat_loading_conversation)
+                                state.permissionRequest != null -> stringResource(R.string.conversations_waiting)
+                                state.processingState == ProcessingState.AwaitingRecovery -> stringResource(R.string.chat_awaiting_recovery)
+                                state.processingState.blocksInput -> stringResource(R.string.conversations_running)
+                                else -> state.currentModel?.name ?: stringResource(R.string.app_name)
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                    NolaDisclosureChevron(expanded = showActions, reduceMotion = rememberReduceMotionEnabled())
                 }
-
             }
 
-            Row(horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                modifier = Modifier.widthIn(min = 96.dp),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                NolaIconButton(
+                    label = stringResource(R.string.chat_search_loaded_title),
+                    onClick = { showIMSearch = true },
+                    modifier = Modifier.testTag("chat.topbar.search")
+                ) {
+                    Icon(painterResource(R.drawable.nola_search), contentDescription = stringResource(R.string.chat_search_loaded_title))
+                }
                 Box {
-                    NolaIconButton(label = stringResource(R.string.chat_search_loaded_title), onClick = { showIMSearch = true }, modifier = Modifier.testTag("chat.topbar.search")) {
-                        Icon(painterResource(R.drawable.nola_search), contentDescription = stringResource(R.string.chat_search_loaded_title))
+                    NolaIconButton(
+                        label = stringResource(R.string.common_more),
+                        onClick = { showActions = true },
+                        modifier = Modifier.testTag("chat.topbar.more")
+                    ) {
+                        Icon(painterResource(R.drawable.nola_more), contentDescription = stringResource(R.string.common_more))
                     }
                     if (showActions) ModalBottomSheet(onDismissRequest = { showActions = false }) {
+                        state.conversationId?.let { activeConversationId ->
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.chat_rename_conversation)) },
+                                enabled = draftWritable,
+                                onClick = {
+                                    renameTarget = activeConversationId to conversationTitle
+                                    renameDraft = conversationTitle
+                                    showActions = false
+                                }
+                            )
+                        }
                         DropdownMenuItem(text = { Text(stringResource(R.string.chat_experts)) },
                             modifier = Modifier.testTag("chat.experts.open"),
                             enabled = draftWritable && !preparingExpertPicker,
@@ -956,8 +1069,8 @@ internal fun ChatScreen(
             }
         }
         HorizontalDivider(
-            thickness = 0.5.dp,
-            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.20f)
+            thickness = 1.dp,
+            color = MaterialTheme.colorScheme.outlineVariant
         )
 
         if (!presentationReady && state.processingState == ProcessingState.BuildingContext) {
@@ -1094,7 +1207,7 @@ internal fun ChatScreen(
                     val savingReasoning by viewModel.savingReasoningPreference.collectAsState()
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.weight(1f)) {
-                            TextButton(onClick = { showModelMenu = true }, modifier = Modifier.testTag("chat.composer.model")) {
+                            TextButton(onClick = { showModelMenu = true }, modifier = Modifier.testTag("chat.modelPicker")) {
                                 Text(state.currentModel?.name ?: stringResource(R.string.chat_no_model_configured), maxLines = 1,
                                     modifier = Modifier.weight(1f, fill = false), style = MaterialTheme.typography.labelMedium, overflow = TextOverflow.Ellipsis)
                                 Spacer(Modifier.width(4.dp))
@@ -2882,7 +2995,7 @@ private fun CompactionSourceActions(
     onRequested: (CompactionSourceNavigator.Request) -> Unit,
 ) {
     parts.filterIsInstance<ConversationProjectionV1.Part.Compaction>().forEach { compaction ->
-        if (conversationId == null || compaction.sourceItemIds.isEmpty() || compaction.sourceFingerprint.isBlank()) {
+        if (conversationId == null || compaction.sourceItemIds.isEmpty()) {
             return@forEach
         }
         Card(
@@ -2917,11 +3030,6 @@ private fun CompactionSourceActions(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                Text(
-                    "SHA-256 · ${compaction.sourceFingerprint.take(12)}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
         }
     }
@@ -3093,15 +3201,16 @@ private fun AgentCoreTaskCard(
                 )
             }
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                val fallbackTaskTitle = stringResource(
+                    when (task.kind) {
+                        AgentCoreTaskKind.Agent -> R.string.chat_task_agent
+                        AgentCoreTaskKind.Tool -> R.string.chat_task_tool
+                        AgentCoreTaskKind.Skill -> R.string.chat_task_skill
+                        AgentCoreTaskKind.DataRefresh -> R.string.chat_task_data_refresh
+                    },
+                )
                 Text(
-                    text = stringResource(
-                        when (task.kind) {
-                            AgentCoreTaskKind.Agent -> R.string.chat_task_agent
-                            AgentCoreTaskKind.Tool -> R.string.chat_task_tool
-                            AgentCoreTaskKind.Skill -> R.string.chat_task_skill
-                            AgentCoreTaskKind.DataRefresh -> R.string.chat_task_data_refresh
-                        },
-                    ),
+                    text = task.lineage.title?.takeIf(String::isNotBlank) ?: fallbackTaskTitle,
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -3414,7 +3523,7 @@ private fun ChatLearningFeedbackSheet(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                Switch(checked = appliesToFuture, onCheckedChange = null)
+                NolaSwitch(checked = appliesToFuture, onCheckedChange = null)
             }
 
             Row(

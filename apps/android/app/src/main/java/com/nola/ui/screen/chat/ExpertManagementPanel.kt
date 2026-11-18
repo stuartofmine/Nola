@@ -22,6 +22,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nola.R
+import com.nola.ui.components.NolaDisclosureBar
+import com.nola.ui.components.NolaDropdownBar
 import com.nola.data.repository.AgentDirectory
 import com.nola.data.repository.PersistentAgent
 import com.nola.domain.model.ModelInfo
@@ -150,10 +152,21 @@ internal fun ExpertManagementPanel(viewModel: ChatViewModel, onBack: () -> Unit)
             OutlinedTextField(description, { description = it }, enabled = !busy,
                 label = { Text(stringResource(R.string.room_agent_description)) },
                 modifier = Modifier.fillMaxWidth().testTag("expert.editor.description"))
-            Box {
-                TextButton(onClick = { modelMenu = true }, enabled = !busy, modifier = Modifier.testTag("expert.editor.model")) {
-                    Text(stringResource(R.string.room_agent_model, if (inheritModel) stringResource(R.string.expert_follow_app_default_model) else selectedModel?.name ?: originalModelSelection?.let { stringResource(R.string.expert_model_unavailable, it) } ?: stringResource(R.string.chat_no_model_selected)))
+            Box(Modifier.fillMaxWidth()) {
+                val modelValue = if (inheritModel) {
+                    stringResource(R.string.expert_follow_app_default_model)
+                } else {
+                    selectedModel?.name
+                        ?: originalModelSelection?.let { stringResource(R.string.expert_model_unavailable, it) }
+                        ?: stringResource(R.string.chat_no_model_selected)
                 }
+                NolaDropdownBar(
+                    value = stringResource(R.string.room_agent_model, modelValue),
+                    expanded = modelMenu,
+                    onClick = { modelMenu = true },
+                    enabled = !busy,
+                    modifier = Modifier.testTag("expert.editor.model")
+                )
                 DropdownMenu(modelMenu, onDismissRequest = { modelMenu = false }) {
                     DropdownMenuItem(text = { Text(stringResource(R.string.expert_follow_app_default_model)) }, onClick = { inheritModel = true; modelSelectionTouched = true; modelMenu = false })
                     models.forEach { model -> DropdownMenuItem(text = { Text(model.name) }, onClick = {
@@ -161,15 +174,21 @@ internal fun ExpertManagementPanel(viewModel: ChatViewModel, onBack: () -> Unit)
                     }) }
                 }
             }
-            Box {
+            Box(Modifier.fillMaxWidth()) {
                 val selectedName = templateID?.let { id -> roles.firstOrNull { it.id == id }?.let { expertRoleText(it.name, language) }
                     ?: templateCatalog?.templates?.firstOrNull { it.id == id }?.name }
-                TextButton(onClick = { templateMenu = true }, enabled = !busy,
-                    modifier = Modifier.testTag("expert.editor.template")) {
-                    Text(stringResource(R.string.expert_template_label, if (templateID == null)
-                        stringResource(R.string.expert_template_default) else selectedName
-                            ?: stringResource(R.string.expert_template_unavailable, checkNotNull(templateID))))
+                val templateValue = if (templateID == null) {
+                    stringResource(R.string.expert_template_default)
+                } else {
+                    selectedName ?: stringResource(R.string.expert_template_unavailable, checkNotNull(templateID))
                 }
+                NolaDropdownBar(
+                    value = stringResource(R.string.expert_template_label, templateValue),
+                    expanded = templateMenu,
+                    onClick = { templateMenu = true },
+                    enabled = !busy,
+                    modifier = Modifier.testTag("expert.editor.template")
+                )
                 DropdownMenu(templateMenu, onDismissRequest = { templateMenu = false }) {
                     DropdownMenuItem(text = { Text(stringResource(R.string.expert_template_default)) }, onClick = {
                         templateID = null; templateSelectionTouched = true; templateMenu = false
@@ -189,11 +208,15 @@ internal fun ExpertManagementPanel(viewModel: ChatViewModel, onBack: () -> Unit)
                         onClick = {}, enabled = false)
                 }
             }
-            Box {
-                TextButton(onClick = { effortMenu = true }, enabled = !busy,
-                    modifier = Modifier.testTag("expert.editor.effort")) {
-                    Text(stringResource(R.string.models_reasoning_effort) + ": " + reasoningEffortLabel(effort))
-                }
+            Box(Modifier.fillMaxWidth()) {
+                NolaDropdownBar(
+                    value = reasoningEffortLabel(effort),
+                    expanded = effortMenu,
+                    onClick = { effortMenu = true },
+                    enabled = !busy,
+                    label = stringResource(R.string.models_reasoning_effort),
+                    modifier = Modifier.testTag("expert.editor.effort")
+                )
                 DropdownMenu(effortMenu, onDismissRequest = { effortMenu = false }) {
                     (listOf("automatic") + declaredEfforts).distinct().forEach { value ->
                         DropdownMenuItem(text = { Text(reasoningEffortLabel(value)) }, onClick = { effort = value; effortMenu = false },
@@ -206,9 +229,12 @@ internal fun ExpertManagementPanel(viewModel: ChatViewModel, onBack: () -> Unit)
             roles.firstOrNull { it.id == templateID }?.let { role ->
                 Text(expertRoleText(role.description, language), style = MaterialTheme.typography.bodySmall)
                 var preview by rememberSaveable(role.id) { mutableStateOf(false) }
-                TextButton(onClick = { preview = !preview }, modifier = Modifier.testTag("expert.template.preview")) {
-                    Text(stringResource(R.string.expert_role_preview))
-                }
+                NolaDisclosureBar(
+                    title = stringResource(R.string.expert_role_preview),
+                    expanded = preview,
+                    onToggle = { preview = !preview },
+                    modifier = Modifier.testTag("expert.template.preview")
+                )
                 if (preview) {
                     Text(stringResource(R.string.expert_role_prompt), style = MaterialTheme.typography.titleSmall)
                     Text(role.prompt, style = MaterialTheme.typography.bodySmall)
@@ -304,6 +330,7 @@ internal fun ExpertManagementPanel(viewModel: ChatViewModel, onBack: () -> Unit)
                                         actionsID = null; colorID = agent.id
                                     }, enabled = !busy)
                                     val archived = agent.availability == "archived"
+                                    val conflictMessage = stringResource(R.string.expert_conflict_refresh)
                                     DropdownMenuItem(text = { Text(stringResource(if (archived) R.string.expert_restore else R.string.expert_archive)) },
                                         modifier = Modifier.testTag("expert.availability.${agent.id}"),
                                         enabled = !busy && agent.availability in setOf("active", "archived"), onClick = {
@@ -312,7 +339,7 @@ internal fun ExpertManagementPanel(viewModel: ChatViewModel, onBack: () -> Unit)
                                                 val snapshot = checkNotNull(directory)
                                                 val original = snapshot.agents.single { it.id == agent.id }
                                                 check(original.revision == agent.revision && original.availability == agent.availability) {
-                                                    "The expert changed. Refresh before trying again."
+                                                    conflictMessage
                                                 }
                                                 directory = withContext(Dispatchers.IO) {
                                                     checkNotNull(repository).updateAgent(original.copy(availability = if (archived) "active" else "archived"),

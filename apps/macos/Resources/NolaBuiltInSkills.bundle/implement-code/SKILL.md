@@ -32,4 +32,4 @@ Use this workflow when explicitly requested or selected for the whole task. A ro
 
 ## Completion
 
-Before the final answer, use `skill_update` to record the required progress and verifier results from the active Core runtime facts. Use their exact run, step and verifier IDs; cite real retained tool-call or execution-evidence sources for verification. Record only observations that are true, combine independent updates when possible, and preserve pending records if a tool or approval is unavailable. Core closes a satisfied contract. A final sentence, success marker or passing command alone does not close the Skill contract.
+Before the final answer, ensure changed files and verification results are summarized accurately and concisely without overstating unverified behavior.

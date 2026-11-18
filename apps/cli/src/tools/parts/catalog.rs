@@ -591,56 +591,6 @@ fn specs_with_skills(skills: &SkillRuntimeContext) -> Vec<ToolSpec<'static>> {
             }),
         },
         ToolSpec {
-            name: "skill_update",
-            description: "Update an active SkillRun with Core-supplied run/contract IDs: changed progress, produced artifacts, observed verification, or declared resume points. Never invent IDs or use without an active Skill.",
-            // This is an internal, permission-free protocol mutation, not a
-            // read. Keeping it read-only bypassed the WorkStep transaction and
-            // made declared artifacts disappear after a cold start.
-            read_only: false,
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "run_id": {"type": "string", "description": "Exact active SkillRun id supplied by Core"},
-                    "action": {
-                        "type": "string",
-                        "enum": ["progress", "artifact", "verification", "resume_point"]
-                    },
-                    "step_id": {"type": "string", "description": "Declared progress step id for action=progress"},
-                    "completed": {"type": "boolean", "description": "Whether the progress step is complete"},
-                    "artifact_id": {"type": "string", "description": "Declared artifact id for action=artifact"},
-                    "artifact_ref": {"type": "string", "description": "Canonical absolute URI for the declared artifact. A file URI must already exist inside the active workspace."},
-                    "verifier_id": {"type": "string", "description": "Declared verifier id for action=verification"},
-                    "passed": {"type": "boolean", "description": "Actual verifier outcome"},
-                    "evidence": skill_verification_evidence_schema(),
-                    "replaces_evidence": {"allOf":[skill_verification_evidence_schema()],"description":"When replacing a verifier result, echo its exact previous evidence object. A new success does not implicitly supersede another result."},
-                    "summary": {"type": "string", "description": "Optional concise verification summary"},
-                    "resume_point": {"type": "string", "description": "Declared resume point id for action=resume_point"}
-                },
-                "required": ["run_id", "action"],
-                "allOf": [{
-                    "oneOf": [
-                        {
-                            "properties": {"action": {"const": "progress"}},
-                            "required": ["step_id", "completed"]
-                        },
-                        {
-                            "properties": {"action": {"const": "artifact"}},
-                            "required": ["artifact_id", "artifact_ref"]
-                        },
-                        {
-                            "properties": {"action": {"const": "verification"}},
-                            "required": ["verifier_id", "passed", "evidence"]
-                        },
-                        {
-                            "properties": {"action": {"const": "resume_point"}},
-                            "required": ["resume_point"]
-                        }
-                    ]
-                }],
-                "additionalProperties": false
-            }),
-        },
-        ToolSpec {
             name: "SOP",
             description: "可选持久工作流：用户要求或确有帮助才以已公布精确 ID 启动，多步骤不强制使用。以实际 run_id、revision、状态推进；不授予权限。",
             read_only: false,
@@ -4039,26 +3989,6 @@ fn specs_with_skills(skills: &SkillRuntimeContext) -> Vec<ToolSpec<'static>> {
     }
     declare_browser_execution_targets(&mut catalog);
     catalog
-}
-
-#[cfg(test)]
-#[test]
-fn skill_update_schema_requires_action_specific_protocol_fields() {
-    let skill_update = specs()
-        .into_iter()
-        .find(|spec| spec.name == "skill_update")
-        .expect("skill_update specification");
-    let variants = skill_update.parameters["allOf"][0]["oneOf"]
-        .as_array()
-        .expect("action variants");
-    let verification = variants
-        .iter()
-        .find(|variant| variant["properties"]["action"]["const"] == "verification")
-        .expect("verification variant");
-    let required = verification["required"]
-        .as_array()
-        .expect("verification requirements");
-    assert!(required.iter().any(|value| value == "evidence"));
 }
 
 #[cfg(test)]

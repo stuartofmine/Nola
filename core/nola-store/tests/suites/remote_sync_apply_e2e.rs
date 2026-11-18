@@ -398,8 +398,6 @@ fn skill(version: &str, updated_at_ms: i64) -> UpsertSkillInput {
         summary: "Create verified documents".into(),
         category: "documents".into(),
         instructions_ref: format!("nola-skill://document-author/{version}"),
-        instructions_digest: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
-            .into(),
         instructions_text: "hello".into(),
         required_tools_json: Some("[]".into()),
         default_mode: Some("fork".into()),

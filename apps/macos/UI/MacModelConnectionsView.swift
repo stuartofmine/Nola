@@ -371,6 +371,7 @@ struct MacModelConnectionsView: View {
                                     Text(Self.protocolTitle(model.protocol)).font(.caption).foregroundStyle(.secondary)
                                 }
                             }
+                            .toggleStyle(.macSwitch)
                             Spacer(minLength: 8)
                                 Button {
                                     expandedModelID = expandedModelID == model.id ? nil : model.id
@@ -622,6 +623,7 @@ struct MacModelConnectionsView: View {
                 .accessibilityIdentifier("model.import.choose-source")
             if let sourceURL { Text(sourceURL.lastPathComponent).font(.caption).textSelection(.enabled).help(sourceURL.path) }
             Toggle(String(localized: "Import API keys from the selected source", table: "ModelCenter"), isOn: $includeCredentials)
+                .toggleStyle(.macSwitch)
                 .onChange(of: includeCredentials) { _, enabled in
                     invalidateImport()
                     if !enabled { credentialURL = nil; allowEnvironment = false }
@@ -632,6 +634,7 @@ struct MacModelConnectionsView: View {
                     HStack { Text(credentialURL.lastPathComponent); Button(String(localized: "Remove selection", table: "ModelCenter")) { self.credentialURL = nil; invalidateImport() } }
                 }
                 Toggle(String(localized: "Allow explicitly named environment variables", table: "ModelCenter"), isOn: $allowEnvironment)
+                    .toggleStyle(.macSwitch)
                     .onChange(of: allowEnvironment) { _, _ in invalidateImport() }
             }
             Text(String(localized: "To use a ChatGPT account, sign in in your browser. Use file import for API connections.", table: "ModelCenter"))
@@ -655,7 +658,9 @@ struct MacModelConnectionsView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Toggle(candidate.connection.display_name, isOn: Binding(get: { importSelection.contains(candidate.id) }, set: { value in
                             if value { importSelection.insert(candidate.id) } else { importSelection.remove(candidate.id) }
-                        })).disabled(candidate.issue != nil)
+                        }))
+                        .toggleStyle(.checkbox)
+                        .disabled(candidate.issue != nil)
                         Text(candidate.connection.base_url).font(.caption).textSelection(.enabled)
                         Text(candidate.connection.protocols.joined(separator: " · ") + " · " + String(localized: "Models", table: "ModelCenter") + " \(candidate.models.count)")
                             .font(.caption).foregroundStyle(.secondary)
@@ -673,10 +678,12 @@ struct MacModelConnectionsView: View {
                             Toggle(String(localized: "Update this existing connection", table: "ModelCenter"), isOn: Binding(get: { importUpdates.contains(candidate.id) }, set: { value in
                                 if value { importUpdates.insert(candidate.id) } else { importUpdates.remove(candidate.id) }
                             }))
+                            .toggleStyle(.checkbox)
                         }
                     }.padding(.vertical, 4)
                 }
                 Toggle(String(localized: "Enable imported models for chat", table: "ModelCenter"), isOn: $enableImportedModels)
+                    .toggleStyle(.macSwitch)
                 Button(String(localized: "Confirm import", table: "ModelCenter")) { confirmImport(plan) }
                     .buttonStyle(.borderedProminent)
                     .disabled(importSelection.isEmpty || plan.candidates.contains { importSelection.contains($0.id) && $0.existing_revision != nil && !importUpdates.contains($0.id) })
@@ -792,10 +799,15 @@ private struct MacModelCapabilityOverrideEditor: View {
                 Text(String(localized: "These are your explicit settings, not test results. Saving disables unchecked capabilities. Clear settings to use the source declaration.", table: "ModelCenter"))
                     .font(.callout).foregroundStyle(.secondary)
                 Toggle(String(localized: "Tool calls", table: "ModelCenter"), isOn: $values.toolCalls)
+                    .toggleStyle(.macSwitch)
                 Toggle(String(localized: "Image input", table: "ModelCenter"), isOn: $values.imageInput)
+                    .toggleStyle(.macSwitch)
                 Toggle(String(localized: "Reasoning", table: "ModelCenter"), isOn: $values.reasoning)
+                    .toggleStyle(.macSwitch)
                 Toggle(String(localized: "Sampling parameters", table: "ModelCenter"), isOn: $values.samplingParameters)
+                    .toggleStyle(.macSwitch)
                 Toggle(String(localized: "Sampling requires reasoning disabled", table: "ModelCenter"), isOn: $values.samplingRequiresNoReasoning)
+                    .toggleStyle(.macSwitch)
                     .disabled(!values.samplingParameters)
                 Picker(String(localized: "Output token field", table: "ModelCenter"), selection: $values.chatOutputTokenField) {
                     Text(String(localized: "Protocol default", table: "ModelCenter")).tag("auto")
@@ -808,7 +820,7 @@ private struct MacModelCapabilityOverrideEditor: View {
                 }
             }.padding(.vertical, 8)
         }
-        .disclosureGroupStyle(MacRowDisclosureStyle())
+        .disclosureGroupStyle(MacRowDisclosureStyle(isPlain: true))
         .task(id: connection.revision) {
             declarationError = false
             guard let declaration = saved ?? model.execution_capabilities else { values = Values(); return }

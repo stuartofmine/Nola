@@ -285,9 +285,7 @@ private struct MacWebSourceRow: View {
                 get: { source.isEnabled },
                 set: { MacWebSourceStore.shared.setEnabled($0, for: source) }
             ))
-            .labelsHidden()
-            .toggleStyle(.switch)
-            .controlSize(.mini)
+            .toggleStyle(.macSwitchControl)
             .accessibilityLabel(String(format: macWebSourcesText("mac.web_sources.enable_format", "Enable %@"), source.name))
         }
         .padding(.vertical, 3)
@@ -502,6 +500,7 @@ private struct MacWebSourceEditor: View {
                     ForEach(MacWebSource.Format.allCases) { format in Text(format.title).tag(format) }
                 }
                 Toggle(macWebSourcesText("mac.web_sources.form.enabled", "Enabled"), isOn: $isEnabled)
+                    .toggleStyle(.macSwitch)
                 Picker(macWebSourcesText("mac.web_sources.form.schedule", "Schedule"), selection: $scheduleFrequency) {
                     Text(macWebSourcesText("mac.web_sources.schedule.manual", "Manual")).tag(nil as MacWebSource.ScheduleFrequency?)
                     ForEach(MacWebSource.ScheduleFrequency.allCases) { frequency in

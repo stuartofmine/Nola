@@ -114,7 +114,7 @@ pub fn capability_for_tool_name(tool_name: &str) -> HostCapability {
 pub fn tool_permission_domain(tool_name: &str) -> Option<String> {
     let domain = permission_name_for_tool(tool_name);
     let internal = matches!(normalize_tool_name(tool_name).as_str(),
-        "system_time" | "skill" | "skill_update" | "skill_skip" | "sop"
+        "system_time" | "skill" | "skill_skip" | "sop"
         | "sop_invoke" | "sop_run_update"
         | "bash_background_status" | "bash_background_wait"
         | "spawn_agent" | "list_tasks" | "read_task" | "wait_task" | "delegate_expert");

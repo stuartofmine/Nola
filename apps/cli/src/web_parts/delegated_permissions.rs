@@ -175,7 +175,10 @@ fn stream_delegated_permissions(
     receipt: Option<Arc<SubmissionReceiptFence>>,
 ) -> DelegatedPermissionStream {
     let (stop, stopped) = mpsc::channel();
-    let worker = std::thread::spawn(move || {
+    let worker = std::thread::Builder::new()
+        .name("web-delegated-permissions".into())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
         let mut sent = std::collections::HashSet::new();
         loop {
             match stopped.recv_timeout(StdDuration::from_millis(500)) {
@@ -213,6 +216,7 @@ fn stream_delegated_permissions(
                 sent.insert(nonce);
             }
         }
-    });
-    DelegatedPermissionStream { stop, worker: Some(worker) }
+    })
+    .ok();
+    DelegatedPermissionStream { stop, worker }
 }

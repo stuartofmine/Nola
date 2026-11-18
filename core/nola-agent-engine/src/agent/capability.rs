@@ -671,11 +671,6 @@ pub struct SkillDescriptor {
     pub display_name: String,
     /// Opaque immutable content reference materialized by the Host.
     pub instructions_ref: String,
-    /// Lowercase SHA-256 of the exact instructions bytes materialized by the Host.
-    ///
-    /// Core validates the required content identity without learning how a
-    /// platform stores the Skill. Missing identity is an invalid current format.
-    pub instructions_digest: String,
     #[serde(default)]
     pub required_tools: Vec<CapabilityToolReference>,
     #[serde(default)]
@@ -822,7 +817,6 @@ pub struct MaterializedSkillInvocation {
     #[serde(default)]
     pub display_name: String,
     pub instructions_ref: String,
-    pub instructions_digest: String,
     #[serde(default)]
     pub required_tools: Vec<CapabilityToolReference>,
     #[serde(default)]
@@ -844,7 +838,6 @@ impl MaterializedSkillInvocation {
                 self.display_name.clone()
             },
             instructions_ref: self.instructions_ref.clone(),
-            instructions_digest: self.instructions_digest.clone(),
             required_tools: self.required_tools.clone(),
             default_mode: self.mode,
             execution_contract: self.execution_contract.clone(),
@@ -1581,17 +1574,6 @@ fn validate_start(
             "Skill run identifiers must not be empty",
         ));
     }
-    if !is_lowercase_sha256(&descriptor.instructions_digest)
-        || descriptor
-            .instructions_ref
-            .rsplit_once("#sha256=")
-            .is_none_or(|(_, digest)| digest != descriptor.instructions_digest)
-    {
-        return Err(runtime_error(
-            "invalid_skill_content_identity",
-            "Skill instructions_ref must identify the exact materialized SHA-256",
-        ));
-    }
     match (mode, owner.child_turn_id.as_deref()) {
         (SkillExecutionMode::Inline, None) => {}
         (SkillExecutionMode::Fork, Some(child))
@@ -1677,6 +1659,27 @@ fn validate_execution_contract(contract: &SkillExecutionContract) -> Result<(), 
 }
 
 pub(crate) fn validate_skill_completion(run: &SkillRun) -> Result<(), SkillRuntimeError> {
+    if let Some((verifier_id, summary)) = run
+        .verifications
+        .iter()
+        .find(|(_, result)| !result.passed)
+        .map(|(id, result)| (id.as_str(), result.summary.as_str()))
+    {
+        return Err(runtime_error(
+            "failed_skill_verification",
+            &format!("Skill verification '{verifier_id}' failed: {summary}"),
+        ));
+    }
+    if !skill_execution_contract_satisfied(run) {
+        return Err(runtime_error(
+            "incomplete_skill_execution_contract",
+            "Skill execution contract has unsatisfied required steps, artifacts, or verifiers",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn skill_execution_contract_satisfied(run: &SkillRun) -> bool {
     let contract = &run.descriptor.execution_contract;
     let missing_progress = contract
         .progress_steps
@@ -1691,26 +1694,17 @@ pub(crate) fn validate_skill_completion(run: &SkillRun) -> Result<(), SkillRunti
             && !run
                 .verifications
                 .get(&verifier.id)
-                .is_some_and(|result| result.passed && result.evidence.method() == verifier.method && result.evidence.validate().is_ok())
+                .is_some_and(|result| {
+                    result.passed
+                        && result.evidence.method() == verifier.method
+                        && result.evidence.validate().is_ok()
+                })
     });
-    if missing_progress || missing_artifacts || failed_or_missing_verification {
-        return Err(runtime_error(
-            "skill_completion_contract_unsatisfied",
-            "Skill cannot complete until required progress, artifacts, and verifiers pass",
-        ));
-    }
-    Ok(())
+    !missing_progress && !missing_artifacts && !failed_or_missing_verification
 }
 
 fn default_skill_execution_contract_schema_version() -> u32 {
     SKILL_EXECUTION_CONTRACT_SCHEMA_VERSION
-}
-
-fn is_lowercase_sha256(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
 
 fn active_run_mut<'a>(

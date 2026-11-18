@@ -4,22 +4,20 @@
 
 This document defines the product boundaries and visual hierarchy of the native macOS client. It is a contract for implementation, not a list of independent screens.
 
-Current desktop interaction (source checked 2026-11-08) follows the [conversation contract](../../design/shared/CONVERSATION_UI_DESIGN.md) and [inline inspector contract](../../design/shared/CONVERSATION_INSPECTOR.md): one 48px global bar, browser-style content tabs, an independent sidebar/list, and a right-side work inspector. The page destination table below defines ownership, not a second global navigation row or large canvas title. The static prototype is a visual reference, not proof of native implementation or acceptance; outdated prototype page switching does not override the inline inspector contract.
+Current desktop interaction (source checked 2026-11-17) follows the [conversation contract](../../design/shared/CONVERSATION_UI_DESIGN.md) and [inline inspector contract](../../design/shared/CONVERSATION_INSPECTOR.md): one 48px global bar, a unified primary sidebar (`Conversations`, `Experts & Skills`, `Automations`, `Memory & Sources` + conversation search & list + bottom `Settings` opening the standalone Settings window), and a flattened three-area right work inspector (`Task`, `Artifacts`, `Context`) shown in conversations. Browser-style management content tabs and the top-left dual sidebar switch are retired. The page destination table below defines ownership, not a second global navigation row or large canvas title. The static prototype is a visual reference, not proof of native implementation or acceptance.
 
 ## Primary navigation
 
-The primary sidebar contains user destinations, not implementation concepts.
+The primary sidebar contains user destinations, not implementation concepts:
 
 | Destination | User question | Owns | Does not own |
 | --- | --- | --- | --- |
-| Chat | What am I working on now? | Conversations, current workspace, model and host selection, live agent progress | Global provider setup, permission administration |
-| Data | What information may Nola use? | Data sources, validation, freshness, default/session availability, provenance | Model configuration, operating-system permissions |
-| Automations | What should happen later or repeatedly? | Schedules, triggers, runs, failures and outputs | Data-source setup, Skill editing |
-| Models | Which intelligence runs the task? | API providers, local models, parameters, lifecycle and health | Host connection and tool authorization |
-| Skills & MCP | What workflows and external capabilities are available? | Skill/MCP gallery, enablement, inspection, editing and connection health | macOS privacy permissions |
-| System Access | What can this Mac permit? | Accessibility, screen recording, notifications and other OS grants | Tool-by-tool conversation policy |
+| Conversations (`chat`) | What am I working on now? | Conversations, current folder (`Temporary Workspace` by default), unified model/external-agent/host selector, live agent progress | Global provider setup, OS privacy administration |
+| Experts & Skills (`extensions`) | Which roles, workflows and tools are available? | Segmented `Experts | Skills | MCP` gallery, enablement, inspection, editing and connection health | macOS privacy permissions |
+| Automations (`automations`) | What should happen later or repeatedly? | Schedules, triggers, runs, failures and outputs | Data-source setup, Skill editing |
+| Memory & Sources (`memory`) | What information may Nola use? | Segmented `Memory | Sources | Usage`: long-term memory, data sources, freshness, provenance and usage history | Model configuration, operating-system permissions |
 
-Activity, diagnostics, notifications, prompt templates and data management are secondary destinations reached from the destination that owns them or from Settings. They should not compete with daily work in the primary navigation.
+Providers/models, Remote Host sharing/pairing, System Access, diagnostics, and general preferences live in the standalone `Settings` window (`⌘,`) and its dedicated Model Center / Diagnostics modals, so they do not compete with daily work in the primary navigation.
 
 ## Conversation and saved assistants
 

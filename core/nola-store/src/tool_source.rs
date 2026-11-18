@@ -42,9 +42,8 @@ pub(crate) fn validate_imported_tool_source_body(connection: &crate::Connection,
         }
         raw.push_str(&text);
     }
-    if raw.len() as u64!=claim.body.total_utf8_bytes()
-        || format!("{:x}",Sha256::digest(raw.as_bytes()))!=claim.body_sha256 {
-        return Err(invalid("tool source body digest or length differs"));
+    if raw.len() as u64 != claim.body.total_utf8_bytes() {
+        return Err(invalid("tool source body length differs"));
     }
     let body:serde_json::Value=serde_json::from_str(&raw)?;
     let fields:&[&str]=match claim.kind {
@@ -87,7 +86,7 @@ pub(crate) fn install_imported_tool_source(connection: &crate::Connection,
             },
         },
         provenance:ToolSourceProvenance::Archive {claim:claim.clone(),restore_id,sequence},
-        body_sha256:claim.body_sha256.clone(),body:claim.body.clone(),created_revision:revision,
+        body:claim.body.clone(),created_revision:revision,
     };
     let mut query=connection.prepare("SELECT binding_json FROM canonical_tool_sources WHERE part_id=?1")?;
     let mut rows=query.query([owner.part_id()])?;
@@ -152,7 +151,6 @@ impl NolaStore {
                 !body["is_error"].is_boolean() || !body["artifacts"].is_array()
                 || !(body["full_output_ref"].is_null() || body["full_output_ref"].is_string())))
         { return Err(invalid("tool source does not match the complete current AgentItem shape")); }
-        let digest = format!("{:x}", Sha256::digest(input.body_json.as_bytes()));
         let transaction = self.write_transaction()?;
         let foreign:bool=transaction.query_row("SELECT EXISTS(SELECT 1 FROM canonical_tool_sources
             WHERE source_item_id=?1 AND json_extract(binding_json,'$.owner')<>?2)",
@@ -175,9 +173,29 @@ impl NolaStore {
             let old: ToolSourceBinding = serde_json::from_str(&old)?;
             if old.source_item_id != input.source_item_id || old.kind != input.kind
                 || old.call_id != input.call_id || old.name != input.name
-                || old.owner != input.owner || old.body_sha256 != digest
+                || old.owner != input.owner || old.body.total_utf8_bytes() != input.body_json.len() as u64
                 || old.provenance!=ToolSourceProvenance::AcceptedRun
             { return Err(StoreError::Conflict("tool source identity, original bytes and owner are immutable".into())); }
+            {
+                let mut q = transaction.prepare("SELECT offset_bytes, text FROM canonical_text_chunks WHERE content_id=?1 ORDER BY offset_bytes")?;
+                let mut rows = q.query([old.body.content_id()])?;
+                let mut matched = 0usize;
+                while let Some(row) = rows.next()? {
+                    let offset = usize::try_from(row.get::<_, i64>(0)?)
+                        .map_err(|_| StoreError::Conflict("tool source identity, original bytes and owner are immutable".into()))?;
+                    let text: String = row.get(1)?;
+                    let end = offset.checked_add(text.len())
+                        .filter(|&end| end <= input.body_json.len())
+                        .ok_or_else(|| StoreError::Conflict("tool source identity, original bytes and owner are immutable".into()))?;
+                    if offset != matched || &input.body_json.as_bytes()[offset..end] != text.as_bytes() {
+                        return Err(StoreError::Conflict("tool source identity, original bytes and owner are immutable".into()));
+                    }
+                    matched = end;
+                }
+                if matched != input.body_json.len() {
+                    return Err(StoreError::Conflict("tool source identity, original bytes and owner are immutable".into()));
+                }
+            }
             transaction.commit()?;
             return Ok(());
         }
@@ -206,7 +224,7 @@ impl NolaStore {
             at=end;
         }
         let content_id = format!("tool-source:{:x}", Sha256::digest(serde_json::to_vec(&(
-            &input.source_item_id, &input.owner, &digest,
+            &input.source_item_id, &input.owner,
         ))?));
         let reference=CanonicalBodyReference::for_field(content_id, identity.conversation_id.clone(),
             identity.assistant_message_id.clone(), owner.part_id.clone(), PartBodyField::ContentJson,
@@ -214,7 +232,7 @@ impl NolaStore {
         crate::canonical_text_store::put_chunks(&transaction,&reference,chunks,256*1024*1024)?;
         let revision: i64=transaction.query_row("SELECT revision FROM conversations WHERE id=?1",[&identity.conversation_id],|r|r.get(0))?;
         let binding=ToolSourceBinding { source_item_id:input.source_item_id.clone(),kind:input.kind,
-            call_id:input.call_id.clone(),name:input.name.clone(),owner:input.owner.clone(),provenance:ToolSourceProvenance::AcceptedRun,body_sha256:digest,
+            call_id:input.call_id.clone(),name:input.name.clone(),owner:input.owner.clone(),provenance:ToolSourceProvenance::AcceptedRun,
             body:reference,created_revision:revision };
         transaction.execute("INSERT INTO canonical_tool_sources(source_item_id,conversation_id,run_id,message_id,part_id,kind,binding_json)
             VALUES(?1,?2,?3,?4,?5,?6,?7)", params![input.source_item_id,identity.conversation_id,identity.run_id,
@@ -240,7 +258,6 @@ pub(crate) fn read_binding(connection:&crate::Connection, conversation: &str, so
             || binding.created_revision < 1 || binding.body.conversation_id() != conversation
             || binding.body.message_id() != canonical.message_id() || binding.body.part_id() != canonical.part_id()
             || canonical.message_id()!=message || canonical.part_id()!=part || kind_name(binding.kind)!=kind
-            || binding.body_sha256.len()!=64 || !binding.body_sha256.bytes().all(|byte|byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
         { return Err(invalid("tool source has foreign or missing canonical ownership")); }
         match &binding.provenance {
             ToolSourceProvenance::AcceptedRun => {
@@ -256,9 +273,8 @@ pub(crate) fn read_binding(connection:&crate::Connection, conversation: &str, so
                     params![conversation,owner.owner.run_id,part,message,owner.turn_id],|r|r.get(0))?;
                 if !exact { return Err(invalid("tool source lacks immutable Part/Turn binding")); }
             }
-            ToolSourceProvenance::VerifiedLocalDerivation {operation_id,target_owner,source_owner,source_binding_sha256,source_provenance} => {
-                if run.is_some() || target_owner!=&canonical || source_binding_sha256.len()!=64
-                    || !source_binding_sha256.bytes().all(|b|b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+            ToolSourceProvenance::VerifiedLocalDerivation {operation_id,target_owner,source_owner,source_provenance} => {
+                if run.is_some() || target_owner!=&canonical {
                     return Err(invalid("tool source has invalid derived provenance"));
                 }
                 let current=crate::part_derivation::source(connection,canonical.part_id())?;
@@ -274,7 +290,7 @@ pub(crate) fn read_binding(connection:&crate::Connection, conversation: &str, so
                 if run.is_some() || binding.claim().map_err(|e|invalid(&e))? != *claim
                     || binding.source_item_id!=claim.source_item_id || binding.kind!=claim.kind
                     || binding.call_id!=claim.call_id || binding.name!=claim.name
-                    || binding.body!=claim.body || binding.body_sha256!=claim.body_sha256
+                    || binding.body!=claim.body
                     || owner.owner.run_id!=claim.original_owner.run_id
                     || owner.turn_id.as_deref()!=Some(claim.original_owner.turn_id.as_str())
                     || owner.part_id!=claim.original_owner.part_owner.part_id()
@@ -329,24 +345,17 @@ pub(crate) fn copy_branch_sources(connection:&crate::Connection,input:&nola_doma
                 crate::conversation_branch::identity(&input.operation_id,"tool-source-body",&id),
                 input.conversation.id.clone(),target_message.into(),part.clone(),PartBodyField::ContentJson,
                 original.body.total_utf8_bytes(),original.body.chunk_count()).map_err(|e|invalid(&e.to_string()))?;
-            let mut digest=Sha256::new();
             {
                 let mut query=connection.prepare("SELECT offset_bytes,text FROM canonical_text_chunks WHERE content_id=?1 ORDER BY offset_bytes")?;
                 let rows=query.query_map([original.body.content_id()],|r|Ok((r.get::<_,u64>(0)?,r.get::<_,String>(1)?)))?;
-                crate::canonical_text_store::put_chunks(connection,&reference,rows.map(|row| {
-                    let (offset,text)=row?;
-                    digest.update(text.as_bytes());
-                    Ok((offset,text))
-                }),256*1024*1024)?;
+                crate::canonical_text_store::put_chunks(connection,&reference,rows.map(|row| Ok(row?)),256*1024*1024)?;
             }
-            if format!("{:x}",digest.finalize())!=original.body_sha256 { return Err(invalid("branch tool source original digest differs")); }
-            let source_binding_sha256=format!("{:x}",Sha256::digest(serde_json::to_vec(&original)?));
             let mut binding=original;
             binding.body=reference;
             binding.created_revision=target_revision;
             binding.provenance=ToolSourceProvenance::VerifiedLocalDerivation {
                 operation_id:input.operation_id.clone(),target_owner:proof.target.owner.clone(),
-                source_owner:proof.immediate_source.owner.clone(),source_binding_sha256,
+                source_owner:proof.immediate_source.owner.clone(),
                 source_provenance:derivation.provenance.clone(),
             };
             connection.execute("INSERT INTO canonical_tool_sources(source_item_id,conversation_id,run_id,message_id,part_id,kind,binding_json)

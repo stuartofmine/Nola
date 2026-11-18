@@ -3217,3 +3217,27 @@
 "main.experts.sourceChanged" = "Los datos del Host cambiaron. Actualiza su directorio y vuelve a seleccionar los expertos. Tu mensaje se conserva.";
 
 "run.blocked.inputBudget" = "La solicitud supera el presupuesto de entrada del modelo. Acorta la conversación o los adjuntos, reduce las herramientas o elige un modelo con mayor contexto.";
+"chat.task.state.retry_waiting" = "Esperando reintento";
+"chat.host_tool.name.goal_complete" = "Completar objetivo";
+"chat.host_tool.name.ask_user" = "Solicitar datos al usuario";
+"chat.host_tool.name.mcp_list" = "Listar recursos MCP";
+"chat.host_tool.name.mcp_read" = "Leer recurso MCP";
+"chat.conversations.rename" = "Renombrar conversación";
+"chat.conversations.title_field" = "Título";
+"a2ui.history.readOnly" = "Los formularios históricos son de solo lectura.";
+"a2ui.date.useShown" = "Usar fecha u hora mostradas";
+"a2ui.date.clear" = "Borrar";
+"a2ui.component.unsupported" = "Componente no disponible: ";
+"a2ui.history.unavailable" = "Esta versión no está disponible.";
+"a2ui.history.mismatch" = "La versión del formulario histórico no coincide.";
+"a2ui.reloadForm" = "Recargar formulario";
+"a2ui.submission.pending" = "El envío anterior no está confirmado. Comprueba el resultado original.";
+"a2ui.intent.reconnectHost" = "Vuelve a conectar con el Host original para confirmar el envío pendiente.";
+"a2ui.intent.previousUnconfirmed" = "El envío anterior no está confirmado. Comprueba primero el original.";
+"a2ui.surface.source_changed" = "La fuente cambió. Vuelve a la conversación original.";
+"a2ui.intent.source_changed" = "La fuente cambió. Conéctate al Host original para comprobar el envío.";
+"a2ui.form.updated" = "Formulario actualizado. Confirma de nuevo antes de enviar.";
+"a2ui.queue.not_executed" = "La acción del formulario no se ejecutó porque se rechazó o canceló.";
+"a2ui.queue.cancel_rejected" = "Quitar acción no ejecutada";
+"chat.host.reconnect_bound" = "Vuelve a conectar el Host vinculado a esta conversación.";
+"chat.host.source_unavailable" = "No se puede verificar el Host de origen.";

@@ -142,7 +142,6 @@ nonisolated struct MacDataSourceContract: Identifiable, Codable, Hashable, Senda
     var validatedAt: Date
     var observedAt: Date?
     var errorMessage: String?
-    var validationDigest: String?
 
     var id: String { sourceID }
 
@@ -151,7 +150,7 @@ nonisolated struct MacDataSourceContract: Identifiable, Codable, Hashable, Senda
         case connectorID = "connectorId"
         case connectorVersion, readerDescription, readRecipe, schemaFields, redactedSample
         case recordCount, maximumAgeMinutes, validationState, validatedAt, observedAt
-        case errorMessage, validationDigest
+        case errorMessage
     }
     var isUsable: Bool {
         MacCoreDataSourceResolver.resolve(
@@ -163,16 +162,6 @@ nonisolated struct MacDataSourceContract: Identifiable, Codable, Hashable, Senda
                 now: Self.coreDateString(.now)
             )
         )?.usable == true
-    }
-
-    var expectedValidationDigest: String? {
-        guard let sealed = MacCoreDataSourceResolver.sealContract(coreContractJSON),
-              case .string(let digest)? = sealed["validationDigest"] else { return nil }
-        return digest
-    }
-
-    mutating func sealValidation() {
-        validationDigest = expectedValidationDigest
     }
 
     nonisolated var coreContractJSON: [String: MacCoreDataSourceJSON] {
@@ -200,8 +189,7 @@ nonisolated struct MacDataSourceContract: Identifiable, Codable, Hashable, Senda
             "maximumAgeMinutes": .number(Double(maximumAgeMinutes)),
             "validationState": .string(validationState.rawValue),
             "validatedAt": .string(Self.coreDateString(validatedAt)),
-            "observedAt": observedAt.map { .string(Self.coreDateString($0)) } ?? .null,
-            "validationDigest": .string(validationDigest ?? "")
+            "observedAt": observedAt.map { .string(Self.coreDateString($0)) } ?? .null
         ]
     }
 
@@ -442,7 +430,7 @@ final class MacDataSourceRegistry {
         let configurationKeys = method == .httpGet
             ? ["url", "maximumBytes"]
             : ["sourceID"]
-        var contract = MacDataSourceContract(
+        let contract = MacDataSourceContract(
             sourceID: sourceID,
             connectorID: connectorID,
             connectorVersion: 1,
@@ -460,10 +448,8 @@ final class MacDataSourceRegistry {
             validationState: recordCount == 0 ? .verifiedEmpty : .verified,
             validatedAt: .now,
             observedAt: observedAt,
-            errorMessage: nil,
-            validationDigest: nil
+            errorMessage: nil
         )
-        contract.sealValidation()
         contracts[sourceID] = contract
         if policies[sourceID] == nil {
             policies[sourceID] = defaultPolicy
@@ -493,8 +479,7 @@ final class MacDataSourceRegistry {
             validationState: .failed,
             validatedAt: .now,
             observedAt: previous?.observedAt,
-            errorMessage: error,
-            validationDigest: previous?.validationDigest
+            errorMessage: error
         )
         if policies[sourceID] == nil {
             policies[sourceID] = defaultPolicy

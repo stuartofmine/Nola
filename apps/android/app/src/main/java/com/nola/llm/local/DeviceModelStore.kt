@@ -10,6 +10,8 @@ import java.time.Instant
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -74,25 +76,29 @@ class DeviceModelStore @Inject constructor(
                 instanceFollowRedirects = true
                 setRequestProperty("User-Agent", "Nola-Android")
             }
-            connection.connect()
-            require(connection.responseCode in 200..299) {
-                "Model download failed with HTTP ${connection.responseCode}"
-            }
-            val total = connection.contentLengthLong.takeIf { it > 0 }
-            connection.inputStream.use { input ->
-                partial.outputStream().buffered().use { output ->
-                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                    var downloaded = 0L
-                    while (true) {
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        output.write(buffer, 0, count)
-                        downloaded += count
-                        onProgress(DeviceModelDownloadProgress(downloaded, total))
+            try {
+                connection.connect()
+                require(connection.responseCode in 200..299) {
+                    "Model download failed with HTTP ${connection.responseCode}"
+                }
+                val total = connection.contentLengthLong.takeIf { it > 0 }
+                connection.inputStream.use { input ->
+                    partial.outputStream().buffered().use { output ->
+                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                        var downloaded = 0L
+                        while (true) {
+                            currentCoroutineContext().ensureActive()
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            output.write(buffer, 0, count)
+                            downloaded += count
+                            onProgress(DeviceModelDownloadProgress(downloaded, total))
+                        }
                     }
                 }
+            } finally {
+                connection.disconnect()
             }
-            connection.disconnect()
 
             val actualSha256 = sha256(partial)
             require(actualSha256.equals(expectedSha256, ignoreCase = true)) {

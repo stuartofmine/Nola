@@ -58,6 +58,7 @@ nonisolated struct IOSRoomDraft: Codable, Equatable, Sendable {
     @Published private(set) var selectedRoom: IOSAgentRoomSnapshot?
     @Published private(set) var drafts: [String: IOSRoomDraft] = [:]
     @Published private(set) var submissions: [String: [IOSRoomSubmission]] = [:]
+    @Published private(set) var peerExchanges: [String: [AppleExpertPeerView]] = [:]
     @Published private(set) var pending: [String: [Pending]] = [:]
     @Published private(set) var errors: [String: String] = [:]
     @Published var directoryError: String?
@@ -569,9 +570,22 @@ nonisolated struct IOSRoomDraft: Codable, Equatable, Sendable {
         do {
             let loadDraft = !loadedDrafts.contains(room.room.id)
             let beforeDraft = drafts[room.room.id]?.revision
+            let participants = room.room.participants
             let result = try await Task.detached {
-                (try service.load(id: room.room.id), try service.submissions(roomID: room.room.id),
-                 loadDraft ? try service.loadDraft(roomID: room.room.id) : nil)
+                var loadedExchanges: [String: AppleExpertPeerView] = [:]
+                for participant in participants {
+                    if let page = try? service.peerExchanges(conversationID: participant.contextConversationID) {
+                        for exchange in page.exchanges { loadedExchanges[exchange.exchangeID] = exchange }
+                    }
+                }
+                return (
+                    try service.load(id: room.room.id),
+                    try service.submissions(roomID: room.room.id),
+                    loadDraft ? try service.loadDraft(roomID: room.room.id) : nil,
+                    loadedExchanges.values.sorted {
+                        $0.createdAtMs == $1.createdAtMs ? $0.exchangeID < $1.exchangeID : $0.createdAtMs < $1.createdAtMs
+                    }
+                )
             }.value
             guard epoch == selectionEpoch else { return }
             guard let snapshot = result.0, snapshot.room.id == room.room.id,
@@ -579,6 +593,7 @@ nonisolated struct IOSRoomDraft: Codable, Equatable, Sendable {
                 throw IOSApplicationRuntimeError.rejected("Room response ownership mismatch")
             }
             selectedRoom = snapshot
+            peerExchanges[room.room.id] = result.3
             if loadDraft {
                 loadedDrafts.insert(room.room.id)
                 draftStorageRevisions[room.room.id] = result.2?.revision

@@ -75,7 +75,6 @@ interface WebHostApiService {
         hostBaseUrl: String,
         token: String,
         identity: RemoteSubmissionIdentity,
-        requestDigest: String,
         pinnedCertificateSha256: String = ""
     ) {
         error("Web Agent Host cancellation is not implemented")

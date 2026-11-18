@@ -62,6 +62,7 @@ nonisolated struct MacInspectorProgressSnapshot: Decodable, Equatable, Sendable 
         let id: String
         let objective: String
         let status: String
+        let next_wake_at_epoch_ms: Int64?
         let requirements: [String: Requirement]
         let work: Work
     }
@@ -110,7 +111,7 @@ nonisolated enum MacInspectorGoalControlPolicy {
     }
 }
 
-enum MacInspectorProgressMode { case progress, goal, execution }
+enum MacInspectorProgressMode { case progress, goal }
 
 struct MacInspectorProgressView: View {
     @Bindable var model: MacWorkspaceModel
@@ -160,12 +161,10 @@ struct MacInspectorProgressView: View {
                   if mode == .goal {
                       goalControls.disabled(!refresh.controlsConfirmed || refresh.owner != model.selectedConversationID)
                   }
-                  if mode == .execution && tasks.isEmpty {
-                      Text("inspector.state.idle", tableName: "ConversationInspector")
-                          .font(.callout).foregroundStyle(.secondary)
-                  } else if mode != .goal || snapshot?.active != nil {
+                  if mode != .goal || snapshot?.active != nil {
                       MacInspectorProgressContent(snapshot: mode == .goal ? snapshot : nil,
-                          todos: mode == .progress ? todos : [], tasks: mode == .execution ? tasks : [])
+                          todos: mode == .progress ? todos : [],
+                          tasks: mode == .progress ? tasks : [])
                           .equatable()
                   }
               }
@@ -227,21 +226,38 @@ struct MacInspectorProgressView: View {
 
     @ViewBuilder private var goalControls: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let error = controlError { Text(error).font(.caption).foregroundStyle(.red) }
+            if let error = controlError {
+                MacInlineNotice(message: error, kind: .failure, dismiss: { controlError = nil })
+            }
             if controlPending {
                 Text("Goal action awaiting confirmation").font(.caption).foregroundStyle(.secondary)
-                Button("Retry saved action") { submit(nil) }.disabled(controlBusy).accessibilityIdentifier("mac-goal-retry")
+                HStack(spacing: 8) {
+                    Button("Retry saved action") { submit(nil) }
+                        .buttonStyle(MacActionButtonStyle())
+                        .disabled(controlBusy)
+                        .accessibilityIdentifier("mac-goal-retry")
+                    Button("Discard", role: .destructive) { discardPending() }
+                        .buttonStyle(.bordered)
+                        .disabled(controlBusy)
+                        .accessibilityIdentifier("mac-goal-discard")
+                }
             } else if MacInspectorGoalControlPolicy.canControl(snapshot),
                       let goal = snapshot?.active, let token = snapshot?.control_token {
-                HStack {
+                HStack(spacing: 8) {
                     if snapshot?.can_pause == true {
-                        Button("Pause") { submit(.init(action: .pause, expectedGoalId: goal.id, expectedControlToken: token)) }.accessibilityIdentifier("mac-goal-pause")
+                        Button("Pause") { submit(.init(action: .pause, expectedGoalId: goal.id, expectedControlToken: token)) }
+                            .buttonStyle(MacActionButtonStyle())
+                            .accessibilityIdentifier("mac-goal-pause")
                     }
                     if snapshot?.can_resume == true {
-                        Button("Resume") { submit(.init(action: .resume, expectedGoalId: goal.id, expectedControlToken: token)) }.accessibilityIdentifier("mac-goal-resume")
+                        Button("Resume") { submit(.init(action: .resume, expectedGoalId: goal.id, expectedControlToken: token)) }
+                            .buttonStyle(MacActionButtonStyle())
+                            .accessibilityIdentifier("mac-goal-resume")
                     }
                     if snapshot?.can_cancel == true {
-                        Button("Cancel", role: .destructive) { goalToCancel = .init(action: .cancel, expectedGoalId: goal.id, expectedControlToken: token) }.accessibilityIdentifier("mac-goal-cancel")
+                        Button("Cancel", role: .destructive) { goalToCancel = .init(action: .cancel, expectedGoalId: goal.id, expectedControlToken: token) }
+                            .buttonStyle(.bordered)
+                            .accessibilityIdentifier("mac-goal-cancel")
                     }
                 }.disabled(controlBusy)
                 VStack(alignment: .leading, spacing: 4) {
@@ -251,21 +267,31 @@ struct MacInspectorProgressView: View {
                 Button("Schedule resume") {
                     submit(.init(action: .schedule, expectedGoalId: goal.id, expectedControlToken: token,
                         wakeAtEpochMs: Int64(wakeAt.timeIntervalSince1970 * 1000)))
-                }.disabled(controlBusy)
+                }
+                .buttonStyle(MacActionButtonStyle())
+                .disabled(controlBusy)
             } else if MacInspectorGoalControlPolicy.canStart(snapshot) {
                 Text(String(localized: "goal.guidance", table: "ConversationInspector"))
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 MacInspectorDocumentEditor(text: Binding(get: { objective }, set: { objective = $0 }), placeholder: String(localized: "goal.example", table: "ConversationInspector"), minHeight: 88)
                     .accessibilityLabel(String(localized: "Goal"))
                     .accessibilityIdentifier("mac-goal-objective")
-                DisclosureGroup(String(localized: "goal.optional_constraints", table: "ConversationInspector")) {
+                DisclosureGroup {
                     MacInspectorDocumentEditor(text: Binding(get: { constraints }, set: { constraints = $0 }), placeholder: String(localized: "goal.constraints"), minHeight: 64)
                         .accessibilityLabel(String(localized: "goal.constraints"))
+                } label: {
+                    Label(String(localized: "goal.optional_constraints", table: "ConversationInspector"), systemImage: "slider.horizontal.3")
+                        .font(.system(size: 13, weight: .medium))
                 }
+                .disclosureGroupStyle(MacRowDisclosureStyle(toggleIdentifier: "mac-goal-optional-constraints"))
                 Button("goal.start") {
                     submit(.init(action: .start, objective: objective,
                         constraints: constraints.split(separator: "\n").map(String.init)))
-                }.disabled(controlBusy || model.selectedConversationID == nil || objective.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty).accessibilityIdentifier("mac-goal-start")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(MacDesignColor.primaryAction)
+                .disabled(controlBusy || model.selectedConversationID == nil || objective.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityIdentifier("mac-goal-start")
             } else {
                 Text("Goal controls are unavailable. Refresh to confirm the current goal state.", tableName: "ConversationInspector")
                     .font(.callout).foregroundStyle(.secondary)
@@ -309,6 +335,28 @@ struct MacInspectorProgressView: View {
         }
     }
 
+    private func discardPending() {
+        guard let owner = model.selectedConversationID,
+              refresh.owner == owner, refresh.controlsConfirmed else { return }
+        let submittedDraft = draft
+        guard !submittedDraft.isSubmitting else { return }
+        submittedDraft.isSubmitting = true
+        submittedDraft.error = nil
+        Task { @MainActor in
+            defer {
+                submittedDraft.isSubmitting = false
+                if model.selectedConversationID == owner { retry += 1 }
+            }
+            do {
+                try await model.discardPendingGoalControl(conversationID: owner)
+                guard model.selectedConversationID == owner else { return }
+                controlPending = false
+            } catch {
+                submittedDraft.error = error.localizedDescription
+            }
+        }
+    }
+
 }
 
 // Presentation is independent of loading so populated, long, and error-adjacent
@@ -326,6 +374,21 @@ struct MacInspectorProgressContent: View, Equatable {
                     Text(goal.objective).font(.system(size: 15, weight: .semibold)).textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                     status(goal.status)
+                    if let wakeMs = goal.next_wake_at_epoch_ms {
+                        let wakeText = Date(timeIntervalSince1970: TimeInterval(wakeMs) / 1_000)
+                            .formatted(date: .abbreviated, time: .shortened)
+                        Label(
+                            String(format: String(localized: "Scheduled resume: %@"), wakeText),
+                            systemImage: "clock"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                    if goal.status == "needs_user" || goal.status == "paused" {
+                        Text(String(localized: "Reply in chat to continue this goal."))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
             if !tasks.isEmpty {
@@ -363,7 +426,9 @@ struct MacInspectorProgressContent: View, Equatable {
                       systemImage: "checklist")
                     .font(.callout).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.vertical, 12)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

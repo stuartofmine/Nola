@@ -160,7 +160,7 @@ fun ModelParametersSheet(
                     item {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(stringResource(R.string.models_reasoning_effort), style = MaterialTheme.typography.titleSmall)
-                            for (effort in listOf("automatic") + reasoningEfforts) {
+                            for (effort in (listOf("automatic") + reasoningEfforts).distinct()) {
                                 NolaRadioOption(com.nola.ui.screen.chat.reasoningEffortLabel(effort), reasoningPreference == effort,
                                     enabled = !saving, modifier = Modifier.testTag("model-reasoning-$effort")) { reasoningPreference = effort }
                             }
@@ -181,7 +181,7 @@ fun ModelParametersSheet(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        Switch(checked = enableThinking, onCheckedChange = null, enabled = !saving)
+                        NolaSwitch(checked = enableThinking, onCheckedChange = null, enabled = !saving)
                     }
                 }
                 item { Spacer(Modifier.height(16.dp)) }
@@ -200,7 +200,7 @@ fun ModelParametersSheet(
                     item {
                         Row(modifier = Modifier.fillMaxWidth().testTag("model-parameters-stream").toggleable(value = streamOutput, enabled = !saving, role = Role.Switch, onValueChange = { streamOutput = it }).heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text(stringResource(R.string.chat_stream_output), modifier = Modifier.weight(1f))
-                            Switch(checked = streamOutput, onCheckedChange = null, enabled = !saving)
+                            NolaSwitch(checked = streamOutput, onCheckedChange = null, enabled = !saving)
                         }
                     }
                 }

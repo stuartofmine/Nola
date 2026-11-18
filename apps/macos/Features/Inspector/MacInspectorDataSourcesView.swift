@@ -184,10 +184,8 @@ struct MacInspectorDataSourcesView: View {
                 .accessibilityLabel("\(title): \(String(localized: "Use Global Setting"))")
             }
             Toggle(title, isOn: binding)
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .controlSize(.mini)
-                .frame(width: 38, height: 20, alignment: .trailing)
+                .toggleStyle(.macSwitchControl)
+                .accessibilityLabel(title)
                 .disabled(!isLoaded || conversationID == nil || policy == .blocked || !isAvailable)
                 .help(readError ?? title)
         }

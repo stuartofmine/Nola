@@ -22,8 +22,6 @@ fn test_skill(id: &str, source: SkillSourceKind, version: &str) -> UpsertSkillIn
         summary: "Exercises the canonical Skill ledger".into(),
         category: "testing".into(),
         instructions_ref: format!("nola-skill://{id}/{version}"),
-        instructions_digest: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
-            .into(),
         instructions_text: "hello".into(),
         required_tools_json: Some(r#"[{"provider":"builtin","tool_name":"read_file"}]"#.into()),
         default_mode: Some("inline".into()),
@@ -249,8 +247,6 @@ fn skill_versions_and_availability_survive_real_sqlite_reopen() {
 
         let mut changed_same_version = test_skill("builtin-doc", SkillSourceKind::BuiltIn, "1");
         changed_same_version.instructions_text = "changed".into();
-        changed_same_version.instructions_digest =
-            "d67e2e944994496c8d5fd1651209efb8c0f391d28c55e1785f4f2f6b16adbc6f".into();
         assert!(store.upsert_skill(&changed_same_version).is_err());
     }
 
@@ -646,10 +642,7 @@ fn delta_transition(
         part_message_owners: std::collections::BTreeMap::new(),
         part_mutations: vec![PartMutation::AppendText {
             part_id: "part-assistant-1".to_string(),
-            expected_content_digest: format!(
-                "{:x}",
-                sha2::Sha256::digest(expected_text.as_bytes())
-            ),
+            expected_prefix_bytes: expected_text.len() as u64,
             text: text.to_string(),
             updated_at_ms: 1_000 + revision,
         }],

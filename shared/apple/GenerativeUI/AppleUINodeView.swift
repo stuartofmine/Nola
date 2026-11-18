@@ -97,6 +97,7 @@ struct AppleUINodeView<JSON: JournalJSONValue>: View {
                 .disabled(node.bindings["value"] == nil)
         case "CheckBox":
             Toggle(label(node), isOn: binding(node, default: false))
+                .tint(Color(red: 0x23 / 255.0, green: 0x70 / 255.0, blue: 0x47 / 255.0))
                 .frame(minHeight: controlHeight).contentShape(Rectangle())
                 .disabled(node.bindings["value"] == nil)
         case "Slider":
@@ -163,7 +164,8 @@ struct AppleUINodeView<JSON: JournalJSONValue>: View {
                 }.buttonStyle(.plain)
             }
         default:
-            Text("此组件暂不可显示：\(node.component)").foregroundStyle(.secondary)
+            Text("\(String(localized: "a2ui.component.unsupported", defaultValue: "Component unavailable:"))\(node.component)")
+                .foregroundStyle(.secondary)
         }
         }
     }

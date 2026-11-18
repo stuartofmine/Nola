@@ -472,8 +472,8 @@ fn execute_permissions<R:AgentRuntimeCommandRepositories>(store:&mut R,command:B
 #[inline(never)]
 fn execute_goal_and_memory<R:AgentRuntimeCommandRepositories>(store:&mut R,command:Box<ApplicationCommand>)->Result<Value,String>{
     match *command {
-        ApplicationCommand::StepGoal { conversation_id, source_host_id, control, start_configuration, selected_model, user_prompt, host_available } =>
-            super::goal_step::advance(store, conversation_id, source_host_id, control, start_configuration, selected_model, user_prompt, host_available.unwrap_or(true)),
+        ApplicationCommand::StepGoal { conversation_id, source_host_id, control, start_configuration, selected_model, user_prompt, host_available, submitted_run_id, submitted_user_message_id, submitted_assistant_message_id, stop_after_sealed_round } =>
+            super::goal_step::advance(store, conversation_id, source_host_id, control, start_configuration, selected_model, user_prompt, host_available.unwrap_or(true), submitted_run_id, submitted_user_message_id, submitted_assistant_message_id, stop_after_sealed_round),
         ApplicationCommand::PrepareGoalControlIntent { input } => {
             // This command is receipt-backed. Retries return the original
             // prepared envelope without recomputing its Host timestamp.

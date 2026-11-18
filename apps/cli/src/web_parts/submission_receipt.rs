@@ -13,10 +13,12 @@ enum SubmissionReceiptRequest {
     },
     Observe {
         identity: RemoteSubmissionIdentity,
+        #[serde(default)]
         request_digest: String,
     },
     Cancel {
         identity: RemoteSubmissionIdentity,
+        #[serde(default)]
         request_digest: String,
     },
 }
@@ -126,7 +128,9 @@ fn submission_receipt_response(
             } => (identity, request_digest, true),
         };
         identity.validate()?;
-        nola_domain::remote_submission::validate_request_digest(&digest)?;
+        if !digest.is_empty() {
+            nola_domain::remote_submission::validate_request_digest(&digest)?;
+        }
         if identity.source_host_id != host {
             return Err("submission source identity mismatch".into());
         }

@@ -44,10 +44,7 @@ pub use agent_trace::{
 };
 pub use context_engine::nola_core_context_plan;
 pub use context_engine::{nola_core_context_engine_abi_version, nola_core_context_prepare};
-pub use data_source::{
-    nola_core_data_source_abi_version, nola_core_data_source_resolve,
-    nola_core_data_source_seal_contract,
-};
+pub use data_source::{nola_core_data_source_abi_version, nola_core_data_source_resolve};
 pub use lifecycle_hooks::{
     nola_core_lifecycle_hook_abi_version, nola_core_lifecycle_hook_build_registry,
     nola_core_lifecycle_hook_plan, nola_core_lifecycle_hook_project_execution,

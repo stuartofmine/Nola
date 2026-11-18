@@ -161,14 +161,28 @@ class ChatContextPreparer @Inject constructor(
                     )
                 )
             }
-            request.uploadedSkills.filter { it.enabled && it.content.isNotBlank() }
-                .forEachIndexed { index, skill ->
+            request.uploadedSkills.filter { it.enabled && it.name.isNotBlank() }
+                .forEach { skill ->
+                    val skillId = skill.resourceId?.trim()?.takeIf(String::isNotEmpty) ?: skill.name
+                    val metadata = buildJsonObject {
+                        put("schema_version", 1)
+                        put("type", "available_skill")
+                        put("name", skill.name)
+                        put("summary", skill.description)
+                        put(
+                            "invocation",
+                            buildJsonObject {
+                                put("tool", "skill_invoke")
+                                put("arguments", buildJsonObject { put("skill", skill.name) })
+                            },
+                        )
+                    }.toString()
                     add(
                         component(
                             "skill",
-                            "host-skill-$index-${skill.name}",
-                            skill.content,
-                            AgentCoreContextComponentSource(platform = "host", title = skill.name),
+                            "skill:$skillId",
+                            metadata,
+                            AgentCoreContextComponentSource(platform = "android", title = skill.name),
                         )
                     )
                 }
@@ -183,20 +197,6 @@ class ChatContextPreparer @Inject constructor(
                         )
                     )
                 }
-            request.mcpServers.filter { it.enabled }.forEachIndexed { index, server ->
-                add(
-                    component(
-                        "mcp",
-                        "host-mcp-$index-${server.name}",
-                        "${server.name}\n${server.url}",
-                        AgentCoreContextComponentSource(
-                            platform = "host",
-                            uri = server.url,
-                            title = server.name,
-                        ),
-                    )
-                )
-            }
             addAll(payload.attachments)
         }
         val responseBasis = buildSet {

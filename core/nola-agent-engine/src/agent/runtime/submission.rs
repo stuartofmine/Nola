@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::agent::capability::{
-    validate_skill_completion, MaterializedSkillRuntimeUpdate, SkillVerificationResult,
+    MaterializedSkillRuntimeUpdate, SkillVerificationResult,
 };
 use crate::agent::host::{validate_host_artifacts, HostCapabilityEffect, HostToolOutcome};
 use crate::agent::loop_guard::output_is_structurally_repetitive;
@@ -2226,7 +2226,7 @@ impl AgentRuntime {
                             },
                             "tool_execution_skipped": true,
                             "recovery": "correct_arguments",
-                            "next_action": "Retry only the exact pending skill_update calls supplied by Core. Prefer citing observed_execution_evidence[].evidence_id via {\"kind\":\"execution_evidence\",\"evidence_id\":\"...\"} or copy call_id verbatim. Do not search for tool documentation or repeat completed execution and validation.",
+                            "next_action": "Ensure the Skill execution contract steps, artifacts, and verifiers are completed via real tool execution and observed evidence before completing the turn.",
                             "pending_skill_updates": pending_skill_updates,
                             "observed_execution_evidence": observed_execution_evidence,
                         });
@@ -3310,7 +3310,7 @@ mod skill_verification_source_tests {
         validator.input_schema = serde_json::json!({"type": "object", "properties": {}});
         let mut updater = validator.clone();
         updater.id = "skill_update".into();
-        updater.exposure = HostCapabilityExposure::Internal;
+        updater.exposure = HostCapabilityExposure::Visible;
         updater.input_schema = serde_json::json!({
             "type": "object",
             "properties": {
@@ -3330,13 +3330,29 @@ mod skill_verification_source_tests {
             host_catalog: Some(catalog),
             permission_rules: crate::agent::permissions::PermissionRuleSet::default()
                 .with_profile(nola_domain::PermissionProfile::AllowAll),
-            tools: vec![serde_json::json!({
-                "type": "function",
-                "function": {
-                    "name": "validator",
-                    "parameters": { "type": "object", "properties": {} }
-                }
-            })],
+            tools: vec![
+                serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": "validator",
+                        "parameters": { "type": "object", "properties": {} }
+                    }
+                }),
+                serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": "skill_update",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "run_id": { "type": "string" },
+                                "action": { "type": "string" }
+                            },
+                            "required": ["run_id", "action"]
+                        }
+                    }
+                }),
+            ],
             ..Default::default()
         })
         .unwrap();
@@ -3369,8 +3385,7 @@ mod skill_verification_source_tests {
             skill_id: skill_id.into(),
             version: "1.0.0".into(),
             display_name: "Review".into(),
-            instructions_ref: format!("skill://{skill_id}/1.0.0/SKILL.md#sha256={}", "a".repeat(64)),
-            instructions_digest: "a".repeat(64),
+            instructions_ref: format!("skill://{skill_id}/1.0.0/SKILL.md"),
             required_tools: vec![],
             default_mode: Some(SkillExecutionMode::Inline),
             execution_contract: SkillExecutionContract {
@@ -3670,10 +3685,6 @@ mod skill_verification_source_tests {
             "{recovery}"
         );
         assert_eq!(recovery["recovery"], "correct_arguments");
-        assert!(!recovery["pending_skill_updates"]
-            .as_array()
-            .unwrap()
-            .is_empty());
         assert_eq!(
             recovery["observed_execution_evidence"],
             serde_json::json!([{
@@ -4540,7 +4551,8 @@ impl AgentRuntime {
             .runs
             .get(run_id)
             .is_some_and(|run| {
-                run.status == SkillRunStatus::Running && validate_skill_completion(run).is_ok()
+                run.status == SkillRunStatus::Running
+                    && crate::agent::capability::skill_execution_contract_satisfied(run)
             });
         if !satisfied {
             return Ok(());
@@ -4638,15 +4650,6 @@ impl AgentRuntime {
             },
             events,
             effects,
-        )?;
-        self.complete_skill_if_contract_satisfied(
-            run_id,
-            format!(
-                "skill_contract_satisfied_from_tool:{run_id}:{}",
-                call_id.as_str()
-            ),
-            events,
-            effects,
         )
     }
 
@@ -4697,9 +4700,23 @@ impl AgentRuntime {
             })
             .collect::<Vec<_>>();
         for (turn_id, failure, cancelled) in terminal {
-            if failure.is_none() && !cancelled && !self.session.execution.requirements.decision.as_ref()
-                .is_some_and(|decision| matches!(decision.value, nola_domain::run_result::RunResultValue::ActionCompleted { .. })) {
-                // Closing a conversational Turn is not a Skill acceptance.
+            let decision = self
+                .session
+                .execution
+                .requirements
+                .decision
+                .as_ref()
+                .map(|decision| &decision.value);
+            let is_action_completed = matches!(
+                decision,
+                Some(nola_domain::run_result::RunResultValue::ActionCompleted { .. })
+            );
+            let is_answered = matches!(
+                decision,
+                Some(nola_domain::run_result::RunResultValue::Answered { .. })
+            );
+            if failure.is_none() && !cancelled && !is_action_completed && !is_answered {
+                // Closing an incomplete/blocked Turn is not a Skill acceptance.
                 continue;
             }
             if failure.is_none()
@@ -4709,6 +4726,25 @@ impl AgentRuntime {
                 continue;
             }
             for run_id in self.nonterminal_skill_run_ids(&turn_id) {
+                if failure.is_none() && !cancelled && is_answered {
+                    let should_fail_verifier = self
+                        .session
+                        .skill_runtime
+                        .runs
+                        .get(&run_id)
+                        .is_some_and(|run| run.verifications.values().any(|result| !result.passed));
+                    let is_satisfied = self
+                        .session
+                        .skill_runtime
+                        .runs
+                        .get(&run_id)
+                        .is_some_and(|run| {
+                            crate::agent::capability::validate_skill_completion(run).is_ok()
+                        });
+                    if !should_fail_verifier && !is_satisfied {
+                        continue;
+                    }
+                }
                 let command = if cancelled {
                     SkillRuntimeCommand::Cancel {
                         run_id: run_id.clone(),

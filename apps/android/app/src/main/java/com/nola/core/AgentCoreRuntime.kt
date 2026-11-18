@@ -49,7 +49,6 @@ internal object AgentCoreNative {
     external fun nativeMemorySelect(input: ByteArray): ByteArray?
     external fun nativeDataSourceAbiVersion(): Int
     external fun nativeDataSourceResolve(input: ByteArray): ByteArray?
-    external fun nativeDataSourceSealContract(input: ByteArray): ByteArray?
     external fun nativeResourceAccessAbiVersion(): Int
     external fun nativeResourceAccessEvaluate(input: ByteArray): ByteArray?
     external fun nativeLifecycleHookAbiVersion(): Int

@@ -87,6 +87,9 @@ fn run_goal_cycle_with_dispatch(request: &mut HostInvocationRequest, user_prompt
     }
     let mut application = crate::application_port::CliApplicationPort::persistent_default()?;
     let mut user_prompt = user_prompt.to_string();
+    let mut submitted_run_id = request.session.host_submission_id.take();
+    let mut submitted_user_message_id = request.session.host_user_message_id.take();
+    let mut submitted_assistant_message_id = request.session.host_assistant_message_id.take();
     let started = std::time::Instant::now();
     let mut previous_run:Option<String>=None;
     let mut handoff=None;
@@ -98,6 +101,8 @@ fn run_goal_cycle_with_dispatch(request: &mut HostInvocationRequest, user_prompt
         let result: serde_json::Value = application.execute(nola_application::ApplicationCommand::StepGoal {
             conversation_id: owner.clone(), source_host_id: host, control:None,
             start_configuration: None, selected_model: None, user_prompt: std::mem::take(&mut user_prompt), host_available: Some(available),
+            submitted_run_id: submitted_run_id.take(), submitted_user_message_id: submitted_user_message_id.take(),
+            submitted_assistant_message_id: submitted_assistant_message_id.take(), stop_after_sealed_round: false,
         })?;
         if let Some(error) = result["error"].as_str() { return Err(error.into()); }
         match result["instruction"]["type"].as_str() {
@@ -141,7 +146,8 @@ pub(crate) fn pause_goal(request: &HostInvocationRequest, cause: GoalCyclePause)
     let result:serde_json::Value=application.execute(nola_application::ApplicationCommand::StepGoal {
         conversation_id:owner.into(),source_host_id:execution.configuration.host_catalog.ok_or("Goal Host unavailable")?.host_id.0,
         control:Some(GoalRuntimeCommandEnvelope {operation_id:format!("pause:{}",uuid::Uuid::new_v4()),command}),
-        start_configuration:None,selected_model:None,user_prompt:String::new(),host_available:Some(true) })?;
+        start_configuration:None,selected_model:None,user_prompt:String::new(),host_available:Some(true),
+        submitted_run_id:None,submitted_user_message_id:None,submitted_assistant_message_id:None,stop_after_sealed_round:false })?;
     if let Some(error)=result["error"].as_str(){return Err(error.into());}
     Ok(GoalCycleOutcome::Paused)
 }

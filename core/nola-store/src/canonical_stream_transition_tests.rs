@@ -388,7 +388,7 @@ fn stream_failure_rolls_back_checkpoint_chunks_receipt_and_old_writers_cannot_cl
     for mutation in [
         PartMutation::AppendText {
             part_id: "p".into(),
-            expected_content_digest: format!("{:x}", Sha256::digest(b"")),
+            expected_prefix_bytes: 0,
             text: "bad".into(),
             updated_at_ms: 3,
         },

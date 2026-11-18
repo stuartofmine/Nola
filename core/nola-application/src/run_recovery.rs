@@ -129,7 +129,7 @@ fn recover_with_observation<R: StoreMaintenanceRepository + ?Sized>(
                 let config = verified_record_configuration(record)?;
                 config.turn_identity.host_invocation.as_ref()
                     .ok_or("Host invocation unavailable: missing frozen binding")?
-                    .require_exact(host_invocation.ok_or("Host invocation unavailable: missing recovery binding")?)
+                    .require_exact_or_rotated_credential(host_invocation.ok_or("Host invocation unavailable: missing recovery binding")?)
                     .map_err(str::to_string)?;
                 verified_configuration = Some(config);
                 if record.session_lease.as_ref() != observed_session_lease {

@@ -108,21 +108,26 @@ struct MacExtensionsCenterView: View {
         nonmutating set { catalog.errorMessage = newValue }
     }
     @State private var pendingRemoval: MacExtensionItem?
+    @State private var mcpEditorMode: MacMCPServerEditorMode?
     private var hasRemovedBuiltInSkills: Bool { catalog.hasRemovedBuiltInSkills }
-    @State private var workspaceURL = MacSecurityScopedBookmarkStore.shared.restoreWorkspace()
+    @State private var workspaceURL: URL?
     @State private var chromeSnapshot = MacChromeMessagingService.shared.snapshot()
     @State private var isChromeManagerPresented = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    private let activeWorkspaceURL: URL?
     private let visibleKinds: [MacExtensionItem.Kind]
+    private let showsPageHeader: Bool
     let navigationAction: (() -> Void)?
 
     init(
         remoteHost: any MacRemoteHostManaging,
         kinds: [MacExtensionItem.Kind] = MacExtensionItem.Kind.allCases,
+        showsPageHeader: Bool = true,
         navigationAction: (() -> Void)? = nil,
         navigation: MacExtensionsNavigationState = MacExtensionsNavigationState(),
-        catalog: MacExtensionsCatalogLoader? = nil
+        catalog: MacExtensionsCatalogLoader? = nil,
+        activeWorkspaceURL: URL? = nil
     ) {
         _catalog = StateObject(wrappedValue: catalog ?? MacExtensionsCatalogLoader(
             local: { try await MacExtensionsService.shared.localExtensions(workspaceURL: $0) },
@@ -132,7 +137,10 @@ struct MacExtensionsCenterView: View {
             },
             removedSkills: { try MacBuiltInSkillRegistry.hasRemovedSkills() }
         ))
+        self.activeWorkspaceURL = activeWorkspaceURL
+        _workspaceURL = State(initialValue: activeWorkspaceURL ?? MacSecurityScopedBookmarkStore.shared.restoreWorkspace())
         visibleKinds = kinds
+        self.showsPageHeader = showsPageHeader
         self.navigationAction = navigationAction
         _navigation = StateObject(wrappedValue: navigation)
     }
@@ -155,6 +163,13 @@ struct MacExtensionsCenterView: View {
         }
         .toolbar(removing: .sidebarToggle)
         .task { await load(includeHost: sourceFilter != .thisMac) }
+        .onChange(of: activeWorkspaceURL) { _, updatedURL in
+            let resolved = updatedURL ?? MacSecurityScopedBookmarkStore.shared.restoreWorkspace()
+            if workspaceURL != resolved {
+                workspaceURL = resolved
+                refresh()
+            }
+        }
         .onReceive(
             NotificationCenter.default.publisher(for: .macChromeBridgeStatusDidChange)
                 .receive(on: RunLoop.main)
@@ -180,11 +195,25 @@ struct MacExtensionsCenterView: View {
                 remove(item)
             }
         } message: { item in
-            Text(String(format: macExtensionsText("mac.extensions.remove.message", "Remove %1$@ from this Mac? You can restore built-in Skills later."), item.title))
+            if item.id.hasPrefix("managed-mcp:") {
+                Text(String(format: macExtensionsText("mac.extensions.remove_mcp.message", "Delete MCP server %1$@ from this Mac?"), item.title))
+            } else {
+                Text(String(format: macExtensionsText("mac.extensions.remove.message", "Remove %1$@ from this Mac? You can restore built-in Skills later."), item.title))
+            }
         }
         .sheet(isPresented: $isChromeManagerPresented) {
             MacChromeExtensionManagerView()
                 .frame(minWidth: 560, minHeight: 430)
+        }
+        .sheet(item: $mcpEditorMode) { mode in
+            MacMCPServerEditorSheet(
+                mode: mode,
+                onSaved: {
+                    mcpEditorMode = nil
+                    refresh()
+                },
+                onCancel: { mcpEditorMode = nil }
+            )
         }
         .onDisappear {
             catalog.invalidate()
@@ -194,37 +223,39 @@ struct MacExtensionsCenterView: View {
 
     private var catalogContent: some View {
         VStack(spacing: 0) {
-            MacPageHeader(
-                LocalizedStringKey(navigationTitle),
-                symbol: "shippingbox",
-                navigationAction: navigationAction
-            ) {
-                EmptyView()
-            } actions: {
-                if showsBrowserIntegration {
-                    Button {
-                        isChromeManagerPresented = true
-                    } label: {
-                        ZStack(alignment: .topTrailing) {
-                            Image(systemName: "globe")
-                            Circle()
-                                .fill(chromeSnapshot.isExtensionConnected ? Color.green : Color.orange)
-                                .frame(width: 7, height: 7)
-                                .offset(x: 4, y: -3)
+            if showsPageHeader {
+                MacPageHeader(
+                    LocalizedStringKey(navigationTitle),
+                    symbol: "shippingbox",
+                    navigationAction: navigationAction
+                ) {
+                    EmptyView()
+                } actions: {
+                    if showsBrowserIntegration {
+                        Button {
+                            isChromeManagerPresented = true
+                        } label: {
+                            ZStack(alignment: .topTrailing) {
+                                Image(systemName: "globe")
+                                Circle()
+                                    .fill(chromeSnapshot.isExtensionConnected ? Color.green : Color.orange)
+                                    .frame(width: 7, height: 7)
+                                    .offset(x: 4, y: -3)
+                            }
                         }
+                        .macToolbarIcon()
+                        .help(chromeConnectionDescription)
+                        .accessibilityLabel(macExtensionsText("mac.extensions.chrome.title", "Chrome Extension"))
+                        .accessibilityValue(chromeConnectionDescription)
+                    }
+                    Button(action: refresh) {
+                        Image(systemName: "arrow.clockwise")
                     }
                     .macToolbarIcon()
-                    .help(chromeConnectionDescription)
-                    .accessibilityLabel(macExtensionsText("mac.extensions.chrome.title", "Chrome Extension"))
-                    .accessibilityValue(chromeConnectionDescription)
+                    .disabled(isLoading)
+                    .help(macExtensionsText("mac.extensions.action.refresh", "Refresh Extensions"))
+                    .accessibilityLabel(macExtensionsText("mac.extensions.action.refresh", "Refresh Extensions"))
                 }
-                Button(action: refresh) {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .macToolbarIcon()
-                .disabled(isLoading)
-                .help(macExtensionsText("mac.extensions.action.refresh", "Refresh Extensions"))
-                .accessibilityLabel(macExtensionsText("mac.extensions.action.refresh", "Refresh Extensions"))
             }
 
             if let errorMessage {
@@ -253,7 +284,8 @@ struct MacExtensionsCenterView: View {
                     onEnabledChange: { item, enabled in
                         setEnabled(enabled, for: item)
                     },
-                    onRemove: { pendingRemoval = $0 }
+                    onRemove: { pendingRemoval = $0 },
+                    onEditMCP: { openMCPEditor(for: $0) }
                 )
             }
         }
@@ -265,6 +297,12 @@ struct MacExtensionsCenterView: View {
             HStack(spacing: 12) {
                 sourcePicker
                 scopeMenu
+                if visibleKinds.contains(.mcp) {
+                    addMCPButton
+                }
+                if !showsPageHeader {
+                    toolbarRefreshButton
+                }
                 Spacer(minLength: 8)
                 searchField.frame(width: 248)
             }
@@ -274,6 +312,12 @@ struct MacExtensionsCenterView: View {
                     sourcePicker
                     Spacer(minLength: 6)
                     scopeMenu
+                    if visibleKinds.contains(.mcp) {
+                        addMCPButton
+                    }
+                    if !showsPageHeader {
+                        toolbarRefreshButton
+                    }
                 }
                 searchField.frame(maxWidth: .infinity)
             }
@@ -328,10 +372,36 @@ struct MacExtensionsCenterView: View {
             .font(.system(size: 12, weight: .medium))
             .lineLimit(1)
         }
-        .menuStyle(.borderlessButton)
+        .menuStyle(MacPillMenuStyle(height: 28))
         .foregroundStyle(workspaceURL == nil ? Color.secondary : MacDesignColor.brand)
         .help(macExtensionsText("mac.extensions.action.choose_workspace", "Choose Workspace"))
         .accessibilityLabel(macExtensionsText("mac.extensions.action.choose_workspace", "Choose Workspace"))
+    }
+
+    private var addMCPButton: some View {
+        Button {
+            mcpEditorMode = .add
+        } label: {
+            Label(
+                macExtensionsText("mac.extensions.action.add_mcp", "Add MCP"),
+                systemImage: "plus"
+            )
+            .font(.system(size: 12, weight: .medium))
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .disabled(isLoading)
+        .accessibilityIdentifier("mac.extensions.action.add_mcp")
+    }
+
+    private var toolbarRefreshButton: some View {
+        Button(action: refresh) {
+            Image(systemName: "arrow.clockwise")
+        }
+        .buttonStyle(.borderless)
+        .disabled(isLoading)
+        .help(macExtensionsText("mac.extensions.action.refresh", "Refresh Extensions"))
+        .accessibilityLabel(macExtensionsText("mac.extensions.action.refresh", "Refresh Extensions"))
     }
 
     private var sourcePicker: some View {
@@ -370,9 +440,7 @@ struct MacExtensionsCenterView: View {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.tertiary)
                 }
-                .buttonStyle(.plain)
-                .frame(width: 28, height: 28)
-                .contentShape(Rectangle())
+                .buttonStyle(MacInlineIconButtonStyle(size: 22))
                 .accessibilityLabel(macExtensionsText("mac.extensions.search.clear", "Clear search"))
             }
         }
@@ -461,6 +529,21 @@ struct MacExtensionsCenterView: View {
             Button(macExtensionsText("mac.extensions.action.remove", "Remove"), role: .destructive) {
                 pendingRemoval = item
             }
+        } else if item.id.hasPrefix("managed-mcp:") {
+            Toggle(
+                macExtensionsText("mac.extensions.metric.enabled", "Enabled"),
+                isOn: Binding(
+                    get: { item.isEnabled },
+                    set: { setEnabled($0, for: item) }
+                )
+            )
+            Button(macExtensionsText("mac.extensions.action.edit_mcp", "Edit MCP Server")) {
+                openMCPEditor(for: item)
+            }
+            Divider()
+            Button(macExtensionsText("mac.extensions.action.remove", "Remove"), role: .destructive) {
+                pendingRemoval = item
+            }
         } else if let path = item.path {
             let url = URL(fileURLWithPath: path)
             if item.kind == .skill || item.kind == .mcp {
@@ -513,8 +596,32 @@ struct MacExtensionsCenterView: View {
         refresh()
     }
 
+    private func openMCPEditor(for item: MacExtensionItem) {
+        Task {
+            do {
+                let draft = try await MacExtensionsService.shared.managedMCPDraft(forItemID: item.id)
+                    ?? MacManagedMCPServerDraft(displayName: item.title)
+                mcpEditorMode = .edit(item: item, draft: draft)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
     private func remove(_ item: MacExtensionItem) {
         pendingRemoval = nil
+        if item.id.hasPrefix("managed-mcp:") {
+            Task {
+                do {
+                    _ = try await MacExtensionsService.shared.deleteManagedMCPServer(itemID: item.id)
+                    if selectedID == item.id { selectedID = nil }
+                    refresh()
+                } catch {
+                    errorMessage = error.localizedDescription
+                }
+            }
+            return
+        }
         guard let id = MacBuiltInSkillRegistry.skillID(forExtensionItemID: item.id) else { return }
         do {
             try MacBuiltInSkillRegistry.remove(id)
@@ -582,6 +689,7 @@ struct MacExtensionGallery: View {
     let onSelect: (MacExtensionItem) -> Void
     let onEnabledChange: (MacExtensionItem, Bool) -> Void
     let onRemove: (MacExtensionItem) -> Void
+    var onEditMCP: ((MacExtensionItem) -> Void)? = nil
 
     private var sections: [MacExtensionCatalogSection] {
         MacExtensionCatalog.sections(for: items)
@@ -626,7 +734,7 @@ struct MacExtensionGallery: View {
                                 ForEach(section.items) { item in
                                     MacExtensionGalleryCard(
                                         item: item,
-                                        onEnabledChange: item.source == .builtIn
+                                        onEnabledChange: (item.source != .connectedHost && (item.kind == .skill || item.kind == .mcp))
                                             ? { onEnabledChange(item, $0) }
                                             : nil,
                                         action: { onSelect(item) }
@@ -649,8 +757,45 @@ struct MacExtensionGallery: View {
                                             } label: {
                                                 Label(macExtensionsText("mac.extensions.action.remove", "Remove"), systemImage: "trash")
                                             }
+                                        } else if item.id.hasPrefix("managed-mcp:") {
+                                            Button {
+                                                onEnabledChange(item, !item.isEnabled)
+                                            } label: {
+                                                Label(
+                                                    item.isEnabled
+                                                        ? macExtensionsText("mac.extensions.status.disabled", "Disabled")
+                                                        : macExtensionsText("mac.extensions.status.enabled", "Enabled"),
+                                                    systemImage: item.isEnabled ? "pause.circle" : "play.circle"
+                                                )
+                                            }
+                                            if let onEditMCP {
+                                                Button {
+                                                    onEditMCP(item)
+                                                } label: {
+                                                    Label(macExtensionsText("mac.extensions.action.edit_mcp", "Edit MCP Server"), systemImage: "slider.horizontal.3")
+                                                }
+                                            }
+                                            Divider()
+                                            Button(role: .destructive) {
+                                                onRemove(item)
+                                            } label: {
+                                                Label(macExtensionsText("mac.extensions.action.remove", "Remove"), systemImage: "trash")
+                                            }
                                         } else if let path = item.path {
                                             let url = URL(fileURLWithPath: path)
+                                            if item.kind == .skill || item.kind == .mcp {
+                                                Button {
+                                                    onEnabledChange(item, !item.isEnabled)
+                                                } label: {
+                                                    Label(
+                                                        item.isEnabled
+                                                            ? macExtensionsText("mac.extensions.status.disabled", "Disabled")
+                                                            : macExtensionsText("mac.extensions.status.enabled", "Enabled"),
+                                                        systemImage: item.isEnabled ? "pause.circle" : "play.circle"
+                                                    )
+                                                }
+                                                Divider()
+                                            }
                                             Button {
                                                 NSWorkspace.shared.open(url)
                                             } label: {
@@ -761,9 +906,7 @@ private struct MacExtensionGalleryCard: View {
                             set: onEnabledChange
                         )
                     )
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
+                    .toggleStyle(.macSwitchControl)
                     .help(
                         item.isEnabled
                             ? macExtensionsText("mac.extensions.status.disabled", "Disabled")
@@ -1342,18 +1485,22 @@ private struct MacExtensionDetail: View {
                     .textSelection(.enabled)
                 Spacer()
                 if item.source == .builtIn || (item.source != .connectedHost && (item.kind == .skill || item.kind == .mcp)) {
-                    Toggle(
-                        isOn: Binding(
-                            get: { item.isEnabled },
-                            set: onEnabledChange
-                        )
-                    ) {
+                    HStack(spacing: 8) {
                         Text(macExtensionsText("mac.extensions.status.enabled", "Enabled"))
                             .font(.system(size: 11.5, weight: .medium))
+                            .foregroundStyle(.secondary)
+                        Toggle(
+                            macExtensionsText("mac.extensions.status.enabled", "Enabled"),
+                            isOn: Binding(
+                                get: { item.isEnabled },
+                                set: onEnabledChange
+                            )
+                        )
+                        .toggleStyle(.macSwitchControl)
+                        .accessibilityLabel(macExtensionsText("mac.extensions.status.enabled", "Enabled"))
                     }
-                    .toggleStyle(.switch)
                 }
-                if item.source == .builtIn {
+                if item.source == .builtIn || item.id.hasPrefix("managed-mcp:") {
                     Menu {
                         Button(macExtensionsText("mac.extensions.action.remove", "Remove"), role: .destructive) {
                             requestExit(onRemove)
@@ -1361,8 +1508,7 @@ private struct MacExtensionDetail: View {
                     } label: {
                         Image(systemName: "ellipsis")
                     }
-                    .menuStyle(.borderlessButton)
-                    .macToolbarIcon()
+                    .menuStyle(MacToolbarMenuStyle())
                     .disabled(isSaving)
                     .help(macExtensionsText("mac.extensions.action.remove", "Remove"))
                     .accessibilityLabel(macExtensionsText("mac.extensions.action.remove", "Remove"))
@@ -1472,12 +1618,14 @@ private struct MacExtensionDetail: View {
                         NSPasteboard.general.setString(document.url.path, forType: .string)
                     }
                     .buttonStyle(.borderless)
-                    Button {
-                        NSWorkspace.shared.open(document.url)
-                    } label: {
-                        Label(macExtensionsText("mac.extensions.detail.open_externally", "Open Externally"), systemImage: "arrow.up.forward.app")
+                    if !item.id.hasPrefix("managed-mcp:") {
+                        Button {
+                            NSWorkspace.shared.open(document.url)
+                        } label: {
+                            Label(macExtensionsText("mac.extensions.detail.open_externally", "Open Externally"), systemImage: "arrow.up.forward.app")
+                        }
+                        .buttonStyle(.borderless)
                     }
-                    .buttonStyle(.borderless)
                     if document.isEditable {
                         if item.source == .builtIn && hasBuiltInOverride {
                             Button(macExtensionsText("mac.extensions.detail.restore_builtin", "Restore Built-in")) {
@@ -1673,6 +1821,234 @@ private struct MacExtensionDetail: View {
             await loadDocument()
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+}
+
+struct MacExpertsAndSkillsCenterView: View {
+    enum Tab: String, CaseIterable, Identifiable {
+        case experts
+        case skills
+        case mcp
+
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .experts: String(localized: "Experts")
+            case .skills: String(localized: "Skills")
+            case .mcp: String(localized: "MCP")
+            }
+        }
+    }
+
+    @ObservedObject var roomWorkspace: MacAgentRoomWorkspace
+    let remoteHost: any MacRemoteHostManaging
+    @ObservedObject var skillsNavigation: MacExtensionsNavigationState
+    var activeWorkspaceURL: URL? = nil
+    @StateObject private var mcpNavigation = MacExtensionsNavigationState()
+    @State private var selectedTab: Tab = .experts
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Picker(String(localized: "Experts & Skills"), selection: $selectedTab) {
+                    ForEach(Tab.allCases) { tab in
+                        Text(tab.title).tag(tab)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: 320)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, MacDesignTokens.Layout.pageGutter)
+            .padding(.vertical, 10)
+            .background(MacDesignColor.canvas)
+
+            Rectangle()
+                .fill(MacDesignColor.borderSubtle)
+                .frame(height: 1)
+
+            switch selectedTab {
+            case .experts:
+                MacExpertDirectoryManagementView(workspace: roomWorkspace, showsCloseButton: false)
+            case .skills:
+                MacExtensionsCenterView(
+                    remoteHost: remoteHost,
+                    kinds: [.skill],
+                    showsPageHeader: false,
+                    navigation: skillsNavigation,
+                    activeWorkspaceURL: activeWorkspaceURL
+                )
+            case .mcp:
+                MacExtensionsCenterView(
+                    remoteHost: remoteHost,
+                    kinds: [.mcp],
+                    showsPageHeader: false,
+                    navigation: mcpNavigation,
+                    activeWorkspaceURL: activeWorkspaceURL
+                )
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(MacPageBackground())
+    }
+}
+
+private enum MacMCPServerEditorMode: Identifiable {
+    case add
+    case edit(item: MacExtensionItem, draft: MacManagedMCPServerDraft)
+
+    var id: String {
+        switch self {
+        case .add: return "add"
+        case .edit(let item, _): return "edit:\(item.id)"
+        }
+    }
+}
+
+private struct MacMCPServerEditorSheet: View {
+    let mode: MacMCPServerEditorMode
+    let onSaved: () -> Void
+    let onCancel: () -> Void
+
+    @State private var draft: MacManagedMCPServerDraft
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    init(
+        mode: MacMCPServerEditorMode,
+        onSaved: @escaping () -> Void,
+        onCancel: @escaping () -> Void
+    ) {
+        self.mode = mode
+        self.onSaved = onSaved
+        self.onCancel = onCancel
+        switch mode {
+        case .add:
+            _draft = State(initialValue: MacManagedMCPServerDraft())
+        case .edit(_, let existing):
+            _draft = State(initialValue: existing)
+        }
+    }
+
+    private var title: String {
+        switch mode {
+        case .add: return macExtensionsText("mac.extensions.mcp_editor.add_title", "Add MCP Server")
+        case .edit: return macExtensionsText("mac.extensions.mcp_editor.edit_title", "Edit MCP Server")
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(title)
+                .font(.system(size: 16, weight: .semibold))
+
+            Form {
+                TextField(
+                    macExtensionsText("mac.extensions.mcp_editor.name", "Name"),
+                    text: $draft.displayName
+                )
+                Picker(
+                    macExtensionsText("mac.extensions.mcp_editor.transport", "Transport"),
+                    selection: $draft.transport
+                ) {
+                    ForEach(MacManagedMCPServerDraft.Transport.allCases) { transport in
+                        Text(transport.title).tag(transport)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                if draft.transport == .stdio {
+                    TextField(
+                        macExtensionsText("mac.extensions.mcp_editor.command", "Command"),
+                        text: $draft.stdioCommand
+                    )
+                    TextField(
+                        macExtensionsText("mac.extensions.mcp_editor.args", "Arguments (one per line)"),
+                        text: $draft.argumentsText,
+                        axis: .vertical
+                    )
+                    .lineLimit(2...4)
+                    TextField(
+                        macExtensionsText("mac.extensions.mcp_editor.cwd", "Working Directory (optional)"),
+                        text: $draft.workingDirectory
+                    )
+                    TextField(
+                        macExtensionsText("mac.extensions.mcp_editor.env", "Environment (KEY=VALUE lines)"),
+                        text: $draft.environmentText,
+                        axis: .vertical
+                    )
+                    .lineLimit(2...5)
+                } else {
+                    TextField(
+                        macExtensionsText("mac.extensions.mcp_editor.url", "Endpoint URL"),
+                        text: $draft.httpEndpointURL
+                    )
+                    TextField(
+                        macExtensionsText("mac.extensions.mcp_editor.headers", "Headers (Key: Value lines)"),
+                        text: $draft.headersText,
+                        axis: .vertical
+                    )
+                    .lineLimit(2...5)
+                }
+                TextField(
+                    macExtensionsText("mac.extensions.mcp_editor.timeout_ms", "Timeout (ms, optional)"),
+                    text: $draft.timeoutMilliseconds
+                )
+
+                Toggle(
+                    macExtensionsText("mac.extensions.metric.enabled", "Enabled"),
+                    isOn: $draft.enabled
+                )
+                .toggleStyle(.macSwitch)
+            }
+            .formStyle(.grouped)
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            HStack {
+                Spacer()
+                Button(macExtensionsText("mac.extensions.action.cancel", "Cancel"), action: onCancel)
+                    .keyboardShortcut(.cancelAction)
+                Button(macExtensionsText("mac.extensions.detail.save", "Save")) {
+                    save()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(isSaving || draft.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || draft.commandOrURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 460)
+    }
+
+    private func save() {
+        guard !isSaving else { return }
+        isSaving = true
+        errorMessage = nil
+        let capturedDraft = draft
+        Task {
+            do {
+                switch mode {
+                case .add:
+                    _ = try await MacExtensionsService.shared.createManagedMCPServer(capturedDraft)
+                case .edit(let item, _):
+                    _ = try await MacExtensionsService.shared.updateManagedMCPServer(itemID: item.id, draft: capturedDraft)
+                }
+                await MainActor.run {
+                    isSaving = false
+                    onSaved()
+                }
+            } catch {
+                await MainActor.run {
+                    isSaving = false
+                    errorMessage = error.localizedDescription
+                }
+            }
         }
     }
 }

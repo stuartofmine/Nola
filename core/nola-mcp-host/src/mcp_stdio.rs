@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::{mpsc, Arc, Mutex, OnceLock, RwLock};
+use std::sync::{mpsc, Arc, Condvar, Mutex, MutexGuard, OnceLock, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -41,6 +41,8 @@ struct StdioConnectionEntry {
     config: StdioMcpConfig,
     client: Option<StdioMcpClient>,
     retired: bool,
+    connecting: bool,
+    connect_signal: Arc<Condvar>,
     resource: crate::mcp_connection_authority::ConnectionResource,
     descriptor: Option<McpServerDescriptor>,
 }
@@ -109,9 +111,15 @@ pub struct StdioRetirement(Option<Arc<Mutex<StdioConnectionEntry>>>);
 impl Drop for StdioRetirement {
     fn drop(&mut self) {
         if let Some(entry) = self.0.take() {
-            let mut entry = entry.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            entry.retired = true;
-            entry.client = None; // Drop kills and reaps the owned process.
+            let signal;
+            let _old_client;
+            {
+                let mut guard = entry.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                guard.retired = true;
+                signal = guard.connect_signal.clone();
+                _old_client = guard.client.take(); // Drop kills and reaps outside lock.
+            }
+            signal.notify_all();
         }
     }
 }
@@ -198,28 +206,156 @@ pub fn cached_descriptor(reference:&str) -> Result<Option<McpServerDescriptor>,M
     Ok((!entry.retired && entry.client.is_some()).then(||entry.descriptor.clone()).flatten())
 }
 
-pub fn connect_approved(reference:&str,expected:&crate::mcp_connection_authority::ConnectionResource)
-    -> Result<crate::mcp_connection_authority::ConnectionEstablished,McpHostError> {
-    let entry = registry().read().map_err(|_|McpHostError::new("mcp_registry_unavailable","MCP registry unavailable"))?
-        .get(reference).cloned().ok_or_else(||McpHostError::new("mcp_connection_required","MCP target is not registered"))?;
-    let mut entry = entry.lock().map_err(|_|McpHostError::new("mcp_connection_unavailable","MCP connection unavailable"))?;
-    discard_exited_client(&mut entry)?;
-    let mut actual = entry.resource.clone();
-    if entry.client.is_none() { actual.generation = None; }
-    if entry.retired || reference != expected.connection_ref || actual != *expected {
-        return Err(McpHostError::new("mcp_connection_changed","MCP resource changed; connection was not started"));
+struct StdioConnectingGuard {
+    entry: Arc<Mutex<StdioConnectionEntry>>,
+    signal: Arc<Condvar>,
+    armed: bool,
+}
+
+impl Drop for StdioConnectingGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        if let Ok(mut guard) = self.entry.lock() {
+            guard.connecting = false;
+        }
+        self.signal.notify_all();
     }
-    if entry.client.is_some() {
-        let server = entry.descriptor.clone().ok_or_else(||McpHostError::new("mcp_descriptor_missing","Active MCP descriptor is missing"))?;
-        return Ok(crate::mcp_connection_authority::ConnectionEstablished {server,resource:actual});
+}
+
+fn wait_while_stdio_connecting(
+    mut guard: MutexGuard<'_, StdioConnectionEntry>,
+) -> Result<MutexGuard<'_, StdioConnectionEntry>, McpHostError> {
+    while guard.connecting {
+        let signal = guard.connect_signal.clone();
+        guard = signal.wait(guard).map_err(|_| {
+            McpHostError::new("mcp_connection_unavailable", "MCP connection unavailable")
+        })?;
     }
-    entry.resource.admission_id = uuid::Uuid::new_v4().to_string();
-    let mut client = StdioMcpClient::connect(&entry.config)?;
-    let descriptor = client.discover(entry.config.server_id.clone(),entry.config.display_name.clone(),reference.into())?;
-    entry.resource.generation = Some(uuid::Uuid::new_v4().to_string());
-    entry.descriptor = Some(descriptor.clone());
-    entry.client = Some(client);
-    Ok(crate::mcp_connection_authority::ConnectionEstablished {server:descriptor,resource:entry.resource.clone()})
+    Ok(guard)
+}
+
+fn establish_stdio_entry(
+    entry: &Arc<Mutex<StdioConnectionEntry>>,
+    mut guard: MutexGuard<'_, StdioConnectionEntry>,
+    reference: &str,
+) -> Result<crate::mcp_connection_authority::ConnectionEstablished, McpHostError> {
+    if guard.client.is_some() {
+        let mut actual = guard.resource.clone();
+        let server = guard.descriptor.clone().ok_or_else(|| {
+            McpHostError::new("mcp_descriptor_missing", "Active MCP descriptor is missing")
+        })?;
+        actual.generation = guard.resource.generation.clone();
+        return Ok(crate::mcp_connection_authority::ConnectionEstablished {
+            server,
+            resource: actual,
+        });
+    }
+    let admission_id = uuid::Uuid::new_v4().to_string();
+    guard.resource.admission_id = admission_id.clone();
+    guard.connecting = true;
+    let config = guard.config.clone();
+    let expected_digest = guard.resource.config_digest.clone();
+    let signal = guard.connect_signal.clone();
+    let mut reset_guard = StdioConnectingGuard {
+        entry: Arc::clone(entry),
+        signal: Arc::clone(&signal),
+        armed: true,
+    };
+    drop(guard);
+
+    let mut client = StdioMcpClient::connect(&config)?;
+    let descriptor = client.discover(
+        config.server_id.clone(),
+        config.display_name.clone(),
+        reference.into(),
+    )?;
+
+    let mut guard = entry.lock().map_err(|_| {
+        McpHostError::new("mcp_connection_unavailable", "MCP connection unavailable")
+    })?;
+    guard.connecting = false;
+    reset_guard.armed = false;
+    signal.notify_all();
+    if guard.retired
+        || guard.resource.admission_id != admission_id
+        || guard.resource.config_digest != expected_digest
+    {
+        drop(guard);
+        drop(client);
+        return Err(McpHostError::new(
+            "mcp_connection_changed",
+            "MCP resource changed; connection was not retained",
+        ));
+    }
+    guard.resource.generation = Some(uuid::Uuid::new_v4().to_string());
+    guard.descriptor = Some(descriptor.clone());
+    guard.client = Some(client);
+    Ok(crate::mcp_connection_authority::ConnectionEstablished {
+        server: descriptor,
+        resource: guard.resource.clone(),
+    })
+}
+
+pub fn connect_approved(
+    reference: &str,
+    expected: &crate::mcp_connection_authority::ConnectionResource,
+) -> Result<crate::mcp_connection_authority::ConnectionEstablished, McpHostError> {
+    let entry = registry()
+        .read()
+        .map_err(|_| McpHostError::new("mcp_registry_unavailable", "MCP registry unavailable"))?
+        .get(reference)
+        .cloned()
+        .ok_or_else(|| McpHostError::new("mcp_connection_required", "MCP target is not registered"))?;
+    let guard = entry
+        .lock()
+        .map_err(|_| McpHostError::new("mcp_connection_unavailable", "MCP connection unavailable"))?;
+    let mut guard = wait_while_stdio_connecting(guard)?;
+    discard_exited_client(&mut guard)?;
+    let mut actual = guard.resource.clone();
+    if guard.client.is_none() {
+        actual.generation = None;
+    }
+    if guard.retired || reference != expected.connection_ref || actual != *expected {
+        return Err(McpHostError::new(
+            "mcp_connection_changed",
+            "MCP resource changed; connection was not started",
+        ));
+    }
+    establish_stdio_entry(&entry, guard, reference)
+}
+
+/// Reconnect an owner-verified stdio MCP route when a lazy restored session lacks a live child.
+pub fn ensure_connected(
+    reference: &str,
+    expected_host_id: &str,
+    expected_session_id: &str,
+    expected_config_digest: &str,
+) -> Result<crate::mcp_connection_authority::ConnectionEstablished, McpHostError> {
+    let entry = registry()
+        .read()
+        .map_err(|_| McpHostError::new("mcp_registry_unavailable", "MCP registry unavailable"))?
+        .get(reference)
+        .cloned()
+        .ok_or_else(|| McpHostError::new("mcp_connection_required", "MCP target is not registered"))?;
+    let guard = entry
+        .lock()
+        .map_err(|_| McpHostError::new("mcp_connection_unavailable", "MCP connection unavailable"))?;
+    let mut guard = wait_while_stdio_connecting(guard)?;
+    discard_exited_client(&mut guard)?;
+    if guard.retired
+        || guard.resource.connection_ref != reference
+        || guard.resource.host_id != expected_host_id
+        || guard.resource.session_id != expected_session_id
+        || guard.resource.config_digest != expected_config_digest
+    {
+        return Err(McpHostError::new(
+            "mcp_connection_changed",
+            "MCP resource changed; connection was not started",
+        ));
+    }
+    establish_stdio_entry(&entry, guard, reference)
 }
 
 pub fn refresh_connected(reference:&str) -> Result<(),McpHostError> {
@@ -447,7 +583,15 @@ fn install(config: StdioMcpConfig, client: Option<StdioMcpClient>, mut resource:
     resource.admission_id = uuid::Uuid::new_v4().to_string();
     connections.insert(
         config.connection_ref.clone(),
-        Arc::new(Mutex::new(StdioConnectionEntry { config, client, retired: false,resource,descriptor:None })),
+        Arc::new(Mutex::new(StdioConnectionEntry {
+            config,
+            client,
+            retired: false,
+            connecting: false,
+            connect_signal: Arc::new(Condvar::new()),
+            resource,
+            descriptor: None,
+        })),
     );
     Ok(())
 }

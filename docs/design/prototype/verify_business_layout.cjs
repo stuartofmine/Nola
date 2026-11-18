@@ -6,6 +6,7 @@ const base=(process.env.PROTOTYPE_URL||'http://127.0.0.1:8071').replace(/\/$/,''
 const out=process.env.PROTOTYPE_OUT||require('../../../apps/web/playwright_runtime/test_environment.cjs').artifactPath('nola-prototype-business-layout');fs.mkdirSync(out,{recursive:true});
 (async()=>{
 const browser=await chromium.launch({...require('../../../apps/web/playwright_runtime/test_environment.cjs').browserOptions(),headless:true});
+try{
 const context=await browser.newContext({reducedMotion:'reduce'}), page=await context.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
 await context.route('**/*',r=>new URL(r.request().url()).origin===new URL(base).origin?r.continue():r.abort());
 let layouts=0;const scenes=['permission','host-pair','inspector','mcp-config','compose','general-fonts'];
@@ -20,5 +21,6 @@ await page.goto(base+'/');await page.getByRole('button',{name:'设置',exact:tru
 await page.setViewportSize({width:390,height:900});await page.goto(base+'/');await page.locator('[data-action="im:nav:settings"]').click();await page.locator('.im-preview-tools>summary').click();await page.getByRole('link',{name:'全业务场景与状态总览 ↗',exact:true}).click();await page.locator('#device[data-scene]').waitFor();assert.equal(new URL(page.url()).searchParams.get('platform'),'ios');
 await context.addInitScript(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:()=>Promise.reject(new Error('fixture-denied'))}}));
 await page.goto(base+'/scenarios.html?scene=compose&state=2&platform=ios');await page.locator('[data-copy]').click();await page.getByRole('textbox',{name:'手动复制回复',exact:true}).waitFor();assert.equal(await page.getByRole('textbox',{name:'手动复制回复',exact:true}).getAttribute('readonly'),'');
-assert.equal(errors.length,0);fs.writeFileSync(`${out}/receipt.json`,JSON.stringify({passed:true,layouts,platformCaptures:12,checks:['confirmation escape and focus restoration','desktop and mobile entry links','clipboard refusal fallback'],errors}));await browser.close();console.log('PASS extra layout / entry / keyboard / clipboard checks');
+assert.equal(errors.length,0);fs.writeFileSync(`${out}/receipt.json`,JSON.stringify({passed:true,layouts,platformCaptures:12,checks:['confirmation escape and focus restoration','desktop and mobile entry links','clipboard refusal fallback'],errors}));console.log('PASS extra layout / entry / keyboard / clipboard checks');
+}finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

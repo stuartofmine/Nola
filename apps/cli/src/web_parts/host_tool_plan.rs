@@ -55,6 +55,31 @@ fn host_tool_plan_tools(settings: &AgentSettings, skills: &crate::skill_runtime:
     Ok((tools,digest))
 }
 
+fn bind_and_catalog_web_mcp(config: &mut Config, raw_servers: &[Value], session: &str) -> Result<(), String> {
+    if raw_servers.is_empty() {
+        config.mcp_server_registry.clear();
+        config.mcp_capability_catalog = Some(
+            crate::agent_host_driver::configured_mcp_capability_catalog(&[], 0)?,
+        );
+        return Ok(());
+    }
+    let bound = crate::mcp_connection_authority::bind_configurations(
+        raw_servers,
+        "nola-cli-host",
+        session,
+    )?;
+    crate::mcp_host::register_configured_servers(&bound).map_err(|error| error.message)?;
+    let discovered =
+        crate::mcp_host::describe_connected_cache(&bound).map_err(|error| error.message)?;
+    let revision =
+        crate::agent_host_driver::configured_mcp_capability_catalog_revision(&discovered);
+    let catalog =
+        crate::agent_host_driver::configured_mcp_capability_catalog(&discovered, revision)?;
+    config.mcp_server_registry = discovered;
+    config.mcp_capability_catalog = Some(catalog);
+    Ok(())
+}
+
 fn capture_current_host_tool_plan_tools(config: &Config, session: &str) -> Result<(Vec<HostToolPlanTool>,String),String> {
     let settings = NolaStore::open_default().and_then(|store| load_agent_settings_from_store(&store))?;
     let skills = web_skill_runtime_for_settings(config.skill_dirs.as_deref(), &settings)?;

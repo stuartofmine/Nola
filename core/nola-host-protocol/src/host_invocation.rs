@@ -77,6 +77,44 @@ pub enum HostModelRouteBinding {
     External { backend: String, model: Option<String>, provider: Option<String> },
 }
 
+impl HostModelRouteBinding {
+    pub fn same_route_authority(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Http(left), Self::Http(right)) => {
+                let mut normalized_right = right.clone();
+                if right.credential_sha256 != EMPTY_CREDENTIAL_SHA256
+                    && left.credential_sha256 != EMPTY_CREDENTIAL_SHA256
+                {
+                    normalized_right.credential_sha256 = left.credential_sha256.clone();
+                }
+                if let (Some(l_acc), Some(r_acc)) = (&left.siwc_account, &mut normalized_right.siwc_account) {
+                    if r_acc.account_id == l_acc.account_id
+                        && r_acc.client_id == l_acc.client_id
+                        && r_acc.subject == l_acc.subject
+                        && r_acc.credential_ref == l_acc.credential_ref
+                        && r_acc.account_revision >= l_acc.account_revision
+                    {
+                        r_acc.account_revision = l_acc.account_revision;
+                    }
+                }
+                left == &normalized_right
+            }
+            (Self::Native(left), Self::Native(right)) => {
+                let mut normalized_right = right.clone();
+                if let (Some(l_prof), Some(r_prof)) = (&left.profile_ref, &mut normalized_right.profile_ref) {
+                    if l_prof.profile_id == r_prof.profile_id
+                        && r_prof.admitted_revision >= l_prof.admitted_revision
+                    {
+                        r_prof.admitted_revision = l_prof.admitted_revision;
+                    }
+                }
+                left == &normalized_right
+            }
+            _ => self == other,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HostNativeModelAdapter { Mlx, LlamaCpp }
@@ -320,6 +358,27 @@ pub struct HostInvocationBinding {
     pub execution_policy_sha256: String,
 }
 
+fn same_mac_launch_authority(
+    left: Option<&crate::HostMacLaunchDescriptor>,
+    right: Option<&crate::HostMacLaunchDescriptor>,
+) -> bool {
+    match (left, right) {
+        (None, None) => true,
+        (Some(l), Some(r)) => {
+            let mut normalized = r.clone();
+            if l.model_profile_id == r.model_profile_id {
+                if let (Some(lr), Some(rr)) = (l.model_profile_revision, r.model_profile_revision) {
+                    if rr >= lr {
+                        normalized.model_profile_revision = Some(lr);
+                    }
+                }
+            }
+            l == &normalized
+        }
+        _ => false,
+    }
+}
+
 impl HostInvocationBinding {
     pub fn validate(&self) -> Result<(), &'static str> {
         if let Some(launch) = &self.mac_launch { launch.validate()?; }
@@ -389,6 +448,47 @@ impl HostInvocationBinding {
         self.validate()?;
         current.validate()?;
         if self != current {
+            return Err("Host invocation unavailable: frozen route, credentials or execution configuration changed");
+        }
+        Ok(())
+    }
+
+    pub fn require_exact_or_rotated_credential(
+        &self,
+        current: &Self,
+    ) -> Result<(), &'static str> {
+        self.validate()?;
+        current.validate()?;
+        if self == current {
+            return Ok(());
+        }
+        if !same_mac_launch_authority(self.mac_launch.as_ref(), current.mac_launch.as_ref())
+            || self.version != current.version
+            || !self.primary.same_route_authority(&current.primary)
+            || self.fallbacks.len() != current.fallbacks.len()
+            || !self
+                .fallbacks
+                .iter()
+                .zip(&current.fallbacks)
+                .all(|(left, right)| left.same_route_authority(right))
+            || self.generation != current.generation
+            || self.execution_policy_sha256 != current.execution_policy_sha256
+            || self.output_admission.preference != current.output_admission.preference
+            || self.output_admission.configured_context_window
+                != current.output_admission.configured_context_window
+            || self.output_admission.resolved != current.output_admission.resolved
+            || self.output_admission.routes.len() != current.output_admission.routes.len()
+            || !self
+                .output_admission
+                .routes
+                .iter()
+                .zip(&current.output_admission.routes)
+                .all(|(left, right)| {
+                    left.max_output_tokens == right.max_output_tokens
+                        && left.max_total_tokens == right.max_total_tokens
+                        && left.route.same_route_authority(&right.route)
+                })
+        {
             return Err("Host invocation unavailable: frozen route, credentials or execution configuration changed");
         }
         Ok(())

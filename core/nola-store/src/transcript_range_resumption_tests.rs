@@ -84,7 +84,7 @@ fn fixture_with_terminal(path: &std::path::Path, backing: &str, terminal: &str) 
     } else {
         parts.push(PartMutation::AppendText {
             part_id: "p".into(),
-            expected_content_digest: format!("{:x}", Sha256::digest(b"")),
+            expected_prefix_bytes: 0,
             text: TEXT.into(),
             updated_at_ms: 2,
         });

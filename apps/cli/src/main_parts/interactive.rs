@@ -369,7 +369,7 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
             SlashCommandResult::RunGoalPrompt(run_prompt) => {
                 goal_entry = false;
                 if recovery_blocked {
-                    terminal_notice!("恢复尚未完成，未启动新任务。请用 /resume 重试或选择其他会话。");
+                    terminal_notice!("{}", ui_text(UiText::RecoveryBlockedUseResume));
                     pending_draft = Some(prompt);
                     continue;
                 }
@@ -3816,6 +3816,15 @@ fn handle_interactive_slash_command(
                             },
                             _ => unreachable!(),
                         };
+                        if control == "resume"
+                            && session::load_session_goal_projection(session_id)?
+                                .and_then(|projection| projection.active)
+                                .is_some_and(|goal| goal.status != GoalStatus::Running)
+                        {
+                            crate::core_agent_runtime::rebind_goal_execution(
+                                &config.host_invocation_request()?,
+                            )?;
+                        }
                         submit_goal_command(
                             config,
                             format!("work:{session_id}:{control}:{}", uuid::Uuid::new_v4()),

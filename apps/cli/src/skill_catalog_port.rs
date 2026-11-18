@@ -4,7 +4,6 @@ use nola_application::{
 };
 use nola_core::agent::capability::{CapabilityToolReference, SkillExecutionMode};
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -17,27 +16,84 @@ pub fn load_web_builtin_skills() -> Result<Vec<Value>, String> {
 pub(crate) fn load_web_builtin_skills_with(application: &mut CliApplicationPort) -> Result<Vec<Value>, String> {
     let mut defaults = crate::builtin_skills::catalog(&[])?;
     let now = unix_time_ms()?;
+    let existing_editors: Vec<Value> = application.execute(ApplicationCommand::Skill {
+        command: SkillCommand::ListEditors,
+    })?;
+    let mut existing_builtins = HashMap::new();
+    for editor in &existing_editors {
+        if editor["record"]["source"] == "built_in" {
+            let skill: Skill = serde_json::from_value(editor["record"].clone())
+                .map_err(|error| error.to_string())?;
+            existing_builtins.insert(skill.id.clone(), skill);
+        }
+    }
     let inputs = defaults.iter().map(|item| {
         let id = item["id"].as_str().ok_or("Built-in Skill ID missing")?.to_owned();
+        if let Some(existing) = existing_builtins
+            .get(&id)
+            .filter(|skill| skill.instructions_ref.starts_with("file://"))
+        {
+            return Ok(SkillInput {
+                id,
+                source: SkillSource::BuiltIn,
+                version: existing.version.clone(),
+                display_name: existing.display_name.clone(),
+                summary: existing.summary.clone(),
+                category: existing.category.clone(),
+                instructions_ref: existing.instructions_ref.clone(),
+                instructions_text: existing.instructions_text.clone(),
+                required_tools: existing.required_tools.clone(),
+                default_mode: existing.default_mode,
+                enabled: existing.enabled,
+                created_at_ms: existing.created_at_ms,
+                updated_at_ms: existing.updated_at_ms,
+            });
+        }
         let text = item["content"].as_str().ok_or("Built-in instructions missing")?.to_owned();
-        let digest = format!("{:x}", Sha256::digest(text.as_bytes()));
-        Ok(SkillInput { id: id.clone(), source: SkillSource::BuiltIn, version: digest.clone(),
+        let existing = existing_builtins.get(&id);
+        let version = match existing {
+            Some(current) if current.instructions_text == text => current.version.clone(),
+            Some(_) => format!("builtin-{}", uuid::Uuid::new_v4()),
+            None => "v1".to_string(),
+        };
+        let instructions_ref = match existing {
+            Some(current) if current.instructions_text == text => current.instructions_ref.clone(),
+            _ => format!("nola://skills/{id}/{version}"),
+        };
+        Ok(SkillInput { id: id.clone(), source: SkillSource::BuiltIn, version,
             display_name: item["name"].as_str().unwrap_or(&id).into(),
             summary: item["description"].as_str().unwrap_or("").into(),
             category: item["category_id"].as_str().unwrap_or("").into(),
-            instructions_ref: format!("nola://skills/{id}/{digest}"), instructions_digest: digest,
+            instructions_ref,
             instructions_text: text, required_tools: Vec::new(), default_mode: None,
             enabled: true, created_at_ms: now, updated_at_ms: now })
     }).collect::<Result<Vec<_>, String>>()?;
-    let editors: Vec<Value> = application.execute(ApplicationCommand::Skill {
-        command: SkillCommand::SynchronizeBuiltIns { inputs },
-    })?;
+    let all_match = inputs.iter().all(|input| {
+        existing_builtins.get(&input.id).is_some_and(|current| {
+            input.version == current.version
+                && input.display_name == current.display_name
+                && input.summary == current.summary
+                && input.category == current.category
+                && input.instructions_ref == current.instructions_ref
+                && input.instructions_text == current.instructions_text
+                && input.required_tools == current.required_tools
+                && input.default_mode == current.default_mode
+        })
+    });
+    let editors = if all_match {
+        existing_editors
+    } else {
+        application.execute(ApplicationCommand::Skill {
+            command: SkillCommand::SynchronizeBuiltIns { inputs },
+        })?
+    };
     for item in &mut defaults {
         let editor = editors.iter().find(|editor| editor["record"]["id"] == item["id"])
             .ok_or("Built-in Skill editor missing")?;
         item["revision"] = editor["revision"].clone();
         item["enabled"] = editor["record"]["enabled"].clone();
         item["content"] = editor["record"]["instructions_text"].clone();
+        item["instructions_ref"] = editor["record"]["instructions_ref"].clone();
     }
     Ok(defaults)
 }
@@ -72,7 +128,6 @@ pub(crate) fn load_web_uploaded_skills_with(
                 "version": skill.version,
                 "content": skill.instructions_text,
                 "instructions_ref": skill.instructions_ref,
-                "instructions_digest": skill.instructions_digest,
             });
             if !skill.required_tools.is_empty() {
                 value["required_tools"] = serde_json::to_value(&skill.required_tools)
@@ -170,8 +225,10 @@ pub(crate) fn save_web_uploaded_skills_with(
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string();
-        let digest = format!("{:x}", Sha256::digest(instructions.as_bytes()));
-        let version = format!("content-{}", &digest[..16]);
+        let version = match existing.get(&id) {
+            Some(current) if current.instructions_text == instructions => current.version.clone(),
+            _ => format!("user-{}", uuid::Uuid::new_v4()),
+        };
         let display_name = skill
             .get("name")
             .and_then(Value::as_str)
@@ -220,7 +277,6 @@ pub(crate) fn save_web_uploaded_skills_with(
             summary,
             category,
             instructions_ref: format!("nola://skills/{id}/{version}"),
-            instructions_digest: digest,
             instructions_text: instructions,
             required_tools,
             default_mode,

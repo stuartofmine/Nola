@@ -672,7 +672,7 @@ final class MacSecondaryPageVisualEndToEndTests: XCTestCase {
         for section in ["general", "providers", "agent", "connections", "notifications", "data", "diagnostics"] {
             for width: CGFloat in [520, 1040] {
                 try await assertRenderedPage(
-                    MacSettingsView(snapshotHostState: .notConfigured, embedsInWorkspace: true, initialCategory: section),
+                    MacSettingsView(snapshotHostState: .notConfigured, initialCategory: section),
                     name: "settings-\(section)-\(Int(width))", size: CGSize(width: width, height: 760))
             }
         }
@@ -811,8 +811,8 @@ final class MacSecondaryPageNavigationTests: XCTestCase {
         let preferences = try XCTUnwrap(UserDefaults(suiteName: preferencesName))
         defer { preferences.removePersistentDomain(forName: preferencesName) }
         for dark in [false, true] {
-            for width: CGFloat in [520, 1040] {
-                let host = NSHostingView(rootView: MacSettingsView(snapshotHostState: .notConfigured, embedsInWorkspace: true)
+            for width: CGFloat in [820, 1040] {
+                let host = NSHostingView(rootView: MacSettingsView(snapshotHostState: .notConfigured)
                     .defaultAppStorage(preferences)
                     .environment(\.colorScheme, dark ? .dark : .light)
                     .environment(\.accessibilityEnabled, true)
@@ -825,7 +825,6 @@ final class MacSecondaryPageNavigationTests: XCTestCase {
                 defer { window.close() }
                 for section in ["general", "providers", "agent", "connections", "data", "diagnostics"] {
                     try await pressIdentifier("settings.category." + section, in: host)
-                    try await pressIdentifier("settings.back", in: host)
                 }
                 window.close()
             }

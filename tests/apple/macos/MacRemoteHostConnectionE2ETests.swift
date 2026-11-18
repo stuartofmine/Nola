@@ -154,7 +154,7 @@ final class MacRemoteHostConnectionE2ETests: XCTestCase {
         let receipt = try source.submissionReceipt()
         let service = await MacRemoteHostService(configurationStore: configuration)
         try await service.cancelRun(
-            identity: receipt.identity, requestDigest: receipt.request_digest,
+            identity: receipt.identity,
             configuration: MacRemoteHostConfiguration(
                 baseURL: try XCTUnwrap(URL(string: "http://127.0.0.1:\(port)/v1")),
                 token: "valid-token", expectedHostID: "fixture-host"

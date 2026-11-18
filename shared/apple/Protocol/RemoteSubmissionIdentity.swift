@@ -15,13 +15,9 @@ nonisolated struct AppleRemoteSubmissionIdentity: Codable, Equatable, Sendable {
 /// Transport acknowledgement is not a terminal Run receipt.
 nonisolated struct AppleRemoteCancellationRequest: Encodable, Sendable {
     let identity: AppleRemoteSubmissionIdentity
-    let request_digest: String
 
-    enum ValidationError: Error { case missingAdmissionDigest }
-    init(identity: AppleRemoteSubmissionIdentity, requestDigest: String) throws {
-        guard !requestDigest.isEmpty else { throw ValidationError.missingAdmissionDigest }
+    init(identity: AppleRemoteSubmissionIdentity) {
         self.identity = identity
-        request_digest = requestDigest
     }
 
     func object() throws -> [String: Any] {

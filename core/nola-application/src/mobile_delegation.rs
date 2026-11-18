@@ -267,7 +267,7 @@ pub(crate) fn prepare<R: AgentRuntimeCommandRepositories>(
                 )),
                 permission_scope_id: Some(format!("task:{}", task.id)),
                 cancellation_scope_id: Some(format!("task:{}", task.id)),
-                ..Default::default()
+                title: (!task.title.trim().is_empty()).then(|| task.title.clone()),
             },
         }
     };

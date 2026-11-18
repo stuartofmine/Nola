@@ -41,7 +41,6 @@ impl NolaStore {
                 || skill.summary != input.summary
                 || skill.category != input.category
                 || skill.instructions_ref != input.instructions_ref
-                || skill.instructions_digest != input.instructions_digest
                 || skill.instructions_text != input.instructions_text
                 || skill.required_tools_json != input.required_tools_json
                 || skill.default_mode != input.default_mode
@@ -219,7 +218,7 @@ impl NolaStore {
             SKILL_SELECT_SQL_BASE,
         );
         let mut statement = self.connection.prepare(&sql)?;
-        let rows = statement.query_map([], |row| Ok((skill_row(row)?, row.get(15)?)))?;
+        let rows = statement.query_map([], |row| Ok((skill_row(row)?, row.get(14)?)))?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(StoreError::from)
     }

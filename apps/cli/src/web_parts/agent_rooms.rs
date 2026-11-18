@@ -394,7 +394,10 @@ fn start_room_dispatch(config: Config, accepted: nola_application::agent_room::R
     // Both CLI recovery and HTTP observers use the same ownership guard.
     let Ok(Some(guard)) = RoomDispatchGuard::acquire(key) else { return; };
     let failed = accepted.clone();
-    if thread::Builder::new().name("room-dispatch".into()).spawn(move || {
+    if thread::Builder::new()
+        .name("room-dispatch".into())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
         let _guard = guard;
         match route_accepted_room(&config, accepted.clone()) {
             Ok(selected) => { let _ = execute_selected_room(&config, selected, None); },
@@ -601,7 +604,7 @@ fn execute_selected_room(config: &Config, mut selected: nola_application::agent_
         // remain the UI's source; a closed HTTP observer must not cancel a room.
                     let mut transport_failure = None;
                     if let Some(permission) = permission {
-                        let monitor=RoomCliCancellationMonitor::start(&identity,&request.request_digest);
+                        let monitor=RoomCliCancellationMonitor::start(&identity);
                         use std::io::BufRead;
                         for line in std::io::BufReader::new(response.into_reader()).lines() {
                             let line = line.map_err(|error| error.to_string())?;
@@ -653,12 +656,12 @@ struct RoomCliCancellationMonitor {
     worker: Option<std::thread::JoinHandle<Result<(),String>>>,
 }
 impl RoomCliCancellationMonitor {
-    fn start(identity:&RemoteSubmissionIdentity,digest:&str)->Self {
+    fn start(identity:&RemoteSubmissionIdentity)->Self {
         let stop=std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         #[cfg(any(feature = "terminal-ui", test))]
         let worker=crate::interaction::current_execution_cancellation().map(|control| {
             let stopped=stop.clone();
-            let body=json!({"identity":identity,"request_digest":digest});
+            let body=json!({"identity":identity});
             std::thread::spawn(move || {
                 while !stopped.load(std::sync::atomic::Ordering::SeqCst) {
                     if control.is_requested() {
@@ -675,7 +678,7 @@ impl RoomCliCancellationMonitor {
             })
         });
         #[cfg(not(any(feature = "terminal-ui", test)))]
-        let worker = { let _ = (identity, digest); None };
+        let worker = { let _ = identity; None };
         Self {stop,worker}
     }
     fn finish(mut self)->Result<(),String> {

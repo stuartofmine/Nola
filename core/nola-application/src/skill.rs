@@ -26,7 +26,6 @@ pub struct SkillInput {
     pub summary: String,
     pub category: String,
     pub instructions_ref: String,
-    pub instructions_digest: String,
     pub instructions_text: String,
     #[serde(default)]
     pub required_tools: Vec<CapabilityToolReference>,
@@ -46,7 +45,6 @@ pub struct Skill {
     pub summary: String,
     pub category: String,
     pub instructions_ref: String,
-    pub instructions_digest: String,
     pub instructions_text: String,
     #[serde(default)]
     pub required_tools: Vec<CapabilityToolReference>,
@@ -70,8 +68,8 @@ pub enum SkillCommand {
     SetBuiltInInstructionsChecked {
         id: String,
         expected_revision: i64,
+        version: String,
         instructions_ref: String,
-        instructions_digest: String,
         instructions_text: String,
         updated_at_ms: i64,
     },
@@ -196,7 +194,6 @@ pub(crate) fn execute_skill_command(
                             .map_err(|error| error.to_string())?;
                         input.version = current.version.clone();
                         input.instructions_ref = current.instructions_ref.clone();
-                        input.instructions_digest = current.instructions_digest.clone();
                         input.instructions_text = current.instructions_text.clone();
                         input.required_tools = current.required_tools.clone();
                         input.default_mode = current.default_mode;
@@ -209,7 +206,6 @@ pub(crate) fn execute_skill_command(
                         && input.summary == current.summary
                         && input.category == current.category
                         && input.instructions_ref == current.instructions_ref
-                        && input.instructions_digest == current.instructions_digest
                         && input.instructions_text == current.instructions_text
                         && input.required_tools == current.required_tools
                         && input.default_mode == current.default_mode
@@ -319,15 +315,33 @@ pub(crate) fn execute_skill_command(
             }
             let mut restored = Vec::with_capacity(ids.len());
             for (id, expected_revision) in expected_revisions {
-                restored.push(execute_skill_command(
-                    store,
-                    SkillCommand::SetEnabledChecked {
-                        id,
-                        enabled: true,
-                        expected_revision,
-                        updated_at_ms,
-                    },
-                )?);
+                let selection = store
+                    .skill_instruction_selection(&id)
+                    .map_err(|error| error.to_string())?;
+                if let Some(sel) = selection.filter(|value| value.override_version.is_some()) {
+                    store
+                        .restore_built_in_package_version(
+                            &id,
+                            expected_revision,
+                            &sel.package_version,
+                            updated_at_ms,
+                        )
+                        .map_err(|error| error.to_string())?;
+                    restored.push(execute_skill_command(
+                        store,
+                        SkillCommand::GetEditor { id },
+                    )?);
+                } else {
+                    restored.push(execute_skill_command(
+                        store,
+                        SkillCommand::SetEnabledChecked {
+                            id,
+                            enabled: true,
+                            expected_revision,
+                            updated_at_ms,
+                        },
+                    )?);
+                }
             }
             store
                 .put_skill_visibility(r#"{"schemaVersion":1,"ids":[]}"#, updated_at_ms)
@@ -391,12 +405,11 @@ pub(crate) fn execute_skill_command(
                 return Err("built-in editing requires a built-in Skill".into());
             }
             let mut editor = if current.instructions_text != instructions_text {
-                use sha2::{Digest, Sha256};
-                let digest = format!("{:x}", Sha256::digest(instructions_text.as_bytes()));
+                let version = format!("override-{}", uuid::Uuid::new_v4());
                 execute_skill_command(store, SkillCommand::SetBuiltInInstructionsChecked {
                     id: id.clone(), expected_revision,
-                    instructions_ref: format!("nola://skills/{id}/{digest}"),
-                    instructions_digest: digest, instructions_text, updated_at_ms,
+                    instructions_ref: format!("nola://skills/{id}/{version}"),
+                    version, instructions_text, updated_at_ms,
                 })?
             } else {
                 execute_skill_command(store, SkillCommand::GetEditor { id: id.clone() })?
@@ -411,8 +424,8 @@ pub(crate) fn execute_skill_command(
         SkillCommand::SetBuiltInInstructionsChecked {
             id,
             expected_revision,
+            version,
             instructions_ref,
-            instructions_digest,
             instructions_text,
             updated_at_ms,
         } => {
@@ -430,19 +443,18 @@ pub(crate) fn execute_skill_command(
                 .unwrap_or_else(|| current.version.clone());
             let selection = nola_store_port::skill::SkillInstructionSelection {
                 package_version,
-                override_version: Some(instructions_digest.clone()),
+                override_version: Some(version.clone()),
             };
             crate::register_skill(
                 store,
                 SkillInput {
                     id: id.clone(),
                     source: current.source,
-                    version: instructions_digest.clone(),
+                    version,
                     display_name: current.display_name,
                     summary: current.summary,
                     category: current.category,
                     instructions_ref,
-                    instructions_digest,
                     instructions_text,
                     required_tools: current.required_tools,
                     default_mode: current.default_mode,
@@ -592,7 +604,6 @@ impl TryFrom<SkillInput> for UpsertSkillInput {
             summary: value.summary,
             category: value.category,
             instructions_ref: value.instructions_ref,
-            instructions_digest: value.instructions_digest,
             instructions_text: value.instructions_text,
             required_tools_json,
             default_mode: value.default_mode.map(|mode| match mode {
@@ -631,7 +642,6 @@ impl TryFrom<StoredSkill> for Skill {
             summary: value.summary,
             category: value.category,
             instructions_ref: value.instructions_ref,
-            instructions_digest: value.instructions_digest,
             instructions_text: value.instructions_text,
             required_tools,
             default_mode,

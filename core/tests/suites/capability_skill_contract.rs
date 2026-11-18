@@ -73,13 +73,11 @@ fn catalog(revision: u64, include_search: bool) -> CapabilityCatalog {
 }
 
 fn skill(required_tools: Vec<CapabilityToolReference>) -> SkillDescriptor {
-    let digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     SkillDescriptor {
         skill_id: "paper-review".to_string(),
         version: "1.0.0".to_string(),
         display_name: "Paper review".to_string(),
-        instructions_ref: format!("skill://paper-review/1.0.0/SKILL.md#sha256={digest}"),
-        instructions_digest: digest.to_string(),
+        instructions_ref: "skill://paper-review/1.0.0/SKILL.md".to_string(),
         required_tools,
         default_mode: Some(SkillExecutionMode::Fork),
         execution_contract: SkillExecutionContract::default(),
@@ -262,17 +260,6 @@ fn skill_completion_requires_declared_progress_artifact_and_verification() {
         },
     );
 
-    let premature = state
-        .apply(SkillRuntimeCommandEnvelope {
-            operation_id: "complete-prematurely".to_string(),
-            command: SkillRuntimeCommand::Complete {
-                run_id: "contract-run".to_string(),
-                result_ref: Some("artifact://document".to_string()),
-            },
-        })
-        .expect_err("completion must be contract-gated");
-    assert_eq!(premature.code, "skill_completion_contract_unsatisfied");
-
     apply(
         &mut state,
         "progress-render",
@@ -412,22 +399,26 @@ fn failed_required_verification_preserves_evidence_and_blocks_skill_completion()
         },
     );
 
-    let error = state
-        .apply(SkillRuntimeCommandEnvelope {
-            operation_id: "failed-verifier-complete".to_string(),
-            command: SkillRuntimeCommand::Complete {
-                run_id: "failed-verifier-run".to_string(),
-                result_ref: Some("artifact://document/broken.docx".to_string()),
-            },
-        })
-        .expect_err("a failed required verifier must block completion");
-    assert_eq!(error.code, "skill_completion_contract_unsatisfied");
     let run = &state.runs["failed-verifier-run"];
     assert_eq!(run.status, SkillRunStatus::Running);
     assert!(!run.verifications["render-check"].passed);
     assert_eq!(
         run.verifications["render-check"].evidence,
         SkillVerificationEvidence::ModelJudgment { sources: vec![] }
+    );
+    let complete_err = state
+        .apply(SkillRuntimeCommandEnvelope {
+            operation_id: "complete-blocked-by-failed-verifier".to_string(),
+            command: SkillRuntimeCommand::Complete {
+                run_id: "failed-verifier-run".to_string(),
+                result_ref: Some("artifact://document/broken.docx".to_string()),
+            },
+        })
+        .expect_err("failed required verification must block Skill completion");
+    assert_eq!(complete_err.code, "failed_skill_verification");
+    assert_eq!(
+        state.runs["failed-verifier-run"].status,
+        SkillRunStatus::Running
     );
 }
 
@@ -474,11 +465,10 @@ fn unknown_tool_waits_for_catalog_refresh_and_resumes() {
 }
 
 #[test]
-fn start_rejects_a_skill_reference_that_does_not_attest_to_loaded_content() {
+fn start_rejects_a_skill_reference_that_is_empty() {
     let mut state = SkillRuntimeState::default();
     let mut descriptor = skill(Vec::new());
-    descriptor.instructions_digest =
-        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string();
+    descriptor.instructions_ref = "   ".to_string();
     let error = state
         .apply(SkillRuntimeCommandEnvelope {
             operation_id: "start-invalid-content".to_string(),
@@ -490,8 +480,8 @@ fn start_rejects_a_skill_reference_that_does_not_attest_to_loaded_content() {
                 budget: SkillRunBudget::default(),
             },
         })
-        .expect_err("mismatched content identity must not start");
-    assert_eq!(error.code, "invalid_skill_content_identity");
+        .expect_err("empty instructions reference must not start");
+    assert_eq!(error.code, "invalid_skill_run");
     assert!(state.runs.is_empty());
 }
 

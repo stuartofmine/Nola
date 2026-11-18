@@ -54,7 +54,9 @@ fn source(
     digest: &str,
 ) -> StoreResult<Option<SourceSubmissionReceipt>> {
     id.validate().map_err(invalid)?;
-    validate_request_digest(digest).map_err(invalid)?;
+    if !digest.is_empty() {
+        validate_request_digest(digest).map_err(invalid)?;
+    }
     let raw: Option<String> = c
         .query_row(
             "SELECT receipt_json FROM source_submission_receipts WHERE submission_id=?1",
@@ -65,7 +67,7 @@ fn source(
     raw.map(|raw| {
         let mut receipt: SourceSubmissionReceipt = serde_json::from_str(&raw)?;
         receipt.validate().map_err(invalid)?;
-        if receipt.identity != *id || receipt.request_digest != digest {
+        if receipt.identity != *id || (!digest.is_empty() && receipt.request_digest != digest) {
             return Err(invalid("source submission identity or request changed"));
         }
         if receipt.phase == RemoteSubmissionPhase::Admitted {
@@ -443,7 +445,9 @@ impl NolaStore {
         rejection: Option<&str>,
     ) -> StoreResult<SourceSubmissionReceipt> {
         id.validate().map_err(invalid)?;
-        validate_request_digest(digest).map_err(invalid)?;
+        if !digest.is_empty() {
+            validate_request_digest(digest).map_err(invalid)?;
+        }
         let tx = self.write_transaction()?;
         let old = source(&tx, id, digest)?;
         if old.is_none() {
@@ -464,10 +468,17 @@ impl NolaStore {
                 return Ok(receipt.clone());
             }
         }
+        let resolved_digest = if digest.is_empty() {
+            old.as_ref()
+                .map(|r| r.request_digest.clone())
+                .unwrap_or_else(|| "0".repeat(64))
+        } else {
+            digest.to_owned()
+        };
         let receipt = SourceSubmissionReceipt {
             protocol_version: 1,
             identity: id.clone(),
-            request_digest: digest.into(),
+            request_digest: resolved_digest,
             phase: if rejection.is_some() {
                 RemoteSubmissionPhase::Rejected
             } else {

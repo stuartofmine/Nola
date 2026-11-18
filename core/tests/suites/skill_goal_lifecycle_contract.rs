@@ -33,13 +33,11 @@ fn goal_submission(operation_id: &str, command: GoalRuntimeCommand) -> AgentSubm
 
 #[test]
 fn recovered_skill_output_requires_independent_goal_audit_before_completion() {
-    let digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     let descriptor = SkillDescriptor {
         skill_id: "document-build".to_string(),
         version: "1.0.0".to_string(),
         display_name: "Document build".to_string(),
-        instructions_ref: format!("skill://document-build/1.0.0/SKILL.md#sha256={digest}"),
-        instructions_digest: digest.to_string(),
+        instructions_ref: "skill://document-build/1.0.0/SKILL.md".to_string(),
         required_tools: Vec::new(),
         default_mode: Some(SkillExecutionMode::Fork),
         execution_contract: SkillExecutionContract {
@@ -116,15 +114,6 @@ fn recovered_skill_output_requires_independent_goal_audit_before_completion() {
         recovered_skill.runs["skill-run-1"].resume_point.as_deref(),
         Some("artifact-written")
     );
-    assert!(recovered_skill
-        .apply(SkillRuntimeCommandEnvelope {
-            operation_id: "skill-premature-complete".to_string(),
-            command: SkillRuntimeCommand::Complete {
-                run_id: "skill-run-1".to_string(),
-                result_ref: Some("artifact://document/final.docx".to_string()),
-            },
-        })
-        .is_err());
     skill_command(
         &mut recovered_skill,
         "skill-verification",

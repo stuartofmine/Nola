@@ -237,7 +237,8 @@ struct MacModelCenterView: View {
             Button(String(localized: "Test Model…", table: "ModelCenter")) { openWindow(id: "model-test") }
         } label: {
             Label(String(localized: "Diagnostics", table: "ModelCenter"), systemImage: "ellipsis")
-        }.labelStyle(.iconOnly).menuStyle(.borderlessButton).fixedSize()
+        }
+        .menuStyle(MacToolbarMenuStyle(size: 30))
     }
 
     private var defaultModelControl: some View {
@@ -259,7 +260,7 @@ struct MacModelCenterView: View {
                     Text(String(localized: "Default chat model", table: "ModelCenter") + " · " + preference.title)
                         .font(.callout).lineLimit(1).truncationMode(.middle)
                 }
-                .menuStyle(.borderlessButton)
+                .menuStyle(MacPillMenuStyle(height: 28))
                 .help(String(localized: "Used by conversations that inherit the default. Running requests keep their current model.", table: "ModelCenter"))
                 .accessibilityIdentifier("default-chat-model-picker")
                 .accessibilityLabel(String(localized: "Default chat model", table: "ModelCenter"))

@@ -385,7 +385,7 @@ final class MacCanonicalDataSourceEndToEndTests: XCTestCase {
                 id: "conversation-a", title: "Data source consumer", settingsJSON: nil,
                 createdAtMs: now, updatedAtMs: now
             )).created)
-            var contract = MacDataSourceContract(
+            let contract = MacDataSourceContract(
                 sourceID: sourceID,
                 connectorID: "mac.test.http",
                 connectorVersion: 1,
@@ -403,10 +403,8 @@ final class MacCanonicalDataSourceEndToEndTests: XCTestCase {
                 validationState: .verified,
                 validatedAt: .now,
                 observedAt: .now,
-                errorMessage: nil,
-                validationDigest: nil
+                errorMessage: nil
             )
-            contract.sealValidation()
             let draft = try store.createDataSourceDraft(MacCanonicalDataSourceDraft(
                 id: sourceID,
                 name: "Fixture",

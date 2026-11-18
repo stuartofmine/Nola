@@ -131,7 +131,7 @@ private struct MacLocalActivitySummariesView: View {
                 } label: {
                     Image(systemName: "ellipsis.circle")
                 }
-                .macToolbarIcon()
+                .menuStyle(MacToolbarMenuStyle())
                 .help(String(localized: "Clear History"))
                 .accessibilityLabel(String(localized: "Clear History"))
             }

@@ -351,13 +351,13 @@ class WebAgentProvider @Inject constructor(
     }
 
     suspend fun cancelAdmittedSubmission(identity: com.nola.data.remote.api.RemoteSubmissionIdentity,
-        requestDigest: String, configuration: Config? = config) {
+        configuration: Config? = config) {
         val cfg = configuration ?: error("Web Agent Host is not configured")
         require(identity.sourceHostId == cfg.expectedHostId && identity.clientId == cfg.clientId)
         webHostApi.cancelAdmittedRemoteSubmission(
             hostBaseUrl = cfg.hostBaseUrl,
             token = cfg.token,
-            identity = identity, requestDigest = requestDigest,
+            identity = identity,
             pinnedCertificateSha256 = cfg.pinnedCertificateSha256
         )
     }

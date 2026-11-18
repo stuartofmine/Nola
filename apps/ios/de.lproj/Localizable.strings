@@ -3218,3 +3218,27 @@
 "main.experts.sourceChanged" = "Die Host-Daten haben sich geändert. Lade das Expertenverzeichnis neu und wähle die Experten erneut. Deine Nachricht bleibt erhalten.";
 
 "run.blocked.inputBudget" = "Diese Anfrage überschreitet das Eingabebudget des Modells. Kürze den Verlauf oder Anhänge, aktiviere weniger Werkzeuge oder wähle ein Modell mit größerem Kontextfenster.";
+"chat.task.state.retry_waiting" = "Wartet auf Wiederholung";
+"chat.host_tool.name.goal_complete" = "Ziel abschließen";
+"chat.host_tool.name.ask_user" = "Eingabe anfordern";
+"chat.host_tool.name.mcp_list" = "MCP-Ressourcen auflisten";
+"chat.host_tool.name.mcp_read" = "MCP-Ressource lesen";
+"chat.conversations.rename" = "Unterhaltung umbenennen";
+"chat.conversations.title_field" = "Titel";
+"a2ui.history.readOnly" = "Historische Formulare sind schreibgeschützt.";
+"a2ui.date.useShown" = "Angezeigtes Datum oder Uhrzeit verwenden";
+"a2ui.date.clear" = "Löschen";
+"a2ui.component.unsupported" = "Komponente nicht verfügbar: ";
+"a2ui.history.unavailable" = "Diese Version ist nicht verfügbar.";
+"a2ui.history.mismatch" = "Formularversion im Verlauf stimmt nicht überein.";
+"a2ui.reloadForm" = "Formular neu laden";
+"a2ui.submission.pending" = "Vorheriges Absenden unbestätigt. Prüfe das ursprüngliche Ergebnis.";
+"a2ui.intent.reconnectHost" = "Mit dem ursprünglichen Host neu verbinden, um das Formular zu bestätigen.";
+"a2ui.intent.previousUnconfirmed" = "Vorheriges Formularergebnis unbestätigt. Prüfe zuerst das Original.";
+"a2ui.surface.source_changed" = "Gesprächsquelle geändert. Kehre zur ursprünglichen Unterhaltung zurück.";
+"a2ui.intent.source_changed" = "Quelle geändert. Verbinde dich mit dem ursprünglichen Host zur Prüfung.";
+"a2ui.form.updated" = "Formular aktualisiert. Vor dem Senden erneut bestätigen.";
+"a2ui.queue.not_executed" = "Die Formularaktion wurde nicht ausgeführt (abgelehnt oder abgebrochen).";
+"a2ui.queue.cancel_rejected" = "Nicht ausgeführte Formularaktion entfernen";
+"chat.host.reconnect_bound" = "Mit dem gebundenen Host dieser Unterhaltung neu verbinden.";
+"chat.host.source_unavailable" = "Quell-Host dieser Unterhaltung nicht verifizierbar.";

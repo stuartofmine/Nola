@@ -3,7 +3,6 @@
 // - Purpose: Registers Mac-only built-in Skills and exposes them to the local Agent Host safely.
 
 import Foundation
-import CryptoKit
 
 nonisolated enum MacSkillFunctionalCategory: String, CaseIterable, Sendable {
     case documents
@@ -322,19 +321,65 @@ nonisolated enum MacBuiltInSkillRegistry {
 
     static func hasOverride(
         for id: MacBuiltInSkillID,
-        overridesRootURL: URL = builtInSkillOverridesRootURL
+        overridesRootURL: URL = builtInSkillOverridesRootURL,
+        store: (any MacSkillCatalogApplicationClient)? = nil
     ) -> Bool {
         let url = overridesRootURL
             .appendingPathComponent(id.resourceDirectory, isDirectory: true)
             .appendingPathComponent("SKILL.md", isDirectory: false)
-        return FileManager.default.fileExists(atPath: url.path)
+        if FileManager.default.fileExists(atPath: url.path) {
+            return true
+        }
+        let activeStore = store ?? (overridesRootURL == builtInSkillOverridesRootURL ? MacApplicationPort.shared : nil)
+        if let activeStore,
+           let record = try? activeStore.skillEditor(id.rawValue)?.record {
+            if record.instructionsRef.hasPrefix("file://\(overridesRootURL.standardizedFileURL.path)") {
+                return true
+            }
+            if let bundledURL = resourceRootURL?
+                .appendingPathComponent(id.resourceDirectory, isDirectory: true)
+                .appendingPathComponent("SKILL.md", isDirectory: false),
+               let bundledText = try? String(contentsOf: bundledURL, encoding: .utf8),
+               record.instructionsText != bundledText {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func stageBundledCompanionResources(
+        for id: MacBuiltInSkillID,
+        into directory: URL,
+        resourceRootURL: URL? = MacBuiltInSkillRegistry.resourceRootURL
+    ) throws {
+        guard let bundledDirectory = resourceRootURL?
+            .appendingPathComponent(id.resourceDirectory, isDirectory: true),
+              FileManager.default.fileExists(atPath: bundledDirectory.path) else {
+            return
+        }
+        let companionURLs = try FileManager.default.contentsOfDirectory(
+            at: bundledDirectory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ).filter { $0.lastPathComponent != "SKILL.md" }
+        for sourceURL in companionURLs {
+            let destinationURL = directory.appendingPathComponent(
+                sourceURL.lastPathComponent,
+                isDirectory: sourceURL.hasDirectoryPath
+            )
+            if FileManager.default.fileExists(atPath: destinationURL.path) {
+                try FileManager.default.removeItem(at: destinationURL)
+            }
+            try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+        }
     }
 
     @discardableResult
     static func saveOverride(
         _ content: String,
         for id: MacBuiltInSkillID,
-        overridesRootURL: URL = builtInSkillOverridesRootURL
+        overridesRootURL: URL = builtInSkillOverridesRootURL,
+        store: any MacSkillCatalogApplicationClient = MacApplicationPort.shared
     ) throws -> URL {
         let directory = overridesRootURL
             .appendingPathComponent(id.resourceDirectory, isDirectory: true)
@@ -343,42 +388,30 @@ nonisolated enum MacBuiltInSkillRegistry {
             withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700]
         )
-        if let bundledDirectory = resourceRootURL?
-            .appendingPathComponent(id.resourceDirectory, isDirectory: true),
-           FileManager.default.fileExists(atPath: bundledDirectory.path) {
-            let companionURLs = try FileManager.default.contentsOfDirectory(
-                at: bundledDirectory,
-                includingPropertiesForKeys: nil,
-                options: [.skipsHiddenFiles]
-            ).filter { $0.lastPathComponent != "SKILL.md" }
-            for sourceURL in companionURLs {
-                let destinationURL = directory.appendingPathComponent(
-                    sourceURL.lastPathComponent,
-                    isDirectory: sourceURL.hasDirectoryPath
-                )
-                if FileManager.default.fileExists(atPath: destinationURL.path) {
-                    try FileManager.default.removeItem(at: destinationURL)
-                }
-                try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
-            }
-        }
+        try stageBundledCompanionResources(for: id, into: directory)
         let url = directory.appendingPathComponent("SKILL.md", isDirectory: false)
         try content.write(to: url, atomically: true, encoding: .utf8)
         try? FileManager.default.setAttributes(
             [.posixPermissions: 0o600],
             ofItemAtPath: url.path
         )
+        try? synchronizeCatalog(overridesRootURL: overridesRootURL, store: store)
         return url
     }
 
     static func resetOverride(
         for id: MacBuiltInSkillID,
-        overridesRootURL: URL = builtInSkillOverridesRootURL
+        overridesRootURL: URL = builtInSkillOverridesRootURL,
+        store: (any MacSkillCatalogApplicationClient)? = nil
     ) throws {
         let directory = overridesRootURL
             .appendingPathComponent(id.resourceDirectory, isDirectory: true)
         if FileManager.default.fileExists(atPath: directory.path) {
             try FileManager.default.removeItem(at: directory)
+        }
+        let activeStore = store ?? (overridesRootURL == builtInSkillOverridesRootURL ? MacApplicationPort.shared : nil)
+        if let activeStore {
+            try? synchronizeCatalog(overridesRootURL: overridesRootURL, store: activeStore)
         }
     }
 
@@ -392,6 +425,34 @@ nonisolated enum MacBuiltInSkillRegistry {
         )
     }
 
+    static var builtInSkillsCacheRootURL: URL {
+        MacAppEnvironment.shared.configDirectory.appendingPathComponent("BuiltInSkillsCache", isDirectory: true)
+    }
+
+    static func materializedInstructionURL(
+        for id: MacBuiltInSkillID,
+        record: MacCanonicalSkill,
+        cacheRootURL: URL = builtInSkillsCacheRootURL,
+        resourceRootURL: URL? = MacBuiltInSkillRegistry.resourceRootURL
+    ) throws -> URL {
+        if let url = URL(string: record.instructionsRef), url.isFileURL {
+            return url
+        }
+        guard let url = URL(string: record.instructionsRef), url.scheme == "nola" else {
+            throw CocoaError(.fileReadUnsupportedScheme)
+        }
+        let skillDirectory = cacheRootURL.appendingPathComponent(id.rawValue, isDirectory: true)
+        try FileManager.default.createDirectory(at: skillDirectory, withIntermediateDirectories: true)
+        try stageBundledCompanionResources(for: id, into: skillDirectory, resourceRootURL: resourceRootURL)
+        let fileURL = skillDirectory.appendingPathComponent("SKILL.md", isDirectory: false)
+        let data = Data(record.instructionsText.utf8)
+        if let existing = try? Data(contentsOf: fileURL), existing == data {
+            return fileURL
+        }
+        try data.write(to: fileURL, options: .atomic)
+        return fileURL
+    }
+
     static func extensionItems(
         store: any MacSkillCatalogApplicationClient = MacApplicationPort.shared
     ) throws -> [MacExtensionItem] {
@@ -400,9 +461,7 @@ nonisolated enum MacBuiltInSkillRegistry {
         let removed = try hiddenSkillIDs(store: store)
         return try MacBuiltInSkillID.allCases.compactMap { id in
             guard !removed.contains(id), let record = records[id.rawValue] else { return nil }
-            guard let url = URL(string: record.instructionsRef), url.isFileURL else {
-                throw CocoaError(.fileReadUnsupportedScheme)
-            }
+            let url = try materializedInstructionURL(for: id, record: record)
             return MacExtensionItem(
                 id: "builtin-skill:\(id.rawValue)",
                 kind: .skill,
@@ -458,6 +517,12 @@ nonisolated enum MacBuiltInSkillRegistry {
         overridesRootURL: URL = builtInSkillOverridesRootURL,
         store: any MacSkillCatalogApplicationClient = MacApplicationPort.shared
     ) throws {
+        for id in MacBuiltInSkillID.allCases {
+            let directory = overridesRootURL.appendingPathComponent(id.resourceDirectory, isDirectory: true)
+            if FileManager.default.fileExists(atPath: directory.path) {
+                try FileManager.default.removeItem(at: directory)
+            }
+        }
         let records = try canonicalRecords(overridesRootURL: overridesRootURL, store: store)
         let now = Int64(Date().timeIntervalSince1970 * 1_000)
         let visibility = try store.productSetting(key: MacProductSettingKeys.hiddenBuiltInSkills)
@@ -597,18 +662,25 @@ nonisolated enum MacBuiltInSkillRegistry {
                 }.joined(separator: "\n")
             ])
         }
+        let storedBuiltIns = try store.listSkills().filter { $0.source == .builtIn }
+        let storedByID = Dictionary(uniqueKeysWithValues: storedBuiltIns.map { ($0.id, $0) })
         var updates: [MacCanonicalSkillInput] = []
         for descriptor in packages {
             let data = try Data(contentsOf: descriptor.instructionURL)
             guard let text = String(data: data, encoding: .utf8) else {
                 throw MacBuiltInSkillRegistryError.invalidInstructionEncoding(descriptor.id.rawValue)
             }
-            let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
             let instructionRef = descriptor.instructionURL.standardizedFileURL.absoluteString
-            // A version also freezes its source reference. Relocating the app
-            // registers a new version rather than rewriting an immutable one.
-            let version = SHA256.hash(data: Data((digest + "\n" + instructionRef).utf8))
-                .map { String(format: "%02x", $0) }.joined()
+            // Reuse the existing immutable version when instruction ref and body match
+            // so startup avoids redundant SHA-256 recomputation on local bundle files.
+            let version: String
+            if let existing = storedByID[descriptor.id.rawValue],
+               existing.instructionsRef == instructionRef,
+               existing.instructionsText == text {
+                version = existing.version
+            } else {
+                version = "v1-\(UUID().uuidString.lowercased())"
+            }
             let timestamp = Int64((try descriptor.instructionURL.resourceValues(
                 forKeys: [.contentModificationDateKey]
             ).contentModificationDate?.timeIntervalSince1970 ?? 0) * 1_000)
@@ -620,7 +692,6 @@ nonisolated enum MacBuiltInSkillRegistry {
                 summary: descriptor.id.routingDescription,
                 category: descriptor.id.functionalCategory.rawValue,
                 instructionsRef: instructionRef,
-                instructionsDigest: digest,
                 instructionsText: text,
                 requiredTools: [],
                 defaultMode: .inline,
@@ -631,7 +702,6 @@ nonisolated enum MacBuiltInSkillRegistry {
                 updatedAtMs: timestamp
             ))
         }
-        let storedBuiltIns = try store.listSkills().filter { $0.source == .builtIn }
         let catalogIsCurrent = catalog(updates, matches: storedBuiltIns)
         if !updates.isEmpty, !catalogIsCurrent {
             _ = try store.synchronizeBuiltInSkills(updates)
@@ -662,7 +732,6 @@ nonisolated enum MacBuiltInSkillRegistry {
                 && record.summary == input.summary
                 && record.category == input.category
                 && record.instructionsRef == input.instructionsRef
-                && record.instructionsDigest == input.instructionsDigest
                 && record.instructionsText == input.instructionsText
                 && record.requiredTools == input.requiredTools
                 && record.defaultMode == input.defaultMode

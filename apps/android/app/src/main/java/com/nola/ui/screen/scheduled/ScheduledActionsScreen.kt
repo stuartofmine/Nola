@@ -80,6 +80,7 @@ import com.nola.ui.components.NolaEmptyState
 import com.nola.ui.components.NolaHeroCard
 import com.nola.ui.components.NolaSectionTitle
 import com.nola.ui.components.NolaSpacing
+import com.nola.ui.components.NolaSwitch
 import com.nola.ui.components.NolaTopAppBar
 import java.text.SimpleDateFormat
 import java.text.DateFormatSymbols
@@ -266,27 +267,8 @@ fun ScheduledActionsScreen(
                 }
             }
 
-            if (state.isLoading && state.actions.isEmpty()) {
-                item {
-                    NolaCard {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = NolaSpacing.md),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                            Spacer(Modifier.width(10.dp))
-                            Text(
-                                stringResource(R.string.scheduled_loading),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-            }
-
-            state.errorMessage?.let { error ->
+            if (state.errorMessage != null) {
+                state.errorMessage?.let { error ->
                 item {
                     NolaCard {
                         Row(
@@ -318,6 +300,7 @@ fun ScheduledActionsScreen(
                         }
                     }
                 }
+            }
             }
 
             if (state.actions.isNotEmpty()) {
@@ -633,7 +616,7 @@ fun ScheduledActionCard(
                     if (isBusy) {
                         CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                     } else {
-                        Switch(
+                        NolaSwitch(
                             checked = action.enabled,
                             onCheckedChange = onToggle,
                             modifier = Modifier.testTag("scheduled.toggle.${action.id}")

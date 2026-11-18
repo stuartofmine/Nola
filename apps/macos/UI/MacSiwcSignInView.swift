@@ -223,6 +223,7 @@ struct MacSiwcSignInView: View {
                 TextField(String(localized: "Account label", table: "ModelCenter"), text: $name)
                     .textFieldStyle(.roundedBorder).padding(.top, 8)
             }
+            .disclosureGroupStyle(MacRowDisclosureStyle(isPlain: true))
             Text(String(localized: "This signs Nola in separately from Codex. Models are enabled only after you choose them.", table: "ModelCenter"))
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         } else if model.flow?.phase == "committed" {

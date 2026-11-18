@@ -27,6 +27,26 @@ nonisolated private struct IOSExpertMentionRejoinRequest: Sendable {
     let query: ExpertMentionQuery
 }
 
+private struct IOSRenameConversationAlert: ViewModifier {
+    @Binding var target: (id: UUID, baseline: String)?
+    @Binding var draft: String
+    let confirm: ((id: UUID, baseline: String), String) -> Void
+
+    func body(content: Content) -> some View {
+        content.alert(String(localized: "chat.conversations.rename", defaultValue: "Rename Conversation"), isPresented: Binding(
+            get: { target != nil }, set: { if !$0 { target = nil } }
+        )) {
+            TextField(String(localized: "chat.conversations.title_field", defaultValue: "Title"), text: $draft)
+            Button(L10n.cancel, role: .cancel) { target = nil }
+            Button(L10n.done) {
+                guard let captured = target else { return }
+                target = nil
+                confirm(captured, draft)
+            }
+        }
+    }
+}
+
 private struct IOSExpertRejoinAlert: ViewModifier {
     @Binding var request: IOSExpertMentionRejoinRequest?
     let confirm: (IOSExpertMentionRejoinRequest) -> Void
@@ -196,6 +216,9 @@ struct ChatView: View {
     }
     @State private var workToolsPresentation: WorkToolsPresentation?
     @State private var queuedWorkDestination: (owner: UUID, destination: IOSConversationWorkDestination)?
+    @State private var queuedRenameOwner: (id: UUID, baseline: String)?
+    @State private var renameTarget: (id: UUID, baseline: String)?
+    @State private var renameDraft = ""
     private struct ParameterEditorOwner {
         let conversationID: UUID
         let model: ModelInfo
@@ -873,6 +896,25 @@ struct ChatView: View {
         taskResultDestination = destination
     }
 
+    private func receiveConversationRenamed(_ notification: Notification) {
+        guard let renamedID = notification.object as? UUID,
+              renamedID == container.chatManager.currentConversationId,
+              let nextTitle = notification.userInfo?["title"] as? String else { return }
+        currentConversationTitle = IOSConversationTitlePresentationPolicy.displayTitle(
+            nextTitle, conversationID: renamedID.uuidString, fallback: L10n.chatConversationDefaultTitle)
+    }
+
+    private func confirmRenameConversation(_ target: (id: UUID, baseline: String), draft: String) {
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != target.baseline else { return }
+        do {
+            try container.conversationStore?.updateConversationTitle(conversationId: target.id, title: trimmed)
+            NotificationCenter.default.post(name: .nolaConversationRenamed, object: target.id, userInfo: ["title": trimmed])
+        } catch {
+            attachmentImportMessage = error.localizedDescription
+        }
+    }
+
     private func recordDraftPersistenceFailure(_ notification: Notification) {
                 if let repository = notification.userInfo?["repository"] as? UUID,
                    repository == composerDrafts.repositoryIdentity,
@@ -892,10 +934,16 @@ struct ChatView: View {
             .accessibilityLabel(Text(L10n.chatTitle))
             .accessibilityIdentifier("chat.navigation.back")
             Button(action: openWorkTools) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(verbatim: currentConversationSubtitle).font(.body.weight(.semibold)).lineLimit(1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(verbatim: currentConversationSubtitle).font(.callout.weight(.semibold)).lineLimit(1)
                     Text(verbatim: conversationParticipantSummary).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(DesignTokens.surfaceColor, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(DesignTokens.borderColor, lineWidth: 1))
+                .contentShape(Rectangle())
             }.accessibilityIdentifier("chat.conversation.details")
             Button { showIMSearch = true } label: {
                 Image("nola-search").renderingMode(.template).resizable().scaledToFit()
@@ -908,9 +956,8 @@ struct ChatView: View {
         .overlay(alignment: .bottom) { NolaDivider() }
     }
 
-    var body: some View {
-        Group {
-            chatMainContent(showsHistoryToggle: false)
+    private var chatPrimaryContent: some View {
+        chatMainContent(showsHistoryToggle: false)
             .onReceive(NotificationCenter.default.publisher(for: .nolaModelConfigured)) { notification in
                 guard let model = notification.object as? ModelInfo,
                       notification.userInfo?["owner"] as? String == (container.chatManager.currentConversationId?.uuidString ?? "unsent") else { return }
@@ -972,8 +1019,8 @@ struct ChatView: View {
                 Button("Cancel", role: .cancel) {}
             } message: { Text("chat.experts.sourceUnavailable.detail") }
             .modifier(IOSExpertRejoinAlert(request: $pendingExpertRejoin, confirm: confirmExpertRejoin))
-            .sheet(isPresented: $showLocalExpertManagement) { IOSAgentRoomsView() }
-            .sheet(isPresented: $showExpertPicker) { expertPickerSheet }
+            .sheet(isPresented: $showLocalExpertManagement) { IOSAgentRoomsView().toggleStyle(NolaSwitchToggleStyle()) }
+            .sheet(isPresented: $showExpertPicker) { expertPickerSheet.toggleStyle(NolaSwitchToggleStyle()) }
             .onAppear(perform: prepareChatPresentation)
             .navigationDestination(item: $taskResultDestination) { destination in
                 IOSTaskChildResultView(destination: destination)
@@ -993,6 +1040,11 @@ struct ChatView: View {
                 hostSkillsInFlightKey = nil
                 hostSkillsRequestID = nil
             }
+    }
+
+    var body: some View {
+        Group {
+            chatPrimaryContent
             .onChange(of: hybridDeviceToolsEnabled) { _, _ in saveHybridCapabilitySettings() }
             .onChange(of: hybridFilesEnabled) { _, _ in saveHybridCapabilitySettings() }
             .onChange(of: hybridClipboardEnabled) { _, _ in saveHybridCapabilitySettings() }
@@ -1003,16 +1055,26 @@ struct ChatView: View {
                     conversationID: container.chatManager.currentConversationId?.uuidString,
                     loadProgress: { try await container.chatManager.loadConversationProgress(conversationID: $0) },
                     submitGoalControl: { try await container.chatManager.controlConversationGoal(conversationID: $0, control: $1) },
+                    discardGoalControl: { try await container.chatManager.discardConversationGoalControl(conversationID: $0) },
                     documents: currentUploadedDocuments + currentHostUploadedDocuments,
                     processingState: container.chatManager.processingState)
+                .toggleStyle(NolaSwitchToggleStyle())
             }
+            .onReceive(NotificationCenter.default.publisher(for: .nolaOpenChatTab)) { _ in }
+            .onReceive(NotificationCenter.default.publisher(for: .nolaConversationRenamed), perform: receiveConversationRenamed)
             .sheet(item: $workToolsPresentation, onDismiss: openQueuedWorkDestination) { presentation in
                 IOSConversationWorkTools(conversationTitle: currentConversationTitle,
-                    modelLabel: currentModelConnectionLabel, hasOwner: presentation.owner != nil) { destination in
+                    modelLabel: currentModelConnectionLabel, hasOwner: presentation.owner != nil,
+                    onRename: presentation.owner.map { owner in {
+                        let baseline = currentConversationSubtitle
+                        queuedRenameOwner = (owner, baseline)
+                        workToolsPresentation = nil
+                    } }) { destination in
                     if let owner = presentation.owner { queuedWorkDestination = (owner, destination) }
                     workToolsPresentation = nil
                 }
             }
+            .modifier(IOSRenameConversationAlert(target: $renameTarget, draft: $renameDraft, confirm: confirmRenameConversation))
             .sheet(isPresented: $showIMSearch) {
                 NavigationStack {
                     List {
@@ -1118,6 +1180,7 @@ struct ChatView: View {
                     }
                     .environmentObject(container)
                 }
+                .toggleStyle(NolaSwitchToggleStyle())
             }
             .sheet(isPresented: $showSkillsSheet, onDismiss: {
                 loadConversationState(for: container.chatManager.currentConversationId)
@@ -1138,7 +1201,7 @@ struct ChatView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showMoreSettingsSheet) { conversationSettingsSheet }
+            .sheet(isPresented: $showMoreSettingsSheet) { conversationSettingsSheet.toggleStyle(NolaSwitchToggleStyle()) }
             .alert(L10n.modelNoAvailableTitle, isPresented: $showNoModelWarning) {
                 Button(NSLocalizedString("model.setup.title", value: "Configure model", comment: "Configure model")) {
                     openModelTab()
@@ -1234,6 +1297,7 @@ struct ChatView: View {
                     DisclosureGroup(NSLocalizedString("chat.history.error_details", comment: "Conversation read error details")) {
                         Text(failure.message).font(.caption).textSelection(.enabled)
                     }
+                    .disclosureGroupStyle(NolaRowDisclosureStyle(isPlain: true))
                 }
                 .padding(.horizontal, 16)
                 .accessibilityIdentifier("chat.history.load_error")
@@ -1259,7 +1323,9 @@ struct ChatView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(message).font(.caption).foregroundStyle(.secondary)
                     if container.chatManager.canCancelRejectedUIQueue {
-                        Button("移除未执行的表单操作") { container.chatManager.cancelRejectedUIQueue() }
+                        Button(NSLocalizedString("a2ui.queue.cancel_rejected", value: "Remove unexecuted form action", comment: "Cancel rejected UI queue action")) {
+                            container.chatManager.cancelRejectedUIQueue()
+                        }
                             .accessibilityIdentifier("chat.ui.cancelRejectedQueue")
                     }
                     Button(NSLocalizedString("chat.host.retry_observation", value: "Reconnect to task", comment: "Read the existing Host Run without new input")) {
@@ -1354,6 +1420,12 @@ struct ChatView: View {
     }
 
     private func openQueuedWorkDestination() {
+        if let pendingRename = queuedRenameOwner {
+            queuedRenameOwner = nil
+            renameDraft = pendingRename.baseline
+            renameTarget = pendingRename
+            return
+        }
         let request = queuedWorkDestination
         queuedWorkDestination = nil
         guard let request, request.owner == container.chatManager.currentConversationId else { return }

@@ -56,7 +56,7 @@ pub fn read_tool_source_range<S: TranscriptExportRepository + ?Sized>(
     }
     Ok(nola_domain::tool_source::ToolSourceExportRange {
         owner: owner.clone(), source_item_id: binding.source_item_id,
-        body_sha256: binding.body_sha256, revision, offset_bytes: page.offset_bytes,
+        revision, offset_bytes: page.offset_bytes,
         next_offset_bytes: page.next_offset_bytes, total_utf8_bytes: total,
         text: page.text, end_of_content: page.end_of_content,
     })

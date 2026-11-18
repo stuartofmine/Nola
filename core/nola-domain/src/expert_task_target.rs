@@ -128,7 +128,7 @@ pub fn tool_schema() -> serde_json::Value {
             "action":{"type":"string","enum":["directory","request","read","wait","cancel"]},
             "target_participant_id":{"type":"string"},"text":{"type":"string","maxLength":262144},
             "exchange_id":{"type":"string"},"in_reply_to":{"type":"string"},
-            "timeout_ms":{"type":"integer","minimum":1,"maximum":30000}},"required":["action"],"additionalProperties":false}}})
+            "timeout_ms":{"type":"integer","minimum":1,"maximum":300000}},"required":["action"],"additionalProperties":false}}})
 }
 
 /// Exact control-schema identities, never inferred from user text.

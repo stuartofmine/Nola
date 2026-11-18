@@ -104,22 +104,6 @@ private fun DataSourceValidationContract.toCoreContract(): JsonObject = buildJso
     put("validationState", validationState.name.replaceFirstChar { it.lowercase() })
     put("validatedAt", Instant.ofEpochMilli(validatedAt).toString())
     put("observedAt", Instant.ofEpochMilli(observedAt).toString())
-    put("validationDigest", validationDigest.orEmpty())
-}
-
-private fun sealDataSourceValidationContract(
-    contract: DataSourceValidationContract,
-    recipe: com.nola.domain.model.DataSourceReadRecipe
-): DataSourceValidationContract {
-    val pending = contract.copy(
-        connectorVersion = contract.connectorVersion,
-        readRecipe = recipe,
-        validationDigest = null
-    )
-    val sealed = AgentCoreDataSourceResolver.sealContract(pending.toCoreContract())
-        ?: return pending
-    val digest = sealed["validationDigest"]?.jsonPrimitive?.content.orEmpty()
-    return pending.copy(validationDigest = digest.ifBlank { null })
 }
 
 internal fun buildDataSourceUsageRecords(
@@ -238,9 +222,8 @@ object DataSourceDocumentInspector {
             validatedAt = now,
             observedAt = now
         )
-        val sealedContract = sealDataSourceValidationContract(
-            contract,
-            com.nola.domain.model.DataSourceReadRecipe(
+        val sealedContract = contract.copy(
+            readRecipe = com.nola.domain.model.DataSourceReadRecipe(
                 method = com.nola.domain.model.DataSourceReadMethod.HttpGet,
                 operationId = "android.http.get",
                 configurationKeys = listOf("url", "maximumBytes"),

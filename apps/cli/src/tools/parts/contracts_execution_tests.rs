@@ -684,7 +684,7 @@ mod skill_schema_tests {
                 .iter()
                 .filter_map(|schema| schema.pointer("/function/name").and_then(Value::as_str))
                 .collect::<Vec<_>>();
-            for skill_name in ["Skill", "skill_invoke", "skill_update", "skill_skip"] {
+            for skill_name in ["Skill", "skill_invoke", "skill_skip"] {
                 assert!(!names.contains(&skill_name), "unexpected {skill_name}");
             }
             assert!(!names.contains(&"skill_context"));
@@ -716,7 +716,7 @@ mod host_capability_availability_tests {
     use serde_json::Value;
     use std::cell::Cell;
 
-    const SKILL_NAMES: &[&str] = &["Skill", "skill_invoke", "skill_update", "skill_skip"];
+    const SKILL_NAMES: &[&str] = &["Skill", "skill_invoke", "skill_skip"];
 
     #[test]
     fn pure_availability_keeps_defaults_only_without_a_manifest_and_rejects_invalid_manifests() {
@@ -810,21 +810,21 @@ mod host_capability_availability_tests {
         };
         let first = tool_schemas_with_host_availability(true, &skills, &supplier);
         assert_eq!(captures.get(), 1);
-        for name in ["Skill", "skill_update", "skill_skip"] {
+        for name in ["Skill", "skill_skip"] {
             assert!(!first.iter().any(|schema| {
                 schema.pointer("/function/name").and_then(Value::as_str) == Some(name)
             }));
         }
         let manifest_disabled = tool_schemas_with_host_availability(true, &skills, &supplier);
         assert_eq!(captures.get(), 2);
-        for name in ["Skill", "skill_update", "skill_skip"] {
+        for name in ["Skill", "skill_skip"] {
             assert!(!manifest_disabled.iter().any(|schema| {
                 schema.pointer("/function/name").and_then(Value::as_str) == Some(name)
             }));
         }
         let next = tool_schemas_with_host_availability(true, &skills, &supplier);
         assert_eq!(captures.get(), 3);
-        for name in ["Skill", "skill_update", "skill_skip"] {
+        for name in ["Skill", "skill_skip"] {
             assert!(next.iter().any(|schema| {
                 schema.pointer("/function/name").and_then(Value::as_str) == Some(name)
             }));
@@ -836,9 +836,6 @@ mod host_capability_availability_tests {
                 schema.pointer("/function/name").and_then(Value::as_str) == Some(name)
             }));
         }
-        assert!(!legacy.iter().any(|schema| {
-            schema.pointer("/function/name").and_then(Value::as_str) == Some("skill_update")
-        }));
     }
 }
 

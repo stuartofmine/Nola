@@ -184,7 +184,6 @@ struct MacTranscriptView: View {
                 notification in
                 guard let request = notification.object as? MacCompactionSourceRequest,
                       !request.sourceItemIDs.isEmpty,
-                      !request.sourceFingerprint.isEmpty,
                       request.matches(conversationID: conversationID, messages: messages) else { return }
                 guard compactionNavigationID == nil else { return }
                 let requestID = UUID()

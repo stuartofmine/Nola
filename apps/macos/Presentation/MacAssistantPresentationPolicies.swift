@@ -35,8 +35,12 @@ enum MacToolPresentationPolicy {
 
     static func displayTitle(
         for rawTitle: String,
-        arguments: String? = nil
+        arguments: String? = nil,
+        mcpDescriptorData: Data? = nil
     ) -> String {
+        if let mcpTitle = mcpDescriptorTitle(from: mcpDescriptorData) {
+            return mcpTitle
+        }
         let canonicalTitle = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         if let skillID = MacBuiltInSkillID(rawValue: canonicalTitle),
            let descriptor = MacBuiltInSkillRegistry.descriptors.first(where: { $0.id == skillID }) {
@@ -117,6 +121,12 @@ enum MacToolPresentationPolicy {
             presentation = ("chat.host_tool.name.plan", "Update plan", false)
         case "system_time":
             presentation = ("chat.host_tool.name.time", "Read system time", false)
+        case "mcp_connect":
+            if let server = mcpConnectServerTitle(in: arguments) {
+                let connectVerb = NSLocalizedString("chat.host_tool.action.connect", value: "Connect", comment: "Connect MCP server verb")
+                return "\(server) · \(connectVerb)"
+            }
+            presentation = ("chat.host_tool.name.mcp_connect", "Connect MCP server", false)
         case "chrome_native_status":
             presentation = ("chat.host_tool.name.browser_status", "Check browser connection", false)
         case "chrome_native_list_pages":
@@ -154,7 +164,10 @@ enum MacToolPresentationPolicy {
                 presentation = ("chat.host_tool.name.skill", "Use skill", false)
             } else if normalized.hasPrefix("sop_") {
                 presentation = ("chat.host_tool.name.sop", "Run procedure", false)
-            } else if normalized.hasPrefix("mcp_") {
+            } else if normalized.hasPrefix("mcp_") || canonicalTitle.hasPrefix("mcp:") {
+                if let formatted = formattedMCPToolTitle(rawTitle: canonicalTitle) {
+                    return formatted
+                }
                 presentation = ("chat.host_tool.name.mcp", "Call MCP", false)
             } else if normalized.hasPrefix("background_") {
                 presentation = ("chat.host_tool.name.background", "Background task", false)
@@ -230,6 +243,78 @@ enum MacToolPresentationPolicy {
             return URL(fileURLWithPath: script).lastPathComponent
         }
         return URL(fileURLWithPath: tokens[0]).lastPathComponent
+    }
+
+    private static func mcpConnectServerTitle(in arguments: String?) -> String? {
+        guard let arguments,
+              let data = arguments.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        for key in ["server_name", "server_id"] {
+            if let value = object[key] as? String {
+                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { return trimmed }
+            }
+        }
+        return nil
+    }
+
+    private static func formattedMCPToolTitle(rawTitle: String) -> String? {
+        if rawTitle.hasPrefix("mcp__") {
+            let suffix = String(rawTitle.dropFirst("mcp__".count))
+            if let separator = suffix.range(of: "__") {
+                let server = String(suffix[..<separator.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                let tool = String(suffix[separator.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !server.isEmpty, !tool.isEmpty {
+                    return "\(server) · \(tool)"
+                }
+            }
+        } else if rawTitle.hasPrefix("mcp:") {
+            let suffix = String(rawTitle.dropFirst("mcp:".count))
+            if let separator = suffix.range(of: ":") {
+                let server = String(suffix[..<separator.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                let tool = String(suffix[separator.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !server.isEmpty, !tool.isEmpty {
+                    return "\(server) · \(tool)"
+                }
+            }
+        }
+        return nil
+    }
+
+    private static func mcpDescriptorTitle(from data: Data?) -> String? {
+        guard let data,
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        if let serverName = object["mcp_connect_server_name"] as? String {
+            let trimmed = serverName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                let connectVerb = NSLocalizedString("chat.host_tool.action.connect", value: "Connect", comment: "Connect MCP server verb")
+                return "\(trimmed) · \(connectVerb)"
+            }
+        }
+        if let title = object["title"] as? String {
+            let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                if let range = trimmed.range(of: " / ") {
+                    return trimmed.replacingCharacters(in: range, with: " · ")
+                }
+                return trimmed
+            }
+        }
+        if let inputNorm = object["input_normalization"] as? [String: Any],
+           let route = inputNorm["mcp_route"] as? [String: Any],
+           let server = route["server_id"] as? String,
+           let tool = route["tool_name"] as? String {
+            let serverTrimmed = server.trimmingCharacters(in: .whitespacesAndNewlines)
+            let toolTrimmed = tool.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !serverTrimmed.isEmpty, !toolTrimmed.isEmpty {
+                return "\(serverTrimmed) · \(toolTrimmed)"
+            }
+        }
+        return nil
     }
 }
 

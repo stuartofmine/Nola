@@ -2,6 +2,7 @@
 // File Overview:
 // - Purpose: Provides shared, restrained chrome for top-level macOS feature pages.
 
+import AppKit
 import SwiftUI
 
 /// Protects a standalone editor's native close button and Command-W as well as
@@ -279,11 +280,12 @@ enum MacDesignColor {
     static let controlOutline = Color("NolaControlOutline")
     static let brand = Color("AccentColor")
     static let canvas = Color("NolaCanvas")
-    static let chrome = Color("NolaCanvas")
-    static let sidebar = Color("NolaCanvas")
-    static let inspector = Color("NolaCanvas")
-    static let sidebarGlass = Color("NolaCanvas").opacity(0.62)
-    static let inspectorGlass = Color("NolaCanvas").opacity(0.68)
+    static let chrome = Color("NolaSurfaceRaised")
+    static let sidebar = MacDesignTokens.Palette.fallbackColor(light: 0xF9F9F8, dark: 0x121211)
+    static let inspector = MacDesignTokens.Palette.fallbackColor(light: 0xFAFAFA, dark: 0x141413)
+    static let subtleFill = MacDesignTokens.Palette.fallbackColor(light: 0xF3F2EE, dark: 0x22221F)
+    static let sidebarGlass = MacDesignTokens.Palette.fallbackColor(light: 0xF9F9F8, dark: 0x121211).opacity(0.68)
+    static let inspectorGlass = MacDesignTokens.Palette.fallbackColor(light: 0xFAFAFA, dark: 0x141413).opacity(0.72)
     static let panel = Color("NolaSurface")
     static let hover = Color("NolaControlHover")
     static let pressed = Color("NolaControlPressed")
@@ -292,6 +294,11 @@ enum MacDesignColor {
     static let success = Color("NolaSuccess")
     static let warning = Color("NolaWarning")
     static let danger = Color("NolaDanger")
+    static let switchTrackOn = MacDesignTokens.Palette.fallbackColor(light: 0x237047, dark: 0x2E8B57)
+    static let switchTrackOnHover = MacDesignTokens.Palette.fallbackColor(light: 0x1D5E3B, dark: 0x369B63)
+    static let switchTrackOff = MacDesignTokens.Palette.fallbackColor(light: 0xDDDAD3, dark: 0x3A3935)
+    static let switchTrackOffHover = MacDesignTokens.Palette.fallbackColor(light: 0xD2CEC6, dark: 0x45443F)
+    static let switchBorderOff = MacDesignTokens.Palette.fallbackColor(light: 0xC4C0B7, dark: 0x52504B)
 }
 
 private struct MacGlobalWorkspaceChromeKey: EnvironmentKey {
@@ -356,7 +363,7 @@ struct MacPageHeader<Subtitle: View, Actions: View>: View {
                 .overlay(alignment: .bottom) {
                     Rectangle()
                         .fill(MacDesignColor.borderSubtle)
-                        .frame(height: 0.5)
+                        .frame(height: 1)
                 }
             }
         }
@@ -555,6 +562,225 @@ extension View {
 
     func macSelectableListRow(isSelected: Bool) -> some View {
         modifier(MacSelectableListRowModifier(isSelected: isSelected))
+    }
+
+    func macComposerPill(isActive: Bool = false, tint: Color = MacDesignColor.brand) -> some View {
+        modifier(MacComposerPillModifier(isActive: isActive, tint: tint))
+    }
+}
+
+struct MacPillMenuStyle: MenuStyle {
+    var height: CGFloat = 28
+    var isActive = false
+    var tint: Color = MacDesignColor.brand
+
+    func makeBody(configuration: Configuration) -> some View {
+        Menu(configuration)
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .padding(.leading, 8)
+            .padding(.trailing, 20)
+            .frame(minHeight: height)
+            .overlay(alignment: .trailing) {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8.5, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.trailing, 8)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+            .macComposerPill(isActive: isActive, tint: tint)
+            .overlay {
+                MacMenuHitExpandOverlay()
+            }
+    }
+}
+
+struct MacToolbarMenuStyle: MenuStyle {
+    var size: CGFloat = MacDesignTokens.Control.iconButton
+    var cornerRadius: CGFloat = MacDesignTokens.Radius.control
+
+    func makeBody(configuration: Configuration) -> some View {
+        MacToolbarMenuBody(configuration: configuration, size: size, cornerRadius: cornerRadius)
+    }
+}
+
+private struct MacToolbarMenuBody: View {
+    let configuration: MenuStyleConfiguration
+    let size: CGFloat
+    let cornerRadius: CGFloat
+    @State private var isHovered = false
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Menu(configuration)
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .labelStyle(.iconOnly)
+            .frame(width: size, height: size)
+            .foregroundStyle(Color.secondary)
+            .background(
+                isEnabled && isHovered ? MacDesignColor.hover : Color.clear,
+                in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .opacity(isEnabled ? 1 : 0.45)
+            .onHover { isHovered = isEnabled && $0 }
+            .onChange(of: isEnabled) { _, enabled in if !enabled { isHovered = false } }
+            .animation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.hover), value: isHovered)
+            .overlay {
+                MacMenuHitExpandOverlay()
+            }
+    }
+}
+
+struct MacInlineIconButtonStyle: ButtonStyle {
+    var size: CGFloat = 24
+    var cornerRadius: CGFloat = 6
+
+    func makeBody(configuration: Configuration) -> some View {
+        MacInlineIconButtonBody(
+            label: configuration.label,
+            isPressed: configuration.isPressed,
+            size: size,
+            cornerRadius: cornerRadius
+        )
+    }
+}
+
+private struct MacInlineIconButtonBody<Label: View>: View {
+    let label: Label
+    let isPressed: Bool
+    let size: CGFloat
+    let cornerRadius: CGFloat
+    @State private var isHovered = false
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        label
+            .frame(width: size, height: size)
+            .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .background(
+                !isEnabled ? Color.clear
+                    : isPressed ? MacDesignColor.pressed
+                    : isHovered ? MacDesignColor.hover
+                    : Color.clear,
+                in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            )
+            .onHover { isHovered = isEnabled && $0 }
+            .onChange(of: isEnabled) { _, enabled in if !enabled { isHovered = false } }
+            .opacity(isEnabled ? 1 : 0.45)
+            .animation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.hover), value: isHovered)
+            .animation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.hover), value: isPressed)
+    }
+}
+
+private struct MacMenuHitExpandOverlay: NSViewRepresentable {
+    func makeNSView(context: Context) -> HitExpandNSView {
+        HitExpandNSView(frame: .zero)
+    }
+
+    func updateNSView(_ nsView: HitExpandNSView, context: Context) {}
+
+    final class HitExpandNSView: NSView {
+        override func isAccessibilityElement() -> Bool { false }
+
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            guard !isHiddenOrHasHiddenAncestor else { return nil }
+            let local = convert(point, from: superview)
+            guard bounds.contains(local), let control = findWrappedControl() else { return nil }
+            guard control.isEnabled else { return nil }
+            let windowPoint = superview?.convert(point, to: nil) ?? .zero
+            let controlWindowRect = control.convert(control.bounds, to: nil)
+            if controlWindowRect.contains(windowPoint) {
+                // Let clicks on the native NSPopUpButton itself pass through untouched.
+                return nil
+            }
+            return self
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            guard let control = findWrappedControl(), control.isEnabled else {
+                super.mouseDown(with: event)
+                return
+            }
+            control.performClick(nil)
+        }
+
+        private func findWrappedControl() -> NSControl? {
+            let targetRect = convert(bounds, to: nil)
+            var container: NSView? = superview
+            for _ in 0..<4 {
+                guard let current = container else { break }
+                if let match = findControl(in: current, withinWindowRect: targetRect) {
+                    return match
+                }
+                container = current.superview
+            }
+            return nil
+        }
+
+        private func findControl(in view: NSView, withinWindowRect targetRect: NSRect) -> NSControl? {
+            for subview in view.subviews {
+                if subview === self || subview.isHidden { continue }
+                if let control = subview as? NSControl, control is NSPopUpButton || control is NSButton {
+                    let controlRect = control.convert(control.bounds, to: nil)
+                    let center = NSPoint(x: controlRect.midX, y: controlRect.midY)
+                    if targetRect.insetBy(dx: -3, dy: -3).contains(center),
+                       targetRect.intersects(controlRect) {
+                        return control
+                    }
+                }
+                if let nested = findControl(in: subview, withinWindowRect: targetRect) {
+                    return nested
+                }
+            }
+            return nil
+        }
+    }
+}
+
+private struct MacComposerPillModifier: ViewModifier {
+    var isActive = false
+    var tint: Color = MacDesignColor.brand
+    @State private var isHovered = false
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    private var fillColor: Color {
+        if isActive {
+            return tint.opacity(isEnabled && isHovered ? 0.14 : 0.10)
+        }
+        return isEnabled && isHovered ? MacDesignColor.hover : MacDesignColor.panel
+    }
+
+    private var borderColor: Color {
+        if contrast == .increased {
+            return Color.primary.opacity(0.45)
+        }
+        if isActive {
+            return tint.opacity(0.32)
+        }
+        return isEnabled && isHovered ? MacDesignColor.controlOutline.opacity(0.6) : MacDesignColor.borderSubtle
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                fillColor,
+                in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(borderColor, lineWidth: contrast == .increased ? 1.2 : 0.75)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .onHover { isHovered = isEnabled && $0 }
+            .onChange(of: isEnabled) { _, enabled in if !enabled { isHovered = false } }
+            .animation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.hover), value: isHovered)
     }
 }
 
@@ -982,14 +1208,134 @@ private struct MacActionButtonBody<Label: View>: View {
     }
 }
 
-/// The title, chevron and trailing whitespace are one accessible disclosure action.
+/// Unified full-width horizontal bar affordance for disclosures and expandable rows.
+struct MacHorizontalBarButtonStyle: ButtonStyle {
+    var isSubtle = true
+    var isExpanded = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        MacHorizontalBarButtonBody(
+            label: configuration.label,
+            isPressed: configuration.isPressed,
+            isSubtle: isSubtle,
+            isExpanded: isExpanded
+        )
+    }
+}
+
+private struct MacHorizontalBarButtonBody<Label: View>: View {
+    let label: Label
+    let isPressed: Bool
+    let isSubtle: Bool
+    let isExpanded: Bool
+    @State private var isHovered = false
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    private var fillColor: Color {
+        if !isEnabled {
+            return isSubtle ? MacDesignColor.subtleFill.opacity(0.45) : MacDesignColor.panel
+        }
+        if isPressed {
+            return MacDesignColor.pressed
+        }
+        if isHovered {
+            return MacDesignColor.hover
+        }
+        if isExpanded {
+            return isSubtle ? MacDesignColor.subtleFill.opacity(0.95) : MacDesignColor.panel
+        }
+        return isSubtle ? MacDesignColor.subtleFill.opacity(0.72) : MacDesignColor.panel
+    }
+
+    private var borderColor: Color {
+        if contrast == .increased {
+            return Color.primary.opacity(0.45)
+        }
+        return (isEnabled && isHovered) ? MacDesignColor.controlOutline.opacity(0.65) : MacDesignColor.borderSubtle
+    }
+
+    var body: some View {
+        label
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+            .contentShape(Rectangle())
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(fillColor)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(borderColor, lineWidth: contrast == .increased ? 1.2 : 0.75)
+                    }
+            )
+            .foregroundStyle(isEnabled ? Color.primary : Color.secondary)
+            .onHover { isHovered = isEnabled && $0 }
+            .onChange(of: isEnabled) { _, enabled in if !enabled { isHovered = false } }
+            .opacity(isEnabled ? 1 : 0.45)
+            .animation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.hover), value: isHovered)
+            .animation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.hover), value: isPressed)
+    }
+}
+
+private struct MacPlainDisclosureButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        MacPlainDisclosureButtonBody(label: configuration.label, isPressed: configuration.isPressed)
+    }
+}
+
+private struct MacPlainDisclosureButtonBody<Label: View>: View {
+    let label: Label
+    let isPressed: Bool
+    @State private var isHovered = false
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        label
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+            .contentShape(Rectangle())
+            .background(
+                !isEnabled ? Color.clear
+                    : isPressed ? MacDesignColor.pressed
+                    : isHovered ? MacDesignColor.hover
+                    : Color.clear,
+                in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+            )
+            .foregroundStyle(isEnabled ? Color.primary : Color.secondary)
+            .onHover { isHovered = isEnabled && $0 }
+            .onChange(of: isEnabled) { _, enabled in if !enabled { isHovered = false } }
+            .opacity(isEnabled ? 1 : 0.45)
+            .animation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.hover), value: isHovered)
+            .animation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.hover), value: isPressed)
+    }
+}
+
+/// The title, chevron and trailing whitespace are one accessible horizontal-bar disclosure action.
 struct MacRowDisclosureStyle: DisclosureGroupStyle {
     var toggleIdentifier = ""
     var isPlain = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
-        let toggle = Button {
+        VStack(alignment: .leading, spacing: 6) {
+            disclosureButton(configuration: configuration)
+                .accessibilityIdentifier(toggleIdentifier)
+                .accessibilityValue(Text(configuration.isExpanded ? "Expanded" : "Collapsed", tableName: "Chat"))
+
+            if configuration.isExpanded {
+                configuration.content
+                    .macDisclosureTransition(reduceMotion: reduceMotion)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func disclosureButton(configuration: Configuration) -> some View {
+        let button = Button {
             withAnimation(reduceMotion ? nil : MacDesignTokens.Motion.disclosureAnimation) {
                 configuration.isExpanded.toggle()
             }
@@ -998,21 +1344,430 @@ struct MacRowDisclosureStyle: DisclosureGroupStyle {
                 configuration.label
                 Spacer(minLength: 8)
                 Image(systemName: "chevron.down")
-                    .font(.caption.weight(.semibold))
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(.secondary)
                     .rotationEffect(.degrees(configuration.isExpanded ? 180 : 0))
                     .accessibilityHidden(true)
             }
-            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
-            .accessibilityIdentifier(toggleIdentifier)
-            .accessibilityValue(Text(configuration.isExpanded ? "Expanded" : "Collapsed", tableName: "Chat"))
-        return VStack(alignment: .leading, spacing: 4) {
-            if isPlain { toggle.buttonStyle(MacPressFeedbackButtonStyle()) }
-            else { toggle.buttonStyle(MacActionButtonStyle()) }
-            if configuration.isExpanded {
-                configuration.content.macDisclosureTransition(reduceMotion: reduceMotion)
+
+        if isPlain {
+            button.buttonStyle(MacPlainDisclosureButtonStyle())
+        } else {
+            button.buttonStyle(MacHorizontalBarButtonStyle(isSubtle: true, isExpanded: configuration.isExpanded))
+        }
+    }
+}
+
+struct MacDropdownOption: Identifiable {
+    let id: String
+    let title: String
+    let isSelected: Bool
+    let action: @MainActor () -> Void
+}
+
+/// Convenience wrapper binding a strongly typed `Selection` to `MacHorizontalDropdownBar`.
+struct MacSelectionDropdownBar<Selection: Hashable>: View {
+    var symbol: String? = nil
+    let title: String
+    var identifier = ""
+    @Binding var selection: Selection
+    let options: [(value: Selection, title: String, isEnabled: Bool)]
+
+    init(
+        symbol: String? = nil,
+        title: String,
+        identifier: String = "",
+        selection: Binding<Selection>,
+        options: [(value: Selection, title: String)]
+    ) {
+        self.symbol = symbol
+        self.title = title
+        self.identifier = identifier
+        self._selection = selection
+        self.options = options.map { ($0.value, $0.title, true) }
+    }
+
+    init(
+        symbol: String? = nil,
+        title: String,
+        identifier: String = "",
+        selection: Binding<Selection>,
+        optionsWithAvailability: [(value: Selection, title: String, isEnabled: Bool)]
+    ) {
+        self.symbol = symbol
+        self.title = title
+        self.identifier = identifier
+        self._selection = selection
+        self.options = optionsWithAvailability
+    }
+
+    private var selectionTitle: String {
+        options.first(where: { $0.value == selection })?.title ?? ""
+    }
+
+    var body: some View {
+        MacHorizontalDropdownBar(
+            symbol: symbol,
+            title: title,
+            selectionTitle: selectionTitle,
+            identifier: identifier,
+            options: options.enumerated().map { index, item in
+                MacDropdownOption(
+                    id: "\(index)-\(item.title)",
+                    title: item.title,
+                    isSelected: item.value == selection
+                ) {
+                    guard item.isEnabled else { return }
+                    selection = item.value
+                }
+            }
+        )
+    }
+}
+
+/// Unified full-width horizontal dropdown bar backed by a silent `NSPopUpButton` overlay.
+struct MacHorizontalDropdownBar: View {
+    var symbol: String? = nil
+    let title: String
+    let selectionTitle: String
+    var identifier = ""
+    let options: [MacDropdownOption]
+    @State private var isHovered = false
+    @State private var isPressed = false
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    private var fillColor: Color {
+        if !isEnabled {
+            return MacDesignColor.subtleFill.opacity(0.45)
+        }
+        if isPressed {
+            return MacDesignColor.pressed
+        }
+        if isHovered {
+            return MacDesignColor.hover
+        }
+        return MacDesignColor.subtleFill.opacity(0.72)
+    }
+
+    private var borderColor: Color {
+        if contrast == .increased {
+            return Color.primary.opacity(0.45)
+        }
+        return (isEnabled && isHovered) ? MacDesignColor.controlOutline.opacity(0.65) : MacDesignColor.borderSubtle
+    }
+
+    var body: some View {
+        ZStack {
+            HStack(spacing: 9) {
+                if let symbol {
+                    Image(systemName: symbol)
+                        .font(.system(size: MacDesignTokens.Typography.inspectorDetail, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 24, height: 24)
+                        .background(
+                            Color.primary.opacity(0.05),
+                            in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        )
+                }
+
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(isEnabled ? Color.primary : Color.secondary)
+                    .lineLimit(1)
+
+                Spacer(minLength: 8)
+
+                Text(selectionTitle)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(fillColor)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(borderColor, lineWidth: contrast == .increased ? 1.2 : 0.75)
+                    }
+            )
+            .opacity(isEnabled ? 1 : 0.45)
+            .accessibilityHidden(true)
+
+            MacPopUpButtonOverlay(
+                title: title,
+                selectionTitle: selectionTitle,
+                identifier: identifier,
+                options: options,
+                isEnabled: isEnabled,
+                colorScheme: colorScheme,
+                onHoverChange: { hovered in
+                    isHovered = isEnabled && hovered
+                },
+                onMenuVisibilityChange: { open in
+                    isPressed = isEnabled && open
+                }
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+        .onChange(of: isEnabled) { _, enabled in
+            if !enabled {
+                isHovered = false
+                isPressed = false
             }
         }
+        .animation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.hover), value: isHovered)
+        .animation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.hover), value: isPressed)
+    }
+}
+
+private final class SilentPopUpButtonCell: NSPopUpButtonCell {
+    override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {}
+    override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {}
+    override func drawBezel(withFrame frame: NSRect, in controlView: NSView) {}
+    override func drawFocusRingMask(withFrame cellFrame: NSRect, in controlView: NSView) {}
+}
+
+private final class SilentPopUpButton: NSPopUpButton {
+    var onHoverChange: ((Bool) -> Void)?
+    var onMenuVisibilityChange: ((Bool) -> Void)?
+    private var trackingAreaRef: NSTrackingArea?
+
+    override class var cellClass: AnyClass? {
+        get { SilentPopUpButtonCell.self }
+        set {}
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: 36)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingAreaRef {
+            removeTrackingArea(trackingAreaRef)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingAreaRef = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        onHoverChange?(true)
+        super.mouseEntered(with: event)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        onHoverChange?(false)
+        super.mouseExited(with: event)
+    }
+
+    override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
+        menu.minimumWidth = max(160, bounds.width)
+        onMenuVisibilityChange?(true)
+        super.willOpenMenu(menu, with: event)
+    }
+
+    override func didCloseMenu(_ menu: NSMenu, with event: NSEvent?) {
+        onMenuVisibilityChange?(false)
+        super.didCloseMenu(menu, with: event)
+    }
+}
+
+private struct MacPopUpButtonOverlay: NSViewRepresentable {
+    let title: String
+    let selectionTitle: String
+    let identifier: String
+    let options: [MacDropdownOption]
+    let isEnabled: Bool
+    let colorScheme: ColorScheme
+    let onHoverChange: (Bool) -> Void
+    let onMenuVisibilityChange: (Bool) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> SilentPopUpButton {
+        let cell = SilentPopUpButtonCell(textCell: "", pullsDown: false)
+        let button = SilentPopUpButton(frame: .zero, pullsDown: false)
+        button.cell = cell
+        button.pullsDown = false
+        button.isBordered = false
+        button.bezelStyle = .regularSquare
+        button.autoenablesItems = false
+        button.preferredEdge = .maxY
+        return button
+    }
+
+    func updateNSView(_ button: SilentPopUpButton, context: Context) {
+        context.coordinator.options = options
+        button.onHoverChange = onHoverChange
+        button.onMenuVisibilityChange = onMenuVisibilityChange
+        button.isEnabled = isEnabled
+        button.appearance = NSAppearance(named: colorScheme == .dark ? .darkAqua : .aqua)
+        button.setAccessibilityLabel(title)
+        button.setAccessibilityValue(selectionTitle)
+        button.setAccessibilityIdentifier(identifier)
+
+        guard let menu = button.menu else { return }
+        menu.autoenablesItems = false
+        menu.minimumWidth = max(160, button.bounds.width)
+        menu.removeAllItems()
+        var selectedIndex: Int?
+        for (index, option) in options.enumerated() {
+            let item = NSMenuItem(
+                title: option.title,
+                action: #selector(Coordinator.selectOption(_:)),
+                keyEquivalent: ""
+            )
+            item.target = context.coordinator
+            item.tag = index
+            item.state = option.isSelected ? .on : .off
+            menu.addItem(item)
+            if option.isSelected && selectedIndex == nil {
+                selectedIndex = index
+            }
+        }
+        if let selectedIndex {
+            button.selectItem(at: selectedIndex)
+        } else {
+            button.select(nil)
+        }
+    }
+
+    @MainActor
+    final class Coordinator: NSObject {
+        var options: [MacDropdownOption] = []
+
+        @objc func selectOption(_ sender: NSMenuItem) {
+            let index = sender.tag
+            guard options.indices.contains(index) else { return }
+            options[index].action()
+        }
+    }
+}
+
+/// Unified, high-contrast macOS pill switch replacing inconsistent AppKit switches and checkboxes.
+struct MacSwitchToggleStyle: ToggleStyle {
+    var showsLabel = true
+
+    func makeBody(configuration: Configuration) -> some View {
+        MacSwitchToggleBody(configuration: configuration, showsLabel: showsLabel)
+    }
+}
+
+extension ToggleStyle where Self == MacSwitchToggleStyle {
+    static var macSwitch: MacSwitchToggleStyle { MacSwitchToggleStyle(showsLabel: true) }
+    static var macSwitchControl: MacSwitchToggleStyle { MacSwitchToggleStyle(showsLabel: false) }
+}
+
+private struct MacSwitchPressButtonStyle: ButtonStyle {
+    let showsLabel: Bool
+    let isOn: Bool
+    @Binding var isHovered: Bool
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    func makeBody(configuration: Configuration) -> some View {
+        Group {
+            if showsLabel {
+                HStack(alignment: .center, spacing: 12) {
+                    configuration.label
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    switchTrack(isPressed: configuration.isPressed)
+                }
+            } else {
+                switchTrack(isPressed: configuration.isPressed)
+                    .fixedSize()
+            }
+        }
+        .contentShape(Rectangle())
+        .onHover { isHovered = isEnabled && $0 }
+        .onChange(of: isEnabled) { _, enabled in if !enabled { isHovered = false } }
+        .opacity(isEnabled ? 1 : 0.52)
+        .animation(reduceMotion ? nil : MacDesignTokens.Motion.responsive, value: isOn)
+        .animation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.hover), value: configuration.isPressed)
+        .animation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.hover), value: isHovered)
+    }
+
+    private func switchTrack(isPressed: Bool) -> some View {
+        let trackFill: Color = if isOn {
+            (isEnabled && isHovered) ? MacDesignColor.switchTrackOnHover : MacDesignColor.switchTrackOn
+        } else {
+            (isEnabled && isHovered) ? MacDesignColor.switchTrackOffHover : MacDesignColor.switchTrackOff
+        }
+        let offStrokeColor: Color = contrast == .increased
+            ? Color.primary.opacity(0.65)
+            : MacDesignColor.switchBorderOff
+        let thumbWidth: CGFloat = (isEnabled && isPressed) ? 18 : 16
+
+        return ZStack(alignment: isOn ? .trailing : .leading) {
+            Capsule(style: .circular)
+                .fill(trackFill)
+            if !isOn || contrast == .increased {
+                Capsule(style: .circular)
+                    .strokeBorder(
+                        isOn ? Color.primary.opacity(0.45) : offStrokeColor,
+                        lineWidth: contrast == .increased ? 1.2 : 0.8
+                    )
+            }
+            Capsule(style: .circular)
+                .fill(Color.white)
+                .frame(width: thumbWidth, height: 16)
+                .shadow(
+                    color: .black.opacity(colorScheme == .dark ? 0.34 : 0.16),
+                    radius: 1.5,
+                    y: 0.6
+                )
+                .padding(2)
+        }
+        .frame(width: 36, height: 20)
+    }
+}
+
+private struct MacSwitchToggleBody: View {
+    let configuration: ToggleStyleConfiguration
+    let showsLabel: Bool
+    @State private var isHovered = false
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Button {
+            withAnimation(reduceMotion ? nil : MacDesignTokens.Motion.responsive) {
+                configuration.isOn.toggle()
+            }
+        } label: {
+            configuration.label
+        }
+        .buttonStyle(
+            MacSwitchPressButtonStyle(
+                showsLabel: showsLabel,
+                isOn: configuration.isOn,
+                isHovered: $isHovered
+            )
+        )
+        .disabled(!isEnabled)
+        .accessibilityValue(Text(configuration.isOn ? String(localized: "Enabled") : String(localized: "Disabled")))
     }
 }

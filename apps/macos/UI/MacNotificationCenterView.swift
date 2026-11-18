@@ -223,8 +223,7 @@ struct MacNotificationCenterView: View {
             } label: {
                 Image(systemName: "ellipsis")
             }
-            .menuStyle(.borderlessButton)
-            .frame(width: MacDesignTokens.Control.iconButton, height: MacDesignTokens.Control.iconButton)
+            .menuStyle(MacToolbarMenuStyle())
             .help(macNotificationText("mac.notifications.actions", "Actions"))
         }
         .padding(.horizontal, MacDesignTokens.Layout.pageGutter)

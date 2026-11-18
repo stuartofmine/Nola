@@ -91,7 +91,7 @@
                 <p id="agent-access-profile-description" class="muted" aria-live="polite">{t($locale, knownPermissionProfile(draft.permissionProfile) ? `agentAccess.detail.${draft.permissionProfile}` : 'agentAccess.unknownProfile')}</p>
                 <label>{t($locale, 'agentAccess.prompt')}<textarea rows="5" bind:value={draft.customSystemPrompt}></textarea></label>
                 <h3>{t($locale, 'agentAccess.devTools')}</h3>
-                <label class="toggle"><input type="checkbox" bind:checked={draft.enableLocalDevTools} />{t($locale, 'agentAccess.enableDevTools')}</label>
+                <label class="toggle"><input type="checkbox" role="switch" bind:checked={draft.enableLocalDevTools} />{t($locale, 'agentAccess.enableDevTools')}</label>
                 <p class="muted">{t($locale, 'agentAccess.devHint')}</p>
                 <label>{t($locale, 'agentAccess.directories')}<textarea rows="3" bind:value={draft.allowedDirs} spellcheck="false"></textarea></label>
                 <label>{t($locale, 'agentAccess.prefixes')}<textarea rows="3" bind:value={draft.bashPrefixes} spellcheck="false"></textarea></label>

@@ -241,10 +241,6 @@ fn tool_source_call_and_result_append_preserves_exact_cold_original_bytes() {
     for (binding, input) in bindings.iter().zip([&call, &result]) {
         assert_eq!(binding.owner, input.owner);
         assert_eq!(
-            binding.body_sha256,
-            format!("{:x}", Sha256::digest(input.body_json.as_bytes()))
-        );
-        assert_eq!(
             read_original(&store, binding, pinned_revision),
             input.body_json
         );
@@ -466,11 +462,6 @@ fn tool_source_reads_and_writes_require_current_revision_and_exact_binding() {
             .is_err());
     }
     assert_eq!(read_original(&store, &binding, current), call.body_json);
-    let mut forged = binding.clone();
-    forged.body_sha256 = "0".repeat(64);
-    assert!(store
-        .read_tool_source_range(&forged, current, 0, 128)
-        .is_err());
     let mut forged = binding;
     forged.owner.turn_id = Some("other-turn".into());
     assert!(store

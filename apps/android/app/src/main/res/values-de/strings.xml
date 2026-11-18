@@ -1363,4 +1363,25 @@
     <string name="expert_main_requires_tools">Wählen Sie ein Hauptmodell mit Werkzeugaufrufen und aktivieren Sie Expertenwerkzeuge oder entfernen Sie die Auswahl. Der Entwurf bleibt erhalten.</string>
     <string name="chat_context_budget_exceeded">Eingabe und Werkzeugbeschreibungen überschreiten das Kontextfenster. Kontextlimit erhöhen oder Anhänge, Verlauf und Werkzeuge reduzieren.</string>
     <string name="chat_run_blocked">Die Aufgabe kann noch nicht fortgesetzt werden. Im Ablauf finden Sie nötige Angaben oder Aktionen.</string>
+    <string name="models_web_host_paste_setup">Verbindungseinrichtung einfügen</string>
+    <string name="models_web_host_invalid_setup">Kopieren Sie die Verbindungseinrichtung von Nola auf dem Host und fügen Sie sie hier ein.</string>
+    <string name="permission_review_unavailable">Vorgangsdetails sind nicht verfügbar. Lehnen Sie diese Anfrage ab oder fordern Sie vom Host prüfbare Details an.</string>
+    <string name="common_more">Mehr</string>
+    <string name="models_config_save_failed">Die Modellkonfiguration konnte nicht gespeichert werden.</string>
+    <string name="models_protocol_responses">Responses</string>
+    <string name="models_protocol_chat_completions">Chat Completions</string>
+    <string name="chat_rename_conversation">Gespräch umbenennen</string>
+    <string name="chat_conversation_title_hint">Gesprächstitel</string>
+    <string name="chat_local_mcp_servers">Geräte-MCP-Server</string>
+    <string name="chat_local_mcp_empty">Keine Geräte-MCP-Server konfiguriert.</string>
+    <string name="goal_discard_pending">Ausstehende Anfrage verwerfen</string>
+    <string name="goal_constraints">Einschränkungen (optional)</string>
+    <string name="goal_constraints_hint">Eine Einschränkung pro Zeile oder durch Kommas getrennt</string>
+    <string name="goal_next_wake_format">Nächste Prüfung: %1$s</string>
+    <string name="expert_conflict_refresh">Der Experte wurde geändert. Aktualisieren Sie vor einem erneuten Versuch.</string>
+    <string name="task_detail_unavailable">Aufgabendetails nicht verfügbar</string>
+    <string name="chat_ui_host_submission_rejected">Der Host hat die Übermittlung abgelehnt. Aktualisieren Sie das Formular und versuchen Sie es erneut.</string>
+    <string name="chat_ui_host_submission_unknown">Das Ergebnis der Host-Übermittlung wurde noch nicht bestätigt.</string>
+    <string name="chat_ui_submission_rejected">Die Übermittlung wurde abgelehnt.</string>
+    <string name="chat_ui_submission_unknown">Das Ergebnis der Übermittlung wurde noch nicht bestätigt.</string>
 </resources>

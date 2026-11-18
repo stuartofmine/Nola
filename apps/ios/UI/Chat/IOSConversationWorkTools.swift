@@ -32,6 +32,7 @@ struct IOSConversationWorkTools: View {
     let conversationTitle: String
     let modelLabel: String
     let hasOwner: Bool
+    var onRename: (() -> Void)? = nil
     let select: (IOSConversationWorkDestination) -> Void
     @Environment(\.dismiss) private var dismiss
 
@@ -39,12 +40,24 @@ struct IOSConversationWorkTools: View {
         NavigationStack {
             List {
                 Section {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(conversationTitle).font(.headline).fixedSize(horizontal: false, vertical: true)
-                        Text(modelLabel).font(.subheadline).foregroundStyle(.secondary)
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(conversationTitle).font(.headline).fixedSize(horizontal: false, vertical: true)
+                            Text(modelLabel).font(.subheadline).foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 8)
+                        if hasOwner, let onRename {
+                            Button(action: onRename) {
+                                Image(systemName: "pencil")
+                                    .frame(width: 44, height: 44)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(String(localized: "chat.conversations.rename", defaultValue: "Rename"))
+                            .accessibilityIdentifier("chat.work_tools.rename")
+                        }
                     }
                     .padding(.vertical, 4)
-                    .accessibilityElement(children: .combine)
+                    .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("chat.work_tools.summary")
                 }
                 Section {

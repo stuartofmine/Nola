@@ -492,7 +492,9 @@ struct ChatBubble: View {
                     DisclosureGroup("chat.request.diagnostic_details") {
                         Text(attempt.presentation.modelName).textSelection(.enabled)
                         if !attempt.failure.isEmpty { Text(verbatim: attempt.failure).textSelection(.enabled) }
-                    }.font(.caption2)
+                    }
+                    .disclosureGroupStyle(NolaRowDisclosureStyle(isPlain: true))
+                    .font(.caption2)
                 } else {
                     Text(attempt.presentation.title()).font(.caption.weight(.semibold))
                 }
@@ -505,6 +507,7 @@ struct ChatBubble: View {
                         DisclosureGroup("chat.request.diagnostic_details") {
                             Text(verbatim: attempt.failure).textSelection(.enabled)
                         }
+                        .disclosureGroupStyle(NolaRowDisclosureStyle(isPlain: true))
                         .font(.caption2).foregroundStyle(.secondary)
                     } else {
                         Text(verbatim: attempt.failure).font(.caption2).foregroundStyle(.secondary)
@@ -549,9 +552,6 @@ struct ChatBubble: View {
                 )
                 Text(link.summary)
                     .lineLimit(2)
-                Text("SHA-256 · \(link.sourceFingerprint.prefix(12))")
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.tertiary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -668,7 +668,9 @@ struct ChatBubble: View {
                 if let result, !result.isEmpty {
                     DisclosureGroup("chat.request.diagnostic_details") {
                         LabeledContent("chat.part.diagnostic.result_reference", value: result)
-                    }.font(.caption2).textSelection(.enabled)
+                    }
+                    .disclosureGroupStyle(NolaRowDisclosureStyle(isPlain: true))
+                    .font(.caption2).textSelection(.enabled)
                 }
             }
         case .skill(_, _, _, let skillID, let name, _, let state, let turns, let tools, let millis, _, let failure):
@@ -681,9 +683,11 @@ struct ChatBubble: View {
                 LabeledContent("chat.part.diagnostic.code", value: code)
                 LabeledContent("chat.part.diagnostic.display_key", value: displayKey)
                 LabeledContent("chat.part.diagnostic.recoverable", value: recoverable ? L10n.yes : L10n.no)
-            }.font(.caption2).textSelection(.enabled)
+            }
+            .disclosureGroupStyle(NolaRowDisclosureStyle(isPlain: true))
+            .font(.caption2).textSelection(.enabled)
         case .compaction(let id, _, let summary, let items, let fingerprint, _, _):
-            if !items.isEmpty && !fingerprint.isEmpty {
+            if !items.isEmpty {
                 compactionSource(.init(id: id, summary: summary, sourceItemIDs: items, sourceFingerprint: fingerprint))
             } else { Text(summary).font(.caption).textSelection(.enabled) }
         case .uiAction(let action):
@@ -727,7 +731,14 @@ struct ChatBubble: View {
                 let thinkingText = message.thinking.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !message.canonicalParts.isEmpty {
                     let segments = ChatExecutionProcessPolicy.segments(message.canonicalParts.filter { part in
-                        switch part { case .source, .citation: false; default: true }
+                        switch part {
+                        case .source, .citation:
+                            return false
+                        case .text(let text):
+                            return text.isDisclosed && !text.markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        default:
+                            return true
+                        }
                     })
                     let latestProcessID = segments.last(where: { $0.kind == .process })?.id
                     ForEach(segments) { segment in
@@ -2461,6 +2472,9 @@ private struct ChatCoreTaskProjectionView: View {
     }
 
     private func title(for task: AgentCoreTaskHandle) -> String {
+        if let custom = task.lineage?.title?.trimmingCharacters(in: .whitespacesAndNewlines), !custom.isEmpty {
+            return custom
+        }
         switch task.kind {
         case .agent: return NSLocalizedString("chat.task.agent", value: "Background agent", comment: "Core task kind")
         case .tool: return NSLocalizedString("chat.task.tool", value: "Background tool", comment: "Core task kind")
@@ -2471,6 +2485,9 @@ private struct ChatCoreTaskProjectionView: View {
 
     private func status(for state: AgentCoreTaskState) -> String {
         if state == .sealed { return NSLocalizedString("chat.task.state.sealed", value: "Execution sealed", comment: "Execution ended, not business acceptance") }
+        if state == .retryWaiting {
+            return NSLocalizedString("chat.task.state.retry_waiting", value: "Waiting to retry", comment: "Core task retrying state")
+        }
         return NSLocalizedString("chat.task.state.\(state.rawValue)", value: state.rawValue.capitalized, comment: "Core task state")
     }
 
@@ -3584,8 +3601,16 @@ private func localizedHostToolDisplayName(_ rawName: String) -> String {
         (key, fallback) = ("chat.host_tool.name.read_output", "Read tool output")
     case "memory_save", "memory_search":
         (key, fallback) = ("chat.host_tool.name.memory", "Manage memory")
-    case "spawn_agent", "nola_orchestrate":
+    case "spawn_agent", "nola_orchestrate", "task_create", "task_update", "task_list", "task_get", "task_watch":
         (key, fallback) = ("chat.host_tool.name.subtask", "Run subtask")
+    case "goal_complete":
+        (key, fallback) = ("chat.host_tool.name.goal_complete", "Complete goal")
+    case "ask_user_question":
+        (key, fallback) = ("chat.host_tool.name.ask_user", "Request user input")
+    case "list_mcp_resources":
+        (key, fallback) = ("chat.host_tool.name.mcp_list", "List MCP resources")
+    case "read_mcp_resource":
+        (key, fallback) = ("chat.host_tool.name.mcp_read", "Read MCP resource")
     case "list_tasks", "read_task", "wait_task", "stop_task":
         (key, fallback) = ("chat.host_tool.name.background", "Background task")
     case "propose_agent_plan", "update_agent_todos", "agent_plan_file":

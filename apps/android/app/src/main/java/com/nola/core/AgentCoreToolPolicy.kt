@@ -328,8 +328,31 @@ internal object AndroidAgentToolRegistry {
         candidate("device_clipboard_read", "Read text from the Android clipboard.", "sensitive_read"),
         candidate("device_clipboard_write", "Replace the Android clipboard text.", "overwrite", mapOf("text" to string("Text to place on the clipboard.")), listOf("text")),
         candidate("device_get_location", "Read the device's current approximate location.", "sensitive_read"),
-        candidate("device_search_calendar_events", "Search calendar events in a time range.", "sensitive_read", mapOf("start_ms" to integer("Inclusive Unix time in milliseconds."), "end_ms" to integer("Exclusive Unix time in milliseconds."))),
-        candidate("device_create_calendar_event", "Create an event in the Android calendar.", "new_file", mapOf("title" to string("Event title."), "start_ms" to integer("Start Unix time in milliseconds."), "end_ms" to integer("End Unix time in milliseconds."), "notes" to string("Optional event notes.")), listOf("title", "start_ms", "end_ms")),
+        candidate(
+            "device_search_calendar_events",
+            "Search calendar events in a time range.",
+            "sensitive_read",
+            mapOf(
+                "start_ms" to integer("Inclusive Unix time in milliseconds."),
+                "end_ms" to integer("Exclusive Unix time in milliseconds."),
+                "start_iso" to string("Optional ISO 8601 start time."),
+                "end_iso" to string("Optional ISO 8601 end time."),
+            ),
+        ),
+        candidate(
+            "device_create_calendar_event",
+            "Create an event in the Android calendar.",
+            "new_file",
+            mapOf(
+                "title" to string("Event title."),
+                "start_ms" to integer("Start Unix time in milliseconds."),
+                "end_ms" to integer("End Unix time in milliseconds."),
+                "start_iso" to string("Optional ISO 8601 start time."),
+                "end_iso" to string("Optional ISO 8601 end time."),
+                "notes" to string("Optional event notes."),
+            ),
+            listOf("title"),
+        ),
         candidate(
             "memory_search",
             "Search durable long-term memory when earlier user context may help the current task. The query is chosen by the model and is not derived by the client.",

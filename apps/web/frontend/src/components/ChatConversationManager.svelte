@@ -26,9 +26,8 @@
     let error = $state('');
     let loadError = $state('');
     let title = $state('');
-    let renameBaseline = $state('');
-    let renameRevision = $state(0);
-    let editing = $state<string | null>(null);
+    let editingTarget = $state<{ id: string; baseline: string; expectedRevision: number } | null>(null);
+    const editing = $derived(editingTarget?.id ?? null);
     let renameInput = $state<HTMLInputElement>();
     let renameOpener: HTMLElement | undefined;
     let listElement: HTMLDivElement;
@@ -39,11 +38,12 @@
         if (!await discardRename() || !current(captured)) return;
         const menu = opener?.closest('details'); if (menu) menu.open = false;
         renameOpener = menu?.querySelector('summary') ?? undefined;
-        title = conversation.title; renameBaseline = conversation.title; renameRevision = conversation.revision; editing = conversation.conversationId;
+        title = conversation.title;
+        editingTarget = { id: conversation.conversationId, baseline: conversation.title, expectedRevision: conversation.revision };
         await tick(); renameInput?.focus(); renameInput?.select();
     }
     async function closeRename() {
-        editing = null; await tick();
+        editingTarget = null; await tick();
         if (renameOpener?.isConnected) renameOpener.focus();
         renameOpener = undefined;
     }
@@ -64,7 +64,7 @@
     let loadVersion = $state(0);
     let loadController: AbortController | undefined;
     const locked = $derived(navigationDisabled || busy || writing);
-    const renameDirty = $derived(editing !== null && title !== renameBaseline);
+    const renameDirty = $derived(editingTarget !== null && title !== editingTarget.baseline);
     const active = $derived(conversations.find(item => item.conversationId === activeId));
     const visible = $derived(conversations.filter(item => !query.trim() || item.title.toLocaleLowerCase($locale).includes(query.trim().toLocaleLowerCase($locale))).sort((a, b) => Number(b.isPinned) - Number(a.isPinned)));
     const owner = (): ConversationOperationOwner => ({ conversationId: activeId, generation });
@@ -93,7 +93,7 @@
         try {
             const accepted = await (confirm ?? confirmation!.ask)({ title: t($locale, 'chatConversations.discardRenameTitle'), description: t($locale, 'chatConversations.discardRenameBody'), confirmLabel: t($locale, 'chatConversations.discardRename'), destructive: true });
             if (!current(captured)) return false;
-            if (accepted) editing = null;
+            if (accepted) editingTarget = null;
             return accepted;
         } finally {
             if (!disposed) writing = false;
@@ -103,7 +103,7 @@
     }
     async function selectConversation(conversation: ChatConversation) {
         const captured = owner();
-        if (navigationDisabled || writing || !await discardRename() || !current(captured)) return;
+        if (navigationDisabled || writing || !current(captured)) return;
         onselect(conversation);
     }
     async function pin(target: ChatConversation, opener: HTMLButtonElement) {
@@ -139,14 +139,20 @@
         catch (cause) { if (current(captured) && version === loadVersion && !request.signal.aborted) loadError = conversationErrorKey(cause, 'load'); }
         finally { if (!disposed && version === loadVersion) loading = false; }
     }
-    $effect(() => { activeId; generation; if (mounted) untrack(() => { editing = null; error = ''; loadError = ''; void refresh(); }); });
+    $effect(() => { generation; if (mounted) untrack(() => { editingTarget = null; }); });
+    $effect(() => { activeId; generation; if (mounted) untrack(() => { error = ''; loadError = ''; void refresh(); }); });
     onMount(() => { mounted = true; void refresh(); return () => { disposed = true; loadController?.abort(); }; });
     export async function mutateMessage(operation: 'branch' | 'truncate', messageId: string, captured: ConversationOperationOwner) {
         if (!current(captured) || !messageIds.includes(messageId)) return;
         return await mutate(operation, messageId);
     }
     export async function createConversation() { return await mutate('create'); }
-    async function mutate(operation: 'create' | 'rename' | 'delete' | 'branch' | 'truncate', explicitMessageId?: string, rowTarget?: ChatConversation) {
+    export async function renameConversationById(id: string, nextTitle: string, expectedRevision?: number): Promise<string | undefined> {
+        const target = conversations.find(item => item.conversationId === id) ?? (active?.conversationId === id ? active : undefined);
+        if (!target || locked) return 'chatConversations.writeFailed';
+        return await mutate('rename', undefined, target, nextTitle, expectedRevision ?? target.revision);
+    }
+    async function mutate(operation: 'create' | 'rename' | 'delete' | 'branch' | 'truncate', explicitMessageId?: string, rowTarget?: ChatConversation, explicitTitle?: string, explicitRevision?: number) {
         if (navigationDisabled || writing || busy && operation !== 'create') return;
         const captured = owner();
         if (operation !== 'rename' && (!await discardRename() || !current(captured))) return;
@@ -155,9 +161,11 @@
         const messageId = explicitMessageId ?? selectedMessageId;
         if (operation !== 'create' && !target) return;
         if ((operation === 'branch' && !hasMessages) || (operation === 'truncate' && !messageId)) return;
+        const renameTitle = explicitTitle ?? title;
+        const renameExpectedRevision = explicitRevision ?? (editingTarget?.id === target?.conversationId ? editingTarget?.expectedRevision : undefined) ?? target?.revision ?? 0;
         let body: unknown;
-        try { body = operation === 'create' ? {} : operation === 'rename' ? conversationTitleRequest(title, renameRevision) : operation === 'branch' ? conversationBranchRequest(messageId) : operation === 'truncate' ? conversationTruncateRequest(messageId!) : undefined; }
-        catch { error = 'chatConversations.invalidTitle'; return; }
+        try { body = operation === 'create' ? {} : operation === 'rename' ? conversationTitleRequest(renameTitle, renameExpectedRevision) : operation === 'branch' ? conversationBranchRequest(messageId) : operation === 'truncate' ? conversationTruncateRequest(messageId!) : undefined; }
+        catch { error = 'chatConversations.invalidTitle'; return error; }
         writing = true; error = '';
         try {
             if (operation === 'delete' || operation === 'truncate' || operation === 'branch') {
@@ -178,7 +186,7 @@
             const type = ({ create: 'created', rename: 'renamed', delete: 'deleted', branch: 'branched', truncate: 'truncated' } as const)[operation];
             onchange?.({ type, conversationId: operation === 'create' ? conversation!.conversationId : target!.conversationId, ...(conversation ? { conversation } : {}) });
             if (current(captured)) {
-                if (operation === 'rename') await closeRename(); else editing = null;
+                if (operation === 'rename') await closeRename(); else editingTarget = null;
                 if ((operation === 'create' || operation === 'branch') && conversation) onselect(conversation);
             }
             await refresh();
@@ -269,7 +277,7 @@
     .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
     .group-title { display: flex; align-items: center; gap: 12px; font-size: 12px; line-height: 20px; color: var(--muted); margin: 12px 0 4px; font-weight: 400; }
     .page-list .group-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
-    .conversation-list { display: grid; gap: 3px; max-height: 340px; overflow: auto; }
+    .conversation-list { display: grid; gap: 3px; }
     .conversation-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; }
     .conversation { display: grid; align-content: center; gap: 4px; min-width: 0; width: 100%; border: 0; border-radius: 6px; background: transparent; padding: 8px 40px 8px 12px; min-height: 40px; text-align: left; overflow-wrap: anywhere; }
     .conversation[aria-current] { background: var(--panel); color: var(--content); }

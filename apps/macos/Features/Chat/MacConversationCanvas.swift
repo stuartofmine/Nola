@@ -166,7 +166,7 @@ struct MacConversationCanvas: View {
                                     .foregroundStyle(.secondary)
                                     .textSelection(.enabled)
                             }
-                            .disclosureGroupStyle(MacRowDisclosureStyle())
+                            .disclosureGroupStyle(MacRowDisclosureStyle(isPlain: true))
                             Text(String(localized: "Your draft has been kept. Review it and send again when ready.", table: "Chat"))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -196,7 +196,7 @@ struct MacConversationCanvas: View {
                                     }
                                 }
                                 .font(.caption)
-                                .disclosureGroupStyle(.automatic)
+                                .disclosureGroupStyle(MacRowDisclosureStyle(isPlain: true))
                             }
                             if model.localRecoveryError == nil,
                                let inspection = model.localRecoveryInspection, !model.isAwaitingUserInput {
@@ -348,7 +348,7 @@ struct MacConversationCanvas: View {
                             DisclosureGroup(String(localized: "Diagnostic details", table: "Chat")) {
                                 Text(error).font(.caption).textSelection(.enabled)
                             }
-                            .disclosureGroupStyle(MacRowDisclosureStyle())
+                            .disclosureGroupStyle(MacRowDisclosureStyle(isPlain: true))
                             Button(String(localized: "Show pending questions")) { model.reopenUserInputWaits() }
                         }
                     }

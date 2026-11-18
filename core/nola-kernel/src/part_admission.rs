@@ -74,7 +74,7 @@ mod tests {
     fn append() -> PartMutation {
         PartMutation::AppendText {
             part_id: "p".into(),
-            expected_content_digest: "prefix".into(),
+            expected_prefix_bytes: 6,
             text: "next".into(),
             updated_at_ms: 1,
         }

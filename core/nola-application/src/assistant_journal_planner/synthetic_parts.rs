@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::assistant_synthetic_semantics::{
-    PublicModelAttemptPart, PublicSkillPart, PublicTaskPart,
+    sanitize_task_display_key, PublicModelAttemptPart, PublicSkillPart, PublicTaskPart,
 };
 
 impl<R: JournalPlanningReader + ?Sized> AssistantJournalPlanner<'_, R> {
@@ -27,7 +27,7 @@ impl<R: JournalPlanningReader + ?Sized> AssistantJournalPlanner<'_, R> {
         let id = part.part_id();
         let metadata = JournalPartMetadata::TaskControl(JournalTaskControlMetadata { task: JournalTaskMetadata {
             task_id: part.task_id.into(),
-            display_key: part.display_key.into(),
+            display_key: sanitize_task_display_key(part.display_key),
             state: part.state.clone(),
             progress: part
                 .progress

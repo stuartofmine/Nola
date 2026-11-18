@@ -396,8 +396,7 @@
                   }
                 },
                 "type": "function"
-              },
-              "model_schema_digest": "b4124d5bdba942471fa7a34887d23448430e214a6d1062edd517ae447703a1c9"
+              }
             }
           ],
           "host_availability_epoch": 1,
@@ -1907,8 +1906,7 @@
                   }
                 },
                 "type": "function"
-              },
-              "model_schema_digest": "b4124d5bdba942471fa7a34887d23448430e214a6d1062edd517ae447703a1c9"
+              }
             }
           ],
           "host_availability_epoch": 1,

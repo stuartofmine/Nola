@@ -173,7 +173,8 @@ class AndroidAgentTurnService @Inject constructor(
         val payload = request.getValue("payload").jsonObject
         val arguments = payload.getValue("input").jsonObject
         if (arguments.getValue("action").jsonPrimitive.content != "request") {
-            val deadline = android.os.SystemClock.elapsedRealtime() + (arguments["timeout_ms"]?.jsonPrimitive?.longOrNull ?: 30_000)
+            val timeoutMs = (arguments["timeout_ms"]?.jsonPrimitive?.longOrNull ?: 300_000L).coerceIn(0L, 300_000L)
+            val deadline = android.os.SystemClock.elapsedRealtime() + timeoutMs
             while (true) {
                 val observed = factory.peerTaskAction(request, actor)
                 val remaining = deadline - android.os.SystemClock.elapsedRealtime()
@@ -253,19 +254,22 @@ class AndroidAgentTurnService @Inject constructor(
     suspend fun start(originalRequest: AndroidAgentTurnRequest): AndroidAgentTurnHandle {
         val application = AndroidCanonicalAgentRuntime(applicationRuntime, originalRequest.canonicalTurn)
         val frozen = if (originalRequest.recoverExistingRun) application.loadExactRunInvocation() else null
-        val request = if (frozen == null) originalRequest else originalRequest.copy(
-            model = recoverModel(frozen),
-            sessionId = frozen.getValue("core_session_id").jsonPrimitive.content,
-            toolPlan = toolPlan(frozen.getValue("core_session_id").jsonPrimitive.content,
-                originalRequest.resultEgressAuthorized, originalRequest.toolPlan.permissionMode),
-            enableThinking = frozen.getValue("host_invocation").jsonObject.getValue("generation")
-                .jsonObject.getValue("thinking_enabled").jsonPrimitive.boolean,
-        )
+        val recoveredModel = frozen?.let { recoverModel(it) }
+        val requestedPermissionMode = originalRequest.toolPlan.permissionMode
+        var request = if (frozen == null) originalRequest else {
+            val coreSessionId = frozen.getValue("core_session_id").jsonPrimitive.content
+            originalRequest.copy(
+                model = recoveredModel,
+                sessionId = coreSessionId,
+                toolPlan = toolPlan(coreSessionId, originalRequest.resultEgressAuthorized, requestedPermissionMode),
+                enableThinking = frozen.getValue("host_invocation").jsonObject.getValue("generation")
+                    .jsonObject.getValue("thinking_enabled").jsonPrimitive.boolean,
+            )
+        }
         val model = checkNotNull(request.model) { "A new Run requires a captured model" }
         val parameters = model.parameters
         val thinking = request.enableThinking ?: parameters.enableThinking
         val prepared = prepareInvocation(model, thinking)
-        val modelFacingTools = model.modelFacingTools(if (frozen == null) request.tools else request.toolPlan.tools)
         val promptComposition = CoreAgentPromptComposer.compose(AndroidSystemPrompt.agentFragments(
             context = applicationContext,
             responseStyle = request.responseStyle ?: parameters.responseStyle,
@@ -303,7 +307,9 @@ class AndroidAgentTurnService @Inject constructor(
         val effectiveHistory = if (isEditedResend) emptyList() else
             listOf(AgentCoreMessage(role = "system", content = promptComposition.rendered)) +
                 request.history.filter { it.role != "system" }
-        val coordinator = DeviceAgentCoordinator(
+        val modelCapabilityProfile = model.editedResendModel?.let { frozenAndroidModelCapability(it.modelCapability) }
+            ?: androidModelCapabilityProfile(model.model, parameters, model.client.supportsNativeEventStream)
+        fun createCoordinator(resolvedPlan: AgentCoreAndroidToolPlan): DeviceAgentCoordinator = DeviceAgentCoordinator(
             modelClient = TextAgentModelClient(
                 client = model.client,
                 enableThinking = thinking,
@@ -312,14 +318,13 @@ class AndroidAgentTurnService @Inject constructor(
             permissionBroker = permissionBroker,
             hostExecutor = hostExecutor,
             canonicalApplication = application,
-            modelCapability = model.editedResendModel?.let { frozenAndroidModelCapability(it.modelCapability) }
-                ?: androidModelCapabilityProfile(model.model, parameters, model.client.supportsNativeEventStream),
-            childToolPlan = { childSession -> toolPlan(childSession, request.resultEgressAuthorized, request.toolPlan.permissionMode) },
+            modelCapability = modelCapabilityProfile,
+            childToolPlan = { childSession -> toolPlan(childSession, request.resultEgressAuthorized, resolvedPlan.permissionMode) },
             prepareChildExecutor = { childConfig -> prepareEmbeddedChild(childConfig, application.descriptor.conversationId) },
-            expertExchange = { request -> executeExpertExchange(application, request) },
+            expertExchange = { exchangeRequest -> executeExpertExchange(application, exchangeRequest) },
             expertDelegationEnabled = localMainContext(application.descriptor.conversationId),
             captureDelegation = request.delegationEnabled && !request.recoverExistingRun,
-            refreshToolPlan = { toolPlan(request.sessionId, request.resultEgressAuthorized, request.toolPlan.permissionMode) },
+            refreshToolPlan = { toolPlan(request.sessionId, request.resultEgressAuthorized, resolvedPlan.permissionMode) },
             prepareRecovery = { proof, config ->
                 // Core ResumeHostEffect advances only the replay witness. The
                 // admitted invocation and every authority field remain exact.
@@ -329,8 +334,8 @@ class AndroidAgentTurnService @Inject constructor(
                 }
                 // Resolve current local authority again after the delivery wait.
                 val authorized = recoverModel(proof)
-                val livePlan = toolPlan(request.sessionId, request.resultEgressAuthorized, request.toolPlan.permissionMode)
-                revalidateFrozenAndroidToolPlan(request.toolPlan, livePlan)
+                val livePlan = toolPlan(request.sessionId, request.resultEgressAuthorized, resolvedPlan.permissionMode)
+                revalidateFrozenAndroidToolPlan(resolvedPlan, livePlan)
                 val preparedRecovery = prepareInvocation(authorized, thinking)
                 val receipt = applicationRuntime.execute(buildJsonObject {
                     put("type", "validate_mobile_run_recovery_authority")
@@ -350,11 +355,11 @@ class AndroidAgentTurnService @Inject constructor(
                 livePlan
             },
         )
-        val runtimeConfig = (request.config ?: AgentCoreRuntimeConfig(
+        fun runtimeConfigFor(resolvedPlan: AgentCoreAndroidToolPlan): AgentCoreRuntimeConfig = (request.config ?: AgentCoreRuntimeConfig(
             executionMode = AndroidAgentExecutionMode.DeviceLocal.wireValue,
             maxIterations = 0,
             contextWindowTokens = parameters.maxContextTokens,
-            grantedCapabilities = request.toolPlan.grantedCapabilities,
+            grantedCapabilities = resolvedPlan.grantedCapabilities,
         )).copy(
             model = model.model.id,
             preparedHostInvocation = prepared,
@@ -364,6 +369,25 @@ class AndroidAgentTurnService @Inject constructor(
             promptFragmentIds = promptComposition.fragmentIds,
             stablePromptFragmentDigests = promptComposition.stableFragmentSha256,
         )
+        if (frozen != null && requestedPermissionMode == AndroidAgentPermissionMode.AllowAll) {
+            val frozenDigest = frozen.getValue("host_invocation").jsonObject["execution_policy_sha256"]
+            val cautiousPlan = toolPlan(request.sessionId, originalRequest.resultEgressAuthorized, AndroidAgentPermissionMode.Cautious)
+            val cautiousCoordinator = createCoordinator(cautiousPlan)
+            val cautiousTools = model.modelFacingTools(cautiousPlan.tools)
+            val cautiousConfig = cautiousCoordinator.buildRuntimeConfig(
+                request.sessionId,
+                effectiveHistory,
+                cautiousTools,
+                cautiousPlan,
+                runtimeConfigFor(cautiousPlan),
+            )
+            if (bindAndroidInvocation(prepared, cautiousConfig)["execution_policy_sha256"] == frozenDigest) {
+                request = request.copy(toolPlan = cautiousPlan)
+            }
+        }
+        val coordinator = createCoordinator(request.toolPlan)
+        val modelFacingTools = model.modelFacingTools(if (frozen == null) request.tools else request.toolPlan.tools)
+        val runtimeConfig = runtimeConfigFor(request.toolPlan)
         return AndroidAgentTurnHandle(
             coordinator = coordinator,
             coreSessionId = request.sessionId,

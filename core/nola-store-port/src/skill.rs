@@ -21,7 +21,6 @@ pub struct UpsertSkillInput {
     pub summary: String,
     pub category: String,
     pub instructions_ref: String,
-    pub instructions_digest: String,
     pub instructions_text: String,
     #[serde(default)]
     pub required_tools_json: Option<String>,
@@ -41,7 +40,6 @@ pub struct StoredSkill {
     pub summary: String,
     pub category: String,
     pub instructions_ref: String,
-    pub instructions_digest: String,
     pub instructions_text: String,
     pub required_tools_json: Option<String>,
     pub default_mode: Option<String>,
@@ -88,6 +86,13 @@ pub trait SkillRepository {
         selection: &SkillInstructionSelection,
         updated_at_ms: i64,
     ) -> Result<(), Self::Error>;
+    fn restore_built_in_package_version(
+        &mut self,
+        skill_id: &str,
+        expected_revision: i64,
+        package_version: &str,
+        updated_at_ms: i64,
+    ) -> Result<StoredSkill, Self::Error>;
     fn skill_visibility(&self) -> Result<Option<SkillVisibilitySetting>, Self::Error>;
     fn put_skill_visibility(
         &mut self,

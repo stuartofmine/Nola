@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import com.nola.ui.components.NolaDisclosureBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -36,9 +37,14 @@ internal fun ModelConnectionsSection(state: ModelsUiState, refresh: () -> Unit, 
         if (state.webHostUrl.isBlank() || state.webHostToken.isBlank()) {
             Text(stringResource(R.string.model_connections_pair_first), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        TextButton(onClick = { showAccountDetails = !showAccountDetails }) {
-            Text(stringResource(if (showAccountDetails) R.string.canonical_hide_details else R.string.model_connections_account_details))
-        }
+        NolaDisclosureBar(
+            title = stringResource(
+                if (showAccountDetails) R.string.canonical_hide_details
+                else R.string.model_connections_account_details
+            ),
+            expanded = showAccountDetails,
+            onToggle = { showAccountDetails = !showAccountDetails }
+        )
         AnimatedVisibility(visible = showAccountDetails) {
             Text(
                 stringResource(R.string.model_connections_source_boundary),

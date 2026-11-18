@@ -81,7 +81,12 @@ pub(crate) fn execute(mut request: HostInvocationRequest) -> Result<(), String> 
                 .prepare_goal_control_intent(input)?;
             crate::core_agent_runtime::submit_agent_core_goal_command(&request, envelope)?;
         } else {
-            let applied = crate::goal_control_port::submit_existing(input)?;
+            let applied = if resumes {
+                apply_tool_receipt(&mut request)?;
+                crate::core_agent_runtime::rebind_and_resume_goal(&request, input)?
+            } else {
+                crate::goal_control_port::submit_existing(input)?
+            };
             // An active owner will consume queued controls. Do not start a
             // competing coordinator or claim an unconfirmed Resume as applied.
             if !applied || !resumes { return Ok(()); }
@@ -171,6 +176,41 @@ pub(crate) fn execute(mut request: HostInvocationRequest) -> Result<(), String> 
                 crate::core_agent_runtime::run_queued_user_input(
                     &request, lease, admission_id, &mut output, cancellation.clone(),
                     nola_core::context_engine::ContextPlatform::Macos, Vec::new())
+            } else if request.input.host_attachments.is_empty()
+                && request.input.context_files.is_empty()
+                && !request.input.message.trim().is_empty()
+                && crate::session::load_session_goal_projection(session)?
+                    .and_then(|projection| projection.active)
+                    .is_some_and(|goal| matches!(goal.status, nola_core::agent::GoalStatus::NeedsUser | nola_core::agent::GoalStatus::Paused))
+            {
+                let goal = crate::session::load_session_goal_projection(session)?
+                    .and_then(|projection| projection.active)
+                    .ok_or("Active Goal missing during resume")?;
+                crate::core_agent_runtime::rebind_goal_execution(&request)?;
+                let user_prompt = request.input.message.clone();
+                let mut goal_request = crate::goal_runtime::restore_goal_execution_request(session, &goal.id)?;
+                goal_request.session.host_submission_id = request.session.host_submission_id.clone();
+                goal_request.session.host_user_message_id = request.session.host_user_message_id.clone();
+                goal_request.session.host_assistant_message_id = request.session.host_assistant_message_id.clone();
+                let outcome = crate::goal_runtime::run_host_goal(
+                    &mut goal_request,
+                    &user_prompt,
+                    &goal.objective,
+                    &goal.constraints.join("\n"),
+                    &mut output,
+                    cancellation.clone(),
+                )?;
+                let cancelled = matches!(outcome, crate::goal_runtime::GoalCycleOutcome::Paused)
+                    && cancellation.is_requested();
+                Ok(crate::core_agent_runtime::CoreRunOutcome {
+                    turn_status: if cancelled {
+                        nola_core::agent::AgentTurnStatus::Cancelled
+                    } else {
+                        nola_core::agent::AgentTurnStatus::Completed
+                    },
+                    run_result: None,
+                    goal_signal: None,
+                })
             } else {
                 crate::core_agent_runtime::run_agent_core_with_cancellation(
                     &request, &request.input.message, &mut output, cancellation.clone())

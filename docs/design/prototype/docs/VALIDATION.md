@@ -1,5 +1,20 @@
 # 验证与交付边界
 
+## 桌面统一导航、扁平三区检查器与去哈希同步验收（2026-11-17）
+
+本轮同步仓库内 `docs/design/prototype/` 原型与 `docs/design/shared/`、`docs/platforms/macos/` 交互文档至最新的干净桌面导航（左栏四项主导航 + 常驻会话搜索与列表 + 独立 `820×620` 设置窗口）、扁平三区检查器（「任务 / 产物 / 上下文」移除外层 9 组手风琴与工作概览、「专家会话」移入「任务」、上下文统计原始消息/摘要计数、托管浏览器仅在未连接或异常时提示）与精简输入栏（「模型·外部代理·远端主机 / 选择文件夹（临时工作区）/ @ 专家」），全界面零 SHA-256 哈希、零字节偏移。未修改真实用户数据、未调用模型或编译新站点发布包。
+
+| 检查入口 | 本轮实际结果 |
+| --- | --- |
+| `verify_sidebar_sync.cjs` | **通过**：1000/1440px × 深浅色共 4 组布局、28 张截图（`0` 异常、`0` 外部请求）；覆盖统一左导航、「专家与技能」（`专家 \| 技能 \| MCP`）、自动化中心、「记忆与数据源」（`记忆 \| 来源 \| 使用记录`）、「临时工作区→演示项目」切换、扁平三区检查器、Wiki 草稿保持、托管浏览器按需收起、单色流光与 `prefers-reduced-motion` |
+| `verify_page_sync.cjs` | **通过**：10 组跨端流程、134 张截图（`0` 异常、`0` 外部请求）；覆盖 iOS/Android 移动页与桌面独立 `820×620` 设置窗口、更新检查失败/不兼容阻止/预览安装、Agent→能力中心与 MCP 未确认恢复、三区检查器与 Wiki 草稿保持、原地 `splice` 编辑重发与剪贴板拒绝回退 |
+| `verify_mobile_ui.cjs` | **通过**：6 组移动布局（320/390px iOS/Android × 深浅色）、49 张截图；覆盖触摸尺寸、`mobile.html` 预览草稿保持与文本对比度 |
+| `verify_business_layout.cjs` | **通过**：`PASS extra layout / entry / keyboard / clipboard checks`（60 个响应式尺寸组合 + 12 张跨平台长任务预览 + 确认框 `Escape` 焦点恢复 + 桌面/移动进入总览链接 + 剪贴板拒绝只读回退） |
+| `verify_business_scenarios.cjs` | **通过**：68 场景、220 状态、2082 个适用平台状态、429 条交互边、288 张截图（`0` 异常、`0` 外部请求），含更新后的 `inspector` 场景检查 |
+| 静态、Token 与文档门禁 | `sync_business_scenarios.py --check`、`scripts/check_design_tokens.py`（72 项 WCAG 对比度与 6 端映射）、`scripts/check_docs.py`（169 篇文档 / 1391 条链接）、`verify_expert_roles.cjs` 与全目录 `node --check` 全部通过 |
+
+**未运行范围说明**：依赖已构建 Browser Use 执行目录（`apps/web/playwright_runtime/browser_use`）的 `verify_inspector_regions.cjs`、`verify_expert_roles_browser.cjs` 与 `verify_reply_presentation.cjs` 因本机当前未构建该 runtime 目录，本轮仅同步了前两个脚本源码断言与 `node --check` 语法检查，**未实机执行**；本轮验证均为本地合成原型回放，不替代原生客户端或真实模型端到端验收。
+
 ## 当前：过程标题与文献来源（2026-11-12 整理）
 
 文末列表于 2026-11-11 完成客户端与原型实测，表格/正文内联引用于 2026-11-12 按用户截图补测；具体结果见验证总账。文档整理时，不将下方较早批次的“仅原型”或“未编译原生”说明套用于这轮改动。完整平台结果和未覆盖范围以[验证总账](../../../quality/VALIDATION_SCOPE.md)“回复过程与文献引用”为准。

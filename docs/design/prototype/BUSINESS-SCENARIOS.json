@@ -5069,7 +5069,7 @@
             "id": "experts",
             "group": "collaboration",
             "title": "专家配置、子任务协作与只读会话",
-            "entry": "会话 → 参与者",
+            "entry": "输入栏 @ 专家 / 专家与技能 / 会话 → 任务",
             "platforms": [
                 "mac",
                 "ios",
@@ -5079,6 +5079,7 @@
             ],
             "sources": [
                 "apps/macos/Features/Chat/MacAgentRoomsView.swift",
+                "apps/macos/UI/MacExtensionsCenterView.swift",
                 "apps/ios/UI/Chat/IOSAgentRoomsView.swift",
                 "apps/web/frontend/src/pages/WorkspaceReview.svelte"
             ],
@@ -5306,7 +5307,7 @@
             "id": "subtask",
             "group": "collaboration",
             "title": "子任务、执行者与取消",
-            "entry": "会话 → 执行 → 子任务",
+            "entry": "对话内联过程 / 会话 → 任务",
             "platforms": [
                 "mac",
                 "ios",
@@ -5419,7 +5420,7 @@
         {
             "id": "inspector",
             "group": "collaboration",
-            "title": "检查器全部区段与独立展开",
+            "title": "检查器三区布局与独立展开",
             "entry": "桌面右栏 / 手机会话详情",
             "platforms": [
                 "mac",
@@ -5429,6 +5430,8 @@
                 "windows"
             ],
             "sources": [
+                "apps/macos/Features/Inspector/MacChatInspectorView.swift",
+                "apps/macos/Features/Inspector/MacInspectorKnowledgeView.swift",
                 "apps/macos/Features/Chat/MacAgentRoomsView.swift",
                 "apps/ios/UI/Chat/IOSAgentRoomsView.swift",
                 "apps/web/frontend/src/pages/WorkspaceReview.svelte"
@@ -5438,7 +5441,7 @@
                     "id": "0",
                     "title": "会话详情",
                     "body": [
-                        "概览、进度、目标、审阅、产物、上下文、执行、参与者直接展开。"
+                        "桌面右栏提供任务、产物、上下文三个独立扁平区域；移除外层手风琴嵌套，各区域独立保留滚动与草稿。"
                     ],
                     "kind": "inspector",
                     "actions": [
@@ -5453,7 +5456,7 @@
                     "id": "1",
                     "title": "查看上下文与产物",
                     "body": [
-                        "多个区段可以同时展开；知识、Wiki、历史召回原地显示。",
+                        "上下文展示记忆/检索开关、上下文用量、原始消息与摘要计数，以及默认收起的知识点、会话 Wiki 与会话回忆；托管浏览器仅在未连接或异常时提示。",
                         "不增加二级返回栈，不切换主内容，不清草稿。"
                     ],
                     "kind": "inspector",

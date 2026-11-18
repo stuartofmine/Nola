@@ -290,7 +290,7 @@ public final class ChatManager: ObservableObject {
               let provider = execution.remoteSubmissionProviders[conversationID.uuidString]
                 ?? (execution.effectiveLLMClient as? ModelService)?.currentProvider() as? WebAgentProvider,
               provider.matchesUIHost(baseURL: model.baseURL, certificateSHA256: model.tlsCertificateSHA256) else {
-            throw IOSApplicationRuntimeError.rejected("请重新连接此会话绑定的 Host。")
+            throw IOSApplicationRuntimeError.rejected(NSLocalizedString("chat.host.reconnect_bound", value: "Reconnect to the Host bound to this conversation.", comment: "Reconnect bound host"))
         }
         return provider
     }
@@ -335,11 +335,11 @@ public final class ChatManager: ObservableObject {
             return nil
         case .remote(let hostID, let epoch):
             guard provider.journalSourceHostID == hostID else {
-                throw IOSApplicationRuntimeError.rejected("请重新连接此会话绑定的 Host。")
+                throw IOSApplicationRuntimeError.rejected(NSLocalizedString("chat.host.reconnect_bound", value: "Reconnect to the Host bound to this conversation.", comment: "Reconnect bound host"))
             }
             return epoch
         case .unavailable:
-            throw IOSApplicationRuntimeError.rejected("无法确认此会话的来源 Host。")
+            throw IOSApplicationRuntimeError.rejected(NSLocalizedString("chat.host.source_unavailable", value: "Unable to verify the source Host for this conversation.", comment: "Source host unavailable"))
         }
     }
 
@@ -350,6 +350,16 @@ public final class ChatManager: ObservableObject {
         }
         guard let execution = ensureExecutionForConversation(owner) else { throw IOSApplicationRuntimeError.invalidResponse }
         return try await execution.controlLocalGoal(control)
+    }
+
+    func discardConversationGoalControl(conversationID: String) async throws {
+        guard let owner = UUID(uuidString: conversationID) else { throw IOSApplicationRuntimeError.invalidResponse }
+        if let provider = try uiProvider(conversationID: owner) {
+            try await provider.discardConversationGoalControl(conversationID: conversationID)
+            return
+        }
+        guard let execution = ensureExecutionForConversation(owner) else { throw IOSApplicationRuntimeError.invalidResponse }
+        execution.discardLocalGoalControl()
     }
 
 
@@ -409,19 +419,32 @@ public final class ChatManager: ObservableObject {
         guard ["ios-device", "ios-local"].contains(host) else { throw IOSApplicationRuntimeError.rejected("Goal belongs to another execution Host") }
         var selectedModel: AgentCoreJSONValue = .null
         var startConfiguration: AgentCoreJSONValue = .null
-        if control?.action == .start {
-            guard let model = try container.conversationStore?.getConversation(conversationId: owner)?.selectedModelInfo else {
+        if control?.action == .start || control?.action == .resume {
+            let storedConversation = try container.conversationStore?.getConversation(conversationId: owner)
+            let lastSelected = ((try? ModelSelectionManager.lastSelectedModel(using: container.applicationRuntime))
+                ?? ModelSelectionManager.getLastSelectedModel()).flatMap { $0.isWebBackend ? nil : $0 }
+            let fallbackModel = try lastSelected
+                ?? ModelSelectionManager.availableModels(using: container.applicationRuntime).first(where: { !$0.isWebBackend })
+            let resolvedModel = storedConversation?.selectedModelInfo ?? selectedModelInfo ?? fallbackModel
+            if let model = resolvedModel {
+                let parameters = try generationParameters(for: model, conversationID: owner)
+                let prepared = try IOSPreparedRunModel.prepare(model: model, parameters: parameters,
+                    resolveCloud: { try ModelSelectionManager.resolvedCloudProfileForRun($0, using: self.container.applicationRuntime, parameters: parameters) })
+                let current = try prepared.prepareHostInvocation()
+                let modelFields: [String: AgentCoreJSONValue] = [
+                    "primary": current.route,
+                    "generation": current.generation,
+                    "output_admission": current.outputAdmission,
+                ]
+                selectedModel = .object(modelFields)
+                if control?.action == .start {
+                    let session = state?.objectFields?["configuration"]?.objectFields?["session_id"]?.stringScalar ?? owner.uuidString
+                    startConfiguration = try await prepareLocalGoalHostConfiguration(owner: owner, session: session,
+                        model: prepared, invocation: current)
+                }
+            } else if control?.action == .start {
                 throw IOSApplicationRuntimeError.invalidResponse
             }
-            let parameters = try generationParameters(for: model, conversationID: owner)
-            let prepared = try IOSPreparedRunModel.prepare(model: model, parameters: parameters,
-                resolveCloud: { try ModelSelectionManager.resolvedCloudProfileForRun($0, using: self.container.applicationRuntime, parameters: parameters) })
-            let current = try prepared.prepareHostInvocation()
-            selectedModel = .object(["primary": current.route, "generation": current.generation,
-                "output_admission": current.outputAdmission])
-            let session = state?.objectFields?["configuration"]?.objectFields?["session_id"]?.stringScalar ?? owner.uuidString
-            startConfiguration = try await prepareLocalGoalHostConfiguration(owner: owner, session: session,
-                model: prepared, invocation: current)
         }
         var fields: [String: AgentCoreJSONValue] = ["type": .string("step_goal"),
             "conversation_id": .string(owner.uuidString), "source_host_id": .string(host), "control": .null, "host_available": .bool(hostAvailable), "selected_model": selectedModel,
@@ -452,6 +475,11 @@ public final class ChatManager: ObservableObject {
         return true
     }
 
+    private func discardLocalGoalControl() {
+        localGoalDriver?.cancel()
+        localGoalDriver = nil
+    }
+
     private func wakeLocalGoal(initial: AgentCoreJSONValue? = nil) {
         guard isConversationExecution, localGoalDriver == nil, remoteObservationForeground,
               UIApplication.shared.applicationState == .active, let owner = currentConversationId else { return }
@@ -473,7 +501,7 @@ public final class ChatManager: ObservableObject {
                         result = next
                     } else if instruction?["type"] == .string("wait"),
                               let wake = Self.embeddedInteger(instruction?["wake_at_epoch_ms"]) {
-                        let delay = max(0, wake - Int64(Date().timeIntervalSince1970 * 1000))
+                        let delay = max(250, wake - Int64(Date().timeIntervalSince1970 * 1000))
                         try await Task.sleep(for: .milliseconds(delay))
                         guard self.remoteObservationForeground, UIApplication.shared.applicationState == .active else { return }
                         result = try await self.stepLocalGoal()
@@ -678,7 +706,7 @@ public final class ChatManager: ObservableObject {
         var localCommandStarted = false
         do {
             guard try uiIntentSource(identity: input.interaction.identity) == source else {
-                return .unknown("会话来源已改变，请连接原 Host 后查询提交结果。")
+                return .unknown(NSLocalizedString("a2ui.intent.source_changed", value: "Conversation source changed. Connect to the original Host to check the submission.", comment: "UI interaction source changed"))
             }
             if let provider = try uiProvider(conversationID: conversationID) {
                 let outcome = await provider.submitUIInteraction(input)
@@ -697,7 +725,9 @@ public final class ChatManager: ObservableObject {
             }
             return .committed(receipt)
         } catch IOSApplicationRuntimeError.rejected(let message) { return localCommandStarted ? .rejected(message) : .unknown(message) }
-        catch IOSApplicationRuntimeError.revisionConflict { return .rejected("表单已更新，请重新确认后提交。") }
+        catch IOSApplicationRuntimeError.revisionConflict {
+            return .rejected(NSLocalizedString("a2ui.form.updated", value: "Form updated. Confirm again before submitting.", comment: "Form updated revision conflict"))
+        }
         catch { return .unknown(error.localizedDescription) }
     }
 
@@ -954,7 +984,7 @@ public final class ChatManager: ObservableObject {
                         case "rejected", "cancelled":
                             self.rejectedUIQueue = (conversationID, provider, sourceEpoch, observed)
                             self.remoteUIWakeSuppressed = true
-                            self.remoteRunObservationError = "表单操作未执行，原请求已被拒绝或取消。可移除此排队操作。"
+                            self.remoteRunObservationError = NSLocalizedString("a2ui.queue.not_executed", value: "The form action was not executed because the original request was rejected or cancelled.", comment: "Queued UI action rejected")
                             return
                         case "prepared":
                             try await Task.sleep(nanoseconds: 1_000_000_000)
@@ -1875,7 +1905,6 @@ public final class ChatManager: ObservableObject {
         let pendingIntent = hostConversationId.flatMap { try? remoteStore?.remoteSubmissionIntent(conversationID: $0) }
         let cancellationReceipt = observedRemoteRun?.submission_receipt
         let cancellationIdentity = pendingIntent?.identity ?? cancellationReceipt?.identity
-        let cancellationDigest = pendingIntent?.request_digest ?? cancellationReceipt?.request_digest
         let requestedGeneration = activeGenerationId
         let requestedOwner = committedAssistantOwner
         let requestedConversation = currentConversationId
@@ -1923,8 +1952,8 @@ public final class ChatManager: ObservableObject {
                 if let pendingIntent, pendingIntent.phase != "admitted", let remoteStore {
                     _ = try? await refreshRemoteSubmission(provider: webProvider, store: remoteStore,
                         conversationID: hostConversationId, cancel: true, expectedIdentity: cancellationIdentity)
-                } else if let cancellationDigest {
-                    try? await webProvider.cancelHostGeneration(identity: cancellationIdentity, requestDigest: cancellationDigest)
+                } else {
+                    try? await webProvider.cancelHostGeneration(identity: cancellationIdentity)
                 }
             }
             if usesWebHost { await deviceCoordinator?.cancel(reason: "cancelled_by_user") }
@@ -2516,8 +2545,14 @@ public final class ChatManager: ObservableObject {
             await agentCoreHostExecutor.installSkillSnapshot(enabledSkills, sessionId: coreSession)
             guard recoveryFence.accepts(conversationID: currentConversationId,
                 generation: activeGenerationId, coordinatorIsAvailable: deviceAgentCoordinator == nil) else { return }
+            let restoredModelClient: TextAgentModelClient
+            if let capability = restoredModel.frozenModelCapability {
+                restoredModelClient = try TextAgentModelClient(client: restoredModel.client, frozenModelCapability: capability)
+            } else {
+                restoredModelClient = TextAgentModelClient(client: restoredModel.client)
+            }
             let coordinator = DeviceAgentCoordinator(
-                modelClient: TextAgentModelClient(client: restoredModel.client),
+                modelClient: restoredModelClient,
                 childPermissionEvents: { [weak self] event in await self?.applyChildPermissionEvent(event) },
                 childTaskStateChanged: { [weak self] in await self?.container.chatManager.recoverEmbeddedChildTasks() },
                 delegationSettings: try restoredModel.mobileDelegationSettings(
@@ -2872,7 +2907,7 @@ public final class ChatManager: ObservableObject {
         guard let receipt = try await provider.submissionReceipt(identity: intent.identity, digest: digest, cancel: cancel) else { return intent }
         let accepted = try store.acceptRemoteSubmissionReceipt(receipt)
         if cancel, accepted.phase == "admitted" {
-            try await provider.cancelHostGeneration(identity: intent.identity, requestDigest: digest)
+            try await provider.cancelHostGeneration(identity: intent.identity)
         }
         return accepted
     }

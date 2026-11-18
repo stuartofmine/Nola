@@ -205,7 +205,7 @@
         <h2>{displayName(original)}</h2>
         {#if error}<p class="error" role="alert">{t($locale, error, { detail: errorDetail })}</p>{/if}
         <fieldset disabled={busy}>
-            <label class="row"><input class="check" type="checkbox" bind:checked={draft.enabled} />{t($locale, 'capability.enable')}</label>
+            <label class="row"><input class="check" type="checkbox" role="switch" bind:checked={draft.enabled} />{t($locale, 'capability.enable')}</label>
             <p class="muted">{t($locale, 'capability.permissionHint')}</p>
             <label>{t($locale, 'capability.name')}<input bind:value={draft.name} readonly={mode === 'skills' && builtin(original)} required /></label>
             <label>{t($locale, 'capability.description')}<textarea bind:value={draft.description} required={mode === 'skills'} rows="3" readonly={mode === 'skills' && builtin(original)}></textarea></label>

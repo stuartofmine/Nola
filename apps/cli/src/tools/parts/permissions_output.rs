@@ -2085,7 +2085,33 @@ fn confirm_native_tool_with_instructions(
     let policy_digest = std::env::var("NOLA_CORE_TOOL_POLICY_DIGEST").ok();
     let manifest_digest = std::env::var("NOLA_CORE_TOOL_MANIFEST_DIGEST").ok();
     let localized = crate::i18n::permission_text();
-    let localized_tool_name = crate::i18n::localize_tool_display_name(&request.name);
+    let current_mcp_descriptor = crate::host_tool_permission_evidence::current_mcp_descriptor();
+    let localized_tool_name = current_mcp_descriptor
+        .as_ref()
+        .and_then(|descriptor| {
+            if let Some(server_name) = descriptor
+                .get("mcp_connect_server_name")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+            {
+                return Some(format!("{server_name} · Connect"));
+            }
+            if let Some(title) = descriptor
+                .get("title")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|title| !title.is_empty())
+            {
+                return Some(title.replacen(" / ", " · ", 1));
+            }
+            descriptor.pointer("/input_normalization/mcp_route").and_then(|route| {
+                let server = route.get("server_id").and_then(Value::as_str)?;
+                let tool = route.get("tool_name").and_then(Value::as_str)?;
+                Some(format!("{server} · {tool}"))
+            })
+        })
+        .unwrap_or_else(|| crate::i18n::localize_tool_display_name(&request.name));
     let approval_reason = format!(
         "{} `{}` {}",
         tr(Message::ToolRequiresApprovalPrefix),
@@ -2118,7 +2144,7 @@ fn confirm_native_tool_with_instructions(
         "permission_instructions": instructions,
         "policy_digest": policy_digest,
         "manifest_digest": manifest_digest,
-        "mcp_descriptor": crate::host_tool_permission_evidence::current_mcp_descriptor(),
+        "mcp_descriptor": current_mcp_descriptor,
         "message": localized.keyboard_hint,
         "trace": trace
     });

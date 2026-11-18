@@ -52,43 +52,9 @@
   ],
   "execution_contract": {
     "schemaVersion": 1,
-    "progressSteps": [
-      {
-        "id": "inspect",
-        "title": "Inspect inputs and constraints",
-        "required": true
-      },
-      {
-        "id": "execute",
-        "title": "Produce the requested outcome",
-        "required": true
-      },
-      {
-        "id": "verify",
-        "title": "Verify the outcome with evidence",
-        "required": true
-      }
-    ],
-    "artifacts": [
-      {
-        "id": "figma-change-record",
-        "mediaType": "application/json",
-        "required": false,
-        "description": "Stable reference to the final requested outcome or its persisted receipt"
-      }
-    ],
-    "verifiers": [
-      {
-        "id": "completion-audit",
-        "method": "model_judgment",
-        "description": "Record real evidence for the applicable completion checks: scripts/audit_snapshot.py --validate-only; changed node before-and-after comparison; tool:read_file reopen the degraded Markdown advisory as the final validation when structured snapshot validation is unavailable",
-        "required": true
-      }
-    ],
-    "resumePoints": [
-      "after-inspect",
-      "after-execute",
-      "after-verify"
-    ]
+    "progressSteps": [],
+    "artifacts": [],
+    "verifiers": [],
+    "resumePoints": []
   }
 }

@@ -2962,7 +2962,7 @@ nonisolated final class MacApplicationPort:
         let range: MacToolSourceExportRange = try execute(Request(owner: owner, sourceItemID: sourceItemID,
             expectedConversationRevision: expectedConversationRevision, offsetBytes: offsetBytes))
         let next = offsetBytes.addingReportingOverflow(UInt64(range.text.utf8.count))
-        guard range.owner == owner, range.sourceItemID == sourceItemID, MacToolSourceClaim.validDigest(range.bodySHA256),
+        guard range.owner == owner, range.sourceItemID == sourceItemID,
               range.revision == expectedConversationRevision, range.offsetBytes == offsetBytes,
               !next.overflow, range.nextOffsetBytes == next.partialValue, range.text.utf8.count <= 32768,
               range.nextOffsetBytes <= range.totalUTF8Bytes, range.nextOffsetBytes > offsetBytes || range.endOfContent,

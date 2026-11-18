@@ -372,8 +372,7 @@ struct MacDiagnosticsCenterView: View {
                 Spacer(minLength: 16)
 
                 Toggle(String(localized: "Detailed Logging"), isOn: $detailedLoggingEnabled)
-                    .labelsHidden()
-                    .toggleStyle(.switch)
+                    .toggleStyle(.macSwitchControl)
                     .accessibilityLabel(String(localized: "Detailed Logging"))
             }
 

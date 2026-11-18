@@ -75,6 +75,8 @@ struct ChatConversationsList: View {
     }
     @FocusState private var searchFocused: Bool
     @State private var pendingDelete: IOSConversationDirectoryEntry?
+    @State private var renameTarget: (id: UUID, baseline: String)?
+    @State private var renameDraft = ""
     @State private var directoryRequest: UUID?
     @State private var loadError: String?
     @State private var previewErrors: [UUID: String] = [:]
@@ -143,6 +145,25 @@ struct ChatConversationsList: View {
             }
             Button(L10n.cancel, role: .cancel) { pendingDelete = nil }
         }
+        .alert(String(localized: "chat.conversations.rename", defaultValue: "Rename Conversation"), isPresented: Binding(
+            get: { renameTarget != nil }, set: { if !$0 { renameTarget = nil } }
+        )) {
+            TextField(String(localized: "chat.conversations.title_field", defaultValue: "Title"), text: $renameDraft)
+            Button(L10n.cancel, role: .cancel) { renameTarget = nil }
+            Button(L10n.done) {
+                guard let target = renameTarget else { return }
+                renameTarget = nil
+                let trimmed = renameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty, trimmed != target.baseline else { return }
+                do {
+                    try container.conversationStore?.updateConversationTitle(conversationId: target.id, title: trimmed)
+                    if container.chatManager.currentConversationId == target.id {
+                        NotificationCenter.default.post(name: .nolaConversationRenamed, object: target.id, userInfo: ["title": trimmed])
+                    }
+                    refresh()
+                } catch { loadError = error.localizedDescription }
+            }
+        }
     }
 
     private func conversationRow(_ conversation: IOSConversationDirectoryEntry) -> some View {
@@ -188,6 +209,12 @@ struct ChatConversationsList: View {
                             .accessibilityIdentifier("chat.conversation.\(conversation.id.uuidString.lowercased())")
                             .task(id: PreviewLoadIdentity(lastActiveAt: conversation.lastActiveAt, refreshRevision: previewRefreshRevision)) { loadPreview(conversation) }
                             .contextMenu {
+                                Button(String(localized: "chat.conversations.rename", defaultValue: "Rename"),
+                                       systemImage: "pencil") {
+                                    let current = title(conversation)
+                                    renameDraft = current
+                                    renameTarget = (conversation.id, current)
+                                }
                                 let isRunning = container.chatManager.executionForConversation(conversation.id)?.processingState.blocksInput == true
                                 Button(isRunning ? String(localized: "chat.history.stop_before_delete") : L10n.chatClearAction,
                                        systemImage: "trash", role: .destructive) { pendingDelete = conversation }

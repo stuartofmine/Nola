@@ -1,7 +1,57 @@
 // SPDX-License-Identifier: Apache-2.0
 // Explicit MCP connection admission on the existing Core tool/resource lane.
 impl CliAgentHostDriver {
+    fn record_restored_mcp_server(
+        &mut self,
+        server_id: &str,
+        transport: McpTransportKind,
+        connection_ref: &str,
+        resource: &crate::mcp_connection_authority::ConnectionResource,
+    ) {
+        self.restored_mcp_servers.entry(server_id.to_string()).or_insert_with(|| RestoredMcpServer {
+            server_id: server_id.to_string(),
+            transport,
+            connection_ref: connection_ref.to_string(),
+            host_id: resource.host_id.clone(),
+            session_id: resource.session_id.clone(),
+            config_digest: resource.config_digest.clone(),
+        });
+    }
+
+    pub(super) fn ensure_restored_mcp_server_connected(
+        &mut self,
+        server_id: &str,
+    ) -> Result<(), crate::mcp_host::McpHostError> {
+        let Some(spec) = self.restored_mcp_servers.remove(server_id) else {
+            return Ok(());
+        };
+        let established = crate::mcp_host::ensure_connected(
+            spec.transport,
+            &spec.connection_ref,
+            &spec.host_id,
+            &spec.session_id,
+            &spec.config_digest,
+        )?;
+        self.capability_catalog
+            .mcp
+            .servers
+            .insert(established.server.server_id.clone(), established.server);
+        Ok(())
+    }
+
     fn restore_lazy_mcp_routes(&mut self, frozen:&HostCapabilityCatalog) -> Result<(),String> {
+        let admitted_servers: std::collections::BTreeSet<(String, String, String)> = frozen
+            .capabilities
+            .values()
+            .filter_map(|descriptor| {
+                let route = descriptor.input_normalization.mcp_route.as_ref()?;
+                Some((
+                    route.server_id.clone(),
+                    route.connection_ref.clone(),
+                    route.config_digest.clone(),
+                ))
+            })
+            .collect();
         for (id,descriptor) in &frozen.capabilities {
             if self.catalog.capabilities.contains_key(id) { continue; }
             if let Some(route) = &descriptor.input_normalization.mcp_route {
@@ -15,12 +65,21 @@ impl CliAgentHostDriver {
                     || descriptor.permission_domain.is_none() {
                     return Err("MCP recovery descriptor does not match its current owner/configuration".into());
                 }
-                let server = self.mcp_server_registry.iter().find(|value|value["connection_ref"] == route.connection_ref)
+                let server = self.mcp_server_registry.iter()
+                    .find(|value| value["connection_ref"] == route.connection_ref)
                     .ok_or("MCP recovery target is not configured")?;
+                if server["enabled"] == false {
+                    return Err("MCP recovery target is disabled".into());
+                }
+                let server_name: String = server["display_name"]
+                    .as_str()
+                    .unwrap_or(&route.server_id)
+                    .into();
                 let transport = match resource.transport.as_str() {"stdio"=>McpTransportKind::Stdio,
                     "streamable_http"=>McpTransportKind::StreamableHttp,_=>return Err("Unsupported MCP recovery transport".into())};
+                self.record_restored_mcp_server(&route.server_id, transport, &route.connection_ref, &resource);
                 self.mcp_tool_routes.insert(id.clone(),McpToolRoute {transport,connection_ref:route.connection_ref.clone(),
-                    server_id:route.server_id.clone(),server_name:server["display_name"].as_str().unwrap_or(&route.server_id).into(),tool_name:route.tool_name.clone()});
+                    server_id:route.server_id.clone(),server_name,tool_name:route.tool_name.clone()});
                 self.catalog.capabilities.insert(id.clone(),descriptor.clone());
             } else {
                 let definition = match id.as_str() {
@@ -31,6 +90,33 @@ impl CliAgentHostDriver {
                 if let Some((title,definition)) = definition {
                     let expected = mcp_catalog_access_descriptor(id,title,definition["function"]["parameters"].clone());
                     if descriptor != &expected { return Err("MCP recovery helper schema differs from its current contract".into()); }
+                    let configured = self.mcp_server_registry.iter()
+                        .filter(|value| value["enabled"] != false)
+                        .filter_map(|value| {
+                            let reference = value["connection_ref"].as_str()?.to_string();
+                            let resource = crate::mcp_connection_authority::permission_resource(&reference).ok()?;
+                            let server_id = value["server_id"].as_str()?.to_string();
+                            let previously_admitted = admitted_servers.contains(&(
+                                server_id.clone(),
+                                reference.clone(),
+                                resource.config_digest.clone(),
+                            )) || resource.generation.is_some();
+                            if !previously_admitted {
+                                return None;
+                            }
+                            let transport = match resource.transport.as_str() {
+                                "stdio" => McpTransportKind::Stdio,
+                                "streamable_http" => McpTransportKind::StreamableHttp,
+                                _ => return None,
+                            };
+                            (resource.host_id == self.catalog.host_id.0
+                                && Some(resource.session_id.as_str()) == self.boundary_session_id.as_deref())
+                                .then_some((server_id, transport, reference, resource))
+                        })
+                        .collect::<Vec<_>>();
+                    for (server_id, transport, reference, resource) in configured {
+                        self.record_restored_mcp_server(&server_id, transport, &reference, &resource);
+                    }
                     self.catalog.capabilities.insert(id.clone(),descriptor.clone());
                 }
             }
@@ -225,12 +311,13 @@ mod mcp_lazy_recovery_tests {
             output:external_tool_result(json!({"error":"mcp_request_timed_out"}),nola_host_protocol::tool_result::ExecutionState::Unknown),
             outcome:HostToolOutcome::Failed,activation:None,full_output_ref:None,artifacts:Vec::new()};
         assert!(!terminal_response_proves_local_stop(&uncertain,true,None));
+        assert_eq!(listener.accept().unwrap_err().kind(),std::io::ErrorKind::WouldBlock);
+        drop(listener);
         driver.execute_tool(&request,&id,"cold-call",&json!({}),&mut |response| {responses.push(response);Ok(())}).unwrap();
         let output = responses.iter().find_map(|response|match &response.payload {
             HostResponse::ToolCompleted {output,..}=>Some(output),_=>None,
         }).expect("cold call must produce an explicit result");
         assert_eq!(output["execution"]["state"],"not_started");
-        assert_eq!(listener.accept().unwrap_err().kind(),std::io::ErrorKind::WouldBlock);
         let connect = &driver.catalog.capabilities[crate::mcp_connection_authority::CONNECT_CAPABILITY];
         assert_eq!(connect.permission_domain.as_deref(),Some("mcp_connection"));
         assert!(connect.permission_subject(&json!({"connection_ref":reference})).is_some());

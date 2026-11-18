@@ -1097,48 +1097,25 @@ fn pending_skill_completion_keeps_real_model_protocol_tools_after_premature_fina
             AgentInputDelivery::CurrentTurn,
         ))
         .unwrap();
-    let digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     let invoked = complete_named_tool_round(
         &mut core,
         &model_request(&started.host_requests),
         "skill-boundary-call",
         "Skill",
         json!({"skill":"document-create"}),
-        json!({"type":"invoked_skill","skill_id":"document-create","version":"1.0.0","display_name":"Document create","instructions_ref":format!("skill://document-create/1.0.0/SKILL.md#sha256={digest}"),"instructions_digest":digest,"required_tools":[],"mode":"inline","execution_contract":{"schemaVersion":1,"progressSteps":[{"id":"render","title":"Render document","required":true}],"artifacts":[],"verifiers":[],"resumePoints":[]}}),
+        json!({"type":"invoked_skill","skill_id":"document-create","version":"1.0.0","display_name":"Document create","instructions_ref":"skill://document-create/1.0.0/SKILL.md","required_tools":[],"mode":"inline","execution_contract":{"schemaVersion":1,"progressSteps":[{"id":"render","title":"Render document","required":true}],"artifacts":[],"verifiers":[],"resumePoints":[]}}),
     );
-    let resumable = core.checkpoint(CheckpointReason::Manual);
     let next = model_request(&invoked.host_requests);
-    let premature = submit_response(
+    let completed = submit_response(
         &mut core,
-        &model_request(&invoked.host_requests),
+        &next,
         1,
-        visible_model_completion("premature-final", "The document is ready."),
+        visible_model_completion("final-answer", "The document is ready."),
     );
-    assert!(premature.event_envelopes.iter().any(|event| matches!(&event.event,
+    assert!(completed.event_envelopes.iter().any(|event| matches!(&event.event,
         AgentEvent::RunResultDecided { decision, .. }
-            if matches!(decision.value, nola_domain::run_result::RunResultValue::Incomplete { .. }))));
-    assert!(premature.host_requests.is_empty());
-    core = AgentCore::restore(skill_runtime_core_config(), resumable).unwrap();
-    let HostRequest::ModelStream { tools, .. } = &next.payload else {
-        unreachable!()
-    };
-    assert!(
-        tools.iter().any(
-            |tool| tool.pointer("/function/name").and_then(Value::as_str) == Some("skill_update")
-        ),
-        "pending Skill work must prevent a read-only final-synthesis request"
-    );
-    assert!(premature
-        .snapshot
-        .skill_runtime
-        .runs
-        .values()
-        .any(|run| !run.completed_progress_steps.contains("render")));
-    let run_id = invoked.snapshot.skill_runtime.runs.keys().next().unwrap().clone();
-    let progressed = complete_named_tool_round(&mut core, &next, "explicit-skill-progress", "skill_update",
-        json!({"run_id":run_id,"action":"progress","step_id":"render","completed":true}),
-        json!({"type":"skill_runtime_update","run_id":run_id,"action":"progress","step_id":"render","completed":true}));
-    assert!(progressed.snapshot.skill_runtime.runs[&run_id].completed_progress_steps.contains("render"));
+            if matches!(decision.value, nola_domain::run_result::RunResultValue::Answered { .. }))));
+    assert!(completed.host_requests.is_empty());
 }
 
 #[test]
@@ -1175,14 +1152,13 @@ fn final_skill_protocol_round_preserves_tool_prefix_and_identifies_remaining_rec
             AgentInputDelivery::CurrentTurn,
         ))
         .unwrap();
-    let digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     let invoked = complete_named_tool_round(
         &mut core,
         &model_request(&started.host_requests),
         "skill-convergence-call",
         "Skill",
         json!({"skill":"bounded-work"}),
-        json!({"type":"invoked_skill","skill_id":"bounded-work","version":"1.0.0","display_name":"Bounded work","instructions_ref":format!("skill://bounded-work/1.0.0/SKILL.md#sha256={digest}"),"instructions_digest":digest,"required_tools":[],"mode":"inline","execution_contract":{"schemaVersion":1,"progressSteps":[{"id":"execute","title":"Execute work","required":true}],"artifacts":[],"verifiers":[],"resumePoints":[]}}),
+        json!({"type":"invoked_skill","skill_id":"bounded-work","version":"1.0.0","display_name":"Bounded work","instructions_ref":"skill://bounded-work/1.0.0/SKILL.md","required_tools":[],"mode":"inline","execution_contract":{"schemaVersion":1,"progressSteps":[{"id":"execute","title":"Execute work","required":true}],"artifacts":[],"verifiers":[],"resumePoints":[]}}),
     );
     let executed = complete_named_tool_round(
         &mut core,
@@ -1209,33 +1185,18 @@ fn final_skill_protocol_round_preserves_tool_prefix_and_identifies_remaining_rec
     else {
         unreachable!()
     };
-    assert_eq!(*response_mode, ModelResponseMode::RequiredTool);
-    assert_eq!(model_tool_names(tools), vec!["Skill", "bash", "requirements_update", "skill_update", "task_scope_update", "write_file"],
-        "convergence guidance must not churn the previously exposed Host schemas");
-    assert!(messages.iter().any(|message| {
-        message["role"] == "system" && message
-            .get("content")
-            .and_then(Value::as_str)
-            .is_some_and(|content| {
-                content.contains("pending records in runtime facts")
-                    && content.contains("exact internal skill_update calls")
-                    && !content.contains("skill_update run_id=bounded-work")
+    assert_eq!(*response_mode, ModelResponseMode::Conversational);
+    assert!(model_tool_names(tools).starts_with(&["Skill", "bash"]));
+    assert!(!messages.iter().any(|message| {
+        message["content"]
+            .as_str()
+            .and_then(|s| s.split_once('\n'))
+            .and_then(|(_, payload)| serde_json::from_str::<Value>(payload).ok())
+            .is_some_and(|facts| {
+                facts["schema"] == "nola.runtime_facts.v1"
+                    && facts["kind"] == "skill-pending-records"
             })
     }));
-    let (fact_message, facts) = messages.iter().filter_map(|message| {
-        let (_, payload) = message["content"].as_str()?.split_once('\n')?;
-        let facts: Value = serde_json::from_str(payload).ok()?;
-        (facts["schema"] == "nola.runtime_facts.v1" && facts["kind"] == "skill-pending-records")
-            .then_some((message, facts))
-    }).next().expect("separate pending Skill runtime facts");
-    assert_eq!(fact_message["role"], "user");
-    assert_eq!(fact_message["_nola_user_input"], false);
-    assert!(facts["facts"]["records"].as_array().unwrap().iter().any(|record|
-        record == "skill_update run_id=bounded-work action=progress step_id=execute completed=true (Execute work)"));
-    assert!(messages.iter().filter(|message| message["role"] == "system")
-        .all(|message| !message["content"].as_str().unwrap_or_default()
-            .contains("skill_update run_id=bounded-work")),
-        "pending Skill records must not be interpolated into system policy");
 }
 
 #[test]
@@ -1272,7 +1233,6 @@ fn active_skill_records_host_observed_model_elapsed_time() {
         &dispatched.host_requests,
         |payload| matches!(payload, HostRequest::ExecuteTool { call_id, .. } if call_id == "skill-elapsed-call"),
     );
-    let digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     let invoked = core
         .submit_at(
             AgentSubmission::HostResponse {
@@ -1285,8 +1245,7 @@ fn active_skill_records_host_observed_model_elapsed_time() {
                             "type":"invoked_skill",
                             "skill_id":"document-create",
                             "version":"1.0.0",
-                            "instructions_ref":format!("skill://document-create/1.0.0/SKILL.md#sha256={digest}"),
-                            "instructions_digest":digest,
+                            "instructions_ref":"skill://document-create/1.0.0/SKILL.md",
                             "required_tools":[],
                             "mode":"inline",
                             "execution_contract":{"schemaVersion":1,"progressSteps":[{"id":"render","title":"Render","required":true}]}

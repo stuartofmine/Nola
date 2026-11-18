@@ -459,6 +459,23 @@ nonisolated public struct AgentCoreTaskLineage: Codable, Equatable, Sendable {
     public let parentCallID: String?
     public let permissionScopeID: String?
     public let cancellationScopeID: String?
+    public let title: String?
+
+    public init(
+        parentTaskID: String? = nil,
+        childSessionID: String? = nil,
+        parentCallID: String? = nil,
+        permissionScopeID: String? = nil,
+        cancellationScopeID: String? = nil,
+        title: String? = nil
+    ) {
+        self.parentTaskID = parentTaskID
+        self.childSessionID = childSessionID
+        self.parentCallID = parentCallID
+        self.permissionScopeID = permissionScopeID
+        self.cancellationScopeID = cancellationScopeID
+        self.title = title
+    }
 
     enum CodingKeys: String, CodingKey {
         case parentTaskID = "parent_task_id"
@@ -466,6 +483,7 @@ nonisolated public struct AgentCoreTaskLineage: Codable, Equatable, Sendable {
         case parentCallID = "parent_call_id"
         case permissionScopeID = "permission_scope_id"
         case cancellationScopeID = "cancellation_scope_id"
+        case title
     }
 }
 

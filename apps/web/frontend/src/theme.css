@@ -25,6 +25,8 @@
     --canvas: #f7f6f3; --surface: #ffffff; --rail: #f1f0ec; --panel: #f1f0ec; --border: #e5e3dd; --muted: #5c5b57;
     --primary: #181817; --on-primary: #ffffff;
     --accent: #181817; --on-accent: #ffffff; --accent-subtle: #eae8e2; --outline: #7a7872;
+    --switch-on: #237047; --switch-off: #dddad3; --switch-off-border: #c4c0b7;
+    --hover: var(--accent-subtle);
     --danger: #ad3d34; --radius: 16px;
     --surface-gradient: var(--surface);
     --surface-highlight: transparent;
@@ -44,6 +46,10 @@
         color-scheme: dark;
         --content: #f2f0eb; --canvas: #131312; --surface: #1b1b19; --rail: #1b1b19; --panel: #232320; --border: #2e2d2a; --muted: #a3a09a;
         --primary: #f2f0eb; --on-primary: #131312; --accent: #f2f0eb; --on-accent: #131312; --accent-subtle: #292825; --outline: #827f79;
+    --switch-on: #2e8b57; --switch-off: #3a3935; --switch-off-border: #52504b;
+    --hover: var(--accent-subtle);
+        --switch-on: #2e8b57; --switch-off: #3a3935; --switch-off-border: #52504b;
+        --hover: var(--accent-subtle);
         --surface-highlight: transparent;
         --surface-shadow: none;
         --control-shadow: none;
@@ -99,14 +105,88 @@ p { margin: 6px 0; } .muted, small { color: var(--muted); }
 .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 label { display: grid; gap: 8px; min-width: 0; } input, select, textarea { color: inherit; background: var(--surface-gradient); box-shadow: var(--control-shadow); border: 1px solid var(--outline); border-radius: var(--radius-control); padding: 8px 12px; width: 100%; min-width: 0; max-width: 100%; }
 textarea { resize: vertical; line-height: 1.5; }
-select { min-height: var(--control-hit-size); cursor: pointer; }
+select {
+    min-height: var(--control-hit-size); cursor: pointer;
+    appearance: none; -webkit-appearance: none;
+    padding-inline-end: 32px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237a7872' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 9 5-5 5 5'/%3E%3Cpath d='m7 15 5 5 5-5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+}
 label:has(select), label[for] { cursor: pointer; }
 label:has(> input:is([type='checkbox'], [type='radio'])) {
     display: flex; align-items: center; gap: 8px; min-height: var(--control-hit-size);
     padding: 6px 8px; border-radius: var(--radius-control); cursor: pointer;
 }
 label:has(> input:is([type='checkbox'], [type='radio']):disabled), label:has(select:disabled) { cursor: not-allowed; }
-input[type='checkbox'], input[type='radio'] { flex-shrink: 0; width: auto; accent-color: var(--accent); }
+input[type='checkbox']:not([role='switch']), input[type='radio'] { flex-shrink: 0; width: auto; accent-color: var(--switch-on); }
+input[type='checkbox'][role='switch'] {
+    appearance: none; -webkit-appearance: none;
+    flex-shrink: 0; position: relative;
+    width: 36px; height: 20px; min-width: 36px; min-height: 20px;
+    margin: 0; padding: 0;
+    border-radius: 999px; corner-shape: round;
+    border: 1px solid var(--switch-off-border);
+    background: var(--switch-off);
+    box-shadow: none;
+    cursor: pointer;
+    transition: background-color .16s ease, border-color .16s ease;
+}
+input[type='checkbox'][role='switch']::after {
+    content: ''; position: absolute; top: 1px; left: 1px;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: #ffffff;
+    box-shadow: 0 1px 3px rgb(0 0 0 / .22);
+    transition: transform .16s ease;
+}
+input[type='checkbox'][role='switch']:checked {
+    background: var(--switch-on);
+    border-color: var(--switch-on);
+}
+input[type='checkbox'][role='switch']:checked::after {
+    transform: translateX(16px);
+}
+input[type='checkbox'][role='switch']:disabled {
+    opacity: 0.55; cursor: not-allowed;
+}
+details:not(.model-menu, .row-actions, .compact-actions, .discovered, .attachment-help, .inspector-section, .connection-detail, .endpoint-card, .skill-info, .citation-detail, .technical, .journal-detail, .reference-details, [data-reply-disclosure]) > summary {
+    list-style: none;
+    width: 100%;
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 12px;
+    border-radius: 8px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    font-size: .875rem;
+    font-weight: 550;
+    box-sizing: border-box;
+}
+details:not(.model-menu, .row-actions, .compact-actions, .discovered, .attachment-help, .inspector-section, .connection-detail, .endpoint-card, .skill-info, .citation-detail, .technical, .journal-detail, .reference-details, [data-reply-disclosure]) > summary::-webkit-details-marker {
+    display: none;
+}
+details:not(.model-menu, .row-actions, .compact-actions, .discovered, .attachment-help, .inspector-section, .connection-detail, .endpoint-card, .skill-info, .citation-detail, .technical, .journal-detail, .reference-details, [data-reply-disclosure]) > summary::after {
+    content: '';
+    width: 12px;
+    height: 12px;
+    flex: none;
+    margin-inline-start: auto;
+    background: currentColor;
+    opacity: .65;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat;
+    transition: transform var(--motion-fast) ease;
+}
+details:not(.model-menu, .row-actions, .compact-actions, .discovered, .attachment-help, .inspector-section, .connection-detail, .endpoint-card, .skill-info, .citation-detail, .technical, .journal-detail, .reference-details, [data-reply-disclosure])[open] > summary::after {
+    transform: rotate(180deg);
+}
+details:not(.model-menu, .row-actions, .compact-actions, .discovered, .attachment-help, .inspector-section, .connection-detail, .endpoint-card, .skill-info, .citation-detail, .technical, .journal-detail, .reference-details, [data-reply-disclosure]) > summary:hover {
+    background: var(--accent-subtle);
+    border-color: var(--outline);
+}
 input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; }
 summary { min-height: var(--control-hit-size); cursor: pointer; padding-block: 8px; overflow-wrap: anywhere; }
 pre { max-width: 100%; overflow: auto; }
@@ -151,6 +231,8 @@ dialog:modal { animation: section-arrive var(--motion-base) ease-out; }
     color-scheme: dark;
     --content: #f2f0eb; --canvas: #131312; --surface: #1b1b19; --rail: #1b1b19; --panel: #232320; --border: #2e2d2a; --muted: #a3a09a;
     --primary: #f2f0eb; --on-primary: #131312; --accent: #f2f0eb; --on-accent: #131312; --accent-subtle: #292825; --outline: #827f79;
+    --switch-on: #2e8b57; --switch-off: #3a3935; --switch-off-border: #52504b;
+    --hover: var(--accent-subtle);
     --surface-highlight: transparent;
     --surface-shadow: none;
     --control-shadow: none;
@@ -164,7 +246,7 @@ dialog:modal { animation: section-arrive var(--motion-base) ease-out; }
 
 /* Native continuous corners where supported; rounded fallback keeps layout. */
 @supports (corner-shape: squircle) {
-    button, .button, input, select, textarea, .card, .tabs, dialog, .composer { corner-shape: squircle; }
+    button, .button, input:not([role='switch']), select, textarea, .card, .tabs, dialog, .composer { corner-shape: squircle; }
 }
 @media (forced-colors: active) {
     button, .button, input, select, textarea, .card, .tabs, dialog,

@@ -777,7 +777,6 @@ fn complete_verified_document_skill_run(core: &mut AgentCore) -> nola_core::agen
             AgentInputDelivery::CurrentTurn,
         ))
         .expect("start Skill Turn");
-    let digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     let invoked = complete_named_tool_round(
         core,
         &model_request(&started.host_requests),
@@ -789,8 +788,7 @@ fn complete_verified_document_skill_run(core: &mut AgentCore) -> nola_core::agen
             "skill_id": "document-create",
             "version": "1.0.0",
             "display_name": "Document create",
-            "instructions_ref": format!("skill://document-create/1.0.0/SKILL.md#sha256={digest}"),
-            "instructions_digest": digest,
+            "instructions_ref": "skill://document-create/1.0.0/SKILL.md",
             "required_tools": [],
             "mode": "inline",
             "execution_contract": {
@@ -846,24 +844,9 @@ fn complete_verified_document_skill_run(core: &mut AgentCore) -> nola_core::agen
         verified.snapshot.skill_runtime.runs[&run_id].status,
         nola_core::agent::capability::SkillRunStatus::Completed
     );
-    let settled = submit_response(
-        core,
-        &model_request(&verified.host_requests),
-        1,
-        empty_model_completion(vec![named_tool_call(
-            "stale-skill-update",
-            "skill_update",
-            json!({"run_id": "document-create", "action": "report", "step_id": "report"}),
-        )]),
-    );
-    assert!(!settled.snapshot.engineering.recovery_required);
-    assert!(!settled
-        .host_requests
-        .iter()
-        .any(|request| matches!(request.payload, HostRequest::ExecuteTool { .. })));
     submit_response(
         core,
-        &model_request(&settled.host_requests),
+        &model_request(&verified.host_requests),
         1,
         visible_model_completion("skill-answer", "The verified document is ready."),
     )

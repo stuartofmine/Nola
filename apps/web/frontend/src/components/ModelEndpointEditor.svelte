@@ -89,7 +89,7 @@
             <label>{t($locale, 'remote.protocol')}<select bind:value={draft.wireProtocol}>
                 <option value="chat_completions">Chat Completions</option><option value="responses">Responses</option><option value="anthropic">Anthropic Messages</option>
             </select></label>
-            <label class="toggle"><input type="checkbox" bind:checked={draft.enabled} />{t($locale, 'remote.enable_endpoint')}</label>
+            <label class="toggle"><input type="checkbox" role="switch" bind:checked={draft.enabled} />{t($locale, 'remote.enable_endpoint')}</label>
         </fieldset>
         <p class="muted">{t($locale, 'remote.endpoint_key_hint')}</p>
         {#if validation}<p class="error" role="alert">{modelValidationText($locale, validation)}</p>{/if}
