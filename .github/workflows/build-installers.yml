@@ -6,6 +6,7 @@ permissions:
   contents: read
 jobs:
   windows:
+    if: "!contains(github.event.head_commit.message, '[linux-only]')"
     runs-on: windows-2025
     timeout-minutes: 150
     steps:
@@ -111,7 +112,10 @@ jobs:
           hostpid=$!
           trap 'kill "$hostpid" 2>/dev/null || true' EXIT
           curl --retry 40 --retry-all-errors --retry-delay 1 --fail http://127.0.0.1:15001/api/health
-          curl --fail http://127.0.0.1:15001/ | grep -qi html
+          curl --fail --location --max-redirs 4 --output "$RUNNER_TEMP/login.html" http://127.0.0.1:15001/
+          grep -qi '<!doctype html' "$RUNNER_TEMP/login.html"
+          curl --fail --output "$RUNNER_TEMP/ui.html" http://127.0.0.1:15001/ui/index.html
+          grep -qi 'type="module"' "$RUNNER_TEMP/ui.html"
       - uses: actions/upload-artifact@v4
         with:
           name: linux-${{ matrix.arch }}
