@@ -60,6 +60,13 @@ function Paste-Text([string]$value) {
     [Windows.Forms.SendKeys]::SendWait('^v')
 }
 function Draft-Value($control) {
+    $pattern = $null
+    if ($control.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
+        return $pattern.Current.Value
+    }
+    if ($control.TryGetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern, [ref]$pattern)) {
+        return $pattern.DocumentRange.GetText(-1).TrimEnd([char]13,[char]10)
+    }
     $control.SetFocus()
     [Windows.Forms.SendKeys]::SendWait('^a')
     [Windows.Forms.Clipboard]::Clear()
@@ -104,23 +111,22 @@ try {
     Paste-Text $note
     [Windows.Forms.SendKeys]::SendWait('{ENTER}')
     $null = Find-Control name 'restart-note.txt'
-    Start-Sleep -Milliseconds 800
+    if ((Draft-Value (Find-Control id 'chat-composer')) -ne $draft) { throw 'Draft changed while selecting the attachment' }
+    Start-Sleep -Milliseconds 1200
     Close-Desktop
     Open-Desktop
     $after = 'http://127.0.0.1:' + (Get-Content $portFile -Raw).Trim()
     if ($before -ne $after) { throw 'Desktop origin changed after restart' }
     $restored = @((Invoke-RestMethod "$after/api/chat/conversations").conversations)
     if ($restored.Count -ne 1 -or $restored[0].conversationId -ne $saved[0].conversationId) { throw 'Conversation changed after restart' }
-    try { $editor = Find-Control id 'chat-composer' 2 }
-    catch {
-        $title = $restored[0].title
-        if (!$title) { $title = 'Untitled conversation' }
-        Click-Control (Find-Control name $title)
-        $editor = Find-Control id 'chat-composer'
-    }
-    $actual = Draft-Value $editor
-    if ($actual -ne $draft) { throw 'Unsent draft did not survive restart' }
+    $title = $restored[0].title
+    if (!$title) { $title = 'Untitled conversation' }
+    $row = Find-Control name $title
+    Click-Control $row
     $attached = (Find-Control name 'restart-note.txt').Current.Name
+    $editor = Find-Control id 'chat-composer'
+    $actual = Draft-Value $editor
+    if ($actual -ne $draft) { throw "Restored draft differs, expected '$draft', received '$actual'" }
     if ($env:NOLA_DESKTOP_RESTART_EVIDENCE) {
         $proof = @{platform='win32';beforeOrigin=$before;afterOrigin=$after;draft=$actual;attachment=$attached}
         [IO.File]::WriteAllText($env:NOLA_DESKTOP_RESTART_EVIDENCE, ($proof | ConvertTo-Json))
