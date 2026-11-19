@@ -79,40 +79,49 @@ final class MacRemoteTaskObservationCoordinator {
         while !Task.isCancelled {
             do {
                 let stream = await events(conversationID, cursor)
-                var receivedEvent = false
                 for try await event in stream {
                     if Task.isCancelled { return }
-                    receivedEvent = true
-                    reconnectDelayNanoseconds = 100_000_000
+                    if event.cursor > cursor { reconnectDelayNanoseconds = 100_000_000 }
                     cursor = max(cursor, event.cursor)
-                    guard let projection = event.projection else { continue }
+                    guard let projection = event.projection, let task = projection.tasks[taskID] else { continue }
                     output(.projection(
                         conversationID: conversationID,
                         taskID: taskID,
                         projection: projection
                     ))
-                    if projection.tasks[taskID]?.state.isTerminal != false {
+                    if task.state.isTerminal {
                         return
                     }
-                }
-                guard !Task.isCancelled else { return }
-                try await Task.sleep(nanoseconds: reconnectDelayNanoseconds)
-                if !receivedEvent {
-                    reconnectDelayNanoseconds = min(
-                        reconnectDelayNanoseconds * 2,
-                        4_000_000_000
-                    )
                 }
             } catch is CancellationError {
                 return
             } catch {
-                output(.failure(
-                    conversationID: conversationID,
-                    taskID: taskID,
-                    detail: error.localizedDescription
-                ))
-                return
+                guard !Task.isCancelled else { return }
+                if !isTransient(error) {
+                    output(.failure(conversationID: conversationID, taskID: taskID,
+                                    detail: macRemoteHostUserFacingError(error)))
+                    return
+                }
             }
+            do { try await Task.sleep(nanoseconds: reconnectDelayNanoseconds) }
+            catch { return }
+            reconnectDelayNanoseconds = min(reconnectDelayNanoseconds * 2, 4_000_000_000)
+        }
+    }
+
+    private static func isTransient(_ error: Error) -> Bool {
+        if let network = error as? URLError {
+            switch network.code {
+            case .timedOut, .networkConnectionLost, .notConnectedToInternet, .cannotConnectToHost,
+                 .cannotFindHost, .dnsLookupFailed, .dataNotAllowed, .internationalRoamingOff:
+                return true
+            default: return false
+            }
+        }
+        switch error {
+        case MacRemoteHostError.transportInterrupted: return true
+        case MacRemoteHostError.http(let status, _): return [408, 429, 500, 502, 503, 504].contains(status)
+        default: return false
         }
     }
 }

@@ -101,6 +101,7 @@ fun SettingsScreen(
     onOpenDataSources: () -> Unit = {},
     onOpenModels: () -> Unit = {},
     onOpenIntelligence: () -> Unit = {},
+    onOpenConversation: ((String) -> Unit)? = null,
     onOpenChat: () -> Unit = {}
 ) {
     var activeScreen by rememberSaveable { mutableStateOf<String?>(null) }
@@ -115,6 +116,7 @@ fun SettingsScreen(
         "notifications" -> NotificationCenterScreen(onBack = { activeScreen = null })
         "scheduled" -> ScheduledActionsScreen(
             onBack = { activeScreen = null },
+            onOpenConversation = onOpenConversation,
             onCreateInChat = onOpenChat
         )
         else -> pageState.SaveableStateProvider("settings-main") { SettingsMain(

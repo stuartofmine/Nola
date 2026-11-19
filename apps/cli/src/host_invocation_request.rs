@@ -248,9 +248,15 @@ pub struct HostRuntimeOptions {
 }
 
 impl HostInvocationRequest {
+    pub(crate) fn workspace_identity(&self) -> Result<nola_core::agent::AgentWorkspaceIdentity, String> {
+        let tools = &self.tool_settings;
+        crate::host_execution_settings::execution_workspace_identity(&tools.project_root,
+            tools.task_worktree.as_ref(), tools.task_sandbox_requirement, tools.process_sandbox.as_ref())
+    }
+
     pub(crate) fn host_execution_settings(&self) -> crate::host_execution_settings::HostExecutionSettings {
         crate::host_execution_settings::HostExecutionSettings {
-            memory_workspace_id: crate::host_execution_settings::execution_workspace_identity(&self.tool_settings.project_root, self.tool_settings.task_worktree.as_ref(), self.tool_settings.task_sandbox_requirement, self.tool_settings.process_sandbox.as_ref()).ok().map(|identity| identity.workspace_id),
+            memory_workspace_id: self.workspace_identity().ok().map(|identity| identity.workspace_id),
             bounded_file_writes: self.tool_settings.bounded_file_writes,
             task_worktree: self.tool_settings.task_worktree.clone(),
             task_sandbox_requirement: self.tool_settings.task_sandbox_requirement,

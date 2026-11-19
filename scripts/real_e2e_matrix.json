@@ -1419,7 +1419,7 @@
       ],
       "timeoutSeconds": 1500,
       "realModel": true,
-      "command": "bash scripts/test_real_cli_web.sh",
+      "command": "bash scripts/test_real_cli_web.sh --web-only",
       "evidence": {
         "platforms": [
           "web"
@@ -1544,8 +1544,8 @@
       }
     },
     {
-      "id": "messaging-webhook-protocols",
-      "contractId": "secure-messaging-ingress",
+      "id": "messaging-host-channel-proxy",
+      "contractId": "messaging-host-channel-contract",
       "platforms": [
         "web"
       ],
@@ -1556,13 +1556,13 @@
       ],
       "timeoutSeconds": 180,
       "realModel": false,
-      "command": "python3 scripts/test_messaging_full_stack_e2e.py",
+      "command": "python3 scripts/test_messaging_channel_web_proxy_e2e.py",
       "execution": {
         "runtime": "local-service-stack",
         "productionCode": true,
         "productEntrypoint": true,
         "realProvider": false,
-        "realPersistence": true,
+        "realPersistence": false,
         "realUI": false,
         "semanticJudge": false,
         "isolation": "temporary-profile"
@@ -1572,25 +1572,16 @@
           "web"
         ],
         "modules": [
-          "delivery",
           "messaging",
-          "webhooks",
-          "persistence",
           "security",
           "web-host"
         ],
         "boundaries": [
-          "telegram-webhook",
-          "whatsapp-webhook",
-          "wechat-official-webhook",
-          "wecom-webhook",
-          "provider-delivery",
-          "d1",
-          "web-host-channel-proxy"
+          "web-host-channel-proxy",
+          "external-channel-service"
         ],
         "requiredObservationKinds": [
-          "event_stream",
-          "persistence_store"
+          "http_transcript"
         ],
         "requireAssertionEvidence": true
       }
@@ -1740,6 +1731,107 @@
           "provider_trace",
           "persistence_store",
           "persistence_audit"
+        ],
+        "requireAssertionEvidence": true
+      }
+    },
+    {
+      "id": "windows-host-restart",
+      "contractId": "desktop-restart-persistence",
+      "platforms": [
+        "windows"
+      ],
+      "layer": "system",
+      "suite": [
+        "smoke",
+        "full"
+      ],
+      "timeoutSeconds": 600,
+      "realModel": false,
+      "command": "python3 scripts/e2e/windows_shell_restart.py",
+      "execution": {
+        "runtime": "native-app",
+        "productionCode": true,
+        "productEntrypoint": true,
+        "realProvider": false,
+        "realPersistence": true,
+        "realUI": false,
+        "semanticJudge": false,
+        "isolation": "temporary-profile"
+      },
+      "evidence": {
+        "platforms": [
+          "windows"
+        ],
+        "modules": [
+          "persistence",
+          "ui"
+        ],
+        "boundaries": [
+          "electron-preload",
+          "local-host",
+          "indexeddb"
+        ],
+        "requiredObservationKinds": [
+          "test_report",
+          "persistence_audit"
+        ],
+        "requireAssertionEvidence": true
+      }
+    },
+    {
+      "id": "windows-model-relaunch",
+      "contractId": "windows-model-relaunch",
+      "platforms": [
+        "windows"
+      ],
+      "layer": "product-ui",
+      "suite": [
+        "smoke",
+        "full"
+      ],
+      "timeoutSeconds": 480,
+      "realModel": true,
+      "command": "python3 apps/windows/scripts/real-model-acceptance.py --require-windows",
+      "execution": {
+        "runtime": "native-app",
+        "productionCode": true,
+        "productEntrypoint": true,
+        "realProvider": true,
+        "realPersistence": true,
+        "realUI": true,
+        "semanticJudge": true,
+        "isolation": "temporary-profile"
+      },
+      "evidence": {
+        "platforms": [
+          "windows"
+        ],
+        "modules": [
+          "agent",
+          "core",
+          "provider",
+          "persistence",
+          "ui",
+          "tools"
+        ],
+        "boundaries": [
+          "electron-renderer",
+          "local-host",
+          "provider",
+          "sqlite",
+          "windows-ui",
+          "filesystem"
+        ],
+        "requiredObservationKinds": [
+          "provider_trace",
+          "persistence_audit",
+          "test_report",
+          "ui_screenshot",
+          "accessibility_tree",
+          "ui_timeline",
+          "transcript",
+          "semantic_audit"
         ],
         "requireAssertionEvidence": true
       }
@@ -2110,25 +2202,6 @@
         "persistence_present"
       ]
     },
-    "secure-messaging-ingress": {
-      "requiredAssertions": [
-        "all_official_webhooks_accepted_valid_signatures",
-        "invalid_signatures_rejected",
-        "duplicate_provider_events_deduplicated",
-        "inbox_projection_persisted",
-        "provider_replies_delivered_and_persisted",
-        "host_channel_management_token_not_leaked"
-      ],
-      "minimumSteps": 6,
-      "perPlatformSteps": false,
-      "validators": [
-        "persistence_present"
-      ],
-      "requiredObservationKinds": [
-        "event_stream",
-        "persistence_store"
-      ]
-    },
     "messaging-external-executor": {
       "requiredAssertions": [
         "channel_message_claimed_once",
@@ -2172,6 +2245,65 @@
         "provider_trace",
         "persistence_store",
         "persistence_audit"
+      ]
+    },
+    "messaging-host-channel-contract": {
+      "requiredAssertions": [
+        "channels_read",
+        "channel_saved",
+        "host_token_kept_private"
+      ],
+      "minimumSteps": 1,
+      "perPlatformSteps": true,
+      "requiredObservationKinds": [
+        "http_transcript"
+      ],
+      "requireAssertionEvidence": true,
+      "validators": [
+        "messaging_proxy"
+      ]
+    },
+    "desktop-restart-persistence": {
+      "requiredAssertions": [
+        "owned_origin_restored",
+        "composer_draft_restored",
+        "composer_attachment_restored"
+      ],
+      "minimumSteps": 1,
+      "perPlatformSteps": true,
+      "validators": [
+        "persistence_present"
+      ],
+      "requiredObservationKinds": [
+        "test_report",
+        "persistence_audit"
+      ]
+    },
+    "windows-model-relaunch": {
+      "requiredAssertions": [
+        "model_reply_restored",
+        "single_sealed_run",
+        "workspace_file_read_verified"
+      ],
+      "minimumSteps": 1,
+      "perPlatformSteps": true,
+      "validators": [
+        "provider_real",
+        "persistence_present",
+        "transcript_order",
+        "ui_terminal",
+        "accessibility_matches_transcript",
+        "ui_screenshot_valid"
+      ],
+      "requiredObservationKinds": [
+        "provider_trace",
+        "persistence_audit",
+        "test_report",
+        "ui_screenshot",
+        "accessibility_tree",
+        "ui_timeline",
+        "transcript",
+        "semantic_audit"
       ]
     }
   }

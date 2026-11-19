@@ -24,7 +24,7 @@ import javax.inject.Singleton
 
 enum class AppearancePreference(val wireValue: String) { System("system"), Light("light"), Dark("dark") }
 
-private val Context.preferenceDataStore: DataStore<Preferences> by preferencesDataStore(
+internal val Context.preferenceDataStore: DataStore<Preferences> by preferencesDataStore(
     name = "nola_preferences"
 )
 

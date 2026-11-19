@@ -212,7 +212,8 @@
     let timeline = $state<ChatTimeline | null>(null);
     let observedRecovery = $state('observe');
     const executionOwnership = $derived(conversationExecutionOwnership(timeline?.projection?.execution_ownership, active?.conversationId ?? ''));
-    const canInteract = $derived(!active?.expertContextOwner && executionOwnership.kind === 'user' && observedRecovery !== 'control_unconfirmed');
+    const canBranchDuringMaintenance = $derived(!!active && !active.expertContextOwner && executionOwnership.kind === 'user' && timeline?.owner.conversationId === active.conversationId && timeline.window?.canBranchDuringMaintenance === true);
+    const canInteract = $derived(!canBranchDuringMaintenance && !active?.expertContextOwner && executionOwnership.kind === 'user' && observedRecovery !== 'control_unconfirmed');
     let enteringMessageIds = $state<Set<string>>(new Set());
     let renderedMessageIds: string[] = [];
     let timelineHydrated = false;
@@ -1316,7 +1317,7 @@
         <aside class="chat-navigation" id="chat-workspace-navigation">
             <div class="compact-list-categories"><WorkspaceListNavigation category={listCategory} onchange={setListCategory} /></div>
             <div class="sidebar-section" hidden={listCategory !== 'conversations'}>
-            <ChatConversationManager navigationDisabled={initializing || initializationFailed} bind:this={conversationManager} bind:writing={conversationWriting} confirm={request => messageConfirmation.ask(request)} messageIds={messages.map(messageMutationId).filter((id): id is string => id !== null)} activeId={active?.conversationId ?? null} highlightSelection={!selectedContentTab} {generation} busy={busy || !!active && !canInteract} hasMessages={messages.length > 0} {selectedMessageId} onselect={conversation => { selectConversation(conversation); if (viewportWidth <= 700) navigationPanel?.closePanel(); }} onchange={changed} />
+            <ChatConversationManager navigationDisabled={initializing || initializationFailed} bind:this={conversationManager} bind:writing={conversationWriting} confirm={request => messageConfirmation.ask(request)} messageIds={messages.map(messageMutationId).filter((id): id is string => id !== null)} activeId={active?.conversationId ?? null} highlightSelection={!selectedContentTab} {generation} busy={busy || !!active && !canInteract} hasMessages={messages.length > 0} {canBranchDuringMaintenance} {selectedMessageId} onselect={conversation => { selectConversation(conversation); if (viewportWidth <= 700) navigationPanel?.closePanel(); }} onchange={changed} />
             </div>
             <div class="sidebar-section" hidden={listCategory !== 'resources'}><WorkspaceResourceNavigation onopen={openManagementTab}
                 selectedPath={selectedContentTab?.kind === 'page' ? selectedContentTab.path : ''} /></div>
@@ -1492,7 +1493,12 @@
                     </aside>
                 {:else if expertError}<p role="alert">{expertError}</p>{#if expertRejoin}<button type="button" disabled={expertsLoading} onclick={rejoinExpert}>{t($locale,'rooms.rejoinExpert')}</button>{/if}{/if}
                 {#if knowledgeSavePending}<p role="status" class="muted">{t($locale, 'chatKnowledge.beforeSend')}</p>{/if}
-            </form>{:else if active?.expertContextOwner}
+            </form>{:else if canBranchDuringMaintenance}
+                <aside class="reply-notice"><p role="status">{t($locale, 'chatConversations.compactionCopyHint')}</p>
+                    <button type="button" disabled={conversationWriting || !messages.length} onclick={() => conversationManager?.duplicateConversation()}>{t($locale,'chatConversations.branchWhole')}</button>
+                    <button type="button" disabled={historyLoading || conversationWriting} onclick={() => loadHistory('replace')}>{t($locale,'chatPage.refresh')}</button>
+                </aside>
+            {:else if active?.expertContextOwner}
                 <aside class="task-readonly"><p>{t($locale,'rooms.childReadOnly')}</p>{#if active.expertParentConversationId}<a href={`/chat?conversation=${encodeURIComponent(active.expertParentConversationId)}`}>{t($locale,'chatPage.taskReturnParent')}</a>{/if}</aside>
             {:else if active && executionOwnership.kind === 'task_child'}
                 <aside class="task-readonly"><p>{t($locale, 'chatPage.taskReadOnly')}</p><a href={`/chat?conversation=${encodeURIComponent(executionOwnership.parent_conversation_id)}`}>{t($locale, 'chatPage.taskReturnParent')}</a></aside>

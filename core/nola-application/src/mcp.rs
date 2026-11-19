@@ -18,9 +18,24 @@ pub struct McpServer {
     pub deleted_at_ms: Option<i64>,
 }
 
+impl McpServer {
+    pub fn is_managed_definition(&self) -> bool {
+        // Legacy CLI connections used their display name as the ID, including
+        // names containing the marker used by native extension activations.
+        !self.id.contains(":mcp:") || (self.id == self.display_name
+            && serde_json::from_str::<Value>(&self.configuration_json).is_ok_and(|config|
+                config["server_id"].as_str() == Some(&self.id) && config.get("configuration_path").is_none()))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum McpCommand {
+    CreateNamed {
+        display_name: String,
+        configuration: Value,
+        created_at_ms: i64,
+    },
     ApplyChanges {
         commands: Vec<McpCommand>,
     },
@@ -59,6 +74,32 @@ pub(crate) fn execute_mcp_command(
     command: McpCommand,
 ) -> Result<Value, String> {
     match command {
+        McpCommand::CreateNamed { display_name, mut configuration, created_at_ms } => {
+            if !store.has_write_unit_of_work() {
+                return Err("MCP creation requires durable command admission".into());
+            }
+            if display_name.is_empty() || display_name.trim() != display_name || display_name.chars().any(char::is_control) {
+                return Err("MCP server name must be non-empty and contain no control characters".into());
+            }
+            if store.list_mcp_servers().map_err(|e| e.to_string())?.into_iter().map(McpServer::from).any(|server|
+                server.deleted_at_ms.is_none() && server.is_managed_definition() && (server.id == display_name || server.display_name == display_name)) {
+                return Err(format!("MCP server '{display_name}' already exists"));
+            }
+            // Keep first-generation IDs addressable. An old grant must never
+            // attach to a new connection that happens to reuse its display name.
+            let id = if display_name.contains(":mcp:") || store.mcp_server_identity_exists(&display_name).map_err(|e| e.to_string())? {
+                uuid::Uuid::new_v4().to_string()
+            } else {
+                display_name.clone()
+            };
+            let fields = configuration.as_object_mut().ok_or("MCP server configuration must be an object")?;
+            fields.insert("server_id".into(), Value::String(id.clone()));
+            fields.insert("name".into(), Value::String(display_name.clone()));
+            fields.insert("enabled".into(), Value::Bool(true));
+            execute_mcp_command(store, McpCommand::Create {
+                id, display_name, enabled: true, configuration_json: configuration.to_string(), created_at_ms,
+            })
+        }
         McpCommand::ApplyChanges { commands } => {
             if !store.has_write_unit_of_work() {
                 return Err("MCP changes require durable command admission".into());

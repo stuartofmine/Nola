@@ -77,6 +77,11 @@ pub enum MemoryCommand {
     List {
         limit: usize,
     },
+    ListForBinding {
+        binding: nola_domain::memory_owner::MemoryExecutionBinding,
+        query: Option<String>,
+        limit: usize,
+    },
     Get {
         id: String,
     },
@@ -185,6 +190,24 @@ pub(crate) fn execute_memory_command<R: MemoryRepository + ?Sized>(
                 .map(from_store_record)
                 .collect::<Result<Vec<_>, _>>()?;
             encode(records, "memory list")
+        }
+        MemoryCommand::ListForBinding { binding, query, limit } => {
+            binding.validate()?;
+            let mut owners = Vec::new();
+            for (namespace, scope) in [
+                (MemoryNamespace::Personal, MemoryScope::Global),
+                (MemoryNamespace::Workspace, MemoryScope::Global),
+                (MemoryNamespace::Conversation, MemoryScope::Conversation),
+                (MemoryNamespace::Conversation, MemoryScope::Turn),
+            ] {
+                if let Ok(owner) = binding.owner_for(&namespace, scope) {
+                    owners.push(serde_json::to_string(&owner).map_err(|error| error.to_string())?);
+                }
+            }
+            let records = store.list_owned_memory_records(&owners, query.as_deref(), limit)
+                .map_err(|error| error.to_string())?.into_iter()
+                .map(from_store_record).collect::<Result<Vec<_>, _>>()?;
+            encode(records, "workspace memory list")
         }
         MemoryCommand::Get { id } => {
             let record = store

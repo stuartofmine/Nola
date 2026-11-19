@@ -1217,6 +1217,10 @@ fn run_agent_core_turn_with_admission(
         };
     }
     let mut effective_config = config.clone();
+    if !effective_config.session.save_session && effective_config.session.session_id.is_none() {
+        // MCP references and the in-memory Store must share one execution owner.
+        effective_config.session.session_id = Some(uuid::Uuid::new_v4().to_string());
+    }
     // This boundary starts a new submission, not a reuse of a previous Run's
     // process-local metadata. Active-Run recovery below rehydrates its receipt.
     let frozen_resend_model = effective_config.session.edited_resend_operation_id.is_some()
@@ -3225,7 +3229,7 @@ fn host_turn_policy() -> HostTurnPolicy {
 /// produces a new revision and therefore a new durable Host signature for the
 /// following Turn.
 fn refresh_changed_mcp_catalog(config: &mut HostInvocationRequest) -> Result<(), String> {
-    if config.tool_settings.mcp_server_registry.is_empty() {
+    if !config.tool_settings.tools_enabled || config.tool_settings.mcp_server_registry.is_empty() {
         return Ok(());
     }
     let session = config.session.session_id.as_deref().ok_or("MCP refresh requires its canonical session")?;

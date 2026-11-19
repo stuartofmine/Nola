@@ -860,10 +860,7 @@ impl Config {
             None => RuntimeConfig::load(&project_root)?,
         };
         if runtime.model_binding.is_some() && matches!(command, CommandMode::Run | CommandMode::Init | CommandMode::Wiki) {
-            if !matches!(command, CommandMode::Run) || !save_session || host_request_stdin {
-                return Err("connection catalog selection requires a saved CLI conversation; use an explicit route for init/wiki/no-save".into());
-            }
-            if endpoint_explicit || api_key_explicit || model_explicit {
+            if !host_request_stdin && (endpoint_explicit || api_key_explicit || model_explicit) {
                 return Err("connection catalog selection cannot combine with endpoint/model/API key flags; use --profile and --profile-revision".into());
             }
         }

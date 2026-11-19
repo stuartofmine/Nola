@@ -227,6 +227,48 @@ async function inspectView(page, label, scheme, width) {
     return metrics;
 }
 
+async function verifyFirstConnection(page, origin, tokenPath) {
+    await page.goto(`${origin}/login?next=/chat`);
+    const token = page.locator('#host-token');
+    const connect = page.getByRole('button', {name: 'Connect', exact: true});
+    await page.locator('.login-card summary').click();
+    assert.equal(await page.locator('.login-card details code').innerText(), '~/.nola/web/mobile-access-token');
+    await token.fill('short');
+    assert.equal(await token.getAttribute('aria-invalid'), 'false');
+    await connect.click();
+    assert.equal(await token.getAttribute('aria-invalid'), 'true');
+    await token.fill('x'.repeat(32));
+    const failed = page.waitForResponse(r => r.url().endsWith('/api/web/login'));
+    await connect.click();
+    assert.equal((await failed).status(), 401);
+    await page.locator('[role="alert"]').waitFor();
+    await token.fill(fs.readFileSync(tokenPath, 'utf8').trim());
+    const accepted = page.waitForResponse(r => r.url().endsWith('/api/web/login'));
+    await connect.click();
+    assert.equal((await accepted).status(), 200);
+    await page.locator('#chat-composer').waitFor();
+}
+
+async function verifyModelSetupNavigation(page, origin) {
+    const name = 'First run test model';
+    const result = await page.request.post(`${origin}/api/model-profiles`, {data: {
+        expectedRevisions: {}, endpointName: name, displayName: name, modelName: 'first-run',
+        baseURL: 'https://example.invalid/v1', wireProtocol: 'responses', priority: 50,
+        capabilities: ['chat'], executionCapabilities: {
+            toolCalls: false, reasoning: false, imageInput: false, samplingParameters: false,
+        },
+    }});
+    assert.equal(result.status(), 201);
+    await page.goto(`${origin}/settings?section=providers`);
+    await page.getByRole('link', {name, exact: true}).click();
+    await page.locator('dialog:modal').waitFor();
+    assert.ok((await page.locator('dialog:modal').getAttribute('aria-label')).includes(name));
+    await page.keyboard.press('Escape');
+    await page.locator('[role="tab"][id$="tab-local"]:visible').click();
+    await page.reload();
+    await page.locator('[role="tab"][id$="tab-local"][aria-selected="true"]').waitFor();
+}
+
 async function runWorkflowRoundTrips(page, origin) {
     // 1. Create a real conversation via UI -> verify persisted in backend & /conversations
     await page.goto(`${origin}/chat`, {waitUntil: 'networkidle'});
@@ -395,8 +437,10 @@ async function verifyA2uiSurface(context, origin, convId, scheme, width, hostId)
 
 (async () => {
     verifyRouteParity();
-    ensureUiBuilt();
-    const cliBinary = resolveNolaBinary();
+    const bundle = process.env.NOLA_CLI_BUNDLE && path.resolve(process.env.NOLA_CLI_BUNDLE);
+    if (!bundle) ensureUiBuilt();
+    const cliBinary = bundle ? path.join(bundle, 'nola') : resolveNolaBinary();
+    fs.accessSync(cliBinary, fs.constants.X_OK);
     const port = await allocatePort();
     const origin = `http://127.0.0.1:${port}`;
     const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nola-web-ui-'));
@@ -410,11 +454,14 @@ async function verifyA2uiSurface(context, origin, convId, scheme, width, hostId)
         NOLA_HOME: tmpHome,
         NOLA_DB_PATH: tmpDb,
     };
-    delete childEnv.NOLA_MAC_APP_SUPPORT;
+    childEnv.NOLA_MAC_APP_SUPPORT = path.join(tmpRoot, 'support');
 
     const logs = [];
-    const host = spawn(cliBinary, ['web', '--host', '127.0.0.1', '--port', String(port), '--web-root', webRoot], {
-        cwd: repoRoot,
+    const args = ['web', '--host', '127.0.0.1', '--port', String(port)];
+    if (bundle) delete childEnv.NOLA_WEB_ROOT;
+    else args.push('--web-root', webRoot);
+    const host = spawn(cliBinary, args, {
+        cwd: bundle ? tmpRoot : repoRoot,
         env: childEnv,
         stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -459,6 +506,9 @@ async function verifyA2uiSurface(context, origin, convId, scheme, width, hostId)
                     for (const route of EXPECTED_ROUTES) {
                         await page.goto(`${origin}/${route}`, {waitUntil: 'networkidle'});
                         await inspectView(page, `route-${route}`, scheme, viewport.width);
+                        if (route === 'login' && viewport.width === 390) {
+                            await page.screenshot({path: path.join(out, `login-${scheme}-390.png`)});
+                        }
                         viewCount += 1;
                     }
 
@@ -466,6 +516,10 @@ async function verifyA2uiSurface(context, origin, convId, scheme, width, hostId)
                     await page.goto(`${origin}/chat?conversation=${encodeURIComponent(convId)}`, {waitUntil: 'networkidle'});
                     await inspectView(page, 'chat-active', scheme, viewport.width);
                     viewCount += 1;
+
+                    if (viewport.width !== 320) {
+                        await page.screenshot({path: path.join(out, `chat-${scheme}-${viewport.width}.png`)});
+                    }
 
                     // Settings 6 categories
                     for (const category of SETTINGS_CATEGORIES) {
@@ -528,17 +582,25 @@ async function verifyA2uiSurface(context, origin, convId, scheme, width, hostId)
                         viewCount += 1;
                     }
 
-                    if (viewport.width === 1440) {
-                        await page.screenshot({path: path.join(out, `chat-${scheme}-1440.png`)});
-                    } else if (viewport.width === 390) {
-                        await page.screenshot({path: path.join(out, `chat-${scheme}-390.png`)});
-                    }
+
                 } finally {
                     await context.close();
                 }
             }
         }
 
+        const connectionPage = await browser.newPage({locale: 'en-US'});
+        try {
+            await verifyFirstConnection(connectionPage, origin, path.join(tmpHome, '.nola/web/mobile-access-token'));
+        } finally {
+            await connectionPage.close();
+        }
+        const modelPage = await browser.newPage({locale: 'en-US'});
+        try {
+            await verifyModelSetupNavigation(modelPage, origin);
+        } finally {
+            await modelPage.close();
+        }
         assert.deepEqual(errors, [], 'Uncaught browser page errors detected');
         console.log(`PASS: Web visual, contrast, overflow, accessibility, A2UI, and real HTTP round-trip suite (${viewCount} views across 14 routes, 6 settings categories, tabs, and modals)`);
     } finally {

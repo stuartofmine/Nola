@@ -3235,3 +3235,12 @@
 "model.web_host.forget_pairing.footer" = "このホストアドレスの記録済み ID と保存済みトークンを削除し、再ペアリングできるようにします。";
 "chat.context.mcp.empty" = "利用可能な MCP サーバーはまだありません。";
 "chat.context.mcp.local.footer" = "ローカル MCP サーバーはライブラリ > 機能で設定・管理できます。";
+
+"onboarding.first_chat.body" = "最初の会話に使うモデルを選んでください。あとで設定から追加することもできます。";
+"onboarding.first_chat.choose_model" = "モデルを選ぶ";
+"chat.context.documents.read_error" = "保存済みの書類を読み込めません。この画面を閉じて開き直してください。";
+"chat.context.documents.conflict" = "別の場所で書類が変更されました。この画面を開き直して最新の一覧を編集してください。";
+"chat.context.import.limit" = "30件の上限に達しました。次のファイルは追加されませんでした：%@";
+"chat.message.pendingEdit" = "保留中の編集を確認";
+"chat.message.editSavedForReview" = "この画面は閉じられます。この会話で保留中の編集を開き、送信状況を確認できます。";
+"chat.context.documents.blank" = "%@ に本文を入力するか、空の書類を削除してください。";

@@ -34,6 +34,7 @@
     }
     let notice = $state('');
     let copying = $state(false);
+    let overflow = $state<ActionDisclosure>();
     let manualCopy = $state<string | null>(null);
     let copyField = $state<HTMLTextAreaElement>();
     const source = $derived(messageCopyContent(message, 'markdown'));
@@ -100,9 +101,9 @@
         {/if}
         {#if editable}<button type="button" disabled={busy || !!ownerCurrent && !ownerCurrent()} onclick={openEditor}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m4 16 12-12 4 4L8 20H4zM14 6l4 4"/></svg>{editedResendLabel($locale,'edit')}</button>{/if}
         {#if source && message.role === 'assistant' || onoperation && mutationId || onselect}
-            <ActionDisclosure iconOnly label={t($locale, 'chatPage.messageActions')}>
-                {#if onselect}<button type="button" aria-pressed={selected} onclick={onselect}>{t($locale, 'chatPage.selectMessage')}</button>{/if}
-                {#if source && message.role === 'assistant'}<button class="copy-action" type="button" disabled={unavailable || copying} onclick={() => copy('markdown')}>{t($locale, 'chatPage.copyMarkdown')}</button>{/if}
+            <ActionDisclosure bind:this={overflow} iconOnly label={t($locale, 'chatPage.messageActions')}>
+                {#if onselect}<button type="button" aria-pressed={selected} onclick={() => { overflow?.close(true); onselect?.(); }}>{t($locale, 'chatPage.selectMessage')}</button>{/if}
+                {#if source && message.role === 'assistant'}<button class="copy-action" type="button" disabled={unavailable || copying} onclick={() => { overflow?.close(true); void copy('markdown'); }}>{t($locale, 'chatPage.copyMarkdown')}</button>{/if}
                 {#if onoperation && mutationId}
                     <button type="button" disabled={busy} onclick={event => mutate('branch', event.currentTarget)}>{t($locale, 'chatConversations.branchHere')}</button>
                     <button type="button" disabled={busy} onclick={event => mutate('truncate', event.currentTarget)}>{t($locale, 'chatConversations.truncateHere')}</button>
@@ -120,8 +121,6 @@
 
 <style>
     .message-actions { display: flex; flex-wrap: wrap; gap: 2px; align-items: center; margin-top: 5px; font-size: 12px; color: var(--muted); }
-    .message-actions :global(.action-disclosure) { display: contents; }
-    .message-actions :global(.disclosed-actions) { flex-basis: 100%; }
     button { display:inline-flex; align-items:center; gap:5px; min-height: var(--control-hit-size); padding: 6px 8px; font-size: 12px; border: 0; box-shadow: none; background: transparent; color: var(--muted); }
     button:hover:not(:disabled) { background: var(--panel); color: var(--content); }
     button.copy-action, button.copy-action:hover:not(:disabled), button.copy-action:active:not(:disabled) { background: transparent; border: 0; box-shadow: none; }

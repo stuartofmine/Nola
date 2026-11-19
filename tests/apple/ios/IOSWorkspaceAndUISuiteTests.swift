@@ -342,7 +342,7 @@ final class IOSConversationInspectorTests: XCTestCase {
 }
 
 @MainActor final class IOSOnboardingGuidanceTests: XCTestCase {
-    func testAllGuidePagesRenderWithoutChangingPermissionsOrSavedExecutionPreferences() async throws {
+    func testWelcomeRendersWithoutChangingPermissionsOrSavedExecutionPreferences() async throws {
         let suite = "onboarding-guidance-\(UUID())"
         let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { preferences.removePersistentDomain(forName: suite) }
@@ -351,33 +351,31 @@ final class IOSConversationInspectorTests: XCTestCase {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         for (width, largeText): (CGFloat, Bool) in [(320, false), (390, true), (768, false)] {
             for dark in [false, true] {
-                for step in 0..<4 {
-                    let controller = UIHostingController(rootView: OnboardingView(initialStep: step)
-                        .defaultAppStorage(preferences)
-                        .environment(\.colorScheme, dark ? .dark : .light)
-                        .environment(\.dynamicTypeSize, largeText ? .accessibility3 : .large)
-                        .transaction { $0.animation = nil; $0.disablesAnimations = true })
-                    let window = UIWindow(windowScene: scene)
-                    window.frame = CGRect(x: 0, y: 0, width: width, height: 900)
-                    window.overrideUserInterfaceStyle = dark ? .dark : .light
-                    window.rootViewController = controller; window.makeKeyAndVisible()
-                    defer { window.isHidden = true; window.rootViewController = nil; window.windowScene = nil }
-                    try await Task.sleep(for: .milliseconds(100))
-                    controller.view.layoutIfNeeded()
-                    let image = UIGraphicsImageRenderer(size: window.bounds.size).image { _ in
-                        controller.view.drawHierarchy(in: controller.view.bounds, afterScreenUpdates: true)
-                    }
-                    let png = try XCTUnwrap(image.pngData())
-                    XCTAssertGreaterThan(png.count, 10_000)
-                    try assertFooterUsesThemeActionColor(image, dark: dark)
-                    let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
-                    attachment.name = "onboarding-\(step)-\(Int(width))-\(dark ? "dark" : "light")\(largeText ? "-accessibility" : "")"
-                    attachment.lifetime = .keepAlways; add(attachment)
-                    XCTAssertFalse(preferences.bool(forKey: "hasCompletedOnboarding"))
-                    XCTAssertEqual(preferences.string(forKey: "onboarding.runtime.preference"), "existing-host")
-                    XCTAssertEqual(preferences.string(forKey: "onboarding.planned.sources"), "existing-sources")
-                    window.isHidden = true; window.rootViewController = nil; window.windowScene = nil
+                let controller = UIHostingController(rootView: OnboardingView(chooseModel: {}, skip: {})
+                    .defaultAppStorage(preferences)
+                    .environment(\.colorScheme, dark ? .dark : .light)
+                    .environment(\.dynamicTypeSize, largeText ? .accessibility3 : .large)
+                    .transaction { $0.animation = nil; $0.disablesAnimations = true })
+                let window = UIWindow(windowScene: scene)
+                window.frame = CGRect(x: 0, y: 0, width: width, height: 900)
+                window.overrideUserInterfaceStyle = dark ? .dark : .light
+                window.rootViewController = controller; window.makeKeyAndVisible()
+                defer { window.isHidden = true; window.rootViewController = nil; window.windowScene = nil }
+                try await Task.sleep(for: .milliseconds(100))
+                controller.view.layoutIfNeeded()
+                let image = UIGraphicsImageRenderer(size: window.bounds.size).image { _ in
+                    controller.view.drawHierarchy(in: controller.view.bounds, afterScreenUpdates: true)
                 }
+                let png = try XCTUnwrap(image.pngData())
+                XCTAssertGreaterThan(png.count, 10_000)
+                try assertFooterUsesThemeActionColor(image, dark: dark)
+                let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+                attachment.name = "onboarding-\(Int(width))-\(dark ? "dark" : "light")\(largeText ? "-accessibility" : "")"
+                attachment.lifetime = .keepAlways; add(attachment)
+                XCTAssertFalse(preferences.bool(forKey: "hasCompletedOnboarding"))
+                XCTAssertEqual(preferences.string(forKey: "onboarding.runtime.preference"), "existing-host")
+                XCTAssertEqual(preferences.string(forKey: "onboarding.planned.sources"), "existing-sources")
+                window.isHidden = true; window.rootViewController = nil; window.windowScene = nil
             }
         }
     }
@@ -717,7 +715,7 @@ final class IOSUIInteractionPolicyTests: XCTestCase {
             description: "Verification guide",
             enabled: true
         )
-        let savedFromCallback = try container.chatManager.updateUploadedDocuments([expectedDoc])
+        let savedFromCallback = try container.chatManager.updateUploadedDocuments([expectedDoc], expected: container.chatMemoryProfileStore.loadProfile()).uploadedDocuments
         XCTAssertEqual(savedFromCallback.map(\.name), ["Release Runbook"])
 
         let reopenedRuntime = try IOSApplicationRuntime(databaseURL: databaseURL)
@@ -885,7 +883,7 @@ final class IOSUIInteractionPolicyTests: XCTestCase {
 
         _ = try container.chatManager.updateUploadedDocuments([
             UserUploadedContextItem(name: "Temp Doc", content: "Body", description: "Desc", enabled: true)
-        ])
+        ], expected: container.chatMemoryProfileStore.loadProfile())
         let baseline = container.chatMemoryProfileStore.loadProfile()
         _ = try container.chatMemoryProfileStore.saveMemoryText(
             longTermMemory: "User prefers dark theme",
@@ -997,17 +995,15 @@ final class IOSUIInteractionPolicyTests: XCTestCase {
             let style: UIUserInterfaceStyle = dark ? .dark : .light
             let themeName = dark ? "dark" : "light"
 
-            for step in 0...3 {
-                try await IOSVisualPixelAssertions.assertHostedView(
-                    OnboardingView(initialStep: step),
-                    label: "onboarding-step-\(step)-\(themeName)",
-                    size: CGSize(width: 390, height: 844),
-                    safeAreaInsets: UIEdgeInsets(top: 59, left: 0, bottom: 34, right: 0),
-                    userInterfaceStyle: style,
-                    horizontalSizeClass: .compact,
-                    dynamicTypeSize: .large
-                )
-            }
+            try await IOSVisualPixelAssertions.assertHostedView(
+                OnboardingView(chooseModel: {}, skip: {}),
+                label: "onboarding-\(themeName)",
+                size: CGSize(width: 390, height: 844),
+                safeAreaInsets: UIEdgeInsets(top: 59, left: 0, bottom: 34, right: 0),
+                userInterfaceStyle: style,
+                horizontalSizeClass: .compact,
+                dynamicTypeSize: .large
+            )
 
             try await IOSVisualPixelAssertions.assertHostedView(
                 NavigationStack { ChatView() }.environmentObject(fixture.container),

@@ -3580,8 +3580,8 @@ public final class ChatManager: ObservableObject {
     }
 
     @discardableResult
-    public func updateUploadedDocuments(_ items: [UserUploadedContextItem]) throws -> [UserUploadedContextItem] {
-        try container.chatMemoryProfileStore.saveUploadedDocuments(items)
+    public func updateUploadedDocuments(_ items: [UserUploadedContextItem], expected: ChatMemoryProfile) throws -> ChatMemoryProfile {
+        try container.chatMemoryProfileStore.saveUploadedDocuments(items, expected: expected)
     }
 
     @discardableResult
@@ -6178,20 +6178,7 @@ extension ChatManager {
         guard let owner = UUID(uuidString: input.conversation_id),
               let execution = executionForConversation(owner, prepareForSubmission: currentConversationId == owner)
                 ?? ensureExecutionForConversation(owner) else { throw IOSApplicationRuntimeError.invalidResponse }
-        do {
-            let existing = try runtime.executeAgentCommand(.object(["type": .string("load_run_identity"), "run_id": .string(input.operation_id)]))
-            if existing != .null {
-                guard case .object(let identity) = existing, identity["conversation_id"] == .string(input.conversation_id) else {
-                    throw IOSApplicationRuntimeError.invalidResponse
-                }
-                let saved = try runtime.executeAgentCommand(.object(["type": .string("load_prepared_in_place_resend"), "operation_id": .string(input.operation_id)]))
-                let prior = try JSONDecoder().decode(ApplePreparedInPlaceResend.self, from: JSONEncoder().encode(saved))
-                guard prior.input == input else { throw IOSApplicationRuntimeError.invalidResponse }
-                return owner
-            }
-        } catch {
-            guard error.localizedDescription.contains("run_not_found") else { throw error }
-        }
+        if try runtime.editReceipt(request) == .admitted { return owner }
         guard execution.canBeginNewMessage, editedResendJobs[owner] == nil else { throw DeviceAgentCoordinatorError.alreadyRunning }
         let encoded = try JSONDecoder().decode(AgentCoreJSONValue.self, from: JSONEncoder().encode(input))
         let result = try runtime.executeAgentCommand(.object(["type": .string("prepare_in_place_resend"), "input": encoded]))

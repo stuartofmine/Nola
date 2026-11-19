@@ -164,36 +164,39 @@ test("startupPageHtml enforces Warm Paper/Ink tokens, WCAG contrast, layout boun
     }
 });
 
+// Exercise the built preload with only the Electron-to-main IPC transport replaced.
+const preload = fs.readFileSync(path.join(repoRoot, "apps/windows/dist/preload.js"), "utf8");
+const preloadHarness = `(() => {
+    const exports = {};
+    let enabled = false, reads = 0;
+    window.__ipcCalls = [];
+    const require = () => ({
+        contextBridge: {exposeInMainWorld: (name, value) => { window[name] = value; }},
+        ipcRenderer: {invoke: async (method, value) => {
+            window.__ipcCalls.push(method);
+            switch (method) {
+                case "desktop:retry-host":
+                    return new Promise(resolve => { window.__finishRetry = resolve; });
+                case "desktop:native-runtime": return {architecture: "x64", backend: "vulkan"};
+                case "desktop:login-item":
+                    if (++reads === 1) throw new Error("Disconnected");
+                    return {available: true, enabled, labels: {title: "Start Nola when I sign in", body: "", enabled: "Enabled", disabled: "Disabled", unavailable: "Unavailable"}};
+                case "desktop:set-login-item": enabled = value; throw new Error("Lost reply");
+                case "desktop:open-log-folder": return true;
+                default: throw new Error("Unexpected IPC " + method);
+            }
+        }}
+    });
+    ${preload}
+})();`;
+
 test("startup recovery buttons enforce preload click IPC and busy/retry guards", async ({ browser }) => {
     const context = await browser.newContext({ viewport: { width: 720, height: 520 }, colorScheme: "light" });
     await context.route("**/*", (route) => route.abort());
     const page = await context.newPage();
     try {
-        await page.setContent(startupPageHtml(stringsFor("en"), "failed", "Exit code 1"));
-        await page.evaluate(() => {
-            const calls: string[] = [];
-            let resolveRetry!: (value: boolean) => void;
-            (window as unknown as Record<string, unknown>).__ipcCalls = calls;
-            (window as unknown as Record<string, unknown>).__finishRetry = (ok: boolean) => resolveRetry(ok);
-
-            const retry = document.getElementById("nola-retry-host");
-            retry?.addEventListener("click", () => {
-                if (!(retry instanceof HTMLButtonElement) || retry.disabled) return;
-                retry.disabled = true;
-                retry.setAttribute("aria-busy", "true");
-                calls.push("desktop:retry-host");
-                new Promise<boolean>((resolve) => { resolveRetry = resolve; })
-                    .then((accepted) => {
-                        if (!accepted && retry.isConnected) {
-                            retry.disabled = false;
-                            retry.removeAttribute("aria-busy");
-                        }
-                    });
-            });
-            document.getElementById("nola-open-logs")?.addEventListener("click", () => {
-                calls.push("desktop:open-log-folder");
-            });
-        });
+        await page.addInitScript({ content: preloadHarness });
+        await page.goto("data:text/html;charset=utf-8," + encodeURIComponent(startupPageHtml(stringsFor("en"), "failed", "Exit code 1")));
 
         await page.locator("#nola-open-logs").click();
         await page.locator("#nola-retry-host").click();
@@ -246,80 +249,7 @@ test("Windows desktop shell integration against isolated real nola web renders S
     try {
         await waitForHealth(origin, host, logs);
         const context = await browser.newContext({ viewport: { width: 1280, height: 840 }, colorScheme: "dark", locale: "en-US" });
-        await context.addInitScript(() => {
-            const setPlatformAttr = () => {
-                if (document.documentElement) document.documentElement.dataset.nolaDesktop = "windows";
-            };
-            setPlatformAttr();
-            document.addEventListener("DOMContentLoaded", setPlatformAttr);
-            let enabled = false;
-            let readCount = 0;
-            const labels = {
-                title: "Start Nola when I sign in",
-                body: "Keeps scheduled work and the local Agent available in the notification area without opening a window.",
-                enabled: "Enabled",
-                disabled: "Disabled",
-                unavailable: "Available after Nola is installed",
-            };
-            (window as unknown as Record<string, unknown>).NolaDesktop = Object.freeze({
-                platform: "windows",
-                retryHost: async () => true,
-                openLogFolder: async () => true,
-                openWorkspace: async () => true,
-                loginItem: async () => {
-                    readCount += 1;
-                    if (readCount === 1) throw new Error("Simulated transient IPC read disconnect");
-                    return { available: true, enabled, labels };
-                },
-                setLoginItem: async (next: boolean) => {
-                    enabled = next;
-                    throw new Error("Simulated lost write reply after persisting");
-                },
-            });
-
-            // Mirror preload.ts runtime badge attachment on /models (standalone or embedded tab).
-            window.addEventListener("DOMContentLoaded", () => {
-                const isModels = () =>
-                    location.pathname === "/models" ||
-                    (new URLSearchParams(location.search).get("content") ?? "").startsWith("/models");
-                let observer: MutationObserver | undefined;
-                const attach = () => {
-                    const hostEl = document.querySelector("[data-local-runtime-host], .model-engine-state");
-                    if (!hostEl) return false;
-                    if (hostEl.querySelector(".desktop-native-runtime")) return true;
-                    const badge = document.createElement("span");
-                    badge.className = "desktop-native-runtime";
-                    badge.textContent = "VULKAN · X64";
-                    badge.title = "llama.cpp";
-                    hostEl.appendChild(badge);
-                    return true;
-                };
-                const sync = () => {
-                    if (!isModels()) {
-                        observer?.disconnect();
-                        observer = undefined;
-                        return;
-                    }
-                    if (attach() || !document.body) {
-                        observer?.disconnect();
-                        observer = undefined;
-                        return;
-                    }
-                    if (!observer) {
-                        observer = new MutationObserver(() => {
-                            if (attach() || !isModels()) {
-                                observer?.disconnect();
-                                observer = undefined;
-                            }
-                        });
-                        observer.observe(document.body, { childList: true, subtree: true });
-                    }
-                };
-                sync();
-                window.addEventListener("popstate", sync);
-                document.addEventListener("click", () => setTimeout(sync, 50), true);
-            });
-        });
+        await context.addInitScript({ content: preloadHarness });
 
         const page = await context.newPage();
         const pageErrors: string[] = [];

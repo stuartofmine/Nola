@@ -91,6 +91,8 @@ import com.nola.ui.components.NolaSpacing
 import com.nola.ui.components.NolaSwitch
 import com.nola.ui.components.NolaTopAppBar
 import java.text.SimpleDateFormat
+import com.nola.work.journalSessionId
+import com.nola.work.journalCompletedAt
 import java.text.DateFormatSymbols
 import java.util.Calendar
 import java.util.Date
@@ -102,6 +104,7 @@ import java.util.TimeZone
 fun ScheduledActionsScreen(
     onBack: (() -> Unit)? = null,
     onCreateInChat: () -> Unit = {},
+    onOpenConversation: ((String) -> Unit)? = null,
     viewModel: ScheduledActionsViewModel = hiltViewModel()
 ) {
     val context = LocalContext.current
@@ -131,13 +134,9 @@ fun ScheduledActionsScreen(
         )
     }
     val nextAction = orderedActions.firstOrNull { it.enabled && nextScheduledAt(it) != null }
-    val latestResultsByAction = remember(state.recentResults) {
-        state.recentResults
-            .groupBy { it.actionId }
-            .mapValues { (_, results) -> results.maxBy { it.createdAt } }
-    }
+    val latestResultsByAction = state.latestResultsByAction
     val attentionActionIds = latestResultsByAction.values
-        .filter { it.status.lowercase(Locale.ROOT) in setOf("failed", "partial") }
+        .filter { scheduledResultNeedsAttention(it.status) }
         .mapTo(mutableSetOf()) { it.actionId }
     val normalizedQuery = searchText.trim()
     val visibleActions = orderedActions.filter { action ->
@@ -179,7 +178,9 @@ fun ScheduledActionsScreen(
 
     selectedResult?.let { result ->
         ExecutionResultDetailSheet(
-            result = result,
+            result = latestResultsByAction[result.actionId]?.takeIf { it.id == result.id }
+                ?: state.recentResults.find { it.id == result.id } ?: result,
+            onOpenConversation = onOpenConversation,
             onDismiss = { selectedResult = null }
         )
     }
@@ -568,7 +569,7 @@ fun ScheduledActionCard(
 ) {
     val dateFormat = remember { SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault()) }
     var showMenu by remember(action.id) { mutableStateOf(false) }
-    val needsAttention = latestResult?.status?.lowercase(Locale.ROOT) in setOf("failed", "partial")
+    val needsAttention = latestResult?.let { scheduledResultNeedsAttention(it.status) } == true
     val isRunning = latestResult?.status?.lowercase(Locale.ROOT) in setOf("pending", "running")
     Box(modifier = Modifier.testTag("scheduled.card.${action.id}")) {
     NolaCard {
@@ -747,7 +748,7 @@ fun ScheduledActionCard(
                     )
                 }
                 latestResult?.let { result ->
-                    val detail = result.failureReason ?: result.llmSummaryText
+                    val detail = result.failureReason?.takeUnless { it == "permission_required" } ?: result.llmSummaryText
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -853,7 +854,7 @@ fun ExecutionResultRow(result: ExecutionResultEntity, onClick: () -> Unit = {}) 
             }
             NolaBadge(resultStatusLabel(result.status), tint = resultStatusColor(result.status))
         }
-        val detail = result.failureReason ?: result.llmSummaryText?.take(180)
+        val detail = result.failureReason?.takeUnless { it == "permission_required" } ?: result.llmSummaryText?.take(180)
         if (!detail.isNullOrBlank()) {
             Text(
                 detail,
@@ -871,6 +872,7 @@ fun ExecutionResultRow(result: ExecutionResultEntity, onClick: () -> Unit = {}) 
 @Composable
 internal fun ExecutionResultDetailSheet(
     result: ExecutionResultEntity,
+    onOpenConversation: ((String) -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
     val dateFormat = remember { SimpleDateFormat("MMM dd, yyyy · HH:mm", Locale.getDefault()) }
@@ -926,7 +928,16 @@ internal fun ExecutionResultDetailSheet(
                 }
             }
 
-            result.failureReason?.takeIf { it.isNotBlank() }?.let { failure ->
+            val sessionId = result.journalSessionId
+            if (sessionId != null && onOpenConversation != null) {
+                item {
+                    TextButton(onClick = { onDismiss(); onOpenConversation(sessionId) },
+                        modifier = Modifier.testTag("scheduled.result.openConversation")) {
+                        Text(stringResource(R.string.activity_open_source))
+                    }
+                }
+            }
+            result.failureReason?.takeIf { it.isNotBlank() && it != "permission_required" }?.let { failure ->
                 item {
                     NolaCard {
                         Text(
@@ -971,10 +982,10 @@ internal fun ExecutionResultDetailSheet(
                     result.scheduledAt?.let {
                         ExecutionResultInfoRow(stringResource(R.string.scheduled_result_scheduled_at), dateFormat.format(Date(it)))
                     }
-                    ExecutionResultInfoRow(
-                        stringResource(R.string.scheduled_result_completed_at),
-                        dateFormat.format(Date(result.fetchedAt ?: result.createdAt))
-                    )
+                    result.journalCompletedAt?.let { completedAt ->
+                        ExecutionResultInfoRow(stringResource(R.string.scheduled_result_completed_at),
+                            dateFormat.format(Date(completedAt)))
+                    }
                     result.sourceUrl?.takeIf { it.isNotBlank() }?.let { url ->
                         if (url.startsWith("https://", ignoreCase = true) || url.startsWith("http://", ignoreCase = true)) {
                             TextButton(onClick = { runCatching { uriHandler.openUri(url) } }) {
@@ -1072,11 +1083,14 @@ private fun ExecutionResultInfoRow(label: String, value: String) {
     }
 }
 
+internal fun scheduledResultNeedsAttention(status: String): Boolean =
+    status.lowercase(Locale.ROOT) in setOf("failed", "partial", "incomplete", "blocked", "needs_attention")
+
 @Composable
 private fun resultStatusColor(status: String): Color =
     when (status.lowercase()) {
         "answered", "action_completed" -> NolaColors.success
-        "incomplete", "blocked", "needs_attention" -> NolaColors.warning
+        "incomplete", "partial", "blocked", "needs_attention" -> NolaColors.warning
         "skipped", "delegation_accepted" -> MaterialTheme.colorScheme.onSurfaceVariant
         "pending", "running" -> MaterialTheme.colorScheme.primary
         else -> MaterialTheme.colorScheme.error
@@ -1087,7 +1101,7 @@ private fun resultStatusLabel(status: String): String =
     when (status.lowercase()) {
         "answered", "action_completed" -> stringResource(R.string.scheduled_result_success)
         "delegation_accepted" -> stringResource(R.string.scheduled_result_delegated)
-        "incomplete" -> stringResource(R.string.scheduled_result_partial)
+        "incomplete", "partial" -> stringResource(R.string.scheduled_result_partial)
         "blocked", "needs_attention" -> stringResource(R.string.scheduled_result_needs_attention)
         "cancelled" -> stringResource(R.string.scheduled_result_cancelled)
         "skipped" -> stringResource(R.string.scheduled_result_skipped)

@@ -4,7 +4,7 @@
 from urllib.parse import urlsplit
 
 
-def selected_model(config: dict, environment: dict) -> dict:
+def declared_route(config: dict) -> tuple[dict, dict]:
     try:
         llm = config["llm"]
         selected = llm["default_model"]
@@ -22,14 +22,18 @@ def selected_model(config: dict, environment: dict) -> dict:
         parsed = urlsplit(endpoint)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
             raise ValueError("Model endpoint must be HTTP(S) without embedded credentials")
-        key = environment.get(connection.get("api_key_env", ""), "")
-        if not key:
-            raise ValueError("Default model credential environment is unavailable")
-        result = {"endpoint": endpoint, "model": models[0]["id"], "api_key": key, "wireProtocol": protocol}
-        # Only the selected model's explicit declarations apply to this route.
-        for name in ("capabilities", "executionCapabilities"):
-            if name in models[0]:
-                result[name] = models[0][name]
-        return result
+        return connection, models[0]
     except (KeyError, TypeError, AttributeError) as error:
         raise ValueError("Invalid current model configuration") from error
+
+
+def selected_model(config: dict, environment: dict) -> dict:
+    connection, model = declared_route(config)
+    key = environment.get(connection.get("api_key_env", ""), "")
+    if not key:
+        raise ValueError("Default model credential environment is unavailable")
+    result = {"endpoint": connection["endpoint"], "model": model["id"], "api_key": key, "wireProtocol": connection["protocol"]}
+    for name in ("capabilities", "executionCapabilities"):
+        if name in model:
+            result[name] = model[name]
+    return result

@@ -5151,7 +5151,7 @@ final class MacWorkspaceModel {
                 )
             case let .failure(_, _, detail):
                 updateActivity(
-                    title: String(localized: "Task guidance", table: "Chat"),
+                    title: String(localized: "Couldn’t load remote task updates", table: "Chat"),
                     detail: detail,
                     state: .failed
                 )

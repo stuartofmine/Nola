@@ -8,6 +8,8 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import tarfile
+import tempfile
 
 RULES = {
     'private_key': re.compile(r'-----BEGIN (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----\s+[A-Za-z0-9+/=\r\n]{40,}-----END (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----'),
@@ -35,22 +37,65 @@ def findings(path, text):
                    'line':text.count('\n',0,match.start())+1}
 
 
-def export(root, destination, allowlist):
-    if destination.exists():raise ValueError('Export destination must not exist')
+def export(root, destination, allowlist=None, revision="HEAD"):
+    if destination.exists():
+        raise ValueError("Export destination must not exist")
+    commit = subprocess.check_output(
+        ["git", "rev-parse", "--verify", "--end-of-options", revision + "^{commit}"],
+        cwd=root, text=True,
+    ).strip()
+    with tempfile.TemporaryDirectory(prefix="nola-public-source-") as temporary:
+        snapshot = Path(temporary)
+        with tempfile.TemporaryFile() as stream:
+            subprocess.run(["git", "archive", "--format=tar", commit], cwd=root, stdout=stream, check=True)
+            stream.seek(0)
+            omitted = []
+            names = []
+            with tarfile.open(fileobj=stream, mode="r:") as archive:
+                for member in archive:
+                    name = member.name
+                    if member.isdir():
+                        continue
+                    if excluded(name):
+                        omitted.append(name)
+                        continue
+                    target = snapshot / name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    if member.issym():
+                        target.symlink_to(member.linkname)
+                    elif member.isfile():
+                        if member.size >= 100 * 1024 * 1024:
+                            raise ValueError("GitHub file limit exceeded: " + name)
+                        with archive.extractfile(member) as source, target.open("wb") as output:
+                            shutil.copyfileobj(source, output)
+                        target.chmod(member.mode & 0o777)
+                    else:
+                        raise ValueError("Unsupported archive member: " + name)
+                    names.append(name)
+        if allowlist is None:
+            manifest = snapshot / "release/public-fixtures.json"
+            if "release/public-fixtures.json" not in names or manifest.is_symlink():
+                raise ValueError("Public fixture allowlist must be a regular file")
+            allowlist = json.loads(manifest.read_text())
+        report = copy_reviewed_files(snapshot, destination, allowlist, names, omitted)
+        return {**report, "commit": commit}
+
+
+def copy_reviewed_files(root, destination, allowlist, names, omitted):
+    root = root.resolve()
     allowed={(item['path'],item['rule'],item['sha256']) for item in allowlist}
-    names=sorted(set(subprocess.check_output(['git','ls-files','-c','-o','--exclude-standard','-z'],cwd=root).decode().split('\0')))
-    plan=[];omitted=[];blocked=[]
+    plan=[];blocked=[]
     for name in names:
         if not name:continue
         path=root/name
-        if excluded(name):omitted.append(name);continue
         if not path.exists() and not path.is_symlink():continue
         if path.is_symlink():
-            if not path.resolve().is_relative_to(root.resolve()) or excluded(str(path.resolve().relative_to(root.resolve()))):
+            resolved = path.resolve()
+            if (path.readlink().is_absolute() or resolved == root or not resolved.is_relative_to(root)
+                    or excluded(str(resolved.relative_to(root)))):
                 raise ValueError('Export symlink escapes the public source: '+name)
             plan.append(name);continue
         if not path.is_file():continue
-        if path.stat().st_size>=100*1024*1024:raise ValueError('GitHub file limit exceeded: '+name)
         try:text=path.read_text()
         except UnicodeError:text=None
         if text is not None:
@@ -70,12 +115,12 @@ def export(root, destination, allowlist):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--destination',required=True,type=Path)
+    parser.add_argument('--commit', default='HEAD', help='Reviewed commit to export (default: HEAD)')
     args=parser.parse_args();root=Path(__file__).resolve().parents[2]
     try:
-        allowlist=json.loads((root/'release/public-fixtures.json').read_text())
-        value=export(root,args.destination.resolve(),allowlist)
+        value=export(root,args.destination.resolve(),revision=args.commit)
         print(json.dumps(value,indent=2))
-    except (ValueError,OSError) as error:parser.exit(1,f'Public export stopped: {error}\n')
+    except (ValueError,OSError,subprocess.CalledProcessError) as error:parser.exit(1,f'Public export stopped: {error}\n')
 
 
 if __name__=='__main__':main()

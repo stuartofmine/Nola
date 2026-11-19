@@ -20,7 +20,7 @@ def test_matrix_has_unique_auditable_cross_platform_scenarios():
     scenarios = MODULE.load_matrix(Path(__file__).with_name("real_e2e_matrix.json"))
     identifiers = [scenario["id"] for scenario in scenarios]
     assert len(identifiers) == len(set(identifiers))
-    assert {"core", "cli", "web", "mac", "ios", "android"} == {
+    assert {"core", "cli", "web", "mac", "ios", "android", "windows"} == {
         platform for scenario in scenarios for platform in scenario["platforms"]
     }
     assert all(scenario["layer"] for scenario in scenarios)
@@ -36,7 +36,7 @@ def test_smoke_slice_contains_a_real_chain_for_every_client_platform():
         if scenario.get("realModel")
         for platform in scenario["platforms"]
     }
-    assert real_platforms == {"cli", "web", "mac", "ios", "android"}
+    assert real_platforms == {"cli", "web", "mac", "ios", "android", "windows"}
     assert not any("backend" in scenario["platforms"] for scenario in selected)
 
 
@@ -172,6 +172,21 @@ def test_runner_rejects_zero_exit_without_structured_evidence(tmp_path):
     assert result["evidence"]["steps"][0]["observations"][0]["kind"] == "process_log"
     assert Path(result["evidence"]["steps"][0]["observations"][0]["path"]).is_file()
     assert "step did not pass: scenario-process" in result["evidenceErrors"]
+
+
+def test_failed_platform_is_only_reported_as_attempted(tmp_path, monkeypatch):
+    matrix = json.loads(MODULE.DEFAULT_MATRIX.read_bytes())
+    scenario = next(s for s in matrix["scenarios"] if s["id"] == "windows-host-restart")
+    scenario["command"] = 'python3 -c "raise SystemExit(2)"'
+    matrix["scenarios"] = [scenario]
+    source = tmp_path / "matrix.json"
+    source.write_text(json.dumps(matrix))
+    monkeypatch.setattr(MODULE.sys, "argv", ["runner", "--matrix", str(source), "--scenario",
+                                             scenario["id"], "--artifacts", str(tmp_path)])
+    assert MODULE.main() == 1
+    report = json.loads((tmp_path / "report.json").read_bytes())
+    assert report["attemptedPlatforms"] == ["windows"]
+    assert report["coveredPlatforms"] == []
 
 
 def test_runner_records_timeout_metadata_when_adapter_never_reports(tmp_path):
@@ -437,6 +452,29 @@ def test_event_summary_reads_canonical_tool_and_text_parts(tmp_path):
     assert summary["toolsCompleted"] == ["read_file"]
     assert summary["doneCount"] >= 1
 def test_runner_uses_non_login_shell_to_preserve_audited_path():
-    source = MODULE_PATH.read_text()
-    assert '["bash", "-c", scenario["command"]]' in source
-    assert '["bash", "-lc", scenario["command"]]' not in source
+    assert MODULE.scenario_command("echo ready", "darwin") == ["bash", "-c", "echo ready"]
+
+
+def test_windows_matrix_launches_native_python_without_a_bash_dependency():
+    commands = [scenario["command"] for scenario in MODULE.load_matrix(MODULE.DEFAULT_MATRIX)
+                if scenario["platforms"] == ["windows"]]
+    assert len(commands) >= 2
+    for command in commands:
+        interpreter, script, *flags = MODULE.scenario_command(command, "win32")
+        assert interpreter == MODULE.sys.executable
+        assert (MODULE.ROOT / script).is_file()
+
+
+def test_current_configuration_preflight_respects_the_selected_connection(tmp_path):
+    source = tmp_path / "config.json"
+    llm = {"default_model": {"connection": "local", "model": "m"}, "connections": [{
+        "id": "local", "endpoint": "http://localhost:11434/v1", "protocol": "chat_completions",
+        "models": [{"id": "m"}],
+    }]}
+    source.write_text(json.dumps({"llm": llm}))
+    MODULE.validate_real_configuration(source)
+    llm["default_model"]["model"] = "absent"
+    source.write_text(json.dumps({"llm": llm}))
+    import pytest
+    with pytest.raises(ValueError, match="Default model"):
+        MODULE.validate_real_configuration(source)

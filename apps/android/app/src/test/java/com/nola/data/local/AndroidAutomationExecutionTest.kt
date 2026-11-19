@@ -10,7 +10,7 @@ class AndroidAutomationExecutionTest {
             listOf("web_source" to "source"), listOf("skill"))
         assertEquals(spec, AndroidAutomationSpec.decode(spec.toJson()))
         val row = buildJsonObject {
-            put("id", "definition"); put("revision", 17)
+            put("id", "definition"); put("revision", 17); put("enabled", true)
             put("metadata_json", "{}")
             put("execution_spec", buildJsonObject { put("kind", "agent"); put("spec", spec.toJson()) })
         }

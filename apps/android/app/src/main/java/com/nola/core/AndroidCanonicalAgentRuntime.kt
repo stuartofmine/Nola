@@ -23,6 +23,9 @@ import kotlinx.coroutines.ensureActive
 import kotlin.coroutines.coroutineContext
 import java.util.UUID
 
+internal class AndroidScheduledPermissionWait(val conversationId: String, val pending: JsonObject) :
+    Exception("Scheduled permission requires interactive review")
+
 data class AndroidQueuedUserAdmission(
     val commandId: String,
     val leaseOwner: String,
@@ -172,6 +175,7 @@ class AndroidCanonicalAgentRuntime(
     private val store: AndroidApplicationRuntime,
     val descriptor: AndroidCanonicalTurnDescriptor,
     private val effectLeaseMilliseconds: Long = EFFECT_LEASE_MILLISECONDS,
+    private val handOffPermissions: Boolean = false,
 ) : AgentCoreTransitionRuntime {
     internal fun mobileCommand(command: JsonObject): JsonElement = store.execute(command)
     internal fun mobileMcpHost(command: JsonObject): JsonObject = store.mobileMcpHost(command)
@@ -638,6 +642,7 @@ class AndroidCanonicalAgentRuntime(
             val control = execution.getValue("control").jsonObject
             require(control.string("session_id") == frozen.string("core_session_id")) { "Recovery Core identity changed" }
             val permissions = readControlPermissions(control)
+            handOffScheduledPermission(control, permissions)
             val tasks = store.execute(buildJsonObject {
                 put("type", "load_conversation_task_projection_v1")
                 put("conversation_id", descriptor.conversationId)
@@ -737,6 +742,7 @@ class AndroidCanonicalAgentRuntime(
             }
             value
         } else if (projection != null) readControlPermissions(projection) else null
+        handOffScheduledPermission(projection, permissions)
         val requests = loadRequests()
         projection?.let { lastControl = it }
         committedRequests = requests
@@ -751,6 +757,17 @@ class AndroidCanonicalAgentRuntime(
                 put("host_requests", requests)
             })
         }
+    }
+
+    private fun handOffScheduledPermission(control: JsonObject?, permissions: JsonObject?) {
+        if (!handOffPermissions || control?.get("turn_status") != JsonPrimitive("awaiting_permission")) return
+        // Leave the committed request unclaimed. The foreground chat will
+        // validate its operation and claim the original delivery immediately.
+        val pending = checkNotNull(permissions).getValue("pending").jsonArray.first().jsonObject
+        val identity = buildJsonObject {
+            for (field in listOf("request_id", "call_id", "capability_id", "turn_id")) put(field, pending.getValue(field))
+        }
+        throw AndroidScheduledPermissionWait(descriptor.conversationId, identity)
     }
 
     private fun readControlPermissions(control: JsonObject): JsonObject {

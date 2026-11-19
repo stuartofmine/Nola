@@ -61,84 +61,73 @@
             "platforms": [
                 "mac",
                 "ios",
-                "android",
-                "web",
-                "windows"
+                "android"
             ],
             "sources": [
+                "apps/macos/UI/MacOnboardingView.swift",
                 "apps/ios/UI/OnboardingView.swift",
-                "apps/web/frontend/src/pages/Login.svelte",
-                "apps/cli/src/config.rs"
+                "apps/android/app/src/main/java/com/nola/ui/screen/onboarding/OnboardingScreen.kt"
             ],
             "states": [
                 {
                     "id": "0",
-                    "title": "先开始一段对话",
+                    "title": "欢迎使用 Nola",
                     "body": [
-                        "本地保存会话。需要使用模型时再配置服务。",
-                        "可以稍后设置，不在启动时申请所有系统权限。"
+                        "选择用于对话的模型，也可以先进入工作区。"
                     ],
                     "kind": "empty",
                     "actions": [
                         {
-                            "label": "配置模型来源",
+                            "label": "配置模型",
                             "to": "1",
                             "style": "primary"
+                        },
+                        {
+                            "label": "稍后设置",
+                            "to": "2",
+                            "style": "secondary"
                         }
                     ]
                 },
                 {
                     "id": "1",
-                    "title": "选择模型来源",
+                    "title": "模型设置",
                     "body": [
-                        "本地模型、API 服务、已配对的宿主机分别选择。",
-                        "已有会话和草稿不会因为跳过引导被删除。"
+                        "在模型中心选择来源并完成配置。"
                     ],
                     "kind": "choice",
                     "actions": [
                         {
-                            "label": "继续设置",
+                            "label": "返回工作区",
                             "to": "2",
-                            "style": "primary"
-                        },
-                        {
-                            "label": "返回上一步",
-                            "to": "0",
                             "style": "secondary"
                         }
                     ]
                 },
                 {
                     "id": "2",
-                    "title": "准备开始",
+                    "title": "对话工作区",
                     "body": [
-                        "当前来源已选择；未验证的服务仍显示未验证。"
+                        "从这里开始对话，或前往设置继续配置模型。"
                     ],
-                    "kind": "success",
+                    "kind": "empty",
                     "actions": [
                         {
-                            "label": "返回上一步",
+                            "label": "模型设置",
                             "to": "1",
-                            "style": "secondary"
-                        },
-                        {
-                            "label": "重新演示",
-                            "to": "0",
-                            "style": "secondary"
+                            "style": "primary"
                         }
                     ]
                 }
             ],
             "fields": [],
             "command": null,
-            "contract": "草稿、决定和结果属于当前对象；失败不能显示为成功。",
+            "contract": "首次进入可以直接配置模型或跳过。权限随具体操作申请。",
             "boundary": "合成状态与交互设计；源码位置为业务依据，不证明所有平台已实现或已验收。",
             "platform_notes": {
-                "mac": "共享业务合同；浏览器预览不模拟原生系统授权、手势或真实执行。",
-                "ios": "共享业务合同；浏览器预览不模拟原生系统授权、手势或真实执行。",
-                "android": "共享业务合同；浏览器预览不模拟原生系统授权、手势或真实执行。",
-                "web": "共享业务合同；浏览器预览不模拟原生系统授权、手势或真实执行。",
-                "windows": "共享业务合同；浏览器预览不模拟原生系统授权、手势或真实执行。"
+                "mac": "模型管理在独立窗口打开；帮助菜单可以重新打开欢迎页。",
+                "ios": "欢迎页可打开模型中心，完成配置后进入对话。",
+                "android": "从模型页返回对话列表，也可以直接跳过设置。"
             }
         },
         {
@@ -151,29 +140,28 @@
                 "windows"
             ],
             "sources": [
-                "apps/ios/UI/OnboardingView.swift",
                 "apps/web/frontend/src/pages/Login.svelte",
-                "apps/cli/src/config.rs"
+                "apps/web/frontend/src/lib/login.ts",
+                "apps/cli/src/web_parts/native_bridge.rs"
             ],
             "states": [
                 {
                     "id": "0",
                     "title": "连接宿主机",
                     "body": [
-                        "使用宿主机分享的连接信息。原型仅使用样例，不输入真实令牌。"
+                        "输入正在连接的宿主机的访问令牌。需要帮助时可展开查看令牌位置。"
                     ],
                     "kind": "form",
                     "actions": [
                         {
-                            "label": "连接（演示）",
-                            "to": "1",
+                            "label": "使用有效令牌（演示）",
+                            "to": "2",
                             "style": "primary"
                         },
                         {
-                            "label": "取消并保留原状",
-                            "to": "0",
-                            "style": "secondary",
-                            "cancel": true
+                            "label": "使用无效令牌（演示）",
+                            "to": "1",
+                            "style": "secondary"
                         }
                     ]
                 },
@@ -181,19 +169,14 @@
                     "id": "1",
                     "title": "访问被拒绝",
                     "body": [
-                        "令牌无效或已撤销。检查原宿主机的分享设置，再重新填写。"
+                        "重新从宿主机复制访问令牌，再提交一次。"
                     ],
                     "kind": "error",
                     "actions": [
                         {
-                            "label": "重新验证（演示）",
-                            "to": "2",
-                            "style": "primary"
-                        },
-                        {
-                            "label": "返回上一步",
+                            "label": "修改令牌",
                             "to": "0",
-                            "style": "secondary"
+                            "style": "primary"
                         }
                     ]
                 },
@@ -201,15 +184,10 @@
                     "id": "2",
                     "title": "已连接",
                     "body": [
-                        "显示实际宿主机身份及连接范围。登录不授予工具权限。"
+                        "回到登录前要访问的页面。"
                     ],
                     "kind": "success",
                     "actions": [
-                        {
-                            "label": "返回上一步",
-                            "to": "1",
-                            "style": "secondary"
-                        },
                         {
                             "label": "重新演示",
                             "to": "0",
@@ -220,18 +198,13 @@
             ],
             "fields": [
                 {
-                    "label": "宿主机地址",
-                    "value": "http://host.example.invalid:5001",
-                    "required": true
-                },
-                {
-                    "label": "连接信息",
+                    "label": "访问令牌",
                     "value": "DEMO_ONLY",
                     "required": true
                 }
             ],
             "command": null,
-            "contract": "草稿、决定和结果属于当前对象；失败不能显示为成功。",
+            "contract": "令牌保留在登录表单直至连接成功。登录成功后回到请求的站内页面。",
             "boundary": "合成状态与交互设计；源码位置为业务依据，不证明所有平台已实现或已验收。",
             "platform_notes": {
                 "web": "共享业务合同；浏览器预览不模拟原生系统授权、手势或真实执行。",

@@ -102,10 +102,14 @@ class ScheduledActionSaveTest {
         var writes = 0
         val ids = mutableListOf<String>()
         override suspend fun create(action: ScheduledActionEntity) { writes++; ids += action.id; write() }
+        override fun observeAll() = emptyFlow<List<ScheduledActionEntity>>()
+        override fun observeLatestPerAction() = emptyFlow<List<ExecutionResultEntity>>()
         override suspend fun getAll() = emptyList<ScheduledActionEntity>()
         override suspend fun getById(id: String): ScheduledActionEntity? = null
         override suspend fun delete(id: String) = Unit
         override suspend fun setEnabled(id: String, enabled: Boolean) = Unit
+        override suspend fun getResult(id: String): ExecutionResultEntity? = null
+        override suspend fun disableCompletedOccurrence(action: ScheduledActionEntity, definitionRevision: Long) = Unit
         override suspend fun getResults(actionId: String) = emptyList<ExecutionResultEntity>()
         override suspend fun getRecentResults(limit: Int) = emptyList<ExecutionResultEntity>()
         override fun observeRecentResults(limit: Int) = emptyFlow<List<ExecutionResultEntity>>()

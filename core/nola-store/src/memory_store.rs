@@ -139,6 +139,23 @@ impl NolaStore {
             .map_err(StoreError::from)
     }
 
+    pub(crate) fn list_owned_memory_records(&self, owners: &[String], pattern: Option<&str>, limit: usize) -> StoreResult<Vec<StoredMemoryRecord>> {
+        let mut statement = self.connection.prepare(&format!(
+            r"SELECT {MEMORY_COLUMNS} FROM memory_records WHERE deleted_at_ms IS NULL
+              AND owner_json IN (SELECT value FROM json_each(?1))
+              AND (?2 IS NULL OR content LIKE ?2 ESCAPE '\' OR summary LIKE ?2 ESCAPE '\' OR kind LIKE ?2 ESCAPE '\'
+                   OR (CASE json_extract(namespace_json, '$.kind')
+                        WHEN 'workspace' THEN 'workspace'
+                        WHEN 'custom' THEN 'custom:' || json_extract(namespace_json, '$.name')
+                        ELSE scope END) LIKE ?2 ESCAPE '\'
+                   OR EXISTS (SELECT 1 FROM json_each(tags_json) WHERE value LIKE ?2 ESCAPE '\'))
+              ORDER BY COALESCE(last_used_at_ms,updated_at_ms) DESC,updated_at_ms DESC,id DESC LIMIT ?3"
+        ))?;
+        let owners = serde_json::json!(owners).to_string();
+        let rows = statement.query_map(params![owners, pattern, limit.clamp(1, 2_000) as i64], memory_record_row)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(StoreError::from)
+    }
+
     pub fn search_memory_records(
         &self,
         owner_json: &str,

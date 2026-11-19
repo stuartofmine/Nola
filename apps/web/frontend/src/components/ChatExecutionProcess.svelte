@@ -23,7 +23,7 @@
     const groups = $derived(messagePresentation(parts).filter(isExecutionPresentation));
 </script>
 
-<details use:replyDisclosure class="execution-process" open={expanded}>
+<details use:replyDisclosure class="execution-process" data-reply-disclosure open={expanded}>
     <summary onclick={event => { event.preventDefault(); onprocessexpandedchange(!expanded); }}>
         <svg class="chevron" class:expanded viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5" /></svg>
         <span class="process-title">{live ? currentTitle || t($locale, 'chatPage.processing') : t($locale, thinkingOnly ? 'chatPage.thinking' : 'chatPage.executionProcess')}</span>

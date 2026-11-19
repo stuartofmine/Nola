@@ -40,7 +40,7 @@ class ScheduledActionScheduler @Inject constructor(
 
     fun scheduleNext(action: ScheduledActionEntity) {
         if (!action.enabled || action.scheduleFrequency !in setOf("daily", "weekly")) return
-        enqueue(action, ExistingWorkPolicy.APPEND_OR_REPLACE)
+        enqueue(action, ExistingWorkPolicy.KEEP)
     }
 
     private fun enqueue(action: ScheduledActionEntity, policy: ExistingWorkPolicy) {
@@ -65,7 +65,17 @@ class ScheduledActionScheduler @Inject constructor(
             .addTag(TAG)
             .addTag(actionTag(action.id))
             .build()
-        workManager.enqueueUniqueWork(uniqueWorkName(action.id), policy, request)
+        val name = if (policy == ExistingWorkPolicy.KEEP) "scheduled_occurrence_$occurrenceID" else uniqueWorkName(action.id)
+        workManager.enqueueUniqueWork(name, policy, request)
+    }
+
+    fun reconcileCompleted(actionId: String, occurrence: String) {
+        val request = OneTimeWorkRequestBuilder<ScheduledActionWorker>()
+            .setInputData(workDataOf(ScheduledActionWorker.KEY_ACTION_ID to actionId,
+                ScheduledActionWorker.KEY_OCCURRENCE_ID to occurrence,
+                ScheduledActionWorker.KEY_RECONCILE_ONLY to true))
+            .build()
+        workManager.enqueueUniqueWork("scheduled_receipt_$occurrence", ExistingWorkPolicy.KEEP, request)
     }
 
     fun cancel(actionId: String) {

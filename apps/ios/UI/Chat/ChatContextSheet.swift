@@ -15,6 +15,35 @@ struct ContextFileImportOwner {
 }
 
 enum IOSContextFileImportPolicy {
+    static func importFiles(_ urls: [URL], existing: [UserUploadedContextItem]) -> (items: [UserUploadedContextItem], problems: [String]) {
+        var items = existing
+        var problems = [String]()
+        var overLimit = [String]()
+        for url in urls {
+            guard items.count < 30 else { overLimit.append(url.lastPathComponent); continue }
+            do {
+                let text = try readText(from: url, maximumCharacters: 40_000)
+                items.append(UserUploadedContextItem(name: url.lastPathComponent, content: text, description: firstNonEmptyLine(in: text)))
+            } catch {
+                problems.append("\(url.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
+        if !overLimit.isEmpty {
+            problems.append(String(format: String(localized: "chat.context.import.limit"), overLimit.joined(separator: ", ")))
+        }
+        return (items, problems)
+    }
+
+    private static func firstNonEmptyLine(in text: String) -> String {
+        text
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty }?
+            .replacingOccurrences(of: #"^#+\s*"#, with: "", options: .regularExpression)
+            .prefix(160)
+            .description ?? ""
+    }
+
     static func isCancellation(_ error: Error) -> Bool {
         let value = error as NSError
         return value.domain == NSCocoaErrorDomain && value.code == CocoaError.userCancelled.rawValue
@@ -124,6 +153,7 @@ struct ChatContextSheet: View {
     let hostUploadedDocuments: [UserUploadedContextItem]
     let hostMCPServers: [UserMCPServer]
     @Binding var uploadedDocuments: [UserUploadedContextItem]
+    var documentsReadable = true
     let dataSources: [URLDataSource]
     @Binding var selectedDataSourceIDs: Set<UUID>
     @Binding var selectedSystemDataSourceTypes: Set<DataSourceType>
@@ -155,6 +185,7 @@ struct ChatContextSheet: View {
     @State private var selectedMCPServerID: UUID?
     @State private var pendingSkillDeletionID: UUID?
     @State private var pendingMCPDeletionID: UUID?
+    @State private var initialDocuments: [UserUploadedContextItem]?
     @State private var initialMemoryText: [String]?
 
     var body: some View {
@@ -603,10 +634,14 @@ struct ChatContextSheet: View {
 
             if displayMode == .context && selectedContextPane == .tools {
                 Section {
-                    uploadedItemsList(
-                        items: $uploadedDocuments,
-                        emptyText: hostUploadedDocuments.isEmpty ? tr("chat.context.documents.empty", "还没有上传文档。", "No documents uploaded yet.") : ""
-                    )
+                    if documentsReadable {
+                        uploadedItemsList(
+                            items: $uploadedDocuments,
+                            emptyText: hostUploadedDocuments.isEmpty ? tr("chat.context.documents.empty", "还没有上传文档。", "No documents uploaded yet.") : ""
+                        )
+                    } else {
+                        Text("chat.context.documents.read_error").foregroundStyle(.secondary)
+                    }
                     hostDocumentsList(items: hostUploadedDocuments)
                     Button {
                         documentImportOwner = ContextFileImportOwner(conversationID: conversationID)
@@ -614,6 +649,7 @@ struct ChatContextSheet: View {
                     } label: {
                         Label(tr("chat.context.documents.upload", "上传文档文件", "Upload document file"), systemImage: "doc.badge.plus")
                     }
+                    .disabled(!documentsReadable)
                 } header: {
                     Text(tr("chat.context.documents.header", "用户文档", "User documents"))
                 } footer: {
@@ -789,6 +825,7 @@ struct ChatContextSheet: View {
         .interactiveDismissDisabled(true)
         .onAppear {
             if initialMemoryText == nil {
+                initialDocuments = uploadedDocuments
                 initialMemoryText = [sessionMemory, longTermMemory, userPreferences]
                 selectedContextPane = initialContextPane
             }
@@ -884,8 +921,9 @@ struct ChatContextSheet: View {
                         initialMemoryText = [sessionMemory, longTermMemory, userPreferences]
                         savedAnyPart = true
                     }
-                    if let onSaveUploadedDocuments {
+                    if let onSaveUploadedDocuments, let initialDocuments, initialDocuments != uploadedDocuments {
                         uploadedDocuments = try onSaveUploadedDocuments(uploadedDocuments)
+                        self.initialDocuments = uploadedDocuments
                         savedAnyPart = true
                     }
                     try onSave()
@@ -1682,36 +1720,15 @@ struct ChatContextSheet: View {
     private func importUploadedFiles(_ result: Result<[URL], Error>, into items: Binding<[UserUploadedContextItem]>) {
         do {
             let urls = try result.get()
-            var failures = 0
-            for url in urls {
-                do {
-                    let text = try IOSContextFileImportPolicy.readText(from: url, maximumCharacters: 40_000)
-                    items.wrappedValue.append(UserUploadedContextItem(
-                        name: url.lastPathComponent, content: text,
-                        description: firstNonEmptyLine(in: text)
-                    ))
-                } catch { failures += 1 }
-            }
-            if items.wrappedValue.count > 30 {
-                items.wrappedValue = Array(items.wrappedValue.suffix(30))
-            }
-            if failures > 0 {
-                errorMessage = String(format: NSLocalizedString(
-                    "chat.context.import.failed_count", value: "%d files could not be imported. Use nonempty UTF-8 text files with at most 40,000 characters (192 KB).", comment: "Context import failures"
-                ), failures)
+            let imported = IOSContextFileImportPolicy.importFiles(urls, existing: items.wrappedValue)
+            items.wrappedValue = imported.items
+            if !imported.problems.isEmpty {
+                errorMessage = imported.problems.joined(separator: "\n")
             }
         } catch {
             if !IOSContextFileImportPolicy.isCancellation(error) { errorMessage = error.localizedDescription }
         }
     }
 
-    private func firstNonEmptyLine(in text: String) -> String {
-        text
-            .split(whereSeparator: \.isNewline)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .first { !$0.isEmpty }?
-            .replacingOccurrences(of: #"^#+\s*"#, with: "", options: .regularExpression)
-            .prefix(160)
-            .description ?? ""
-    }
+
 }

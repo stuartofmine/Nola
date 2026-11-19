@@ -197,10 +197,11 @@ class DeviceAgentCoordinator internal constructor(
         return taskCancellationChannel?.trySend(taskId)?.isSuccess == true
     }
 
-    fun sendTaskGuidance(taskId: String, content: String): Boolean {
+    suspend fun sendTaskGuidance(taskId: String, content: String): Boolean {
         val request = TaskGuidanceRequest(taskId.trim(), content.trim())
         if (request.taskId.isEmpty() || request.content.isEmpty()) return false
-        return taskGuidanceChannel?.trySend(request)?.isSuccess == true
+        if (taskGuidanceChannel?.trySend(request)?.isSuccess != true) return false
+        return request.accepted.await()
     }
 
     fun run(
@@ -333,19 +334,18 @@ class DeviceAgentCoordinator internal constructor(
 
                     val guidance = taskGuidance.tryReceive().getOrNull()
                     if (guidance != null) {
-                        val task = state.taskProjection.tasks[guidance.taskId]
-                            ?: error("Task guidance references an unknown Task")
-                        require(task.kind == AgentCoreTaskKind.Agent && task.state.isActive && !task.cancelRequested) {
-                            "Only an active Agent Task accepts guidance"
+                        try {
+                            val task = state.taskProjection.tasks[guidance.taskId]
+                            if (task != null && task.kind == AgentCoreTaskKind.Agent && task.state.isActive && !task.cancelRequested) {
+                                transition = runtime.submit(
+                                    agentCoreTaskGuidanceSubmission(task, guidance.content, UUID.randomUUID().toString(),
+                                        System.currentTimeMillis()),
+                                ).agentCoreTransitionOrThrow()
+                                guidance.accepted.complete(true)
+                            }
+                        } finally {
+                            guidance.accepted.complete(false)
                         }
-                        transition = runtime.submit(
-                            agentCoreTaskGuidanceSubmission(
-                                task = task,
-                                content = guidance.content,
-                                messageId = UUID.randomUUID().toString(),
-                                enqueuedAtEpochMs = System.currentTimeMillis(),
-                            ),
-                        ).agentCoreTransitionOrThrow()
                         continue
                     }
 
@@ -407,12 +407,17 @@ class DeviceAgentCoordinator internal constructor(
                 cancellations.close()
                 taskCancellations.close()
                 taskGuidance.close()
+                while (true) {
+                    val waiting = taskGuidance.tryReceive().getOrNull() ?: break
+                    waiting.accepted.complete(false)
+                }
                 policyNotifications.close()
             }
         }
     }.flowOn(Dispatchers.IO) // JNI Store replay and reduction must never block UI input.
 
-    private data class TaskGuidanceRequest(val taskId: String, val content: String)
+    private data class TaskGuidanceRequest(val taskId: String, val content: String,
+        val accepted: kotlinx.coroutines.CompletableDeferred<Boolean> = kotlinx.coroutines.CompletableDeferred())
 
     private suspend fun acceptTransition(
         transition: JsonObject,

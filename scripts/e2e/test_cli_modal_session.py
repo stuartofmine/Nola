@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """PTY acceptance: modal lifecycle, resize and optional real-model follow-up.
 
-Uses the installed model config without printing credentials. All conversation
-state is isolated in a temporary project/database; HOME is never changed.
+The default run uses an isolated first-launch profile. --model uses the installed
+model configuration with a temporary project and conversation database.
 Run: python3 scripts/e2e/test_cli_modal_session.py target/debug/nola [--model]
 """
 import fcntl
@@ -24,11 +24,21 @@ def main():
     binary = str(Path(sys.argv[1]).resolve())
     project = tempfile.mkdtemp(prefix="nola-modal-acceptance-", dir="/tmp")
     print(f"Isolated project: {project}", flush=True)
+    live = "--model" in sys.argv[2:]
+    home = Path(project, "home")
+    if not live:
+        (home / ".nola").mkdir(parents=True)
+        (home / ".nola/config.json").write_text(json.dumps({
+            "llm": {"endpoint": "http://127.0.0.1:9/v1", "model": "first-run-test"}
+        }))
     pid, master = pty.fork()
     if pid == 0:
         os.chdir(project)
-        env = dict(os.environ, TERM="xterm-256color", NOLA_SKIP_ONBOARDING="1",
+        env = dict(os.environ, TERM="xterm-256color",
                    NOLA_DB_PATH=f"{project}/test.sqlite", NOLA_LLM_MAX_RETRIES="0")
+        env.pop("NOLA_SKIP_ONBOARDING", None)
+        if not live:
+            env.update(HOME=str(home), NOLA_HOME=str(home))
         os.execve(binary, [binary, "--project", project, "--no-tools", "--lang", "en"], env)
     os.set_blocking(master, False)
     output = bytearray()
@@ -107,16 +117,24 @@ def main():
     try:
         resize(24, 80)
         wait_for(lambda value: "Type a message" in value)
+        first_prompt = len(visible())
+        send("/guide\r")
+        wait_for(lambda value: project in value[first_prompt:]
+                 and "Type a message" in value.split("Catalog:")[-1] and "Catalog:" in value[first_prompt:])
+        print("PASS: first command reached the composer without a welcome prompt", flush=True)
         for rows, columns in [(12, 40), (30, 100), (24, 80)]:
             start = len(visible())
-            send("/allow\r")
+            send("/allow")
+            wait_for(lambda value: value[start:].rstrip().endswith("/allow"))
+            send("\r")
             wait_for(lambda value: "Permission Mode" in value[start:])
             resize(rows, columns)
             send("\x19")  # Ctrl+Y must not approve anything.
             send("\x1b")
-            wait_for(lambda value: "Cancelled" in value[start:])
+            wait_for(lambda value: "Cancelled" in value[start:]
+                     and "Type a message" in value[start:].split("Cancelled", 1)[1])
         print("PASS: /allow cancellation, Ctrl+Y and three terminal sizes", flush=True)
-        if "--model" in sys.argv[2:]:
+        if live:
             for marker in ["MODAL-READY-741", "FOLLOWUP-READY-742"]:
                 start = len(visible())
                 send(f"请只回复 {marker}，不要调用工具。\r")

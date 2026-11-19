@@ -36,7 +36,7 @@ data class AndroidAutomationSpec(val prompt: String, val hostId: String,
 }
 
 data class AndroidAutomationDefinition(val id: String, val revision: Long, val spec: AndroidAutomationSpec,
-    val metadata: JsonObject)
+    val metadata: JsonObject, val enabled: Boolean)
 data class AndroidAutomationLease(val occurrenceId: String, val definitionRevision: Long,
     val workerId: String, val leaseToken: String) {
     init {
@@ -56,5 +56,6 @@ internal fun decodeAndroidAutomationDefinition(value: JsonObject): AndroidAutoma
     require(revision > 0)
     return AndroidAutomationDefinition(value.getValue("id").jsonPrimitive.content, revision,
         AndroidAutomationSpec.decode(execution.getValue("spec").jsonObject),
-        Json.parseToJsonElement(value.getValue("metadata_json").jsonPrimitive.content).jsonObject)
+        Json.parseToJsonElement(value.getValue("metadata_json").jsonPrimitive.content).jsonObject,
+        value.getValue("enabled").jsonPrimitive.boolean)
 }

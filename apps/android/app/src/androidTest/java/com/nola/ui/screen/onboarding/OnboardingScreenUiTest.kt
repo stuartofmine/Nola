@@ -12,6 +12,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -37,7 +38,7 @@ class OnboardingScreenUiTest {
     val compose = createAndroidComposeRule<ComponentActivity>()
 
     @Test
-    fun allFourStepsAndCompletionFailureBannerRenderUnclippedAcrossFormFactorsAndThemes() {
+    fun welcomeChoicesAndSaveFailureStayReachableAcrossFormFactorsAndThemes() {
         var widthDp by mutableStateOf(360)
         var heightDp by mutableStateOf(640)
         var fontScale by mutableStateOf(1f)
@@ -66,17 +67,9 @@ class OnboardingScreenUiTest {
         }
 
         val laterLabel = compose.activity.getString(R.string.onboarding_guide_action_later)
-        val nextLabel = compose.activity.getString(R.string.onboarding_guide_action_next)
-        val startLabel = compose.activity.getString(R.string.onboarding_guide_action_start)
-        val backLabel = compose.activity.getString(R.string.onboarding_guide_back)
+        val chooseModel = compose.activity.getString(R.string.onboarding_choose_model)
+        val title = compose.activity.getString(R.string.onboarding_welcome_title)
         val errorLabel = compose.activity.getString(R.string.onboarding_guide_save_error)
-
-        val stepTitles = listOf(
-            compose.activity.getString(R.string.onboarding_core_loop_title),
-            compose.activity.getString(R.string.onboarding_guide_runtime_title),
-            compose.activity.getString(R.string.onboarding_guide_sources_title),
-            compose.activity.getString(R.string.onboarding_guide_ready_title),
-        )
 
         val configurations = listOf(
             Triple(360, 640, 1.0f),
@@ -101,36 +94,37 @@ class OnboardingScreenUiTest {
                 compose.onNodeWithTag("onboarding.viewport")
                     .assertRenderedBackgroundMatches(expectedBg, isDark, "Onboarding(${w}x${h},scale=$scale,dark=$isDark)")
 
-                for (stepIndex in 0..3) {
-                    compose.waitForIdle()
-                    compose.onNodeWithText(stepTitles[stepIndex]).assertIsDisplayed()
-                    if (isDark) {
-                        compose.onNodeWithText(stepTitles[stepIndex], useUnmergedTree = true)
-                            .assertRenderedTextColor(WarmPaletteExpectations.DarkText, "OnboardingStepTitle($stepIndex)")
-                        compose.onNodeWithText(laterLabel, useUnmergedTree = true)
-                            .assertNonBlackDarkText("OnboardingLater($stepIndex)")
-                    }
-                    compose.onNodeWithText(laterLabel).assertIsDisplayed().assertFullyInside(rootBounds, "Later($w,$h)")
-                    compose.onNodeWithText(errorLabel).assertIsDisplayed().assertFullyInside(rootBounds, "Error($w,$h)")
-
-                    val actionLabel = if (stepIndex == 3) startLabel else nextLabel
-                    compose.onNodeWithText(actionLabel).assertIsDisplayed().assertFullyInside(rootBounds, "Primary($w,$h,$stepIndex)")
-                    if (stepIndex < 3) {
-                        compose.onNodeWithText(actionLabel).performClick()
-                    }
+                compose.onNodeWithText(title).assertIsDisplayed()
+                if (isDark) {
+                    compose.onNodeWithText(title, useUnmergedTree = true)
+                        .assertRenderedTextColor(WarmPaletteExpectations.DarkText, "WelcomeTitle")
+                    compose.onNodeWithText(laterLabel, useUnmergedTree = true)
+                        .assertNonBlackDarkText("WelcomeSkip")
                 }
-
-                // Step back to step 0 before the next configuration pass.
-                repeat(3) {
-                    compose.onNodeWithText(stepTitles[3 - it]).assertExists()
-                    compose.onNodeWithContentDescriptionCompat(backLabel).performClick()
-                    compose.waitForIdle()
+                for (label in listOf(laterLabel, errorLabel, chooseModel)) {
+                    compose.onNodeWithText(label).assertIsDisplayed().assertFullyInside(rootBounds, label)
                 }
             }
         }
     }
 
-    private fun androidx.compose.ui.test.junit4.ComposeContentTestRule.onNodeWithContentDescriptionCompat(
-        contentDescription: String,
-    ) = onNode(androidx.compose.ui.test.hasContentDescription(contentDescription))
+    @Test
+    fun eachButtonSelectsItsDestinationAndSavingPreventsDuplicateRequests() {
+        val choices = mutableListOf<Boolean>()
+        var completing by mutableStateOf(false)
+        compose.setContent {
+            NolaTheme {
+                OnboardingContent(OnboardingUiState(isCompleting = completing)) { choices.add(it) }
+            }
+        }
+        val later = compose.activity.getString(R.string.onboarding_guide_action_later)
+        compose.onNodeWithText(compose.activity.getString(R.string.onboarding_choose_model)).performClick()
+        compose.onNodeWithText(later).performClick()
+        compose.runOnIdle {
+            org.junit.Assert.assertEquals(listOf(true, false), choices)
+            completing = true
+        }
+        compose.onNodeWithText(later).assertIsNotEnabled()
+        compose.onNodeWithText(compose.activity.getString(R.string.onboarding_guide_action_saving)).assertIsNotEnabled()
+    }
 }

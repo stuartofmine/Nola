@@ -42,6 +42,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -106,11 +107,21 @@ internal fun nolaNavigationLayout(widthDp: Float): NolaNavigationLayout = when {
 }
 
 @Composable
-fun NolaScaffold(modifier: Modifier = Modifier) {
+fun NolaScaffold(
+    modifier: Modifier = Modifier,
+    openModelsAfterWelcome: Boolean = false,
+    onWelcomeDestinationOpened: () -> Unit = {},
+) {
     val navController = rememberNavController()
     var chatDetailVisible by rememberSaveable { mutableStateOf(false) }
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
+    LaunchedEffect(openModelsAfterWelcome, currentRoute) {
+        if (openModelsAfterWelcome && currentRoute != null) {
+            navController.navigate(NolaTab.Models.route) { launchSingleTop = true }
+            onWelcomeDestinationOpened()
+        }
+    }
     val selectedTab = when {
         currentRoute?.startsWith(MODELS_ROUTE) == true || currentRoute == NolaTab.Intelligence.route -> NolaTab.Settings
         currentRoute?.startsWith(WORKSPACE_ROUTE) == true -> NolaTab.Information
@@ -499,8 +510,8 @@ private fun NolaNavigationHost(
                 )
             }
             composable(NolaTab.Models.route) {
-                val fromSettings = navController.previousBackStackEntry?.destination?.route == NolaTab.Settings.route
-                ModelsScreen(onBack = if (fromSettings) ({ navController.popBackStack() }) else null)
+                val hasPrevious = navController.previousBackStackEntry != null
+                ModelsScreen(onBack = if (hasPrevious) ({ navController.popBackStack() }) else null)
             }
             composable("$MODELS_ROUTE/add") { ModelsScreen(initialShowEndpointSheet = true) }
             composable("$MODELS_ROUTE/add/{requestKey}") { entry ->
@@ -511,6 +522,7 @@ private fun NolaNavigationHost(
             }
             composable(NolaTab.Settings.route) {
                 SettingsScreen(
+                    onOpenConversation = { openChat(it) },
                     onOpenDataSources = {
                         workspacePage = 0
                         navController.navigate(WORKSPACE_ROUTE) {

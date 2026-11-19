@@ -82,8 +82,14 @@ impl NolaStore {
                 "branch source revision changed".into(),
             ));
         }
-        let active: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM runs WHERE conversation_id=?1 AND status NOT IN ('sealed'))",
-            params![input.source_conversation_id],|row|row.get(0))?;
+        // A manual compaction owns model context only. The transaction below
+        // copies an immutable, completed message prefix and never imports or
+        // changes its checkpoint, pending effects, or worker lease.
+        let active: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM runs r WHERE r.conversation_id=?1 AND r.status!='sealed'
+             AND NOT (r.kind='maintenance' AND r.user_message_id IS NULL AND r.assistant_message_id IS NULL
+                      AND EXISTS(SELECT 1 FROM effect_outbox e WHERE e.run_id=r.id AND e.effect_kind='compact')))",
+            params![input.source_conversation_id], |row| row.get(0))?;
         if active {
             return Err(StoreError::Conflict(
                 "cannot branch a conversation with an active Run".into(),

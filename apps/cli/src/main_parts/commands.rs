@@ -1952,8 +1952,25 @@ fn with_cli_execution_control<T>(
     result
 }
 
+fn prepare_cli_prompt<'a>(config: &Config, prompt: &'a str) -> Result<(Config, std::borrow::Cow<'a, str>), String> {
+    let mut selected_config = crate::conversation_invocation::prepare_submission(config)?;
+    let (text, selection) = if config.host_request_stdin {
+        (std::borrow::Cow::Borrowed(prompt), None)
+    } else {
+        crate::cli_expert_mentions::submit(prompt, selected_config.session_id.as_deref())?
+    };
+    if let Some(selection) = selection {
+        if !config.save_session || !config.tools_enabled {
+            return Err("Expert mentions require a saved conversation with tools enabled.".into());
+        }
+        selected_config.main_expert_selection = Some(selection);
+    }
+    Ok((selected_config, text))
+}
+
 fn run_single_prompt(config: &Config, prompt: &str) -> Result<PromptRunResult, String> {
-    let selected_config = crate::conversation_invocation::prepare_submission(config)?;
+    let (selected_config, text) = prepare_cli_prompt(config, prompt)?;
+    let prompt = text.as_ref();
     let config = &selected_config;
     // Debug mode enriches the durable trace and log files; it must not expose
     // internal lifecycle messages or change the interactive rendering model.
@@ -2004,7 +2021,8 @@ fn run_single_prompt_with_execution_cancellation(
     prompt: &str,
     cancellation: interaction::ExecutionCancellation,
 ) -> Result<PromptRunResult, String> {
-    let selected_config = crate::conversation_invocation::prepare_submission(config)?;
+    let (selected_config, text) = prepare_cli_prompt(config, prompt)?;
+    let prompt = text.as_ref();
     let config = &selected_config;
     let prompt_started_at = std::time::Instant::now();
     let (turn_config, used_data_sources) =

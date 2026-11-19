@@ -3,6 +3,8 @@
 package com.nola.core
 
 import android.content.Context
+import com.nola.work.occurrenceKey
+import com.nola.work.journalSessionId
 import com.nola.data.local.datastore.ModelParametersStore
 import com.nola.data.local.datastore.MemoryProfileDataStore
 import com.nola.data.repository.ModelRepository
@@ -61,6 +63,9 @@ class AndroidAgentTurnService @Inject constructor(
     private val modelService: ModelService,
     private val modelRepository: ModelRepository,
     private val modelParametersStore: ModelParametersStore,
+    private val preferences: com.nola.data.local.datastore.PreferenceDataStore,
+    private val scheduledResults: com.nola.data.local.db.dao.ExecutionResultDao,
+    private val scheduledActionScheduler: com.nola.work.ScheduledActionScheduler,
     private val openAiProvider: com.nola.llm.provider.OpenAiProvider,
     private val localLlamaProvider: com.nola.llm.provider.LocalLlamaProvider,
     private val deviceModelStore: com.nola.llm.local.DeviceModelStore,
@@ -267,17 +272,33 @@ class AndroidAgentTurnService @Inject constructor(
             .jsonObject.getValue("model_tool"),
     )
 
+    private suspend fun scheduledPermissionBinding(descriptor: AndroidCanonicalTurnDescriptor): com.nola.data.local.db.entity.ExecutionResultEntity? {
+        val row = scheduledResults.getPermissionWaits().firstOrNull { it.journalSessionId == descriptor.conversationId } ?: return null
+        val occurrenceKey = row.occurrenceKey ?: return null
+        val occurrence = applicationRuntime.findAutomationOccurrence(row.actionId, occurrenceKey) ?: return null
+        val binding = applicationRuntime.observeAutomationExecution(occurrence.id)["binding"] as? JsonObject ?: return null
+        return row.takeIf { binding["conversation_id"] == JsonPrimitive(descriptor.conversationId) &&
+            binding["run_id"] == JsonPrimitive(descriptor.submissionId) && binding["occurrence_id"] == JsonPrimitive(occurrence.id) }
+    }
+
     suspend fun start(originalRequest: AndroidAgentTurnRequest): AndroidAgentTurnHandle {
-        val application = AndroidCanonicalAgentRuntime(applicationRuntime, originalRequest.canonicalTurn)
+        val scheduled = originalRequest.inputOrigin == DeviceAgentInputOrigin.SCHEDULED_ACTION
+        val application = AndroidCanonicalAgentRuntime(applicationRuntime, originalRequest.canonicalTurn,
+            handOffPermissions = scheduled)
         val frozen = if (originalRequest.recoverExistingRun) application.loadExactRunInvocation() else null
         val recoveredModel = frozen?.let { recoverModel(it) }
-        val requestedPermissionMode = originalRequest.toolPlan.permissionMode
+        // The scheduled plan is the authority for its original run. A chat
+        // opened to review it can have a different interactive Agent toggle.
+        val scheduledReview = frozen?.let { scheduledPermissionBinding(originalRequest.canonicalTurn) }
+        val resultEgressAuthorized = originalRequest.resultEgressAuthorized || scheduledReview != null
+        val requestedPermissionMode = if (scheduledReview != null) AndroidAgentPermissionMode.Cautious else originalRequest.toolPlan.permissionMode
         var request = if (frozen == null) originalRequest else {
             val coreSessionId = frozen.getValue("core_session_id").jsonPrimitive.content
             originalRequest.copy(
                 model = recoveredModel,
                 sessionId = coreSessionId,
-                toolPlan = toolPlan(coreSessionId, originalRequest.resultEgressAuthorized, requestedPermissionMode),
+                resultEgressAuthorized = resultEgressAuthorized,
+                toolPlan = toolPlan(coreSessionId, resultEgressAuthorized, requestedPermissionMode),
                 enableThinking = frozen.getValue("host_invocation").jsonObject.getValue("generation")
                     .jsonObject.getValue("thinking_enabled").jsonPrimitive.boolean,
             )
@@ -338,7 +359,7 @@ class AndroidAgentTurnService @Inject constructor(
             childToolPlan = { childSession -> toolPlan(childSession, request.resultEgressAuthorized, resolvedPlan.permissionMode) },
             prepareChildExecutor = { childConfig -> prepareEmbeddedChild(childConfig, application.descriptor.conversationId) },
             expertExchange = { exchangeRequest -> executeExpertExchange(application, exchangeRequest) },
-            expertDelegationEnabled = localMainContext(application.descriptor.conversationId),
+            expertDelegationEnabled = !scheduled && scheduledReview == null && localMainContext(application.descriptor.conversationId),
             captureDelegation = request.delegationEnabled && !request.recoverExistingRun,
             refreshToolPlan = { toolPlan(request.sessionId, request.resultEgressAuthorized, resolvedPlan.permissionMode) },
             prepareRecovery = { proof, config ->
@@ -421,6 +442,9 @@ class AndroidAgentTurnService @Inject constructor(
                         recoverExistingRun = request.recoverExistingRun,
                     ),
                 )
+                // Normal completion here follows a committed terminal seal.
+                // Wake the original occurrence even after a long permission wait.
+                scheduledReview?.let { scheduledActionScheduler.reconcileCompleted(it.actionId, checkNotNull(it.occurrenceKey)) }
                 memoryWorkerScheduler.enqueue(request.canonicalTurn.conversationId)
             },
         )
@@ -645,7 +669,11 @@ class AndroidAgentTurnService @Inject constructor(
     }
 
     suspend fun captureActiveModel(): AndroidTurnModelSnapshot {
-        ensureConfiguredModel()
+        if (modelService.isPlaceholder) {
+            val model = preferences.defaultModelSelection(modelRepository.listConfiguredModels())
+                ?: error("No API model has been explicitly selected for background execution")
+            return captureModel(model, modelParametersStore.loadParameters(checkNotNull(model.profileId)))
+        }
         val id = modelService.currentModelId
         val source = when (modelService.currentModelSource) {
             "local" -> com.nola.domain.model.ModelInfo.ModelSource.Local
@@ -691,11 +719,6 @@ class AndroidAgentTurnService @Inject constructor(
             ),
             maximumJobCount = maximumJobCount,
         )
-    }
-
-    private suspend fun ensureConfiguredModel() {
-        if (!modelService.isPlaceholder) return
-        error("No model has been explicitly activated for Agent execution")
     }
 
     private val applicationContext = context.applicationContext

@@ -2536,8 +2536,19 @@ fn list_messages_response(url: &str, conversation_id: &str) -> Response<Box<dyn 
             return Err("not_found".to_string());
         }
         let window = store.load_web_message_window(conversation_id, before, limit)?;
+        let mut application = store.application()?;
+        let can_branch_during_maintenance = match application.active_run(conversation_id)? {
+            Some(run) if run.kind == "maintenance" && run.assistant_message_id.is_none() => {
+                application.load_committed_host_requests(&run.run_id).is_ok_and(|effects| {
+                    effects.requests.iter().any(|request| matches!(
+                        request.payload, nola_core::agent::host::HostRequest::Compact { .. }
+                    ))
+                })
+            }
+            _ => false,
+        };
         let assistant_journal_heads = local_browser_journal_heads(
-            &mut store.application()?, window.assistant_journal_heads,
+            &mut application, window.assistant_journal_heads,
         );
         let messages = window
             .messages
@@ -2556,6 +2567,7 @@ fn list_messages_response(url: &str, conversation_id: &str) -> Response<Box<dyn 
             window.projection_revision,
             window.event_sequence,
             assistant_journal_heads,
+            can_branch_during_maintenance,
         ))
     }) {
         Ok((
@@ -2567,6 +2579,7 @@ fn list_messages_response(url: &str, conversation_id: &str) -> Response<Box<dyn 
             projection_revision,
             event_sequence,
             assistant_journal_heads,
+            can_branch_during_maintenance,
         )) => {
             if expected_revision.is_some_and(|expected| expected != projection_revision)
                 || expected_event_sequence.is_some_and(|expected| expected != event_sequence)
@@ -2610,6 +2623,7 @@ fn list_messages_response(url: &str, conversation_id: &str) -> Response<Box<dyn 
                         "totalCount": total_count,
                         "before": before_ordinal,
                         "hasMore": has_more,
+                        "canBranchDuringMaintenance": can_branch_during_maintenance,
                         "limit": limit,
                         "projectionRevision": projection_revision,
                         "eventSequence": event_sequence

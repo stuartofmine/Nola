@@ -9,7 +9,7 @@ import com.nola.R
 import com.nola.agent.trace.AgentTraceEvent
 import com.nola.core.AgentCoreContextComponent
 import com.nola.core.AgentCoreContextComponentSource
-import com.nola.core.AndroidAgentPermissionRequest
+import com.nola.core.AndroidScheduledPermissionWait
 import com.nola.core.AndroidAgentTurnRequest
 import com.nola.core.AndroidAgentTurnService
 import com.nola.core.DeviceAgentCoordinatorEvent
@@ -41,6 +41,8 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.boolean
 
 @HiltWorker
@@ -66,37 +68,36 @@ class ScheduledActionWorker @AssistedInject constructor(
 
     override suspend fun doWork(): Result {
         return try {
-        val actionId = inputData.getString(KEY_ACTION_ID)
-        val actions = if (actionId != null) {
-            listOfNotNull(scheduledActionRepo.getById(actionId))
-        } else {
-            scheduledActionRepo.getAll().filter { it.enabled }
-        }
-        val scheduledAt = inputData.getLong(KEY_SCHEDULED_AT, 0L)
-            .takeIf { it > 0L }
-            ?: return Result.failure(workDataOf("error" to "missing_stable_occurrence_time"))
-        val providedOccurrenceID = inputData.getString(KEY_OCCURRENCE_ID)
-        val outcomes = actions.filter { it.enabled }.map { action ->
-            val occurrenceID = providedOccurrenceID
-                ?.takeIf { actionId == action.id }
-                ?: "${action.id}:$scheduledAt"
-            action to executeCanonicalRun(
-                action = action,
-                occurrenceID = occurrenceID,
-                scheduledAt = scheduledAt,
-            )
-        }
-        if (outcomes.any { it.second == ScheduledActionOutcome.Deferred }) {
-            // Worker retry means observe/recover the original occurrence, not
-            // a new model submission or a synthetic terminal failure.
-            return Result.retry()
-        }
-        outcomes.forEach { (action, outcome) ->
-            if (shouldScheduleNextForOutcome(outcome)) {
-                scheduler.scheduleNext(action)
+            val actionId = inputData.getString(KEY_ACTION_ID)
+            if (inputData.getBoolean(KEY_RECONCILE_ONLY, false)) {
+                val action = actionId?.let { scheduledActionRepo.getById(it) } ?: return Result.success()
+                val key = inputData.getString(KEY_OCCURRENCE_ID) ?: return Result.failure()
+                val run = applicationRuntime.findAutomationOccurrence(action.id, key) ?: return Result.failure()
+                val receipt = applicationRuntime.reconcileAutomationExecution(run.id) ?: return Result.retry()
+                val delivered = applicationRuntime.observeAutomationExecution(run.id)["notification_delivered"]?.jsonPrimitive?.boolean == true
+                publishReceipt(action, key, run.id, receipt, delivered)
+                return Result.success()
             }
-        }
-        return workResultForScheduledOutcomes(outcomes.map { it.second })
+            val actions = if (actionId != null) {
+                listOfNotNull(scheduledActionRepo.getById(actionId))
+            } else {
+                scheduledActionRepo.getAll().filter { it.enabled }
+            }
+            val scheduledAt = inputData.getLong(KEY_SCHEDULED_AT, 0L)
+                .takeIf { it > 0L }
+                ?: return Result.failure(workDataOf("error" to "missing_stable_occurrence_time"))
+            val providedOccurrenceID = inputData.getString(KEY_OCCURRENCE_ID)
+            val outcomes = actions.filter { it.enabled }.map { action ->
+                val occurrenceID = providedOccurrenceID
+                    ?.takeIf { actionId == action.id }
+                    ?: "${action.id}:$scheduledAt"
+                executeCanonicalRun(
+                    action = action,
+                    occurrenceID = occurrenceID,
+                    scheduledAt = scheduledAt,
+                )
+            }
+            return workResultForScheduledOutcomes(outcomes)
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
         } catch (_: Exception) {
@@ -118,6 +119,15 @@ class ScheduledActionWorker @AssistedInject constructor(
         if (receipt != null) return@coroutineScope publishReceipt(action, occurrenceID, run.id, receipt,
             observation["notification_delivered"]?.jsonPrimitive?.boolean == true)
         val binding = observation["binding"]?.takeUnless { it == JsonNull }?.jsonObject
+        if (binding != null) {
+            val previous = scheduledActionRepo.getResult(scheduledExecutionResultId(occurrenceID))
+            // The open conversation owns permission recovery. The worker only
+            // reconciles this occurrence until Core publishes its terminal seal.
+            if (previous?.failureReason == "permission_required" &&
+                previous.journalSessionId == binding.getValue("conversation_id").jsonPrimitive.content) {
+                return@coroutineScope ScheduledActionOutcome.Deferred
+            }
+        }
         // A dispatch lease authorizes first admission only. Once bound, the
         // original Run's Host delivery protocol owns recovery, never this lease.
         val definition = if (binding == null) applicationRuntime.loadAutomationDefinition(action.id)
@@ -146,10 +156,19 @@ class ScheduledActionWorker @AssistedInject constructor(
             else publishReceipt(action, occurrenceID, run.id, committed, false)
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
-        } catch (_: ScheduledActionPermissionSuspended) {
-            // The same Run keeps its open permission wait. No terminal result
-            // or failure is inferred from the worker's suspended observation.
-            ScheduledActionOutcome.NeedsAttention
+        } catch (wait: AndroidScheduledPermissionWait) {
+            val row = checkNotNull(scheduledActionRepo.getResult(scheduledExecutionResultId(occurrenceID)))
+            val session = observation.getValue("identity").jsonObject.getValue("conversation_id").jsonPrimitive.content
+            require(wait.conversationId == session && row.actionId == action.id)
+            scheduledActionRepo.recordResult(row.copy(status = "needs_attention", failureReason = "permission_required",
+                eventsJson = buildJsonObject {
+                    row.journal?.get("trace")?.let { put("trace", it) }
+                    put("schema_version", 1)
+                    put("session_id", session)
+                    put("state", "needs_attention")
+                    put("pending_permission", wait.pending)
+                }.toString()))
+            ScheduledActionOutcome.Deferred
         } catch (error: Exception) {
             lease?.let { applicationRuntime.observeAutomationWorker(it, error.message ?: error.javaClass.simpleName) }
             ScheduledActionOutcome.Deferred
@@ -171,14 +190,20 @@ class ScheduledActionWorker @AssistedInject constructor(
             .project(conversationRepo.getProjectionWindow(session, null).projection)
             .filter { it.id == identity.getValue("assistant_message_id").jsonPrimitive.content &&
                 it.role == com.nola.domain.model.ChatRole.assistant }.joinToString("\n\n") { it.text }
-        val existing = scheduledActionRepo.getResults(action.id).firstOrNull { it.id == scheduledExecutionResultId(occurrenceID) }
-        scheduledActionRepo.recordResult(buildReceiptExecutionResult(existing, action, occurrenceID, kind, text))
+        val existing = scheduledActionRepo.getResult(scheduledExecutionResultId(occurrenceID))
+        scheduledActionRepo.recordResult(buildReceiptExecutionResult(existing, action, occurrenceID, kind, text,
+            session, terminal.getValue("completed_at_ms").jsonPrimitive.long))
         if (!delivered) {
             notifyResult(action, text.ifBlank { kind }, outcome == ScheduledActionOutcome.Success,
                 receipt.getValue("notification_id").jsonPrimitive.content)
             applicationRuntime.acknowledgeAutomationNotification(occurrenceId, receipt.getValue("notification_id").jsonPrimitive.content)
         }
-        if (shouldAutoDisableAfterReceipt(action.scheduleFrequency)) scheduledActionRepo.setEnabled(action.id, false)
+        val definitionRevision = binding.getValue("definition_revision").jsonPrimitive.long
+        if (shouldAutoDisableAfterReceipt(action.scheduleFrequency)) {
+            scheduledActionRepo.disableCompletedOccurrence(action, definitionRevision)
+        } else if (applicationRuntime.loadAutomationDefinition(action.id)?.revision == definitionRevision) {
+            scheduler.scheduleNext(action)
+        }
         return outcome
     }
 
@@ -277,23 +302,6 @@ class ScheduledActionWorker @AssistedInject constructor(
                             ),
                         )
                     }
-                    is DeviceAgentCoordinatorEvent.PermissionRequested -> {
-                        scheduledActionRepo.recordResult(
-                            runningResult.copy(
-                                status = "needs_attention",
-                                fetchedAt = source?.contract?.observedAt,
-                                llmSummaryText = journalText.takeIf(String::isNotBlank),
-                                failureReason = "permission_required",
-                                eventsJson = executionJournalJson(
-                                    sessionId = sessionId,
-                                    state = "needs_attention",
-                                    traceEvents = traceEvents,
-                                    pendingPermission = event.request,
-                                ),
-                            ),
-                        )
-                        throw ScheduledActionPermissionSuspended(event.request)
-                    }
                     is DeviceAgentCoordinatorEvent.Completed -> Unit
                     else -> Unit
                 }
@@ -333,7 +341,6 @@ class ScheduledActionWorker @AssistedInject constructor(
         sessionId: String,
         state: String,
         traceEvents: List<AgentTraceEvent>,
-        pendingPermission: AndroidAgentPermissionRequest? = null,
     ): String = buildJsonObject {
         put("schema_version", 1)
         put("session_id", sessionId)
@@ -346,27 +353,13 @@ class ScheduledActionWorker @AssistedInject constructor(
                 },
             ),
         )
-        pendingPermission?.let { request ->
-            put(
-                "pending_permission",
-                buildJsonObject {
-                    put("request_id", request.requestId)
-                    put("call_id", request.callId)
-                    put("tool_name", request.toolName)
-                    put("capability", request.capability)
-                    put("authorization", request.authorization)
-                    put("rationale", request.rationale)
-                    request.scope?.let { put("scope", it) }
-                },
-            )
-        }
     }.toString()
 
     companion object {
+        const val KEY_RECONCILE_ONLY = "reconcile_only"
         const val KEY_ACTION_ID = "action_id"
         const val KEY_OCCURRENCE_ID = "occurrence_id"
         const val KEY_SCHEDULED_AT = "scheduled_at"
-        const val KEY_NEEDS_ATTENTION = "needs_attention"
         private const val LEASE_DURATION_MS = 5 * 60_000L
     }
 }
@@ -421,23 +414,20 @@ internal fun outcomeForCanonicalAutomationKind(kind: String): ScheduledActionOut
     else -> error("Unknown canonical automation result")
 }
 
-internal fun shouldScheduleNextForOutcome(outcome: ScheduledActionOutcome): Boolean =
-    outcome != ScheduledActionOutcome.NeedsAttention
-
 internal fun shouldAutoDisableAfterReceipt(scheduleFrequency: String): Boolean =
-    scheduleFrequency == "none"
+    scheduleFrequency == "once" || scheduleFrequency == "none"
 
 internal fun workResultForScheduledOutcomes(
     outcomes: List<ScheduledActionOutcome>,
 ): androidx.work.ListenableWorker.Result = when {
     outcomes.any { it == ScheduledActionOutcome.Deferred } -> androidx.work.ListenableWorker.Result.retry()
-    outcomes.any { it == ScheduledActionOutcome.NeedsAttention } -> androidx.work.ListenableWorker.Result.failure(
-        workDataOf(ScheduledActionWorker.KEY_NEEDS_ATTENTION to true)
-    )
     else -> androidx.work.ListenableWorker.Result.success()
 }
 
-internal fun scheduledExecutionResultId(occurrenceId: String): String = "scheduled-result:$occurrenceId"
+private const val SCHEDULED_RESULT_PREFIX = "scheduled-result:"
+internal fun scheduledExecutionResultId(occurrenceId: String): String = SCHEDULED_RESULT_PREFIX + occurrenceId
+internal val ExecutionResultEntity.occurrenceKey: String?
+    get() = id.takeIf { it.startsWith(SCHEDULED_RESULT_PREFIX) }?.removePrefix(SCHEDULED_RESULT_PREFIX)?.takeIf { it.isNotBlank() }
 
 internal fun buildReceiptExecutionResult(
     existing: ExecutionResultEntity?,
@@ -445,12 +435,26 @@ internal fun buildReceiptExecutionResult(
     occurrenceId: String,
     kind: String,
     summaryText: String,
+    sessionId: String,
+    completedAtMs: Long,
 ): ExecutionResultEntity = (existing ?: ExecutionResultEntity(
     id = scheduledExecutionResultId(occurrenceId),
     actionId = action.id,
     sourceName = action.name,
-)).copy(status = kind, llmSummaryText = summaryText.takeIf(String::isNotBlank))
+)).copy(status = kind, llmSummaryText = summaryText.takeIf(String::isNotBlank), failureReason = null,
+    eventsJson = buildJsonObject {
+        existing?.journal?.get("trace")?.let { put("trace", it) }
+        put("schema_version", 1)
+        put("session_id", sessionId)
+        put("state", kind)
+        put("completed_at_ms", completedAtMs)
+    }.toString())
 
-private class ScheduledActionPermissionSuspended(
-    val request: AndroidAgentPermissionRequest,
-) : Exception("Scheduled Agent turn is waiting for permission")
+private val ExecutionResultEntity.journal: JsonObject?
+    get() = runCatching { Json.parseToJsonElement(eventsJson) as? JsonObject }.getOrNull()
+
+internal val ExecutionResultEntity.journalSessionId: String?
+    get() = (journal?.get("session_id") as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+
+internal val ExecutionResultEntity.journalCompletedAt: Long?
+    get() = (journal?.get("completed_at_ms") as? JsonPrimitive)?.longOrNull

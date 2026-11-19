@@ -15,8 +15,8 @@
     import { conversationPinRequest, conversationPinConfirmed } from '../lib/chatConversations';
     import { committedConversationConfiguration } from '../lib/conversationConfigurationCommit';
     interface Change { type: 'created' | 'renamed' | 'deleted' | 'branched' | 'truncated' | 'refreshed'; conversationId: string; conversation?: ChatConversation }
-    interface Props { layout?: 'page' | 'sidebar'; highlightSelection?: boolean; navigationDisabled?: boolean; activeId: string | null; generation: number; busy?: boolean; hasMessages?: boolean; showHistoryActions?: boolean; selectedMessageId?: string | null; messageIds?: string[]; writing?: boolean; confirm?: ConfirmationHandle['ask']; onselect: (conversation: ChatConversation) => void; onchange?: (event: Change) => void }
-    let { layout = 'sidebar', highlightSelection = true, navigationDisabled = false, activeId, generation, busy = false, hasMessages = false, showHistoryActions = true, selectedMessageId = null, messageIds = [], writing = $bindable(false), confirm, onselect, onchange }: Props = $props();
+    interface Props { layout?: 'page' | 'sidebar'; highlightSelection?: boolean; navigationDisabled?: boolean; activeId: string | null; generation: number; busy?: boolean; hasMessages?: boolean; canBranchDuringMaintenance?: boolean; showHistoryActions?: boolean; selectedMessageId?: string | null; messageIds?: string[]; writing?: boolean; confirm?: ConfirmationHandle['ask']; onselect: (conversation: ChatConversation) => void; onchange?: (event: Change) => void }
+    let { layout = 'sidebar', highlightSelection = true, navigationDisabled = false, activeId, generation, busy = false, hasMessages = false, canBranchDuringMaintenance = false, showHistoryActions = true, selectedMessageId = null, messageIds = [], writing = $bindable(false), confirm, onselect, onchange }: Props = $props();
     let createButton: HTMLButtonElement;
     export function focusCreateEntry() { createButton?.focus(); }
     let confirmation = $state<ConfirmationHandle>();
@@ -64,6 +64,10 @@
     let loadVersion = $state(0);
     let loadController: AbortController | undefined;
     const locked = $derived(navigationDisabled || busy || writing);
+    const branchLocked = $derived(navigationDisabled || writing || (busy && !canBranchDuringMaintenance));
+    function menuLocked(target: ChatConversation) {
+        return rowLocked(target) && !(target.conversationId === activeId && showHistoryActions && !branchLocked && hasMessages);
+    }
     function rowLocked(target?: ChatConversation) {
         return navigationDisabled || writing || (busy && (!target || target.conversationId === activeId));
     }
@@ -150,18 +154,21 @@
         return await mutate(operation, messageId);
     }
     export async function createConversation() { return await mutate('create'); }
+    export async function duplicateConversation() { return await mutate('branch', null); }
     export async function renameConversationById(id: string, nextTitle: string, expectedRevision?: number): Promise<string | undefined> {
         const target = conversations.find(item => item.conversationId === id) ?? (active?.conversationId === id ? active : undefined);
         if (!target || rowLocked(target)) return 'chatConversations.writeFailed';
         return await mutate('rename', undefined, target, nextTitle, expectedRevision ?? target.revision);
     }
-    async function mutate(operation: 'create' | 'rename' | 'delete' | 'branch' | 'truncate', explicitMessageId?: string, rowTarget?: ChatConversation, explicitTitle?: string, explicitRevision?: number) {
+    async function mutate(operation: 'create' | 'rename' | 'delete' | 'branch' | 'truncate', explicitMessageId?: string | null, rowTarget?: ChatConversation, explicitTitle?: string, explicitRevision?: number) {
         const target = rowTarget ?? active;
-        if (navigationDisabled || writing || (busy && operation !== 'create' && (!target || target.conversationId === activeId))) return;
+        const blockedByRun = () => busy && operation !== 'create' &&
+            (!target || target.conversationId === activeId) && !(operation === 'branch' && canBranchDuringMaintenance);
+        if (navigationDisabled || writing || blockedByRun()) return;
         const captured = owner();
         if (operation !== 'rename' && (!await discardRename() || !current(captured))) return;
         if (rowTarget && (!['rename', 'delete'].includes(operation) || !conversations.some(item => item.conversationId === rowTarget.conversationId))) return;
-        const messageId = explicitMessageId ?? selectedMessageId;
+        const messageId = explicitMessageId === undefined ? selectedMessageId : explicitMessageId;
         if (operation !== 'create' && !target) return;
         if ((operation === 'branch' && !hasMessages) || (operation === 'truncate' && !messageId)) return;
         const renameTitle = explicitTitle ?? title;
@@ -175,8 +182,8 @@
                 const descriptionKey = operation === 'branch' && !messageId ? 'chatConversations.branchWholeBody' : `chatConversations.${operation}Body`;
                 const confirmKey = operation === 'branch' && !messageId ? 'chatConversations.branchWhole' : `chatConversations.${operation}`;
                 const accepted = await (confirm ?? confirmation!.ask)({ title: t($locale, `chatConversations.${operation}Title`), description: t($locale, descriptionKey, { name: target!.title }), confirmLabel: t($locale, confirmKey), destructive: operation !== 'branch' });
-                const boundaryValid = explicitMessageId === undefined ? selectedMessageId === messageId : messageIds.includes(explicitMessageId);
-                if (!accepted || !current(captured) || (operation !== 'delete' || target!.conversationId === activeId) && busy || (operation !== 'delete' && !boundaryValid)) return;
+                const boundaryValid = explicitMessageId === undefined ? selectedMessageId === messageId : explicitMessageId === null || messageIds.includes(explicitMessageId);
+                if (!accepted || !current(captured) || blockedByRun() || (operation !== 'delete' && !boundaryValid)) return;
             }
             if (!current(captured)) return;
             const path = operation === 'create' ? '/api/chat/conversations' : `${conversationUrl(target!.conversationId)}${operation === 'branch' || operation === 'truncate' ? `/${operation}` : ''}`;
@@ -235,7 +242,7 @@
                 {#if layout === 'page'}<ConversationRowDetails conversationId={conversation.conversationId} version={JSON.stringify([generation, loadVersion, conversation.updatedAt, conversation.revision])} />{/if}
             </button>
             <details class="row-actions" use:dismissibleDisclosure>
-                <summary aria-label={t($locale, 'chatConversations.actionsFor', {name: conversation.title || t($locale, 'chatConversations.untitled')})} aria-disabled={rowLocked(conversation)} onclick={event => { if (rowLocked(conversation)) event.preventDefault(); }}>⋯</summary>
+                <summary aria-label={t($locale, 'chatConversations.actionsFor', {name: conversation.title || t($locale, 'chatConversations.untitled')})} aria-disabled={menuLocked(conversation)} onclick={event => { if (menuLocked(conversation)) event.preventDefault(); }}>⋯</summary>
                 <div class="row-action-buttons">
                     <button disabled={rowLocked(conversation)} onclick={event => pin(conversation, event.currentTarget)}>{t($locale, conversation.isPinned ? 'chatConversations.unpin' : 'chatConversations.pin')}</button>
                     <button disabled={rowLocked(conversation)} onclick={event => rename(conversation, event.currentTarget)}>{t($locale, 'chatConversations.rename')}</button>
@@ -243,9 +250,9 @@
                     <button disabled={rowLocked(conversation)} onclick={() => download('json', conversation)}>{t($locale, 'chatConversations.exportJson')}</button>
                     {#if activeId === conversation.conversationId && showHistoryActions}
                         <div class="history-actions">
-                            <button disabled={locked || !hasMessages} onclick={() => mutate('branch')}>{t($locale, selectedMessageId ? 'chatConversations.branch' : 'chatConversations.branchWhole')}</button>
+                            <button disabled={branchLocked || !hasMessages} onclick={() => mutate('branch')}>{t($locale, selectedMessageId ? 'chatConversations.branch' : 'chatConversations.branchWhole')}</button>
                             <button disabled={locked || !selectedMessageId} onclick={() => mutate('truncate')}>{t($locale, 'chatConversations.truncate')}</button>
-                            <p class="muted">{t($locale, 'chatConversations.selectionHint')}</p>
+                            <p class="muted">{t($locale, busy && canBranchDuringMaintenance ? 'chatConversations.compactionCopyHint' : 'chatConversations.selectionHint')}</p>
                         </div>
                     {/if}
                     <button class="danger" disabled={rowLocked(conversation)} onclick={event => deleteRow(conversation, event.currentTarget)}>{t($locale, 'chatConversations.delete')}</button>

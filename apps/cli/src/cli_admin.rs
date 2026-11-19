@@ -315,20 +315,20 @@ fn fetch_mcp_servers(application: &mut CliApplicationPort) -> Result<Vec<McpServ
     })?;
     Ok(servers
         .into_iter()
-        .filter(|server| server.deleted_at_ms.is_none() && !server.id.contains(":mcp:"))
+        .filter(|server| server.deleted_at_ms.is_none() && server.is_managed_definition())
         .collect())
 }
 
 fn find_mcp_server<'a>(servers: &'a [McpServer], id_or_name: &str) -> Result<&'a McpServer, String> {
-    servers
-        .iter()
-        .find(|server| server.id == id_or_name)
-        .or_else(|| {
-            servers
-                .iter()
-                .find(|server| server.display_name == id_or_name)
-        })
-        .ok_or_else(|| format!("MCP server '{id_or_name}' not found"))
+    if let Some(server) = servers.iter().find(|server| server.id == id_or_name) {
+        return Ok(server);
+    }
+    let mut matches = servers.iter().filter(|server| server.display_name == id_or_name);
+    let server = matches.next().ok_or_else(|| format!("MCP server '{id_or_name}' not found"))?;
+    if matches.next().is_some() {
+        return Err(format!("Multiple MCP servers are named '{id_or_name}'. Use an ID from nola mcp list."));
+    }
+    Ok(server)
 }
 
 fn mcp_server_summary(server: &McpServer) -> Value {
@@ -390,14 +390,6 @@ fn add_mcp_server(
     if trimmed_target.is_empty() {
         return Err("MCP server command or URL must be non-empty".to_string());
     }
-    let existing = fetch_mcp_servers(application)?;
-    if existing
-        .iter()
-        .any(|server| server.id == trimmed_name || server.display_name == trimmed_name)
-    {
-        return Err(format!("MCP server '{trimmed_name}' already exists"));
-    }
-
     let lower = trimmed_target.to_ascii_lowercase();
     let config_value = if lower.starts_with("http://") || lower.starts_with("https://") {
         if !extra.is_empty() {
@@ -411,32 +403,22 @@ fn add_mcp_server(
             return Err("MCP URL requires a valid host".to_string());
         }
         json!({
-            "server_id": trimmed_name,
-            "name": trimmed_name,
             "type": "streamable_http",
             "endpoint": trimmed_target,
             "url": trimmed_target,
-            "enabled": true,
         })
     } else {
         json!({
-            "server_id": trimmed_name,
-            "name": trimmed_name,
             "type": "stdio",
             "command": trimmed_target,
             "args": extra,
-            "enabled": true,
         })
     };
 
-    let configuration_json =
-        serde_json::to_string(&config_value).map_err(|error| error.to_string())?;
     let created: McpServer = application.execute(ApplicationCommand::Mcp {
-        command: McpCommand::Create {
-            id: trimmed_name.to_string(),
+        command: McpCommand::CreateNamed {
             display_name: trimmed_name.to_string(),
-            enabled: true,
-            configuration_json,
+            configuration: config_value,
             created_at_ms: Utc::now().timestamp_millis(),
         },
     })?;
@@ -598,6 +580,26 @@ mod tests {
             .find(|item| item["id"] == first_id)
             .unwrap();
         assert_eq!(entry["enabled"], true);
+    }
+
+    #[test]
+    fn cli_flow_mcp_recreation_and_reserved_name_keep_distinct_addressable_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = CliApplicationPort::persistent(&dir.path().join("mcp.sqlite")).unwrap();
+        for name in ["server", "source:mcp:name"] {
+            let mut ids = Vec::new();
+            for _ in 0..2 {
+                add_mcp_server(&mut app, name, "echo", &[], true).unwrap();
+                assert!(add_mcp_server(&mut app, name, "echo", &[], true).is_err());
+                let active = fetch_mcp_servers(&mut app).unwrap();
+                let item = find_mcp_server(&active, name).unwrap();
+                assert!(!item.id.contains(":mcp:"));
+                assert_eq!(serde_json::from_str::<Value>(&item.configuration_json).unwrap()["server_id"], item.id);
+                ids.push(item.id.clone());
+                remove_mcp_server(&mut app, name, true).unwrap();
+            }
+            assert_ne!(ids[0], ids[1]);
+        }
     }
 
     #[test]

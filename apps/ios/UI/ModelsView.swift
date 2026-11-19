@@ -18,11 +18,11 @@ struct ModelsView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    @State private var apiHasDraft = false
+    @State private var apiDraft = IOSModelSetupDraft()
     @State private var hostHasDraft = false
     @State private var hostIsConnecting = false
     @State private var confirmsDiscard = false
-    private var hasDraft: Bool { apiHasDraft || hostHasDraft }
+    private var hasDraft: Bool { apiDraft.hasChanges || hostHasDraft }
     @State private var models: [ModelInfo] = []
     @State private var selectedModel: ModelInfo? = nil
     @State private var detailTarget: ModelInfo? = nil
@@ -82,9 +82,12 @@ struct ModelsView: View {
                     onDraftChanged: { hostHasDraft = $0 },
                     onConnectingChanged: { hostIsConnecting = $0 }
                 ) { configured in
-                    ModelSelectionManager.addModel(configured)
-                    reloadModels()
-                    onConfigured?(configured)
+                    if onConfigured != nil {
+                        select(configured)
+                    } else {
+                        ModelSelectionManager.addModel(configured)
+                        reloadModels()
+                    }
                 }.tag(2)
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
@@ -135,7 +138,7 @@ struct ModelsView: View {
 
     private var apiContent: some View {
             NolaPage {
-                IOSModelSetupForm(service: IOSModelConnectionService(application: container.applicationRuntime), onDraftChanged: { apiHasDraft = $0 }) { model in
+                IOSModelSetupForm(service: IOSModelConnectionService(application: container.applicationRuntime), draft: $apiDraft) { model in
                     reloadModels()
                     showsConfiguredModels = true
                     statusMessage = NSLocalizedString("model.setup.saved", value: "Saved and set as default · not tested", comment: "Configured model saved")
@@ -617,9 +620,16 @@ struct ModelsView: View {
             sourceTab = 2
             return
         }
-        ModelSelectionManager.saveSelectedModel(model)
-        container.chatManager.selectModel(model)
+        do {
+            try ModelSelectionManager.commitSelectedModel(model, using: container.applicationRuntime)
+        } catch {
+            sourceTab = 0
+            runtimeError = error.localizedDescription
+            return
+        }
+        container.chatManager.selectModel(model, persistAsDefault: false)
         selectedModel = model
+        onConfigured?(model)
         statusMessage = model.isLocal
             ? String(
                 format: NSLocalizedString(

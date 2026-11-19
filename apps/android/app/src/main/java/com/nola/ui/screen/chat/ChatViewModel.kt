@@ -107,6 +107,7 @@ import kotlinx.coroutines.flow.collect
 import com.nola.core.AndroidChildPermissions
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import com.nola.data.local.conversationSourceOwner
 import kotlinx.coroutines.sync.withLock
@@ -5131,50 +5132,55 @@ class ChatViewModel @Inject constructor(
 
     private val remoteGuidanceMutex = kotlinx.coroutines.sync.Mutex()
 
-    fun sendAgentTaskGuidance(ownerKey: String, taskId: String, message: String) {
+    fun sendAgentTaskGuidance(ownerKey: String, taskId: String, message: String): kotlinx.coroutines.Deferred<Boolean> {
+        fun unavailable() = kotlinx.coroutines.CompletableDeferred(false)
         if (runRegistry.current == null) {
-            runRegistry.find(ownerKey)?.let { runRegistry.enter(it) { sendAgentTaskGuidance(ownerKey, taskId, message) } }
-            return
+            val owner = runRegistry.find(ownerKey) ?: return unavailable()
+            return runRegistry.enter(owner) { sendAgentTaskGuidance(ownerKey, taskId, message) }
         }
-        if (executionSession.ownerKey != ownerKey) return
+        if (executionSession.ownerKey != ownerKey) return unavailable()
         val content = message.trim()
-        if (content.isEmpty()) return
+        if (content.isEmpty()) return unavailable()
         val state = _uiState.value
         val control = state.messages.flatMap { it.canonicalParts }.filterIsInstance<com.nola.domain.projection.ConversationProjectionV1.Part.Task>()
-            .lastOrNull { it.taskId == taskId } ?: return
-        if (!control.supportsGuidance) return
-        val parentRun = control.parentRunId?.takeIf { it.isNotBlank() } ?: return
+            .lastOrNull { it.taskId == taskId } ?: return unavailable()
+        if (!control.supportsGuidance) return unavailable()
+        val parentRun = control.parentRunId?.takeIf { it.isNotBlank() } ?: return unavailable()
         if (state.currentModel?.source == ModelInfo.ModelSource.WebHost && state.conversationId != null) {
-            executionScope.launch {
-                runCatching {
+            return executionScope.async {
+                try {
                     remoteGuidanceMutex.withLock {
-                    val cfg = checkNotNull(remoteObservationConfiguration)
-                    val intent = buildJsonObject {
-                        put("hostId", cfg.expectedHostId); put("conversationId", state.conversationId)
-                        put("parentRunId", parentRun); put("taskId", taskId)
-                        put("messageId", UUID.randomUUID().toString()); put("submittedAtMs", System.currentTimeMillis())
-                        put("message", content)
+                        val cfg = checkNotNull(remoteObservationConfiguration)
+                        val intent = buildJsonObject {
+                            put("hostId", cfg.expectedHostId); put("conversationId", state.conversationId)
+                            put("parentRunId", parentRun); put("taskId", taskId)
+                            put("messageId", UUID.randomUUID().toString()); put("submittedAtMs", System.currentTimeMillis())
+                            put("message", content)
+                        }
+                        val key = kotlinx.serialization.json.JsonArray(listOf(cfg.expectedHostId, state.conversationId, parentRun, taskId).map(::JsonPrimitive)).toString()
+                        val preferences = context.getSharedPreferences("task-guidance-intents", android.content.Context.MODE_PRIVATE)
+                        val status = com.nola.data.local.submitRecoverableTaskGuidance(intent,
+                            read = { preferences.getString(key, null) },
+                            write = { value -> check((if (value == null) preferences.edit().remove(key)
+                                else preferences.edit().putString(key, value)).commit()) { "Cannot persist guidance intent" } },
+                            transport = { frozen, receipt -> webAgentProvider.taskGuidanceCommand(frozen, receipt, cfg) })
+                        check(status != "rejected") { "The original task instruction was rejected" }
                     }
-                    val key = kotlinx.serialization.json.JsonArray(listOf(cfg.expectedHostId, state.conversationId, parentRun, taskId).map(::JsonPrimitive)).toString()
-                    val preferences = context.getSharedPreferences("task-guidance-intents", android.content.Context.MODE_PRIVATE)
-                    val status = com.nola.data.local.submitRecoverableTaskGuidance(intent,
-                        read = { preferences.getString(key, null) },
-                        write = { value -> check((if (value == null) preferences.edit().remove(key)
-                            else preferences.edit().putString(key, value)).commit()) { "Cannot persist guidance intent" } },
-                        transport = { frozen, receipt -> webAgentProvider.taskGuidanceCommand(frozen, receipt, cfg) })
-                    check(status != "rejected") { "The original task instruction was rejected" }
-                    }
-                }.onSuccess {
                     observeRemoteAgentTasks(state.conversationId)
-                }.onFailure { error ->
+                    true
+                } catch (error: Exception) {
                     if (error is kotlinx.coroutines.CancellationException) throw error
                     _uiState.update { it.copy(error = error.message ?: context.getString(R.string.chat_agent_error)) }
+                    false
                 }
             }
-            return
         }
-        if (turnRuntime.deviceCoordinator()?.sendTaskGuidance(taskId, content) == true) return
-        _uiState.update { it.copy(error = context.getString(R.string.chat_task_control_unavailable)) }
+        val coordinator = turnRuntime.deviceCoordinator()
+        return executionScope.async {
+            val accepted = coordinator?.sendTaskGuidance(taskId, content) == true
+            if (!accepted) _uiState.update { it.copy(error = context.getString(R.string.chat_task_control_unavailable)) }
+            accepted
+        }
     }
 
     private fun applyRemoteTaskProjection(event: SseEvent.TaskProjection) {

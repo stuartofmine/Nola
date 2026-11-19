@@ -26,7 +26,7 @@
     <string name="conversations_search_title">会話のタイトルを検索</string>
     <string name="activity_title">アクティビティと結果</string>
     <string name="activity_local_scope">この端末で受信した、会話・エージェント・プランの実行記録です。</string>
-    <string name="activity_search_title">タイトル・出典・結果状態を検索</string>
+    <string name="activity_search_title">アクティビティを検索</string>
     <string name="activity_search">検索</string>
     <string name="activity_all">すべて</string>
     <string name="activity_agent">エージェント</string>

@@ -115,10 +115,43 @@ def validate_real_configuration(config_path: Path) -> None:
     if not config_path.is_file():
         raise ValueError(f"missing real LLM configuration: {config_path}")
     value = json.loads(config_path.read_text(encoding="utf-8"))
-    llm = value.get("llm", {})
-    missing = [key for key in ("endpoint", "api_key", "model") if not llm.get(key)]
+    llm = value.get("llm") if isinstance(value, dict) else None
+    if not isinstance(llm, dict):
+        raise ValueError("real LLM configuration requires an llm object")
+    if "connections" in llm or "default_model" in llm:
+        from e2e.current_model import declared_route
+        declared_route(value)
+        return
+    missing = [key for key in ("endpoint", "model") if not llm.get(key)]
     if missing:
         raise ValueError(f"real LLM configuration is missing: {', '.join(missing)}")
+
+
+def scenario_command(command: str, platform: str) -> list[str]:
+    if platform == "win32":
+        # Native Windows scenarios invoke Python scripts with repo-relative paths.
+        # Use the interpreter that loaded the matrix, including virtual environments.
+        words = shlex.split(command)
+        if words and words[0] == "python3":
+            return [sys.executable, *words[1:]]
+        return ["cmd.exe", "/d", "/c", command]
+    return ["bash", "-c", command]
+
+
+def stop_scenario(process: subprocess.Popen, *, force: bool) -> None:
+    if process.poll() is not None:
+        return
+    if sys.platform == "win32":
+        # A scenario can own npm, Electron and Host descendants.
+        command = ["taskkill.exe", "/T", "/PID", str(process.pid)]
+        if force:
+            command.append("/F")
+        subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    else:
+        try:
+            os.killpg(process.pid, signal.SIGKILL if force else signal.SIGTERM)
+        except ProcessLookupError:
+            pass
 
 
 def run_scenario(scenario: dict, artifact_dir: Path, environment: dict[str, str]) -> dict:
@@ -147,13 +180,13 @@ def run_scenario(scenario: dict, artifact_dir: Path, environment: dict[str, str]
                 # Preserve the caller's audited toolchain. Login shells source
                 # user profiles and can silently replace Node/Python/Cargo or
                 # provider CLIs with incompatible versions.
-                ["bash", "-c", scenario["command"]],
+                scenario_command(scenario["command"], sys.platform),
                 cwd=ROOT,
                 env=child_environment,
                 stdout=log,
                 stderr=subprocess.STDOUT,
                 text=True,
-                start_new_session=True,
+                start_new_session=sys.platform != "win32",
             )
             timeout_seconds = int(scenario["timeoutSeconds"])
             heartbeat_seconds = max(
@@ -164,11 +197,11 @@ def run_scenario(scenario: dict, artifact_dir: Path, environment: dict[str, str]
                 elapsed = time.monotonic() - started
                 if elapsed >= timeout_seconds:
                     timed_out = True
-                    os.killpg(process.pid, signal.SIGTERM)
+                    stop_scenario(process, force=False)
                     try:
                         process.wait(timeout=5)
                     except subprocess.TimeoutExpired:
-                        os.killpg(process.pid, signal.SIGKILL)
+                        stop_scenario(process, force=True)
                         process.wait()
                     log.write(f"\nTIMEOUT after {timeout_seconds} seconds\n")
                     log.flush()
@@ -193,7 +226,7 @@ def run_scenario(scenario: dict, artifact_dir: Path, environment: dict[str, str]
             return_code = 124 if timed_out else int(process.returncode or 0)
         except BaseException:
             if process is not None and process.poll() is None:
-                os.killpg(process.pid, signal.SIGKILL)
+                stop_scenario(process, force=True)
                 process.wait()
             raise
     duration = round(time.monotonic() - started, 3)
@@ -322,10 +355,10 @@ def main() -> int:
             return 2
 
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-    artifact_dir = args.artifacts or ROOT / ".artifacts" / "real-e2e" / stamp
+    artifact_dir = (args.artifacts or ROOT / ".artifacts" / "real-e2e" / stamp).resolve()
     artifact_dir.mkdir(parents=True, exist_ok=True)
     environment = os.environ.copy()
-    environment["NOLA_CONFIG_PATH"] = str(args.config.expanduser())
+    environment["NOLA_CONFIG_PATH"] = str(args.config.expanduser().resolve())
     environment["NOLA_REAL_LLM_E2E"] = "1"
     environment["NOLA_RUN_REAL_MODEL_E2E"] = "1"
 
@@ -337,7 +370,7 @@ def main() -> int:
         state = "PASS" if result["passed"] else "FAIL"
         print(f"  {state} {result['durationSeconds']:.1f}s  {result['log']}", flush=True)
 
-    covered_platforms = sorted({p for result in results for p in result["platforms"]})
+    covered_platforms = sorted({p for result in results if result["passed"] for p in result["evidence"]["platforms"]})
     passed_ids = {result["id"] for result in results if result["passed"]}
     coverage_suite = effective_suite if effective_suite in {"smoke", "full"} else "smoke"
     coverage = audit_coverage(
@@ -363,6 +396,7 @@ def main() -> int:
         "selectedCount": len(selected),
         "executedCount": len(results),
         "passedCount": sum(1 for result in results if result["passed"]),
+        "attemptedPlatforms": sorted({p for result in results for p in result["platforms"]}),
         "coveredPlatforms": covered_platforms,
         "executionComplete": execution_complete,
         "coverage": coverage,

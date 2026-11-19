@@ -55,6 +55,7 @@ pub trait MemoryReadRepository {
     ) -> Result<Option<(StoredMemoryRecord, i64)>, Self::Error>;
     fn memory_records_by_ids(&self, ids: &[String])
         -> Result<Vec<StoredMemoryRecord>, Self::Error>;
+    fn list_owned_memory_records(&self, owners: &[String], query: Option<&str>, limit: usize) -> Result<Vec<StoredMemoryRecord>, Self::Error>;
     fn list_memory_records(&self, limit: usize) -> Result<Vec<StoredMemoryRecord>, Self::Error>;
     fn memory_usage_stats(
         &self,

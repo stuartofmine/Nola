@@ -52,6 +52,12 @@ impl AgentCore {
         })
     }
 
+    /// Freeze the configuration actually accepted at Run admission, before
+    /// reducing the submission or handing its first effect to a Host.
+    pub fn invocation_configuration(&self) -> &AgentCoreConfig {
+        self.reducer.invocation_configuration()
+    }
+
     pub fn bind_next_trace_root(&mut self, message_id: &str) -> Result<(), String> {
         self.reducer.bind_next_trace_root(message_id)
     }

@@ -3250,3 +3250,12 @@
 "model.web_host.forget_pairing.footer" = "Löscht die gespeicherte Host-Identität und das Token für diese Adresse, sodass Sie erneut koppeln können.";
 "chat.context.mcp.empty" = "Noch keine MCP-Server konfiguriert.";
 "chat.context.mcp.local.footer" = "Lokale MCP-Server unter Mediathek > Fähigkeiten verwalten.";
+
+"onboarding.first_chat.body" = "Wähle ein Modell für dein erstes Gespräch. Du kannst es auch später in den Einstellungen einrichten.";
+"onboarding.first_chat.choose_model" = "Modell auswählen";
+"chat.context.documents.read_error" = "Gespeicherte Dokumente konnten nicht geladen werden. Schließe und öffne diese Ansicht erneut.";
+"chat.context.documents.conflict" = "Die Dokumente wurden an anderer Stelle geändert. Öffne diese Ansicht erneut, um die aktuelle Liste zu bearbeiten.";
+"chat.context.import.limit" = "Das Limit von 30 Dateien ist erreicht. Nicht hinzugefügt: %@";
+"chat.message.pendingEdit" = "Ausstehende Bearbeitung prüfen";
+"chat.message.editSavedForReview" = "Du kannst den Editor schließen und die ausstehende Bearbeitung in diesem Chat erneut öffnen, um den Versand zu prüfen.";
+"chat.context.documents.blank" = "Gib Text für %@ ein oder lösche das leere Dokument.";

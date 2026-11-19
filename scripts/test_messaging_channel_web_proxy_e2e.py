@@ -105,11 +105,15 @@ def main() -> int:
                         raise RuntimeError("Nola Web Host did not become ready")
                     time.sleep(0.1)
 
+            exchanges = []
             def request(pathname: str, payload: dict | None = None, method: str = "GET") -> dict:
                 raw = json.dumps(payload).encode() if payload is not None else None
                 req = urllib.request.Request(base + pathname, data=raw, method=method, headers={"content-type": "application/json"} if raw else {})
                 with opener.open(req, timeout=20) as response:
-                    return json.load(response)
+                    result = json.load(response)
+                    exchanges.append({"method": req.get_method(), "path": pathname,
+                                      "status": response.status, "response": result})
+                    return result
 
             listed = request("/api/messaging-channels")
             if listed.get("channels", [{}])[0].get("state") != "connected":
@@ -126,6 +130,17 @@ def main() -> int:
                 raise RuntimeError("Host leaked its private channel access token")
             if [item["method"] for item in State.requests] != ["GET", "PUT"]:
                 raise RuntimeError(f"unexpected backend requests: {State.requests}")
+            if os.environ.get("NOLA_E2E_RECEIPT_PATH"):
+                from real_e2e_evidence import record_step
+                directory = Path(os.environ["NOLA_E2E_RECEIPT_PATH"]).resolve().parent
+                transcript = directory / "channel-management-http.json"
+                transcript.write_text(json.dumps({"exchanges": exchanges}, indent=2) + "\n")
+                assertions = dict(channels_read=True, channel_saved=True, host_token_kept_private=True)
+                record_step("host-channel-management", platforms=["web"],
+                            modules=["messaging", "security", "web-host"],
+                            boundaries=["web-host-channel-proxy", "external-channel-service"],
+                            assertions=assertions, assertion_evidence={key: ["channel-http"] for key in assertions},
+                            observations=[{"id": "channel-http", "kind": "http_transcript", "path": transcript}])
             print(json.dumps({"ok": True, "proxied": ["GET", "PUT"], "token_leaked": False, "connection": saved["connection_id"]}))
             return 0
         finally:

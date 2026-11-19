@@ -2612,7 +2612,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         afterCursor: Int64
     ) async -> AsyncThrowingStream<MacRemoteTaskProjectionEvent, Error> {
         AsyncThrowingStream { continuation in
-            Task {
+            let producer = Task {
                 do {
                     try await self.startTaskEvents(
                         conversationID: conversationID,
@@ -2623,6 +2623,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
                     continuation.finish(throwing: error)
                 }
             }
+            continuation.onTermination = { _ in producer.cancel() }
         }
     }
 

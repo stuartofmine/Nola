@@ -103,6 +103,49 @@ final class MacRemoteTaskObservationCoordinatorTests: XCTestCase {
         XCTAssertEqual(outputs.count, 2)
     }
 
+    func testTimeoutResumesAtLastCursorAndWaitsForTargetTerminalEvent() async {
+        let terminal = expectation(description: "observed remote terminal event")
+        var cursors: [Int64] = []
+        var states: [MacCoreTaskState] = []
+        let coordinator = MacRemoteTaskObservationCoordinator { owner, cursor in
+            cursors.append(cursor)
+            return AsyncThrowingStream { continuation in
+                if cursor == 0 {
+                    continuation.yield(.init(conversationID: owner, cursor: 3, projection: Self.projection(state: .running)))
+                    continuation.finish(throwing: URLError(.timedOut))
+                } else {
+                    continuation.yield(.init(conversationID: owner, cursor: 4, projection: .init()))
+                    continuation.yield(.init(conversationID: owner, cursor: 5, projection: Self.projection(state: .sealed)))
+                    continuation.finish()
+                }
+            }
+        }
+        coordinator.start(conversationID: "conversation-1", taskID: "task-1") { event in
+            guard case .projection(_, _, let projection) = event, let state = projection.tasks["task-1"]?.state else {
+                return XCTFail("Expected a status for the observed task")
+            }
+            states.append(state)
+            if state.isTerminal { terminal.fulfill() }
+        }
+        await fulfillment(of: [terminal], timeout: 3)
+        XCTAssertEqual(cursors, [0, 3])
+        XCTAssertEqual(states, [.running, .sealed])
+    }
+
+    func testUnauthorizedHostStopsObservation() async {
+        let failed = expectation(description: "host denied access")
+        var calls = 0
+        let coordinator = MacRemoteTaskObservationCoordinator { _, _ in
+            calls += 1
+            return AsyncThrowingStream { $0.finish(throwing: MacRemoteHostError.http(403, "")) }
+        }
+        coordinator.start(conversationID: "conversation-1", taskID: "task-1") { event in
+            if case .failure = event { failed.fulfill() }
+        }
+        await fulfillment(of: [failed], timeout: 1)
+        XCTAssertEqual(calls, 1)
+    }
+
     func testCancelEndsTheConversationSubscription() async {
         let subscriptionStarted = expectation(description: "subscription started")
         let subscriptionCancelled = expectation(description: "subscription cancelled")

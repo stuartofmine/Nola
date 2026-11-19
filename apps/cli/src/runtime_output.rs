@@ -62,6 +62,9 @@ pub trait RuntimeOutputPort {
         &mut self,
         through: nola_domain::assistant_journal::AssistantJournalCursor,
     );
+    /// A standalone JSON client cannot follow a cursor into a terminated in-memory Store.
+    fn needs_ephemeral_public_text(&self) -> bool { false }
+    fn ephemeral_public_text(&mut self, _seal: &nola_domain::assistant_run_terminal::AssistantRunTerminalSeal, _text: &str) {}
     fn committed_assistant_run_terminal(
         &mut self,
         seal: &nola_domain::assistant_run_terminal::AssistantRunTerminalSeal,

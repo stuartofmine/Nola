@@ -1001,41 +1001,107 @@ mod branch_transactions {
             ..Default::default()
         }
     }
+    fn begin_input(store: &NolaStore, conversation: &str) -> BeginAssistantTurn {
+        let frontier = support::admission_frontier::read(store, conversation);
+        BeginAssistantTurn {
+            expected_configuration_revision: frontier.0,
+            expected_parent_message_id: frontier.1,
+            conversation_id: conversation.into(),
+            conversation_title: "Branch".into(),
+            user_message_id: "next-user".into(),
+            user_part_id: "next-user:body".into(),
+            user_text: "continue".into(),
+            user_content_json: None,
+            assistant_message_id: "next-assistant".into(),
+            context_checkpoint_id: None,
+            core_config: config(conversation),
+            submission: AgentSubmission::UserInput {
+                delivery: nola_agent_engine::agent::AgentInputDelivery::CurrentTurn,
+                items: vec![AgentItem::user_message(
+                    ItemId::from_string("next-user".into()),
+                    "continue",
+                )],
+                turn_context_items: Vec::new(),
+                turn_context_platform: Default::default(),
+                turn_context_components: Vec::new(),
+                submission_id: Some("next-turn".into()),
+                submitted_at_epoch_ms: Some(4),
+            },
+            created_at_ms: 4,
+        }
+    }
     fn begin(
         store: &mut NolaStore,
         conversation: &str,
     ) -> nola_application::AcceptedAssistantTurn {
-        let frontier = support::admission_frontier::read(store, conversation);
-        begin_assistant_turn(
-            store,
-            BeginAssistantTurn {
-                expected_configuration_revision: frontier.0,
-                expected_parent_message_id: frontier.1,
-                conversation_id: conversation.into(),
-                conversation_title: "Branch".into(),
-                user_message_id: "next-user".into(),
-                user_part_id: "next-user:body".into(),
-                user_text: "continue".into(),
-                user_content_json: None,
-                assistant_message_id: "next-assistant".into(),
-                context_checkpoint_id: None,
-                core_config: config(conversation),
-                submission: AgentSubmission::UserInput {
-                    delivery: nola_agent_engine::agent::AgentInputDelivery::CurrentTurn,
-                    items: vec![AgentItem::user_message(
-                        ItemId::from_string("next-user".into()),
-                        "continue",
-                    )],
-                    turn_context_items: Vec::new(),
-                    turn_context_platform: Default::default(),
-                    turn_context_components: Vec::new(),
-                    submission_id: Some("next-turn".into()),
-                    submitted_at_epoch_ms: Some(4),
-                },
-                created_at_ms: 4,
-            },
-        )
-        .unwrap()
+        let command = begin_input(store, conversation);
+        begin_assistant_turn(store, command).unwrap()
+    }
+
+    #[test]
+    fn empty_context_after_rewind_excludes_hidden_originals_and_rejects_overlapping_recovery() {
+        let directory = tempdir().unwrap();
+        let mut store = NolaStore::open(directory.path().join("rewind.db")).unwrap();
+        let hidden = "ORIGINAL_REMOVED_BEFORE_FIRST_MESSAGE";
+        seed(&mut store, hidden);
+        nola_application::revert_conversation(&mut store, nola_application::RevertConversation {
+            conversation_id: "source".into(), operation_id: "rewind-to-start".into(),
+            through_message_id: "question".into(), keep_message: false,
+            committed_at_ms: 3, core_config: config("source"),
+        }).unwrap();
+        let accepted = begin(&mut store, "source");
+        let effects = nola_application::load_committed_host_requests(&store, &accepted.begin.run_id).unwrap();
+        let request = serde_json::to_string(&effects).unwrap();
+        assert!(request.contains("continue"));
+        assert!(!request.contains(hidden));
+        let before = store.load_checkpoint("source").unwrap().unwrap();
+        let mut overlap = begin_input(&store, "source");
+        overlap.user_message_id = "overlap-user".into();
+        overlap.assistant_message_id = "overlap-assistant".into();
+        overlap.user_part_id = "overlap-part".into();
+        if let AgentSubmission::UserInput { submission_id, .. } = &mut overlap.submission {
+            *submission_id = Some("overlap-turn".into());
+        }
+        let error = begin_assistant_turn(&mut store, overlap).unwrap_err();
+        assert!(error.contains("active Run"), "{error}");
+        assert_eq!(before.checkpoint_json, store.load_checkpoint("source").unwrap().unwrap().checkpoint_json);
+        assert_eq!(store.active_run("source").unwrap().unwrap().run_id, accepted.begin.run_id);
+    }
+
+    #[test]
+    fn completed_history_can_be_copied_during_compaction_but_not_an_active_reply() {
+        let directory = tempdir().unwrap();
+        let mut store = NolaStore::open(directory.path().join("branch.db")).unwrap();
+        seed(&mut store, "Keep this history");
+        let mut runtime = config("source");
+        let catalog = runtime.host_catalog.as_mut().unwrap();
+        let mut compact = catalog.capabilities["model.stream"].clone();
+        compact.id = "context.compact".into();
+        compact.route = nola_agent_engine::agent::host::HostCapabilityRoute::Compaction;
+        catalog.capabilities.insert(compact.id.clone(), compact);
+        runtime.initial_items = (0..16).map(|index| {
+            let text = format!("Turn {index} {}", "archived evidence ".repeat(200));
+            let id = ItemId::from_string(format!("history-{index}"));
+            if index % 2 == 0 { AgentItem::user_message(id, text) }
+            else { AgentItem::assistant_message(id, text) }
+        }).collect();
+        let compaction = nola_application::begin_maintenance_turn(&mut store,
+            nola_application::BeginMaintenanceTurn {
+                conversation_id: "source".into(), context_checkpoint_id: None,
+                core_config: runtime, created_at_ms: 3,
+                submission: AgentSubmission::Compact { operation_id: "compact".into() },
+            }).unwrap();
+        let revision = store.load_conversation("source").unwrap().unwrap().revision;
+        let copy = create_conversation_branch(&mut store.conversation_write_repository(),
+            intent("source", "copied", "answer", revision)).unwrap();
+        assert_eq!(copy.message_count, 2);
+        assert_eq!(store.active_run("source").unwrap().unwrap().run_id, compaction.run_id);
+        assert!(store.active_run("copied").unwrap().is_none());
+        begin(&mut store, "copied");
+        let revision = store.load_conversation("copied").unwrap().unwrap().revision;
+        let error = create_conversation_branch(&mut store.conversation_write_repository(),
+            intent("copied", "denied", "next-user", revision)).unwrap_err();
+        assert!(error.contains("cannot branch a conversation with an active Run"), "{error}");
     }
 
     #[test]
@@ -1144,6 +1210,17 @@ mod branch_transactions {
             ),
             ("source", "answer")
         );
+        // The real Web/CLI Host commits its selected configuration before
+        // admission, creating an idle checkpoint in the freshly copied chat.
+        nola_application::reduce_and_commit_idle_submission(&mut store,
+            nola_application::ReduceAndCommitIdleSubmission {
+                conversation_id: "target".into(), core_config: config("target"), committed_at_ms: 4,
+                submission: AgentSubmission::UpdateSessionConfiguration {
+                    patch: nola_agent_engine::agent::AgentSessionConfigurationPatch {
+                        max_model_iterations: Some(12), ..Default::default()
+                    },
+                },
+            }).unwrap();
         let begun = begin(&mut store, "target");
         let checkpoint = store.load_checkpoint("target").unwrap().unwrap().checkpoint_json;
         assert!(checkpoint.contains("question evidence") && checkpoint.contains("answer"));

@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Package the matching CLI, Agent Host, service, Web UI and browser runtime."""
 import argparse
+from html.parser import HTMLParser
+from urllib.parse import urlsplit
 import platform
 import os
 import json
@@ -19,6 +21,37 @@ def verify_contract_marker(path):
         raise ValueError('Executable does not use the v1 tool-result contract: ' + path.name)
 
 
+class WebEntrypoints(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.assets = []
+        self.has_module = False
+
+    def handle_starttag(self, tag, attributes):
+        attrs = dict(attributes)
+        if tag == 'script' and attrs.get('type') == 'module' and attrs.get('src'):
+            self.has_module = True
+            self.assets.append(attrs['src'])
+        if tag == 'link' and attrs.get('rel') in {'stylesheet', 'modulepreload'}:
+            self.assets.append(attrs.get('href', ''))
+
+
+def verify_web_ui(ui_root):
+    entry = ui_root / 'index.html'
+    if not entry.is_file():
+        raise ValueError('Missing Web UI index.html. Build apps/web/frontend before packaging.')
+    html = WebEntrypoints()
+    html.feed(entry.read_text(encoding='utf-8'))
+    if not html.has_module:
+        raise ValueError('Web UI index.html lacks a module entrypoint')
+    for url in html.assets:
+        parts = urlsplit(url)
+        path = (ui_root / parts.path.removeprefix('/ui/')).resolve()
+        if (parts.netloc or parts.scheme or not parts.path.startswith('/ui/')
+                or not path.is_relative_to(ui_root.resolve()) or not path.is_file()):
+            raise ValueError('Missing or invalid packaged Web asset: ' + url)
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output',required=True,type=Path)
@@ -29,6 +62,7 @@ def main():
     root=Path(__file__).resolve().parents[2]
     source=json.loads((root/'release/update-source.json').read_text());version=source['version']
     if args.output.exists():raise SystemExit('Output already exists')
+    verify_web_ui(root / 'apps/web/app/static/ui')
     runtime=args.browser_runtime.resolve()
     for name in ['bin/node','bridge.cjs','owner_queue.cjs','browser_use.cjs','browser_use/worker.py','browser_use/requirements.lock','browser_use/python/bin/python3','browser_use/site-packages/browser_use/__init__.py','node_modules/playwright-core/LICENSE']:
         if not (runtime/name).is_file():raise SystemExit('Managed browser runtime is incomplete: '+name)

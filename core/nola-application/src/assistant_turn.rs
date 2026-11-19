@@ -269,6 +269,7 @@ fn begin_assistant_turn_in_transaction<R: RunCreationRepository
     mut command: BeginAssistantTurn,
     successor: Option<SuccessorAdmission>,
 ) -> Result<(AcceptedAssistantTurn, AgentCore), String> {
+    crate::validate_invocation_binding(&command.core_config)?;
     crate::main_expert_selection::admit(store, &mut command)?;
     if let AgentSubmission::AutomatedInput {
         origin: nola_agent_engine::agent::AgentInputOrigin::GoalContinuation,
@@ -289,8 +290,6 @@ fn begin_assistant_turn_in_transaction<R: RunCreationRepository
         | AgentSubmission::AutomatedInput { origin:nola_agent_engine::agent::AgentInputOrigin::GoalContinuation, .. }) {
         crate::goal_execution::validate_goal_round(store,&command.conversation_id,&command.core_config,command.created_at_ms)?;
     }
-    let (invocation_config_json, invocation_config_digest) =
-        invocation_config_snapshot(&command.core_config)?;
     let internal_execution = match &command.submission {
         AgentSubmission::AutomatedInput { origin, .. } => input_origin_uses_internal_turn(*origin),
         _ => false,
@@ -340,26 +339,34 @@ fn begin_assistant_turn_in_transaction<R: RunCreationRepository
         .unwrap_or_else(|| command.assistant_message_id.clone());
     let stored = crate::load_current_checkpoint(store, &command.conversation_id)?;
     let expected_checkpoint_revision = stored.as_ref().map(|checkpoint| checkpoint.revision);
-    let needs_canonical_context = stored.is_none();
+
     let context_prompt_limit = command
         .core_config
         .context_window
         .clone()
         .normalized()
         .prompt_token_limit();
-    let mut core = match stored {
+    let (mut core, needs_canonical_context) = match stored {
         Some(stored) => {
             let value = serde_json::from_str(&stored.checkpoint_json)
                 .map_err(|error| format!("decode Core checkpoint failed: {error}"))?;
             let checkpoint = if successor.is_some() {
                 serde_json::from_value(value).map_err(|e| format!("decode successor Core checkpoint failed: {e}"))?
             } else { CoreCheckpoint::<AgentThreadState>::decode_history_for_new_turn(value)? };
-            AgentCore::restore(command.core_config, checkpoint)
-                .map_err(|error| format!("restore Core for assistant turn failed: {error}"))?
+            // Hosts can commit idle configuration before the first message in a
+            // branch. That checkpoint owns the settings, but the completed chat
+            // history still lives exclusively in the canonical transcript.
+            let needs_history = successor.is_none() && checkpoint.state.execution.active_turn.is_none()
+                && checkpoint.state.conversation.transcript.is_empty();
+            let core = AgentCore::restore(command.core_config, checkpoint)
+                .map_err(|error| format!("restore Core for assistant turn failed: {error}"))?;
+            (core, needs_history)
         }
-        None => AgentCore::try_new(command.core_config)
-            .map_err(|error| format!("initialize Core for assistant turn failed: {error}"))?,
+        None => (AgentCore::try_new(command.core_config)
+            .map_err(|error| format!("initialize Core for assistant turn failed: {error}"))?, true),
     };
+    let (invocation_config_json, invocation_config_digest) =
+        invocation_config_snapshot(core.invocation_configuration())?;
     if needs_canonical_context {
         canonical_branch::restore_canonical_context(
             store,

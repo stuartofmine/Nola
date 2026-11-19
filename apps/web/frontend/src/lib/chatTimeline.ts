@@ -28,7 +28,7 @@ export interface TimelineMessage {
     id: string; role: CanonicalMessage['role']; state: CanonicalMessage['state'];
     canonical: CanonicalMessage | null; canonicalSnapshot?: Readonly<CanonicalMessageSnapshot> | null; parts: TimelinePart[];
 }
-export interface TimelineWindow { projectionRevision: number; eventSequence: number; before: number | null; hasMore: boolean; totalCount: number }
+export interface TimelineWindow { projectionRevision: number; eventSequence: number; before: number | null; hasMore: boolean; totalCount: number; canBranchDuringMaintenance?: boolean }
 export interface ChatTimeline {
     owner: TimelineOwner; version: number; messages: TimelineMessage[];
     /** Loaded canonical message cache, not an assertion that omitted history was deleted.
@@ -206,7 +206,7 @@ function canonicalMessage(message: CanonicalMessage, snapshot:Readonly<Canonical
 }
 function parseWindow(value: unknown): TimelineWindow {
     if (!object(value) || !integer(value.projectionRevision) || !integer(value.eventSequence) || !integer(value.totalCount) || typeof value.hasMore !== 'boolean' || !(value.before === null || Number.isSafeInteger(value.before))) throw new Error('Invalid history window');
-    return { projectionRevision: value.projectionRevision, eventSequence: value.eventSequence, totalCount: value.totalCount, before: value.before as number | null, hasMore: value.hasMore };
+    return { projectionRevision: value.projectionRevision, eventSequence: value.eventSequence, totalCount: value.totalCount, before: value.before as number | null, hasMore: value.hasMore, ...(value.canBranchDuringMaintenance === true ? { canBranchDuringMaintenance: true } : {}) };
 }
 function sameSnapshot(a: TimelineWindow, b: TimelineWindow): boolean { return a.projectionRevision === b.projectionRevision && a.eventSequence === b.eventSequence; }
 function admittedMessages(existing: TimelineMessage[], declarations: readonly AdmittedMessage[]): TimelineMessage[] {

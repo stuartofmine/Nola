@@ -503,7 +503,7 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
             probe.append({"schemaVersion": 1, "event": "provider.response", "requestId": request_id,
                 "startedAt": started_at, "status": status, "upstreamPath": self.path,
-                "requestSha256": request_sha, "model": request_value.get("model"),
+                "responseBytes": len(response), "requestSha256": request_sha, "model": request_value.get("model"),
                 "requestInputPresent": input_present,
                 **tool_schema_metrics(request_value),
                 **instruction_evidence,

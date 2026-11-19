@@ -248,7 +248,6 @@
 </dialog>
 <style>
     .retained-settings:has(button) { margin-bottom: 16px; }
-    pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 18rem; overflow: auto; }
     .notice button[aria-disabled="true"] { color: var(--muted); background: var(--panel); border-color: var(--border); cursor: progress; }
     .category { display: grid; gap: 12px; margin-bottom: 24px; }
     .gallery { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; border-bottom: 1px solid var(--border); }

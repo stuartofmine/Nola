@@ -2149,6 +2149,10 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
     }
 
     func executeAgentCommand(_ command: AgentCoreJSONValue) throws -> AgentCoreJSONValue {
+        if case .object(let fields) = command, fields["type"] == .string("prepare_in_place_resend"),
+           let operation = fields["input"]?.objectFields?["operation_id"]?.stringScalar {
+            return try executeMutation(command, requestID: "in-place-resend:\(operation)")
+        }
         if case .object(let fields) = command,
            fields["type"] == .string("admit_conversation_user_message"),
            case .object(let input)? = fields["input"],

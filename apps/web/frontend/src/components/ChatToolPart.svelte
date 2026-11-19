@@ -46,7 +46,7 @@
 
 {#key owner}
 {#if tool}
-    <details use:replyDisclosure class="tool-part" data-tool-id={part.id} data-reading-part={readingPartKey(part)} data-reading-ticket={reading?.identity??''} data-state={tool.state} open={expanded}>
+    <details use:replyDisclosure class="tool-part" data-reply-disclosure data-tool-id={part.id} data-reading-part={readingPartKey(part)} data-reading-ticket={reading?.identity??''} data-state={tool.state} open={expanded}>
         <summary onclick={event => { event.preventDefault(); toggle(); }}>
             <span class="tool-indicator" aria-hidden="true"></span>
             <span class="tool-heading"><span class="tool-title" title={title}>{title}</span>{#if !expanded && tool.state === 'failed' && tool.summary}<span class="tool-failure-summary">{tool.summary}</span>{/if}</span>
@@ -57,7 +57,7 @@
             {#if tool.summary !== null}<p class="tool-summary">{tool.summary}</p>{/if}
             {#each toolArtifacts(tool.artifacts) as reference}<ChatReferenceCard {reference} />{/each}
             {#if tool.origin || tool.hasInput || tool.permission || tool.resources.length || tool.outputPreview !== null || tool.hasStructuredResult}
-            <details use:replyDisclosure class="tool-technical" open={technicalExpanded}>
+            <details use:replyDisclosure class="tool-technical" data-reply-disclosure open={technicalExpanded}>
                 <summary onclick={event=>{event.preventDefault();chooseField('technical',!technicalExpanded);}}>{t($locale, 'chatPage.toolTechnicalDetails')}</summary>
             {#if tool.origin}<p class="tool-origin">{tool.origin}</p>{/if}
             {#if input !== null}<details use:replyDisclosure class="tool-input" open={inputExpanded}><summary onclick={event=>{event.preventDefault();chooseField('input',!inputExpanded);}}>{t($locale, 'chatPage.toolInput')}</summary>

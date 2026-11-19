@@ -357,12 +357,14 @@ struct NolaMacApp: App {
                     .frame(minWidth: 620, minHeight: 520)
             } else {
                 MacApplicationStartupGate {
-                    MacOnboardingRootView(
-                        canonicalRepository: conversationRepository,
-                        localAgentRuntime: localAgentRuntime,
-                        remoteHost: remoteHost,
-                        inspectorDependencies: inspectorDependencies
-                    )
+                    MacOnboardingRootView {
+                        MacChatWorkspaceView(
+                            canonicalRepository: conversationRepository,
+                            localAgentRuntime: localAgentRuntime,
+                            remoteHost: remoteHost,
+                            inspectorDependencies: inspectorDependencies
+                        )
+                    }
                 }
                     .frame(minWidth: 920, minHeight: 640)
             }
@@ -387,6 +389,15 @@ struct NolaMacApp: App {
         }
         .defaultSize(width: 1180, height: 780)
         .windowStyle(.hiddenTitleBar)
+
+        Window("mac.welcome.title", id: "welcome") {
+            MacApplicationStartupGate { MacWelcomeHelpWindow() }
+                .frame(minWidth: 420, minHeight: 280)
+        }
+        .defaultSize(width: 580, height: 360)
+        .windowStyle(.hiddenTitleBar)
+        .defaultLaunchBehavior(.suppressed)
+        .restorationBehavior(.disabled)
 
         Window("mac.window.data_center", id: "data-center") {
             MacApplicationStartupGate { MacDataCenterView() }
@@ -644,6 +655,10 @@ private struct NolaMacCommands: Commands {
             }
             .keyboardShortcut(".", modifiers: .command)
             .disabled(actions == nil)
+        }
+
+        CommandGroup(after: .help) {
+            Button("mac.welcome.title") { openWindow(id: "welcome") }
         }
 
         CommandGroup(after: .sidebar) {

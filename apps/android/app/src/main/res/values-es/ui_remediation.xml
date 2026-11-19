@@ -26,7 +26,7 @@
     <string name="conversations_search_title">Buscar títulos de conversaciones</string>
     <string name="activity_title">Actividad y resultados</string>
     <string name="activity_local_scope">Registros de ejecución recibidos en este dispositivo para conversaciones, agentes y planes.</string>
-    <string name="activity_search_title">Buscar títulos, fuentes o estados</string>
+    <string name="activity_search_title">Buscar actividad</string>
     <string name="activity_search">Buscar</string>
     <string name="activity_all">Todo</string>
     <string name="activity_agent">Agente</string>

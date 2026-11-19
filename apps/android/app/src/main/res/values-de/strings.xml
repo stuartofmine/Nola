@@ -1386,4 +1386,6 @@
     <string name="chat_ui_submission_unknown">Das Ergebnis der Übermittlung wurde noch nicht bestätigt.</string>
     <string name="chat_skill_description">Beschreibung (optional)</string>
     <string name="models_web_host_disconnect">Host trennen</string>
+    <string name="onboarding_choose_model">Modell auswählen</string>
+    <string name="onboarding_chat_model_hint">Verbinde einen Modelldienst, lade ein lokales Modell herunter oder kopple einen Nola-Host, um zu chatten.</string>
 </resources>

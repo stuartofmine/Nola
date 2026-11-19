@@ -145,7 +145,12 @@ impl AgentRuntime {
             // either regressing the catalog or making maintenance operations
             // such as compaction impossible. Pending effects remain protected
             // by the exact-owner check above.
-            if !same_host_catalog_is_stale {
+            if same_host_catalog_is_stale {
+                // A new Run must freeze the catalog that will own its first
+                // effect. Keeping the request's stale revision here makes its
+                // very first cold recovery fail the pending-owner check above.
+                config.host_catalog = Some(session.host.catalog.clone());
+            } else {
                 session.host.catalog = host_catalog;
             }
         }

@@ -1,5 +1,5 @@
 /** Keep a details-owned action popup in the viewport and above content paint layers. */
-export function anchoredPopover(node: HTMLElement) {
+export function anchoredPopover(node: HTMLElement, preferredWidth = 320) {
     const owner = node.closest('details');
     const anchor = owner?.querySelector('summary');
     if (!owner || !anchor) return {};
@@ -9,7 +9,7 @@ export function anchoredPopover(node: HTMLElement) {
         if (!anchor!.getClientRects().length || rect.bottom <= 0 || rect.top >= window.innerHeight || rect.right <= 0 || rect.left >= window.innerWidth) {
             owner!.open = false; node.hidePopover(); return;
         }
-        const width = Math.min(320, window.innerWidth - 24);
+        const width = Math.min(preferredWidth, window.innerWidth - 24);
         const below = Math.max(0, window.innerHeight - rect.bottom - 16);
         const above = Math.max(0, rect.top - 16);
         const upward = below < Math.min(node.scrollHeight, 180) && above > below;

@@ -18,6 +18,7 @@ import javax.inject.Inject
 
 data class ScheduledActionsUiState(
     val actions: List<ScheduledActionEntity> = emptyList(),
+    val latestResultsByAction: Map<String, ExecutionResultEntity> = emptyMap(),
     val recentResults: List<ExecutionResultEntity> = emptyList(),
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
@@ -39,39 +40,27 @@ class ScheduledActionsViewModel internal constructor(
     private val _uiState = MutableStateFlow(ScheduledActionsUiState())
     val uiState: StateFlow<ScheduledActionsUiState> = _uiState.asStateFlow()
 
-    init {
-        observeResults()
-        loadActions()
-    }
+    private var observation: kotlinx.coroutines.Job? = null
 
-    private fun observeResults() {
-        viewModelScope.launch {
-            repo.observeRecentResults(limit = 10).collectLatest { results ->
-                _uiState.update { it.copy(recentResults = results) }
-            }
-        }
-    }
+    init { loadActions() }
 
     fun loadActions() {
-        if (_uiState.value.isLoading) return
-        viewModelScope.launch {
+        observation?.cancel()
+        observation = viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
-            runCatching {
-                repo.getAll() to repo.getRecentResults(limit = 10)
-            }.onSuccess { (actions, recentResults) ->
-                _uiState.update {
-                    it.copy(
-                        actions = actions,
-                        recentResults = recentResults,
-                        isLoading = false,
-                        errorMessage = null
-                    )
+            try {
+                kotlinx.coroutines.flow.combine(
+                    repo.observeAll(), repo.observeLatestPerAction(), repo.observeRecentResults(limit = 10),
+                ) { actions, latest, recent ->
+                    Triple(actions, latest.associateBy { it.actionId }, recent)
+                }.collectLatest { (actions, latest, recent) ->
+                    _uiState.update { it.copy(actions = actions, latestResultsByAction = latest,
+                        recentResults = recent, isLoading = false) }
                 }
-            }.onFailure { error ->
-                if (error is CancellationException) throw error
-                _uiState.update {
-                    it.copy(isLoading = false, errorMessage = error.localizedMessage.orEmpty())
-                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                _uiState.update { it.copy(isLoading = false, errorMessage = error.localizedMessage.orEmpty()) }
             }
         }
     }
@@ -94,7 +83,6 @@ class ScheduledActionsViewModel internal constructor(
                 schedule(action)
                 _uiState.update { it.copy(savingActionId = null) }
                 onSaved()
-                loadActions()
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -137,7 +125,6 @@ class ScheduledActionsViewModel internal constructor(
                     _uiState.update { state ->
                         state.copy(busyActionIds = state.busyActionIds - id)
                     }
-                    loadActions()
                 }
                 .onFailure { error ->
                     if (error is CancellationException) throw error

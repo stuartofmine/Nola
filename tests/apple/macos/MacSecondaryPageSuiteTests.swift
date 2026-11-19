@@ -581,7 +581,7 @@ final class MacSecondaryPageLocalizationTests: XCTestCase {
 @MainActor
 final class MacSecondaryPageVisualEndToEndTests: XCTestCase {
     func testOnboardingAndStartupGateStatesRenderInBothAppearances() async throws {
-        try await assertOnboardingSteps()
+        try await assertOnboardingWelcome()
         try await assertStartupGateStates()
     }
 
@@ -764,75 +764,46 @@ final class MacSecondaryPageVisualEndToEndTests: XCTestCase {
         }
     }
 
-    private func assertOnboardingSteps() async throws {
+    private func assertOnboardingWelcome() async throws {
         let accessibility = try MacHostedAccessibilitySession()
         defer { accessibility.restore() }
         for appearance in [NSAppearance.Name.aqua, .darkAqua] {
             let label = appearance == .darkAqua ? "dark" : "light"
             for (widthLabel, size) in [("regular", CGSize(width: 980, height: 740)), ("compact", CGSize(width: 680, height: 720))] {
-                var currentStep = 0
                 try await MacVisualPixelAssertions.assertView(
-                    MacOnboardingView(onComplete: {})
-                        .environment(\.accessibilityEnabled, true),
-                    name: "onboarding-step0-\(widthLabel)-\(label)",
+                    MacOnboardingView(onComplete: {}).environment(\.accessibilityEnabled, true),
+                    name: "onboarding-welcome-\(widthLabel)-\(label)",
                     size: size,
                     appearance: appearance,
-                    beforeCapture: { _, hostingView in
-                        // Step 0 verified directly; subsequent assertions exercise steps 1..3 below.
-                        _ = hostingView
+                    beforeCapture: { _, host in
+                        XCTAssertNotNil(self.findAccessibleElement(identifier: "onboarding.connect", in: host))
+                        XCTAssertNotNil(self.findAccessibleElement(identifier: "onboarding.dismiss", in: host))
                     },
-                    assertWindow: { window, _ in
+                    assertWindow: { window, host in
                         XCTAssertTrue(window.styleMask.contains(.fullSizeContentView))
                         XCTAssertEqual(window.titleVisibility, .hidden)
+                        let target = window.contentView?.superview ?? host
+                        let image = try MacVisualPixelAssertions.captureCGImage(of: target)
+                        let button = try XCTUnwrap(self.findAccessibleElement(identifier: "onboarding.connect", in: host))
+                        let frame = try XCTUnwrap(button.accessibilityFrame?())
+                        let bounds = target.convert(window.convertFromScreen(frame), from: nil).insetBy(dx: 6, dy: 4)
+                        let scale = CGFloat(image.width) / target.bounds.width
+                        let top = target.isFlipped ? bounds.minY : target.bounds.maxY - bounds.maxY
+                        let rect = CGRect(x: bounds.minX * scale, y: top * scale,
+                            width: bounds.width * scale, height: bounds.height * scale)
+                        let crop = try XCTUnwrap(image.cropping(to: rect))
+                        let contrast = try MacVisualPixelAssertions.analyzePixels(cgImage: crop,
+                            contentRect: CGRect(x: 0, y: 0, width: crop.width, height: crop.height),
+                            isDark: appearance == .darkAqua)
+                        XCTAssertGreaterThan(max(contrast.headerContrastDelta, contrast.bodyContrastDelta), 100,
+                            "The model action must remain legible when the window is inactive.")
+                        let png = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+                        let screenshot = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+                        screenshot.name = "welcome-\(widthLabel)-\(label)"
+                        screenshot.lifetime = .keepAlways
+                        self.add(screenshot)
                     }
                 )
-                // Walk steps 0 -> 1 -> 2 -> 3 inside one live window to verify every guide page.
-                let isDark = appearance == .darkAqua
-                let nsAppearance = try XCTUnwrap(NSAppearance(named: appearance))
-                let previousAppAppearance = NSApplication.shared.appearance
-                NSApplication.shared.appearance = nsAppearance
-                defer { NSApplication.shared.appearance = previousAppAppearance }
-                let host = NSHostingView(
-                    rootView: MacOnboardingView(onComplete: {})
-                        .frame(width: size.width, height: size.height)
-                        .environment(\.colorScheme, isDark ? .dark : .light)
-                        .environment(\.accessibilityEnabled, true)
-                )
-                host.frame = NSRect(origin: .zero, size: size)
-                host.appearance = nsAppearance
-                let window = NSWindow(
-                    contentRect: NSRect(origin: .zero, size: size),
-                    styleMask: [.titled, .closable, .miniaturizable, .resizable],
-                    backing: .buffered,
-                    defer: false
-                )
-                window.appearance = nsAppearance
-                window.animationBehavior = .none
-                window.isReleasedWhenClosed = false
-                window.contentView = host
-                window.orderFrontRegardless()
-                defer { window.orderOut(nil); window.contentView = nil; window.close() }
-                try await MacVisualPixelAssertions.settleLayout(window: window, hostingView: host)
-                for step in 1...3 {
-                    currentStep = step
-                    let nextButton = try XCTUnwrap(findAccessibleElement(identifier: "onboarding.next", in: host))
-                    XCTAssertTrue(nextButton.accessibilityPerformPress?() ?? false, "Failed to advance onboarding to step \(step)")
-                    try await MacVisualPixelAssertions.settleLayout(window: window, hostingView: host)
-                    let target = window.contentView?.superview ?? host
-                    let cgImage = try MacVisualPixelAssertions.captureCGImage(of: target)
-                    let metrics = try MacVisualPixelAssertions.analyzePixels(
-                        cgImage: cgImage,
-                        contentRect: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height),
-                        isDark: isDark
-                    )
-                    XCTAssertGreaterThanOrEqual(metrics.warmSurfaceFraction, 0.35, "onboarding-step\(currentStep)-\(widthLabel)-\(label)")
-                    XCTAssertLessThan(metrics.coolGrayFraction, 0.01, "onboarding-step\(currentStep)-\(widthLabel)-\(label)")
-                    XCTAssertGreaterThanOrEqual(max(metrics.headerContrastDelta, metrics.bodyContrastDelta), 40.0)
-                    if isDark {
-                        XCTAssertLessThan(metrics.pureBlackFraction, 0.005)
-                        XCTAssertEqual(metrics.fullWidthBlackScanlines, 0)
-                    }
-                }
             }
         }
     }

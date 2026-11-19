@@ -11,6 +11,9 @@ interface ScheduledActionDao {
     @Query("SELECT * FROM scheduled_actions ORDER BY createdAt DESC")
     suspend fun getAll(): List<ScheduledActionEntity>
 
+    @Query("SELECT * FROM scheduled_actions ORDER BY createdAt DESC")
+    fun observeAll(): kotlinx.coroutines.flow.Flow<List<ScheduledActionEntity>>
+
     @Query("SELECT * FROM scheduled_actions WHERE id = :id")
     suspend fun getById(id: String): ScheduledActionEntity?
 

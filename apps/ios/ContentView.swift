@@ -1,30 +1,34 @@
 // SPDX-License-Identifier: Apache-2.0
 // File Overview:
-// - Purpose: Implements ContentView logic in the iOS app.
-// - Interfaces:
-//   - ContentView
-// - APIs:
-//   - none
-//
-//
-//  ContentView.swift
-//  Nola
-//
-//
+// - Purpose: Routes first launch and restores unfinished model setup.
 
 import SwiftUI
-import CoreData
 
-// ContentView is now a wrapper that displays the main tab navigation or onboarding
 struct ContentView: View {
     @EnvironmentObject private var container: ServiceContainer
-    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
-    
+    @AppStorage("hasCompletedOnboarding") private var completed = false
+    @AppStorage("onboarding.guide.version") private var guideVersion = 0
+    @AppStorage("onboarding.modelSetupRequested") private var modelSetupRequested = false
+
+    var onWorkspaceAppear: () -> Void = {}
+
     var body: some View {
-        if hasCompletedOnboarding {
-            MainTabView()
+        if completed {
+            MainTabView().onAppear(perform: onWorkspaceAppear)
         } else {
-            OnboardingView()
+            OnboardingView(chooseModel: { modelSetupRequested = true }, skip: finish)
+                .sheet(isPresented: $modelSetupRequested) {
+                    ModelsView { model in
+                        container.chatManager.selectModel(model, persistAsDefault: false)
+                        finish()
+                    }
+                }
         }
+    }
+
+    private func finish() {
+        modelSetupRequested = false
+        guideVersion = 3
+        completed = true
     }
 }

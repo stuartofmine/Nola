@@ -78,7 +78,13 @@
     }
     function resume() { if (!disposed && pageLocation.active() && !document.hidden && tab === 'local' && !busy) void refresh(); }
     function selectTab(value: 'local' | 'api') {
+        if (value === tab) return;
+        linkedModelId = '';
         tab = value;
+        const url = pageLocation.read();
+        url.searchParams.set('tab', value);
+        url.searchParams.delete('configure');
+        pageLocation.replace(url);
         clearTimeout(timer);
         if (tab === 'api' && !busy) catalogReads.cancel();
         else resume();
@@ -89,7 +95,7 @@
     }
     onMount(() => {
         const parameters = pageLocation.read().searchParams;
-        tab = parameters.get('tab') === 'local' || parameters.has('configure') ? 'local' : 'api';
+        tab = parameters.get('tab') === 'local' || (!parameters.has('tab') && parameters.has('configure')) ? 'local' : 'api';
         linkedModelId = parameters.get('configure') || '';
         void refresh();
         return () => { disposed = true; clearTimeout(timer); catalogReads.cancel(); };

@@ -11,6 +11,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.ui.Alignment
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import com.nola.data.local.datastore.PreferenceDataStore
@@ -45,6 +48,7 @@ class MainActivity : ComponentActivity() {
                 AppearancePreference.Dark -> true
             }
             NolaTheme(darkTheme = darkTheme) {
+                var openModelsAfterWelcome by rememberSaveable { mutableStateOf(false) }
                 val hasCompletedOnboarding by prefs.hasCompletedOnboarding.collectAsState(initial = null)
 
                 if (hasCompletedOnboarding == null) {
@@ -52,9 +56,9 @@ class MainActivity : ComponentActivity() {
                         CircularProgressIndicator()
                     }
                 } else if (hasCompletedOnboarding == true) {
-                    NolaScaffold(modifier = Modifier.fillMaxSize())
+                    NolaScaffold(Modifier.fillMaxSize(), openModelsAfterWelcome) { openModelsAfterWelcome = false }
                 } else {
-                    OnboardingScreen()
+                    OnboardingScreen(onChooseDestination = { openModelsAfterWelcome = it })
                 }
             }
         }

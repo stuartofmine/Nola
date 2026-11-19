@@ -189,6 +189,7 @@ impl ApplicationCommand {
                 }
                 | Self::Memory {
                     command: MemoryCommand::List { .. }
+                        | MemoryCommand::ListForBinding { .. }
                         | MemoryCommand::Get { .. }
                         | MemoryCommand::GetMany { .. }
                         | MemoryCommand::UsageStats { .. }

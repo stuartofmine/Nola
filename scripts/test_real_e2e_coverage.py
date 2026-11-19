@@ -181,3 +181,11 @@ def test_screenshot_capture_without_actual_visual_review_proves_no_ui_lane():
         "findings": ["Messages remain ordered and the composer does not cover the answer."],
     }
     assert "product-ui" in observed_scenario_lanes(scenario, receipt)
+
+
+def test_empty_executed_receipts_cannot_borrow_matrix_declarations():
+    web = _scenario("web-ui", "web", execution={"runtime": "browser"})
+    coverage = audit_coverage([web], suite="smoke", passed_scenario_ids={"web-ui"}, evidence_by_scenario={})
+    assert coverage["consideredScenarios"] == []
+    assert coverage["platforms"]["web"]["verified"] == []
+    assert not coverage["platforms"]["windows"]["complete"]

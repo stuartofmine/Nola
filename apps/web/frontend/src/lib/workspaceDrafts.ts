@@ -25,6 +25,7 @@ export function createWorkspaceDrafts(repository: ConversationDraftRepository | 
         const loaded = new Set<string>(), deleted = new Set<string>();
         const touched = new Map<string, Set<string>>(), loading = new Map<string, Promise<void>>();
         const editRevisions = new Map<string, number>();
+        const unsavedEdits = new Set<string>();
         const tickets = new Map<string, {ticket: ConversationDraftSubmissionTicket; editRevision: number; draft?:ConversationDraftRecord}>();
         // Expert parent admission is not an ordinary source Run submission.
         // Keep only the original local text edit witness, never a synthetic receipt.
@@ -37,10 +38,15 @@ export function createWorkspaceDrafts(repository: ConversationDraftRepository | 
         const persist = (id: string) => {
             if (!repository || !ownerHostId || invalidated || deleted.has(id)) return;
             const snapshot = {hostId: ownerHostId, conversationId: id, text: text.read(id), objective: objectives.read(id), attachments: attachments.read(id)};
-            enqueue(id, () => repository.write(snapshot));
+            const revision = editRevisions.get(id);
+            enqueue(id, async () => {
+                await repository.write(snapshot);
+                if (editRevisions.get(id) === revision) unsavedEdits.delete(id);
+            });
         };
         const changed = (id: string, field: string) => {
             if (hydrating || invalidated || deleted.has(id)) return;
+            unsavedEdits.add(id);
             const fields = touched.get(id) ?? new Set<string>(); fields.add(field); touched.set(id, fields);
             editRevisions.set(id, (editRevisions.get(id) ?? 0) + 1);
             if (!repository || !ownerHostId) return;
@@ -78,7 +84,7 @@ export function createWorkspaceDrafts(repository: ConversationDraftRepository | 
                 else persistenceErrors.delete(id);
             } catch { persistenceErrors.set(id, true); }
         }
-        return { text, objectives, attachments, persistenceErrors, load,
+        return { text, objectives, attachments, persistenceErrors, load, unsavedEdits,
         controllers,
         captureExpertAdmission(id: string, submissionId: string, submittedText: string) {
             if (invalidated || deleted.has(id) || !ownerHostId || !submissionId.trim()
@@ -184,7 +190,7 @@ export function createWorkspaceDrafts(repository: ConversationDraftRepository | 
             tickets.delete(submissionId);
         },
         forget(id: string) {
-            deleted.add(id); loaded.delete(id); touched.delete(id);
+            deleted.add(id); loaded.delete(id); touched.delete(id); unsavedEdits.delete(id);
             for (const [submissionId, ticket] of expertDrafts) if (ticket.conversationId === id) expertDrafts.delete(submissionId);
             readingPositions.delete(id);
             expertSelections.delete(id); expertSelectionEpochs.delete(id);
@@ -215,6 +221,12 @@ export function createWorkspaceDrafts(repository: ConversationDraftRepository | 
             return current;
         },
         get hasDrafts() { return current.text.hasDrafts || current.objectives.hasDrafts || current.attachments.hasDrafts || [...current.knowledge.values()].some(knowledgePending) || [...current.rooms.values()].some(room => !!room.text || !!room.pending); },
+        get needsUnloadConfirmation() {
+            const pending = repository ? current.unsavedEdits.size > 0
+                : current.text.hasDrafts || current.objectives.hasDrafts || current.attachments.hasDrafts;
+            return pending || [...current.knowledge.values()].some(knowledgePending)
+                || [...current.rooms.values()].some(room => !!room.text || !!room.pending);
+        },
         get selectedConversationId() { return current.lastConversationId; },
         get authenticatedHostId() { return hostId; },
         forgetConversation(id: string) {

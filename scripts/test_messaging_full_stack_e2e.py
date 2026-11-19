@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Audited E2E for messaging ingress, delivery, persistence, and Host management."""
+"""Optional historical Worker integration. Requires the local-only legacy Worker checkout."""
 
 from __future__ import annotations
 

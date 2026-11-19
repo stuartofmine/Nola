@@ -132,6 +132,21 @@ fn maintenance_success_failure_and_cancel_settle_without_user_result_or_messages
                 updated_at_ms: 1,
             })
             .unwrap();
+        if outcome == "completed" {
+            // A restarted Host advertises an older catalog than the preceding
+            // idle conversation. Its new maintenance effect must remain cold-recoverable.
+            let previous = config();
+            let mut advertised = previous.host_catalog.as_ref().unwrap().clone();
+            advertised.revision += 100;
+            let mut core = nola_agent_engine::agent::AgentCore::try_new(previous).unwrap();
+            core.reduce_at(AgentSubmission::UpdateHostCatalog { catalog: advertised }, 500).unwrap();
+            let checkpoint = core.checkpoint(nola_agent_engine::agent::recovery::CheckpointReason::Manual);
+            store.save_checkpoint(&nola_store::SaveCheckpointInput {
+                conversation_id: "recovery-conversation".into(), expected_revision: 0, revision: checkpoint.revision as i64,
+                event_cursor: checkpoint.last_event_cursor.sequence as i64,
+                checkpoint_json: serde_json::to_string(&checkpoint).unwrap(), updated_at_ms: 500,
+            }).unwrap();
+        }
         let accepted = nola_application::begin_maintenance_turn(
             &mut store,
             nola_application::BeginMaintenanceTurn {

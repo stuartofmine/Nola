@@ -1109,11 +1109,12 @@ class AndroidApplicationRuntime(
     }
 
     fun saveAutomationDefinition(id: String, name: String, enabled: Boolean, metadata: JsonObject,
-        spec: AndroidAutomationSpec): AndroidAutomationDefinition {
+        spec: AndroidAutomationSpec, expectedRevision: Long? = null): AndroidAutomationDefinition {
         val previous = automationDefinitionCommand(buildJsonObject { put("type", "get"); put("id", id) })
             .takeUnless { it == kotlinx.serialization.json.JsonNull }?.jsonObject
         val revision = previous?.getValue("revision")?.jsonPrimitive?.content?.toLong() ?: 0L
         val now = System.currentTimeMillis()
+        require(expectedRevision == null || expectedRevision == revision) { "Automation definition changed" }
         val input = buildJsonObject {
             put("id", id); put("name", name); put("enabled", enabled)
             put("schedule_format", "nola.android.scheduled_action.v1"); put("revision", Math.addExact(revision, 1L))

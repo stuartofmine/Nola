@@ -1386,4 +1386,6 @@
     <string name="chat_ui_submission_unknown">Le résultat de l’envoi n’est pas encore confirmé.</string>
     <string name="chat_skill_description">Description (facultatif)</string>
     <string name="models_web_host_disconnect">Déconnecter l’hôte</string>
+    <string name="onboarding_choose_model">Choisir un modèle</string>
+    <string name="onboarding_chat_model_hint">Pour discuter, connectez un service de modèles, téléchargez un modèle local ou associez un hôte Nola.</string>
 </resources>

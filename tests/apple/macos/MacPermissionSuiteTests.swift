@@ -238,51 +238,73 @@ final class MacPermissionSuiteTests: XCTestCase {
     }
 
     @MainActor
-    func testFirstRunGuideNavigatesWithoutPretendSelectionsOrPreferenceWrites() async throws {
+    func testWelcomeOffersModelSetupAndRespectsCompletionOnRelaunch() async throws {
         let session = try MacHostedAccessibilitySession()
         defer { session.restore() }
-        let suite = "onboarding-guidance-\(UUID())"
-        let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { preferences.removePersistentDomain(forName: suite) }
-        preferences.set("existing-host", forKey: "nola.mac.runtime.preference")
-        preferences.set("existing-sources", forKey: "nola.mac.planned.sources")
-        for width: CGFloat in [520, 1040] {
-            for dark in [false, true] {
-                var completions = 0
-                let host = NSHostingView(rootView: MacOnboardingView { completions += 1 }
-                    .defaultAppStorage(preferences)
-                    .environment(\.colorScheme, dark ? .dark : .light)
-                    .environment(\.accessibilityEnabled, true)
-                    .transaction { $0.animation = nil; $0.disablesAnimations = true }
-                    .frame(width: width, height: 820))
-                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 820),
-                    styleMask: [.borderless], backing: .buffered, defer: false)
-                window.isReleasedWhenClosed = false; window.contentView = host; window.orderFrontRegardless()
-                defer { window.close() }
-                for step in 0..<4 {
-                    try await Task.sleep(for: .milliseconds(80))
-                    host.layoutSubtreeIfNeeded()
-                    let objects = accessibilityObjects(host)
-                    XCTAssertFalse(objects.contains { object in
-                        let role = object.accessibilityRole?() ?? nil
-                        return role == .radioButton || role == .checkBox
-                    }, "The guide must not offer choices that do not configure execution")
-                    if let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
-                        host.cacheDisplay(in: host.bounds, to: bitmap)
-                        let attachment = XCTAttachment(data: try XCTUnwrap(bitmap.representation(using: .png, properties: [:])), uniformTypeIdentifier: "public.png")
-                        attachment.name = "onboarding-\(step)-\(Int(width))-\(dark ? "dark" : "light")"
-                        attachment.lifetime = .keepAlways; add(attachment)
-                    }
-                    let candidate: AnyObject? = objects.first { ($0.accessibilityIdentifier?() ?? nil) == "onboarding.next" }
-                    let next: AnyObject = try XCTUnwrap(candidate)
-                    XCTAssertTrue(next.accessibilityPerformPress?() ?? false)
+        let navigation = MacModelCenterNavigationState.shared
+        let previousTab = navigation.selectedTab
+        let previousFocus = navigation.focusedRemoteProfileID
+        defer {
+            if let previousFocus { navigation.showRemoteModel(profileID: previousFocus) }
+            else { navigation.selectedTab = previousTab }
+        }
+        for action in ["onboarding.connect", "onboarding.dismiss"] {
+            let suite = "mac-first-run-\(UUID())"
+            let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+            defer { preferences.removePersistentDomain(forName: suite) }
+            preferences.set("existing-host", forKey: "nola.mac.runtime.preference")
+            navigation.showLocalModels()
+
+            func makeContent() -> some View {
+                MacOnboardingRootView(bypass: false) {
+                    Text("Fixture workspace").accessibilityIdentifier("fixture.workspace")
                 }
-                try await Task.sleep(for: .milliseconds(60))
-                XCTAssertEqual(completions, 1)
-                XCTAssertEqual(preferences.string(forKey: "nola.mac.runtime.preference"), "existing-host")
-                XCTAssertEqual(preferences.string(forKey: "nola.mac.planned.sources"), "existing-sources")
-                window.close()
+                .defaultAppStorage(preferences)
+                .environment(\.accessibilityEnabled, true)
+                .transaction { $0.animation = nil; $0.disablesAnimations = true }
+                .frame(width: 520, height: 360)
             }
+
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 360),
+                styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            defer { window.orderOut(nil); window.contentView = nil; window.close() }
+            let host = NSHostingView(rootView: makeContent())
+            window.contentView = host
+            window.orderFrontRegardless()
+            func find(_ id: String, in view: NSView) async throws -> AnyObject {
+                for _ in 0..<40 {
+                    view.layoutSubtreeIfNeeded()
+                    if let object = accessibilityObjects(view).first(where: {
+                        ($0.accessibilityIdentifier?() ?? nil) == id
+                    }) { return object }
+                    try await Task.sleep(for: .milliseconds(50))
+                }
+                throw NSError(domain: "WelcomeAccessibility", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "Missing accessible element \(id)"])
+            }
+
+            let button = try await find(action, in: host)
+            XCTAssertTrue(button.accessibilityPerformPress?() ?? false)
+            _ = try await find("fixture.workspace", in: host)
+            XCTAssertTrue(preferences.bool(forKey: "nola.mac.onboarding.completed.v2"))
+            XCTAssertEqual(navigation.showsRemoteModels, action == "onboarding.connect")
+            XCTAssertEqual(preferences.string(forKey: "nola.mac.runtime.preference"), "existing-host")
+
+            let relaunched = NSHostingView(rootView: makeContent())
+            window.contentView = relaunched
+            _ = try await find("fixture.workspace", in: relaunched)
+            XCTAssertFalse(accessibilityObjects(relaunched).contains {
+                ($0.accessibilityIdentifier?() ?? nil) == "onboarding.connect"
+            })
+
+            let help = NSHostingView(rootView: MacWelcomeHelpWindow()
+                .defaultAppStorage(preferences).environment(\.accessibilityEnabled, true))
+            window.contentView = help
+            _ = try await find("onboarding.connect", in: help)
+            let close = try await find("onboarding.dismiss", in: help)
+            let closeLabel = String(localized: "common.close")
+            XCTAssertTrue(close.accessibilityLabel?() == closeLabel || close.accessibilityTitle?() == closeLabel)
         }
     }
 

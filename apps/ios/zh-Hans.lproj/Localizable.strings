@@ -3402,3 +3402,12 @@
 "model.web_host.forget_pairing.footer" = "清除此主机地址已记住的身份与保存的令牌，以便重新配对。";
 "chat.context.mcp.empty" = "当前还没有可用的 MCP 服务器。";
 "chat.context.mcp.local.footer" = "可在「资料库 > 能力库」中配置、启用或管理本机 MCP 服务器。";
+
+"onboarding.first_chat.body" = "先选择一个模型，开始第一次对话。也可以稍后在设置中配置。";
+"onboarding.first_chat.choose_model" = "选择模型";
+"chat.context.documents.read_error" = "无法读取已保存的文档。请关闭并重新打开此面板以重试。";
+"chat.context.documents.conflict" = "文档已在其他位置更改。请重新打开此面板，载入最新列表后再编辑。";
+"chat.context.import.limit" = "最多可保存 30 个文件。以下文件未添加：%@";
+"chat.message.pendingEdit" = "核对待确认的编辑";
+"chat.message.editSavedForReview" = "可以关闭编辑器。回到此对话后，点“核对待确认的编辑”即可查询是否已发送。";
+"chat.context.documents.blank" = "请输入 %@ 的内容，或删除该空文档。";

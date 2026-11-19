@@ -62,7 +62,6 @@ fn prompt_create_global_config() -> Result<Option<GeneratedConfiguration>, Strin
         .to_string();
 
     write_global_config(&path, &endpoint, &api_key, &model)?;
-    let _ = crate::onboarding::mark_completed();
     println!("{} {}.", ui_text(UiText::ConfigCreated), path.display());
     Ok(Some(GeneratedConfiguration {
         endpoint,
@@ -72,12 +71,9 @@ fn prompt_create_global_config() -> Result<Option<GeneratedConfiguration>, Strin
 }
 
 fn is_valid_endpoint_url(value: &str) -> bool {
-    let trimmed = value.trim();
-    let lower = trimmed.to_ascii_lowercase();
-    (lower.starts_with("http://") || lower.starts_with("https://"))
-        && trimmed
-            .split_once("://")
-            .is_some_and(|(_, host)| !host.trim().is_empty())
+    reqwest::Url::parse(value.trim()).is_ok_and(|url| {
+        matches!(url.scheme(), "http" | "https") && url.host().is_some()
+    })
 }
 
 fn prompt_config_line(prompt: &str) -> Result<String, String> {
@@ -86,10 +82,11 @@ fn prompt_config_line(prompt: &str) -> Result<String, String> {
         .flush()
         .map_err(|err| format!("flush prompt failed: {err}"))?;
     let mut value = String::new();
-    io::stdin()
-        .read_line(&mut value)
-        .map_err(|err| format!("read prompt failed: {err}"))?;
-    Ok(value)
+    match io::stdin().read_line(&mut value) {
+        Ok(0) => Err(io::Error::from(io::ErrorKind::UnexpectedEof).to_string()),
+        Ok(_) => Ok(value),
+        Err(error) => Err(format!("read prompt failed: {error}")),
+    }
 }
 
 struct ConfigSecretRawModeGuard;
@@ -287,6 +284,8 @@ mod tests {
         assert!(!is_valid_endpoint_url(""));
         assert!(!is_valid_endpoint_url("ftp://example.com/v1"));
         assert!(!is_valid_endpoint_url("http://"));
+        assert!(!is_valid_endpoint_url("https://bad host/v1"));
+        assert!(!is_valid_endpoint_url("http://localhost:invalid/v1"));
         assert!(!is_valid_endpoint_url("localhost:11434/v1"));
     }
 

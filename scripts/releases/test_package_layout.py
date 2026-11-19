@@ -17,6 +17,15 @@ spec.loader.exec_module(package)
 
 
 class PackageLayoutTests(unittest.TestCase):
+    def test_incomplete_ui_fails_before_packaging(self):
+        with tempfile.TemporaryDirectory() as name:
+            ui = Path(name)
+            with self.assertRaisesRegex(ValueError, 'index.html'):
+                package.verify_web_ui(ui)
+            (ui / 'index.html').write_text('<script type="module" src="/ui/app.js"></script>')
+            with self.assertRaisesRegex(ValueError, 'app.js'):
+                package.verify_web_ui(ui)
+
     def test_moved_source_builds_the_same_self_contained_bundle_paths(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -26,6 +35,7 @@ class PackageLayoutTests(unittest.TestCase):
                 'apps/windows/package-lock.json': '{"version":"1.0.0","packages":{"":{"version":"1.0.0"}}}',
                 'apps/android/app/build.gradle.kts': 'versionCode = 1\nversionName = "1.0.0"',
                 'apple/Nola.xcodeproj/project.pbxproj': 'CURRENT_PROJECT_VERSION = 1;\nMARKETING_VERSION = 1.0.0;',
+                'apps/web/app/static/ui/index.html': '<script type="module" src="/ui/index.js"></script>',
                 'apps/web/app/static/ui/index.js': '// Fixture UI',
                 'LICENSE': 'Fixture project license',
                 'node-license.txt': 'Fixture Node license',
@@ -59,7 +69,7 @@ class PackageLayoutTests(unittest.TestCase):
                 package.main()
             with zipfile.ZipFile(output) as archive:
                 prefix = 'Nola-cli-macos-aarch64-1.0.0/'
-                expected = ['nola', 'bin/nola', 'bin/nola-agent-host', 'bin/nola-service', 'web/app/static/ui/index.js', 'web/playwright_runtime/bin/node', 'web/playwright_runtime/bridge.cjs', 'web/playwright_runtime/browser_use/worker.py', 'web/playwright_runtime/browser_use/python/bin/python3']
+                expected = ['nola', 'bin/nola', 'bin/nola-agent-host', 'bin/nola-service', 'web/app/static/ui/index.html', 'web/app/static/ui/index.js', 'web/playwright_runtime/bin/node', 'web/playwright_runtime/bridge.cjs', 'web/playwright_runtime/browser_use/worker.py', 'web/playwright_runtime/browser_use/python/bin/python3']
                 self.assertTrue(all(prefix + name in archive.namelist() for name in expected))
                 self.assertFalse(any('app/templates/' in name for name in archive.namelist()))
                 self.assertFalse(any('/apps/' in name for name in archive.namelist()))

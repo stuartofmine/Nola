@@ -160,7 +160,7 @@ fun DataWorkspaceScreen(onCreateInChat: () -> Unit = {}, initialPage: Int = 0, o
         ) { selected ->
             when (selected) {
                 1 -> com.nola.ui.screen.intelligence.IntelligenceScreen(section = com.nola.ui.screen.intelligence.IntelligenceSection.MEMORY)
-                2 -> com.nola.ui.screen.scheduled.ScheduledActionsScreen(onCreateInChat = onCreateInChat)
+                2 -> com.nola.ui.screen.scheduled.ScheduledActionsScreen(onCreateInChat = onCreateInChat, onOpenConversation = onOpenConversation)
                 3 -> com.nola.ui.screen.activity.ActivityScreen(onOpenConversation = onOpenConversation)
                 4 -> ConversationKnowledgeScreen(onOpenConversation = onOpenConversation)
                 else -> DataSourcesScreen()

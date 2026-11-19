@@ -87,6 +87,10 @@ impl AgentRuntime {
         cell.view(&observation.cell, observation.after_output_sequence)
     }
 
+    pub(crate) fn invocation_configuration(&self) -> &AgentCoreConfig {
+        &self.config
+    }
+
     pub(crate) fn host_execution_state(&self) -> super::HostExecutionState {
         super::HostExecutionState::from_state(&self.session, self.control_snapshot())
     }

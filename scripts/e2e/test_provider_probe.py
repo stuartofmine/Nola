@@ -113,6 +113,7 @@ def test_authentication_fault_uses_protocol_generation_input_then_forwards_exact
                     before = len(received)
                     status, body = relay_post(relay,path,request)
                     assert status == 401 and json.loads(body)["error"]["type"] == "authentication_error"
+                    denied_bytes = len(body)
                     assert len(received) == before
                     status, body = relay_post(relay,path,request)
                     assert status == 200 and body == b'{"owned_upstream":true}'
@@ -124,6 +125,7 @@ def test_authentication_fault_uses_protocol_generation_input_then_forwards_exact
                 events = [json.loads(line) for line in log.read_text().splitlines()]
                 faults = [event for event in events if event.get("injectedHttpError")]
                 assert len(faults) == 1 and faults[0]["forwarded"] is False
+                assert faults[0]["responseBytes"] == denied_bytes
 
 
 def test_debug_credential_cannot_leave_relay_even_on_discovery_or_retry(tmp_path):

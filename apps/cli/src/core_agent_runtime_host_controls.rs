@@ -1420,6 +1420,14 @@ impl CoreAgentHost {
         } else {None};
         let run_result = seal.as_ref().map(|seal| seal.result.value.clone());
         if let Some(seal) = seal {
+            if !self.execution_config.session.save_session && emitter.needs_ephemeral_public_text() {
+                let journal = self.session_store.as_mut().ok_or("temporary conversation Store is unavailable")?
+                    .read_source_run_journal(&seal.identity.run_id, &seal.identity.assistant_message_id)?;
+                if journal.seal.as_ref() != Some(&seal) {
+                    return Err("temporary reply does not match its terminal seal".into());
+                }
+                emitter.ephemeral_public_text(&seal, &journal.public_text());
+            }
             emitter.committed_assistant_run_terminal(&seal);
         }
 

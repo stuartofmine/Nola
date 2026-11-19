@@ -25,7 +25,7 @@
 
 | ID | 业务 / 场景 | 入口 | 状态数 | 适用设计平台 |
 | --- | --- | --- | ---: | --- |
-| [welcome](../scenarios.html?scene=welcome&platform=mac) | 开始与账户 / 首次使用与跳过引导 | 首次启动 | 3 | macOS / iOS / iPadOS / Android / Web / Windows |
+| [welcome](../scenarios.html?scene=welcome&platform=mac) | 开始与账户 / 首次使用与跳过引导 | 首次启动 | 3 | macOS / iOS / iPadOS / Android |
 | [web-login](../scenarios.html?scene=web-login&platform=web) | 开始与账户 / Web / Windows 连接登录 | Host 地址 → 登录 | 3 | Web / Windows |
 | [account-browser](../scenarios.html?scene=account-browser&platform=mac) | 开始与账户 / ChatGPT 授权与网页回跳 | 模型 → 添加 ChatGPT 账户 | 4 | macOS / CLI |
 | [account-reauth](../scenarios.html?scene=account-reauth&platform=mac) | 开始与账户 / 账户失效、重新授权与退出 | 模型 → 账户详情 | 3 | macOS / CLI |

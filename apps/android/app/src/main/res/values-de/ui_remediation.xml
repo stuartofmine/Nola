@@ -26,7 +26,7 @@
     <string name="conversations_search_title">Gesprächstitel durchsuchen</string>
     <string name="activity_title">Aktivität und Ergebnisse</string>
     <string name="activity_local_scope">Auf diesem Gerät empfangene Ausführungsprotokolle für Gespräche, Agenten und Pläne.</string>
-    <string name="activity_search_title">Titel, Quellen oder Ergebnisstatus suchen</string>
+    <string name="activity_search_title">Aktivität suchen</string>
     <string name="activity_search">Suche</string>
     <string name="activity_all">Alle</string>
     <string name="activity_agent">Agent</string>

@@ -154,6 +154,10 @@ final class ChatManagerTests: XCTestCase {
         // Room pages and a previously opened editor retain their source owner;
         // the main chat selection must not reroute or reject that submission.
         manager.currentConversationId = nil
+        // Retain the original before dispatch. A lost UI acknowledgement must be
+        // verifiable by a different runtime even after Core removes its original bubble.
+        let pending = IOSPendingMessageEdit(runtime: runtime, conversationID: owner)
+        try pending.retain(request)
         let admittedOwner: UUID
         do { admittedOwner = try await manager.sendEditedMessage(request) }
         catch {
@@ -163,6 +167,12 @@ final class ChatManagerTests: XCTestCase {
             throw error
         }
         XCTAssertEqual(admittedOwner, owner)
+        let cold = IOSPendingMessageEdit(runtime: try IOSApplicationRuntime(databaseURL: runtime.databaseURL), conversationID: owner)
+        let recovered = try XCTUnwrap(cold.load())
+        XCTAssertEqual(recovered, request)
+        XCTAssertEqual(try cold.runtime.editReceipt(recovered), .admitted)
+        try cold.clear(recovered)
+        XCTAssertNil(try pending.load())
         XCTAssertNil(manager.currentConversationId)
         for _ in 0..<1000 where manager.executionForConversation(owner)?.processingState.blocksInput == true {
             try await Task.sleep(for: .milliseconds(10))
@@ -961,7 +971,7 @@ final class ChatManagerTests: XCTestCase {
 
         let savedDocs = try manager.saveUploadedDocuments([
             UserUploadedContextItem(name: "Updated Brief", content: "Updated document text")
-        ])
+        ], expected: profileStore.loadProfile()).uploadedDocuments
         XCTAssertEqual(savedDocs.count, 1)
         XCTAssertEqual(profileStore.loadProfile().uploadedDocuments.map(\.name), ["Updated Brief"])
         XCTAssertEqual(profileStore.loadProfile().uploadedDocuments.map(\.content), ["Updated document text"])

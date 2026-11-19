@@ -2,7 +2,7 @@
 // Window-scoped editing only. No composer/history mutation and no Run execution.
 import Foundation
 
-nonisolated struct AppleMessageEditSubmission: Sendable {
+nonisolated struct AppleMessageEditSubmission: Codable, Equatable, Sendable {
     let operationID: UUID
     let targetConversationID: UUID
     let createdAtMs: Int64

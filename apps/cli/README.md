@@ -357,7 +357,7 @@ Useful options:
 - `--force-tool-set MODE`: choose exposed tools. `auto` sends a focused coding set plus `tool_search`, `all` sends every tool schema, and `write` sends the SWE write-focused set.
 - `--session ID`: load and save a named session.
 - `--continue, -c`: continue the latest saved session.
-- `--no-save`: run without writing a session file.
+- `--no-save` runs the conversation in memory. With `--json`, the `ephemeral_assistant_text` event includes the sealed public reply before the process exits.
 - `--project PATH`: project root for runs, `init`, and `wiki`; defaults to the current directory.
 - `--output PATH`: output file for `init` (`NOLA.md`) or `wiki`.
 - `--version, -V`: print installed Nola version and build metadata (same as `nola version`).
@@ -401,7 +401,8 @@ Interactive commands are recognized only when the submitted line starts with `/`
 - `/resources` lists current workspace resources, data sources, and runtime access scope.
 - `/skills [list|enable|disable]` inspects or toggles built-in and uploaded skills.
 - `/mcp [list|enable|disable]` inspects or toggles configured MCP servers.
-- `/memory [list|search|add]` inspects, searches, or adds persisted long-term memories.
+- `/memory add` saves a workspace memory for the active `--project`. `/memory list` and `/memory search` show memories visible to the current workspace and conversation, including personal memories.
+- In a saved conversation, type `@` followed by part of an expert or file name. Tab cycles through matches. Expert entries show a role label and insert a revision-bound mention. The main agent receives that reference and decides whether to delegate. A file with the same name remains a separate candidate.
 - `/stop [id]` stops the active run or a persisted background task.
 - `/compact` compacts model context while preserving the complete replay transcript.
 - `/cd PATH` changes the persistent CLI workspace and starts a project session there.

@@ -1,7 +1,6 @@
 package com.nola.work
 
 import androidx.work.ListenableWorker
-import androidx.work.workDataOf
 import com.nola.data.local.db.entity.ExecutionResultEntity
 import com.nola.data.local.db.entity.ScheduledActionEntity
 import com.nola.data.repository.DataSourceDocumentInspector
@@ -172,7 +171,7 @@ class ScheduledActionAgentContractTest {
 
         assertEquals(ListenableWorker.Result.retry(), workResultForScheduledOutcomes(listOf(ScheduledActionOutcome.Success, ScheduledActionOutcome.Deferred)))
         assertEquals(
-            ListenableWorker.Result.failure(workDataOf(ScheduledActionWorker.KEY_NEEDS_ATTENTION to true)),
+            ListenableWorker.Result.success(),
             workResultForScheduledOutcomes(listOf(ScheduledActionOutcome.Success, ScheduledActionOutcome.NeedsAttention)),
         )
         assertEquals(
@@ -180,12 +179,9 @@ class ScheduledActionAgentContractTest {
             workResultForScheduledOutcomes(listOf(ScheduledActionOutcome.Success, ScheduledActionOutcome.AlreadyHandled)),
         )
 
-        assertTrue(shouldScheduleNextForOutcome(ScheduledActionOutcome.Success))
-        assertTrue(shouldScheduleNextForOutcome(ScheduledActionOutcome.AlreadyHandled))
-        assertFalse(shouldScheduleNextForOutcome(ScheduledActionOutcome.NeedsAttention))
 
         assertTrue(shouldAutoDisableAfterReceipt("none"))
-        assertFalse(shouldAutoDisableAfterReceipt("once"))
+        assertTrue(shouldAutoDisableAfterReceipt("once"))
         assertFalse(shouldAutoDisableAfterReceipt("daily"))
         assertFalse(shouldAutoDisableAfterReceipt("weekly"))
 
@@ -202,7 +198,7 @@ class ScheduledActionAgentContractTest {
             action = action,
             occurrenceId = "occ-42",
             kind = "answered",
-            summaryText = "Summary line",
+            summaryText = "Summary line", sessionId = "session-1", completedAtMs = 123456L,
         )
         assertEquals("scheduled-result:occ-42", firstReceipt.id)
         assertEquals("answered", firstReceipt.status)
@@ -210,14 +206,18 @@ class ScheduledActionAgentContractTest {
 
         // Reconciling the same occurrence reuses the exact stable row ID instead of inserting duplicates.
         val replayed = buildReceiptExecutionResult(
-            existing = firstReceipt.copy(scheduledAt = 12345L),
+            existing = firstReceipt.copy(scheduledAt = 12345L, failureReason = "permission_required", eventsJson = """{"pending_permission":{}}"""),
             action = action,
             occurrenceId = "occ-42",
             kind = "answered",
-            summaryText = "Summary line",
+            summaryText = "Summary line", sessionId = "session-1", completedAtMs = 123456L,
         )
         assertEquals(firstReceipt.id, replayed.id)
         assertEquals(12345L, replayed.scheduledAt)
         assertNotNull(replayed.llmSummaryText)
+        assertNull(replayed.failureReason)
+        assertFalse(replayed.eventsJson.contains("pending_permission"))
+        assertEquals(123456L, replayed.journalCompletedAt)
+        assertEquals("session-1", replayed.journalSessionId)
     }
 }

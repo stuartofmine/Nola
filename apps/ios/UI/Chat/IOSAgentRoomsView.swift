@@ -480,6 +480,11 @@ struct IOSAgentRoomTimeline: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            ForEach(workspace.room?.room.participants ?? []) { participant in
+                if let owner = UUID(uuidString: participant.contextConversationID), owner != ordinaryConversationID {
+                    IOSPendingEditAction(owner: owner, ownerIsRunning: expertGroupIsBusy)
+                }
+            }
             if showsOwnerControls { ScrollView(.horizontal) {
                 HStack(spacing: 12) {
                     ForEach(workspace.room?.room.participants ?? []) { participant in

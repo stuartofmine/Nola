@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.test.core.app.ActivityScenario
@@ -25,6 +26,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.text.TextLayoutResult
 import java.io.File
+import kotlin.math.roundToInt
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -36,8 +38,9 @@ class WorkspacePageMatrixTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
     private val primaryNavigation = hasTestTag("navigation.bottom") or hasTestTag("navigation.side.compact") or hasTestTag("navigation.side.expanded")
     private fun tab(label: Int) {
-        compose.onNode((hasText(context.getString(label)) or hasContentDescription(context.getString(label))) and hasAnyAncestor(primaryNavigation)).performClick()
-        compose.waitForIdle()
+        val destination = (hasText(context.getString(label)) or hasContentDescription(context.getString(label))) and hasAnyAncestor(primaryNavigation)
+        compose.onNode(destination).performClick()
+        compose.onNode(destination and isSelected()).assertIsDisplayed()
     }
     private fun capture(name: String, darkTheme: Boolean? = null) {
         compose.mainClock.advanceTimeBy(500)
@@ -50,7 +53,16 @@ class WorkspacePageMatrixTest {
             compose.onAllNodes(isSelected() and hasAnyAncestor(primaryNavigation))
                 .assertCountEquals(1)
         }
-        val image = compose.onRoot().captureToImage()
+        // Capture the frame shown by the emulator's compositor. Compose's window
+        // PixelCopy can time out on an idle page with no new buffers to submit.
+        val root = compose.onRoot().fetchSemanticsNode()
+        val (position, size) = compose.runOnIdle { root.positionOnScreen to root.size }
+        val screen = checkNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()) {
+            "The compositor did not return a screenshot for $name"
+        }
+        val cropped = Bitmap.createBitmap(screen, position.x.roundToInt(), position.y.roundToInt(), size.width, size.height)
+        if (cropped !== screen) screen.recycle()
+        val image = cropped.asImageBitmap()
         if (darkTheme != null) {
             val pixels = image.assertWarmThemeSurface(darkTheme = darkTheme, label = "WorkspacePageMatrix($name)")
             val surfaceSample = pixels.dominantInteriorColor()
@@ -87,12 +99,25 @@ class WorkspacePageMatrixTest {
         File(directory, "$name.png").outputStream().use {
             check(image.asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it))
         }
+        cropped.recycle()
     }
     private fun back(activity: ActivityScenario<MainActivity>) {
         compose.waitForIdle()
         activity.onActivity { it.onBackPressedDispatcher.onBackPressed() }
         compose.waitForIdle()
     }
+
+    private fun enterWorkspace() {
+        val skip = hasText(context.getString(R.string.onboarding_guide_action_later))
+        compose.waitUntil(15_000) {
+            compose.onAllNodes(primaryNavigation or skip).fetchSemanticsNodes().isNotEmpty()
+        }
+        if (compose.onAllNodes(primaryNavigation).fetchSemanticsNodes().isEmpty()) {
+            compose.onNode(skip).performClick()
+        }
+        compose.waitUntil(15_000) { compose.onAllNodes(primaryNavigation).fetchSemanticsNodes().isNotEmpty() }
+    }
+
     @Test fun allPrimaryAndManagementPagesOpenAndReturnInBothThemes() {
         requireIsolatedProductTestUser(context)
         // Only this test's prior screenshots; never clear application records.
@@ -109,37 +134,13 @@ class WorkspacePageMatrixTest {
                     }
                 }
                 compose.waitForIdle()
-                for (step in 0..3) {
-                    for (role in listOf(androidx.compose.ui.semantics.Role.RadioButton, androidx.compose.ui.semantics.Role.Checkbox)) {
-                        compose.onAllNodes(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.Role, role)).assertCountEquals(0)
-                    }
-                    capture("onboarding-$step-$theme", darkTheme = isDark)
-                    if (step < 3) {
-                        compose.onNodeWithText(context.getString(R.string.onboarding_guide_action_next)).performClick()
-                        compose.waitForIdle()
-                    }
-                }
+                compose.onNodeWithText(context.getString(R.string.onboarding_choose_model)).assertIsDisplayed()
+                compose.onNodeWithText(context.getString(R.string.onboarding_guide_action_later)).assertIsDisplayed()
+                capture("onboarding-$theme", darkTheme = isDark)
             }
         }
         ActivityScenario.launch(MainActivity::class.java).use { activity ->
-            compose.waitUntil(15_000) {
-                compose.onAllNodes(primaryNavigation).fetchSemanticsNodes().isNotEmpty()
-                    || compose.onAllNodesWithText(context.getString(R.string.onboarding_guide_action_next)).fetchSemanticsNodes().isNotEmpty()
-            }
-            // The guide teaches real setup without pretend runtime/source selections
-            // or requests for system permissions and model credentials.
-            if (compose.onAllNodes(primaryNavigation).fetchSemanticsNodes().isEmpty()) {
-                for (step in 0..3) {
-                    for (role in listOf(androidx.compose.ui.semantics.Role.RadioButton, androidx.compose.ui.semantics.Role.Checkbox)) {
-                        compose.onAllNodes(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.Role, role)).assertCountEquals(0)
-                    }
-                    capture("onboarding-$step")
-                    val label = if (step == 3) R.string.onboarding_guide_action_start else R.string.onboarding_guide_action_next
-                    compose.onNodeWithText(context.getString(label)).performClick()
-                    compose.waitForIdle()
-                }
-            }
-            compose.waitUntil(15_000) { compose.onAllNodes(primaryNavigation).fetchSemanticsNodes().isNotEmpty() }
+            enterWorkspace()
             for ((theme, label) in listOf("light" to R.string.appearance_light, "dark" to R.string.appearance_dark)) {
                 val isDark = theme == "dark"
                 tab(R.string.tab_settings)
@@ -156,7 +157,7 @@ class WorkspacePageMatrixTest {
                     R.string.settings_capabilities)) {
                     tab(R.string.tab_settings)
                     compose.onNodeWithText(context.getString(section)).performScrollTo().performClick()
-                    capture("settings-$section-$theme", darkTheme = isDark)
+                    capture("settings-${context.resources.getResourceEntryName(section)}-$theme", darkTheme = isDark)
                     if (section == R.string.settings_general) {
                         compose.onNodeWithTag("settings_notification_center").performScrollTo().performClick()
                         back(activity)
@@ -182,7 +183,16 @@ class WorkspacePageMatrixTest {
                 }
                 for (destination in listOf(R.string.tab_chat, R.string.tab_activity, R.string.tab_settings)) {
                     tab(destination)
-                    capture("primary-$destination-$theme", darkTheme = isDark)
+                    if (destination == R.string.tab_activity) {
+                        val layouts = mutableListOf<TextLayoutResult>()
+                        val label = hasText(context.getString(R.string.activity_search_title)) and
+                            SemanticsMatcher.keyIsDefined(SemanticsActions.GetTextLayoutResult)
+                        compose.onNode(label, useUnmergedTree = true)
+                            .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+                        val layout = layouts.single()
+                        org.junit.Assert.assertFalse("Activity search label must fit beside the button", layout.isLineEllipsized(0))
+                    }
+                    capture("primary-${context.resources.getResourceEntryName(destination)}-$theme", darkTheme = isDark)
                 }
             }
         }
@@ -191,20 +201,26 @@ class WorkspacePageMatrixTest {
     @Test fun generalScrollSurvivesNotificationCenterRoundTrip() {
         requireIsolatedProductTestUser(context)
         ActivityScenario.launch(MainActivity::class.java).use { activity ->
-            compose.waitUntil(15_000) { compose.onAllNodes(primaryNavigation).fetchSemanticsNodes().isNotEmpty() }
+            enterWorkspace()
             tab(R.string.tab_settings)
             compose.onNodeWithText(context.getString(R.string.settings_general)).performClick()
             compose.onNodeWithText(context.getString(R.string.software_update_check)).performScrollTo()
             val center = compose.onNodeWithTag("settings_notification_center")
             center.performScrollTo()
-            fun offset(): Float = compose.onNode(hasScrollAction()).fetchSemanticsNode()
-                .config[androidx.compose.ui.semantics.SemanticsProperties.VerticalScrollAxisRange].value()
-            val before = offset()
-            org.junit.Assert.assertTrue("The fixture must exercise a scrolled General page", before > 0f)
+            val scroller = compose.onNode(hasScrollAction())
+            fun range() = scroller.fetchSemanticsNode()
+                .config[androidx.compose.ui.semantics.SemanticsProperties.VerticalScrollAxisRange]
+            // A tall tablet may show every setting at once. If it can scroll,
+            // always exercise a nonzero offset without moving the action off-screen.
+            if (range().maxValue() > 0f && range().value() == 0f) {
+                scroller.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 12f) }
+            }
+            val before = range().value()
+            org.junit.Assert.assertTrue("Scrollable General must exercise a reading position", range().maxValue() == 0f || before > 0f)
             center.performClick()
             back(activity)
             center.assertIsDisplayed()
-            org.junit.Assert.assertEquals("Returning from notifications preserves the reading position", before, offset(), 1f)
+            org.junit.Assert.assertEquals("Returning from notifications preserves the reading position", before, range().value(), 1f)
         }
     }
 

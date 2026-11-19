@@ -31,7 +31,6 @@ struct NolaApp: App {
 
     @State private var container: ServiceContainer?
     @State private var startupFailure: String?
-    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @AppStorage(AppleAppearancePreference.storageKey) private var appearance = "system"
 
     private static func makeServiceContainer() throws -> ServiceContainer {
@@ -296,6 +295,10 @@ struct NolaApp: App {
                         IOSRoomPermissionUITestFixture(container: container)
                     } else if ProcessInfo.processInfo.arguments.contains("-ui-testing-message-reader") {
                         IOSMessageReaderUITestFixture(container: container)
+                    } else if ProcessInfo.processInfo.arguments.contains("-ui-testing-onboarding"),
+                              let runID = ProcessInfo.processInfo.environment["NOLA_UI_TEST_RUN_ID"],
+                              let preferences = UserDefaults(suiteName: "nola.onboarding.test.\(runID)") {
+                        ContentView().environmentObject(container).defaultAppStorage(preferences)
                     } else {
                         MainTabView().environmentObject(container)
                     }
@@ -305,17 +308,8 @@ struct NolaApp: App {
                     #endif
                 } else if Self.isRunningUnitTests {
                     Text(NSLocalizedString("app.unit_tests.placeholder", comment: "Placeholder shown while running unit tests"))
-                } else if hasCompletedOnboarding {
-                    ContentView()
-                        .environmentObject(container)
-                        .onAppear {
-                            // Schedule background refresh if not already scheduled
-                            if hasCompletedOnboarding {
-                                container.scheduler.scheduleNextRefresh()
-                            }
-                        }
                 } else {
-                    OnboardingView()
+                    ContentView(onWorkspaceAppear: { container.scheduler.scheduleNextRefresh() })
                         .environmentObject(container)
                 }
             } else {

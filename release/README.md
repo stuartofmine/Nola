@@ -17,10 +17,11 @@ python3 scripts/releases/prepare_version.py --version 1.0.1 --build 2 --dry-run
 
 确认版本变更后去掉 dry-run。build 全平台单调增长；Apple、Android、Windows 和源身份必须一致，Cargo 内部 crate 版本不代表 App 发布版本。
 
-从现有私有工作树首次公开时，导出当前源码并创建新仓库历史：
+先记录已审查的提交，再导出该提交的快照。将快照应用到公开仓库最新 main 上，保留已有发布历史和独立发布文件。
 
 ```sh
-python3 scripts/releases/export_public.py --destination /path/to/new-public-checkout
+reviewed_commit=$(git rev-parse HEAD)
+python3 scripts/releases/export_public.py --commit "$reviewed_commit" --destination ../nola-public-snapshot
 ```
 
 导出不复制 `.git`、签名材料、本地数据或构建目录；即使敏感文件原来已被私有仓库跟踪，也不会进入公开快照。已人工核对的测试凭据只按路径和内容指纹允许，不放宽新凭据检测。原私有目录与历史不删除。
@@ -30,12 +31,14 @@ python3 scripts/releases/export_public.py --destination /path/to/new-public-chec
 先生成前端资源并构建匹配的 executables，再打包。macOS ARM64 CLI 的包同时包含 nola、nola-agent-host、nola-service、Web 资源和托管浏览器 runtime；保留目录结构。
 
 ```sh
-npm --prefix web/frontend ci
-npm --prefix web/frontend run build
+npm --prefix apps/web/frontend ci
+npm --prefix apps/web/frontend run build
 cargo build --release --locked -p nola_cli -p nola_service --bins
 python3 scripts/releases/package_cli.py --output /staging/Nola-cli-macos-aarch64-1.0.0.zip \
   --browser-runtime /staging/managed-browser-runtime --node-license /staging/Node-LICENSE.txt
 ```
+
+验收生成的 ZIP 时，用保留执行权限的工具解压。将 `NOLA_CLI_BUNDLE` 指向包含启动脚本 `nola` 的解压目录，运行 `npm --prefix apps/web/playwright_runtime run test:ui`。浏览器从一个临时工作区启动包内的 Host，使用包内 Web 资源，实际打开聊天、创建会话并检查页面。
 
 平台签名/公证必须在计算包 digest 前完成；开发预览若未进行 Developer ID 签名与公证，要在发布说明明确标注。Android 不能用 Debug 签名冒充 Release；商店包使用 `-PnolaDistribution=store`，禁止请求 APK 安装权限。没有经过对应系统构建和安装验收的平台不发布安装包。
 

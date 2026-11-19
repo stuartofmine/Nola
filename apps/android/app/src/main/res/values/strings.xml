@@ -1396,4 +1396,6 @@
     <string name="chat_ui_submission_unknown">The submission outcome has not been confirmed yet.</string>
     <string name="chat_skill_description">Description (optional)</string>
     <string name="models_web_host_disconnect">Disconnect host</string>
+    <string name="onboarding_choose_model">Choose a model</string>
+    <string name="onboarding_chat_model_hint">To start chatting, connect a model service, download a local model, or pair with a Nola Host.</string>
 </resources>

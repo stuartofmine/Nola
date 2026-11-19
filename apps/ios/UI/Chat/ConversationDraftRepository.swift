@@ -104,6 +104,40 @@ nonisolated final class FileConversationDraftRepository: ConversationDraftReposi
         guard value.revision > 0 else { throw CocoaError(.fileReadCorruptFile) }
         return value
     }
+    private func editURL(_ conversation: UUID) -> URL {
+        folder(.conversation(conversation)).appendingPathComponent("pending-edit.json")
+    }
+
+    private func readEdit(_ conversation: UUID) throws -> AppleMessageEditSubmission? {
+        do {
+            let edit = try decoder.decode(AppleMessageEditSubmission.self, from: Data(contentsOf: editURL(conversation)))
+            guard UUID(uuidString: edit.sourceConversationID) == conversation else { throw CocoaError(.fileReadCorruptFile) }
+            return edit
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile { return nil }
+    }
+
+    func pendingEdit(_ conversation: UUID) throws -> AppleMessageEditSubmission? {
+        try Self.disk.sync { try readEdit(conversation) }
+    }
+
+    func retainEdit(_ edit: AppleMessageEditSubmission, for conversation: UUID) throws {
+        guard UUID(uuidString: edit.sourceConversationID) == conversation else { throw Failure.conflict }
+        try Self.disk.sync { try locked {
+            guard try manifest(.conversation(conversation))?.deleted != true else { throw Failure.deleted }
+            if let current = try readEdit(conversation) {
+                guard current == edit else { throw IOSApplicationRuntimeError.rejected(String(localized: "chat.message.pendingEdit")) }
+            } else {
+                try write(encoder.encode(edit), to: editURL(conversation))
+            }
+        } }
+    }
+
+    func clearEdit(_ edit: AppleMessageEditSubmission, for conversation: UUID) throws {
+        try Self.disk.sync { try locked {
+            if try readEdit(conversation) == edit { try FileManager.default.removeItem(at: editURL(conversation)) }
+        } }
+    }
+
     private func submissionURL(_ id: UUID) -> URL {
         root.appendingPathComponent("submissions", isDirectory: true).appendingPathComponent("\(id.uuidString).json")
     }
@@ -277,6 +311,10 @@ nonisolated final class FileConversationDraftRepository: ConversationDraftReposi
         try write(encoder.encode(Manifest(revision: revision + 1, deleted: true, text: "", attachments: [], configuration: nil)),
             to: directory.appendingPathComponent("manifest.json"))
         revisions[owner] = nil
+        if case .conversation(let id) = owner {
+            do { try FileManager.default.removeItem(at: editURL(id)) }
+            catch let error as CocoaError where error.code == .fileNoSuchFile {}
+        }
         if case .unsent(let id) = owner, try pendingOwnerFromDisk() == id {
             _ = try newPendingOwnerFromDisk()
         }

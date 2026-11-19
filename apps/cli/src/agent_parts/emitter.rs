@@ -80,6 +80,14 @@ fn committed_assistant_journal(
         &mut self,
         through: nola_domain::assistant_journal::AssistantJournalCursor,
     ) { Emitter::committed_assistant_journal(self, through) }
+fn needs_ephemeral_public_text(&self) -> bool { self.json && self.event_sink.is_none() }
+fn ephemeral_public_text(&mut self, seal: &nola_domain::assistant_run_terminal::AssistantRunTerminalSeal, text: &str) {
+    self.emit_json_value(json!({
+        "type": "ephemeral_assistant_text", "session_id": seal.identity.conversation_id,
+        "run_id": seal.identity.run_id, "assistant_message_id": seal.identity.assistant_message_id,
+        "text": text,
+    }));
+}
 fn committed_assistant_run_terminal(
         &mut self,
         seal: &nola_domain::assistant_run_terminal::AssistantRunTerminalSeal,

@@ -3280,3 +3280,12 @@
 "model.web_host.forget_pairing.footer" = "Efface l’identité mémorisée et le jeton enregistré pour cette adresse d’hôte afin de réappairer.";
 "chat.context.mcp.empty" = "Aucun serveur MCP n’est encore configuré.";
 "chat.context.mcp.local.footer" = "Configurez et gérez les serveurs MCP locaux dans Bibliothèque > Capacités.";
+
+"onboarding.first_chat.body" = "Choisissez un modèle pour votre première conversation. Vous pourrez aussi le configurer plus tard dans les réglages.";
+"onboarding.first_chat.choose_model" = "Choisir un modèle";
+"chat.context.documents.read_error" = "Impossible de lire les documents enregistrés. Fermez puis rouvrez ce panneau.";
+"chat.context.documents.conflict" = "Les documents ont été modifiés ailleurs. Rouvrez le panneau pour modifier la liste à jour.";
+"chat.context.import.limit" = "La limite de 30 fichiers est atteinte. Fichiers non ajoutés : %@";
+"chat.message.pendingEdit" = "Vérifier la modification en attente";
+"chat.message.editSavedForReview" = "Vous pouvez fermer cet éditeur. Rouvrez la modification en attente dans cette conversation pour vérifier son envoi.";
+"chat.context.documents.blank" = "Saisissez du texte pour %@ ou supprimez le document vide.";

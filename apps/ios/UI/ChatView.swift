@@ -1108,7 +1108,7 @@ struct ChatView: View {
                 }
                 .toggleStyle(NolaSwitchToggleStyle())
             }
-            .sheet(isPresented: $showContextSheet) {
+            .sheet(isPresented: $showContextSheet, onDismiss: { loadConversationState(for: container.chatManager.currentConversationId) }) {
                 NavigationStack {
                     ChatContextSheet(
                         displayMode: .context,
@@ -1126,6 +1126,7 @@ struct ChatView: View {
                         hostUploadedDocuments: currentHostUploadedDocuments,
                         hostMCPServers: currentHostMCPServers,
                         uploadedDocuments: $currentUploadedDocuments,
+                        documentsReadable: memoryEditorBaseline?.uploadedDocumentsReadable == true,
                         dataSources: availableContextDataSources,
                         selectedDataSourceIDs: $currentDataSourceIDs,
                         selectedSystemDataSourceTypes: $currentSystemDataSourceTypes
@@ -1149,9 +1150,12 @@ struct ChatView: View {
                         currentLongTermMemory = saved.longTermMemory
                         currentUserPreferences = saved.userPreferences
                     } onSaveUploadedDocuments: { items in
-                        let savedDocuments = try container.chatManager.updateUploadedDocuments(items)
-                        memoryEditorBaseline?.uploadedDocuments = savedDocuments
-                        return savedDocuments
+                        guard let baseline = memoryEditorBaseline else {
+                            throw IOSApplicationRuntimeError.rejected(String(localized: "chat.context.documents.read_error"))
+                        }
+                        let saved = try container.chatManager.updateUploadedDocuments(items, expected: baseline)
+                        memoryEditorBaseline = saved
+                        return saved.uploadedDocuments
                     } onSaveConversationKnowledge: { snapshot in
                         let conversationId = try container.chatManager.updateConversationKnowledge(
                             knowledgePoints: snapshot.knowledgePoints,
@@ -1651,6 +1655,7 @@ struct ChatView: View {
 
     private var chatComposer: some View {
         VStack(alignment: .leading, spacing: 0) {
+            IOSPendingEditAction(owner: container.chatManager.currentConversationId, ownerIsRunning: processingState.blocksInput)
             if container.chatManager.currentConversationId == nil, let modelConfigurationMessage {
                 Button(action: openModelTab) {
                     Text(modelConfigurationMessage)
@@ -2873,18 +2878,22 @@ struct ChatView: View {
         guard let conversation = container.chatManager.conversation(for: convId) else {
             if convId != nil { selectedModel = nil }
             else { _ = restoreUnsentConfiguration() }
-            currentSessionMemory = ""
-            currentKnowledgePoints = ""
-            currentConversationWiki = ""
+            if !showContextSheet {
+                currentSessionMemory = ""
+                currentKnowledgePoints = ""
+                currentConversationWiki = ""
+            }
             currentPromptTemplateID = nil
             currentDataSourceIDs = []
             currentSystemDataSourceTypes = []
             currentContextUsage = nil
             return
         }
-        currentSessionMemory = conversation.sessionMemory
-        currentKnowledgePoints = conversation.knowledgePoints
-        currentConversationWiki = conversation.wiki
+        if !showContextSheet {
+            currentSessionMemory = conversation.sessionMemory
+            currentKnowledgePoints = conversation.knowledgePoints
+            currentConversationWiki = conversation.wiki
+        }
         currentPromptTemplateID = conversation.selectedPromptTemplateID
         currentDataSourceIDs = Set(availableContextDataSources.compactMap { source in
             source.isEnabledForConversation(
@@ -2911,7 +2920,7 @@ struct ChatView: View {
             guard !Task.isCancelled,
                   container.chatManager.currentConversationId == convId else { return }
             currentContextUsage = usage
-            if let refreshedConversation = container.chatManager.conversation(for: convId) {
+            if !showContextSheet, let refreshedConversation = container.chatManager.conversation(for: convId) {
                 currentSessionMemory = refreshedConversation.sessionMemory
                 currentKnowledgePoints = refreshedConversation.knowledgePoints
                 currentConversationWiki = refreshedConversation.wiki

@@ -12,6 +12,10 @@ import dagger.hilt.components.SingletonComponent
 @EntryPoint @InstallIn(SingletonComponent::class)
 interface AndroidExpertNativeTestDependencies {
     fun turnService(): AndroidAgentTurnService
+    fun modelService(): com.nola.llm.ModelService
+    fun scheduledActionScheduler(): com.nola.work.ScheduledActionScheduler
+    fun scheduledActions(): com.nola.data.repository.ScheduledActionRepository
+    fun preferences(): com.nola.data.local.datastore.PreferenceDataStore
     fun modelRepository(): ModelRepository
     fun runtime(): AndroidApplicationRuntime
     fun webAgentProvider(): com.nola.llm.provider.WebAgentProvider

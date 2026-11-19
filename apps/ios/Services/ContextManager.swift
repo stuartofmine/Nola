@@ -78,6 +78,10 @@ nonisolated public struct UserUploadedContextItem: Codable, Equatable, Identifia
     public var requiredTools: [String]?
     public var validationSteps: [String]?
 
+    fileprivate enum CodingKeys: String, CodingKey, CaseIterable {
+        case id, name, content, description, enabled, version, requiredTools, validationSteps
+    }
+
     public init(
         id: UUID = UUID(),
         name: String,
@@ -183,6 +187,8 @@ nonisolated public struct ChatMemoryRecord: Codable, Equatable, Identifiable {
 nonisolated public struct ChatMemoryProfile: Codable, Equatable {
     // Edit precondition only: not serialized, synchronized or used as canonical state.
     var canonicalMemorySnapshot: [IOSCanonicalMemoryRecord]? = []
+    var uploadedDocumentRevision: Int64?
+    var uploadedDocumentsReadable = false
     public var longTermMemory: String
     public var userPreferences: String
     public var memoryRecords: [ChatMemoryRecord]
@@ -268,6 +274,8 @@ nonisolated public struct ChatMemoryProfile: Codable, Equatable {
             uploadedDocuments: uploadedDocuments
         )
         result.canonicalMemorySnapshot = canonicalMemorySnapshot
+        result.uploadedDocumentRevision = uploadedDocumentRevision
+        result.uploadedDocumentsReadable = uploadedDocumentsReadable
         return result
     }
 
@@ -317,6 +325,8 @@ nonisolated public struct ChatMemoryProfile: Codable, Equatable {
             uploadedDocuments: uploadedDocuments
         )
         result.canonicalMemorySnapshot = canonicalMemorySnapshot
+        result.uploadedDocumentRevision = uploadedDocumentRevision
+        result.uploadedDocumentsReadable = uploadedDocumentsReadable
         return result
     }
 
@@ -385,7 +395,7 @@ nonisolated public protocol ChatMemoryProfileStore: AnyObject {
     @discardableResult
     func saveMemoryText(longTermMemory: String, userPreferences: String, expected: ChatMemoryProfile) throws -> ChatMemoryProfile
     @discardableResult
-    func saveUploadedDocuments(_ items: [UserUploadedContextItem]) throws -> [UserUploadedContextItem]
+    func saveUploadedDocuments(_ items: [UserUploadedContextItem], expected: ChatMemoryProfile) throws -> ChatMemoryProfile
 }
 
 nonisolated protocol ChatSkillEditingStore: AnyObject {
@@ -413,6 +423,14 @@ nonisolated protocol ChatMCPEditingStore: AnyObject {
 }
 
 nonisolated public final class CanonicalChatMemoryProfileStore: ChatMemoryProfileStore, ChatSkillEditingStore, ChatMCPEditingStore, ChatCapabilityLibraryStore {
+    private struct StoredDocument: Decodable {
+        let item: UserUploadedContextItem
+        init(from decoder: Decoder) throws {
+            _ = try AgentCoreResourceStrictDecoding.fields(decoder, allowed: Set(UserUploadedContextItem.CodingKeys.allCases.map(\.rawValue)))
+            item = try UserUploadedContextItem(from: decoder)
+        }
+    }
+
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
     private let queue: DispatchQueue
@@ -604,20 +622,30 @@ nonisolated public final class CanonicalChatMemoryProfileStore: ChatMemoryProfil
     }
 
     @discardableResult
-    public func saveUploadedDocuments(_ items: [UserUploadedContextItem]) throws -> [UserUploadedContextItem] {
+    public func saveUploadedDocuments(_ items: [UserUploadedContextItem], expected: ChatMemoryProfile) throws -> ChatMemoryProfile {
         try queue.sync {
+            guard expected.uploadedDocumentsReadable else {
+                throw IOSApplicationRuntimeError.rejected(String(localized: "chat.context.documents.read_error"))
+            }
+            if let blank = items.first(where: { $0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+                throw IOSApplicationRuntimeError.rejected(String(format: String(localized: "chat.context.documents.blank"), blank.name))
+            }
             let normalized = Self.normalizeUploadedItems(items)
             for item in normalized where item.content.count > maxCharacters * 8 {
-                throw ChatMemoryProfileStoreError.textTooLong(field: "文档: \(item.name)", maxCharacters: maxCharacters * 8)
+                throw ChatMemoryProfileStoreError.textTooLong(field: item.name, maxCharacters: maxCharacters * 8)
             }
-            let encoded = try encoder.encode(normalized)
-            let valueJSON = String(decoding: encoded, as: UTF8.self)
-            _ = try applicationRuntime.putProductSetting(
-                key: uploadedDocumentsKey,
-                valueJSON: valueJSON,
-                updatedAtMs: Int64(Date().timeIntervalSince1970 * 1_000)
-            )
-            return normalized
+            let valueJSON = String(decoding: try encoder.encode(normalized), as: UTF8.self)
+            let saved: IOSCanonicalProductSetting
+            do {
+                saved = try applicationRuntime.putProductSettingChecked(key: uploadedDocumentsKey, valueJSON: valueJSON,
+                    expectedRevision: expected.uploadedDocumentRevision, updatedAtMs: Int64(Date().timeIntervalSince1970 * 1_000))
+            } catch IOSApplicationRuntimeError.rejected(let detail) where detail.contains("product_setting_revision_conflict") {
+                throw IOSApplicationRuntimeError.rejected(String(localized: "chat.context.documents.conflict"))
+            }
+            var result = expected
+            result.uploadedDocuments = normalized
+            result.uploadedDocumentRevision = saved.revision
+            return result
         }
     }
 
@@ -628,19 +656,17 @@ nonisolated public final class CanonicalChatMemoryProfileStore: ChatMemoryProfil
         let preferences = records.filter { $0.namespace == .userPreferences }.map(\.text).joined(separator: "\n")
         let skills = (try? applicationRuntime.listSkills().compactMap(\.uploadedContextItem)) ?? []
         let servers = (try? applicationRuntime.listMCPServers().compactMap(\.userMCPServer)) ?? []
-        let documents: [UserUploadedContextItem]
-        if let setting = try? applicationRuntime.productSetting(key: uploadedDocumentsKey),
-           let data = setting.valueJSON.data(using: .utf8),
-           let decoded = try? decoder.decode([UserUploadedContextItem].self, from: data) {
-            documents = decoded
-        } else {
-            documents = []
+        var result = ChatMemoryProfile(longTermMemory: longTerm, userPreferences: preferences, memoryRecords: records,
+            mcpServers: servers, uploadedSkills: skills)
+        do {
+            if let setting = try applicationRuntime.productSetting(key: uploadedDocumentsKey) {
+                result.uploadedDocuments = try decoder.decode([StoredDocument].self, from: Data(setting.valueJSON.utf8)).map(\.item)
+                result.uploadedDocumentRevision = setting.revision
+            }
+            result.uploadedDocumentsReadable = true
+        } catch {
+            result.uploadedDocumentsReadable = false
         }
-        var result = ChatMemoryProfile(
-            longTermMemory: longTerm, userPreferences: preferences, memoryRecords: records,
-            mcpServers: servers, uploadedSkills: skills,
-            uploadedDocuments: documents
-        )
         result.canonicalMemorySnapshot = canonicalMemories
         return result
     }
@@ -691,16 +717,12 @@ nonisolated public final class CanonicalChatMemoryProfileStore: ChatMemoryProfil
     private static func normalizeUploadedItems(_ items: [UserUploadedContextItem]) -> [UserUploadedContextItem] {
         items
             .filter { !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            .map {
-                UserUploadedContextItem(
-                    id: $0.id,
-                    name: $0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        ? "Uploaded Context"
-                        : $0.name.trimmingCharacters(in: .whitespacesAndNewlines),
-                    content: $0.content.trimmingCharacters(in: .whitespacesAndNewlines),
-                    description: $0.description.trimmingCharacters(in: .whitespacesAndNewlines),
-                    enabled: $0.enabled
-                )
+            .map { item in
+                var result = item
+                let name = item.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                result.name = name.isEmpty ? "Uploaded Context" : name
+                result.description = item.description.trimmingCharacters(in: .whitespacesAndNewlines)
+                return result
             }
     }
 }
@@ -884,8 +906,8 @@ public final class DefaultContextManager {
     }
 
     @discardableResult
-    public func saveUploadedDocuments(_ items: [UserUploadedContextItem]) throws -> [UserUploadedContextItem] {
-        try profileStore.saveUploadedDocuments(items)
+    public func saveUploadedDocuments(_ items: [UserUploadedContextItem], expected: ChatMemoryProfile) throws -> ChatMemoryProfile {
+        try profileStore.saveUploadedDocuments(items, expected: expected)
     }
 
     func recordPreparedDataSourceUsage(

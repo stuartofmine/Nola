@@ -42,6 +42,19 @@ test('history installs canonical snapshot and rejects a missing source Host inst
     assert.equal(reduceChatTimeline(initial,{type:'history',request:timelineRequest(initial),mode:'replace',payload:missing}).ignored,'invalid');
 });
 
+test('only an explicit maintenance copy capability in the latest history window allows copying', () => {
+    const initial = createChatTimeline(owner);
+    const payload = history([message('user', 'user')], 5);
+    const confirmed = reduceChatTimeline(initial, { type: 'history', request: timelineRequest(initial), mode: 'replace',
+        payload: { ...payload, messageWindow: { ...payload.messageWindow, canBranchDuringMaintenance: true } } }).state;
+    assert.equal(confirmed.window?.canBranchDuringMaintenance, true);
+    for (const flag of [false, 'true', undefined]) {
+        const refreshed = reduceChatTimeline(confirmed, { type: 'history', request: timelineRequest(confirmed), mode: 'replace',
+            payload: { ...payload, messageWindow: { ...payload.messageWindow, canBranchDuringMaintenance: flag } } }).state;
+        assert.equal(refreshed.window?.canBranchDuringMaintenance, undefined);
+    }
+});
+
 test('verified terminal hydrates only its exact user witness without replacing the loaded range or journal',async()=>{
     const {state,evidence,payload,userId}=await terminalWitnessFixture();
     const before=state.messages.find(message=>message.id===userId)!;

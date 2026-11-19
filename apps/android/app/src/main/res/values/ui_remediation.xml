@@ -26,7 +26,7 @@
     <string name="conversations_search_title">Search conversation titles</string>
     <string name="activity_title">Activity and results</string>
     <string name="activity_local_scope">Execution records received on this device for conversations, agents and plans.</string>
-    <string name="activity_search_title">Search titles, sources or result status</string>
+    <string name="activity_search_title">Search activity</string>
     <string name="activity_search">Search</string>
     <string name="activity_all">All</string>
     <string name="activity_agent">Agent</string>

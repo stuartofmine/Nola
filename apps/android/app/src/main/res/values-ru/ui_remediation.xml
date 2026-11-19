@@ -26,7 +26,7 @@
     <string name="conversations_search_title">Поиск по названиям разговоров</string>
     <string name="activity_title">Активность и результаты</string>
     <string name="activity_local_scope">Записи выполнения для разговоров, агентов и планов, полученные на этом устройстве.</string>
-    <string name="activity_search_title">Поиск по названию, источнику или статусу</string>
+    <string name="activity_search_title">Поиск действий</string>
     <string name="activity_search">Поиск</string>
     <string name="activity_all">Все</string>
     <string name="activity_agent">Агент</string>

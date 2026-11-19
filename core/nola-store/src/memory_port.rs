@@ -39,6 +39,9 @@ impl MemoryReadRepository for NolaStore {
     ) -> Result<Vec<StoredMemoryRecord>, Self::Error> {
         NolaStore::memory_records_by_ids(self, ids)
     }
+    fn list_owned_memory_records(&self, owners: &[String], query: Option<&str>, limit: usize) -> Result<Vec<StoredMemoryRecord>, Self::Error> {
+        self.list_owned_memory_records(owners, query.map(escaped_like_pattern).as_deref(), limit)
+    }
     fn list_memory_records(&self, limit: usize) -> Result<Vec<StoredMemoryRecord>, Self::Error> {
         NolaStore::list_memory_records(self, limit)
     }

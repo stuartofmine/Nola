@@ -421,10 +421,14 @@ pub struct CommittedHostRequests {
     pub requests: Vec<HostRequestEnvelope>,
 }
 
-fn invocation_config_snapshot(config: &AgentCoreConfig) -> Result<(String, String), String> {
+fn validate_invocation_binding(config: &AgentCoreConfig) -> Result<(), String> {
     if let Some(binding) = &config.turn_identity.host_invocation {
         binding.validate().map_err(str::to_string)?;
     }
+    Ok(())
+}
+
+fn invocation_config_snapshot(config: &AgentCoreConfig) -> Result<(String, String), String> {
     let json = serde_json::to_string(config)
         .map_err(|error| format!("encode Run invocation config failed: {error}"))?;
     let digest = format!("{:x}", Sha256::digest(json.as_bytes()));

@@ -3412,3 +3412,12 @@
 "model.web_host.forget_pairing.footer" = "Clears the remembered identity and saved token for this host address so you can pair again.";
 "chat.context.mcp.empty" = "No MCP servers are configured yet.";
 "chat.context.mcp.local.footer" = "Configure and manage local MCP servers in Library > Capabilities.";
+
+"onboarding.first_chat.body" = "Choose a model for your first conversation. You can also set it up later in Settings.";
+"onboarding.first_chat.choose_model" = "Choose a model";
+"chat.context.documents.read_error" = "Couldn’t read your saved documents. Close and reopen this panel to try again.";
+"chat.context.documents.conflict" = "Your documents changed elsewhere. Reopen this panel to load the latest list before editing.";
+"chat.context.import.limit" = "The 30-file limit was reached. These files weren’t added: %@";
+"chat.message.pendingEdit" = "Review pending message edit";
+"chat.message.editSavedForReview" = "You can close this editor. Reopen the pending edit in this conversation to check whether it was sent.";
+"chat.context.documents.blank" = "Enter text for %@ or delete the empty document.";

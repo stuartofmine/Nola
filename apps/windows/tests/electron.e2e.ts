@@ -1,5 +1,6 @@
 import { _electron as electron, ElectronApplication, expect, Page, test } from "@playwright/test";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 test.skip(
@@ -8,7 +9,7 @@ test.skip(
 );
 
 const windowsRoot = path.resolve(__dirname, "..");
-const testUserData = path.join(windowsRoot, "test-results", "profile");
+let profile: string;
 let application: ElectronApplication;
 let page: Page;
 
@@ -22,16 +23,20 @@ function requiredExecutable(environmentName: string): string {
 
 test.beforeAll(async () => {
     const cliPath = requiredExecutable("NOLA_WINDOWS_CLI_PATH");
-    const llamaServerPath = requiredExecutable("NOLA_LLAMA_SERVER");
-    rmSync(testUserData, { recursive: true, force: true });
+    profile = mkdtempSync(path.join(os.tmpdir(), "nola-electron-"));
+    mkdirSync(path.join(profile, "home"));
     application = await electron.launch({
         args: [windowsRoot],
         cwd: windowsRoot,
         env: {
             ...process.env,
             NOLA_WINDOWS_CLI_PATH: cliPath,
-            NOLA_LLAMA_SERVER: llamaServerPath,
-            NOLA_E2E_USER_DATA: testUserData,
+            NOLA_E2E_USER_DATA: path.join(profile, "desktop"),
+            NOLA_HOME: path.join(profile, "home"),
+            HOME: path.join(profile, "home"),
+            USERPROFILE: path.join(profile, "home"),
+            NOLA_MAC_APP_SUPPORT: path.join(profile, "support"),
+            NOLA_DB_PATH: path.join(profile, "state.sqlite"),
         },
     });
     page = await application.firstWindow();
@@ -40,12 +45,13 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
     await application?.close();
+    if (profile) rmSync(profile, { recursive: true, force: true, maxRetries: 5 });
 });
 
 test("starts the real local Host in a sandboxed desktop renderer", async () => {
     await expect(page.locator(".chat-page")).toBeVisible();
     expect(await page.locator("html").getAttribute("data-nola-desktop")).toBe("windows");
-    expect(await application.browserWindow(page).evaluate((window) => ({
+    expect(await (await application.browserWindow(page)).evaluate((window) => ({
         nodeIntegration: window.webContents.getLastWebPreferences().nodeIntegration,
         contextIsolation: window.webContents.getLastWebPreferences().contextIsolation,
         sandbox: window.webContents.getLastWebPreferences().sandbox,
@@ -81,4 +87,41 @@ test("keeps API and local llama.cpp models accessible with native runtime badge"
     const downloadControl = page.getByRole("button", { name: /下载|下載|Download|ダウンロード|다운로드|Herunterladen|Descargar|Télécharger|Скачать/i });
     expect((await startControl.count()) + (await downloadControl.count())).toBeGreaterThan(0);
     await page.screenshot({ path: path.join(windowsRoot, "test-results", "artifacts", "model-routes.png"), fullPage: true });
+});
+
+
+test("restarting the owned Host restores the same conversation draft", async () => {
+    const origin = new URL(page.url()).origin;
+    await page.goto(origin + "/chat");
+    await page.locator("button.new-conversation:visible").first().click();
+    const composer = page.locator("#chat-composer");
+    await composer.fill("Unsent desktop restart regression");
+    await page.locator('input[type="file"][accept*=".txt"]').first().setInputFiles({
+        name: "restart-note.txt", mimeType: "text/plain", buffer: Buffer.from("Unsent note"),
+    });
+    await expect.poll(() => page.evaluate(async () => {
+        return new Promise<boolean>((resolve, reject) => {
+            const request = indexedDB.open("nola-conversation-workspace");
+            request.onsuccess = () => {
+                const db = request.result;
+                const rows = db.transaction("drafts").objectStore("drafts").getAll();
+                rows.onsuccess = () => { db.close(); resolve(rows.result.some(row => row.text === "Unsent desktop restart regression" && row.attachments.some((a: {name: string}) => a.name === "restart-note.txt"))); };
+                rows.onerror = () => reject(rows.error);
+            };
+            request.onerror = () => reject(request.error);
+        });
+    })).toBe(true);
+    const departed = page.waitForURL(/^data:/);
+    await page.evaluate(() => { void (window as unknown as {NolaDesktop: {retryHost(): Promise<boolean>}}).NolaDesktop.retryHost(); });
+    await departed;
+    await page.waitForURL(url => url.origin === origin && url.pathname === "/chat");
+    await expect(composer).toHaveValue("Unsent desktop restart regression");
+    const attachment = page.getByRole("button", { name: "restart-note.txt", exact: true });
+    await expect(attachment).toBeVisible();
+    if (process.env.NOLA_DESKTOP_RESTART_EVIDENCE) {
+        writeFileSync(process.env.NOLA_DESKTOP_RESTART_EVIDENCE, JSON.stringify({
+            platform: process.platform, beforeOrigin: origin, afterOrigin: new URL(page.url()).origin,
+            draft: await composer.inputValue(), attachment: await attachment.innerText(),
+        }), {flag: "wx"});
+    }
 });

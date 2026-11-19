@@ -26,7 +26,7 @@
     <string name="conversations_search_title">搜索会话标题</string>
     <string name="activity_title">活动与结果</string>
     <string name="activity_local_scope">仅显示本端已收到的对话、Agent 和计划执行记录。</string>
-    <string name="activity_search_title">搜索标题、来源或结果状态</string>
+    <string name="activity_search_title">搜索活动</string>
     <string name="activity_search">搜索</string>
     <string name="activity_all">全部</string>
     <string name="activity_agent">Agent</string>

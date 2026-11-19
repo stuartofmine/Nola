@@ -37,7 +37,10 @@ const agentHostName = process.platform === "win32" ? "nola-agent-host.exe" : "no
 const llamaServerName = process.platform === "win32" ? "llama-server.exe" : "llama-server";
 
 if (process.env.NOLA_E2E_USER_DATA) {
-    app.setPath("userData", path.resolve(process.env.NOLA_E2E_USER_DATA));
+    const directory = path.resolve(process.env.NOLA_E2E_USER_DATA);
+    mkdirSync(directory, {recursive: true});
+    app.setPath("userData", directory);
+    app.setPath("documents", directory);
 }
 
 function resourcesRoot(): string {
@@ -362,6 +365,7 @@ function handleHostState(state: HostState): void {
         void mainWindow?.loadURL(`${state.origin}${targetPath}`);
         return;
     }
+    hostOrigin = undefined;
     if (state.kind === "failed" && !quitting) {
         if (!isNonRecoverableStartupError(state.detail) && automaticRecoveryCount < 3) {
             automaticRecoveryCount += 1;
@@ -381,6 +385,7 @@ async function startHost(): Promise<void> {
         host = new HostController({
             cliPath: paths.cliPath,
             webRoot: paths.webRoot,
+            portFile: path.join(app.getPath("userData"), "host-port"),
             workspaceRoot: paths.workspace,
             llamaServerPath: paths.llamaServerPath,
             llamaBackend: loadNativeRuntimeInfo().backend,

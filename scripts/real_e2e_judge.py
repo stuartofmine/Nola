@@ -251,6 +251,26 @@ def _judge_persistence_present(receipt: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def _judge_messaging_proxy(receipt: dict[str, Any]) -> dict[str, Any]:
+    paths = _paths(receipt, "http_transcript")
+    for path in paths:
+        value = _load_json(path)
+        rows = value.get("exchanges", [])
+        if len(rows) != 2 or not all(row.get("path") == "/api/messaging-channels"
+                and row.get("status") == 200 for row in rows):
+            continue
+        listed, saved = rows
+        channels = listed.get("response", {}).get("channels", [])
+        updated = saved.get("response", {})
+        if (listed.get("method") == "GET" and saved.get("method") == "PUT"
+                and any(item.get("connection_id") == "telegram-primary" for item in channels)
+                and updated.get("connection_id") == "whatsapp-primary"
+                and updated.get("state") == "awaiting_verification"
+                and "private-channel-token" not in json.dumps(rows)):
+            return _result(True, "Host channel read and update verified", [str(path)])
+    return _result(False, "missing Host channel round-trip", map(str, paths))
+
+
 def _judge_http_api(receipt: dict[str, Any]) -> dict[str, Any]:
     valid = []
     failures = []
@@ -509,6 +529,7 @@ JUDGES = {
     "assistant_nonempty": _judge_assistant_nonempty,
     "persistence_present": _judge_persistence_present,
     "http_api": _judge_http_api,
+    "messaging_proxy": _judge_messaging_proxy,
     "transcript_order": _judge_transcript_order,
     "ui_terminal": _judge_ui_terminal,
     "ui_progressive": _judge_ui_progressive,

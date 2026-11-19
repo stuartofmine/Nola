@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } = require('node:fs');
 const os = require('node:os');
+const { createServer } = require('node:net');
 const path = require('node:path');
 const { HostController, resolveExecutable } = require('../dist/host.js');
 
@@ -65,9 +66,12 @@ test('HostController transitions starting -> ready, verifies args/env, and stops
             }));
             const server = http.createServer((req, res) => {
                 if (req.url === '/api/health') { res.writeHead(200); res.end('ok'); return; }
+                if (req.url === '/chat') { res.end('<div id="app"></div>'); return; }
                 res.writeHead(404); res.end();
             });
-            server.listen(port, '127.0.0.1');
+            server.listen(port, '127.0.0.1', () => console.log(JSON.stringify({
+                type: 'server.started', origin: 'http://127.0.0.1:' + port, loopback: true, protocol_version: 1
+            })));
             process.on('SIGTERM', () => { server.close(() => process.exit(0)); });
         `);
 
@@ -113,8 +117,10 @@ test('HostController retries with backoff across maxAttempts and fails when all 
             if (count === 1) process.exit(17);
             const args = process.argv.slice(2);
             const port = Number(args[args.indexOf('--port') + 1]);
-            const server = http.createServer((req, res) => { res.writeHead(200); res.end('ok'); });
-            server.listen(port, '127.0.0.1');
+            const server = http.createServer((req, res) => { res.writeHead(200); res.end('<div id="app"></div>'); });
+            server.listen(port, '127.0.0.1', () => console.log(JSON.stringify({
+                type: 'server.started', origin: 'http://127.0.0.1:' + port, loopback: true, protocol_version: 1
+            })));
             process.on('SIGTERM', () => server.close(() => process.exit(0)));
         `);
 
@@ -162,16 +168,20 @@ test('HostController retries with backoff across maxAttempts and fails when all 
     }
 });
 
-test('HostController transitions to failed on post-ready crash and reallocates port on restart', async () => {
+test('HostController transitions to failed on post-ready crash and preserves its origin on restart', async () => {
     const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'nola-win-host-crash-'));
     try {
         const cliPath = createFakeHostBinary(tmpDir, `
             const http = require('node:http');
             const args = process.argv.slice(2);
             const port = Number(args[args.indexOf('--port') + 1]);
-            const server = http.createServer((req, res) => { res.writeHead(200); res.end('ok'); });
-            server.listen(port, '127.0.0.1');
-            setTimeout(() => { server.close(() => process.exit(42)); }, 250);
+            const server = http.createServer((req, res) => { res.writeHead(200); res.end('<div id="app"></div>'); });
+            server.listen(port, '127.0.0.1', () => console.log(JSON.stringify({
+                type: 'server.started', origin: 'http://127.0.0.1:' + port, loopback: true, protocol_version: 1
+            })));
+            server.once('request', () => server.on('request', (req, res) => {
+                if (req.url === '/chat') res.once('finish', () => setTimeout(() => process.exit(42), 80));
+            }));
             process.on('SIGTERM', () => server.close(() => process.exit(0)));
         `);
 
@@ -193,7 +203,7 @@ test('HostController transitions to failed on post-ready crash and reallocates p
 
         const origin2 = await controller.restart();
         try {
-            assert.notEqual(origin2, origin1, 'restart() should allocate a fresh loopback port');
+            assert.equal(origin2, origin1);
             assert.equal((await fetch(`${origin2}/api/health`)).status, 200);
         } finally {
             await controller.stop();
@@ -239,22 +249,54 @@ test('HostController launches and stops real target/debug/nola binary in an isol
     delete process.env.NOLA_MAC_APP_SUPPORT;
 
     const states = [];
-    const controller = new HostController({
+    const options = {
         cliPath: realNola,
+        portFile: path.join(tmpDir, "host-port"),
         webRoot: path.join(repoRoot, 'apps/web'),
         workspaceRoot: tmpDir,
         maxAttempts: 1,
         log: () => {},
         onState: (state) => states.push(state),
-    });
+    };
+    const controller = new HostController(options);
 
     try {
+        // A released shell selected an ephemeral port. While that origin is
+        // occupied, upgrading must not silently switch to another workspace.
+        const previous = createServer();
+        await new Promise((resolve, reject) => previous.once('error', reject).listen(0, '127.0.0.1', resolve));
+        const previousOrigin = 'http://127.0.0.1:' + previous.address().port;
+        const logs = path.join(tmpDir, 'logs');
+        require('node:fs').mkdirSync(logs);
+        const logFile = path.join(logs, 'nola-windows.log');
+        const record = origin => '2026-04-01T12:00:00.001Z [state] ' + JSON.stringify({ kind: 'ready', origin }) + '\n';
+        try {
+            writeFileSync(logFile, record(previousOrigin));
+            await assert.rejects(() => controller.start(), /port .* is busy/);
+            assert.equal(existsSync(options.portFile), false);
+        } finally {
+            await new Promise(resolve => previous.close(resolve));
+        }
         const origin = await controller.start();
+        assert.equal(origin, previousOrigin);
+        assert.equal(require('node:fs').readFileSync(options.portFile, 'utf8'), new URL(previousOrigin).port);
         const res = await fetch(`${origin}/api/health`);
         assert.equal(res.status, 200);
         const session = await (await fetch(`${origin}/api/web/session`)).json();
         assert.equal(session.localTrust, true);
         assert.equal(states.at(-1).kind, 'ready');
+        await controller.stop();
+        writeFileSync(logFile, record('http://127.0.0.1:1'));
+        const relaunched = new HostController(options);
+        try {
+            assert.equal(await relaunched.start(), origin, 'A new shell must reuse its profile origin');
+        } finally {
+            await relaunched.stop();
+        }
+        // A fresh checkout does not contain built UI assets.
+        const missingUi = new HostController({...options, webRoot: homeDir});
+        await assert.rejects(() => missingUi.start(), /cannot serve \/chat/);
+        assert.equal(states.at(-1).kind, 'failed');
     } finally {
         await controller.stop();
         for (const [k, v] of Object.entries(prevEnv)) {

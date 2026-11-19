@@ -1386,4 +1386,6 @@
     <string name="chat_ui_submission_unknown">Результат отправки ещё не подтверждён.</string>
     <string name="chat_skill_description">Описание (необязательно)</string>
     <string name="models_web_host_disconnect">Отключить</string>
+    <string name="onboarding_choose_model">Выбрать модель</string>
+    <string name="onboarding_chat_model_hint">Чтобы начать чат, подключите сервис моделей, загрузите локальную модель или подключитесь к хосту Nola.</string>
 </resources>

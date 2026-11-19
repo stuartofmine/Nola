@@ -9,27 +9,15 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CONFIG_PATH="${NOLA_CONFIG_PATH:-$HOME/.nola/config.json}"
 BINARY="${NOLA_REAL_CLI_BINARY:-$ROOT/target/release/nola}"
 
+if (( $# > 1 )) || [[ $# -eq 1 && $1 != "--web-only" ]]; then
+    printf 'Usage: %s [--web-only]\n' "$0" >&2
+    exit 2
+fi
+
 [[ -f "$CONFIG_PATH" ]] || {
     printf 'Missing Nola config: %s\n' "$CONFIG_PATH" >&2
     exit 2
 }
-
-python3 - "$CONFIG_PATH" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as handle:
-    llm = json.load(handle).get("llm", {})
-missing = [
-    key
-    for key in ("endpoint", "api_key", "model")
-    if not str(llm.get(key, "")).strip()
-]
-if missing:
-    raise SystemExit(
-        "Nola config must define llm.endpoint, llm.api_key, and llm.model."
-    )
-PY
 
 if [[ "${NOLA_SKIP_CLI_BUILD:-0}" != "1" ]]; then
     printf '[real-cli-web] building current CLI Web Host\n'
@@ -46,7 +34,7 @@ fi
     exit 2
 }
 
-if [[ "${NOLA_REAL_WEB_ONLY:-0}" != "1" ]]; then
+if [[ "${1:-}" != "--web-only" ]]; then
 printf '[real-cli-web] running CLI product path\n'
 python3 - "$BINARY" "$CONFIG_PATH" <<'PY'
 import json
@@ -66,69 +54,28 @@ with tempfile.TemporaryDirectory(prefix="nola-real-cli-") as runtime_dir:
     environment = os.environ.copy()
     environment["HOME"] = runtime_home
     environment["NOLA_DB_PATH"] = os.path.join(runtime_dir, "nola.sqlite")
-    completed = subprocess.run(
-        [
-            binary,
-            "--no-save",
-            "--no-tools",
-            "--json",
-            f"Return only this exact ASCII token: {expected}",
-        ],
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=90,
-        env=environment,
-    )
-events = []
-for line in completed.stdout.splitlines():
-    try:
-        events.append(json.loads(line))
-    except json.JSONDecodeError:
-        continue
-assistant_text = ""
-canonical_delta_count = 0
-canonical_complete_count = 0
-for event in events:
-    if event.get("type") == "core_part_updated":
-        part = event.get("part") or {}
-        update = event.get("update") or {}
-        if part.get("kind") == "text":
-            assistant_text = str(part.get("text", ""))
-            if update.get("type") == "text_delta":
-                canonical_delta_count += 1
-            if update.get("type") == "completed":
-                canonical_complete_count += 1
-types = [event.get("type") for event in events]
-report = {
-    "exitCode": completed.returncode,
-    "eventCount": len(events),
-    "assistantDeltaCount": canonical_delta_count,
-    "assistantResetCount": types.count("assistant_reset"),
-    "thinkingDeltaCount": types.count("thinking_delta"),
-    "assistantCompleteCount": canonical_complete_count,
-    "assistantText": assistant_text,
-}
-print(json.dumps(report, ensure_ascii=False))
-if (
-    completed.returncode != 0
-    or report["assistantDeltaCount"] < 1
-    or report["assistantResetCount"] != 0
-    or report["assistantCompleteCount"] != 1
-    or assistant_text.strip() != expected
-):
-    if completed.stderr.strip():
-        print(completed.stderr, file=sys.stderr)
-    raise SystemExit(9)
+    environment.update(NOLA_HOME=runtime_home, NOLA_MAC_APP_SUPPORT=os.path.join(runtime_dir, "support"))
+    config_file = os.path.join(runtime_config_dir, "config.json")
+    with open(config_file) as source:
+        if "connections" in json.load(source)["llm"]:
+            subprocess.run([binary, "model", "apply-config", config_file], cwd=runtime_dir, env=environment,
+                           check=True, stdout=subprocess.DEVNULL)
+    completed = subprocess.run([binary, "--no-tools", "--json", f"Return only this exact ASCII token: {expected}"],
+                               cwd=runtime_dir, env=environment, text=True, capture_output=True, timeout=120, check=True)
+    events = [json.loads(line) for line in completed.stdout.splitlines() if line.startswith("{")]
+    admitted, = [e for e in events if e.get("type") == "submission_admitted"]
+    terminal, = [e for e in events if e.get("type") == "assistant_run_terminal_committed_v1"]
+    assert (terminal["run_id"], terminal["session_id"]) == (admitted["run_id"], admitted["conversation_id"])
+    shown = subprocess.check_output([binary, "--json", "session", "show", terminal["session_id"]],
+                                    cwd=runtime_dir, env=environment)
+    messages = json.loads(shown)["messages"]
+    assert [m["role"] for m in messages] == ["user", "assistant"] and messages[-1]["content"].strip() == expected
+    print("CLI first turn and persisted reply verified")
 PY
 
-printf '[real-cli-web] running interactive terminal product path\n'
-env -u NOLA_E2E_RECEIPT_PATH \
-    python3 "$ROOT/scripts/test_real_cli_terminal.py" "$BINARY"
+printf '[real-cli-web] running tool chain and compaction through current model configuration\n'
+python3 "$ROOT/scripts/test_real_cli_long_tasks.py" --binary "$BINARY" --config "$CONFIG_PATH" --case compaction
 
-printf '[real-cli-web] running Agent tools and compaction product path\n'
-python3 "$ROOT/scripts/test_real_cli_agent.py" "$BINARY"
 fi
 
 printf '[real-cli-web] running token-session Web product path\n'
@@ -138,8 +85,8 @@ import json
 import os
 import shutil
 import signal
-import time
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -149,7 +96,7 @@ import uuid
 from pathlib import Path
 
 root, binary, config_path = sys.argv[1:]
-expected = "NOLA_WEB_REAL_OK"
+expected = "NOLA_WEB_" + uuid.uuid4().hex
 prompt = f"Return only this exact ASCII token: {expected}"
 runtime_dir = tempfile.mkdtemp(prefix="nola-real-web-", dir="/tmp")
 
@@ -164,7 +111,13 @@ os.makedirs(runtime_config_dir, exist_ok=True)
 shutil.copyfile(config_path, os.path.join(runtime_config_dir, "config.json"))
 with open(os.path.join(runtime_config_dir, "config.json"), encoding="utf-8") as handle:
     runtime_config = json.load(handle)
-upstream_endpoint = str(runtime_config.get("llm", {}).get("endpoint", "")).strip()
+llm = runtime_config["llm"]
+route = llm
+if "connections" in llm:
+    sys.path.insert(0, os.path.join(root, "scripts"))
+    from e2e.current_model import declared_route
+    route, _ = declared_route(runtime_config)
+upstream_endpoint = route["endpoint"]
 if not upstream_endpoint:
     raise RuntimeError("configured provider endpoint is missing")
 provider_trace_path = os.path.join(runtime_dir, "provider.ndjson")
@@ -192,11 +145,14 @@ while not os.path.isfile(provider_ready_path):
         raise RuntimeError("provider evidence probe readiness timed out")
     time.sleep(0.05)
 with open(provider_ready_path, encoding="utf-8") as handle:
-    runtime_config.setdefault("llm", {})["endpoint"] = json.load(handle)["endpoint"]
+    route["endpoint"] = json.load(handle)["endpoint"]
 with open(os.path.join(runtime_config_dir, "config.json"), "w", encoding="utf-8") as handle:
     json.dump(runtime_config, handle)
-environment["HOME"] = runtime_home
+environment.update(HOME=runtime_home, NOLA_HOME=runtime_home, NOLA_MAC_APP_SUPPORT=os.path.join(runtime_dir, "support"))
 environment["NOLA_DB_PATH"] = os.path.join(runtime_dir, "nola.sqlite")
+if "connections" in llm:
+    subprocess.run([binary, "model", "apply-config", os.path.join(runtime_config_dir, "config.json")],
+                   cwd=runtime_dir, env=environment, check=True, stdout=subprocess.DEVNULL)
 server_log_path = os.path.join(runtime_dir, "web-host.log")
 server_log = open(server_log_path, "w", encoding="utf-8")
 process = subprocess.Popen(
@@ -260,13 +216,37 @@ try:
             method=method or ("GET" if data is None else "POST"),
         )
         try:
-            with opener.open(request, timeout=10) as response:
+            with opener.open(request, timeout=45) as response:
                 return json.load(response)
         except urllib.error.HTTPError as error:
             payload = error.read().decode("utf-8", "replace")
             raise RuntimeError(
                 f"HTTP {error.code} for {path}: {payload}"
             ) from error
+
+    def encode_submission(request):
+        conversation = request["conversationId"]
+        request["expected_host_id"] = session["hostId"]
+        config = json_request(f"/api/chat/conversations/{conversation}/configuration")
+        request["expected_configuration_revision"] = config["configurationRevision"]
+        history = json_request(f"/api/chat/conversations/{conversation}/messages")["messages"]
+        request["expected_parent_message_id"] = history[-1]["messageId"] if history else None
+        plan = json_request("/api/agent/tool-plan/prepare", {"expected_host_id": session["hostId"],
+                            "client_id": request["client_id"], "session_id": conversation})
+        request["tool_plan_ref"] = plan["result"]["reference"]
+        identity = {key: request[key] for key in ("client_id", "submission_id", "user_message_id", "assistant_message_id")}
+        identity.update(source_host_id=session["hostId"], conversation_id=conversation)
+        prepared = json_request("/api/chat/agent/v2/submission", {"operation": "prepare", "identity": identity, "request": request})
+        assert prepared["result"]["identity"] == identity
+        request["request_digest"] = prepared["result"]["request_digest"]
+        return json.dumps(request)
+
+    def open_stream(request):
+        try:
+            return opener.open(request, timeout=180)
+        except urllib.error.HTTPError as error:
+            body = json.load(error)
+            raise RuntimeError(f"Stream rejected (HTTP {error.code}): {body.get('code')}, {body.get('error')}") from error
 
     def canonical_identity():
         submission_id = str(uuid.uuid4())
@@ -283,10 +263,11 @@ try:
         *,
         agent_mode,
         permission_decision=None,
+        allowed_challenges=None,
     ):
         request = urllib.request.Request(
             f"{base_url}/api/chat/agent/v2/stream",
-            data=json.dumps(
+            data=encode_submission(
                 {
                     "conversationId": conversation_id,
                     **canonical_identity(),
@@ -305,7 +286,7 @@ try:
             method="POST",
         )
         stream_events = []
-        with opener.open(request, timeout=180) as response:
+        with open_stream(request) as response:
             for raw_line in response:
                 line = raw_line.decode("utf-8", "replace").strip()
                 if not line.startswith("data:"):
@@ -317,12 +298,14 @@ try:
                 stream_events.append(event)
                 if event.get("type") != "permission_request":
                     continue
+                if allowed_challenges is not None and event.get("tool_name") not in allowed_challenges:
+                    raise RuntimeError(f"Unexpected permission tool: {event.get('tool_name')}")
                 if permission_decision not in {"allow", "deny"}:
                     raise RuntimeError(
                         "unexpected Web permission request: "
                         + json.dumps(event, ensure_ascii=False)
                     )
-                json_request(
+                decision_receipt = json_request(
                     "/api/agent/host-permission/decision",
                     {
                         "protocol_version": event.get("protocol_version", 0),
@@ -332,39 +315,26 @@ try:
                         "client_id": event.get("client_id", ""),
                         "session_id": event.get("session_id", ""),
                         "tool_name": event.get("tool_name") or event.get("name", ""),
-                        "args_digest": event.get("args_digest", ""),
-                        "decision": permission_decision,
+                        "resolution": {"type": "authorization", "decision": "allow_once" if permission_decision == "allow" else "deny"},
                     },
                 )
+                assert decision_receipt["accepted"] and decision_receipt["nonce"] == event["nonce"]
         return stream_events
 
     def canonical_trace(event):
-        for key in ("trace", "event"):
-            candidate = event.get(key)
-            if isinstance(candidate, dict) and candidate.get("kind"):
-                return candidate
-        return {}
+        return event.get("trace", {}) if event.get("type") == "agent_trace" else {}
 
     def assistant_projection(events):
-        ordered_part_ids = []
-        text_parts = {}
-        canonical_updates = 0
-        for event in events:
-            if event.get("type") != "core_part_updated":
-                continue
-            part = event.get("part") if isinstance(event.get("part"), dict) else {}
-            if (part.get("kind") or part.get("type")) != "text":
-                continue
-            part_id = str(event.get("part_id") or part.get("id") or "")
-            if not part_id:
-                part_id = f"text-part-{len(ordered_part_ids)}"
-            if part_id not in text_parts:
-                ordered_part_ids.append(part_id)
-            text_parts[part_id] = str(part.get("text", ""))
-            canonical_updates += 1
-        if ordered_part_ids:
-            return "".join(text_parts[part_id] for part_id in ordered_part_ids), canonical_updates
-        return "", 0
+        notifications = [e for e in events if e.get("type") == "assistant_journal_committed_v1"]
+        seals = [e for e in events if e.get("type") == "assistant_run_terminal_committed_v1"]
+        if not notifications or len(seals) != 1:
+            return "", 0
+        seal = seals[0]
+        rows = json_request(f"/api/chat/conversations/{seal['session_id']}/messages")["messages"]
+        matching = [row for row in rows if row["role"] == "assistant"
+                    and row["messageId"] == notifications[-1]["through"]["identity"]["assistant_message_id"]]
+        assert len(matching) == 1
+        return matching[0]["content"], len(notifications)
 
     def assistant_from(events):
         text, _ = assistant_projection(events)
@@ -431,33 +401,32 @@ try:
         or conversation.get("conversation_id")
         or conversation.get("id")
     )
-    goal_start = json_request(
-        f"/api/chat/conversations/{conversation_id}/goal",
-        {
-            "action": "start",
-            "objective": "Verify durable Web Goal lifecycle",
-            "constraints": ["Persist every transition through Core"],
-        },
-    )
-    goal_pause = json_request(
-        f"/api/chat/conversations/{conversation_id}/goal",
-        {"action": "pause"},
-    )
-    goal_schedule = json_request(
-        f"/api/chat/conversations/{conversation_id}/goal",
-        {"action": "schedule", "wakeAtEpochMs": int(time.time() * 1000) + 60_000},
-    )
-    goal_resume = json_request(
-        f"/api/chat/conversations/{conversation_id}/goal",
-        {"action": "resume"},
-    )
-    goal_cancel = json_request(
-        f"/api/chat/conversations/{conversation_id}/goal",
-        {"action": "cancel"},
-    )
-    goal_readback = json_request(
-        f"/api/chat/conversations/{conversation_id}/goal"
-    )
+    goal_conversation = json_request("/api/chat/conversations", {"title": "Isolated Goal lifecycle"})
+    goal_id = goal_conversation["conversationId"]
+    goal_url = f"/api/chat/conversations/{goal_id}/goal"
+    def control_goal(action, previous=None, **fields):
+        body = {"action": action, "operationId": str(uuid.uuid4()), "expectedHostId": session["hostId"], **fields}
+        if previous is not None:
+            goal = previous["goalProjection"]
+            body.update(expectedGoalId=goal["active"]["id"], expectedControlToken=goal["control_token"])
+        receipt = json_request(goal_url, body)
+        deadline = time.monotonic() + 45
+        while time.monotonic() < deadline:
+            operation = (receipt.get("goalProjection") or {}).get("applied_operations", {}).get(body["operationId"])
+            if receipt.get("authoritative") and operation is not None:
+                if operation.get("rejection") is not None:
+                    raise RuntimeError(f"Goal {action} was rejected: {operation['rejection']}")
+                return receipt
+            time.sleep(0.2)
+            receipt = json_request(goal_url)
+        raise RuntimeError(f"Goal {action} did not reach a durable receipt")
+
+    goal_start = control_goal("start", objective="Verify durable Web Goal lifecycle")
+    goal_pause = control_goal("pause", goal_start)
+    goal_schedule = control_goal("schedule", goal_pause, wakeAtEpochMs=int(time.time() * 1000) + 60_000)
+    goal_resume = control_goal("resume", goal_schedule)
+    goal_cancel = control_goal("cancel", goal_resume)
+    goal_readback = json_request(goal_url)
 
     data_source_code = f"WEB-DATA-SOURCE-{time.time_ns()}"
     data_source_path = os.path.join(runtime_dir, "verified-context.csv")
@@ -495,7 +464,7 @@ try:
     data_source_usage = json_request("/api/data-sources/usage").get("usageRecords", [])
     stream_request = urllib.request.Request(
         f"{base_url}/api/chat/agent/v2/stream",
-        data=json.dumps(
+        data=encode_submission(
             {
                 "conversationId": conversation_id,
                 **canonical_identity(),
@@ -515,7 +484,7 @@ try:
     )
     events = []
     stream_done = False
-    with opener.open(stream_request, timeout=180) as response:
+    with open_stream(stream_request) as response:
         for raw_line in response:
             line = raw_line.decode("utf-8", "replace").strip()
             if not line.startswith("data:"):
@@ -528,23 +497,9 @@ try:
 
     assistant_text, canonical_assistant_updates = assistant_projection(events)
     event_types = [event.get("type") for event in events]
-    committed_projection_indices = [
-        index for index, event in enumerate(events)
-        if event.get("type") == "conversation_projection_committed_v1"
-    ]
-    terminal_trace_indices = [
-        index for index, event in enumerate(events)
-        if canonical_trace(event).get("kind")
-        in {"run.completed", "run.failed", "run.cancelled"}
-    ]
-    committed_usage = next(
-        (
-            event.get("conversation_projection", {}).get("context_usage", {})
-            for event in reversed(events)
-            if event.get("type") == "conversation_projection_committed_v1"
-        ),
-        {},
-    )
+    journal_indices = [i for i, e in enumerate(events) if e.get("type") == "assistant_journal_committed_v1"]
+    seal_indices = [i for i, e in enumerate(events) if e.get("type") == "assistant_run_terminal_committed_v1"]
+    committed_usage = json_request(f"/api/chat/conversations/{conversation_id}/context-usage")["usage"]
     if not assistant_text.strip():
         raise RuntimeError(
             "Web stream produced no projected assistant text: "
@@ -572,23 +527,28 @@ try:
         f"/api/chat/conversations/{branch_conversation_id}/messages"
     ).get("messages", []) if branch_conversation_id else []
 
+    recalled = stream_agent(branch_conversation_id,
+        "Repeat the exact token in your immediately preceding reply. Use only conversation history, with no tools.",
+        "real-web-branch-recall", agent_mode=False)
+    branch_recall_exact = assistant_from(recalled).strip() == expected and not any(
+        canonical_trace(event).get("kind") == "tool.started" for event in recalled)
+    source_after_branch = json_request(f"/api/chat/conversations/{conversation_id}/messages")["messages"]
+    source_unchanged = [(row["messageId"], row["content"]) for row in source_after_branch] == [
+        (row["messageId"], row["content"]) for row in messages]
+    if not branch_recall_exact or not source_unchanged:
+        raise RuntimeError(f"Branch history check failed: recall={branch_recall_exact}, source_unchanged={source_unchanged}")
+
     report = {
         "loginAuthenticated": login.get("authenticated") is True,
         "sessionAuthenticated": session.get("sessionAuthenticated") is True,
         "eventCount": len(events),
-        "assistantDeltaCount": (
-            canonical_assistant_updates
-        ),
+        "assistantJournalUpdates": canonical_assistant_updates,
         "assistantResetCount": event_types.count("assistant_reset"),
         "thinkingDeltaCount": event_types.count("thinking_delta"),
         "streamCompleted": stream_done,
-        "sessionProjectionCount": event_types.count("core_session_projection_updated"),
-        "committedProjectionCount": len(committed_projection_indices),
-        "commitFollowsTerminalTrace": bool(
-            committed_projection_indices
-            and terminal_trace_indices
-            and committed_projection_indices[-1] > terminal_trace_indices[-1]
-        ),
+        "journalCommitCount": len(journal_indices),
+        "runSealCount": len(seal_indices),
+        "sealFollowsJournal": bool(journal_indices and seal_indices and seal_indices[0] > journal_indices[-1]),
         "committedContextUsedTokens": int(committed_usage.get("used_tokens", 0) or 0),
         "committedContextWindowTokens": int(committed_usage.get("context_window_tokens", 0) or 0),
         "assistantText": assistant_text,
@@ -598,6 +558,8 @@ try:
         "branchHasDistinctIdentity": bool(branch_conversation_id) and branch_conversation_id != conversation_id,
         "branchStoredRoles": [message.get("role") for message in branch_messages],
         "branchMessageCount": len(branch_messages),
+        "branchHistoryRecalled": branch_recall_exact,
+        "branchSourceUnchanged": source_unchanged,
         "goalStarted": goal_start.get("goalProjection", {}).get("active", {}).get("status") == "running",
         "goalPaused": goal_pause.get("goalProjection", {}).get("active", {}).get("status") == "paused",
         "goalScheduled": goal_schedule.get("goalProjection", {}).get("active", {}).get("next_wake_at_epoch_ms") is not None,
@@ -669,12 +631,10 @@ try:
     protected_path = os.path.join(runtime_dir, "web-protected.txt")
     with open(protected_path, "w", encoding="utf-8") as handle:
         handle.write("KEEP_WEB_PROTECTED")
-    delete_expected = "NOLA_WEB_DELETE_DENIED_OK"
     delete_prompt = (
         "Use the delete_file tool exactly once to delete the absolute file "
         f"{protected_path}. Do not use bash or another deletion tool. If permission "
-        "is denied, do not retry and return only this exact ASCII token: "
-        + delete_expected
+        "is denied, do not retry. Tell me what happened."
     )
     delete_conversation = json_request(
         "/api/chat/conversations",
@@ -695,8 +655,24 @@ try:
         "real-web-delete-acceptance",
         agent_mode=True,
         permission_decision="deny",
+        allowed_challenges={"delete_file"},
     )
     delete_text = assistant_from(delete_events)
+    # The journal emits the denied call's own started/completed pair after the
+    # permission is resolved. Verify distinct persisted calls and their decisions.
+    with sqlite3.connect(Path(environment["NOLA_DB_PATH"]).as_uri() + "?mode=ro", uri=True) as db:
+        tool_parts = [json.loads(raw) for raw, in db.execute(
+            """SELECT p.content_json FROM message_parts p JOIN messages m ON m.id=p.message_id
+               WHERE m.conversation_id=? AND p.kind='tool'""", (delete_conversation_id,))]
+    deletions = [part for part in tool_parts if part["capability_id"] == "delete_file"]
+    stopped_after_denial = (
+        len(deletions) == 1 and deletions[0]["state"] == "failed"
+        and (deletions[0].get("permission") or {}).get("decision") == "deny"
+        and Path(deletions[0]["input"]["path"]).resolve() == Path(protected_path).resolve()
+        and all(part["capability_id"] in {"tool_search", "delete_file"} for part in tool_parts)
+    )
+    if not stopped_after_denial:
+        raise RuntimeError("Protected file operation lacked a single denied tool receipt")
     with open(protected_path, encoding="utf-8") as handle:
         protected_text = handle.read()
     report.update(
@@ -710,6 +686,7 @@ try:
             "writeToolTraces": write_tool_traces,
             "writeFileText": write_file_text,
             "deleteAssistantText": delete_text,
+            "noToolRetryAfterDenial": stopped_after_denial,
             "deletePermissionRequests": sum(
                 event.get("type") == "permission_request"
                 for event in delete_events
@@ -723,6 +700,8 @@ try:
         }
     )
 
+    memory_settings = json_request("/api/assistant/memory-default", {"enabled": True}, method="PUT")
+    assert memory_settings["hostAllowed"] and memory_settings["enabled"]
     memory_code = f"WEB-PROJECT-LABEL-{time.time_ns()}"
     memory_write_conversation = json_request(
         "/api/chat/conversations",
@@ -746,7 +725,7 @@ try:
             "MEMORY_WRITE_OK."
         ),
         "real-web-memory-write",
-        agent_mode=True,
+        agent_mode=True, permission_decision="allow", allowed_challenges={"memory_save", "memory_search"},
     )
     memory_recall_conversation = json_request(
         "/api/chat/conversations",
@@ -769,7 +748,7 @@ try:
             "platforms. Return only the exact saved project label."
         ),
         "real-web-memory-recall",
-        agent_mode=True,
+        agent_mode=True, permission_decision="allow", allowed_challenges={"memory_search"},
     )
 
     memory_write_started = tool_started_count(memory_write_events, "memory_save")
@@ -897,6 +876,7 @@ try:
         }
     )
 
+    print("Completed Goal, data source, permission, memory and Skill flows", flush=True)
     compact_conversation = json_request(
         "/api/chat/conversations",
         {
@@ -911,7 +891,7 @@ try:
         or compact_conversation.get("id")
     )
     for index in range(4):
-        marker = f"HISTORICAL_TURN_{index}_MARKER"
+        marker = f"HISTORICAL_TURN_{index}_{uuid.uuid4().hex}"
         history_events = stream_agent(
             compact_conversation_id,
             f"Return exactly this ASCII token and nothing else: {marker}\n"
@@ -921,18 +901,18 @@ try:
         )
         if marker not in assistant_from(history_events):
             raise RuntimeError(f"compaction history turn {index} lost its marker")
+    usage_path = f"/api/chat/conversations/{compact_conversation_id}/context-usage"
+    usage_before = json_request(usage_path)["usage"]
     compact_result = json_request(
         f"/api/chat/conversations/{compact_conversation_id}/compact",
         {},
     )
-    continuation_expected = "NOLA_WEB_COMPACT_CONTINUE_OK"
-    continuation_prompt = (
-        "Continue this same conversation and return only this exact ASCII token: "
-        + continuation_expected
-    )
+    usage_after = json_request(usage_path)["usage"]
+    continuation_expected = marker
+    continuation_prompt = "Repeat the token in your most recent reply before compaction. Return only that token."
     continuation_request = urllib.request.Request(
         f"{base_url}/api/chat/agent/v2/stream",
-        data=json.dumps(
+        data=encode_submission(
             {
                 "conversationId": compact_conversation_id,
                 **canonical_identity(),
@@ -966,6 +946,11 @@ try:
     compact_context = compact_result.get("context", {})
     report.update(
         {
+            "compactContextUsage": {
+                phase: {key: usage.get(key) for key in ("used_tokens", "context_window_tokens", "estimated", "measured_at_revision")}
+                for phase, usage in (("before", usage_before), ("after", usage_after),
+                                     ("nextModelTurn", json_request(usage_path)["usage"]))
+            },
             "compactReplacedItemCount": compact_context.get(
                 "replacedItemCount", 0
             ),
@@ -977,8 +962,8 @@ try:
                 event.get("type") == "assistant_reset"
                 for event in continuation_events
             ),
-            "compactContinuationCommittedProjectionCount": continuation_event_types.count(
-                "conversation_projection_committed_v1"
+            "compactContinuationSeals": continuation_event_types.count(
+                "assistant_run_terminal_committed_v1"
             ),
             "compactContinuationEventTypes": continuation_event_types,
             "compactSnapshotPreserved": compact_context.get("replacedItemCount", 0) > 0,
@@ -989,12 +974,12 @@ try:
         [
             report["loginAuthenticated"],
             report["sessionAuthenticated"],
-            report["assistantDeltaCount"] >= 1,
+            report["assistantJournalUpdates"] >= 1,
             report["assistantResetCount"] == 0,
             report["streamCompleted"],
-            report["sessionProjectionCount"] >= 1,
-            report["committedProjectionCount"] == 1,
-            report["commitFollowsTerminalTrace"],
+            report["journalCommitCount"] >= 1,
+            report["runSealCount"] == 1,
+            report["sealFollowsJournal"],
             report["committedContextUsedTokens"] > 0,
             report["committedContextWindowTokens"] > 0,
             assistant_text.strip() == expected,
@@ -1019,7 +1004,7 @@ try:
             report["writePermissionRequests"] == 0,
             report["writeToolEvents"] >= 2,
             report["writeFileText"] == "WEB_RECOMMENDED_WRITE",
-            report["deleteAssistantText"].strip() == delete_expected,
+            bool(report["deleteAssistantText"]) and report["noToolRetryAfterDenial"],
             report["deletePermissionRequests"] == 1,
             report["protectedFileText"] == "KEEP_WEB_PROTECTED",
             report["memoryWriteAssistantText"] == "MEMORY_WRITE_OK",
@@ -1030,9 +1015,7 @@ try:
             report["memorySaveCompleted"] == 1,
             report["memorySearchCompleted"] >= 1,
             report["memoryToolFailures"] == 0,
-            report["memoryPermissionRequests"] == 0,
             report["dataSkillStarted"] == 1,
-            report["dataSkillPermissionRequests"] == 0,
             report["dataSkillRunCompleted"] == 1,
             report["dataSkillTraceOrdered"],
             report["dataSkillArtifactExists"],
@@ -1042,7 +1025,7 @@ try:
             report["compactContinuationText"].strip()
             == continuation_expected,
             report["compactContinuationResetCount"] == 0,
-            report["compactContinuationCommittedProjectionCount"] == 1,
+            report["compactContinuationSeals"] == 1,
             report["compactSnapshotPreserved"],
         ]
     ):
@@ -1062,8 +1045,9 @@ try:
         with open(report_path, "w", encoding="utf-8") as handle:
             json.dump(report, handle, ensure_ascii=False, indent=2)
         audit_assertions = {
-            "permission_policy_verified": report["writePermissionRequests"] == 0 and report["deletePermissionRequests"] == 1 and report["protectedFileText"] == "KEEP_WEB_PROTECTED",
-            "cross_session_memory_verified": report["memoryRecallExactFormat"] and report["memoryPermissionRequests"] == 0,
+            "branch_history_recalled_without_changing_source": branch_recall_exact and source_unchanged,
+            "permission_policy_verified": report["writePermissionRequests"] == 0 and stopped_after_denial and report["protectedFileText"] == "KEEP_WEB_PROTECTED",
+            "cross_session_memory_verified": report["memoryRecallExactFormat"] and report["memorySaveCompleted"] == 1 and report["memorySearchCompleted"] >= 1,
             "data_source_read_and_disclosure_audited": report["dataSourceAnswerExact"] and report["dataSourceUsageAudited"],
             "skill_artifact_verified": report["dataSkillArtifactExists"] and report["dataSkillArtifactHasRevenue"] and report["dataSkillArtifactHasLimitations"],
             "compaction_continuation_verified": report["compactReplacedItemCount"] > 0 and report["compactContinuationText"].strip() == continuation_expected,
@@ -1071,7 +1055,8 @@ try:
         with open(audit_path, "w", encoding="utf-8") as handle:
             json.dump({"passed": all(audit_assertions.values()), "assertions": audit_assertions}, handle, ensure_ascii=False, indent=2)
         shutil.copyfile(provider_trace_path, trace_copy)
-        shutil.copyfile(environment["NOLA_DB_PATH"], database_copy)
+        with sqlite3.connect(environment["NOLA_DB_PATH"]) as source, sqlite3.connect(database_copy) as copy:
+            source.backup(copy)
         sys.path.insert(0, os.path.join(root, "scripts"))
         from real_e2e_evidence import record_step
         record_step(

@@ -9,7 +9,28 @@ spec=importlib.util.spec_from_file_location('public_export',Path(__file__).with_
 module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
 
 
+def commit(root):
+    subprocess.run(['git','-c','user.name=Fixture','-c','user.email=fixture@example.invalid',
+                    'commit','-qm','snapshot'],cwd=root,check=True)
+
+
 class PublicExportTests(unittest.TestCase):
+    def test_symlink_targets_use_the_physical_snapshot_root(self):
+        with tempfile.TemporaryDirectory() as name:
+            folder = Path(name)
+            snapshot = folder / 'snapshot'
+            snapshot.mkdir()
+            alias = folder / 'alias'
+            alias.symlink_to(snapshot, target_is_directory=True)
+            (snapshot / 'source.txt').write_text('source')
+            (snapshot / 'inside').symlink_to('source.txt')
+            public = folder / 'public'
+            module.copy_reviewed_files(alias, public, [], ['source.txt', 'inside'], [])
+            self.assertEqual((public / 'inside').readlink(), Path('source.txt'))
+            (snapshot / 'outside').symlink_to('../private.txt')
+            with self.assertRaisesRegex(ValueError, 'symlink escapes'):
+                module.copy_reviewed_files(alias, folder / 'rejected', [], ['outside'], [])
+
     def test_export_excludes_even_tracked_keys_and_all_private_git_history(self):
         with tempfile.TemporaryDirectory() as name:
             root=Path(name)/'private';root.mkdir();destination=Path(name)/'public'
@@ -17,7 +38,11 @@ class PublicExportTests(unittest.TestCase):
             (root/'cer').mkdir();(root/'cer/key.p8').write_text('not-public')
             (root/'source.rs').write_text('// public source\n')
             subprocess.run(['git','add','.'],cwd=root,check=True)
+            commit(root)
+            (root/"source.rs").write_text("uncommitted change")
+            (root/"private-note").write_text("local only")
             report=module.export(root,destination,[])
+            self.assertFalse((destination/"private-note").exists())
             self.assertFalse((destination/'cer').exists());self.assertFalse((destination/'.git').exists())
             self.assertEqual((destination/'source.rs').read_text(),'// public source\n');self.assertFalse(report['history_copied'])
 
@@ -31,6 +56,7 @@ class PublicExportTests(unittest.TestCase):
             (root/'default.profraw').write_bytes(b'local coverage')
             (root/'Tests.xcresult').mkdir();(root/'Tests.xcresult'/'Info.plist').write_text('private test results')
             subprocess.run(['git','add','.'],cwd=root,check=True)
+            commit(root)
             module.export(root,destination,[])
             self.assertEqual((destination/'README.md').read_text(),'Public project')
             for directory in ['.github','.vscode','.claude','.cargo','.codex','.idea']:
@@ -49,6 +75,7 @@ class PublicExportTests(unittest.TestCase):
             (root/'docs/platforms/android').mkdir(parents=True)
             (root/'docs/platforms/android/README.md').write_text('Public Android guide')
             subprocess.run(['git','add','.'],cwd=root,check=True)
+            commit(root)
             module.export(root,destination,[])
             self.assertFalse((destination/'Doc').exists())
             self.assertEqual((destination/'docs/platforms/android/README.md').read_text(),'Public Android guide')
@@ -67,6 +94,7 @@ class PublicExportTests(unittest.TestCase):
             (root/'apps/cli/main.rs').write_text('// current public source\n')
             subprocess.run(['git','add','-f','.'],cwd=root,check=True)
             (root/'legacy/backend/untracked.py').write_text('# local only\n')
+            commit(root)
             module.export(root,destination,[])
             self.assertFalse((destination/'legacy').exists())
             self.assertFalse((destination/'backend').exists())
@@ -80,5 +108,7 @@ class PublicExportTests(unittest.TestCase):
             subprocess.run(['git','init','-q',str(root)],check=True)
             # Construct the synthetic token so this test source contains none.
             (root/'source.txt').write_text('ghp_'+'A'*36)
+            subprocess.run(['git','add','.'],cwd=root,check=True)
+            commit(root)
             with self.assertRaisesRegex(ValueError,'credential findings'):module.export(root,destination,[])
             self.assertFalse(destination.exists())

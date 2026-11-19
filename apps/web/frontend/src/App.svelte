@@ -92,7 +92,7 @@
             show(new URL(location.href));
         };
         const unload = (event: BeforeUnloadEvent) => {
-            if (event.isTrusted && drafts.hasDrafts) { event.preventDefault(); event.returnValue = ''; }
+            if (event.isTrusted && drafts.needsUnloadConfirmation) { event.preventDefault(); event.returnValue = ''; }
         };
         document.addEventListener('click', click);
         window.addEventListener(workspaceNavigationEvent, requested);

@@ -1135,7 +1135,7 @@ internal fun ChatScreen(
             onCancelTask = { taskId -> viewModel.cancelAgentTask(viewModel.composerDrafts.ownerKey(state.conversationId), taskId) },
             loadTaskDetail = viewModel::loadTaskChildDetail,
             taskRecovery = viewModel::taskRecovery,
-            onSendTaskGuidance = { taskId, message -> viewModel.sendAgentTaskGuidance(viewModel.composerDrafts.ownerKey(state.conversationId), taskId, message) }
+            onSendTaskGuidance = { taskId, message -> viewModel.sendAgentTaskGuidance(viewModel.composerDrafts.ownerKey(state.conversationId), taskId, message).await() }
         )
             }
         }
@@ -1523,7 +1523,7 @@ internal fun ChatTranscript(
     onCancelTask: (String) -> Unit = {},
     loadTaskDetail: (suspend (AgentCoreTaskHandle, String, Long?) -> com.nola.domain.projection.ConversationProjectionWindowV1)? = null,
     taskRecovery: (suspend (AgentCoreTaskHandle, String, com.nola.data.local.UnknownEffectRecoveryDecision?, Boolean) -> Pair<UnknownEffectRecoveryPresentation?, Boolean>)? = null,
-    onSendTaskGuidance: (String, String) -> Unit = { _, _ -> },
+    onSendTaskGuidance: suspend (String, String) -> Boolean = { _, _ -> false },
     onResendEditedMessage: ((ConversationMessage) -> Unit)? = null,
 ) {
     val timelineMessages = state.timelineMessages()
@@ -2715,7 +2715,7 @@ fun MessageBubble(
     onCancelTask: (String) -> Unit = {},
     loadTaskDetail: (suspend (AgentCoreTaskHandle, String, Long?) -> com.nola.domain.projection.ConversationProjectionWindowV1)? = null,
     taskRecovery: (suspend (AgentCoreTaskHandle, String, com.nola.data.local.UnknownEffectRecoveryDecision?, Boolean) -> Pair<UnknownEffectRecoveryPresentation?, Boolean>)? = null,
-    onSendTaskGuidance: (String, String) -> Unit = { _, _ -> },
+    onSendTaskGuidance: suspend (String, String) -> Boolean = { _, _ -> false },
     onCompactionSourceRequested: (CompactionSourceNavigator.Request) -> Unit = {},
     onLongPress: () -> Unit = {},
     contentPadding: PaddingValues = PaddingValues(horizontal = nolaPageGutter(), vertical = 6.dp),
@@ -3138,33 +3138,35 @@ private fun AgentCoreTaskList(
     recovery: (suspend (AgentCoreTaskHandle, com.nola.data.local.UnknownEffectRecoveryDecision?, Boolean) -> Pair<UnknownEffectRecoveryPresentation?, Boolean>)?,
     guidance: Map<String, AgentCoreTaskGuidanceQueue>,
     onCancel: (String) -> Unit,
-    onSendGuidance: (String, String) -> Unit,
+    onSendGuidance: suspend (String, String) -> Boolean,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(7.dp)) {
         tasks.forEach { task ->
-            AgentCoreTaskCard(
-                task = task,
-                control = controls[task.id],
-                loadDetail = loadDetail?.let { loader -> { before -> loader(task, before) } },
-                recovery = recovery?.let { action -> { decision, submit -> action(task, decision, submit) } },
-                guidance = guidance[task.id],
-                onCancel = { onCancel(task.id) },
-                onSendGuidance = { onSendGuidance(task.id, it) },
-            )
+            key(task.ownerSessionId, task.ownerTurnId, task.id) {
+                AgentCoreTaskCard(
+                    task = task,
+                    control = controls[task.id],
+                    loadDetail = loadDetail?.let { loader -> { before -> loader(task, before) } },
+                    recovery = recovery?.let { action -> { decision, submit -> action(task, decision, submit) } },
+                    guidance = guidance[task.id],
+                    onCancel = { onCancel(task.id) },
+                    onSendGuidance = { onSendGuidance(task.id, it) },
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun AgentCoreTaskCard(
+internal fun AgentCoreTaskCard(
     task: AgentCoreTaskHandle,
     control: com.nola.domain.projection.ConversationProjectionV1.Part.Task?,
     loadDetail: (suspend (Long?) -> com.nola.domain.projection.ConversationProjectionWindowV1)?,
     recovery: TaskRecoveryCommand?,
     guidance: AgentCoreTaskGuidanceQueue?,
     onCancel: () -> Unit,
-    onSendGuidance: (String) -> Unit,
+    onSendGuidance: suspend (String) -> Boolean,
 ) {
     var showDetail by remember(task.id) { mutableStateOf(false) }
     if (showDetail && loadDetail != null) key(task.ownerSessionId, task.ownerTurnId, task.id) {
@@ -3172,7 +3174,9 @@ private fun AgentCoreTaskCard(
     }
     val reduceMotion = rememberReduceMotionEnabled()
     var expanded by remember(task.id) { mutableStateOf(false) }
-    var draft by remember(task.id) { mutableStateOf("") }
+    var draft by rememberSaveable(task.ownerSessionId, task.ownerTurnId, task.id) { mutableStateOf("") }
+    var sendingGuidance by remember(task.ownerSessionId, task.ownerTurnId, task.id) { mutableStateOf(false) }
+    val guidanceScope = rememberCoroutineScope()
     val active = task.state.isActive
     val waitingForInput = control?.state == ConversationProjectionV1.ActivityState.WaitingForInput
     val terminalIcon = when (task.state) {
@@ -3260,12 +3264,16 @@ private fun AgentCoreTaskCard(
                         placeholder = { Text(stringResource(R.string.chat_task_guidance_placeholder)) },
                         trailingIcon = {
                             IconButton(
-                                enabled = draft.isNotBlank(),
+                                enabled = draft.isNotBlank() && !sendingGuidance,
                                 onClick = {
-                                    val content = draft.trim()
-                                    if (content.isNotEmpty()) {
-                                        draft = ""
-                                        onSendGuidance(content)
+                                    val submitted = draft
+                                    sendingGuidance = true
+                                    guidanceScope.launch {
+                                        try {
+                                            if (onSendGuidance(submitted.trim()) && draft == submitted) draft = ""
+                                        } finally {
+                                            sendingGuidance = false
+                                        }
                                     }
                                 },
                             ) {

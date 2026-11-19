@@ -67,7 +67,6 @@ fn persist_interactive_view_state(store: &mut Option<crate::cli_view_state::View
 }
 
 fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<InteractiveSessionExit, String> {
-    onboarding::run_if_needed(config)?;
     let mut ui_guard = InteractiveSessionUiStateGuard::new(!config.json_output);
     llm::configure_local_debug_log(config.debug_mode, &config.project_root);
     if !config.json_output {
@@ -765,6 +764,7 @@ fn read_interactive_prompt_line(
     view_store: &mut Option<crate::cli_view_state::ViewStore>,
     goal_entry: bool,
 ) -> io::Result<Option<InteractivePromptInput>> {
+    crate::cli_expert_mentions::begin_composer();
     let _purpose = GoalComposerScope(GOAL_COMPOSER_ACTIVE.with(|active| active.replace(goal_entry)));
     if !io::stdin().is_terminal() {
         let mut raw_line = String::new();
@@ -1869,10 +1869,7 @@ fn composer_completion_line(line: &str, cursor: usize, config: &Config) -> Optio
             .map(|item| interactive_room_completion_label(&item.name).unwrap_or(item.name))
             .collect::<Vec<_>>()
     } else if let Some((_, _, prefix)) = active_at_file_token(line, cursor) {
-        workspace_file_completions(&config.project_root, prefix)
-            .into_iter()
-            .map(|rel| format!("@{rel}"))
-            .collect::<Vec<_>>()
+        interactive_mention_candidates(config, prefix).into_iter().map(|(_, label)| label).collect()
     } else {
         return None;
     };
@@ -3086,6 +3083,20 @@ fn active_at_file_token(line: &str, cursor: usize) -> Option<(usize, usize, &str
     Some((token_start, idx, rest))
 }
 
+fn interactive_mention_candidates(config: &Config, prefix: &str) -> Vec<(String, String)> {
+    let experts = if config.save_session && config.tools_enabled {
+        crate::cli_expert_mentions::completions(prefix, config.session_id.as_deref())
+    } else {
+        Vec::new()
+    };
+    let mut candidates = experts.into_iter().map(|e| (e.token, e.label)).collect::<Vec<_>>();
+    candidates.extend(workspace_file_completions(&config.project_root, prefix).into_iter().map(|file| {
+        let token = if file.starts_with("expert[") { format!("@./{file}") } else { format!("@{file}") };
+        (token.clone(), token)
+    }));
+    candidates
+}
+
 fn workspace_file_completions(project_root: &std::path::Path, prefix: &str) -> Vec<String> {
     let mut stack = vec![project_root.to_path_buf()];
     let mut collected = Vec::new();
@@ -3176,10 +3187,7 @@ fn apply_composer_completion_cycle(
             .collect();
         (0usize, line.len(), items)
     } else if let Some((start, end, prefix)) = active_at_file_token(line, *cursor) {
-        let items: Vec<String> = workspace_file_completions(&config.project_root, prefix)
-            .into_iter()
-            .map(|rel| format!("@{rel}"))
-            .collect();
+        let items = interactive_mention_candidates(config, prefix).into_iter().map(|(token, _)| token).collect();
         (start, end, items)
     } else {
         return false;
@@ -3913,9 +3921,8 @@ fn handle_interactive_slash_command(
             Ok(SlashCommandResult::Handled)
         }
         "/guide" => {
-            if !crate::terminal_ui::owns_terminal() {
-                onboarding::show(config);
-            }
+            terminal_notice!("  {} {}", tr(Message::InteractiveModelLabel), config.model);
+            terminal_notice!("  {} {}", tr(Message::InteractiveWorkspaceLabel), config.project_root.display());
             print_interactive_shortcuts_guide();
             Ok(SlashCommandResult::Handled)
         }
@@ -4497,8 +4504,9 @@ fn handle_interactive_slash_command(
         "/memory" => {
             let action = parts.next().unwrap_or("list");
             let mut app = crate::application_port::CliApplicationPort::persistent_default()?;
+            let binding = crate::memory_admin::workspace_memory_binding(&config.host_invocation_request()?)?;
             if action.eq_ignore_ascii_case("list") {
-                let records = crate::memory_admin::list_memories(&mut app, 30)?;
+                let records = crate::memory_admin::visible_memories(&mut app, &binding, None, 30)?;
                 terminal_notice!("{}", interactive_layer_rule(Some("memory")));
                 if records.is_empty() {
                     terminal_notice!("  (none)");
@@ -4516,29 +4524,14 @@ fn handle_interactive_slash_command(
                     terminal_notice!("  Usage: /memory search <query>");
                     return Ok(SlashCommandResult::Handled);
                 }
-                let q = query.trim().to_ascii_lowercase();
-                let records = crate::memory_admin::list_memories(&mut app, 200)?;
+                let records = crate::memory_admin::visible_memories(&mut app, &binding, Some(query.trim()), 20)?;
                 terminal_notice!("{}", interactive_layer_rule(Some("memory search")));
-                let mut count = 0usize;
-                for item in records {
-                    let hay = format!(
-                        "{} {} {}",
-                        item["content"].as_str().unwrap_or(""),
-                        item["summary"].as_str().unwrap_or(""),
-                        item["scope"].as_str().unwrap_or("")
-                    )
-                    .to_ascii_lowercase();
-                    if hay.contains(&q) {
-                        count += 1;
-                        let id = item["id"].as_str().unwrap_or("");
-                        let content = item["content"].as_str().unwrap_or("");
-                        terminal_notice!("  {id} · {}", preview(content, 72));
-                        if count >= 20 {
-                            break;
-                        }
-                    }
+                for item in &records {
+                    let id = item["id"].as_str().unwrap_or("");
+                    let content = item["content"].as_str().unwrap_or("");
+                    terminal_notice!("  {id} · {}", preview(content, 72));
                 }
-                if count == 0 {
+                if records.is_empty() {
                     terminal_notice!("  (no matches)");
                 }
             } else if action.eq_ignore_ascii_case("add") {
@@ -4553,8 +4546,8 @@ fn handle_interactive_slash_command(
                     "content": text.trim(),
                 }))
                 .map_err(|e| e.to_string())?;
-                let saved = crate::memory_admin::save_memory(&mut app, &draft, None)?;
-                let id = saved["record"]["id"].as_str().unwrap_or("");
+                let saved = crate::memory_admin::add_workspace_memory(&mut app, &binding, &draft)?;
+                let id = saved["id"].as_str().unwrap_or("");
                 terminal_notice!("  Saved memory {id}");
             } else {
                 terminal_notice!("  Usage: /memory [list|search <query>|add <text>]");

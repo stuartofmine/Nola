@@ -15,6 +15,7 @@ mod application_service_entry;
 mod background_scheduler;
 mod builtin_skills;
 mod cli_admin;
+mod cli_expert_mentions;
 mod code_intelligence_provider;
 mod codebase_memory;
 mod config;
@@ -100,8 +101,6 @@ mod memory_admin;
 mod memory_worker;
 mod messaging_channel_worker;
 mod model_output;
-#[cfg(any(feature = "terminal-ui", test))]
-mod onboarding;
 mod permission_grants;
 mod permission_request_port;
 mod permissions;

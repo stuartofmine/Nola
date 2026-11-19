@@ -1,42 +1,45 @@
 // SPDX-License-Identifier: Apache-2.0
 import SwiftUI
 
-/// One model setup editor; Core owns enabled models and default selection.
+/// The model center keeps this draft alive when its pager releases an offscreen form.
+struct IOSModelSetupDraft {
+    var endpoint = ""
+    var secret = ""
+    var modelID = ""
+    var name = ""
+    var wire = "chat_completions"
+    var savedModel: ModelInfo?
+
+    var hasChanges: Bool {
+        !endpoint.isEmpty || !secret.isEmpty || !modelID.isEmpty || !name.isEmpty
+            || wire != "chat_completions" || savedModel != nil
+    }
+}
+
 struct IOSModelSetupForm: View {
     let service: IOSModelConnectionService
-    var onDraftChanged: (Bool) -> Void = { _ in }
+    @Binding var draft: IOSModelSetupDraft
     let onSaved: (ModelInfo) -> Void
     private enum Field: Hashable { case endpoint, key, model, name }
     @FocusState private var focusedField: Field?
-    @State private var endpoint = ""
-    @State private var secret = ""
-    @State private var modelID = ""
-    @State private var name = ""
-    @State private var wire = "chat_completions"
     @State private var showsAdvanced = false
     @State private var error: String?
     @State private var busy = false
-    @State private var savedModel: ModelInfo?
     @State private var discoveredModels: [AppleModelCatalogDiscovery.Model] = []
     @State private var discoveryTask: Task<Void, Never>?
     @State private var discovering = false
     @State private var discoveryAttempt: UUID?
-    private var discoveryRoute: [String] { [endpoint, secret, wire, name] }
-
-    private var hasDraft: Bool {
-        !endpoint.isEmpty || !secret.isEmpty || !modelID.isEmpty || !name.isEmpty
-            || wire != "chat_completions" || savedModel != nil
-    }
+    private var discoveryRoute: [String] { [draft.endpoint, draft.secret, draft.wire, draft.name] }
 
     private var saveDisabled: Bool {
-        busy || endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        busy || draft.endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || draft.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             field(NSLocalizedString("model.connections.endpoint", comment: "API address")) {
-                TextField(text: $endpoint, prompt: Text(verbatim: "https://api.example.com/v1")) {
+                TextField(text: $draft.endpoint, prompt: Text(verbatim: "https://api.example.com/v1")) {
                     Text(NSLocalizedString("model.connections.endpoint", comment: "API endpoint"))
                 }
                     .keyboardType(.URL).focused($focusedField, equals: .endpoint)
@@ -44,13 +47,13 @@ struct IOSModelSetupForm: View {
                     .accessibilityIdentifier("model.setup.endpoint")
             }
             field(NSLocalizedString("model.setup.api_key", value: "API key", comment: "API key")) {
-                SecureField(NSLocalizedString("model.setup.key_hint", value: "As required by your service", comment: "API key hint"), text: $secret)
+                SecureField(NSLocalizedString("model.setup.key_hint", value: "As required by your service", comment: "API key hint"), text: $draft.secret)
                     .focused($focusedField, equals: .key)
                     .submitLabel(.next).onSubmit { focusedField = .model }
                     .accessibilityIdentifier("model.setup.key")
             }
             field(NSLocalizedString("model.setup.model_id", value: "Default model ID", comment: "Default model ID")) {
-                TextField(NSLocalizedString("model.setup.model_hint", value: "Model ID from your service", comment: "Model ID hint"), text: $modelID)
+                TextField(NSLocalizedString("model.setup.model_hint", value: "Model ID from your service", comment: "Model ID hint"), text: $draft.modelID)
                     .focused($focusedField, equals: .model)
                     .submitLabel(.done).onSubmit { focusedField = nil }
                     .accessibilityIdentifier("model.setup.modelID")
@@ -60,7 +63,7 @@ struct IOSModelSetupForm: View {
                     Label(NSLocalizedString("model.setup.discover", value: "Discover models", comment: "Discover models"), systemImage: "magnifyingglass")
                         .frame(minHeight: 44)
                 }.accessibilityIdentifier("model.setup.discover")
-                .disabled(discovering || endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || busy || savedModel != nil)
+                .disabled(discovering || draft.endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || busy || draft.savedModel != nil)
                 if discovering {
                     ProgressView()
                     Button(NSLocalizedString("model.connections.cancel", comment: "Cancel discovery")) { cancelDiscovery() }
@@ -68,14 +71,14 @@ struct IOSModelSetupForm: View {
                 }
             }
             if !discoveredModels.isEmpty {
-                Picker(NSLocalizedString("model.setup.discovered", value: "Choose a discovered model", comment: "Choose a discovered model"), selection: $modelID) {
+                Picker(NSLocalizedString("model.setup.discovered", value: "Choose a discovered model", comment: "Choose a discovered model"), selection: $draft.modelID) {
                     Text(NSLocalizedString("model.setup.choose", value: "Choose a model", comment: "Choose a model")).tag("")
-                    if !modelID.isEmpty && !discoveredModels.contains(where: { $0.id == modelID }) { Text(modelID).tag(modelID) }
+                    if !draft.modelID.isEmpty && !discoveredModels.contains(where: { $0.id == draft.modelID }) { Text(draft.modelID).tag(draft.modelID) }
                     ForEach(discoveredModels, id: \.id) { Text($0.displayName).tag($0.id) }
                 }.accessibilityIdentifier("model.setup.discovered")
             }
             field(NSLocalizedString("model.connections.protocol", comment: "Protocol")) {
-                Picker(NSLocalizedString("model.connections.protocol", comment: "Protocol"), selection: $wire) {
+                Picker(NSLocalizedString("model.connections.protocol", comment: "Protocol"), selection: $draft.wire) {
                     Text(verbatim: "Chat Completions").tag("chat_completions")
                     Text(verbatim: "Responses").tag("responses")
                     Text(verbatim: "Anthropic Messages").tag("anthropic")
@@ -93,7 +96,7 @@ struct IOSModelSetupForm: View {
             DisclosureGroup(isExpanded: $showsAdvanced) {
                 VStack(alignment: .leading, spacing: 12) {
                     field(NSLocalizedString("model.connections.name", comment: "Connection name")) {
-                        TextField(NSLocalizedString("model.setup.name_hint", value: "Optional connection name", comment: "Optional connection name"), text: $name)
+                        TextField(NSLocalizedString("model.setup.name_hint", value: "Optional connection name", comment: "Optional connection name"), text: $draft.name)
                             .focused($focusedField, equals: .name)
                             .submitLabel(.done).onSubmit { focusedField = nil }
                     }
@@ -119,14 +122,13 @@ struct IOSModelSetupForm: View {
         }
         .textInputAutocapitalization(.never).autocorrectionDisabled()
         .onChange(of: discoveryRoute) { _, _ in cancelDiscovery(); discoveredModels = [] }
-        .onChange(of: hasDraft, initial: true) { _, value in onDraftChanged(value) }
         .onDisappear { cancelDiscovery() }
     }
 
     private func field<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
-            content().disabled(busy || savedModel != nil).padding(12).frame(minHeight: 44)
+            content().disabled(busy || draft.savedModel != nil).padding(12).frame(minHeight: 44)
                 .background(NolaSurfaceBackground(fill: DesignTokens.surfaceColor,
                     border: DesignTokens.strongBorderColor, cornerRadius: 12, raised: false))
         }
@@ -140,7 +142,7 @@ struct IOSModelSetupForm: View {
     private func discover() {
         focusedField = nil
         guard !discovering, !busy else { return }
-        let address = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        let address = draft.endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URLComponents(string: address), let scheme = url.scheme,
               ["http", "https"].contains(scheme), url.host != nil, url.user == nil,
               url.password == nil, url.query == nil, url.fragment == nil else {
@@ -174,19 +176,19 @@ struct IOSModelSetupForm: View {
             // If setting the default was rejected, retry that exact saved model instead
             // of creating a second connection with the same entered credentials.
             let model: ModelInfo
-            if let savedModel { model = savedModel }
+            if let savedModel = draft.savedModel { model = savedModel }
             else {
-                let connection = try service.create(name: name, endpoint: endpoint, wireProtocol: wire, secret: secret, modelID: modelID,
-                    discoveredModel: discoveredModels.first { $0.id == modelID.trimmingCharacters(in: .whitespacesAndNewlines) })
+                let connection = try service.create(name: draft.name, endpoint: draft.endpoint, wireProtocol: draft.wire, secret: draft.secret, modelID: draft.modelID,
+                    discoveredModel: discoveredModels.first { $0.id == draft.modelID.trimmingCharacters(in: .whitespacesAndNewlines) })
                 guard let profile = try service.application.listModelProfiles().first(where: {
                     guard $0.enabled, $0.deletedAtMs == nil,
                           let source = try? JSONSerialization.jsonObject(with: Data($0.sourceJSON.utf8)) as? [String: Any] else { return false }
-                    return source["connectionID"] as? String == connection.id && $0.modelName == modelID.trimmingCharacters(in: .whitespacesAndNewlines) && source["wireProtocol"] as? String == wire
+                    return source["connectionID"] as? String == connection.id && $0.modelName == draft.modelID.trimmingCharacters(in: .whitespacesAndNewlines) && source["wireProtocol"] as? String == draft.wire
                 }), let configured = ModelSelectionManager.modelInfo(from: profile) else { throw IOSApplicationRuntimeError.invalidResponse }
-                model = configured; savedModel = configured; secret = ""
+                model = configured; draft.savedModel = configured; draft.secret = ""
             }
             try ModelSelectionManager.commitSelectedModel(model, using: service.application)
-            savedModel = nil; endpoint = ""; modelID = ""; name = ""; secret = ""; wire = "chat_completions"
+            draft = IOSModelSetupDraft()
             onSaved(model)
         } catch { self.error = error.localizedDescription }
     }

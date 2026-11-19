@@ -3249,3 +3249,12 @@
 "model.web_host.forget_pairing.footer" = "Borra la identidad recordada y el token guardado para esta dirección de host para volver a vincular.";
 "chat.context.mcp.empty" = "Aún no hay servidores MCP configurados.";
 "chat.context.mcp.local.footer" = "Configura y administra servidores MCP locales en Biblioteca > Capacidades.";
+
+"onboarding.first_chat.body" = "Elige un modelo para tu primera conversación. También puedes configurarlo más tarde en Ajustes.";
+"onboarding.first_chat.choose_model" = "Elegir un modelo";
+"chat.context.documents.read_error" = "No se pudieron leer los documentos guardados. Cierra y vuelve a abrir este panel.";
+"chat.context.documents.conflict" = "Los documentos cambiaron en otro lugar. Vuelve a abrir este panel para editar la lista actualizada.";
+"chat.context.import.limit" = "Se alcanzó el límite de 30 archivos. No se añadieron: %@";
+"chat.message.pendingEdit" = "Revisar edición pendiente";
+"chat.message.editSavedForReview" = "Puedes cerrar el editor. Abre la edición pendiente en esta conversación para comprobar si se envió.";
+"chat.context.documents.blank" = "Introduce texto para %@ o elimina el documento vacío.";

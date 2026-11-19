@@ -23,12 +23,12 @@ EXECUTION_FIELDS = {
     "isolation",
 }
 
-CLIENT_PLATFORMS = ("cli", "web", "mac", "ios", "android")
+CLIENT_PLATFORMS = ("cli", "web", "mac", "ios", "android", "windows")
 ROOT = Path(__file__).resolve().parent.parent
 
 RUNTIME_PLATFORMS = {
     "native-process": {"core", "cli", "mac"},
-    "native-app": {"mac"},
+    "native-app": {"mac", "windows"},
     "terminal-pty": {"cli"},
     "http-service": {"web"},
     "local-service-stack": {"cli", "web"},
@@ -44,6 +44,7 @@ SMOKE_REQUIREMENTS = {
     "web": {"product-entrypoint", "real-provider", "real-persistence", "product-ui", "semantic-judge"},
     "mac": {"product-entrypoint", "real-provider", "real-persistence", "product-ui", "semantic-judge"},
     "ios": {"product-entrypoint", "real-provider", "real-persistence", "product-ui", "semantic-judge"},
+    "windows": {"product-entrypoint", "real-provider", "real-persistence", "product-ui", "semantic-judge"},
     "android": {"product-entrypoint", "real-provider", "real-persistence", "product-ui", "semantic-judge"},
 }
 
@@ -60,6 +61,7 @@ SMOKE_MODULE_REQUIREMENTS = {
         "persistence", "rendering", "ui",
     },
     "ios": {"agent", "core", "provider", "tools", "persistence", "rendering", "ui"},
+    "windows": {"agent", "core", "provider", "tools", "persistence", "ui"},
     "android": {"agent", "core", "provider", "data-source", "skills", "persistence", "ui"},
 }
 
@@ -254,8 +256,10 @@ def audit_coverage(
         identifier = str(scenario.get("id") or "")
         if passed_scenario_ids is not None and identifier not in passed_scenario_ids:
             continue
-        considered.append(identifier)
         receipt = (evidence_by_scenario or {}).get(identifier)
+        if evidence_by_scenario is not None and not receipt:
+            continue
+        considered.append(identifier)
         lanes = observed_scenario_lanes(scenario, receipt) if receipt is not None else scenario_lanes(scenario)
         receipt_platforms = receipt.get("platforms", []) if receipt is not None else scenario.get("platforms", [])
         receipt_modules = receipt.get("modules", []) if receipt is not None else scenario.get("evidence", {}).get("modules", [])

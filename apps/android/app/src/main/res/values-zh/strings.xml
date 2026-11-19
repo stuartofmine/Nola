@@ -1385,4 +1385,6 @@
     <string name="chat_ui_submission_unknown">提交结果尚未确认。</string>
     <string name="chat_skill_description">描述（可选）</string>
     <string name="models_web_host_disconnect">断开连接</string>
+    <string name="onboarding_choose_model">选择模型</string>
+    <string name="onboarding_chat_model_hint">连接模型服务、下载本地模型，或与 Nola 宿主机配对，即可开始对话。</string>
 </resources>

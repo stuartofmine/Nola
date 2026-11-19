@@ -427,6 +427,25 @@ pub(crate) fn list_memories(application: &mut CliApplicationPort, limit: usize) 
     Ok(records.iter().map(memory_value).collect())
 }
 
+pub(crate) fn workspace_memory_binding(request: &crate::host_invocation_request::HostInvocationRequest) -> Result<nola_domain::memory_owner::MemoryExecutionBinding, String> {
+    let mut binding = nola_domain::memory_owner::MemoryExecutionBinding::local_profile();
+    binding.workspace_id = Some(request.workspace_identity()?.workspace_id);
+    binding.conversation_id = request.session.session_id.clone();
+    Ok(binding)
+}
+
+pub(crate) fn visible_memories(application: &mut CliApplicationPort, binding: &nola_domain::memory_owner::MemoryExecutionBinding, query: Option<&str>, limit: usize) -> Result<Vec<Value>, String> {
+    let records: Vec<ApplicationMemoryRecord> = application.execute(ApplicationCommand::Memory {
+        command: MemoryCommand::ListForBinding { binding: binding.clone(), query: query.map(str::to_owned), limit },
+    })?;
+    Ok(records.iter().map(memory_value).collect())
+}
+
+pub(crate) fn add_workspace_memory(application: &mut CliApplicationPort, binding: &nola_domain::memory_owner::MemoryExecutionBinding, draft: &MemoryDraft) -> Result<Value, String> {
+    let owner = binding.owner_for(&MemoryNamespace::Workspace, MemoryScope::Global)?;
+    Ok(memory_value(&commit_draft(application, draft, &[], Some(owner), None)?))
+}
+
 fn get_memory(
     application: &mut CliApplicationPort,
     id: &str,
@@ -627,6 +646,35 @@ fn memory_value(stored: &ApplicationMemoryRecord) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cli_flow_memory_honors_the_selected_project_on_write_list_and_search() {
+        let root = tempfile::tempdir().unwrap();
+        let mut application = CliApplicationPort::persistent(&root.path().join("cli.sqlite")).unwrap();
+        let binding = |name: &str| {
+            let mut request = crate::host_invocation_request::HostInvocationRequest::for_test().unwrap();
+            request.tool_settings.project_root = root.path().join(name);
+            workspace_memory_binding(&request).unwrap()
+        };
+        let a = binding("a");
+        let b = binding("b");
+        let draft = |scope, content| serde_json::from_value(json!({
+            "scope": scope, "kind": "other", "content": content,
+        })).unwrap();
+        add_workspace_memory(&mut application, &b, &draft("project", "project 100%")).unwrap();
+        for name in ["other 100%", "newer project"] {
+            add_workspace_memory(&mut application, &a, &draft("project", name)).unwrap();
+        }
+        assert_eq!(visible_memories(&mut application, &b, Some("workspace"), 1).unwrap().len(), 1);
+        assert!(visible_memories(&mut application, &b, Some("global"), 5).unwrap().is_empty());
+        let b_records = visible_memories(&mut application, &b, Some("%"), 1).unwrap();
+        assert_eq!(b_records.len(), 1);
+        assert_eq!(b_records[0]["content"], "project 100%");
+        assert_eq!(b_records[0]["owner"]["workspace_id"], b.workspace_id.unwrap());
+        assert_eq!(visible_memories(&mut application, &a, None, 5).unwrap().len(), 2);
+        save_memory(&mut application, &draft("global", "shared"), None).unwrap();
+        assert_eq!(visible_memories(&mut application, &a, Some("shared"), 1).unwrap().len(), 1);
+    }
 
     #[test]
     fn current_web_memory_write_contract_creates_and_revises_through_shared_service() {

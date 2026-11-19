@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 
-document.documentElement.dataset.nolaDesktop = "windows";
+
 
 contextBridge.exposeInMainWorld("NolaDesktop", Object.freeze({
     platform: "windows",
@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld("NolaDesktop", Object.freeze({
 }));
 
 window.addEventListener("DOMContentLoaded", () => {
+    document.documentElement.dataset.nolaDesktop = "windows";
     const retry = document.getElementById("nola-retry-host");
     retry?.addEventListener("click", () => {
         if (!(retry instanceof HTMLButtonElement) || retry.disabled) return;

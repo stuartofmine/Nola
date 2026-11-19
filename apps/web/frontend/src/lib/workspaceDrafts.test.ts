@@ -103,3 +103,24 @@ test('blocked-before-model restores original scoped input and attachments withou
     await host.stageSubmission(pending('two'));await host.retireSubmission('two');host.text.write('conversation','New edit');
     assert.equal(host.restoreBlockedSubmission('two'),false);assert.equal(host.text.read('conversation'),'New edit');
 });
+
+
+test('a persisted conversation draft survives unload and a failed edit still requests confirmation', async () => {
+    let fail = false;
+    const workspace = createWorkspaceDrafts({
+        read: async () => null,
+        write: async () => { if (fail) throw new Error('Disk unavailable'); },
+        delete: async () => {},
+    });
+    const host = workspace.forHost('h');
+    await host.load('c');
+    host.text.write('c', 'first');
+    assert.equal(workspace.needsUnloadConfirmation, true);
+    await host.flush();
+    assert.equal(workspace.hasDrafts, true);
+    assert.equal(workspace.needsUnloadConfirmation, false);
+    fail = true;
+    host.text.write('c', 'second');
+    await host.flush();
+    assert.equal(workspace.needsUnloadConfirmation, true);
+});

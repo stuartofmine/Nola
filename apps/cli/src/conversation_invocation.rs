@@ -330,10 +330,33 @@ fn explicit_profile_settings(store:&NolaStore,id:&str,revision:i64,config:&Confi
     Ok(json!({"modelSelectionID":key,"modelOverrides":{key:{}},"permissionModeRawValue":permission.canonical_name(),"memoryEnabledOverride":config.runtime.memory_enabled}))
 }
 
+fn apply_initial_model(config: &mut Config, store: &NolaStore) -> Result<(), String> {
+    if config.cli_profile_selection.is_none() {
+        if config.runtime.model_binding.is_some() {
+            config.cli_profile_selection = Some(crate::model_connection_host::file_config::resolve_default(store)?);
+        }
+    }
+    if let Some((id,revision))=config.cli_profile_selection.clone() {
+        let mut settings=explicit_profile_settings(store,&id,revision,config)?;
+        // A fresh model binding must preserve the current execution policy;
+        // restoring model-only settings would silently discard cache preferences.
+        settings["executionPolicy"] = serde_json::to_value(execution_policy(config, vec![])?).map_err(|error| error.to_string())?;
+        restore(config,snapshot_for_settings(&settings,store)?,store)?;
+    }
+    Ok(())
+}
+
 /// Called once at process/session entry, before provider exposure or recovery.
 /// It never overwrites existing configuration with newly loaded global defaults.
 pub(crate) fn initialize_or_restore(config: &mut Config) -> Result<(), String> {
-    if config.host_request_stdin || !matches!(config.command, CommandMode::Run) || !config.save_session || config.show_help { return Ok(()); }
+    if config.host_request_stdin || config.show_help { return Ok(()); }
+    if !matches!(config.command, CommandMode::Run) || !config.save_session {
+        if matches!(config.command, CommandMode::Run | CommandMode::Init | CommandMode::Wiki)
+            && config.runtime.model_binding.is_some() {
+            apply_initial_model(config, &NolaStore::open_default()?)?;
+        }
+        return Ok(());
+    }
     let mut defaults = APPLICATION_DEFAULTS.get_or_init(Default::default).lock().map_err(|_| "CLI defaults lock poisoned")?;
     if defaults.is_none() { *defaults = Some(config.clone()); }
     drop(defaults);
@@ -363,18 +386,7 @@ pub(crate) fn initialize_or_restore(config: &mut Config) -> Result<(), String> {
             return Ok(());
         }
     }
-    if config.cli_profile_selection.is_none() {
-        if config.runtime.model_binding.is_some() {
-            config.cli_profile_selection = Some(crate::model_connection_host::file_config::resolve_default(&store)?);
-        }
-    }
-    if let Some((id,revision))=config.cli_profile_selection.clone() {
-        let mut settings=explicit_profile_settings(&store,&id,revision,config)?;
-        // A fresh model binding must preserve the current execution policy;
-        // restoring model-only settings would silently discard cache preferences.
-        settings["executionPolicy"] = serde_json::to_value(execution_policy(config, vec![])?).map_err(|error| error.to_string())?;
-        restore(config,snapshot_for_settings(&settings,&store)?,&store)?;
-    }
+    apply_initial_model(config, &store)?;
     let session = crate::session::SessionStore::open(config.session_id.as_deref(), false, &config.project_root.to_string_lossy())?;
     config.session_id = Some(session.id);
     persist(config)?;
@@ -631,6 +643,45 @@ pub(crate) fn refresh_unmodified(config: &mut Config) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    struct RestoreEnvironment(Option<std::ffi::OsString>);
+    impl Drop for RestoreEnvironment {
+        fn drop(&mut self) {
+            match &self.0 { Some(value) => std::env::set_var("NOLA_DB_PATH", value), None => std::env::remove_var("NOLA_DB_PATH") }
+        }
+    }
+
+    #[test]
+    fn cli_flow_ephemeral_commands_share_the_current_default_without_creating_conversations() {
+        let _lock = crate::store::test_env_lock();
+        let root = tempfile::tempdir().unwrap();
+        let db = root.path().join("isolated.sqlite");
+        let _restore = RestoreEnvironment(std::env::var_os("NOLA_DB_PATH"));
+        std::env::set_var("NOLA_DB_PATH", &db);
+        let store = NolaStore::open(&db).unwrap();
+        let mut config = Config::for_test().unwrap();
+        let profile = ensure_remote_profile(&store, "https://example.invalid/v1/chat/completions", "test-default", "",
+            &config.runtime.host_runtime_options(), None).unwrap();
+        let _: Value = store.application().unwrap().execute(nola_application::ApplicationCommand::PutProductSettingChecked {
+            key: "chat.default_model".into(), expected_revision: None, updated_at_ms: 1,
+            value_json: json!({"version":1, "selection":{"kind":"profile", "profile_id":profile.id}}).to_string(),
+        }).unwrap();
+        config.runtime.model_binding = Some(crate::model_connection_host::file_config::ModelRef {
+            connection: "file".into(), model: "file".into(),
+        });
+        config.show_help = false;
+        config.session_id = None;
+        for command in [CommandMode::Run, CommandMode::Init, CommandMode::Wiki] {
+            let mut invocation = config.clone();
+            invocation.save_session = !matches!(command, CommandMode::Run);
+            invocation.command = command;
+            initialize_or_restore(&mut invocation).unwrap();
+            assert_eq!(invocation.model, "test-default");
+            assert_eq!(invocation.session_id, None);
+        }
+        let db = rusqlite::Connection::open(db).unwrap();
+        assert_eq!(db.query_row("SELECT COUNT(*) FROM conversations", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+    }
+
     #[test]
     fn model_explicit_profile_selection_preserves_core_identity_and_rejects_stale_revision() {
         let root=tempfile::tempdir().unwrap();let store=NolaStore::open(&root.path().join("fixture.sqlite")).unwrap();
@@ -777,12 +828,6 @@ mod tests {
     #[test]
     fn real_repository_restores_independent_sessions_refreshes_canonical_and_rejects_stale_edits() {
         let _environment = crate::store::test_env_lock();
-        struct RestoreEnvironment(Option<std::ffi::OsString>);
-        impl Drop for RestoreEnvironment {
-            fn drop(&mut self) {
-                match &self.0 { Some(value) => std::env::set_var("NOLA_DB_PATH", value), None => std::env::remove_var("NOLA_DB_PATH") }
-            }
-        }
         let _restore = RestoreEnvironment(std::env::var_os("NOLA_DB_PATH"));
         let directory = tempfile::tempdir().unwrap();
         std::env::set_var("NOLA_DB_PATH", directory.path().join("sessions.sqlite"));

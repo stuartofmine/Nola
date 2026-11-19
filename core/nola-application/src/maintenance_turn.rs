@@ -94,6 +94,7 @@ fn begin_maintenance_turn_in_transaction<R: RunCreationRepository + crate::repos
     store: &mut R,
     command: BeginMaintenanceTurn,
 ) -> Result<AcceptedMaintenanceTurn, String> {
+    crate::validate_invocation_binding(&command.core_config)?;
     if !matches!(&command.submission, AgentSubmission::Compact { operation_id } if !operation_id.trim().is_empty())
         && !matches!(&command.submission, AgentSubmission::CloseSession { submission_id: Some(id) } if !id.trim().is_empty())
     {
@@ -108,8 +109,6 @@ fn begin_maintenance_turn_in_transaction<R: RunCreationRepository + crate::repos
     {
         return Err("maintenance turn cannot overlap an active Run".to_string());
     }
-    let (invocation_config_json, invocation_config_digest) =
-        invocation_config_snapshot(&command.core_config)?;
     let stored = crate::load_current_checkpoint(store, &command.conversation_id)?;
     let mut core = match stored {
         Some(stored) => {
@@ -126,6 +125,8 @@ fn begin_maintenance_turn_in_transaction<R: RunCreationRepository + crate::repos
         None => AgentCore::try_new(command.core_config)
             .map_err(|error| format!("initialize Core for maintenance turn failed: {error}"))?,
     };
+    let (invocation_config_json, invocation_config_digest) =
+        invocation_config_snapshot(core.invocation_configuration())?;
     let transition = core
         .reduce_at(command.submission, decision_time_ms(command.created_at_ms)?)
         .map_err(|error| format!("reduce maintenance submission failed: {error}"))?;
