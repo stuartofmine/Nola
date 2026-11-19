@@ -14,9 +14,9 @@ CLI 可以通过带认证的本地 HTTP 服务，为 Web 和远程客户端提�
 
 ## 下载
 
-1.0.0 开发预览提供 **macOS Apple Silicon 完整 CLI 包**。请保留 CLI、Agent Host、服务、Web 资源和浏览器运行时的完整目录结构。此包尚未进行 Apple Developer ID 公证。其他平台暂未发布安装包，可从源码构建。
+从 [1.0.0 发行页](https://github.com/stuartofmine/Nola/releases/tag/v1.0.0-build.2) 选择安装包或压缩包。发行页列出了可下载的平台、签名状态和校验值。
 
-只下载[发行页](https://github.com/stuartofmine/Nola/releases)列出的制品。解压后在目录中运行：
+使用 Linux CLI 和 Web 客户端时，请完整解压，在解压后的目录中运行以下命令。
 
 ```sh
 ./nola --version
@@ -33,7 +33,7 @@ CLI 可以通过带认证的本地 HTTP 服务，为 Web 和远程客户端提�
 | macOS · `apps/macos/` | SwiftUI / AppKit | 原生桌面客户端与平台 Host 集成 |
 | iOS · `apps/ios/` | SwiftUI | 移动客户端与 iOS 系统能力 |
 | Android · `apps/android/` | Kotlin / Compose | 移动客户端、JNI 集成与 Android 系统能力 |
-| Windows · `apps/windows/` | 桌面原生壳 + Web UI | 桌面客户端与受控本地 Host 集成 |
+| Windows · `apps/windows/` | Tauri 2 / WebView2 / Svelte | 桌面客户端与受控本地 Host 集成 |
 | Web · `apps/web/frontend/` | Svelte / TypeScript | 由 Rust Host 提供服务的浏览器界面 |
 | CLI · `apps/cli/` | Rust | 终端客户端、Agent Host 与本地 HTTP 服务 |
 | Core · `core/` | Rust、C ABI / JNI | 领域契约、Agent 执行、Application Service、持久化与 Host 接口 |

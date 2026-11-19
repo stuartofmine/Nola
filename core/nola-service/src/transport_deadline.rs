@@ -2,7 +2,10 @@
 //! Per-frame I/O budgets; these do not limit Application command execution.
 
 use std::io::{self, Read, Write};
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
+#[cfg(windows)]
+use uds_windows::UnixStream;
 use std::time::{Duration, Instant};
 
 pub(super) struct DeadlineStream<'a> {

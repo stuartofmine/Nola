@@ -102,4 +102,4 @@ $env:NOLA_LLAMA_BACKEND = $Backend
 $env:NOLA_LLAMA_COMMIT = $ResolvedLlamaCommit
 
 Invoke-Checked node (Join-Path $PSScriptRoot "stage-native.mjs") --arch $Architecture
-Write-Host "Native runtime staged for Electron packaging."
+Write-Host "Native runtime staged for Tauri packaging."

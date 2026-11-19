@@ -745,8 +745,14 @@ fn socket_path_for_hash(hash: u64) -> PathBuf {
     // collisions and the service restricts the socket itself to mode 0600.
     #[cfg(unix)]
     let socket_root = PathBuf::from("/tmp");
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        let root = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
+        return root.join("NolaIPC").join(format!("v{APPLICATION_SERVICE_PROTOCOL_VERSION}-{hash:016x}"));
+    }
+    #[cfg(not(any(unix, windows)))]
     let socket_root = std::env::temp_dir();
+    #[cfg(not(windows))]
     socket_root.join(format!(
         "nola-application-v{APPLICATION_SERVICE_PROTOCOL_VERSION}-{hash:016x}.sock"
     ))
@@ -781,13 +787,17 @@ fn database_path_hash(database_path: &Path) -> u64 {
     hash
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod platform {
     use super::*;
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::Shutdown;
+    #[cfg(unix)]
     use std::os::fd::AsRawFd;
+    #[cfg(unix)]
     use std::os::unix::net::UnixStream;
+    #[cfg(windows)]
+    use uds_windows::UnixStream;
     use std::process::{Child, ChildStderr, Command, Stdio};
     use std::sync::atomic::AtomicBool;
     use std::sync::{Arc, Mutex, OnceLock};
@@ -875,6 +885,7 @@ mod platform {
         Ok(lock)
     }
 
+    #[cfg(unix)]
     fn startup_process_lock(socket: &Path, timeout: Duration) -> Result<std::fs::File, String> {
         use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
         let lock_path = socket.with_extension("startup.lock");
@@ -904,6 +915,7 @@ mod platform {
         // cross-process lock, including after a client crashes.
     }
 
+    #[cfg(unix)]
     fn database_owner_is_busy(database: &Path) -> Result<bool, String> {
         use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
         let canonical = if database.exists() {
@@ -950,6 +962,8 @@ mod platform {
 
     impl StderrCapture {
         fn start(mut stderr: ChildStderr) -> Result<Self, String> {
+            #[cfg(unix)]
+            {
             let fd = stderr.as_raw_fd();
             let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
             if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0
@@ -958,6 +972,7 @@ mod platform {
                     "configure service stderr failed: {}",
                     std::io::Error::last_os_error()
                 ));
+            }
             }
             let tail = Arc::new(Mutex::new(Vec::new()));
             let cancelled = Arc::new(AtomicBool::new(false));
@@ -1006,7 +1021,11 @@ mod platform {
         fn drop(&mut self) {
             self.cancelled.store(true, Ordering::Release);
             if let Some(worker) = self.worker.take() {
+                #[cfg(unix)]
                 let _ = worker.join();
+                #[cfg(windows)]
+                drop(worker); // The reader exits on child stderr EOF.
+
             }
         }
     }
@@ -1057,6 +1076,7 @@ mod platform {
         }
     }
 
+    #[cfg(unix)]
     impl Read for DeadlineStream {
         fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
             use std::os::fd::AsRawFd;
@@ -1141,6 +1161,7 @@ mod platform {
         }
     }
 
+    #[cfg(unix)]
     fn wait_for_socket_writable(
         descriptor: std::os::fd::RawFd,
         deadline: Option<Instant>,
@@ -1192,6 +1213,7 @@ mod platform {
         }
     }
 
+    #[cfg(unix)]
     fn connect_with_deadline(
         path: &Path,
         deadline: Option<Instant>,
@@ -1261,6 +1283,9 @@ mod platform {
             }
         }
     }
+
+    #[cfg(windows)]
+    include!("windows_transport.rs");
 
     pub(super) fn send_cancellable(
         socket_path: &Path,
@@ -1374,6 +1399,8 @@ mod platform {
             if embedded_entry {
                 command.arg("--nola-application-service");
             }
+            #[cfg(windows)]
+            std::os::windows::process::CommandExt::creation_flags(&mut command, 0x08000000);
             let mut child = command
                 .arg("--database")
                 .arg(client.database_path())
@@ -1458,7 +1485,7 @@ mod platform {
         Err("Application Service startup attempts exhausted".into())
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     mod stderr_tests {
         use super::*;
 
@@ -1925,7 +1952,7 @@ mod platform {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 mod platform {
     use super::*;
 

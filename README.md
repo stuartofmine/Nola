@@ -14,9 +14,9 @@ Native and Web expert settings provide seven starting roles: code writing, code 
 
 ## Downloads
 
-The 1.0.0 development preview provides a complete **macOS Apple Silicon CLI** bundle. Keep its CLI, Agent Host, service, Web assets and browser runtime together. It is not Apple Developer ID notarized. Other platform installers have not been published; their source is included.
+Choose an installer or archive from the [1.0.0 release](https://github.com/stuartofmine/Nola/releases/tag/v1.0.0-build.2). The release page lists the available platforms, signing status and checksums.
 
-Download only assets listed on the [release page](https://github.com/stuartofmine/Nola/releases). In the extracted folder:
+For the Linux CLI and Web client, extract the complete archive and run the following commands from its directory.
 
 ```sh
 ./nola --version
@@ -33,7 +33,7 @@ Configure a model connection and select a declared model before starting a conve
 | macOS · `apps/macos/` | SwiftUI / AppKit | Native desktop client and platform Host integration |
 | iOS · `apps/ios/` | SwiftUI | Mobile client and iOS capabilities |
 | Android · `apps/android/` | Kotlin / Compose | Mobile client, JNI integration and Android capabilities |
-| Windows · `apps/windows/` | Native desktop shell + Web UI | Desktop client and owned local Host integration |
+| Windows · `apps/windows/` | Tauri 2 / WebView2 / Svelte | Desktop client and owned local Host integration |
 | Web · `apps/web/frontend/` | Svelte / TypeScript | Browser interface served by the Rust Host |
 | CLI · `apps/cli/` | Rust | Terminal client, Agent Host and local HTTP service |
 | Core · `core/` | Rust, C ABI / JNI | Domain contracts, Agent execution, Application Service, persistence and Host interfaces |

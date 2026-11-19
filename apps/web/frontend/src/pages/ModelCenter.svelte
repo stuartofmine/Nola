@@ -93,7 +93,13 @@
         if (document.hidden) { clearTimeout(timer); if (!busy) catalogReads.cancel(); }
         else resume();
     }
+    let desktopRuntime = $state('');
     onMount(() => {
+        const desktop = (window as Window & { NolaDesktop?: { nativeRuntime?: () => Promise<{ backend: string; architecture: string }> } }).NolaDesktop;
+        desktop?.nativeRuntime?.().then(runtime => {
+            if (!disposed && runtime.backend && runtime.architecture)
+                desktopRuntime = [runtime.backend, runtime.architecture].join(' · ').toUpperCase();
+        }).catch(() => {});
         const parameters = pageLocation.read().searchParams;
         tab = parameters.get('tab') === 'local' || (!parameters.has('tab') && parameters.has('configure')) ? 'local' : 'api';
         linkedModelId = parameters.get('configure') || '';
@@ -186,7 +192,7 @@
                 </div>
             </section>{/if}
             <section class="card runtime-card" aria-label={t($locale, 'local.engine_status')}>
-                <div><div class="row between" data-local-runtime-host><h2>{t($locale, 'local.engine_status')}</h2></div><p class="muted">{runningModel ? t($locale, 'local.running_model', { name: runningModel.displayName || runningModel.name || runningModel.id }) : catalog.binaryAvailable ? t($locale, 'models.engineReady') : t($locale, 'models.engineMissing')}</p></div>
+                <div><div class="row between" data-local-runtime-host><h2>{t($locale, 'local.engine_status')}</h2>{#if desktopRuntime}<span class="desktop-native-runtime" title="llama.cpp">{desktopRuntime}</span>{/if}</div><p class="muted">{runningModel ? t($locale, 'local.running_model', { name: runningModel.displayName || runningModel.name || runningModel.id }) : catalog.binaryAvailable ? t($locale, 'models.engineReady') : t($locale, 'models.engineMissing')}</p></div>
             {#if !catalog.binaryAvailable && catalog.installHint}<details><summary>{t($locale, 'models.configure')}</summary><p>{catalog.installHint}</p></details>{/if}</section>
             <div class="models">
                 {#each catalog.models as model (model.id)}

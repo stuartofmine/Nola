@@ -26,6 +26,7 @@ RELEVANT_PATHS = (
     "apps/android/app/src/main/java/com/nola/ui",
     "apps/android/app/src/main/res",
     "apps/windows/src",
+    "apps/windows/scripts/export-shell-strings.mjs",
     "apps/ios",
     "apps/macos",
 )

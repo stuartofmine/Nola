@@ -14,6 +14,10 @@ pub(super) struct ConnectionBudget {
 pub(super) struct ConnectionPermit(Arc<AtomicUsize>);
 
 impl ConnectionBudget {
+    #[cfg(windows)]
+    pub(super) fn for_process() -> Self { Self::new(128) }
+
+    #[cfg(unix)]
     pub(super) fn for_process() -> Self {
         let mut limits = libc::rlimit {
             rlim_cur: 0,

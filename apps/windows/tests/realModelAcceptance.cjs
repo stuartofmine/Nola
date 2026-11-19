@@ -3,13 +3,14 @@
 const assert = require('node:assert/strict');
 const { readFileSync, writeFileSync } = require('node:fs');
 const path = require('node:path');
-const { _electron: electron, expect } = require('@playwright/test');
+const { expect } = require('@playwright/test');
+
+const { launchDesktop } = require("../scripts/test-installed-tauri.cjs");
 
 async function main() {
-    const evidence = process.env.NOLA_ELECTRON_MODEL_EVIDENCE;
+    const evidence = process.env.NOLA_TAURI_MODEL_EVIDENCE;
     assert.ok(evidence && path.isAbsolute(evidence) && process.env.NOLA_E2E_USER_DATA, 'Use the real-model acceptance runner');
-    const windows = path.resolve(__dirname, '..');
-    const receipt = { os: process.platform, client: 'windows-electron', passed: false };
+    const receipt = { os: process.platform, client: 'windows-tauri', passed: false };
     const workspace = path.join(process.env.NOLA_E2E_USER_DATA, 'Nola Workspace');
     const expected = readFileSync(path.join(workspace, 'handoff-note.txt'), 'utf8').trim();
     const question = 'Read handoff-note.txt in this workspace with the read_file tool. Reply with only the reference code inside. Leave all files unchanged.';
@@ -19,9 +20,8 @@ async function main() {
     }
     let application, page;
     async function launch() {
-        application = await electron.launch({ args: [windows], cwd: windows, env: process.env, timeout: 45000 });
-        page = await application.firstWindow();
-        await page.waitForURL(url => url.origin.startsWith('http://127.0.0.1:') && url.pathname === '/chat', {timeout: 60000});
+        application = await launchDesktop(process.env.NOLA_INSTALLED_DESKTOP, process.env.NOLA_HOME || process.env.HOME);
+        page = application.page;
         await expect(page.locator('html')).toHaveAttribute('data-nola-desktop', 'windows');
     }
     const answer = () => page.locator('article:not(.user) .message-content').getByText(expected, {exact: true});
