@@ -37,27 +37,27 @@ jobs:
           $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=19223'
           $env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $env:NOLA_HOME 'WebProfile'
           $env:NOLA_E2E_USER_DATA = Join-Path $env:NOLA_HOME 'desktop'
-          $key = 'HKCU:/Software/Policies/Microsoft/Edge/WebView2/AdditionalBrowserArguments'
-          New-Item -Force $key | Out-Null
-          New-ItemProperty -Path $key -Name 'nola-desktop.exe' -Value '--remote-debugging-port=19223' -Force | Out-Null
           Add-Type -AssemblyName UIAutomationClient
           Add-Type -AssemblyName UIAutomationTypes
-          $p = Start-Process $env:NOLA_INSTALLED_DESKTOP -PassThru
-          Start-Sleep -Seconds 10
-          $p.Refresh()
-          Write-Host ("Launched desktop, exited " + $p.HasExited + " pid " + $p.Id + " window " + $p.MainWindowHandle)
-          if ($p.MainWindowHandle -ne 0) {
-            $root = [System.Windows.Automation.AutomationElement]::FromHandle($p.MainWindowHandle)
+          Add-Type -AssemblyName System.Windows.Forms
+          $proc = Start-Process $env:NOLA_INSTALLED_DESKTOP -PassThru
+          Start-Sleep -Seconds 5
+          $proc.Refresh()
+          $shell = New-Object -ComObject WScript.Shell
+          $null = $shell.AppActivate($proc.Id)
+          $root = [System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)
+          for ($i=0; $i -lt 10; $i++) {
             $nodes = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
-            $nodes | Select-Object -First 85 | ForEach-Object { Write-Output ($_.Current.ControlType.ProgrammaticName + ' ' + $_.Current.Name) }
+            if ($nodes.Count -gt 30) { break }
+            [System.Windows.Forms.SendKeys]::SendWait('{TAB}')
+            Start-Sleep -Milliseconds 800
           }
-          Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" | ForEach-Object { Write-Output ("WebView2 test port: " + ($_.CommandLine -like '*19223*') + ' Parent ' + $_.ParentProcessId) }
+          $nodes | Select-Object -First 90 | ForEach-Object { Write-Output ($_.Current.ControlType.ProgrammaticName + ' ' + $_.Current.Name + ' id=' + $_.Current.AutomationId) }
           foreach ($file in @('host-port','host-startup.log')) {
             $path = Join-Path $env:NOLA_E2E_USER_DATA $file
             if (Test-Path $path) { Get-Content $path -Tail 12 }
           }
-          $meta = Invoke-RestMethod http://127.0.0.1:19223/json/version
-          Write-Output ("CDP " + $meta.Browser + " protocol " + $meta.'Protocol-Version')
-          Stop-Process -Id $p.Id -Force
-          npm --prefix apps/windows run test:e2e
-          exit $LASTEXITCODE
+          $session = Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" | Where-Object ParentProcessId -eq $proc.Id
+          $flags = [regex]::Matches($session.CommandLine,'--[a-zA-Z0-9-]+') | ForEach-Object Value
+          Write-Output ("Browser options " + ($flags -join ' '))
+          if ($nodes.Count -lt 30) { throw 'Installed WebView accessible tree unavailable' }
