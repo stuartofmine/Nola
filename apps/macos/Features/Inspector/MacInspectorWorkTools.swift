@@ -203,7 +203,8 @@ struct MacInspectorReviewView: View {
             loadRequestID = requestID; loading = true
             defer { if loadRequestID == requestID { loading = false } }
             do {
-                let result = try await MacWorkspaceGitService.shared.snapshot(at: url)
+                let result = try await MacWorkspaceGitService.shared.snapshot(
+                    at: url, allowEnclosingRepository: !model.usesSessionSandbox)
                 guard !Task.isCancelled, owner == requestedOwner, loadRequestID == requestID else { return }
                 snapshot = result
             } catch MacWorkspaceGitError.notRepository {

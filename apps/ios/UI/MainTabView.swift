@@ -161,9 +161,9 @@ struct MainTabView: View {
                         Text(tab.title).font(.caption2.weight(isSelected ? .semibold : .regular))
                     }
                     .foregroundStyle(isSelected ? DesignTokens.actionColor : DesignTokens.secondaryContentColor)
-                    .frame(minWidth: 64, minHeight: 50)
+                    .frame(maxWidth: .infinity, minHeight: 50)
+                    .contentShape(Rectangle())
                 }
-                .frame(maxWidth: .infinity)
                 .accessibilityLabel(Text(tab.title))
                 .accessibilityIdentifier("main.tab.\(tab.rawValue)")
                 .accessibilityAddTraits(isSelected ? .isSelected : [])

@@ -42,6 +42,7 @@ struct MacConversationSidebar: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(MacSidebarNavigationButtonStyle(isSelected: isSelected))
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
                     .accessibilityIdentifier("workspace.nav." + section.rawValue)
                 }
             }

@@ -8,6 +8,7 @@ nonisolated struct IOSConversationDirectoryEntry: Identifiable, Sendable {
     let lastActiveAt: Date
     let knowledgePoints: String
     var sourceID: String? = nil
+    var revision: Int64 = 0
     var canonicalID: String { sourceID ?? id.uuidString }
 }
 
@@ -20,8 +21,13 @@ nonisolated enum IOSWorkspaceReadFacts {
     /// Directory surfaces never need message bodies, model credentials or
     /// per-source permission reads from the full ConversationStore projection.
     static func conversationDirectory(runtime: IOSApplicationRuntime) throws -> [IOSConversationDirectoryEntry] {
+        try conversationDirectory(runtime: runtime, summaries: runtime.listRootConversations())
+    }
+
+    static func conversationDirectory(runtime: IOSApplicationRuntime,
+                                      summaries: [IOSCanonicalConversationSummary]) throws -> [IOSConversationDirectoryEntry] {
         var result: [IOSConversationDirectoryEntry] = []
-        for summary in try runtime.listRootConversations() {
+        for summary in summaries {
             try Task.checkCancellation()
             guard let id = UUID(uuidString: summary.id) else { continue }
             let metadata = try runtime.executeAgentCommand(.object([
@@ -34,7 +40,7 @@ nonisolated enum IOSWorkspaceReadFacts {
             }
             result.append(.init(id: id, title: summary.title,
                 lastActiveAt: Date(timeIntervalSince1970: Double(summary.updatedAtMs) / 1000),
-                knowledgePoints: (settings["knowledge"] as? [String: Any])?["keyPointsMarkdown"] as? String ?? "", sourceID: summary.id))
+                knowledgePoints: (settings["knowledge"] as? [String: Any])?["keyPointsMarkdown"] as? String ?? "", sourceID: summary.id, revision: summary.revision))
         }
         return result.sorted { $0.lastActiveAt > $1.lastActiveAt }
     }

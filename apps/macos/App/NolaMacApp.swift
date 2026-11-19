@@ -857,9 +857,6 @@ struct MacSettingsView: View {
          initialCategory: String? = nil, openModels: ((String?) -> Void)? = nil) {
         self.initialCategory = initialCategory
         self.openModels = openModels
-        if let initialCategory, let destination = MacSettingsCategory(rawValue: initialCategory) {
-            UserDefaults.standard.set(destination.navigationCategory.rawValue, forKey: "nola.mac.settings.category")
-        }
         if !MacProcessRuntimePolicy.usesEphemeralCredentials {
             let host = MacRemoteHostConfigurationStore.shared.displayValues()
             _hostURL = State(initialValue: host.url)
@@ -1045,6 +1042,8 @@ struct MacSettingsView: View {
                 .frame(width: 22, height: 22)
             Text(selectedCategory.title)
                 .font(.system(size: 15, weight: .semibold))
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("settings.heading." + selectedCategory.rawValue)
             Spacer()
 
         }

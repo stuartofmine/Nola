@@ -21,6 +21,7 @@ struct MacWorkspaceNavigationActions {
     let extensions: MacExtensionsNavigationState
     let currentSection: () -> MacWorkspaceSection
     let setSection: (MacWorkspaceSection) -> Void
+    var focusNewConversation: (String) -> Void = { _ in }
 
     func navigate(to section: MacWorkspaceSection,
                   ifStillValid: @escaping () -> Bool = { true },
@@ -38,7 +39,13 @@ struct MacWorkspaceNavigationActions {
     }
 
     func newConversation() {
-        navigate(to: .chat, then: { model.newConversation() })
+        navigate(to: .chat) {
+            let previousID = model.selectedConversationID
+            model.newConversation()
+            if let createdID = model.selectedConversationID, createdID != previousID {
+                focusNewConversation(createdID)
+            }
+        }
     }
 
     func selectConversation(_ id: String) {
@@ -284,7 +291,17 @@ struct MacChatWorkspaceView: View {
     @State private var selectedSection: MacWorkspaceSection
     private var navigationActions: MacWorkspaceNavigationActions {
         MacWorkspaceNavigationActions(model: model, extensions: extensionsNavigation,
-            currentSection: { selectedSection }, setSection: { selectedSection = $0 })
+            currentSection: { selectedSection }, setSection: { selectedSection = $0 },
+            focusNewConversation: { focusComposer(in: $0) })
+    }
+
+    private func focusComposer(in conversationID: String?) {
+        Task { @MainActor in
+            await Task.yield()
+            guard model.selectedConversationID == conversationID, selectedSection == .chat,
+                  !model.isTranscriptSearchVisible else { return }
+            composerFocused = true
+        }
     }
     private var sectionSelection: Binding<MacWorkspaceSection> {
         Binding(get: { selectedSection }, set: { section in
@@ -617,12 +634,10 @@ struct MacChatWorkspaceView: View {
             }
             activeOverlay = nil
             codeReference = nil
-            if model.selectedConversation?.isPersisted == false {
-                Task { @MainActor in
-                    await Task.yield()
-                    composerFocused = true
-                }
-            }
+            if model.selectedConversation?.isPersisted == false { focusComposer(in: selectedID) }
+        }
+        .onChange(of: model.isTranscriptSearchVisible) { _, visible in
+            if !visible { focusComposer(in: model.selectedConversationID) }
         }
         .onChange(of: selectedSection) { _, _ in
             if isEditingTitle { cancelInlineTitle() }
@@ -1094,7 +1109,10 @@ struct MacChatWorkspaceView: View {
     }
 
     private var searchConversationButton: some View {
-        Button { model.isTranscriptSearchVisible.toggle() } label: {
+        Button {
+            if !model.isTranscriptSearchVisible { composerFocused = false }
+            model.isTranscriptSearchVisible.toggle()
+        } label: {
             Image("nola-search").renderingMode(.template).resizable().scaledToFit()
                 .frame(width: 18, height: 18).frame(width: 36, height: 36)
         }

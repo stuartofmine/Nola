@@ -465,6 +465,7 @@ final class MacWorkspaceModel {
     var selectedConversationID: String? {
         didSet {
             guard selectedConversationID != oldValue else { return }
+            isTranscriptSearchVisible = false
             if let selectedConversationID { refreshPermissionDisplayOwner(conversationID: selectedConversationID) }
             parkUnselectedLocalRecovery()
             parkUnselectedRemoteRecovery()
@@ -553,7 +554,11 @@ final class MacWorkspaceModel {
     private(set) var conversationRecallResults: [MacConversationRecallResult] = []
     private(set) var isConversationRecallSearching = false
     private(set) var conversationRecallFailed = false
-    var isTranscriptSearchVisible = false
+    var isTranscriptSearchVisible = false {
+        didSet {
+            if !isTranscriptSearchVisible { transcriptSearchText = "" }
+        }
+    }
     var attachments: [MacAttachment] {
         get { selectedConversationID.flatMap { attachmentsByConversation[$0] } ?? [] }
         set {
@@ -2862,12 +2867,11 @@ final class MacWorkspaceModel {
     }
 
     var filteredConversations: [MacConversation] {
-        guard !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return conversations
-        }
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return conversations }
         return conversations.filter {
-            $0.title.localizedCaseInsensitiveContains(searchText)
-                || $0.preview.localizedCaseInsensitiveContains(searchText)
+            $0.title.localizedCaseInsensitiveContains(query)
+                || $0.preview.localizedCaseInsensitiveContains(query)
         }
     }
 
@@ -3052,6 +3056,7 @@ final class MacWorkspaceModel {
             conversationOperationError = error.localizedDescription
             return
         }
+        searchText = ""
         conversations.insert(conversation, at: 0)
         messagesByConversation[conversation.id] = []
         newlyCreatedEmptyConversationID = conversation.id

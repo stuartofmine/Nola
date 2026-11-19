@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import CoreGraphics
 import XCTest
 
 /// Real app navigation with a fresh namespace; no provider, permission grants or inference.
@@ -324,6 +325,268 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
 
     private func waitAndTapRootTab(_ tab: String, in app: XCUIApplication, timeout: TimeInterval = 5) {
         app.tapRootTab(tab, timeout: timeout)
+    }
+
+    func testConversationListHeaderRemainsLegibleAfterReturningFromWorkspaceTabs() throws {
+        try checkConversationListHeader(language: "en", locale: "en_US", dark: false, titleLabel: "Chat")
+    }
+
+    func testChineseDarkConversationListHeaderRemainsLegibleAfterReturningFromWorkspaceTabs() throws {
+        try checkConversationListHeader(language: "zh-Hans", locale: "zh_CN", dark: true, titleLabel: "对话")
+    }
+
+    private func checkConversationListHeader(language: String, locale: String, dark: Bool, titleLabel: String) throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        let theme = dark ? "dark" : "light"
+        let prefix = "chat-header-\(language)-\(theme)"
+        app.launchArguments = ["-ui-testing", "-AppleLanguages", "(\(language))", "-AppleLocale", locale,
+                               "-nola.appearance", theme]
+        app.launchEnvironment["NOLA_UI_TEST_RUN_ID"] = "chat-header-\(UUID().uuidString)"
+        app.launch()
+        defer { app.terminate() }
+        app.tapRootTab("chat")
+        let newChat = app.buttons["chat.conversations.new"]
+        XCTAssertTrue(newChat.waitForExistence(timeout: 5))
+        newChat.tap()
+        let conversationBack = app.buttons["chat.navigation.back"]
+        XCTAssertTrue(conversationBack.waitForExistence(timeout: 5))
+        conversationBack.tap()
+
+        let search = app.textFields["chat.conversations.search"]
+        let firstRow = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "chat.conversation.")).firstMatch
+        func capture(_ name: String) -> XCUIScreenshot {
+            let screenshot = app.screenshot()
+            let attachment = XCTAttachment(screenshot: screenshot)
+            attachment.name = "\(prefix)-\(name)"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            return screenshot
+        }
+        func inspectHeader(_ name: String) throws -> (frame: CGRect, contrast: Double) {
+            XCTAssertTrue(search.waitForExistence(timeout: 5))
+            XCTAssertTrue(firstRow.waitForExistence(timeout: 5))
+            let screenshot = capture(name)
+            if name == "before" {
+                try XCUIElementPixelAssertions.assertScreenshot(screenshot, label: "\(prefix)-baseline", isDark: dark)
+            }
+            XCTAssertTrue(app.rootTabButton("chat").isSelected)
+            let title = try XCTUnwrap(app.staticTexts.matching(identifier: titleLabel).allElementsBoundByIndex
+                .first { $0.frame.midY < search.frame.minY })
+            for element in [title, search, newChat, firstRow] {
+                XCTAssertTrue(app.frame.contains(element.frame), "\(name): clipped \(element.identifier)")
+            }
+            XCTAssertTrue(search.isHittable && newChat.isHittable && firstRow.isHittable)
+            XCTAssertLessThanOrEqual(title.frame.maxY, search.frame.minY)
+            XCTAssertLessThanOrEqual(search.frame.maxY, firstRow.frame.minY)
+            let statusBar = app.statusBars.firstMatch
+            if statusBar.exists { XCTAssertGreaterThanOrEqual(title.frame.minY, statusBar.frame.maxY) }
+            let contrast = try titleEdgeContrast(in: screenshot, frame: title.frame, viewport: app.frame)
+            let metrics = XCTAttachment(string: "title=\(title.frame), search=\(search.frame), firstRow=\(firstRow.frame), titleEdgeContrast=\(contrast)")
+            metrics.name = "\(prefix)-\(name)-metrics"
+            metrics.lifetime = .keepAlways
+            add(metrics)
+            return (title.frame, contrast)
+        }
+
+        let baseline = try inspectHeader("before")
+        var contrasts: [(tab: String, value: Double)] = []
+        for (tab, entry) in [("information", "information.knowledge"), ("activity", "activity.plans"),
+                             ("settings", "settings.category.general")] {
+            app.tapRootTab(tab)
+            let button = app.buttons[entry]
+            XCTAssertTrue(button.waitForExistence(timeout: 5))
+            XCTAssertTrue(app.rootTabButton(tab).isSelected)
+            button.tap()
+            let back = app.navigationBars.buttons.firstMatch
+            XCTAssertTrue(back.waitForExistence(timeout: 5))
+            _ = capture("\(tab)-detail")
+            back.tap()
+            XCTAssertTrue(button.waitForExistence(timeout: 5))
+            app.tapRootTab("chat")
+            let returned = try inspectHeader("after-\(tab)")
+            XCTAssertEqual(returned.frame.minY, baseline.frame.minY, accuracy: 1, tab)
+            contrasts.append((tab, returned.contrast))
+        }
+        firstRow.tap()
+        XCTAssertTrue(conversationBack.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(baseline.contrast, 40, "The heading must already be legible on first display")
+        for sample in contrasts {
+            XCTAssertGreaterThanOrEqual(sample.value, max(40, baseline.contrast * 0.8),
+                                        "\(sample.tab): returning softened or obscured the chat heading")
+        }
+    }
+
+    /// Scroll-edge blur fades vertically. A few sharp pixels in the lower strokes
+    /// can survive even when the top half of the heading is unreadable.
+    private func titleEdgeContrast(in screenshot: XCUIScreenshot, frame: CGRect, viewport: CGRect) throws -> Double {
+        let screen = try XCTUnwrap(screenshot.image.cgImage)
+        let scaleX = CGFloat(screen.width) / viewport.width
+        let scaleY = CGFloat(screen.height) / viewport.height
+        let bounds = frame.offsetBy(dx: -viewport.minX, dy: -viewport.minY)
+            .applying(CGAffineTransform(scaleX: scaleX, y: scaleY)).integral
+        let title = try XCTUnwrap(screen.cropping(to: bounds))
+        let width = title.width, height = title.height
+        let context = try XCTUnwrap(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                                              bytesPerRow: width, space: CGColorSpaceCreateDeviceGray(),
+                                              bitmapInfo: CGImageAlphaInfo.none.rawValue))
+        context.draw(title, in: CGRect(x: 0, y: 0, width: width, height: height))
+        let pixels = try XCTUnwrap(context.data).assumingMemoryBound(to: UInt8.self)
+        var rowContrasts: [Double] = []
+        for y in 0..<height {
+            let row = UnsafeBufferPointer(start: pixels + y * width, count: width)
+            guard let light = row.max(), let dark = row.min(), Int(light) - Int(dark) >= 64 else { continue }
+            let strongest = zip(row.dropFirst(), row)
+                .map { abs(Int($0.0) - Int($0.1)) }.sorted(by: >).prefix(4)
+            guard !strongest.isEmpty else { continue }
+            rowContrasts.append(Double(strongest.reduce(0, +)) / Double(strongest.count))
+        }
+        guard !rowContrasts.isEmpty else { return 0 }
+        return rowContrasts.sorted()[rowContrasts.count / 4]
+    }
+
+    func testCompactTabBarRespondsAtBothEdgesOfEveryTab() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launchEnvironment["NOLA_UI_TEST_RUN_ID"] = "compact-tab-targets-\(UUID().uuidString)"
+        app.launch()
+        defer { app.terminate() }
+        app.waitForRootTab("chat")
+        let tabs = ["chat", "activity", "information", "settings"]
+        let buttons = tabs.map { app.buttons["main.tab.\($0)"] }
+        try XCTSkipUnless(buttons[0].exists, "Requires the custom compact-width tab bar")
+        let destinations = [app.textFields["chat.conversations.search"], app.buttons["activity.plans"],
+                            app.buttons["information.knowledge"], app.buttons["settings.models"]]
+        let centers = buttons.map { $0.frame.midX }
+        let slotWidth = centers[1] - centers[0]
+        XCTAssertGreaterThan(slotWidth, 44)
+        let origin = app.coordinate(withNormalizedOffset: .zero)
+        for direction in [-1, 1] {
+            // Start with Activity so the first tap must change the visible page.
+            for index in [1, 2, 3, 0] {
+                let button = buttons[index]
+                XCTAssertFalse(button.isSelected)
+                let x = centers[index] + CGFloat(direction) * (slotWidth / 2 - 5)
+                let offset = CGVector(dx: x - app.frame.minX, dy: button.frame.midY - app.frame.minY)
+                origin.withOffset(offset).tap()
+                XCTAssertTrue(destinations[index].waitForExistence(timeout: 5))
+                XCTAssertTrue(destinations[index].isHittable, "\(tabs[index]) edge \(direction)")
+                XCTAssertTrue(button.isSelected)
+            }
+        }
+    }
+
+    func testConversationSearchFieldAcceptsTapsAcrossItsBackground() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launchEnvironment["NOLA_UI_TEST_RUN_ID"] = "search-target-\(UUID().uuidString)"
+        app.launch()
+        defer { app.terminate() }
+        app.tapRootTab("chat")
+        let newChat = app.buttons["chat.conversations.new"]
+        XCTAssertTrue(newChat.waitForExistence(timeout: 5))
+        newChat.tap()
+        let back = app.buttons["chat.navigation.back"]
+        XCTAssertTrue(back.waitForExistence(timeout: 5))
+        back.tap()
+        let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "chat.conversation.")).firstMatch
+        let search = app.textFields["chat.conversations.search"]
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        XCTAssertTrue(search.exists)
+        let viewport = app.frame
+        let centerY = search.frame.midY
+        let inset: CGFloat = viewport.width < 359 ? 16 : 20
+        let points = [("magnifier", CGPoint(x: viewport.minX + inset + 22, y: centerY)),
+                      ("top-padding", CGPoint(x: viewport.midX, y: centerY - 19))]
+        let origin = app.coordinate(withNormalizedOffset: .zero)
+        var missed: [String] = []
+        for (name, point) in points {
+            XCTAssertFalse(app.keyboards.firstMatch.exists)
+            origin.withOffset(CGVector(dx: point.x - viewport.minX, dy: point.y - viewport.minY)).tap()
+            let focused = app.keyboards.firstMatch.waitForExistence(timeout: 3)
+            if focused {
+                app.typeText("quartz")
+                XCTAssertTrue(app.staticTexts["No matching conversations"].waitForExistence(timeout: 5))
+                XCTAssertFalse(row.exists)
+            } else { missed.append(name) }
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = "conversation-search-hit-\(name)"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            if focused {
+                app.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "quartz".count))
+                XCTAssertTrue(row.waitForExistence(timeout: 5))
+                row.tap()
+                XCTAssertTrue(back.waitForExistence(timeout: 5))
+                back.tap()
+                XCTAssertTrue(search.waitForExistence(timeout: 5))
+            }
+        }
+        XCTAssertTrue(missed.isEmpty, "Search taps did not focus the field at \(missed.joined(separator: ", "))")
+    }
+
+    func testSearchFindsUnsentDraftAndOpensItsConversation() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launchEnvironment["NOLA_UI_TEST_RUN_ID"] = "draft-search-\(UUID().uuidString)"
+        app.launch()
+        defer { app.terminate() }
+        app.tapRootTab("chat")
+
+        let newChat = app.buttons["chat.conversations.new"]
+        let input = app.textViews["chat.composer.input"]
+        let back = app.buttons["chat.navigation.back"]
+        let search = app.textFields["chat.conversations.search"]
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "chat.conversation."))
+        func capture(_ step: String) {
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = "unsent-draft-search-\(step)"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        func createDraft(_ text: String) {
+            XCTAssertTrue(newChat.waitForExistence(timeout: 5))
+            newChat.tap()
+            XCTAssertTrue(input.waitForExistence(timeout: 5))
+            input.tap()
+            input.typeText(text)
+            XCTAssertEqual(input.value as? String, text)
+            back.tap()
+            XCTAssertTrue(search.waitForExistence(timeout: 5))
+        }
+
+        let query = "quartz"
+        let original = "Review quartz samples tomorrow"
+        createDraft(original)
+        XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 5))
+        let originalID = rows.firstMatch.identifier
+        createDraft("Pack the conference bag")
+        XCTAssertEqual(rows.count, 2)
+        let otherID = try XCTUnwrap(rows.allElementsBoundByIndex.map(\.identifier).first { $0 != originalID })
+        capture("both-conversations")
+
+        search.tap()
+        search.typeText(query)
+        let originalRow = app.buttons[originalID]
+        XCTAssertTrue(originalRow.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons[otherID].exists)
+        XCTAssertEqual(rows.count, 1)
+        capture("filtered")
+        originalRow.tap()
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        XCTAssertEqual(input.value as? String, original)
+        capture("reopened")
+        back.tap()
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        XCTAssertEqual(search.value as? String, query)
+        search.tap()
+        search.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: query.count))
+        XCTAssertTrue(app.buttons[otherID].waitForExistence(timeout: 5))
+        XCTAssertEqual(rows.count, 2)
+        capture("search-cleared")
     }
 
     func testManagementPagesAndNavigationInBothThemesWithoutModelAccount() throws {

@@ -51,6 +51,73 @@ nonisolated enum IOSConversationTitlePresentationPolicy {
     }
 }
 
+nonisolated struct IOSConversationListPreview: Sendable {
+    let lastActiveAt: Date
+    let revision: Int64
+    let checkedOnVisit: Int
+    var hasCurrentMessage = false
+    var draft: String?
+    var message = ""
+    var hasRoom = false
+    var experts: [String] = []
+    var error: String?
+
+    func matches(_ query: String) -> Bool {
+        message.localizedStandardContains(query) || draft?.localizedStandardContains(query) == true
+            || experts.contains { $0.localizedStandardContains(query) }
+    }
+
+    // Search covers the whole directory even when its rows have never appeared.
+    static func missing(in entries: [IOSConversationDirectoryEntry],
+                        cache: [UUID: Self], visit: Int) -> [IOSConversationDirectoryEntry] {
+        entries.filter { cache[$0.id]?.checkedOnVisit != visit }
+    }
+
+    static func read(_ entry: IOSConversationDirectoryEntry, runtime: IOSApplicationRuntime,
+                     previous: Self?, visit: Int) async -> Self {
+        var result = Self(lastActiveAt: entry.lastActiveAt, revision: entry.revision, checkedOnVisit: visit)
+        do {
+            result.draft = try FileConversationDraftRepository.scoped(to: runtime.databaseURL).textPreview(.conversation(entry.id))
+        } catch {
+            result.draft = previous?.draft
+            result.error = error.localizedDescription
+        }
+        do {
+            let association = try IOSAgentRoomService(runtime: runtime).forConversation(entry.canonicalID)
+            result.hasRoom = association != nil
+            result.experts = association?.room.room.participants.filter(\.active).map(\.displayName) ?? []
+        } catch {
+            // A transient association read must not remove an existing disclosure.
+            result.hasRoom = previous?.hasRoom ?? false
+            result.experts = previous?.experts ?? []
+        }
+        // Drafts and room membership have independent lifetimes. The message
+        // projection can be reused only after a successful read of this revision.
+        if let previous, previous.lastActiveAt == entry.lastActiveAt,
+           previous.revision == entry.revision, previous.hasCurrentMessage {
+            result.message = previous.message
+            result.hasCurrentMessage = true
+            return result
+        }
+        do {
+            let window = try runtime.loadConversationProjectionWindowV1(id: entry.canonicalID,
+                beforeOrdinal: nil, limit: 2, contentByteLimit: 4096)
+            let text = await MainActor.run {
+                IOSConversationProjectionPresenter.messages(from: window.projection)
+                    .last { !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }?.content ?? ""
+            }
+            result.message = text.components(separatedBy: .newlines).map { line in
+                (try? AttributedString(markdown: line)).map { String($0.characters) } ?? line
+            }.joined(separator: " ")
+            result.hasCurrentMessage = true
+        } catch {
+            result.message = previous?.message ?? ""
+            result.error = error.localizedDescription
+        }
+        return result
+    }
+}
+
 /// The Chat tab's root list. It owns search/scroll state while a conversation is pushed.
 struct ChatConversationsList: View {
     @EnvironmentObject private var container: ServiceContainer
@@ -59,12 +126,10 @@ struct ChatConversationsList: View {
     let onSelect: (UUID) -> Void
     var onContinueExpert: (IOSExpertHistoryContinuation) -> Void = { _ in }
     @State private var expandedParents: Set<UUID> = []
-    @State private var roomParents: Set<UUID> = []
     @State private var conversations: [IOSConversationDirectoryEntry] = []
     @State private var pageWidth: CGFloat = 390
-    @State private var previews: [UUID: String] = [:]
-    @State private var expertNames: [UUID: [String]] = [:]
-    @State private var previewDates: [UUID: Date] = [:]
+    @State private var previews: [UUID: IOSConversationListPreview] = [:]
+    @State private var directorySnapshot: [IOSCanonicalConversationSummary]?
     @Binding var search: String
 
     init(search: Binding<String>, onSelect: @escaping (UUID) -> Void,
@@ -79,22 +144,28 @@ struct ChatConversationsList: View {
     @State private var renameDraft = ""
     @State private var directoryRequest: UUID?
     @State private var loadError: String?
-    @State private var previewErrors: [UUID: String] = [:]
     @State private var previewRefreshRevision = 0
-    @State private var draftTexts: [UUID: String] = [:]
     @State private var needsResponseOnly = false
 
     private struct PreviewLoadIdentity: Hashable {
         let lastActiveAt: Date
         let refreshRevision: Int
+        let searching: Bool
+    }
+
+    private var query: String { search.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    private struct SearchIndexIdentity: Hashable {
+        let active: Bool
+        let revision: Int
     }
 
     private var visibleConversations: [IOSConversationDirectoryEntry] {
         let candidates = conversations.filter { !needsResponseOnly || waiting($0.id) }
-        guard !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return candidates }
+        let term = query
+        guard !term.isEmpty else { return candidates }
         return candidates.filter {
-            title($0).localizedStandardContains(search) || (previews[$0.id] ?? "").localizedStandardContains(search) || (draftTexts[$0.id] ?? "").localizedStandardContains(search)
-                || (expertNames[$0.id] ?? []).contains { $0.localizedStandardContains(search) }
+            title($0).localizedStandardContains(term) || previews[$0.id]?.matches(term) == true
         }
     }
 
@@ -107,17 +178,23 @@ struct ChatConversationsList: View {
             if let loadError {
                 Section {
                     Text(loadError).foregroundStyle(.secondary)
-                    Button(String(localized: "common.retry")) { refresh() }
+                    Button(String(localized: "common.retry")) { Task { await refresh() } }
                 }.accessibilityIdentifier("chat.history.error")
             }
-            if conversations.isEmpty && loadError == nil {
+            if directorySnapshot == nil && loadError == nil {
+                ProgressView().frame(maxWidth: .infinity).listRowSeparator(.hidden)
+            } else if conversations.isEmpty && loadError == nil {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(String(localized: "chat.history.empty.title")).font(.headline)
                     Text(String(localized: "chat.history.empty.message")).foregroundStyle(.secondary)
                 }.padding(.vertical, 20).listRowSeparator(.hidden).listRowBackground(DesignTokens.backgroundColor)
             }
             if !conversations.isEmpty && visibleConversations.isEmpty {
-                Text(String(localized: "chat.history.no_results")).foregroundStyle(.secondary).padding(.vertical, 20).listRowBackground(DesignTokens.backgroundColor)
+                if !query.isEmpty && !IOSConversationListPreview.missing(in: conversations, cache: previews, visit: previewRefreshRevision).isEmpty {
+                    ProgressView().frame(maxWidth: .infinity).listRowSeparator(.hidden)
+                } else {
+                    Text(String(localized: "chat.history.no_results")).foregroundStyle(.secondary).padding(.vertical, 20).listRowBackground(DesignTokens.backgroundColor)
+                }
             }
             Section {
                 ForEach(visibleConversations, id: \.id) { conversation in
@@ -127,6 +204,7 @@ struct ChatConversationsList: View {
 
         }
         .listStyle(.plain)
+        .modifier(ConversationListTopEdge())
         .scrollContentBackground(.hidden)
         .background(DesignTokens.backgroundColor)
         .background(IOSWorkspaceWidthObserver(width: $pageWidth))
@@ -134,14 +212,21 @@ struct ChatConversationsList: View {
         .navigationTitle("")
         .toolbar(.hidden, for: .navigationBar)
         .scrollDismissesKeyboard(.interactively)
-        .onAppear { previewRefreshRevision += 1; refresh() }
-        .refreshable { refresh(forcePreviews: true) }
+        .task { await refresh() }
+        .refreshable { await refresh(forcePreviews: true) }
+        .task(id: SearchIndexIdentity(active: !query.isEmpty, revision: previewRefreshRevision)) {
+            guard !query.isEmpty else { return }
+            for entry in IOSConversationListPreview.missing(in: conversations, cache: previews, visit: previewRefreshRevision) {
+                guard !Task.isCancelled else { return }
+                await loadPreview(entry)
+            }
+        }
         .confirmationDialog(String(localized: "chat.history.delete.title"), isPresented: Binding(
             get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }
         ), presenting: pendingDelete) { conversation in
             Button(L10n.chatClearAction, role: .destructive) {
                 pendingDelete = nil
-                Task { await container.chatManager.clearConversation(conversation.id); refresh() }
+                Task { await container.chatManager.clearConversation(conversation.id); await refresh() }
             }
             Button(L10n.cancel, role: .cancel) { pendingDelete = nil }
         }
@@ -160,7 +245,7 @@ struct ChatConversationsList: View {
                     if container.chatManager.currentConversationId == target.id {
                         NotificationCenter.default.post(name: .nolaConversationRenamed, object: target.id, userInfo: ["title": trimmed])
                     }
-                    refresh()
+                    Task { await refresh() }
                 } catch { loadError = error.localizedDescription }
             }
         }
@@ -187,17 +272,17 @@ struct ChatConversationsList: View {
                                                 .font(.caption).foregroundStyle(.secondary)
                                                 .fixedSize(horizontal: true, vertical: false)
                                         }
-                                        if let draft = draftTexts[conversation.id], !draft.isEmpty {
+                                        if let draft = previews[conversation.id]?.draft, !draft.isEmpty {
                                             (Text(String(localized: "chat.history.draft")).foregroundColor(DesignTokens.warningColor) + Text(verbatim: " · " + draft).foregroundColor(.secondary))
                                                 .font(.subheadline).lineLimit(1)
-                                        } else if let previewError = previewErrors[conversation.id] {
+                                        } else if let previewError = previews[conversation.id]?.error {
                                             Text(previewError).font(.caption).foregroundStyle(.secondary)
                                                 .lineLimit(3)
                                                 .accessibilityIdentifier("chat.conversation.previewError.\(conversation.id.uuidString.lowercased())")
                                         } else if let execution = container.chatManager.executionForConversation(conversation.id) {
-                                            ChatConversationLivePreview(execution: execution, fallback: previews[conversation.id] ?? "")
-                                        } else {
-                                            Text(previews[conversation.id].flatMap { $0.isEmpty ? nil : $0 } ?? String(localized: "chat.history.no_messages"))
+                                            ChatConversationLivePreview(execution: execution, fallback: previews[conversation.id]?.message ?? "")
+                                        } else if let preview = previews[conversation.id] {
+                                            Text(preview.message.isEmpty ? String(localized: "chat.history.no_messages") : preview.message)
                                                 .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                                         }
 
@@ -207,7 +292,9 @@ struct ChatConversationsList: View {
                             }
                             .buttonStyle(NolaPressableButtonStyle())
                             .accessibilityIdentifier("chat.conversation.\(conversation.id.uuidString.lowercased())")
-                            .task(id: PreviewLoadIdentity(lastActiveAt: conversation.lastActiveAt, refreshRevision: previewRefreshRevision)) { loadPreview(conversation) }
+                            .task(id: PreviewLoadIdentity(lastActiveAt: conversation.lastActiveAt, refreshRevision: previewRefreshRevision, searching: !query.isEmpty)) {
+                                if query.isEmpty { await loadPreview(conversation) }
+                            }
                             .contextMenu {
                                 Button(String(localized: "chat.conversations.rename", defaultValue: "Rename"),
                                        systemImage: "pencil") {
@@ -220,7 +307,7 @@ struct ChatConversationsList: View {
                                        systemImage: "trash", role: .destructive) { pendingDelete = conversation }
                                     .disabled(isRunning)
                             }
-                            if roomParents.contains(conversation.id) { Button {
+                            if previews[conversation.id]?.hasRoom == true { Button {
                                 dismissSearchKeyboard()
                                 if !expandedParents.insert(conversation.id).inserted { expandedParents.remove(conversation.id) }
                             } label: {
@@ -252,7 +339,7 @@ struct ChatConversationsList: View {
                     Button {
                         dismissSearchKeyboard()
                         if let id = container.chatManager.startConversation(title: nil, language: nil) {
-                            refresh(); onSelect(id)
+                            onSelect(id)
                         } else { loadError = String(localized: "chat.history.create_failed") }
                     } label: {
                         Image("nola-edit").renderingMode(.template).resizable().scaledToFit()
@@ -264,6 +351,7 @@ struct ChatConversationsList: View {
             HStack(spacing: 10) {
                 Image("nola-search").renderingMode(.template).resizable().scaledToFit()
                     .frame(width: 19, height: 19).foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
                 TextField("", text: $search, prompt: Text(String(localized: "chat.history.search")).foregroundColor(.secondary))
                     .font(.subheadline).focused($searchFocused)
                     .submitLabel(.search).autocorrectionDisabled()
@@ -271,6 +359,8 @@ struct ChatConversationsList: View {
             }
             .padding(.horizontal, 13).frame(minHeight: 46)
             .background(DesignTokens.elevatedColor, in: RoundedRectangle(cornerRadius: 12))
+            .contentShape(Rectangle())
+            .onTapGesture { searchFocused = true }
             HStack(spacing: 18) {
                 filterButton("activity.all", selected: !needsResponseOnly) { needsResponseOnly = false }
                 filterButton("workspace.today.needsResponse", selected: needsResponseOnly) { needsResponseOnly = true }
@@ -307,57 +397,54 @@ struct ChatConversationsList: View {
             conversationID: conversation.id.uuidString, fallback: L10n.chatConversationDefaultTitle)
     }
 
-    private func loadPreview(_ conversation: IOSConversationDirectoryEntry) {
-        do { draftTexts[conversation.id] = try FileConversationDraftRepository.application().textPreview(.conversation(conversation.id)) }
-        catch { previewErrors[conversation.id] = error.localizedDescription; return }
-        // Read the existing association only; opening history must never create a room.
-        do {
-            let association = try IOSAgentRoomService(runtime: container.applicationRuntime)
-                .forConversation(conversation.canonicalID)
-            if association != nil { roomParents.insert(conversation.id) } else { roomParents.remove(conversation.id) }
-            expertNames[conversation.id] = association?.room.room.participants
-                .filter(\.active).map(\.displayName) ?? []
-        } catch {
-            // Keep an already confirmed disclosure operable through a transient
-            // association read failure; detail opening revalidates the owner.
-            expertNames.removeValue(forKey: conversation.id)
-        }
-        guard previewDates[conversation.id] != conversation.lastActiveAt else { return }
-        do {
-            let window = try container.applicationRuntime.loadConversationProjectionWindowV1(
-                id: conversation.id.uuidString, beforeOrdinal: nil, limit: 2, contentByteLimit: 4096)
-            let source = IOSConversationProjectionPresenter.messages(from: window.projection)
-                .last(where: { !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })?.content ?? ""
-            previews[conversation.id] = source.components(separatedBy: .newlines).map { line in
-                (try? AttributedString(markdown: line)).map { String($0.characters) } ?? line
-            }.joined(separator: " ")
-            previewDates[conversation.id] = conversation.lastActiveAt
-            previewErrors.removeValue(forKey: conversation.id)
-        } catch { previewErrors[conversation.id] = error.localizedDescription }
+    private func loadPreview(_ entry: IOSConversationDirectoryEntry) async {
+        let previous = previews[entry.id]
+        guard previous?.checkedOnVisit != previewRefreshRevision else { return }
+        let runtime = container.applicationRuntime
+        let revision = previewRefreshRevision
+        let preview = await Task.detached(priority: .utility) {
+            await IOSConversationListPreview.read(entry, runtime: runtime, previous: previous, visit: revision)
+        }.value
+        guard !Task.isCancelled, previewRefreshRevision == revision else { return }
+        previews[entry.id] = preview
     }
 
-    private func refresh(forcePreviews: Bool = false) {
+    private func refresh(forcePreviews: Bool = false) async {
         let runtime = container.applicationRuntime, request = UUID()
         directoryRequest = request
-        Task { @MainActor in
-            do {
-                let loaded = try await Task.detached { try IOSWorkspaceReadFacts.conversationDirectory(runtime: runtime) }.value
-                guard directoryRequest == request else { return }
-                if forcePreviews {
-                    previewDates.removeAll(); previewErrors.removeAll(); expertNames.removeAll()
-                    previewRefreshRevision += 1
-                }
-                let ids = Set(loaded.map(\.id))
+        do {
+            let previous = directorySnapshot
+            let (snapshot, directory) = try await Task.detached {
+                let snapshot = try runtime.listRootConversations()
+                let changed = forcePreviews || snapshot != previous
+                let directory = changed ? try IOSWorkspaceReadFacts.conversationDirectory(runtime: runtime, summaries: snapshot) : nil
+                return (snapshot, directory)
+            }.value
+            guard !Task.isCancelled, directoryRequest == request else { return }
+            if let directory {
+                let ids = Set(directory.map(\.id))
                 previews = previews.filter { ids.contains($0.key) }
-                previewDates = previewDates.filter { ids.contains($0.key) }
-                expertNames = expertNames.filter { ids.contains($0.key) }
-                previewErrors = previewErrors.filter { ids.contains($0.key) }
-                draftTexts = draftTexts.filter { ids.contains($0.key) }
-                roomParents.formIntersection(ids)
+                if forcePreviews {
+                    for id in previews.keys { previews[id]?.hasCurrentMessage = false }
+                }
                 expandedParents.formIntersection(ids)
-                conversations = loaded
-                loadError = nil
-            } catch { if directoryRequest == request { loadError = error.localizedDescription } }
+                conversations = directory
+                directorySnapshot = snapshot
+            }
+            previewRefreshRevision += 1
+            loadError = nil
+        } catch {
+            if !Task.isCancelled && directoryRequest == request { loadError = error.localizedDescription }
+        }
+    }
+}
+
+private struct ConversationListTopEdge: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.scrollEdgeEffectHidden(true, for: .top)
+        } else {
+            content
         }
     }
 }

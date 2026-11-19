@@ -839,6 +839,100 @@ final class MacComposerAndInspectorLayoutTests: XCTestCase {
         }
     }
 
+    func testConversationSearchDoesNotSurviveCloseOrNewConversation() async throws {
+        let accessibility = try MacHostedAccessibilitySession()
+        defer { accessibility.restore() }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("workspace-search-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let preferencesName = "workspace-search-\(UUID())"
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: preferencesName))
+        defer { preferences.removePersistentDomain(forName: preferencesName) }
+        let port = try MacApplicationPort(databaseURL: root.appendingPathComponent("test.sqlite"))
+        let repository = MacCanonicalConversationRepository(store: port)
+        let runtime = PersistenceTestLocalRuntime()
+        let remote = PersistenceTestRemoteHost()
+        let model = MacWorkspaceModel(canonicalRepository: repository, localAgentRuntime: runtime,
+            remoteHost: remote, modelApplication: port)
+        model.newConversation()
+        let original = try XCTUnwrap(model.selectedConversationID)
+        let registry = MacDataSourceRegistry(storeURL: root.appendingPathComponent("registry.json"))
+        let dependencies = MacInspectorDependencies(dataRegistry: registry,
+            platformData: MacPlatformDataService(registry: registry, startsPeriodicRefresh: false, preferences: preferences),
+            webSources: MacWebSourceStore(storeURL: root.appendingPathComponent("sources.json"), registry: registry),
+            chromeMessaging: LayoutTestChromeMessaging())
+        let size = CGSize(width: 1280, height: 780)
+        let host = NSHostingView(rootView: MacChatWorkspaceView(initialConversationID: original,
+            canonicalRepository: repository, localAgentRuntime: runtime, remoteHost: remote,
+            inspectorDependencies: dependencies, model: model)
+            .defaultAppStorage(preferences).environment(\.accessibilityEnabled, true)
+            .frame(width: size.width, height: size.height))
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil); window.contentView = nil; window.close() }
+        func press(_ id: String) async throws {
+            let deadline = ContinuousClock.now + .seconds(4)
+            while ContinuousClock.now < deadline {
+                host.layoutSubtreeIfNeeded()
+                if let button = objects(host).first(where: { $0.accessibilityIdentifier?() == id }) {
+                    XCTAssertTrue(button.accessibilityPerformPress?() == true, id)
+                    try await Task.sleep(for: .milliseconds(180))
+                    return
+                }
+                try await Task.sleep(for: .milliseconds(30))
+            }
+            XCTFail("Missing visible control: " + id)
+            throw MacApplicationPortError.invalidResponse
+        }
+        func capture(_ name: String) throws {
+            let image = try MacVisualPixelAssertions.captureCGImage(of: host)
+            let png = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        try await press("workspace.searchConversation")
+        XCTAssertTrue(model.isTranscriptSearchVisible)
+        let searchEditor = try XCTUnwrap(window.firstResponder as? NSTextInputClient)
+        searchEditor.insertText("Only this conversation", replacementRange: NSRange(location: NSNotFound, length: 0))
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(model.transcriptSearchText, "Only this conversation")
+        XCTAssertEqual(model.searchText, "")
+        try await press("workspace.searchConversation")
+        XCTAssertFalse(model.isTranscriptSearchVisible)
+        XCTAssertEqual(model.transcriptSearchText, "")
+        XCTAssertTrue(window.firstResponder is MacAttachmentPasteTextView, "Closing search must restore keyboard editing")
+        try await press("workspace.searchConversation")
+        model.transcriptSearchText = "Previous conversation"
+        model.searchText = "No matching historical title"
+        try await press("workspace.newConversation")
+        let created = try XCTUnwrap(model.selectedConversationID)
+        XCTAssertNotEqual(created, original)
+        XCTAssertFalse(model.isTranscriptSearchVisible)
+        XCTAssertEqual(model.transcriptSearchText, "")
+        XCTAssertEqual(model.searchText, "")
+        XCTAssertTrue(window.firstResponder is MacAttachmentPasteTextView, "New conversations must be ready for typing")
+        let createdTitle = try XCTUnwrap(model.selectedConversation?.title)
+        model.searchText = "  " + createdTitle + "  "
+        XCTAssertTrue(model.filteredConversations.contains { $0.id == created })
+        model.searchText = ""
+        try capture("mac-new-conversation-after-filter")
+        try await press("workspace.conversation." + original)
+        XCTAssertEqual(model.selectedConversationID, original)
+        for area in ["task", "artifacts", "context"] {
+            try await press("mac-inspector-group-" + area)
+            XCTAssertTrue(objects(host).contains { $0.accessibilityIdentifier?() == "mac-inspector-region-" + area })
+            try capture("mac-workspace-" + area)
+        }
+        for section in ["extensions", "automations", "memory", "chat"] {
+            try await press("workspace.nav." + section)
+            try capture("mac-destination-" + section)
+        }
+    }
+
     func testLeftSidebarDestinationsAndSettingsStayUniqueInBothAppearances() async throws {
         let accessibility = try MacHostedAccessibilitySession()
         defer { accessibility.restore() }

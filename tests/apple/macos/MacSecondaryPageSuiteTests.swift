@@ -973,8 +973,18 @@ final class MacSecondaryPageNavigationTests: XCTestCase {
                 window.contentView = host
                 window.orderFrontRegardless()
                 defer { window.close() }
-                for section in ["general", "providers", "agent", "connections", "data", "diagnostics"] {
+                for section in ["general", "providers", "agent", "connections", "data", "diagnostics", "general"] {
                     try await pressIdentifier("settings.category." + section, in: host)
+                    let heading = "settings.heading." + section
+                    XCTAssertTrue(accessibilityObjects(host).contains { $0.accessibilityIdentifier?() == heading }, heading)
+                    if width == 820, section != "general" {
+                        let image = try MacVisualPixelAssertions.captureCGImage(of: host)
+                        let png = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+                        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+                        attachment.name = "mac-settings-\(section)-\(dark ? "dark" : "light")"
+                        attachment.lifetime = .keepAlways
+                        add(attachment)
+                    }
                 }
                 window.close()
             }

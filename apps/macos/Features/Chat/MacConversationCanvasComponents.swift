@@ -331,19 +331,25 @@ struct MacConversationSearchBar: View {
                     .foregroundStyle(.secondary)
             }
             Button {
-                model.transcriptSearchText = ""
                 model.isTranscriptSearchVisible = false
             } label: {
                 Image(systemName: "xmark")
             }
-            .buttonStyle(.plain)
+            .buttonStyle(MacInlineIconButtonStyle(size: 28))
             .help("Close Search")
+            .accessibilityLabel("Close Search")
+            .accessibilityIdentifier("workspace.closeTranscriptSearch")
         }
         .padding(.horizontal, 14)
         .frame(height: 36)
         .background(.bar)
         .overlay(alignment: .bottom) { Divider() }
-        .onAppear { focused = true }
+        .task {
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            focused = true
+        }
+        .onExitCommand { model.isTranscriptSearchVisible = false }
     }
 }
 
