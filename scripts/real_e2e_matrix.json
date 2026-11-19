@@ -1768,7 +1768,7 @@
           "ui"
         ],
         "boundaries": [
-          "electron-preload",
+          "tauri-bridge",
           "local-host",
           "indexeddb"
         ],
@@ -1816,7 +1816,7 @@
           "tools"
         ],
         "boundaries": [
-          "electron-renderer",
+          "webview2",
           "local-host",
           "provider",
           "sqlite",

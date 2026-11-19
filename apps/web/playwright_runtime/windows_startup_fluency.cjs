@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// The shipped Windows startup renderer, without starting Electron or its Host.
+// The shipped Windows startup renderer, without starting Tauri or its Host.
 const {chromium} = require('playwright-core');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');

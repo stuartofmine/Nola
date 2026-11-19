@@ -164,40 +164,39 @@ test("startupPageHtml enforces Warm Paper/Ink tokens, WCAG contrast, layout boun
     }
 });
 
-// Exercise the built preload with only the Electron-to-main IPC transport replaced.
-const preload = fs.readFileSync(path.join(repoRoot, "apps/windows/dist/preload.js"), "utf8");
+// Exercise the production bridge and startup page with a controlled Tauri command transport.
+const bridge = fs.readFileSync(path.join(repoRoot, "apps/windows/src-tauri/src/desktop-bridge.js"), "utf8");
+const startup = fs.readFileSync(path.join(repoRoot, "apps/windows/src-tauri/startup/startup.js"), "utf8");
 const preloadHarness = `(() => {
-    const exports = {};
     let enabled = false, reads = 0;
     window.__ipcCalls = [];
-    const require = () => ({
-        contextBridge: {exposeInMainWorld: (name, value) => { window[name] = value; }},
-        ipcRenderer: {invoke: async (method, value) => {
-            window.__ipcCalls.push(method);
-            switch (method) {
-                case "desktop:retry-host":
-                    return new Promise(resolve => { window.__finishRetry = resolve; });
-                case "desktop:native-runtime": return {architecture: "x64", backend: "vulkan"};
-                case "desktop:login-item":
-                    if (++reads === 1) throw new Error("Disconnected");
-                    return {available: true, enabled, labels: {title: "Start Nola when I sign in", body: "", enabled: "Enabled", disabled: "Disabled", unavailable: "Unavailable"}};
-                case "desktop:set-login-item": enabled = value; throw new Error("Lost reply");
-                case "desktop:open-log-folder": return true;
-                default: throw new Error("Unexpected IPC " + method);
-            }
-        }}
-    });
-    ${preload}
+    window.__TAURI_INTERNALS__ = {invoke: async (method, args) => {
+        if (method === "startup_status") return {phase:"failed",language:"en",failure:"Exit code 1",page:${JSON.stringify(startupPageHtml(stringsFor("en"), "failed", "DETAIL"))}};
+        window.__ipcCalls.push(method);
+        switch (method) {
+            case "retry_startup": return new Promise(resolve => { window.__finishRetry = resolve; });
+            case "native_runtime": return {architecture:"x64", backend:"vulkan"};
+            case "login_item":
+                if (++reads === 1) throw new Error("Disconnected");
+                return {available:true, enabled, labels:{title:"Start Nola when I sign in",body:"",enabled:"Enabled",disabled:"Disabled",unavailable:"Unavailable"}};
+            case "set_login_item": enabled = args.enabled; throw new Error("Lost reply");
+            case "open_diagnostics": return true;
+            default: throw new Error("Unexpected IPC " + method);
+        }
+    }};
+    ${bridge}
 })();`;
 
-test("startup recovery buttons enforce preload click IPC and busy/retry guards", async ({ browser }) => {
+test("startup recovery buttons enforce Tauri command and busy/retry guards", async ({ browser }) => {
     const context = await browser.newContext({ viewport: { width: 720, height: 520 }, colorScheme: "light" });
-    await context.route("**/*", (route) => route.abort());
+    const index = fs.readFileSync(path.join(repoRoot, "apps/windows/src-tauri/startup/index.html"), "utf8");
+    await context.route("http://tauri.localhost/**", route => route.request().url().endsWith("/startup.js")
+        ? route.fulfill({contentType:"text/javascript", body:startup})
+        : route.fulfill({contentType:"text/html", body:index}));
     const page = await context.newPage();
     try {
         await page.addInitScript({ content: preloadHarness });
-        await page.goto("data:text/html;charset=utf-8," + encodeURIComponent(startupPageHtml(stringsFor("en"), "failed", "Exit code 1")));
-
+        await page.goto("http://tauri.localhost/index.html");
         await page.locator("#nola-open-logs").click();
         await page.locator("#nola-retry-host").click();
         await expect(page.locator("#nola-retry-host")).toBeDisabled();
@@ -206,8 +205,8 @@ test("startup recovery buttons enforce preload click IPC and busy/retry guards",
         // Second click while busy must not re-invoke IPC.
         await page.locator("#nola-retry-host").click({ force: true });
         expect(await page.evaluate(() => (window as unknown as { __ipcCalls: string[] }).__ipcCalls)).toEqual([
-            "desktop:open-log-folder",
-            "desktop:retry-host",
+            "open_diagnostics",
+            "retry_startup",
         ]);
 
         // Rejected / false retry re-enables button and clears aria-busy.

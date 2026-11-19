@@ -4,7 +4,7 @@
   "version": "../package.json",
   "identifier": "com.nola.assistant.windows",
   "build": { "frontendDist": "startup" },
-  "app": { "windows": [], "security": { "capabilities": [] } },
+  "app": { "windows": [], "security": { "capabilities": ["startup"] } },
   "bundle": {
     "active": true,
     "targets": ["nsis"],

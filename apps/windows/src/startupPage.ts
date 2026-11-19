@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { DesktopStrings } from "./i18n";
-import { DARK_THEME_TOKENS, LIGHT_THEME_TOKENS } from "./themeTokens";
+import { DARK_THEME_TOKENS, LIGHT_THEME_TOKENS } from "./themeTokens.ts";
 
 export function startupPageHtml(strings: DesktopStrings, mode: "starting" | "failed", detail = ""): string {
     const failed = mode === "failed";

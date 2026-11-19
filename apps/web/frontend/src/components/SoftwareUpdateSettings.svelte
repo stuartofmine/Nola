@@ -9,6 +9,8 @@
         release: { release_id: string; version: string; build: number; notes: string;
             artifact: {kind: 'installer'|'archive'|'store';url: string;filename?: string;size?: number;sha256?: string} } | null;
     }
+    let desktop = $state(false);
+    onMount(() => { desktop = 'NolaDesktop' in window; });
     let snapshot = $state<Snapshot>();
     let busy = $state(false), failure = $state(''), downloaded = $state(false);
     let generation = 0, disposed = false;
@@ -48,7 +50,7 @@
             {#if snapshot.release.notes}<p class="notes">{snapshot.release.notes}</p>{/if}
             {#if snapshot.release.artifact.kind === 'store'}
                 {#if storeURL(snapshot.release.artifact.url)}<a class="button" href={storeURL(snapshot.release.artifact.url)} target="_blank" rel="noopener noreferrer">{t($locale,'softwareUpdate.store')}</a>{/if}
-            {:else}<a class="button" href={`/api/software-update/package?release_id=${encodeURIComponent(snapshot.release.release_id)}`} target="_blank" rel="noopener noreferrer" aria-disabled={downloaded || busy} onclick={event => { if (downloaded || busy) event.preventDefault(); else requestDownload(); }}>{t($locale,'softwareUpdate.download')}</a>{/if}
+            {:else}<a class="button" href={`/api/software-update/package?release_id=${encodeURIComponent(snapshot.release.release_id)}`} target={desktop ? "_self" : "_blank"} rel="noopener noreferrer" aria-disabled={downloaded || busy} onclick={event => { if (downloaded || busy) event.preventDefault(); else requestDownload(); }}>{t($locale,'softwareUpdate.download')}</a>{/if}
         {/if}
     {/if}
     {#if busy}<p role="status">{t($locale,'softwareUpdate.working')}</p>{/if}

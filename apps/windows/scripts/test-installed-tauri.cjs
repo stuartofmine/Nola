@@ -9,7 +9,7 @@ const { once } = require("node:events");
 const { setTimeout: delay } = require("node:timers/promises");
 const { chromium } = require("playwright-core");
 
-async function withDesktop(executable, home, inspect) {
+async function launchDesktop(executable, home) {
     const child = spawn(executable, [], { env: { ...process.env, NOLA_HOME: home,
         WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: "--remote-debugging-port=19223" } });
     const exit = once(child, "exit");
@@ -35,18 +35,31 @@ async function withDesktop(executable, home, inspect) {
             console.error("Startup page:", (await page.locator("body").innerText()).slice(0, 600));
             throw error;
         }
-        return await inspect(page, new URL(page.url()).origin);
-    } finally {
+        return {page, close: async () => {
+            child.kill();
+            await exit;
+            if (browser) await browser.close().catch(() => {});
+        }};
+    } catch (error) {
         child.kill();
         await exit;
         if (browser) await browser.close().catch(() => {});
+        throw error;
     }
+}
+
+async function withDesktop(executable, home, inspect) {
+    const desktop = await launchDesktop(executable, home);
+    try { return await inspect(desktop.page, new URL(desktop.page.url()).origin); }
+    finally { await desktop.close(); }
 }
 
 async function main() {
     const executable = process.env.NOLA_INSTALLED_DESKTOP;
     assert.ok(executable && fs.existsSync(executable), "Set NOLA_INSTALLED_DESKTOP to the installed Tauri executable");
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nola-desktop-test-"));
+    process.env.NOLA_E2E_USER_DATA = path.join(home, "desktop");
+    const { expect } = require("@playwright/test");
     const created = await withDesktop(executable, home, async (page, origin) => {
         const button = page.locator("button.new-conversation:visible").first();
         const [result] = await Promise.all([
@@ -57,8 +70,23 @@ async function main() {
         const value = await result.json();
         const id = value.conversationId ?? value.conversation?.conversationId;
         assert.ok(id);
-        await page.locator("#chat-composer").fill("Tauri desktop verification");
-        assert.equal(await page.locator("#chat-composer").inputValue(), "Tauri desktop verification");
+        await page.waitForURL(url => url.searchParams.get("conversation") === id);
+        await page.locator("#chat-composer").fill("Unsent desktop restart regression");
+        await page.locator('input[type="file"][accept*=".txt"]').first().setInputFiles({
+            name:"restart-note.txt", mimeType:"text/plain", buffer:Buffer.from("Unsent note"),
+        });
+        await expect.poll(() => page.evaluate(() => new Promise((resolve, reject) => {
+            const db = indexedDB.open("nola-conversation-workspace");
+            db.onsuccess = () => {
+                const rows = db.result.transaction("drafts").objectStore("drafts").getAll();
+                rows.onsuccess = () => { db.result.close(); resolve(rows.result.some(row =>
+                    row.text === "Unsent desktop restart regression" && row.attachments.some(a => a.name === "restart-note.txt"))); };
+                rows.onerror = () => reject(rows.error);
+            };
+            db.onerror = () => reject(db.error);
+        }))).toBe(true);
+        const login = await page.evaluate(() => window.NolaDesktop.loginItem());
+        assert.equal(login.available, true);
         return { id, origin };
     });
     await withDesktop(executable, home, async (page, origin) => {
@@ -67,7 +95,19 @@ async function main() {
         assert.ok(response.ok());
         assert.ok((await response.json()).conversations.some(c => c.conversationId === created.id),
             "The conversation created in the installed UI must survive relaunch");
+        await page.goto(origin + "/chat?conversation=" + encodeURIComponent(created.id));
+        const composer = page.locator("#chat-composer");
+        const attachment = page.getByRole("button", { name:"restart-note.txt", exact:true });
+        await expect(composer).toHaveValue("Unsent desktop restart regression");
+        await expect(attachment).toBeVisible();
+        if (process.env.NOLA_DESKTOP_RESTART_EVIDENCE) {
+            fs.writeFileSync(process.env.NOLA_DESKTOP_RESTART_EVIDENCE, JSON.stringify({
+                platform:process.platform,beforeOrigin:created.origin,afterOrigin:origin,
+                draft:await composer.inputValue(),attachment:(await attachment.innerText()).trim(),
+            }),{flag:"wx"});
+        }
     });
     console.log("Installed Tauri/WebView2 client passed launch, conversation creation, composer and restart.");
 }
-main().catch(error => { console.error(error); process.exitCode = 1; });
+module.exports = { launchDesktop };
+if (require.main === module) main().catch(error => { console.error(error); process.exitCode = 1; });

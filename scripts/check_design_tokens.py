@@ -602,7 +602,7 @@ def check_android_theme(root: Path, light: dict[str, str], dark: dict[str, str],
 def check_windows_shell(root: Path, light: dict[str, str], dark: dict[str, str], errors: list[str]) -> None:
     windows_src = root / "apps/windows/src"
     tokens_path = windows_src / "themeTokens.ts"
-    main_path = windows_src / "main.ts"
+    desktop_export = root / "apps/windows/scripts/export-shell-strings.mjs"
     startup_path = windows_src / "startupPage.ts"
     if not tokens_path.is_file():
         errors.append("apps/windows/src/themeTokens.ts: missing file")
@@ -634,14 +634,8 @@ def check_windows_shell(root: Path, light: dict[str, str], dark: dict[str, str],
         errors,
     )
 
-    if not main_path.is_file():
-        errors.append("apps/windows/src/main.ts: missing file")
-    else:
-        main_ts = main_path.read_text(encoding="utf-8")
-        if "DARK_THEME_TOKENS.canvas" not in main_ts or "LIGHT_THEME_TOKENS.canvas" not in main_ts:
-            errors.append(
-                "apps/windows/src/main.ts: BrowserWindow backgroundColor must use DARK_THEME_TOKENS.canvas / LIGHT_THEME_TOKENS.canvas"
-            )
+    if not desktop_export.is_file() or "startupPageHtml(" not in desktop_export.read_text(encoding="utf-8"):
+        errors.append("Tauri startup resources must render the themed Windows startup page")
 
     if not startup_path.is_file():
         errors.append("apps/windows/src/startupPage.ts: missing file")

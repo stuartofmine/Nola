@@ -17,7 +17,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
+        id: build-cache
         with:
           path: |
             ~/.cargo/registry
@@ -30,6 +31,17 @@ jobs:
       - run: npm ci
         working-directory: apps/windows
       - run: npm run dist:x64
+        working-directory: apps/windows
+      - uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            apps/windows/src-tauri/target
+            apps/windows/.cache
+          key: ${{ steps.build-cache.outputs.cache-primary-key }}
+      - run: npm run test:unit
         working-directory: apps/windows
       - name: Store installer for diagnostics and verification
         uses: actions/upload-artifact@v4
@@ -46,6 +58,8 @@ jobs:
           $dir = Join-Path $env:RUNNER_TEMP 'NolaInstalled'
           $process = Start-Process $setup[0].FullName -ArgumentList "/S /D=$dir" -Wait -PassThru
           if ($process.ExitCode) { throw "Installer exited $($process.ExitCode)" }
+          Get-ChildItem $dir -File -Filter '*.exe' | Select-Object Name, Length
+          Write-Host ('Installer signature: ' + (Get-AuthenticodeSignature $setup[0].FullName).Status)
           $env:NOLA_INSTALLED_DESKTOP = Join-Path $dir 'nola-desktop.exe'
           npm --prefix apps/windows run test:e2e
           if ($LASTEXITCODE) {

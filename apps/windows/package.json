@@ -26,7 +26,6 @@
     "@playwright/test": "^1.62.0",
     "@tauri-apps/cli": "^2.12.6",
     "@types/node": "^24.0.0",
-    "electron": "^43.2.0",
     "typescript": "^7.0.2"
   }
 }
