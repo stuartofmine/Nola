@@ -86,14 +86,19 @@ try {
     if ((Draft-Value $editor) -ne $draft) { throw 'Native composer did not receive the draft' }
     $saved = @((Invoke-RestMethod "$before/api/chat/conversations").conversations)
     if ($saved.Count -ne 1 -or !$saved[0].conversationId) { throw 'Conversation creation did not commit' }
-    Click-Control (Find-Control name 'Add text files')
+    $picker = Find-Control name 'Add text files: No file chosen'
+    $picker.SetFocus()
+    [Windows.Forms.SendKeys]::SendWait('{ENTER}')
     $dialog = $null
     for ($i = 0; $i -lt 50; $i++) {
         $foreground = $uia::FromHandle([DesktopInput]::GetForegroundWindow())
         if ($foreground.Current.ClassName -eq '#32770') { $dialog = $foreground; break }
         Start-Sleep -Milliseconds 200
     }
-    if (!$dialog) { throw 'Clicking Add text files did not open the Windows file picker' }
+    if (!$dialog) {
+        $focused = $uia::FocusedElement.Current
+        throw "File picker unavailable. Foreground: $($foreground.Current.ClassName) / $($foreground.Current.Name). Focus: $($focused.ControlType.ProgrammaticName) / $($focused.Name)"
+    }
     [Windows.Forms.SendKeys]::SendWait('%n')
     [Windows.Forms.SendKeys]::SendWait('^a')
     Paste-Text $note
