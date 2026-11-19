@@ -126,20 +126,23 @@ class IntelligenceViewModel @Inject constructor(
             val record = snapshot.record
             onLoaded(skill.copy(
                 name = record.getValue("display_name").jsonPrimitive.content,
+                description = record["description"]?.jsonPrimitive?.content ?: skill.description,
                 content = record.getValue("instructions_text").jsonPrimitive.content,
                 enabled = record.getValue("enabled").jsonPrimitive.content.toBooleanStrict(),
             ), snapshot)
         }
     }
 
-    fun saveSkill(original: UploadedContent, snapshot: AndroidApplicationRuntime.SkillEditorSnapshot?, name: String, content: String, onCommitted: () -> Unit) {
+    fun saveSkill(original: UploadedContent, snapshot: AndroidApplicationRuntime.SkillEditorSnapshot?, name: String, description: String, content: String, onCommitted: () -> Unit) {
         val normalizedName = name.trim()
+        val normalizedDescription = description.trim()
         val normalizedContent = content.trim()
         if (normalizedName.isEmpty() || normalizedContent.isEmpty()) return
         mutateMcp { principalId ->
             if (snapshot != null) requireAccess(original, principalId, AgentCoreResourcePermission.EditContent)
             val skill = original.copy(
                 name = normalizedName,
+                description = normalizedDescription,
                 content = normalizedContent,
             )
             memoryProfileDataStore.saveSkill(snapshot, skill)

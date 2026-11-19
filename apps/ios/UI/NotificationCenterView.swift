@@ -185,7 +185,7 @@ struct NotificationCenterView: View {
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
-                .background(Color(.systemGroupedBackground))
+                .background(DesignTokens.backgroundColor)
                 .refreshable {
                     await loadHistory(showLoading: false)
                 }

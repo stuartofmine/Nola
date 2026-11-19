@@ -83,7 +83,7 @@ struct ChatEmptyStateCard: View {
                 Button(action: onPrimaryAction) {
                     Text(primaryActionTitle)
                         .font(.callout.weight(.semibold))
-                        .foregroundColor(Color(.systemBackground))
+                        .foregroundStyle(DesignTokens.onActionColor)
                         .padding(.horizontal, 22)
                         .padding(.vertical, 12)
                         .background(RoundedRectangle(cornerRadius: DesignTokens.radius_md).fill(DesignTokens.actionColor))

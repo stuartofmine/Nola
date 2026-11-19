@@ -8,7 +8,7 @@
     import { locale,t } from '../lib/i18n';
     import ChatMessageContent from './ChatMessageContent.svelte';
     import ChatReadOnlySurfacePart from './ChatReadOnlySurfacePart.svelte';
-    let {parentId,disabled=false}:{parentId:string;disabled?:boolean}=$props();
+    let {parentId,disabled=false,preload=false}:{parentId:string;disabled?:boolean;preload?:boolean}=$props();
     let expanded=$state(false),loading=$state(false),preloaded=$state(false),error=$state(''),host=$state('');
     let children=$state<ExpertChildConversation[]>([]),next=$state<number|null>(0),roomId=$state('');
     let sourceEpoch=$state<string|null>(null);
@@ -18,7 +18,7 @@
     let dialog:HTMLDialogElement,closeButton:HTMLButtonElement;
     let alive=true,serial=0,historySerial=0;const controller=new AbortController();let opener:HTMLElement|undefined;
     onDestroy(()=>{alive=false;++serial;++historySerial;controller.abort();if(dialog?.open)dialog.close();});
-    $effect(()=>{if(!preloaded&&!loading&&!error){preloaded=true;void load(false,true);}});
+    $effect(()=>{if(preload&&!preloaded&&!loading&&!error){preloaded=true;void load(false,true);}});
     async function sessionHost(){const session=await api<{hostId:string}>('/api/web/session',{signal:controller.signal});if(!session.hostId)throw Error('Invalid Host');return session.hostId;}
     async function load(reset=false,silent=false){
         if(loading||!reset&&next===null)return;const request=++serial,parent=parentId,offset=reset?0:next!;loading=true;if(!silent)error='';

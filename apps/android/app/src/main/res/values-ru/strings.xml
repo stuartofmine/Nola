@@ -1384,4 +1384,6 @@
     <string name="chat_ui_host_submission_unknown">Результат отправки на хост ещё не подтверждён.</string>
     <string name="chat_ui_submission_rejected">Отправка была отклонена.</string>
     <string name="chat_ui_submission_unknown">Результат отправки ещё не подтверждён.</string>
+    <string name="chat_skill_description">Описание (необязательно)</string>
+    <string name="models_web_host_disconnect">Отключить</string>
 </resources>

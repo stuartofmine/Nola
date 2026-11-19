@@ -57,7 +57,13 @@
       },
       {
         "from": "../web",
-        "to": "web"
+        "to": "web",
+        "filter": [
+          "app/static/**/*",
+          "app/locales/**/*",
+          "!app/static/ui-tests/**",
+          "!app/static/agent_artifacts/**"
+        ]
       }
     ],
     "win": {

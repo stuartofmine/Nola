@@ -125,10 +125,12 @@ struct IOSConversationInspector: View {
     var discardGoalControl: (@MainActor (String) async throws -> Void)? = nil
     let documents: [UserUploadedContextItem]
     let processingState: ChatProcessingState
+    var initialObjective: String = ""
     @Environment(\.dismiss) private var dismiss
     @State private var facts: IOSInspectorProgressFacts?
     @State private var plan: IOSInspectorProgressFacts.Plan?
     @State private var loadedOwner: String?
+    @State private var appliedInitialObjective = false
     @State private var loading = true
     @State private var failed = false
     @State private var retry = 0
@@ -147,6 +149,7 @@ struct IOSConversationInspector: View {
     var body: some View {
         NavigationStack {
             List {
+                Group {
                 if pane == .resources {
                     if documents.isEmpty {
                         ContentUnavailableView(String(localized: "inspector.no_resources", table: "ConversationInspector"), systemImage: "folder")
@@ -156,6 +159,7 @@ struct IOSConversationInspector: View {
                             Text(item.content).textSelection(.enabled)
                                 .font(.body).padding(.vertical, 8)
                         } label: { Label(item.name, systemImage: "doc") }
+                        .disclosureGroupStyle(NolaRowDisclosureStyle(isPlain: true))
                     }
                 } else if conversationID == nil {
                     ContentUnavailableView {
@@ -219,7 +223,11 @@ struct IOSConversationInspector: View {
                         }
                     }
                 }
+                }
+                .listRowBackground(DesignTokens.surfaceColor)
+                .listRowSeparatorTint(DesignTokens.borderColor)
             }
+            .nolaGroupedSurface()
             .navigationTitle(pane == .goals ? String(localized: "work.tools.goals") : pane == .progress
                 ? String(localized: "inspector.progress", table: "ConversationInspector")
                 : String(localized: "inspector.resources", table: "ConversationInspector"))
@@ -247,6 +255,14 @@ struct IOSConversationInspector: View {
                 if pendingGoalControl?.control.action == .start, result.pendingGoalControl == nil,
                    result.goalControlNotice == nil { goalObjective = "" }
                 pendingGoalControl = result.pendingGoalControl
+                if !appliedInitialObjective {
+                    appliedInitialObjective = true
+                    let prefill = initialObjective.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !prefill.isEmpty, facts?.goal_projection?.active == nil, pendingGoalControl == nil {
+                        goalObjective = prefill
+                        if canStartNewGoal { showGoalStart = true }
+                    }
+                }
                 if goalObjective.isEmpty, let draft = result.goalDraft { goalObjective = draft.objective }
                 if let notice = result.goalControlNotice { goalControlNotice = notice }
                 else if result.pendingGoalControl == nil { goalControlNotice = nil }
@@ -315,6 +331,7 @@ struct IOSConversationInspector: View {
         .sheet(isPresented: $showGoalStart) {
             NavigationStack {
                 Form {
+                    Group {
                     Text(goalText("goal.guidance", "Describe a result. Nola keeps working and pauses when it needs your input or permission."))
                         .foregroundStyle(.secondary)
                     TextField(goalText("goal.objective", "What should this Goal achieve?"), text: $goalObjective, axis: .vertical)
@@ -325,7 +342,10 @@ struct IOSConversationInspector: View {
                         .font(.callout).foregroundStyle(.secondary)
                     Text(goalText("goal.model_note", "Uses this conversation’s selected model and current tool permissions."))
                         .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .listRowBackground(DesignTokens.surfaceColor)
                 }
+                .nolaGroupedSurface()
                 .navigationTitle(goalText("goal.start", "Start a Goal"))
                 .onAppear { goalObjectiveFocused = true }
                 .toolbar {
@@ -343,10 +363,12 @@ struct IOSConversationInspector: View {
                     }
                 }
             }
+            .toggleStyle(NolaSwitchToggleStyle())
         }
         .sheet(isPresented: $showSchedule) {
             NavigationStack {
                 Form { DatePicker(goalText("goal.wake", "Continue at"), selection: $goalWake, in: Date()...) }
+                    .nolaGroupedSurface()
                     .navigationTitle(goalText("goal.schedule", "Schedule continuation"))
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) { Button(L10n.close) { showSchedule = false } }
@@ -358,6 +380,7 @@ struct IOSConversationInspector: View {
                         }
                     }
             }
+            .toggleStyle(NolaSwitchToggleStyle())
         }
     }
 

@@ -111,22 +111,59 @@ struct AppleActivityView: View {
                     }
                 }.font(.subheadline)
             }.padding()
-            Text("activity.localScope").font(.caption).foregroundStyle(.secondary).padding(.horizontal)
+            Text("activity.localScope").font(.caption).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal)
             if let error = errorForCurrentQuery {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(error).foregroundStyle(.secondary)
                     Button("common.retry") { requestReload(more: false) }.disabled(busy)
                 }.padding()
             }
-            HStack {
-                TextField(text: $query, prompt: Text("activity.search").foregroundStyle(Color.secondary)) {
-                    Text("activity.search")
-                }.textFieldStyle(.roundedBorder)
+            HStack(spacing: 8) {
+                #if os(macOS)
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                    TextField(text: $query, prompt: Text("activity.search").foregroundStyle(Color.secondary)) {
+                        Text("activity.search")
+                    }
+                    .textFieldStyle(.plain)
                     .accessibilityIdentifier("activity.search")
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 36)
+                .background(MacDesignColor.panel, in: RoundedRectangle(cornerRadius: MacDesignTokens.Radius.control, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: MacDesignTokens.Radius.control, style: .continuous)
+                        .strokeBorder(MacDesignColor.borderSubtle, lineWidth: 0.75)
+                }
+                #else
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                    TextField(text: $query, prompt: Text("activity.search").foregroundStyle(Color.secondary)) {
+                        Text("activity.search")
+                    }
+                    .textFieldStyle(.plain)
+                    .accessibilityIdentifier("activity.search")
+                }
+                .padding(.horizontal, 12)
+                .frame(minHeight: 44)
+                .background(DesignTokens.elevatedColor, in: RoundedRectangle(cornerRadius: 12))
+                #endif
                 Button { requestReload(more: false) } label: {
                     Label("activity.refresh", systemImage: "arrow.clockwise").labelStyle(.iconOnly)
                         .frame(minWidth: actionSize, minHeight: actionSize)
-                }.disabled(busy).help(Text("activity.refresh"))
+                }
+                #if os(macOS)
+                .macToolbarIcon()
+                #endif
+                .disabled(busy).help(Text("activity.refresh"))
                     .accessibilityIdentifier("activity.refresh")
             }.padding(.horizontal).padding(.vertical, 6)
             List {

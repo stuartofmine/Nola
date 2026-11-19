@@ -129,6 +129,7 @@ struct ChatContextSheet: View {
     @Binding var selectedSystemDataSourceTypes: Set<DataSourceType>
     let onSave: () throws -> Void
     let onSaveMemoryProfile: () async throws -> Void
+    var onSaveUploadedDocuments: (([UserUploadedContextItem]) throws -> [UserUploadedContextItem])? = nil
     let onSaveConversationKnowledge: (ConversationKnowledgeSaveSnapshot) async throws -> Void
     let onCompact: () async throws -> String
     let onReload: () async throws -> String?
@@ -157,6 +158,7 @@ struct ChatContextSheet: View {
 
     var body: some View {
         Form {
+            Group {
             Section {
                 ChatConversationScopeSummary(
                     symbol: displayMode == .context ? "circle.hexagongrid" : "shippingbox",
@@ -518,16 +520,23 @@ struct ChatContextSheet: View {
 
             if displayMode == .context && selectedContextPane == .tools {
                 Section {
-                    hostMCPServersList(items: hostMCPServers)
-                    if hostMCPServers.isEmpty {
-                        Text(tr("chat.context.mcp.host.empty", "当前宿主机没有可用的 MCP 服务器。", "The connected host has no available MCP servers."))
+                    if !hostMCPServers.isEmpty {
+                        hostMCPServersList(items: hostMCPServers)
+                    } else if !mcpServers.isEmpty {
+                        localMCPServersReadOnlyList(items: mcpServers)
+                    } else {
+                        Text(tr("chat.context.mcp.empty", "当前还没有可用的 MCP 服务器。", "No MCP servers are configured yet."))
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                     }
                 } header: {
                     Text(tr("chat.context.mcp.header", "MCP 能力", "MCP capabilities"))
                 } footer: {
-                    Text(tr("chat.context.mcp.host.footer", "连接、授权和能力发现由宿主机管理；此设备显示本次会话可用的能力。", "Connection, authorization, and capability discovery are managed by the host; this device shows what is available to this conversation."))
+                    if !hostMCPServers.isEmpty {
+                        Text(tr("chat.context.mcp.host.footer", "连接、授权和能力发现由宿主机管理；此设备显示本次会话可用的能力。", "Connection, authorization, and capability discovery are managed by the host; this device shows what is available to this conversation."))
+                    } else {
+                        Text(tr("chat.context.mcp.local.footer", "可在「资料库 > 能力库」中配置、启用或管理本机 MCP 服务器。", "Configure and manage local MCP servers in Library > Capabilities."))
+                    }
                 }
             }
 
@@ -722,7 +731,11 @@ struct ChatContextSheet: View {
                         .foregroundColor(.secondary)
                 }
             }
+            }
+            .listRowBackground(DesignTokens.surfaceColor)
+            .listRowSeparatorTint(DesignTokens.borderColor)
         }
+        .nolaGroupedSurface()
         .navigationTitle(sheetTitle)
         .navigationBarTitleDisplayMode(.inline)
         .fileImporter(
@@ -857,6 +870,10 @@ struct ChatContextSheet: View {
                     if initialMemoryText != [sessionMemory, longTermMemory, userPreferences] {
                         try await onSaveMemoryProfile()
                         initialMemoryText = [sessionMemory, longTermMemory, userPreferences]
+                        savedAnyPart = true
+                    }
+                    if let onSaveUploadedDocuments {
+                        uploadedDocuments = try onSaveUploadedDocuments(uploadedDocuments)
                         savedAnyPart = true
                     }
                     try onSave()
@@ -1150,6 +1167,7 @@ struct ChatContextSheet: View {
         category: SkillVisualCategory
     ) -> some View {
         Form {
+            Group {
             Section {
                 HStack(spacing: 12) {
                     skillCategoryIcon(category)
@@ -1204,7 +1222,11 @@ struct ChatContextSheet: View {
                     Label(tr("chat.context.delete", "删除 Skill", "Delete Skill"), systemImage: "trash")
                 }
             }
+            }
+            .listRowBackground(DesignTokens.surfaceColor)
+            .listRowSeparatorTint(DesignTokens.borderColor)
         }
+        .nolaGroupedSurface()
         .navigationTitle(skillDisplayName(item.wrappedValue))
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -1214,6 +1236,7 @@ struct ChatContextSheet: View {
         category: SkillVisualCategory
     ) -> some View {
         List {
+            Group {
             Section {
                 HStack(spacing: 12) {
                     skillCategoryIcon(category)
@@ -1243,7 +1266,11 @@ struct ChatContextSheet: View {
                     Label(tr("chat.context.skills.use", "在对话中使用", "Use in conversation"), systemImage: "arrow.turn.down.left")
                 }
             }
+            }
+            .listRowBackground(DesignTokens.surfaceColor)
+            .listRowSeparatorTint(DesignTokens.borderColor)
         }
+        .nolaGroupedSurface()
         .navigationTitle(skillDisplayName(item))
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -1488,6 +1515,43 @@ struct ChatContextSheet: View {
                 .padding(.vertical, 4)
             }
         }
+    }
+
+    private func localMCPServersReadOnlyList(items: [UserMCPServer]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(items) { server in
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(server.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                             ? tr("chat.context.mcp.default_name", "MCP Server", "MCP Server")
+                             : server.name)
+                            .font(.subheadline.weight(.semibold))
+                        Spacer()
+                        Text(server.enabled
+                             ? tr("chat.context.toggle.enabled", "启用", "Enabled")
+                             : tr("chat.context.sources.disabled", "已停用", "Disabled"))
+                            .font(.caption2.weight(.semibold))
+                            .foregroundColor(server.enabled ? DesignTokens.successColor : .secondary)
+                    }
+                    if !server.endpoint.isEmpty {
+                        Text(server.endpoint)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    if !server.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text(server.description)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(10)
+                .background(DesignTokens.primaryColor.opacity(0.06), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+        }
+        .padding(.vertical, 4)
     }
 
     private func hostMCPServersList(items: [UserMCPServer]) -> some View {

@@ -1384,4 +1384,6 @@
     <string name="chat_ui_host_submission_unknown">Le résultat de l’envoi à l’hôte n’est pas encore confirmé.</string>
     <string name="chat_ui_submission_rejected">L’envoi a été rejeté.</string>
     <string name="chat_ui_submission_unknown">Le résultat de l’envoi n’est pas encore confirmé.</string>
+    <string name="chat_skill_description">Description (facultatif)</string>
+    <string name="models_web_host_disconnect">Déconnecter l’hôte</string>
 </resources>

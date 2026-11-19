@@ -3404,3 +3404,11 @@
 "a2ui.queue.cancel_rejected" = "Remove unexecuted form action";
 "chat.host.reconnect_bound" = "Reconnect to the Host bound to this conversation.";
 "chat.host.source_unavailable" = "Unable to verify the source Host for this conversation.";
+
+"composer.command.goal" = "Goal";
+"chat.composer.attach_photos" = "Photos";
+"model.center.start_blocked_hint" = "Stop the running local model before starting this one.";
+"model.web_host.forget_pairing" = "Forget previous pairing";
+"model.web_host.forget_pairing.footer" = "Clears the remembered identity and saved token for this host address so you can pair again.";
+"chat.context.mcp.empty" = "No MCP servers are configured yet.";
+"chat.context.mcp.local.footer" = "Configure and manage local MCP servers in Library > Capabilities.";

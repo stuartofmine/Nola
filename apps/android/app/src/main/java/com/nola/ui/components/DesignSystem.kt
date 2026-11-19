@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -41,6 +42,7 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -273,9 +275,11 @@ fun nolaPageGutter(): Dp = if (LocalConfiguration.current.screenWidthDp < 360) 1
 @Composable
 fun NolaPage(
     modifier: Modifier = Modifier,
+    scrollKey: Any? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val background = MaterialTheme.colorScheme.background
+    val scrollState = rememberSaveable(scrollKey, saver = ScrollState.Saver) { ScrollState(0) }
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -286,7 +290,7 @@ fun NolaPage(
                 .align(Alignment.TopCenter)
                 .widthIn(max = 840.dp)
                 .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(scrollState)
                 .padding(horizontal = nolaPageGutter())
                 .padding(top = NolaSpacing.xl, bottom = 48.dp),
             verticalArrangement = Arrangement.spacedBy(NolaSpacing.xl),

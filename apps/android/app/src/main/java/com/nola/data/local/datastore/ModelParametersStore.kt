@@ -68,6 +68,44 @@ class ModelParametersStore @Inject constructor(
 
     suspend fun loadParameters(modelID: String): ModelParameters = loadParametersNow(modelID)
 
+    suspend fun loadLocalParameters(modelID: String, contextWindow: Int): ModelParameters {
+        val profile = applicationRuntime.modelProfile(modelID)
+        val raw = profile?.let { json.decodeFromString<ModelParameters>(it.parametersJson) }
+            ?: defaultParameters.copy(maxContextTokens = contextWindow.coerceIn(2048, 8192))
+        val maxContext = contextWindow.coerceAtLeast(512)
+        return raw.copy(maxContextTokens = raw.maxContextTokens.coerceIn(512, maxContext))
+    }
+
+    fun localParameterSnapshot(modelID: String, modelName: String, contextWindow: Int): ParameterSnapshot {
+        val existing = applicationRuntime.modelProfile(modelID)
+        val clampedContext = contextWindow.coerceAtLeast(512)
+        if (existing != null) {
+            val base = parameterSnapshot(modelID)
+            return base.copy(
+                parameters = base.parameters.copy(
+                    maxContextTokens = base.parameters.maxContextTokens.coerceIn(512, clampedContext),
+                ),
+            )
+        }
+        val params = defaultParameters.copy(maxContextTokens = contextWindow.coerceIn(2048, 8192))
+        val now = System.currentTimeMillis()
+        val synthetic = CanonicalModelProfile(
+            id = modelID,
+            displayName = modelName,
+            provider = "llama_cpp",
+            modelName = modelID,
+            runtime = "local",
+            sourceJson = "{}",
+            parametersJson = json.encodeToString(params),
+            selected = false,
+            enabled = true,
+            revision = 0L,
+            createdAtMs = now,
+            updatedAtMs = now,
+        )
+        return ParameterSnapshot(params, synthetic, emptyList())
+    }
+
     suspend fun clearAll() {
         applicationRuntime.resetModelParameters(
             profileIds = applicationRuntime.listModelProfiles().map { it.id },

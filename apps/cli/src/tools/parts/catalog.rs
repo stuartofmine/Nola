@@ -588,7 +588,8 @@ fn specs_with_skills(skills: &SkillRuntimeContext) -> Vec<ToolSpec<'static>> {
                 "type": "object",
                 "properties": {
                     "skill": skills.invocation_schema(),
-                    "args": {"type": "string", "description": "须原样传入的用户参数"}
+                    "args": {"type": "string", "description": "须原样传入的用户参数"},
+                    "activation": {"type": "string", "enum": ["turn", "session"]}
                 },
                 "required": ["skill"],
                 "additionalProperties": false

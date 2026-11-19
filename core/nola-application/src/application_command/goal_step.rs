@@ -644,6 +644,9 @@ fn advance_in_transaction<R: AgentRuntimeCommandRepositories>(
         let operation_id = envelope.operation_id.clone();
         submitted_operation_id = Some(operation_id.clone());
         if let nola_agent_engine::agent::GoalRuntimeCommand::Start { id, .. } = &envelope.command {
+            if !config.turn_identity.model_capability.native_tool_calls {
+                return Err("Goal mode requires a model with tool-calling support".into());
+            }
             start_command = true;
             if config.turn_identity.host_recovery.is_none()
                 || config

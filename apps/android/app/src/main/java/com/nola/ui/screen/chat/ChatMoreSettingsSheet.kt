@@ -74,6 +74,8 @@ import com.nola.domain.model.ModelInfo
 import com.nola.domain.model.ModelParameters
 import com.nola.domain.model.ConversationGenerationOverride
 import com.nola.domain.model.ModelParameterLimits
+import androidx.activity.compose.BackHandler
+import com.nola.ui.components.DiscardChangesDialog
 import com.nola.ui.components.ModelParametersSheet
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.key
@@ -216,10 +218,22 @@ fun ChatMoreSettingsScreen(
     var localUserPreferences by remember(userPreferences) { mutableStateOf(userPreferences) }
 
     var isSaving by remember { mutableStateOf(false) }
+    var showDiscardDialog by remember { mutableStateOf(false) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var showForgetPairingConfirmation by remember { mutableStateOf(false) }
     var showPersonalIntelligence by remember { mutableStateOf(false) }
+    val hasUnsavedChanges = localResponseStyle != responseStyleOverride ||
+        localAgentMode != agentModeEnabled ||
+        localAutoCompactPercent != autoCompactTriggerPercent ||
+        localSessionMemory != sessionMemory ||
+        localLongTermMemory != longTermMemory ||
+        localUserPreferences != userPreferences
+    val requestBack = {
+        if (!isSaving && !parameterSaving) {
+            if (hasUnsavedChanges) showDiscardDialog = true else onBack()
+        }
+    }
 
     val scope = rememberCoroutineScope()
     val responseStyles = listOf("professional", "casual", "playful")
@@ -356,6 +370,11 @@ fun ChatMoreSettingsScreen(
         )
     }
 
+    BackHandler { requestBack() }
+    if (showDiscardDialog) {
+        DiscardChangesDialog(onDiscard = onBack, onKeepEditing = { showDiscardDialog = false })
+    }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -363,7 +382,7 @@ fun ChatMoreSettingsScreen(
             NolaTopAppBar(
                 title = stringResource(R.string.chat_more_settings_title),
                 subtitle = selectedModel?.name ?: noModelSelected,
-                onBack = { if (!isSaving && !parameterSaving) onBack() }
+                onBack = requestBack
             ) {
                     IconButton(
                         modifier = Modifier.testTag("chat-settings-save"),
@@ -672,15 +691,17 @@ fun ChatMoreSettingsScreen(
                 StepperRow(
                     label = stringResource(R.string.chat_auto_compact_trigger),
                     value = "${localAutoCompactPercent}%",
+                    incrementEnabled = localAutoCompactPercent < 95,
+                    decrementEnabled = localAutoCompactPercent > 50,
                     onIncrement = {
                         if (localAutoCompactPercent < 95) {
-                            localAutoCompactPercent += 5
+                            localAutoCompactPercent = (localAutoCompactPercent + 5).coerceAtMost(95)
                             onAutoCompactPercentChange(localAutoCompactPercent)
                         }
                     },
                     onDecrement = {
-                        if (localAutoCompactPercent > 20) {
-                            localAutoCompactPercent -= 5
+                        if (localAutoCompactPercent > 50) {
+                            localAutoCompactPercent = (localAutoCompactPercent - 5).coerceAtLeast(50)
                             onAutoCompactPercentChange(localAutoCompactPercent)
                         }
                     }
@@ -859,6 +880,8 @@ private fun HostNativeBrowserStatusBlock(status: HostNativeBrowserStatus) {
 fun StepperRow(
     label: String,
     value: String,
+    incrementEnabled: Boolean = true,
+    decrementEnabled: Boolean = true,
     onIncrement: () -> Unit,
     onDecrement: () -> Unit
 ) {
@@ -876,10 +899,10 @@ fun StepperRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-        TextButton(onClick = onDecrement) {
+        TextButton(onClick = onDecrement, enabled = decrementEnabled) {
             Text("−", style = MaterialTheme.typography.titleMedium)
         }
-        TextButton(onClick = onIncrement) {
+        TextButton(onClick = onIncrement, enabled = incrementEnabled) {
             Text("+", style = MaterialTheme.typography.titleMedium)
         }
     }

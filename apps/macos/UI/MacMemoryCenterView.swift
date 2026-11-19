@@ -457,13 +457,27 @@ private struct MacMemoryEditor: View {
         }
     }
 
+    @ViewBuilder
     private var scopePicker: some View {
-        Picker(macMemoryText("mac.memory.scope", "Scope"), selection: $scope) {
-            Text(macMemoryText("mac.memory.scope.global", "Global")).tag("global")
-            Text(macMemoryText("mac.memory.scope.workspace", "Workspace")).tag("workspace")
-            Text(macMemoryText("mac.memory.scope.conversation", "Conversation")).tag("conversation")
+        if record == nil {
+            Picker(macMemoryText("mac.memory.scope", "Scope"), selection: $scope) {
+                Text(macMemoryText("mac.memory.scope.global", "Global")).tag("global")
+                Text(macMemoryText("mac.memory.scope.workspace", "Workspace")).tag("workspace")
+            }
+            .frame(maxWidth: .infinity)
+        } else {
+            LabeledContent(macMemoryText("mac.memory.scope", "Scope"), value: editorScopeTitle(scope))
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity)
+    }
+
+    private func editorScopeTitle(_ value: String) -> String {
+        switch value {
+        case "workspace": return macMemoryText("mac.memory.scope.workspace", "Workspace")
+        case "conversation": return macMemoryText("mac.memory.scope.conversation", "Conversation")
+        case "turn": return macMemoryText("mac.memory.scope.turn", "Turn")
+        default: return macMemoryText("mac.memory.scope.global", "Global")
+        }
     }
 
     private var kindPicker: some View {

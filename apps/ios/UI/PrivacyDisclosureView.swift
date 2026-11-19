@@ -11,6 +11,7 @@ import SwiftUI
 struct PrivacyDisclosureView: View {
     var body: some View {
         Form {
+            Group {
             Section {
                 Text(NSLocalizedString(
                     "privacy.disclosure.intro",
@@ -30,7 +31,11 @@ struct PrivacyDisclosureView: View {
             } header: {
                 Text(NSLocalizedString("privacy.disclosure.principles.header", value: "Principles", comment: ""))
             }
+            }
+            .listRowBackground(DesignTokens.surfaceColor)
+            .listRowSeparatorTint(DesignTokens.borderColor)
         }
+        .nolaGroupedSurface()
         .navigationTitle(NSLocalizedString("privacy.disclosure.nav.title", value: "Privacy", comment: ""))
         .navigationBarTitleDisplayMode(.inline)
     }

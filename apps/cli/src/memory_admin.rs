@@ -100,14 +100,43 @@ fn read_draft() -> Result<MemoryDraft, String> {
 pub(crate) fn save_memory(application: &mut CliApplicationPort, draft: &MemoryDraft, previous_id: Option<&str>) -> Result<Value, String> {
     if let Some(id) = previous_id {
         let existing = get_memory(application, id)?.ok_or("memory revision target does not exist")?;
-        if existing.record.content == draft.content.trim() && display_scope(&existing.record) == draft.scope.trim()
-            && display_kind(existing.record.kind) == draft.kind.trim() {
-            return Err("memory revision must change content, scope, or kind".into());
+        let draft_summary = draft.summary.as_deref().map(str::trim).filter(|value| !value.is_empty());
+        let draft_sensitivity = draft.sensitivity.as_deref().map(str::trim).filter(|value| !value.is_empty());
+        let existing_expires = match &existing.record.retention {
+            MemoryRetention::ExpiresAt { expires_at } => Some(expires_at.as_str()),
+            _ => None,
+        };
+        let draft_expires = draft.expires_at.as_deref().map(str::trim).filter(|value| !value.is_empty());
+        let draft_confidence = draft.confidence.unwrap_or(1.0) as f32;
+        let draft_importance = draft.importance.unwrap_or(0.5) as f32;
+        let identity_changed = existing.record.content != draft.content.trim()
+            || display_scope(&existing.record) != draft.scope.trim()
+            || display_kind(existing.record.kind) != draft.kind.trim();
+        let unchanged = !identity_changed
+            && existing.record.summary.as_deref() == draft_summary
+            && existing.record.tags == draft.tags
+            && (existing.record.confidence - draft_confidence).abs() <= f32::EPSILON
+            && (existing.record.importance - draft_importance).abs() <= f32::EPSILON
+            && existing.record.sensitivity.as_deref() == draft_sensitivity
+            && existing_expires == draft_expires;
+        if unchanged {
+            return Err("memory revision must change at least one field".into());
         }
-        let record = commit_draft(application, draft, &[id.to_string()], Some(existing.record.owner))?;
+        let supersedes = if identity_changed {
+            vec![id.to_string()]
+        } else {
+            existing.record.supersedes.clone()
+        };
+        let record = commit_draft(
+            application,
+            draft,
+            &supersedes,
+            Some(existing.record.owner),
+            Some(existing.updated_at_ms),
+        )?;
         Ok(json!({"type": "memory_revised", "previous_id": id, "record": memory_value(&record)}))
     } else {
-        let record = commit_draft(application, draft, &[], None)?;
+        let record = commit_draft(application, draft, &[], None, None)?;
         Ok(json!({"type": "memory_created", "record": memory_value(&record)}))
     }
 }
@@ -162,6 +191,7 @@ fn commit_draft(
     draft: &MemoryDraft,
     supersedes: &[String],
     owner: Option<nola_domain::memory_owner::MemoryOwner>,
+    min_proposed_at_ms: Option<i64>,
 ) -> Result<ApplicationMemoryRecord, String> {
     let source = draft
         .source
@@ -228,7 +258,7 @@ fn commit_draft(
             input: MemoryCandidate {
                 record,
                 quality: None,
-                proposed_at_ms: Utc::now().timestamp_millis(),
+                proposed_at_ms: Utc::now().timestamp_millis().max(min_proposed_at_ms.unwrap_or(0)),
             },
             intent: MemoryCommitIntent::ExplicitUser,
         },
@@ -353,6 +383,13 @@ mod tests {
         assert_eq!(revised["record"]["supersedes"], json!([id]));
         assert_eq!(revised["record"]["sensitivity"], "private");
         assert!(revised["record"]["created_at"].as_str().is_some_and(|value| !value.is_empty()));
+        let revised_id = revised["record"]["id"].as_str().unwrap();
+        let revised_meta = write_memory(&mut application, serde_json::from_value(json!({"operation": "revise", "id": revised_id, "draft": {
+            "scope": "global", "kind": "preference", "content": "second", "summary": "Short label", "tags": ["style"], "confidence": 0.85, "importance": 0.9, "sensitivity": "private"
+        }})).unwrap()).unwrap();
+        assert_eq!(revised_meta["record"]["id"], revised_id);
+        assert_eq!(revised_meta["record"]["summary"], "Short label");
+        assert_eq!(revised_meta["record"]["tags"], json!(["style"]));
         assert_eq!(list_memories(&mut application, 2_000).unwrap().len(), 2);
         assert!(serde_json::from_value::<MemoryWriteRequest>(json!({"operation": "unknown", "draft": {}})).is_err());
     }
@@ -362,9 +399,9 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let mut application = CliApplicationPort::persistent(&directory.path().join("memory.db")).unwrap();
         let draft: MemoryDraft = serde_json::from_value(json!({"scope": "global", "kind": "preference", "content": "old preference"})).unwrap();
-        let original = commit_draft(&mut application, &draft, &[], None).unwrap();
+        let original = commit_draft(&mut application, &draft, &[], None, None).unwrap();
         let revised: MemoryDraft = serde_json::from_value(json!({"scope": "global", "kind": "preference", "content": "new preference"})).unwrap();
-        let revision = commit_draft(&mut application, &revised, &[original.record.id.clone()], Some(original.record.owner.clone())).unwrap();
+        let revision = commit_draft(&mut application, &revised, &[original.record.id.clone()], Some(original.record.owner.clone()), None).unwrap();
         let records = list_memories(&mut application, 2_000).unwrap();
         assert_eq!(records.len(), 2);
         let value = records.iter().find(|value| value["id"] == revision.record.id).unwrap();

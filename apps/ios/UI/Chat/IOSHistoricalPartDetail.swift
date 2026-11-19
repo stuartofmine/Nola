@@ -170,7 +170,7 @@ struct IOSHistoricalPartDetail: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading).padding(12)
-            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+            .background(DesignTokens.elevatedColor, in: RoundedRectangle(cornerRadius: 12))
         }
         DisclosureGroup(String(localized: "history.detail.diagnostics", defaultValue: "Technical details")) {
             Text([projection.canonicalKind, projection.schema, projection.status.code, projection.status.reason].compactMap { $0 }.joined(separator: " · "))

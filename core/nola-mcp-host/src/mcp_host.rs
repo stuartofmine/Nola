@@ -1067,11 +1067,20 @@ impl StreamableHttpMcpClient {
                 "Put MCP credentials in headers, not in the endpoint URL",
             ));
         }
+        let origin = parsed.clone();
         let client = Client::builder()
             .no_proxy()
             .connect_timeout(Duration::from_millis(timeout_ms.min(15_000)))
             .timeout(Duration::from_millis(timeout_ms))
-            .redirect(reqwest::redirect::Policy::none())
+            .redirect(reqwest::redirect::Policy::custom(move |attempt| {
+                if attempt.previous().len() >= 3 {
+                    attempt.error("Too many MCP HTTP redirects")
+                } else if same_origin_mcp_redirect(&origin, attempt.url()) {
+                    attempt.follow()
+                } else {
+                    attempt.error("Cross-origin MCP HTTP redirect rejected")
+                }
+            }))
             .build()
             .map_err(|error| McpHostError::new("mcp_client_failed", error.to_string()))?;
         let mut connection = Self {
@@ -1603,6 +1612,14 @@ fn truncate(value: &str, maximum: usize) -> String {
     value.chars().take(maximum).collect()
 }
 
+fn same_origin_mcp_redirect(origin: &reqwest::Url, next: &reqwest::Url) -> bool {
+    next.username().is_empty()
+        && next.password().is_none()
+        && next.scheme() == origin.scheme()
+        && next.host_str() == origin.host_str()
+        && next.port_or_known_default() == origin.port_or_known_default()
+}
+
 use std::io::Read;
 
 #[cfg(test)]
@@ -2015,5 +2032,116 @@ mod tests {
         assert!(!artifacts
             .iter()
             .any(|artifact| artifact.uri.contains("must-not-be-inferred")));
+    }
+
+    #[test]
+    fn http_redirect_allows_same_origin_and_blocks_cross_origin() {
+        let origin = reqwest::Url::parse("http://127.0.0.1:8080/mcp").unwrap();
+        assert!(same_origin_mcp_redirect(
+            &origin,
+            &reqwest::Url::parse("http://127.0.0.1:8080/mcp/").unwrap()
+        ));
+        assert!(!same_origin_mcp_redirect(
+            &origin,
+            &reqwest::Url::parse("http://127.0.0.1:9090/mcp/").unwrap()
+        ));
+        assert!(!same_origin_mcp_redirect(
+            &origin,
+            &reqwest::Url::parse("https://evil.example/mcp/").unwrap()
+        ));
+        assert!(!same_origin_mcp_redirect(
+            &origin,
+            &reqwest::Url::parse("http://user:pass@127.0.0.1:8080/mcp/").unwrap()
+        ));
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind redirect MCP server");
+        let addr = listener.local_addr().unwrap();
+        let endpoint = format!("http://{addr}/mcp");
+        let server = std::thread::spawn(move || {
+            for stream in listener.incoming().take(12) {
+                let mut stream = stream.expect("accept redirect request");
+                let mut request = Vec::new();
+                let mut buffer = [0u8; 4096];
+                let header_end = loop {
+                    let count = stream.read(&mut buffer).unwrap_or(0);
+                    if count == 0 {
+                        break request.len();
+                    }
+                    request.extend_from_slice(&buffer[..count]);
+                    if let Some(pos) = request.windows(4).position(|v| v == b"\r\n\r\n") {
+                        break pos + 4;
+                    }
+                };
+                if header_end == 0 {
+                    continue;
+                }
+                let header_text = String::from_utf8_lossy(&request[..header_end]);
+                let first_line = header_text.lines().next().unwrap_or("");
+                if first_line.starts_with("POST /mcp HTTP") {
+                    write!(
+                        stream,
+                        "HTTP/1.1 307 Temporary Redirect\r\nLocation: /mcp/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    )
+                    .unwrap();
+                    continue;
+                }
+                let content_length = header_text
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())
+                            .flatten()
+                    })
+                    .unwrap_or_default();
+                while request.len() < header_end + content_length {
+                    let count = stream.read(&mut buffer).unwrap_or(0);
+                    if count == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buffer[..count]);
+                }
+                let payload: Value = serde_json::from_slice(
+                    &request[header_end..request.len().min(header_end + content_length)],
+                )
+                .unwrap_or(Value::Null);
+                let method = payload["method"].as_str().unwrap_or_default();
+                let id = payload.get("id").cloned();
+                let response = match method {
+                    "notifications/initialized" => String::new(),
+                    "initialize" => json!({
+                        "jsonrpc":"2.0", "id":id,
+                        "result":{"protocolVersion":DEFAULT_PROTOCOL_VERSION,"capabilities":{}}
+                    })
+                    .to_string(),
+                    "tools/list" => json!({
+                        "jsonrpc":"2.0", "id":id,
+                        "result":{"tools":[{"name":"ping","description":"ping","inputSchema":{"type":"object"}}]}
+                    })
+                    .to_string(),
+                    "resources/list" | "resources/templates/list" | "prompts/list" => json!({
+                        "jsonrpc":"2.0", "id":id,
+                        "error":{"code":-32601,"message":"Method not found"}
+                    })
+                    .to_string(),
+                    _ => String::new(),
+                };
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    response.len(),
+                    response
+                )
+                .unwrap();
+            }
+        });
+        let discovered = crate::mcp_connection_authority::connect_fixture_servers(&[json!({
+            "server_id": "redirect-test",
+            "endpoint": endpoint,
+            "timeout_ms": 5_000,
+        })])
+        .expect("same-origin 307 redirect should succeed");
+        assert_eq!(discovered[0]["tools"]["ping"]["name"], "ping");
+        server.join().unwrap();
     }
 }

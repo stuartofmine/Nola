@@ -12,12 +12,14 @@ import XCTest
 @MainActor
 final class MacWorkspaceTabsLayoutAndComposerContractTests: XCTestCase {
     func testWorkspaceSidebarContentTabsExpertBubbleViewportAndFilePreviewContracts() throws {
-        for text in ["搜索 current", "please /stop", "https://example.org", "模型权限设计"] {
+        for text in ["搜索 current", "please /stop", "https://example.org", "模型权限设计", "/opt/tools/notes.md", "// comment"] {
             XCTAssertNil(ComposerCommand.parse(text))
         }
         XCTAssertEqual(ComposerCommand.query("/mo"), "mo")
         XCTAssertNil(ComposerCommand.query("/model "))
         XCTAssertEqual(ComposerCommand.parse("/search 最近变化")?.argument, "最近变化")
+        XCTAssertEqual(ComposerCommand.parse("/goal Ship v1.0")?.command, .goal)
+        XCTAssertEqual(ComposerCommand.parse("/goal Ship v1.0")?.argument, "Ship v1.0")
         XCTAssertNil(ComposerCommand.parse("/unknown")?.command)
         XCTAssertNil(ComposerCommand.parse("/stop extra")?.command)
         XCTAssertEqual(ComposerCommand.parse("/stop ")?.command, .stop)
@@ -1133,6 +1135,86 @@ final class MacInspectorInteractionTests: XCTestCase {
                 }
             }
         }
+    }
+
+    func testWarmInkColorsetsAndTopBarSingleHeaderPlacement() async throws {
+        func assertColor(_ name: String, appearance: NSAppearance.Name, expectedRGB: (CGFloat, CGFloat, CGFloat)) throws {
+            let color = try XCTUnwrap(NSColor(named: name))
+            let nsAppearance = try XCTUnwrap(NSAppearance(named: appearance))
+            var resolved: NSColor?
+            nsAppearance.performAsCurrentDrawingAppearance {
+                resolved = color.usingColorSpace(.sRGB)
+            }
+            let srgb = try XCTUnwrap(resolved)
+            XCTAssertEqual(srgb.redComponent, expectedRGB.0 / 255.0, accuracy: 0.01, "\(name) red")
+            XCTAssertEqual(srgb.greenComponent, expectedRGB.1 / 255.0, accuracy: 0.01, "\(name) green")
+            XCTAssertEqual(srgb.blueComponent, expectedRGB.2 / 255.0, accuracy: 0.01, "\(name) blue")
+        }
+        try assertColor("NolaCanvas", appearance: .darkAqua, expectedRGB: (0x13, 0x13, 0x12))
+        try assertColor("NolaSurface", appearance: .darkAqua, expectedRGB: (0x1B, 0x1B, 0x19))
+        try assertColor("NolaCanvas", appearance: .aqua, expectedRGB: (0xF7, 0xF6, 0xF3))
+        try assertColor("NolaSurface", appearance: .aqua, expectedRGB: (0xFF, 0xFF, 0xFF))
+
+        let accessibility = try MacHostedAccessibilitySession()
+        defer { accessibility.restore() }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("workspace-header-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let port = try MacApplicationPort(databaseURL: root.appendingPathComponent("test.sqlite"))
+        let registry = MacDataSourceRegistry(storeURL: root.appendingPathComponent("registry.json"))
+        let repo = MacCanonicalConversationRepository(store: port)
+        let model = MacWorkspaceModel(canonicalRepository: repo,
+            localAgentRuntime: PersistenceTestLocalRuntime(), remoteHost: PersistenceTestRemoteHost(), modelApplication: port)
+        defer { model.presentationDidDetach() }
+        let deps = MacInspectorDependencies(dataRegistry: registry,
+            platformData: MacPlatformDataService(registry: registry, startsPeriodicRefresh: false),
+            webSources: MacWebSourceStore(storeURL: root.appendingPathComponent("sources.json"), registry: registry),
+            chromeMessaging: InspectorTestChromeMessaging())
+        let view = MacChatWorkspaceView(
+            canonicalRepository: repo,
+            localAgentRuntime: PersistenceTestLocalRuntime(),
+            remoteHost: PersistenceTestRemoteHost(),
+            inspectorDependencies: deps,
+            model: model
+        )
+        .frame(width: 1080, height: 700)
+        .environment(\.accessibilityEnabled, true)
+        let hosting = NSHostingView(rootView: view)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1080, height: 700),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.titlebarSeparatorStyle = .none
+        window.isReleasedWhenClosed = false
+        window.contentView = hosting
+        window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil); window.contentView = nil; window.close() }
+        let deadline = ContinuousClock.now + .seconds(3)
+        var toggleButton: AnyObject?
+        while toggleButton == nil && ContinuousClock.now < deadline {
+            hosting.layoutSubtreeIfNeeded()
+            var queue: [AnyObject] = [hosting], seen = Set<ObjectIdentifier>()
+            while let item = queue.popLast() {
+                guard seen.insert(ObjectIdentifier(item)).inserted else { continue }
+                if (item.accessibilityIdentifier?() ?? nil) == "workspace.toggleSidebar" {
+                    toggleButton = item
+                    break
+                }
+                let children = item.accessibilityChildren?() ?? []
+                queue += (children + NSAccessibility.unignoredChildren(from: children)).map { $0 as AnyObject }
+                if let nsView = item as? NSView { queue += nsView.subviews }
+            }
+            if toggleButton == nil {
+                try await Task.sleep(for: .milliseconds(25))
+            }
+        }
+        let button = try XCTUnwrap(toggleButton)
+        let frame = try XCTUnwrap(button.accessibilityFrame?())
+        let bottomOffsetFromWindowTop = window.frame.maxY - frame.minY
+        XCTAssertLessThanOrEqual(bottomOffsetFromWindowTop, 48.0, "Top header must sit at y=0..48 inside fullSizeContentView without a duplicate titlebar strip")
     }
 
     private func hasLoadingIndicator(_ root: AnyObject) -> Bool {

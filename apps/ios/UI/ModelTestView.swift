@@ -89,8 +89,8 @@ struct ModelTestView: View {
                 }
             }
             .padding()
-            .background(Color(.systemBackground))
-            .border(width: 1, edges: [.bottom], color: Color.gray.opacity(0.2))
+            .background(DesignTokens.backgroundColor)
+            .border(width: 1, edges: [.bottom], color: DesignTokens.borderColor)
                 
                 // Comment in English.
                 ZStack {

@@ -129,9 +129,11 @@ struct MacInspectorBrowserView: View {
                     .font(.system(size: MacDesignTokens.Typography.inspectorCaption))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                ViewThatFits(in: .horizontal) {
-                    chromeActions(horizontal: true)
-                    chromeActions(horizontal: false)
+                if !chrome.snapshot.isExtensionConnected || chrome.snapshot.errorMessage != nil {
+                    ViewThatFits(in: .horizontal) {
+                        chromeActions(horizontal: true)
+                        chromeActions(horizontal: false)
+                    }
                 }
                 if let error = chrome.actionError {
                     Label(error, systemImage: "exclamationmark.triangle")

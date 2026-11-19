@@ -368,7 +368,7 @@ struct NolaMacApp: App {
             }
         }
         .defaultSize(width: 1280, height: 820)
-        .windowStyle(.automatic)
+        .windowStyle(.hiddenTitleBar)
         .commands {
             NolaMacCommands()
         }
@@ -386,6 +386,7 @@ struct NolaMacApp: App {
                 .frame(minWidth: 920, minHeight: 640)
         }
         .defaultSize(width: 1180, height: 780)
+        .windowStyle(.hiddenTitleBar)
 
         Window("mac.window.data_center", id: "data-center") {
             MacApplicationStartupGate { MacDataCenterView() }
@@ -1633,13 +1634,15 @@ struct MacSettingsView: View {
                             MacAssistantPreferences.setUserPreferences(value)
                         }
                         .font(.body)
+                        .scrollContentBackground(.hidden)
+                        .padding(8)
                         .frame(minHeight: 120)
                         .accessibilityLabel(macSettingsText("mac.settings.agent.user_preferences", "User preferences"))
-                        .background(Color(nsColor: .textBackgroundColor))
+                        .background(MacDesignColor.subtleFill)
                         .clipShape(RoundedRectangle(cornerRadius: MacDesignTokens.Radius.field))
                         .overlay {
                             RoundedRectangle(cornerRadius: MacDesignTokens.Radius.field)
-                                .stroke(MacDesignColor.borderSubtle, lineWidth: 0.5)
+                                .stroke(MacDesignColor.borderSubtle, lineWidth: 0.75)
                         }
                 }
                 Button {
@@ -1649,8 +1652,9 @@ struct MacSettingsView: View {
                         macSettingsText("mac.settings.agent.open_memory_center", "Open Memory Center"),
                         systemImage: "brain.head.profile"
                     )
+                    .foregroundStyle(MacDesignColor.brand)
                 }
-                .buttonStyle(.link)
+                .buttonStyle(.plain)
                 Label(
                     macSettingsText("mac.settings.agent.auto_saved", "Changes are saved automatically on this Mac."),
                     systemImage: "checkmark.circle"
@@ -2121,7 +2125,7 @@ private struct MacSettingsSidebarRow: View {
             HStack(spacing: 8) {
                 category.image.renderingMode(.template).resizable().scaledToFit()
                     .frame(width: 15, height: 15)
-                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+                    .foregroundStyle(isSelected ? MacDesignColor.brand : Color.secondary)
                     .frame(width: 28, height: 28)
                     .background(
                         Color.primary.opacity(isSelected ? 0.055 : 0.025),
@@ -2279,11 +2283,11 @@ struct MacApplicationStartupGate<Content: View>: View {
                             } label: {
                                 Text("mac.startup.incompatible.recover", tableName: "Startup")
                                     .font(.body.weight(.medium))
-                                    .foregroundStyle(.white)
+                                    .foregroundStyle(MacDesignColor.onPrimaryAction)
                                     .padding(.horizontal, 18)
                                     .padding(.vertical, 9)
                                     .background(
-                                        Color.accentColor,
+                                        MacDesignColor.primaryAction,
                                         in: RoundedRectangle(cornerRadius: 8)
                                     )
                             }
@@ -2310,11 +2314,11 @@ struct MacApplicationStartupGate<Content: View>: View {
                             } label: {
                                 Text("mac.startup.failure.retry")
                                     .font(.body.weight(.medium))
-                                    .foregroundStyle(.white)
+                                    .foregroundStyle(MacDesignColor.onPrimaryAction)
                                     .padding(.horizontal, 18)
                                     .padding(.vertical, 9)
                                     .background(
-                                        Color.accentColor,
+                                        MacDesignColor.primaryAction,
                                         in: RoundedRectangle(cornerRadius: 8)
                                     )
                             }
@@ -2336,7 +2340,7 @@ struct MacApplicationStartupGate<Content: View>: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(MacPageBackground())
         .task(id: attempt) {
             let port = applicationPort
             let shouldRecover = recoveryRequested

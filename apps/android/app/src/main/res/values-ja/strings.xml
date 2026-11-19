@@ -1386,4 +1386,6 @@
     <string name="chat_ui_host_submission_unknown">ホストへの送信結果がまだ確認されていません。</string>
     <string name="chat_ui_submission_rejected">送信が拒否されました。</string>
     <string name="chat_ui_submission_unknown">送信結果がまだ確認されていません。</string>
+    <string name="chat_skill_description">説明（任意）</string>
+    <string name="models_web_host_disconnect">切断</string>
 </resources>

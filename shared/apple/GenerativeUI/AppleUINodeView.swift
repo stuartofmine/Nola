@@ -164,7 +164,7 @@ struct AppleUINodeView<JSON: JournalJSONValue>: View {
                 }.buttonStyle(.plain)
             }
         default:
-            Text("\(String(localized: "a2ui.component.unsupported", defaultValue: "Component unavailable:"))\(node.component)")
+            Text("\(String(localized: "a2ui.component.unsupported", defaultValue: "Component unavailable:")) \(node.component)")
                 .foregroundStyle(.secondary)
         }
         }

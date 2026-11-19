@@ -1024,12 +1024,14 @@ final class IOSChatPresentationCommandsAndDraftContractsTests: XCTestCase {
         XCTAssertEqual(ChatAgentTraceMeta.phase(from: meta), "searching")
         XCTAssertTrue(ChatAgentTraceMeta.values(thinking: " ", phase: nil).isEmpty)
 
-        for text in ["搜索 current", "please /stop", "https://example.org", "模型权限设计"] {
+        for text in ["搜索 current", "please /stop", "https://example.org", "模型权限设计", "/opt/tools/notes.md", "// comment"] {
             XCTAssertNil(ComposerCommand.parse(text))
         }
         XCTAssertEqual(ComposerCommand.query("/mo"), "mo")
         XCTAssertNil(ComposerCommand.query("/model "))
         XCTAssertEqual(ComposerCommand.parse("/search 最近变化")?.argument, "最近变化")
+        XCTAssertEqual(ComposerCommand.parse("/goal Ship v1.0")?.command, .goal)
+        XCTAssertEqual(ComposerCommand.parse("/goal Ship v1.0")?.argument, "Ship v1.0")
         XCTAssertNil(ComposerCommand.parse("/unknown")?.command)
         XCTAssertNil(ComposerCommand.parse("/stop extra")?.command)
         XCTAssertEqual(ComposerCommand.parse("/stop ")?.command, .stop)

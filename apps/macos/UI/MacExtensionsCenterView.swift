@@ -1846,7 +1846,28 @@ struct MacExpertsAndSkillsCenterView: View {
     @ObservedObject var skillsNavigation: MacExtensionsNavigationState
     var activeWorkspaceURL: URL? = nil
     @StateObject private var mcpNavigation = MacExtensionsNavigationState()
-    @State private var selectedTab: Tab = .experts
+    @State private var selectedTab: Tab
+
+    init(
+        roomWorkspace: MacAgentRoomWorkspace,
+        remoteHost: any MacRemoteHostManaging,
+        skillsNavigation: MacExtensionsNavigationState,
+        activeWorkspaceURL: URL? = nil
+    ) {
+        self.roomWorkspace = roomWorkspace
+        self.remoteHost = remoteHost
+        self.skillsNavigation = skillsNavigation
+        self.activeWorkspaceURL = activeWorkspaceURL
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["NOLA_CAPTURE_UI"] != nil,
+           let raw = ProcessInfo.processInfo.environment["NOLA_CAPTURE_EXTENSIONS_TAB"],
+           let requested = Tab(rawValue: raw) {
+            _selectedTab = State(initialValue: requested)
+            return
+        }
+        #endif
+        _selectedTab = State(initialValue: .experts)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1858,7 +1879,7 @@ struct MacExpertsAndSkillsCenterView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(maxWidth: 320)
+                .fixedSize()
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, MacDesignTokens.Layout.pageGutter)

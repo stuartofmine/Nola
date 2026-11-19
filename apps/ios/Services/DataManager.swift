@@ -206,6 +206,12 @@ public final class DataManager {
         } catch {
             logger.log(.warn, "DataManager", NSLocalizedString("autogen.DataManager.9e60996c", comment: "AUTOGEN"), metadata: ["error": error.localizedDescription])
         }
+
+        if let attachmentsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
+            .first?.appendingPathComponent("ChatAttachments", isDirectory: true),
+           FileManager.default.fileExists(atPath: attachmentsDir.path) {
+            try? FileManager.default.removeItem(at: attachmentsDir)
+        }
         
         // Reset Core Data (if needed in future)
         // clearCoreData()

@@ -1394,4 +1394,6 @@
     <string name="chat_ui_host_submission_unknown">The host submission outcome has not been confirmed yet.</string>
     <string name="chat_ui_submission_rejected">The submission was rejected.</string>
     <string name="chat_ui_submission_unknown">The submission outcome has not been confirmed yet.</string>
+    <string name="chat_skill_description">Description (optional)</string>
+    <string name="models_web_host_disconnect">Disconnect host</string>
 </resources>

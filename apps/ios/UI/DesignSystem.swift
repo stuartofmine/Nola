@@ -644,3 +644,11 @@ struct NolaRowDisclosureStyle: DisclosureGroupStyle {
         }
     }
 }
+
+extension View {
+    func nolaGroupedSurface() -> some View {
+        scrollContentBackground(.hidden)
+            .background(DesignTokens.backgroundColor.ignoresSafeArea())
+            .presentationBackground(DesignTokens.backgroundColor)
+    }
+}

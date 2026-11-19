@@ -557,6 +557,7 @@ struct IOSWorkspacePageHeading: View {
 
 
 struct IOSConversationActivityView: View {
+    var isRootTab = false
     @EnvironmentObject private var container: ServiceContainer
     @State private var nextPlan: AppleTodayQueuedInstance?
     @State private var plansLoadedAt: Date?
@@ -564,6 +565,12 @@ struct IOSConversationActivityView: View {
     var body: some View {
         let runtime = container.applicationRuntime
         VStack(spacing: 0) {
+        if isRootTab {
+            IOSWorkspacePageHeading(title: String(localized: "information.activity"))
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 4)
+        }
         NavigationLink { ScheduledActionsView(embedded: true) } label: {
             HStack(spacing: 12) {
                 Image(systemName: "calendar").font(.title3).foregroundStyle(DesignTokens.actionColor)
@@ -576,8 +583,11 @@ struct IOSConversationActivityView: View {
                     }
                 }
                 Spacer(minLength: 8)
+                Image("nola-chevron").resizable().renderingMode(.template).scaledToFit()
+                    .frame(width: 14, height: 14).foregroundStyle(.secondary)
             }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).padding(14)
                 .background(DesignTokens.surfaceColor, in: RoundedRectangle(cornerRadius: 14))
+                .overlay(RoundedRectangle(cornerRadius: 14).stroke(DesignTokens.borderColor, lineWidth: 0.75))
                 .contentShape(Rectangle())
         }.buttonStyle(.plain).padding(.horizontal, 16).padding(.top, 8)
             .accessibilityIdentifier("activity.plans")
@@ -592,6 +602,9 @@ struct IOSConversationActivityView: View {
             }
         }, canOpenSource: { UUID(uuidString: $0) != nil })
         }
+        .background(DesignTokens.backgroundColor)
+        .navigationTitle(isRootTab ? "" : String(localized: "information.activity"))
+        .toolbar(isRootTab ? .hidden : .visible, for: .navigationBar)
         .task {
             guard plansLoadedAt.map({ Date().timeIntervalSince($0) >= 30 }) ?? true else { return }
             do {

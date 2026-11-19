@@ -1287,6 +1287,7 @@ private fun SectionLabel(text: String) {
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 private fun DataSourceCard(
     modifier: Modifier = Modifier,
     icon: ImageVector,
@@ -1316,18 +1317,26 @@ private fun DataSourceCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                SourceStatusBadge(state)
-                accessPolicy?.let { policy ->
-                    SourceMetadataPill(policyLabel(policy))
+                FlowRow(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    SourceStatusBadge(state)
+                    accessPolicy?.let { policy ->
+                        SourceMetadataPill(policyLabel(policy))
+                    }
                 }
-                Spacer(Modifier.weight(1f))
                 if (actionLabel != null && onAction != null) {
-                    TextButton(onClick = onAction) {
+                    TextButton(
+                        onClick = onAction,
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
                         if (state == SourceVisualState.Updating) {
                             CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                             Spacer(Modifier.size(7.dp))
                         }
-                        Text(actionLabel)
+                        Text(actionLabel, maxLines = 1, softWrap = false)
                     }
                 }
             }

@@ -80,18 +80,22 @@ struct SettingsView: View {
                         .font(.footnote.weight(.medium))
                         .foregroundStyle(DesignTokens.secondaryContentColor)
                         .padding(.bottom, 8)
-                    ForEach(categoryGroups[group], id: \.rawValue) { category in
-                        Group {
-                            if category == .agents {
-                                Button { showsAgentManagement = true } label: { categoryLabel(category) }
-                            } else {
-                                NavigationLink { destination(category).toolbar(.visible, for: .navigationBar) } label: { categoryLabel(category) }
+                    NolaSettingsCard {
+                        ForEach(categoryGroups[group], id: \.rawValue) { category in
+                            Group {
+                                if category == .agents {
+                                    Button { showsAgentManagement = true } label: { categoryLabel(category) }
+                                } else {
+                                    NavigationLink { destination(category).toolbar(.visible, for: .navigationBar) } label: { categoryLabel(category) }
+                                }
                             }
-                        }
-                        .buttonStyle(NolaPressableButtonStyle())
-                        .accessibilityIdentifier(category == .providers ? "settings.models" : "settings.category." + category.rawValue)
-                        if category != categoryGroups[group].last {
-                            Rectangle().fill(DesignTokens.borderColor).frame(height: 0.5).padding(.leading, 34).accessibilityHidden(true)
+                            .buttonStyle(NolaPressableButtonStyle())
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 4)
+                            .accessibilityIdentifier(category == .providers ? "settings.models" : "settings.category." + category.rawValue)
+                            if category != categoryGroups[group].last {
+                                Rectangle().fill(DesignTokens.borderColor).frame(height: 0.5).padding(.leading, 48).accessibilityHidden(true)
+                            }
                         }
                     }
                 }
@@ -149,11 +153,13 @@ struct SettingsView: View {
                 Text("settings.appearance.theme").font(.body.weight(.medium))
                 Spacer(minLength: 12)
                 AppleAppearancePicker().labelsHidden().pickerStyle(.menu)
-            }.frame(minHeight: 52)
+            }.frame(minHeight: 44)
             let motionKey = reduceMotion ? "settings.appearance.motionReduced" : "settings.appearance.motionStandard"
             Text(LocalizedStringKey(motionKey))
                 .font(.footnote).foregroundStyle(.secondary)
         }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
     }
 
     private func settingsPage<Content: View>(title: String, showsHeading: Bool = true, @ViewBuilder content: () -> Content) -> some View {
@@ -488,6 +494,50 @@ struct SettingsView: View {
                     container.logger.log(.warn, "SettingsView", "Failed to clear data source", metadata: ["error": error.localizedDescription])
                 }
             }
+            if !fetcher.sources.isEmpty {
+                completelyCleared = false
+            }
+        }
+        let clearedAtMs = Int64(Date().timeIntervalSince1970 * 1_000)
+        if !PersonalIntelligenceCore.clear() {
+            completelyCleared = false
+            container.logger.log(.warn, "SettingsView", "Failed to clear PersonalIntelligenceCore store")
+        }
+        do {
+            _ = try container.applicationRuntime.deleteProductSetting(key: "assistant.uploaded_documents")
+        } catch {
+            completelyCleared = false
+            container.logger.log(.warn, "SettingsView", "Failed to clear uploaded documents", metadata: ["error": error.localizedDescription])
+        }
+        do {
+            let memories = try container.applicationRuntime.listMemories(limit: 1_000)
+            if !memories.isEmpty {
+                _ = try container.applicationRuntime.replaceMemories(
+                    expected: memories,
+                    candidates: [],
+                    deletedAtMs: clearedAtMs
+                )
+            }
+        } catch {
+            completelyCleared = false
+            container.logger.log(.warn, "SettingsView", "Failed to clear memories", metadata: ["error": error.localizedDescription])
+        }
+        do {
+            let userSkills = try container.applicationRuntime.listSkills().filter { $0.source != "built_in" }
+            for skill in userSkills {
+                _ = try container.applicationRuntime.deleteUserSkill(id: skill.id, deletedAtMs: clearedAtMs)
+            }
+        } catch {
+            completelyCleared = false
+            container.logger.log(.warn, "SettingsView", "Failed to clear user skills", metadata: ["error": error.localizedDescription])
+        }
+        do {
+            for server in try container.applicationRuntime.listMCPServers() {
+                _ = try container.applicationRuntime.deleteMCPServer(id: server.id, deletedAtMs: clearedAtMs)
+            }
+        } catch {
+            completelyCleared = false
+            container.logger.log(.warn, "SettingsView", "Failed to clear MCP servers", metadata: ["error": error.localizedDescription])
         }
         return completelyCleared
     }
@@ -574,6 +624,12 @@ private struct NolaSettingsCard<Content: View>: View {
             content
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DesignTokens.surfaceColor, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(tint?.opacity(0.28) ?? DesignTokens.borderColor, lineWidth: 1)
+        }
     }
 }
 
@@ -610,6 +666,8 @@ struct NolaSettingsLinkLabel: View {
                     .frame(width: 34, height: 34)
                     .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .accessibilityLabel(title)
+            } else {
+                NolaSettingsIconTile(icon: icon, tint: tint)
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
@@ -632,7 +690,7 @@ struct NolaSettingsLinkLabel: View {
             }
         }
         .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 14)
         .padding(.vertical, 8)
         .contentShape(Rectangle())
     }
@@ -691,6 +749,7 @@ struct NolaSettingsToggleRow: View {
             }
         }
         .frame(minHeight: detail == nil ? 58 : 66)
+        .padding(.horizontal, 14)
         .padding(.vertical, 8)
     }
 
@@ -717,13 +776,14 @@ private struct NolaSettingsPickerRow: View {
                 Text(["daily": L10n.settingsNotificationDaily, "weekly": L10n.settingsNotificationWeekly,
                       "immediate": L10n.settingsNotificationImmediate][selection] ?? selection)
                     .foregroundStyle(.secondary)
-                Image(systemName: "chevron.up.chevron.down").font(.caption)
+                Image(systemName: "chevron.up.chevron.down").font(.caption).foregroundStyle(.tertiary)
             }
             .frame(maxWidth: .infinity, minHeight: 58)
+            .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .contentShape(Rectangle())
         }
-        .buttonStyle(NolaActionButtonStyle())
+        .buttonStyle(NolaPressableButtonStyle())
         .accessibilityLabel(title)
     }
 
@@ -746,6 +806,7 @@ private struct NolaSettingsValueRow: View {
                 .foregroundStyle(.secondary)
         }
         .frame(minHeight: 58)
+        .padding(.horizontal, 14)
         .padding(.vertical, 8)
     }
 }
@@ -769,6 +830,7 @@ private struct NolaSettingsActionLabel: View {
             Spacer(minLength: 8)
         }
         .frame(minHeight: 62)
+        .padding(.horizontal, 14)
         .padding(.vertical, 8)
         .contentShape(Rectangle())
     }
@@ -776,7 +838,11 @@ private struct NolaSettingsActionLabel: View {
 
 private struct NolaSettingsDivider: View {
     var body: some View {
-        Color.clear.frame(height: 8).accessibilityHidden(true)
+        Rectangle()
+            .fill(DesignTokens.borderColor)
+            .frame(height: 0.5)
+            .padding(.leading, 60)
+            .accessibilityHidden(true)
     }
 }
 

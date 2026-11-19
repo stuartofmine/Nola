@@ -116,7 +116,7 @@
                 <p class="scope">{t($locale, 'activity.executionBoundary')}</p>
             </section>
             <dl class="execution-facts">
-                <div><dt>{t($locale, 'activity.executionHost')}</dt><dd>{detail.execution_host_id || t($locale, 'activity.hostUnknown')}</dd></div>
+                <div><dt>{t($locale, 'activity.executionHost')}</dt><dd title={detail.execution_host_id || undefined}>{detail.execution_host_id ? detail.execution_host_id.slice(0, 8) : t($locale, 'activity.hostUnknown')}</dd></div>
                 <div><dt>{t($locale, 'activity.contextScope')}</dt><dd>{t($locale, detail.context_scope === 'task' ? 'activity.context.task' : detail.context_scope === 'conversation' ? 'activity.context.conversation' : 'activity.context.unavailable')}</dd></div>
             </dl>
             {#if detail.entry.needs_response}<p role="status">{t($locale, 'chatInspector.needsResponse')}</p>{/if}

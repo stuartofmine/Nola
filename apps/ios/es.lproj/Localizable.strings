@@ -3241,3 +3241,11 @@
 "a2ui.queue.cancel_rejected" = "Quitar acción no ejecutada";
 "chat.host.reconnect_bound" = "Vuelve a conectar el Host vinculado a esta conversación.";
 "chat.host.source_unavailable" = "No se puede verificar el Host de origen.";
+
+"composer.command.goal" = "Objetivo";
+"chat.composer.attach_photos" = "Fotos";
+"model.center.start_blocked_hint" = "Detén el modelo local en ejecución antes de iniciar este.";
+"model.web_host.forget_pairing" = "Olvidar vinculación anterior";
+"model.web_host.forget_pairing.footer" = "Borra la identidad recordada y el token guardado para esta dirección de host para volver a vincular.";
+"chat.context.mcp.empty" = "Aún no hay servidores MCP configurados.";
+"chat.context.mcp.local.footer" = "Configura y administra servidores MCP locales en Biblioteca > Capacidades.";

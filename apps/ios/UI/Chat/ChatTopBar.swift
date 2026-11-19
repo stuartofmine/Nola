@@ -45,6 +45,8 @@ struct ChatTopBar: View {
     var onShowProgress: () -> Void = {}
     var onShowResources: () -> Void = {}
     var onShowWorkTools: () -> Void = {}
+    var onBack: (() -> Void)? = nil
+    var onSearch: (() -> Void)? = nil
     var reasoningEfforts: [String] = []
     var reasoningPreference: String = "automatic"
     var reasoningSelectionEnabled = true
@@ -82,7 +84,17 @@ struct ChatTopBar: View {
     }
 
     private var fullBar: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 4) {
+            if let onBack {
+                Button(action: onBack) {
+                    Image("nola-back").renderingMode(.template).resizable().scaledToFit()
+                        .frame(width: 20, height: 20)
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text(L10n.chatTitle))
+                .accessibilityIdentifier("chat.navigation.back")
+            }
             if showsHistoryToggle {
                 sidebarToggleButton
             }
@@ -96,21 +108,28 @@ struct ChatTopBar: View {
                 }.buttonStyle(.plain)
                     .accessibilityIdentifier("chat.conversation.settings")
             } else {
-            modelPicker
+                modelPicker
+                Spacer(minLength: 4)
+                ReasoningEffortMenu(efforts: reasoningEfforts, preference: reasoningPreference,
+                    disabled: !reasoningSelectionEnabled, select: onSelectReasoning).layoutPriority(1)
+            }
+            if let onSearch {
+                Button(action: onSearch) {
+                    Image("nola-search").renderingMode(.template).resizable().scaledToFit()
+                        .frame(width: 20, height: 20)
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text("chat.search.loaded.title"))
+                .accessibilityIdentifier("chat.topbar.search")
             }
             if roomTitle == nil { actionsMenu }
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 12)
         .padding(.vertical, 5)
-        .background {
-            if reduceTransparency {
-                DesignTokens.elevatedColor
-            } else {
-                Rectangle().fill(.ultraThinMaterial)
-            }
-        }
-        .overlay(NolaDivider(), alignment: .bottom)
+        .background(DesignTokens.backgroundColor.ignoresSafeArea(edges: .top))
+        .overlay(Rectangle().fill(DesignTokens.borderColor).frame(height: 0.5), alignment: .bottom)
     }
 
     // The same model picker is used in the phone navigation bar and wider layouts.
@@ -164,7 +183,7 @@ struct ChatTopBar: View {
                     }
                     Image("nola-chevron").renderingMode(.template).resizable().scaledToFit()
                         .frame(width: 10, height: 10).rotationEffect(.degrees(90))
-                        .foregroundStyle(Color(uiColor: .label))
+                        .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: presentation == .composer ? nil : .infinity, minHeight: 44, alignment: .leading)
                 .padding(.horizontal, 6)

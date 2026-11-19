@@ -216,25 +216,39 @@ struct MacInspectorKnowledgeView: View {
 
     @ViewBuilder
     private var knowledgeSaveStatus: some View {
-        HStack(spacing: 5) {
-            if model.selectedKnowledgeSaveFailed {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
-                Text(String(localized: "Knowledge save was not confirmed. Your draft is retained.", table: "Chat"))
-                    .fixedSize(horizontal: false, vertical: true)
-            } else if model.selectedKnowledgeIsSaving {
-                ProgressView()
-                    .controlSize(.mini)
-                Text(String(localized: "Saving…", table: "Chat"))
-            } else if let updatedAt = model.selectedKnowledgeUpdatedAt {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                Text(
-                    String(
-                        format: String(localized: "Saved %@", table: "Chat"),
-                        updatedAt.formatted(date: .abbreviated, time: .shortened)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 5) {
+                if model.selectedKnowledgeSaveFailed {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text(String(localized: "Knowledge save was not confirmed. Your draft is retained.", table: "Chat"))
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if model.selectedKnowledgeIsSaving {
+                    ProgressView()
+                        .controlSize(.mini)
+                    Text(String(localized: "Saving…", table: "Chat"))
+                } else if let updatedAt = model.selectedKnowledgeUpdatedAt {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                    Text(
+                        String(
+                            format: String(localized: "Saved %@", table: "Chat"),
+                            updatedAt.formatted(date: .abbreviated, time: .shortened)
+                        )
                     )
-                )
+                }
+            }
+            if model.selectedKnowledgeSaveFailed {
+                HStack(spacing: 8) {
+                    Button(String(localized: "Retry Save", table: "Chat")) {
+                        model.retrySelectedKnowledgeSave()
+                    }
+                    .buttonStyle(MacActionButtonStyle())
+                    Button(String(localized: "Discard Unsaved Edits", table: "Chat"), role: .destructive) {
+                        model.discardSelectedKnowledgeEdits()
+                    }
+                    .buttonStyle(.bordered)
+                }
             }
         }
         .font(.system(size: MacDesignTokens.Typography.inspectorDetail, weight: .medium))

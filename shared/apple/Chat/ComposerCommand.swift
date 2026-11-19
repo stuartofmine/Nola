@@ -3,9 +3,9 @@
 import Foundation
 
 enum ComposerCommand: String, CaseIterable, Identifiable {
-    case model, experts, resources, permissions, plan, search, stop, help
+    case model, experts, resources, permissions, plan, goal, search, stop, help
     var id: String { rawValue }
-    var acceptsArgument: Bool { self == .plan || self == .search }
+    var acceptsArgument: Bool { self == .plan || self == .goal || self == .search }
     var title: String { NSLocalizedString("composer.command.\(rawValue)", value: rawValue.capitalized, comment: "Composer command") }
     static func query(_ text: String) -> String? {
         guard text.first == "/", !text.dropFirst().contains(where: { $0.isWhitespace || $0 == "/" }) else { return nil }
@@ -17,7 +17,9 @@ enum ComposerCommand: String, CaseIterable, Identifiable {
     }
     static func parse(_ text: String) -> (command: Self?, argument: String)? {
         guard text.first == "/" else { return nil }
+        if text.dropFirst().first == "/" { return nil }
         let parts = text.dropFirst().split(whereSeparator: \.isWhitespace)
+        if let first = parts.first, first.contains("/") { return nil }
         let command = parts.first.flatMap { Self(rawValue: $0.lowercased()) }
         let argument = parts.dropFirst().joined(separator: " ")
         return (command?.acceptsArgument == true || argument.isEmpty ? command : nil, argument)

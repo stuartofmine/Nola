@@ -10,10 +10,13 @@ import SwiftUI
 enum MacVisualSnapshotHarness {
     enum Page: String, CaseIterable {
         case chat
+        case onboarding
         case modelCenter = "model-center"
         case localModels = "local-models"
         case settings
         case dataCenter = "data-center"
+        case memoryCenter = "memory-center"
+        case workspaceReview = "workspace-review"
         case capabilities
         case automations
         case activity
@@ -42,6 +45,11 @@ enum MacVisualSnapshotHarness {
             "NOLA_CAPTURE_ATTACHMENT",
             "NOLA_CAPTURE_BROWSER_PREVIEW_URL",
             "NOLA_CAPTURE_BROWSER_PAGE_URL",
+            "NOLA_CAPTURE_CHAT_STATE",
+            "NOLA_CAPTURE_EXTENSIONS_TAB",
+            "NOLA_CAPTURE_DATA_SECTION",
+            "NOLA_CAPTURE_FRAME",
+            "NOLA_MAC_INITIAL_SECTION",
             "NOLA_CAPTURE_EXIT",
         ] {
             if let value = currentEnvironmentValue(for: key) {
@@ -80,19 +88,25 @@ enum MacVisualSnapshotHarness {
             .frame(width: size.width, height: size.height)
             .environment(\.colorScheme, colorScheme)
 
+        let usesHiddenTitleBar = page == .chat || page == .onboarding
         let hostingView = NSHostingView(rootView: root)
         hostingView.appearance = appearance
         hostingView.frame = CGRect(origin: .zero, size: size)
         let window = NSWindow(
             contentRect: CGRect(origin: .zero, size: size),
-            styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
+            styleMask: usesHiddenTitleBar
+                ? [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+                : [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = windowTitle(for: page)
+        window.titleVisibility = usesHiddenTitleBar ? .hidden : .visible
+        window.titlebarSeparatorStyle = usesHiddenTitleBar ? .none : .automatic
         window.appearance = appearance
         window.isReleasedWhenClosed = false
-        window.titlebarAppearsTransparent = true
+        window.titlebarAppearsTransparent = usesHiddenTitleBar
+        window.backgroundColor = NSColor(named: "NolaCanvas") ?? .windowBackgroundColor
         window.contentView = hostingView
         window.center()
         NSApplication.shared.activate(ignoringOtherApps: true)
@@ -108,7 +122,7 @@ enum MacVisualSnapshotHarness {
             // short async settle window instead.
             await Task.yield()
             hostingView.layoutSubtreeIfNeeded()
-            try? await Task.sleep(for: .milliseconds(160))
+            try? await Task.sleep(for: .milliseconds(250))
             await Task.yield()
         } else {
             let activationDeadline = ContinuousClock.now + .seconds(2)
@@ -119,11 +133,15 @@ enum MacVisualSnapshotHarness {
             try? await Task.sleep(for: .milliseconds(900))
         }
         hostingView.layoutSubtreeIfNeeded()
-        let representation = hostingView.bitmapImageRepForCachingDisplay(in: hostingView.bounds)
+        let captureTarget: NSView = (environment["NOLA_CAPTURE_FRAME"] == "window")
+            ? (window.contentView?.superview ?? hostingView)
+            : hostingView
+        captureTarget.layoutSubtreeIfNeeded()
+        let representation = captureTarget.bitmapImageRepForCachingDisplay(in: captureTarget.bounds)
             ?? NSBitmapImageRep(
                 bitmapDataPlanes: nil,
-                pixelsWide: Int(size.width * window.backingScaleFactor),
-                pixelsHigh: Int(size.height * window.backingScaleFactor),
+                pixelsWide: Int(captureTarget.bounds.width * window.backingScaleFactor),
+                pixelsHigh: Int(captureTarget.bounds.height * window.backingScaleFactor),
                 bitsPerSample: 8,
                 samplesPerPixel: 4,
                 hasAlpha: true,
@@ -132,9 +150,9 @@ enum MacVisualSnapshotHarness {
                 bytesPerRow: 0,
                 bitsPerPixel: 0
             )
-        representation?.size = hostingView.bounds.size
+        representation?.size = captureTarget.bounds.size
         if let representation {
-            hostingView.cacheDisplay(in: hostingView.bounds, to: representation)
+            captureTarget.cacheDisplay(in: captureTarget.bounds, to: representation)
         }
         if let data = representation?.representation(using: .png, properties: [:]) {
             try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
@@ -166,6 +184,8 @@ enum MacVisualSnapshotHarness {
                 inspectorTab: inspectorCaptureTab,
                 canonicalRepository: MacCanonicalConversationRepository(store: MacApplicationPort.shared)
             ))
+        case .onboarding:
+            return AnyView(MacOnboardingView(onComplete: {}))
         case .modelCenter:
             return AnyView(MacModelCenterView(remoteHost: MacRemoteHostService.shared))
         case .localModels:
@@ -208,6 +228,12 @@ enum MacVisualSnapshotHarness {
                 registry: registry,
                 webSources: webSources,
                 initialSection: ProcessInfo.processInfo.environment["NOLA_CAPTURE_SECTION"]
+            ))
+        case .memoryCenter:
+            return AnyView(MacMemoryCenterPage())
+        case .workspaceReview:
+            return AnyView(MacWorkspaceReviewView(
+                route: MacWorkspaceReviewRoute(path: ProcessInfo.processInfo.environment["NOLA_CAPTURE_SECTION"] ?? "/tmp/nola-visual-empty-repo")
             ))
         case .capabilities:
             return AnyView(MacCapabilityCenterView())
@@ -264,10 +290,12 @@ enum MacVisualSnapshotHarness {
 
     private static func windowTitle(for page: Page) -> String {
         switch page {
-        case .chat: return "Nola"
+        case .chat, .onboarding: return "Nola"
         case .modelCenter, .localModels: return String(localized: "Model Center")
         case .settings: return String(localized: "Settings")
         case .dataCenter: return String(localized: "Data Center")
+        case .memoryCenter: return String(localized: "Long-term Memory")
+        case .workspaceReview: return String(localized: "Workspace Changes")
         case .capabilities: return String(localized: "System Access")
         case .automations: return String(localized: "Automations")
         case .activity: return String(localized: "Activity")

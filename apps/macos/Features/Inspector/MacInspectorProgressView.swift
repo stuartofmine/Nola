@@ -229,6 +229,9 @@ struct MacInspectorProgressView: View {
             if let error = controlError {
                 MacInlineNotice(message: error, kind: .failure, dismiss: { controlError = nil })
             }
+            if let workspaceError = model.goalControlError, workspaceError != controlError {
+                MacInlineNotice(message: workspaceError, kind: .failure, dismiss: { model.goalControlError = nil })
+            }
             if controlPending {
                 Text("Goal action awaiting confirmation").font(.caption).foregroundStyle(.secondary)
                 HStack(spacing: 8) {
@@ -394,7 +397,7 @@ struct MacInspectorProgressContent: View, Equatable {
             if !tasks.isEmpty {
                 section("inspector.section.execution") {
                     ForEach(tasks) { task in
-                        row(task.current_step ?? task.id, state: task.state)
+                        row(Self.taskStepTitle(task), state: task.state)
                     }
                 }
             }
@@ -464,6 +467,17 @@ struct MacInspectorProgressContent: View, Equatable {
     }
 
     // Reported work is not verified completion. Unknown states remain neutral.
+    private static func taskStepTitle(_ task: MacInspectorProgressSnapshot.Tasks.Item) -> String {
+        if let step = task.current_step?.trimmingCharacters(in: .whitespacesAndNewlines), !step.isEmpty {
+            return step
+        }
+        let id = task.id.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !id.isEmpty && UUID(uuidString: id) == nil {
+            return id
+        }
+        return NSLocalizedString("inspector.section.execution", tableName: "ConversationInspector", comment: "Execution fallback title")
+    }
+
     static func symbol(_ state: String?) -> String {
         switch state {
         case "completed": return "checkmark.circle"

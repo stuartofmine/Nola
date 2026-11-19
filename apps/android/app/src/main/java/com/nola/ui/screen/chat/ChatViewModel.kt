@@ -3029,8 +3029,11 @@ class ChatViewModel @Inject constructor(
     }
 
     fun setAutoCompactPercent(percent: Int) {
-        _uiState.update { it.copy(autoCompactTriggerPercent = percent) }
-        viewModelScope.launch { memoryProfileDataStore.saveAutoCompactTriggerPercent(percent) }
+        val clamped = percent.coerceIn(50, 95)
+        _uiState.update { it.copy(autoCompactTriggerPercent = clamped) }
+        viewModelScope.launch {
+            runCatching { memoryProfileDataStore.saveAutoCompactTriggerPercent(clamped) }
+        }
     }
 
     private var parameterEditorOwner: Pair<String?, ModelInfo>? = null
@@ -3122,12 +3125,13 @@ class ChatViewModel @Inject constructor(
 
     suspend fun saveMemoryProfile() {
         val state = _uiState.value
-        val profile = checkNotNull(memoryEditorSnapshot) { "Reload the memory profile before saving" }
+        val profile = memoryEditorSnapshot ?: memoryProfileDataStore.getSnapshot()
         val updated = profile.copy(
             longTermMemory = state.longTermMemory.split("\n").filter { it.isNotBlank() },
             userPreferences = state.userPreferences.split("\n").filter { it.isNotBlank() }
         )
         val committed = memoryProfileDataStore.saveMemoryText(updated)
+        memoryProfileDataStore.saveAutoCompactTriggerPercent(state.autoCompactTriggerPercent.coerceIn(50, 95))
         memoryEditorSnapshot = committed
         _uiState.update { current ->
             current.copy(
@@ -3351,7 +3355,7 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    suspend fun saveSkill(original: UploadedContent?, name: String, content: String) {
+    suspend fun saveSkill(original: UploadedContent?, name: String, description: String, content: String) {
         skillMutationMutex.withLock {
             require(name.isNotBlank() && content.isNotBlank())
             val principal = memoryProfileDataStore.getOrCreateResourcePrincipalId()
@@ -3359,9 +3363,12 @@ class ChatViewModel @Inject constructor(
                 check(com.nola.core.AndroidManagedResourceAccess.project(original, principal).canEditContent)
             }
             val edited = (original ?: UploadedContent(
-                name = name.trim(), content = content,
-                resourceId = java.util.UUID.randomUUID().toString(), accessOwnerId = principal,
-            )).copy(name = name.trim(), content = content)
+                name = name.trim(),
+                description = description.trim(),
+                content = content,
+                resourceId = java.util.UUID.randomUUID().toString(),
+                accessOwnerId = principal,
+            )).copy(name = name.trim(), description = description.trim(), content = content)
             memoryProfileDataStore.saveSkill(original?.let(memoryProfileDataStore::skillEditor), edited)
             val committed = memoryProfileDataStore.skills()
             _uiState.update { it.copy(uploadedSkills = committed, error = null) }

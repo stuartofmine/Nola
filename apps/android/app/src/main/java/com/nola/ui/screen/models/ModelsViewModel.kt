@@ -123,7 +123,7 @@ class ModelsViewModel @Inject constructor(
     private val deviceModelStore: DeviceModelStore,
     private val webAgentProvider: WebAgentProvider,
     private val webHostApi: com.nola.data.remote.api.WebHostApiService,
-    applicationRuntime: com.nola.data.local.AndroidApplicationRuntime,
+    private val applicationRuntime: com.nola.data.local.AndroidApplicationRuntime,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
     private val connections = com.nola.data.repository.ModelConnectionRepository(applicationRuntime)
@@ -500,13 +500,15 @@ class ModelsViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(activatingModelId = model.id, activatingModelSource = model.source) }
             try {
-                val params = modelParametersStore.loadParameters(model.id)
+                val params = modelParametersStore.loadLocalParameters(model.id, record.contextWindow)
                 localLlamaProvider.start(record, params)
                 modelService.reconfigure(localLlamaProvider, model.id, "local")
+                prefs.saveDefaultModelSelection(model)
                 _uiState.update {
                     it.copy(
-                        selectedModelId = model.id,
+                        selectedModelId = model.selectionId,
                         selectedModelSource = ModelInfo.ModelSource.Local,
+                        runningLocalModelId = model.id,
                         connectionTestResult = context.getString(R.string.models_model_activated_format, model.name),
                         connectionTestSucceeded = true,
                     )
@@ -527,6 +529,38 @@ class ModelsViewModel @Inject constructor(
             if (_uiState.value.selectedModelSource == ModelInfo.ModelSource.Local) {
                 modelService.usePlaceholder()
                 _uiState.update { it.copy(selectedModelId = null, selectedModelSource = null) }
+            }
+        }
+    }
+
+    fun deleteModel(model: ModelInfo) {
+        if (model.source == ModelInfo.ModelSource.Local) {
+            deleteLocalModel(model)
+            return
+        }
+        if (model.source != ModelInfo.ModelSource.Cloud) return
+        val profileId = model.profileId ?: model.id
+        viewModelScope.launch {
+            try {
+                applicationRuntime.deleteModelProfile(profileId, System.currentTimeMillis())
+                val configuredModels = modelRepo.listConfiguredModels()
+                val wasSelected = _uiState.value.selectedModelId == model.selectionId &&
+                    _uiState.value.selectedModelSource == ModelInfo.ModelSource.Cloud
+                if (wasSelected) {
+                    modelService.usePlaceholder()
+                    prefs.clearDefaultModelSelection()
+                }
+                _uiState.update {
+                    it.copy(
+                        configuredApiModels = configuredModels,
+                        selectedModelId = if (wasSelected) null else it.selectedModelId,
+                        selectedModelSource = if (wasSelected) null else it.selectedModelSource,
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                publishStatus(context.getString(R.string.models_delete_failed_format, error.message.orEmpty()), false)
             }
         }
     }
@@ -584,6 +618,30 @@ class ModelsViewModel @Inject constructor(
     private var webHostConnectionJob: Job? = null
 
     fun cancelWebHostConnection() { webHostConnectionJob?.cancel(); webHostConnectionJob = null }
+
+    fun disconnectWebHost() {
+        cancelWebHostConnection()
+        viewModelScope.launch {
+            prefs.clearWebHostConfig()
+            val wasSelected = _uiState.value.selectedModelSource == ModelInfo.ModelSource.WebHost
+            if (wasSelected) {
+                modelService.usePlaceholder()
+                prefs.clearDefaultModelSelection()
+            }
+            webAgentProvider.config = null
+            _uiState.update {
+                it.copy(
+                    webHostUrl = "",
+                    webHostToken = "",
+                    webHostCertificateSha256 = "",
+                    webHostModel = null,
+                    hostMessaging = null,
+                    selectedModelId = if (wasSelected) null else it.selectedModelId,
+                    selectedModelSource = if (wasSelected) null else it.selectedModelSource,
+                )
+            }
+        }
+    }
 
     fun saveWebHostConfig(
         url: String,
@@ -664,7 +722,12 @@ class ModelsViewModel @Inject constructor(
     fun openParameters(model: ModelInfo) {
         viewModelScope.launch {
             val snapshot = try {
-                modelParametersStore.parameterSnapshot(model.parameterProfileId)
+                if (model.source == ModelInfo.ModelSource.Local) {
+                    val contextWindow = installedLocalRecords.firstOrNull { it.id == model.id }?.contextWindow ?: 4096
+                    modelParametersStore.localParameterSnapshot(model.id, model.name, contextWindow)
+                } else {
+                    modelParametersStore.parameterSnapshot(model.parameterProfileId)
+                }
             } catch (error: Exception) {
                 publishStatus(error.localizedMessage ?: context.getString(R.string.models_error_model_unavailable), false)
                 return@launch
@@ -718,7 +781,12 @@ class ModelsViewModel @Inject constructor(
         _uiState.update { it.copy(savingParameters = true) }
         viewModelScope.launch {
             try {
-                val refreshed = modelParametersStore.parameterSnapshot(target.parameterProfileId)
+                val refreshed = if (target.source == ModelInfo.ModelSource.Local) {
+                    val contextWindow = installedLocalRecords.firstOrNull { it.id == target.id }?.contextWindow ?: 4096
+                    modelParametersStore.localParameterSnapshot(target.id, target.name, contextWindow)
+                } else {
+                    modelParametersStore.parameterSnapshot(target.parameterProfileId)
+                }
                 _uiState.update { state ->
                     state.acceptParameterReload(baseline, refreshed)
                 }

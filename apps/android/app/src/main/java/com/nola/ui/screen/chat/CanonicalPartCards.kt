@@ -137,9 +137,13 @@ internal fun CanonicalErrorPart(part: ConversationProjectionV1.Part.Error, onRea
         )
         if (details) {
             Fact(part.partId, CanonicalPartReadField.ErrorIdentity, onReadText, stringResource(R.string.canonical_identity), part.partId)
-            Fact(part.partId, CanonicalPartReadField.ErrorMetadata, onReadText, stringResource(R.string.canonical_preview), buildJsonObject {
-                put("code", part.code); put("display_key", part.displayKey); put("recoverable", part.recoverable)
-            }.toString(), code = true)
+            val summaryText = listOfNotNull(
+                part.code.takeIf { it.isNotBlank() },
+                part.displayKey?.takeIf { it.isNotBlank() },
+            ).joinToString(" · ")
+            if (summaryText.isNotEmpty()) {
+                Fact(part.partId, CanonicalPartReadField.ErrorMetadata, onReadText, stringResource(R.string.canonical_preview), summaryText)
+            }
         }
     }
 }
@@ -173,8 +177,14 @@ private fun CanonicalActivityRow(part: ConversationProjectionV1.Part.Tool, detai
                 facts.preview?.let { Fact(part.partId, CanonicalPartReadField.ToolPreview, onReadText, stringResource(R.string.canonical_preview), it, code = true) }
                 Fact(part.partId, CanonicalPartReadField.ToolOrigin, onReadText, stringResource(R.string.canonical_origin), listOfNotNull(facts.origin.kind, facts.origin.providerId, facts.origin.providerTitle, facts.origin.namespace).joinToString(" · "))
                 facts.permission?.let { Fact(part.partId, CanonicalPartReadField.ToolPermissionIdentity, onReadText, stringResource(R.string.canonical_permission_record), it.requestId) }
-                facts.startedAtMs?.let { Fact(part.partId, CanonicalPartReadField.ToolStarted, onReadText, stringResource(R.string.canonical_started), it.toString()) }
-                facts.finishedAtMs?.let { Fact(part.partId, CanonicalPartReadField.ToolFinished, onReadText, stringResource(R.string.canonical_finished), it.toString()) }
+                facts.startedAtMs?.let {
+                    Fact(part.partId, CanonicalPartReadField.ToolStarted, onReadText, stringResource(R.string.canonical_started),
+                        java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.MEDIUM).format(java.util.Date(it.coerceAtMost(Long.MAX_VALUE.toULong()).toLong())))
+                }
+                facts.finishedAtMs?.let {
+                    Fact(part.partId, CanonicalPartReadField.ToolFinished, onReadText, stringResource(R.string.canonical_finished),
+                        java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.MEDIUM).format(java.util.Date(it.coerceAtMost(Long.MAX_VALUE.toULong()).toLong())))
+                }
                 // Owner facts are selectable display only; there is intentionally no open/download action.
                 facts.fullOutput?.let { owner -> Fact(part.partId, CanonicalPartReadField.ToolOutputOwner, onReadText, stringResource(R.string.canonical_retained_output),
                     listOf(owner.messageId, owner.partId, owner.toolCallId).joinToString(" · ")) }

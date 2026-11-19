@@ -19,6 +19,7 @@ export type HostControllerOptions = {
     llamaServerPath?: string;
     llamaBackend?: string;
     debug?: boolean;
+    maxAttempts?: number;
     log: (line: string) => void;
     onState: (state: HostState) => void;
 };
@@ -67,14 +68,23 @@ export class HostController {
 
     async start(): Promise<string> {
         if (this.child && this.child.exitCode === null) throw new Error("Agent Host is already running");
-        if (!existsSync(this.options.cliPath)) throw new Error(`Nola CLI was not found at ${this.options.cliPath}`);
-        if (!existsSync(this.options.webRoot)) throw new Error(`Web resources were not found at ${this.options.webRoot}`);
+        if (!existsSync(this.options.cliPath)) {
+            const detail = `Nola CLI was not found at ${this.options.cliPath}`;
+            this.options.onState({ kind: "failed", detail });
+            throw new Error(detail);
+        }
+        if (!existsSync(this.options.webRoot)) {
+            const detail = `Web resources were not found at ${this.options.webRoot}`;
+            this.options.onState({ kind: "failed", detail });
+            throw new Error(detail);
+        }
 
         this.explicitStop = false;
         const generation = ++this.generation;
+        const maxAttempts = Math.max(1, this.options.maxAttempts ?? 3);
         let lastError: unknown;
 
-        for (let attempt = 1; attempt <= 3; attempt += 1) {
+        for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
             this.options.onState({ kind: "starting", attempt });
             try {
                 const port = await availablePort();
@@ -130,7 +140,7 @@ export class HostController {
                 lastError = error;
                 this.options.log(`[startup:${attempt}] ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
                 this.terminateChild();
-                if (attempt < 3) await delay(attempt * 500);
+                if (attempt < maxAttempts) await delay(attempt * 500);
             }
         }
 

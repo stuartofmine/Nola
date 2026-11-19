@@ -30,6 +30,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
@@ -112,7 +113,11 @@ internal const val INTELLIGENCE_CAPABILITY_SKILLS_TAB_TAG = "intelligence.capabi
 internal const val INTELLIGENCE_CAPABILITY_MCP_TAB_TAG = "intelligence.capabilities.mcp"
 
 @Composable
-fun IntelligenceScreen(viewModel: IntelligenceViewModel = hiltViewModel(), section: IntelligenceSection? = null) {
+fun IntelligenceScreen(
+    viewModel: IntelligenceViewModel = hiltViewModel(),
+    section: IntelligenceSection? = null,
+    onBack: (() -> Unit)? = null,
+) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val profile = state.profile
     val visibleSkillIndices = profile.uploadedSkills.indices.filter {
@@ -152,6 +157,15 @@ fun IntelligenceScreen(viewModel: IntelligenceViewModel = hiltViewModel(), secti
         ) {
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (onBack != null) {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = stringResource(R.string.common_back)
+                        )
+                    }
+                    Spacer(Modifier.width(4.dp))
+                }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = stringResource(when (section) {
@@ -378,8 +392,8 @@ fun IntelligenceScreen(viewModel: IntelligenceViewModel = hiltViewModel(), secti
             isSaving = state.isSaving,
             errorMessage = state.errorMessage,
             onDismiss = { skillEditor = null; viewModel.clearError() },
-            onSave = { name, content ->
-                viewModel.saveSkill(activeEditor.skill, activeEditor.snapshot, name, content) {
+            onSave = { name, description, content ->
+                viewModel.saveSkill(activeEditor.skill, activeEditor.snapshot, name, description, content) {
                     if (skillEditor == activeEditor) skillEditor = null
                 }
             }
@@ -1006,13 +1020,14 @@ private fun skillGalleryPreview(content: String): String = content
     .trim()
 
 @Composable
-internal fun SkillEditorDialog(editor: SkillEditor, isSaving: Boolean, errorMessage: String?, onDismiss: () -> Unit, onSave: (String, String) -> Unit) {
+internal fun SkillEditorDialog(editor: SkillEditor, isSaving: Boolean, errorMessage: String?, onDismiss: () -> Unit, onSave: (String, String, String) -> Unit) {
     var name by remember(editor) { mutableStateOf(editor.skill.name) }
+    var description by remember(editor) { mutableStateOf(editor.skill.description) }
     var content by remember(editor) { mutableStateOf(editor.skill.content) }
     var discard by remember(editor) { mutableStateOf(false) }
     val requestDismiss = {
         if (!isSaving) {
-            if (editor.isEditable && (name != editor.skill.name || content != editor.skill.content)) discard = true
+            if (editor.isEditable && (name != editor.skill.name || description != editor.skill.description || content != editor.skill.content)) discard = true
             else onDismiss()
         }
     }
@@ -1042,6 +1057,7 @@ internal fun SkillEditorDialog(editor: SkillEditor, isSaving: Boolean, errorMess
                     style = MaterialTheme.typography.bodySmall,
                 )
                 OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.chat_skill_name)) }, singleLine = true, enabled = editor.isEditable && !isSaving)
+                OutlinedTextField(description, { description = it }, modifier = Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.chat_skill_description)) }, maxLines = 3, enabled = editor.isEditable && !isSaving)
                 OutlinedTextField(
                     value = content,
                     onValueChange = { content = it },
@@ -1056,7 +1072,7 @@ internal fun SkillEditorDialog(editor: SkillEditor, isSaving: Boolean, errorMess
         },
         confirmButton = {
             if (editor.isEditable) {
-                Button(onClick = { onSave(name, content) }, enabled = !isSaving && name.isNotBlank() && content.isNotBlank()) { Text(stringResource(R.string.common_save)) }
+                Button(onClick = { onSave(name, description, content) }, enabled = !isSaving && name.isNotBlank() && content.isNotBlank()) { Text(stringResource(R.string.common_save)) }
             }
         },
         dismissButton = {

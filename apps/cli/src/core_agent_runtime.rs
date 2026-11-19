@@ -3229,7 +3229,24 @@ fn refresh_changed_mcp_catalog(config: &mut HostInvocationRequest) -> Result<(),
         return Ok(());
     }
     let session = config.session.session_id.as_deref().ok_or("MCP refresh requires its canonical session")?;
-    let bound = crate::mcp_connection_authority::bind_configurations(&config.tool_settings.mcp_server_registry,"nola-cli-host",session)?;
+    let mut bound = Vec::with_capacity(config.tool_settings.mcp_server_registry.len());
+    for server in &config.tool_settings.mcp_server_registry {
+        match crate::mcp_connection_authority::bind_configurations(
+            std::slice::from_ref(server),
+            "nola-cli-host",
+            session,
+        ) {
+            Ok(mut items) => bound.append(&mut items),
+            Err(error) => crate::llm::log_local_debug_payload(
+                "mcp_server_unavailable",
+                &json!({
+                    "type": "mcp_server_unavailable",
+                    "server_id": server.get("server_id").or_else(|| server.get("id")).or_else(|| server.get("name")),
+                    "error": error,
+                }),
+            ),
+        }
+    }
     let Some(discovered) = crate::mcp_host::refresh_changed_servers(&bound)
         .map_err(|error| format!("{}: {}", error.code, error.message))?
     else {

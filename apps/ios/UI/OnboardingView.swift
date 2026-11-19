@@ -41,7 +41,6 @@ struct OnboardingView: View {
                 footer
             }
         }
-        .preferredColorScheme(nil)
         .tint(DesignTokens.actionColor)
         .animation(reduceMotion ? nil : DesignTokens.revealAnimation, value: step)
 
@@ -62,10 +61,10 @@ struct OnboardingView: View {
             HStack(spacing: 12) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 13, style: .continuous)
-                        .fill(Color.accentColor.opacity(0.13))
+                        .fill(DesignTokens.accentSubtleColor)
                     Image(systemName: "sparkles")
                         .font(.system(size: 19, weight: .semibold))
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(DesignTokens.actionColor)
                 }
                 .frame(width: 44, height: 44)
 
@@ -95,7 +94,7 @@ struct OnboardingView: View {
             HStack(spacing: 7) {
                 ForEach(0..<totalSteps, id: \.self) { index in
                     Capsule()
-                        .fill(index <= step ? Color.accentColor : Color.secondary.opacity(0.18))
+                        .fill(index <= step ? DesignTokens.actionColor : Color.secondary.opacity(0.20))
                         .frame(height: 4)
                 }
             }
@@ -266,11 +265,12 @@ struct OnboardingView: View {
             }
         }
         .padding(.horizontal, 22)
-        .padding(.top, 8)
-        .padding(.bottom, 18)
+        .padding(.top, 10)
+        .padding(.bottom, 14)
         .frame(maxWidth: 720)
         .frame(maxWidth: .infinity)
-        .background(.ultraThinMaterial)
+        .background(DesignTokens.backgroundColor)
+        .overlay(alignment: .top) { NolaDivider() }
     }
 
     private var backButton: some View {
@@ -280,10 +280,17 @@ struct OnboardingView: View {
         } label: {
             Image(systemName: "chevron.left")
                 .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(DesignTokens.contentColor)
                 .frame(minWidth: 50, minHeight: 50)
         }
         .buttonStyle(.plain)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(
+            NolaSurfaceBackground(
+                fill: DesignTokens.surfaceColor,
+                border: DesignTokens.borderColor,
+                cornerRadius: 16
+            )
+        )
         .accessibilityLabel(localized("onboarding.guide.back"))
     }
 
@@ -300,13 +307,16 @@ struct OnboardingView: View {
                     .frame(maxWidth: .infinity)
                 Image(systemName: step == totalSteps - 1 ? "checkmark" : "arrow.right")
             }
+            .foregroundStyle(DesignTokens.onActionColor)
             .padding(.horizontal, 18)
             .frame(minHeight: 50)
-
+            .background(
+                DesignTokens.actionColor,
+                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
-        .buttonStyle(.borderedProminent)
-        .foregroundStyle(DesignTokens.onActionColor)
-        .controlSize(.large)
+        .buttonStyle(NolaPressableButtonStyle())
         .accessibilityIdentifier("onboarding.next")
         .frame(maxWidth: .infinity)
     }
@@ -339,23 +349,8 @@ struct OnboardingView: View {
 
 private struct OnboardingBackground: View {
     var body: some View {
-        LinearGradient(
-            colors: [
-                Color(.systemBackground),
-                Color.accentColor.opacity(0.045),
-                Color(.systemBackground)
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-        .ignoresSafeArea()
-        .overlay(alignment: .topTrailing) {
-            Circle()
-                .fill(Color.teal.opacity(0.08))
-                .frame(width: 260, height: 260)
-                .blur(radius: 60)
-                .offset(x: 90, y: -90)
-        }
+        DesignTokens.backgroundColor
+            .ignoresSafeArea()
     }
 }
 
@@ -383,7 +378,7 @@ private struct GuidePage<Content: View>: View {
                 Text(eyebrow)
                     .font(.caption.weight(.bold))
                     .tracking(0.9)
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(DesignTokens.secondaryContentColor)
                 Text(title)
                     .font(.system(.largeTitle, design: .rounded, weight: .bold))
                     .fixedSize(horizontal: false, vertical: true)
@@ -429,7 +424,7 @@ private struct GuideFlowRow: View {
 private struct GuideFlowConnector: View {
     var body: some View {
         Rectangle()
-            .fill(Color.secondary.opacity(0.18))
+            .fill(DesignTokens.borderColor)
             .frame(width: 1, height: 14)
             .padding(.leading, 18)
     }
@@ -444,9 +439,9 @@ private struct FirstTaskRow: View {
         HStack(spacing: 13) {
             Image(systemName: icon)
                 .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(DesignTokens.actionColor)
                 .frame(width: 38, height: 38)
-                .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 11))
+                .background(DesignTokens.accentSubtleColor, in: RoundedRectangle(cornerRadius: 11))
             VStack(alignment: .leading, spacing: 3) {
                 Text(title).font(.subheadline.weight(.semibold))
                 Text(detail)
@@ -459,8 +454,11 @@ private struct FirstTaskRow: View {
         }
         .padding(14)
         .background(
-            Color(.secondarySystemBackground).opacity(0.78),
-            in: RoundedRectangle(cornerRadius: 17, style: .continuous)
+            NolaSurfaceBackground(
+                fill: DesignTokens.surfaceColor,
+                border: DesignTokens.borderColor,
+                cornerRadius: 17
+            )
         )
     }
 }
@@ -472,7 +470,7 @@ private struct GuideNote: View {
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
             Image(systemName: icon)
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(DesignTokens.actionColor)
             Text(text)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -482,8 +480,11 @@ private struct GuideNote: View {
         .padding(.horizontal, 13)
         .padding(.vertical, 11)
         .background(
-            Color.accentColor.opacity(0.075),
-            in: RoundedRectangle(cornerRadius: 15, style: .continuous)
+            NolaSurfaceBackground(
+                fill: DesignTokens.elevatedColor,
+                border: DesignTokens.borderColor,
+                cornerRadius: 15
+            )
         )
     }
 }
@@ -491,10 +492,12 @@ private struct GuideNote: View {
 private extension View {
     func guideCard() -> some View {
         padding(16)
-            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .stroke(Color.secondary.opacity(0.12))
-            }
+            .background(
+                NolaSurfaceBackground(
+                    fill: DesignTokens.surfaceColor,
+                    border: DesignTokens.borderColor,
+                    cornerRadius: 22
+                )
+            )
     }
 }

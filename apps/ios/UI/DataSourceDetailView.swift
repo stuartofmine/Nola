@@ -195,7 +195,7 @@ struct DataSourceDetailView: View {
             .padding(.top, 12)
             .padding(.bottom, 28)
         }
-        .background(Color(.systemGroupedBackground))
+        .background(DesignTokens.backgroundColor)
         .accessibilityIdentifier("data.source.detail.\(sourceType.rawValue)")
         .navigationTitle(sourceType.displayName)
         .navigationBarTitleDisplayMode(.inline)

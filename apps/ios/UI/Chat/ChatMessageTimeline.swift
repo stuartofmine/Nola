@@ -840,7 +840,7 @@ private struct ChatLearningFeedbackSheet: View {
                             .lineLimit(3)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(12)
-                            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .background(DesignTokens.elevatedColor, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     }
 
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -851,11 +851,11 @@ private struct ChatLearningFeedbackSheet: View {
                                 } label: {
                                     Text(item.title)
                                         .font(.subheadline.weight(.medium))
-                                        .foregroundStyle(draft.focus == item ? Color.white : Color.primary)
+                                        .foregroundStyle(draft.focus == item ? DesignTokens.onActionColor : DesignTokens.contentColor)
                                         .padding(.horizontal, 13)
                                         .frame(minHeight: 44)
                                         .background(
-                                            Capsule().fill(draft.focus == item ? Color.accentColor : Color(.secondarySystemBackground))
+                                            Capsule().fill(draft.focus == item ? DesignTokens.actionColor : DesignTokens.elevatedColor)
                                         )
                                 }
                                 .buttonStyle(.plain)
@@ -873,7 +873,7 @@ private struct ChatLearningFeedbackSheet: View {
                             .frame(minHeight: 86)
                             .padding(8)
                             .scrollContentBackground(.hidden)
-                            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .background(DesignTokens.elevatedColor, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                             .overlay(alignment: .topLeading) {
                                 if draft.note.isEmpty {
                                     Text(NSLocalizedString("chat.learning.note.placeholder", value: "Tell Nola exactly how this answer should improve", comment: "Correction detail placeholder"))

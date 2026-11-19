@@ -113,7 +113,7 @@ struct MacDataCenterView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(maxWidth: 360)
+                .fixedSize()
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, MacDesignTokens.Layout.pageGutter)
@@ -835,9 +835,9 @@ private struct MacDataSourceCard: View {
     private var statusColor: Color {
         if contract?.validationState == .failed { return .red }
         switch snapshot.authorization {
-        case .available: return contract?.isUsable == true ? .green : .accentColor
-        case .notDetermined: return .accentColor
-        case .denied, .restricted: return .orange
+        case .available: return contract?.isUsable == true ? MacDesignColor.success : .secondary
+        case .notDetermined: return MacDesignColor.warning
+        case .denied, .restricted: return MacDesignColor.warning
         case .unavailable: return .secondary
         }
     }

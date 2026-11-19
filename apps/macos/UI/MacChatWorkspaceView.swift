@@ -299,7 +299,18 @@ struct MacChatWorkspaceView: View {
         showsCommandPalette = false
     }
     @StateObject private var inspectorNavigation: MacInspectorNavigationState
-    @StateObject private var dataNavigation = MacDataCenterNavigationState()
+    @StateObject private var dataNavigation: MacDataCenterNavigationState = {
+        let state = MacDataCenterNavigationState()
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["NOLA_CAPTURE_UI"] != nil,
+           let raw = ProcessInfo.processInfo.environment["NOLA_CAPTURE_DATA_SECTION"]
+               ?? ProcessInfo.processInfo.environment["NOLA_CAPTURE_SECTION"],
+           let parsed = MacDataCenterSection(rawValue: raw) {
+            state.section = parsed
+        }
+        #endif
+        return state
+    }()
     @StateObject private var automationNavigation = MacAutomationCenterNavigationState()
     @StateObject private var extensionsNavigation = MacExtensionsNavigationState()
     @State private var columnVisibility = NavigationSplitViewVisibility.all
@@ -467,6 +478,7 @@ struct MacChatWorkspaceView: View {
                 }
             }
         }
+        .ignoresSafeArea(.container, edges: .top)
         .animation(reduceMotion ? nil : MacDesignTokens.Motion.structure, value: columnVisibility)
         .animation(reduceMotion ? nil : MacDesignTokens.Motion.structure, value: showsInspector)
         .animation(reduceMotion ? nil : MacDesignTokens.Motion.structure, value: activeOverlay)
@@ -625,7 +637,7 @@ struct MacChatWorkspaceView: View {
             \.nolaMacCommandActions,
             MacCommandActions(
                 newConversation: navigationActions.newConversation,
-                focusComposer: { navigationActions.navigate(to: .chat) { composerFocused = true } },
+                focusComposer: { navigationActions.navigate(to: .chat, then: { composerFocused = true }) },
                 openWorkspace: model.chooseWorkspace,
                 reviewWorkspace: reviewWorkspace,
                 showCommandPalette: { showsCommandPalette = true },
@@ -966,7 +978,8 @@ struct MacChatWorkspaceView: View {
                     modelSetupRequired: modelSetupRequired,
                     conversationControls: AnyView(composerConversationControls),
                     modelControls: AnyView(composerModelControls),
-                    onCommand: { command in
+                    onCommand: { command, argument in
+                        let trimmedArgument = argument.trimmingCharacters(in: .whitespacesAndNewlines)
                         switch command {
                         case .experts: showsAgentRooms = true
                         case .resources:
@@ -977,7 +990,13 @@ struct MacChatWorkspaceView: View {
                             inspectorNavigation.selectedTab = .context
                             showsInspector = true
                             activeOverlay = layoutMode == .threeColumn ? nil : .inspector
-                        case .plan: navigationActions.navigate(to: .automations)
+                        case .plan, .goal:
+                            if !trimmedArgument.isEmpty {
+                                inspectorNavigation.goalDrafts.draft(for: model.selectedConversationID ?? "").objective = trimmedArgument
+                            }
+                            inspectorNavigation.selectedTab = .task
+                            showsInspector = true
+                            activeOverlay = layoutMode == .threeColumn ? nil : .inspector
                         default: break
                         }
                     }
@@ -1116,11 +1135,11 @@ struct MacChatWorkspaceView: View {
         MacConversationInspectorButtons(selection: inspectorNavigation.selectedTab,
             isVisible: !isManagementContent && (layoutMode == .threeColumn ? showsInspector : activeOverlay == .inspector)) { tab in
                     if isManagementContent {
-                        navigationActions.navigate(to: .chat) {
+                        navigationActions.navigate(to: .chat, then: {
                             inspectorNavigation.selectedTab = tab
                             showsInspector = true
                             activeOverlay = layoutMode == .threeColumn ? nil : .inspector
-                        }
+                        })
                         return
                     }
                     let visible = layoutMode == .threeColumn ? showsInspector : activeOverlay == .inspector
@@ -1144,9 +1163,7 @@ struct MacChatWorkspaceView: View {
                 )
         }
         .macToolbarIcon(
-            isActive: layoutMode == .compactOverlay
-                ? activeOverlay == .sidebar
-                : columnVisibility != .detailOnly
+            isActive: layoutMode == .compactOverlay && activeOverlay == .sidebar
         )
         .help(String(localized: "Toggle Sidebar"))
         .accessibilityLabel(String(localized: "Toggle Sidebar"))
@@ -1180,7 +1197,7 @@ struct MacChatWorkspaceView: View {
             Button(action: beginInlineTitle) {
                 HStack(spacing: 6) {
                     Text(model.selectedConversationDisplayTitle)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: 14.5, weight: .semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -1191,19 +1208,12 @@ struct MacChatWorkspaceView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
                 .background(
-                    isTitleHovered ? MacDesignColor.hover : MacDesignColor.panel,
+                    isTitleHovered ? MacDesignColor.hover : .clear,
                     in: RoundedRectangle(cornerRadius: 7, style: .continuous)
                 )
-                .overlay {
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .strokeBorder(
-                            isTitleHovered ? MacDesignColor.controlOutline.opacity(0.6) : MacDesignColor.borderSubtle,
-                            lineWidth: 0.75
-                        )
-                }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -1211,20 +1221,11 @@ struct MacChatWorkspaceView: View {
             .help(model.selectedConversationDisplayTitle)
         } else {
             Text(model.selectedConversationDisplayTitle)
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: 14.5, weight: .semibold))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(
-                    MacDesignColor.panel.opacity(0.65),
-                    in: RoundedRectangle(cornerRadius: 7, style: .continuous)
-                )
-                .overlay {
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .strokeBorder(MacDesignColor.borderSubtle.opacity(0.75), lineWidth: 0.75)
-                }
+                .padding(.horizontal, 4)
         }
     }
 

@@ -250,10 +250,8 @@ struct MacChatInspector: View {
             Rectangle().fill(MacDesignColor.borderSubtle).frame(height: 1)
             MacInspectorDataSourcesView(model: model, dataRegistry: dataRegistry,
                 platformData: platformData, webSources: webSources)
-            if chrome.snapshot.errorMessage != nil || !chrome.snapshot.isExtensionConnected {
-                Rectangle().fill(MacDesignColor.borderSubtle).frame(height: 1)
-                MacInspectorBrowserView(model: model, chrome: chrome)
-            }
+            Rectangle().fill(MacDesignColor.borderSubtle).frame(height: 1)
+            MacInspectorBrowserView(model: model, chrome: chrome)
         }
     }
 

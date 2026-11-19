@@ -68,9 +68,13 @@ struct MacUnknownEffectRecoveryView: View {
                         Text(String(format: "#%lld", Int64(index + 1))).tag(Optional(index))
                     }
                 }
-                TextField(String(localized: "Reason for this recovery decision", table: "Chat"), text: $reason, axis: .vertical)
+                TextField(String(localized: "Add a short note (required for Keep Blocked or retry)", table: "Chat"), text: $reason, axis: .vertical)
                     .lineLimit(2...4)
                     .textFieldStyle(.roundedBorder)
+                Text(String(localized: "This note is saved to the recovery record before retrying or closing unresolved operations as blocked.", table: "Chat"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 ViewThatFits(in: .horizontal) {
                     HStack { actions }
                     VStack(alignment: .leading) { actions }
@@ -112,12 +116,12 @@ struct MacUnknownEffectRecoveryView: View {
     }
 
     @ViewBuilder private var actions: some View {
-        Button(String(localized: "Review risk retry…", table: "Chat")) {
+        Button(String(localized: "Review & retry selected…", table: "Chat")) {
             confirmation = try? presentation.decision(targetIndex: selectedIndex, reason: reason)
         }
         .disabled(!presentation.inspection.retryAllowed || selectedIndex == nil || !validReason)
         .accessibilityIdentifier("chat.unknown.reviewRetry")
-        Button(String(localized: "Keep unknown and close as blocked", table: "Chat")) {
+        Button(String(localized: "Keep blocked & stop task", table: "Chat")) {
             if let decision = try? presentation.decision(targetIndex: nil, reason: reason) { submit(decision) }
         }
         .disabled(!validReason || presentation.inspection.independentPendingEffects != 0)

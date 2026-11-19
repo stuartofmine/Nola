@@ -221,7 +221,7 @@ internal fun ConversationProgressPanel(
             else expertChildren(owner)
             state.coreTaskProjection.orderedTasks.filter { owner != null && it.ownerSessionId == state.coreTaskProjection.sessionId }.forEach { task ->
                 HorizontalDivider()
-                Text(task.currentStep ?: task.id, style = MaterialTheme.typography.bodyMedium)
+                Text(task.currentStep?.takeIf { it.isNotBlank() } ?: stringResource(R.string.canonical_running), style = MaterialTheme.typography.bodyMedium)
                 Text(progressStatusText(task.state.wireValue), style = MaterialTheme.typography.labelMedium)
             }
         }

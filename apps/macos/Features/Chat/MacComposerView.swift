@@ -326,7 +326,7 @@ struct MacComposerView: View {
             attachmentTray
             inputRow
         }
-        .background(NolaSurfaceBackground(fill: MacDesignColor.surfaceRaised,
+        .background(NolaSurfaceBackground(fill: MacDesignColor.panel,
                                           border: MacDesignColor.borderSubtle,
                                           cornerRadius: MacDesignTokens.Radius.message))
         .overlay {

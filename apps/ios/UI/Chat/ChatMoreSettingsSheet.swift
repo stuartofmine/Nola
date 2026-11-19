@@ -72,6 +72,7 @@ struct ChatMoreSettingsSheet: View {
 
     var body: some View {
         Form {
+            Group {
             Section {
                 ChatConversationScopeSummary(
                     symbol: "slider.horizontal.3",
@@ -91,7 +92,11 @@ struct ChatMoreSettingsSheet: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
+            }
+            .listRowBackground(DesignTokens.surfaceColor)
+            .listRowSeparatorTint(DesignTokens.borderColor)
         }
+        .nolaGroupedSurface()
         .disabled(isSaving)
         .interactiveDismissDisabled(isSaving || generationEditorPreventsDismiss)
         .navigationTitle(tr("chat.more_settings.title", "Conversation Settings", comment: "Chat more settings sheet title"))
@@ -237,8 +242,8 @@ struct ChatMoreSettingsSheet: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
-            .background(.regularMaterial)
-            .overlay(alignment: .top) { Divider() }
+            .background(DesignTokens.surfaceColor)
+            .overlay(alignment: .top) { NolaDivider() }
             .transition(.move(edge: .bottom).combined(with: .opacity))
         }
     }
@@ -748,6 +753,7 @@ private struct IOSConversationGenerationSettingsView: View {
 
     var body: some View {
         Form {
+            Group {
             Section {
                 Toggle(NSLocalizedString("model.parameters.max_context_length", value: "Context window", comment: "Context window parameter"), isOn: $editor.contextEnabled)
                 if editor.contextEnabled {
@@ -775,7 +781,11 @@ private struct IOSConversationGenerationSettingsView: View {
                     errorMessage = nil
                 }
             }
+            }
+            .listRowBackground(DesignTokens.surfaceColor)
+            .listRowSeparatorTint(DesignTokens.borderColor)
         }
+        .nolaGroupedSurface()
         .navigationTitle(model.name)
         .navigationBarBackButtonHidden(hasChanges)
         .interactiveDismissDisabled(hasChanges)

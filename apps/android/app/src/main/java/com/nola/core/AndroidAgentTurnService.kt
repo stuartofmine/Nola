@@ -210,8 +210,24 @@ class AndroidAgentTurnService @Inject constructor(
     private suspend fun capturePeerTargetConfiguration(material: JsonObject): JsonObject {
         val entry = Json.decodeFromJsonElement<com.nola.data.local.AndroidExpertMessageEntry>(material.getValue("entry"))
         val declared = entry.modelDeclaration
+        val declaredProfileId = declared.getValue("profile_id").jsonPrimitive.content
+        val declaredRevision = declared.getValue("profile_revision").jsonPrimitive.long
         val model = modelRepository.listConfiguredModels().singleOrNull {
-            it.profileId == declared.getValue("profile_id").jsonPrimitive.content && it.profileRevision == declared.getValue("profile_revision").jsonPrimitive.long
+            it.profileId == declaredProfileId && it.profileRevision == declaredRevision
+        } ?: localLlamaProvider.activeModel?.takeIf { local ->
+            declaredProfileId == local.id ||
+                declaredProfileId == "local:${local.id}" ||
+                declaredProfileId == com.nola.domain.model.ModelInfo(
+                    local.id,
+                    local.displayName,
+                    com.nola.domain.model.ModelInfo.ModelSource.Local,
+                ).selectionId
+        }?.let { local ->
+            com.nola.domain.model.ModelInfo(
+                id = local.id,
+                name = local.displayName,
+                source = com.nola.domain.model.ModelInfo.ModelSource.Local,
+            )
         } ?: error("The target expert's exact model profile is unavailable")
         val parameters = com.nola.data.repository.readExpertConversationParameters(entry.defaults, model, declared.getValue("parameters").jsonObject)
         val captured = captureModel(model, parameters)

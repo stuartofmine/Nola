@@ -384,6 +384,8 @@ nonisolated public protocol ChatMemoryProfileStore: AnyObject {
     func loadProfile() -> ChatMemoryProfile
     @discardableResult
     func saveMemoryText(longTermMemory: String, userPreferences: String, expected: ChatMemoryProfile) throws -> ChatMemoryProfile
+    @discardableResult
+    func saveUploadedDocuments(_ items: [UserUploadedContextItem]) throws -> [UserUploadedContextItem]
 }
 
 nonisolated protocol ChatSkillEditingStore: AnyObject {
@@ -598,6 +600,24 @@ nonisolated public final class CanonicalChatMemoryProfileStore: ChatMemoryProfil
             result.userPreferences = result.memoryRecords.filter { $0.namespace == .userPreferences }.map(\.text).joined(separator: "\n")
             result.canonicalMemorySnapshot = committed
             return result
+        }
+    }
+
+    @discardableResult
+    public func saveUploadedDocuments(_ items: [UserUploadedContextItem]) throws -> [UserUploadedContextItem] {
+        try queue.sync {
+            let normalized = Self.normalizeUploadedItems(items)
+            for item in normalized where item.content.count > maxCharacters * 8 {
+                throw ChatMemoryProfileStoreError.textTooLong(field: "文档: \(item.name)", maxCharacters: maxCharacters * 8)
+            }
+            let encoded = try encoder.encode(normalized)
+            let valueJSON = String(decoding: encoded, as: UTF8.self)
+            _ = try applicationRuntime.putProductSetting(
+                key: uploadedDocumentsKey,
+                valueJSON: valueJSON,
+                updatedAtMs: Int64(Date().timeIntervalSince1970 * 1_000)
+            )
+            return normalized
         }
     }
 
@@ -861,6 +881,11 @@ public final class DefaultContextManager {
     init(store: ConversationStore, profileStore: ChatMemoryProfileStore) {
         self.store = store
         self.profileStore = profileStore
+    }
+
+    @discardableResult
+    public func saveUploadedDocuments(_ items: [UserUploadedContextItem]) throws -> [UserUploadedContextItem] {
+        try profileStore.saveUploadedDocuments(items)
     }
 
     func recordPreparedDataSourceUsage(

@@ -378,7 +378,10 @@ struct ModelTestDetailViewNew: View {
                                 .foregroundColor(.secondary)
                         }
                     }
+                    .listRowBackground(DesignTokens.surfaceColor)
+                    .listRowSeparatorTint(DesignTokens.borderColor)
                 }
+                .nolaGroupedSurface()
                 
                 Spacer()
             }

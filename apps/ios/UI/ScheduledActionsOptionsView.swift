@@ -72,6 +72,7 @@ struct ScheduledActionsOptionsView: View {
                     Text(L10n.scheduledActionsAdvancedOptionsTitle)
                 }
             }
+            .nolaGroupedSurface()
             .navigationTitle(L10n.scheduledActionsOptions)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

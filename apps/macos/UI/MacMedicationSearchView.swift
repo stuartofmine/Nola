@@ -22,16 +22,14 @@ struct MacMedicationSearchView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().opacity(0.55)
+            Rectangle()
+                .fill(MacDesignColor.borderSubtle)
+                .frame(height: 1)
             content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .background {
-            LinearGradient(
-                colors: [Color(nsColor: .windowBackgroundColor), Color.accentColor.opacity(0.025)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(MacPageBackground())
         .navigationTitle(macMedicationText("mac.medication.title", "Medication Lookup"))
     }
 
@@ -40,9 +38,9 @@ struct MacMedicationSearchView: View {
             HStack(alignment: .center, spacing: 13) {
                 Image(systemName: "pills.fill")
                     .font(.system(size: 19, weight: .medium))
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(MacDesignColor.brand)
                     .frame(width: 42, height: 42)
-                    .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
+                    .background(MacDesignColor.selected, in: RoundedRectangle(cornerRadius: 12))
                 VStack(alignment: .leading, spacing: 3) {
                     Text(macMedicationText("mac.medication.title", "Medication Lookup"))
                         .font(.system(size: 22, weight: .semibold, design: .rounded))
@@ -71,15 +69,15 @@ struct MacMedicationSearchView: View {
                     .accessibilityLabel(macMedicationText("mac.medication.clear", "Clear search"))
                 }
                 Button(macMedicationText("mac.medication.search", "Search")) { search() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(MacActionButtonStyle())
                     .disabled(trimmedQuery.isEmpty || isSearching)
             }
             .padding(.horizontal, 13)
             .frame(height: 44)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .background(MacDesignColor.panel, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+                    .strokeBorder(MacDesignColor.borderSubtle, lineWidth: 0.75)
             }
         }
         .padding(22)
@@ -119,7 +117,7 @@ struct MacMedicationSearchView: View {
                         .foregroundStyle(.secondary)
                         .padding(13)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.accentColor.opacity(0.06), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .background(MacDesignColor.subtleFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
                     if let dosage = result.commonDosage, !dosage.isEmpty {
                         informationSection(macMedicationText("mac.medication.dosage", "COMMON DOSAGE"), text: dosage, symbol: "scalemass")
@@ -143,12 +141,14 @@ struct MacMedicationSearchView: View {
                 systemImage: "pills.circle",
                 description: Text(errorMessage)
             )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ContentUnavailableView(
                 macMedicationText("mac.medication.empty.title", "Search Medication Labels"),
                 systemImage: "pills",
                 description: Text(macMedicationText("mac.medication.empty.detail", "Enter a brand name to retrieve public label information."))
             )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -156,7 +156,7 @@ struct MacMedicationSearchView: View {
         _ title: String,
         text: String,
         symbol: String,
-        tint: Color = .accentColor
+        tint: Color = MacDesignColor.brand
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Label(title, systemImage: symbol)
@@ -170,11 +170,7 @@ struct MacMedicationSearchView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(16)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .stroke(Color.primary.opacity(0.07), lineWidth: 0.5)
-        }
+        .macPanel(cornerRadius: 13)
     }
 
     private var trimmedQuery: String {

@@ -491,8 +491,17 @@ private fun NolaNavigationHost(
                     openChat(newConversation = true)
                 })
             }
-            composable(NolaTab.Intelligence.route) { IntelligenceScreen(section = IntelligenceSection.EXTENSIONS) }
-            composable(NolaTab.Models.route) { ModelsScreen() }
+            composable(NolaTab.Intelligence.route) {
+                val fromSettings = navController.previousBackStackEntry?.destination?.route == NolaTab.Settings.route
+                IntelligenceScreen(
+                    section = IntelligenceSection.EXTENSIONS,
+                    onBack = if (fromSettings) ({ navController.popBackStack() }) else null,
+                )
+            }
+            composable(NolaTab.Models.route) {
+                val fromSettings = navController.previousBackStackEntry?.destination?.route == NolaTab.Settings.route
+                ModelsScreen(onBack = if (fromSettings) ({ navController.popBackStack() }) else null)
+            }
             composable("$MODELS_ROUTE/add") { ModelsScreen(initialShowEndpointSheet = true) }
             composable("$MODELS_ROUTE/add/{requestKey}") { entry ->
                 ModelsScreen(

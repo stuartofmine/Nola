@@ -280,12 +280,30 @@ enum MacDesignColor {
     static let controlOutline = Color("NolaControlOutline")
     static let brand = Color("AccentColor")
     static let canvas = Color("NolaCanvas")
-    static let chrome = Color("NolaSurfaceRaised")
-    static let sidebar = MacDesignTokens.Palette.fallbackColor(light: 0xF9F9F8, dark: 0x121211)
-    static let inspector = MacDesignTokens.Palette.fallbackColor(light: 0xFAFAFA, dark: 0x141413)
-    static let subtleFill = MacDesignTokens.Palette.fallbackColor(light: 0xF3F2EE, dark: 0x22221F)
-    static let sidebarGlass = MacDesignTokens.Palette.fallbackColor(light: 0xF9F9F8, dark: 0x121211).opacity(0.68)
-    static let inspectorGlass = MacDesignTokens.Palette.fallbackColor(light: 0xFAFAFA, dark: 0x141413).opacity(0.72)
+    static let chrome = MacDesignTokens.Palette.fallbackColor(
+        light: MacDesignTokens.Palette.Light.surfaceSubtle,
+        dark: MacDesignTokens.Palette.Dark.surface
+    )
+    static let sidebar = MacDesignTokens.Palette.fallbackColor(
+        light: MacDesignTokens.Palette.Light.surfaceSubtle,
+        dark: MacDesignTokens.Palette.Dark.surface
+    )
+    static let inspector = MacDesignTokens.Palette.fallbackColor(
+        light: MacDesignTokens.Palette.Light.surfaceSubtle,
+        dark: MacDesignTokens.Palette.Dark.surface
+    )
+    static let subtleFill = MacDesignTokens.Palette.fallbackColor(
+        light: MacDesignTokens.Palette.Light.surfaceSubtle,
+        dark: MacDesignTokens.Palette.Dark.surfaceSubtle
+    )
+    static let sidebarGlass = MacDesignTokens.Palette.fallbackColor(
+        light: MacDesignTokens.Palette.Light.surfaceSubtle,
+        dark: MacDesignTokens.Palette.Dark.surface
+    ).opacity(0.68)
+    static let inspectorGlass = MacDesignTokens.Palette.fallbackColor(
+        light: MacDesignTokens.Palette.Light.surfaceSubtle,
+        dark: MacDesignTokens.Palette.Dark.surface
+    ).opacity(0.72)
     static let panel = Color("NolaSurface")
     static let hover = Color("NolaControlHover")
     static let pressed = Color("NolaControlPressed")
@@ -1365,6 +1383,7 @@ struct MacDropdownOption: Identifiable {
     let id: String
     let title: String
     let isSelected: Bool
+    var isAvailable: Bool = true
     let action: @MainActor () -> Void
 }
 
@@ -1418,7 +1437,8 @@ struct MacSelectionDropdownBar<Selection: Hashable>: View {
                 MacDropdownOption(
                     id: "\(index)-\(item.title)",
                     title: item.title,
-                    isSelected: item.value == selection
+                    isSelected: item.value == selection,
+                    isAvailable: item.isEnabled
                 ) {
                     guard item.isEnabled else { return }
                     selection = item.value
@@ -1640,6 +1660,7 @@ private struct MacPopUpButtonOverlay: NSViewRepresentable {
             )
             item.target = context.coordinator
             item.tag = index
+            item.isEnabled = option.isAvailable
             item.state = option.isSelected ? .on : .off
             menu.addItem(item)
             if option.isSelected && selectedIndex == nil {
@@ -1659,7 +1680,7 @@ private struct MacPopUpButtonOverlay: NSViewRepresentable {
 
         @objc func selectOption(_ sender: NSMenuItem) {
             let index = sender.tag
-            guard options.indices.contains(index) else { return }
+            guard options.indices.contains(index), options[index].isAvailable else { return }
             options[index].action()
         }
     }

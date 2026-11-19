@@ -3394,3 +3394,11 @@
 "a2ui.queue.cancel_rejected" = "移除未执行的表单操作";
 "chat.host.reconnect_bound" = "请重新连接此会话绑定的 Host。";
 "chat.host.source_unavailable" = "无法确认此会话的来源 Host。";
+
+"composer.command.goal" = "目标";
+"chat.composer.attach_photos" = "选择照片";
+"model.center.start_blocked_hint" = "请先停止正在运行的本地模型，再启动此模型。";
+"model.web_host.forget_pairing" = "忘记之前的配对";
+"model.web_host.forget_pairing.footer" = "清除此主机地址已记住的身份与保存的令牌，以便重新配对。";
+"chat.context.mcp.empty" = "当前还没有可用的 MCP 服务器。";
+"chat.context.mcp.local.footer" = "可在「资料库 > 能力库」中配置、启用或管理本机 MCP 服务器。";

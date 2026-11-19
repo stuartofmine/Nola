@@ -165,7 +165,8 @@ struct PermissionsSetupView: View {
             .padding(.horizontal, 20)
             .padding(.top, 14)
             .padding(.bottom, 16)
-            .background(.ultraThinMaterial)
+            .background(DesignTokens.backgroundColor)
+            .overlay(alignment: .top) { NolaDivider() }
         }
         .interactiveDismissDisabled(isRequestingPermissions)
         .onDisappear {
@@ -311,7 +312,8 @@ struct StepView: View {
                     PermissionFeature(icon: "hand.raised.fill", title: L10n.permissionsSetupFeatureControlTitle, description: L10n.permissionsSetupFeatureControlDesc)
                 }
                 .padding(16)
-                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .background(DesignTokens.surfaceColor, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay { RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(DesignTokens.borderColor, lineWidth: 0.5) }
             }
             .frame(maxWidth: 560)
             .padding(.horizontal, 22)
@@ -330,9 +332,9 @@ struct PermissionFeature: View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: icon)
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(DesignTokens.actionColor)
                 .frame(width: 28, height: 28)
-                .background(Color.accentColor.opacity(0.09), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background(DesignTokens.accentSubtleColor, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)

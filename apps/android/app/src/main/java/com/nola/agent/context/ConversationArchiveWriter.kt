@@ -62,6 +62,7 @@ class ConversationArchiveWriter @Inject constructor(
         }
         check(output.action == "ready") { "Application did not prepare a ready context" }
         return AndroidPreparedContext(request.route, ModelInput(userPrefs = request.userPrefs,
-            canonicalMessages = output.messages, tools = output.tools, contextPayloadDigest = output.payloadDigest), output)
+            canonicalMessages = output.messages, tools = output.tools, contextPayloadDigest = output.payloadDigest), output,
+            turnContextComponents = nonSystemTurnContextComponents(request.components))
     }
 }

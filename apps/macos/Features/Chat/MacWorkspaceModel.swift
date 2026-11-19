@@ -581,6 +581,10 @@ final class MacWorkspaceModel {
     private var userInputWaitLoadErrors: [String: String] = [:]
     var resolvingUserInputWaitIDs: Set<String> = []
     var isResolvingPermission = false
+    private(set) var permissionResolutionErrors: [String: String] = [:]
+    var selectedPermissionResolutionError: String? {
+        selectedConversationID.flatMap { permissionResolutionErrors[$0] }
+    }
     var renamingConversationID: String?
     var renameDraft = ""
     var conversationOperationError: String?
@@ -1089,6 +1093,20 @@ final class MacWorkspaceModel {
             return
         }
         if ProcessInfo.processInfo.environment["NOLA_CAPTURE_UI"] != nil {
+            if ProcessInfo.processInfo.environment["NOLA_CAPTURE_CHAT_STATE"] == "empty" {
+                let emptyConversation = MacConversation(
+                    id: "nola-visual-snapshot-empty",
+                    title: String(localized: "New Conversation"),
+                    preview: "",
+                    updatedAt: .now,
+                    isPinned: false
+                )
+                conversations = [emptyConversation]
+                selectedConversationID = emptyConversation.id
+                messagesByConversation = [emptyConversation.id: []]
+                workspaceURL = nil
+                return
+            }
             var conversation = MacConversation(
                 id: "nola-visual-snapshot",
                 title: "Visual QA Conversation",
@@ -1096,7 +1114,14 @@ final class MacWorkspaceModel {
                 updatedAt: .now,
                 isPinned: false
             )
-            if ProcessInfo.processInfo.environment["NOLA_CAPTURE_INSPECTOR_TAB"] == "resources" {
+            let secondaryConversation = MacConversation(
+                id: "nola-visual-snapshot-secondary",
+                title: "Architecture Audit",
+                preview: "Summarized client token alignment across platforms.",
+                updatedAt: Date().addingTimeInterval(-3_600),
+                isPinned: false
+            )
+            if ["artifacts", "resources"].contains(ProcessInfo.processInfo.environment["NOLA_CAPTURE_INSPECTOR_TAB"]) {
                 let pageURL = ProcessInfo.processInfo.environment["NOLA_CAPTURE_BROWSER_PAGE_URL"]
                     ?? "https://example.com/nola-browser-preview"
                 conversation.browserSnapshot = MacConversationBrowserSnapshot(
@@ -1140,7 +1165,7 @@ final class MacWorkspaceModel {
                 result: "No unresolved blockers found."
             )
             assistantPresentation.finish()
-            conversations = [conversation]
+            conversations = [conversation, secondaryConversation]
             selectedConversationID = conversation.id
             messagesByConversation = [
                 conversation.id: [
@@ -1169,7 +1194,8 @@ final class MacWorkspaceModel {
                         createdAt: .now,
                         presentation: assistantPresentation
                     )
-                ]
+                ],
+                secondaryConversation.id: []
             ]
             workspaceURL = nil
             return
@@ -2341,6 +2367,30 @@ final class MacWorkspaceModel {
         return knowledgeSavePendingConversationIDs.contains(selectedConversationID)
     }
 
+    func retrySelectedKnowledgeSave() {
+        guard let selectedConversationID, selectedKnowledgeSaveFailed else { return }
+        knowledgeSaveFailedConversationIDs.remove(selectedConversationID)
+        knowledgeSavePendingConversationIDs.insert(selectedConversationID)
+        persistArchiveNow(conversationID: selectedConversationID)
+    }
+
+    func discardSelectedKnowledgeEdits() {
+        guard let conversationID = selectedConversationID else { return }
+        archiveScheduler.invalidate(conversationID: conversationID)
+        scheduledConfigurationOwners.remove(conversationID)
+        let savedKnowledge = (try? canonicalRepository?.loadSidebar(eagerConversationID: conversationID))?
+            .first(where: { $0.conversation.id == conversationID })?.knowledge
+        knowledgeByConversation[conversationID] = savedKnowledge
+        knowledgeSavePendingConversationIDs.remove(conversationID)
+        knowledgeSaveFailedConversationIDs.remove(conversationID)
+        resumeConfigurationWaitersIfSettled(conversationID)
+    }
+
+    func dismissPermissionResolutionError() {
+        guard let selectedConversationID else { return }
+        permissionResolutionErrors[selectedConversationID] = nil
+    }
+
     typealias ContextArchiveCountState = MacContextArchiveCountState
     private var contextArchiveCountState = ContextArchiveCountState()
 
@@ -3208,6 +3258,7 @@ final class MacWorkspaceModel {
         knowledgeByConversation[conversation.id] = nil
         knowledgeSavePendingConversationIDs.remove(conversation.id)
         knowledgeSaveFailedConversationIDs.remove(conversation.id)
+        permissionResolutionErrors[conversation.id] = nil
         contextSnapshotsByConversation[conversation.id] = nil
         archiveScheduler.forget(conversationID: conversation.id)
         residencyPolicy.remove(conversationID: conversation.id)
@@ -5164,6 +5215,7 @@ final class MacWorkspaceModel {
             do {
                 try bookmarkStore.confirmFolderAccess(folderURL, conversationID: conversationID)
             } catch {
+                permissionResolutionErrors[conversationID] = error.localizedDescription
                 updateActivity(title: String(localized: "Permission required"),
                                detail: error.localizedDescription, state: .failed)
                 return
@@ -5172,6 +5224,7 @@ final class MacWorkspaceModel {
                   pendingRemoteConversationID == conversationID,
                   generationID == activeGenerationID else { return }
         }
+        permissionResolutionErrors[conversationID] = nil
         isResolvingPermission = true
         if usesLocalRuntime {
             Task {
@@ -5214,6 +5267,7 @@ final class MacWorkspaceModel {
                           permissionRequestIsValid(request, conversationID: conversationID,
                                                    usesLocalRuntime: true) else { return }
                     isResolvingPermission = false
+                    permissionResolutionErrors[conversationID] = error.localizedDescription
                     updateActivity(
                         title: request.toolName,
                         detail: error.localizedDescription,
@@ -5245,6 +5299,7 @@ final class MacWorkspaceModel {
             } catch {
                 guard generationID == activeGenerationID, pendingRemotePermission == request else { return }
                 isResolvingPermission = false
+                permissionResolutionErrors[conversationID] = error.localizedDescription
                 updateActivity(
                     title: request.toolName,
                     detail: error.localizedDescription,
@@ -5335,6 +5390,9 @@ final class MacWorkspaceModel {
     }
 
     private func clearPendingPermission() {
+        if let pendingRemoteConversationID {
+            permissionResolutionErrors[pendingRemoteConversationID] = nil
+        }
         pendingRemotePermission = nil
         pendingRemotePrompt = nil
         pendingRemoteConversationID = nil

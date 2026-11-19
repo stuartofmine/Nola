@@ -168,7 +168,7 @@
         {#if loading}<p role="status">{t($locale, 'settings.loading')}</p>{/if}
         {#if error}<p role="alert" class="error">{t($locale, error)}</p>{/if}
         {#if session}
-            <dl><dt>{t($locale, 'settings.host')}</dt><dd><code>{session.hostId}</code></dd><dt>{t($locale, 'settings.connection')}</dt><dd>{t($locale, session.sessionAuthenticated ? 'settings.signedIn' : session.localTrust ? 'settings.local' : 'settings.signedOut')}</dd></dl>
+            <dl><dt>{t($locale, 'settings.host')}</dt><dd title={session.hostId}>{session.localTrust ? t($locale, 'chatOverview.localHost') : session.hostId.slice(0, 8)}</dd><dt>{t($locale, 'settings.connection')}</dt><dd>{t($locale, session.sessionAuthenticated ? 'settings.signedIn' : session.localTrust ? 'settings.local' : 'settings.signedOut')}</dd></dl>
             {#if session.transportIngress === "tailcat"}<p class="muted">{t($locale, 'settings.tailcatIngress')}</p>{/if}
             {#if session.localTrust}<p class="muted">{t($locale, 'settings.localHint')}</p>{/if}
             {#if session.sessionAuthenticated}<div class="actions"><button disabled={busy || loading} onclick={logout}>{t($locale, 'settings.logout')}</button></div>

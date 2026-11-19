@@ -971,7 +971,10 @@ private struct MacAssistantTaskCard: View {
 
     private func taskDetail(_ label: String, _ value: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(label).foregroundStyle(Color("NolaTextSecondary")).frame(width: 58, alignment: .leading)
+            Text(label)
+                .foregroundStyle(Color("NolaTextSecondary"))
+                .frame(minWidth: 72, alignment: .leading)
+                .fixedSize()
             Text(value).foregroundStyle(.secondary).textSelection(.enabled)
         }
         .font(.system(size: 12))

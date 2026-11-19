@@ -80,14 +80,18 @@ fun OnboardingScreen(viewModel: OnboardingViewModel = hiltViewModel()) {
     var step by rememberSaveable { mutableIntStateOf(0) }
     BackHandler(enabled = step > 0 && !uiState.isCompleting) { step-- }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .windowInsetsPadding(WindowInsets.safeDrawing)
-            .padding(horizontal = 20.dp),
-        contentAlignment = Alignment.TopCenter
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background,
+        contentColor = MaterialTheme.colorScheme.onBackground
     ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(horizontal = 20.dp),
+            contentAlignment = Alignment.TopCenter
+        ) {
         Column(
             modifier = Modifier
                 .fillMaxHeight()
@@ -230,6 +234,7 @@ fun OnboardingScreen(viewModel: OnboardingViewModel = hiltViewModel()) {
                 }
             }
         }
+        }
     }
 }
 
@@ -238,7 +243,7 @@ private fun GuideHeader(step: Int) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 22.dp, bottom = 12.dp),
+            .padding(top = 12.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Surface(
@@ -426,8 +431,8 @@ private fun GuidePage(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(vertical = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            .padding(top = 12.dp, bottom = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
             eyebrow,

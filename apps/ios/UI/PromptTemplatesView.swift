@@ -44,6 +44,7 @@ private struct PromptTemplateLibraryContent: View {
 
     var body: some View {
         List {
+            Group {
             let resolution = Result { try service.getCurrentTemplate() }
             let current = (try? resolution.get()).flatMap { matchesSearch($0) ? $0 : nil }
             if case .failure(let error) = resolution { Text(error.localizedDescription).foregroundStyle(.red) }
@@ -193,7 +194,11 @@ private struct PromptTemplateLibraryContent: View {
                     }
                 }
             }
+            }
+            .listRowBackground(DesignTokens.surfaceColor)
+            .listRowSeparatorTint(DesignTokens.borderColor)
         }
+        .nolaGroupedSurface()
         .navigationTitle(L10n.promptTemplatesTitle)
         .navigationBarTitleDisplayMode(.inline)
         .searchable(
@@ -382,6 +387,7 @@ struct AddPromptTemplateSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                Group {
                 if let saveError { Text(saveError).foregroundStyle(.red) }
                 Section(header: Text(L10n.promptTemplatesBasicInfo)) {
                     TextField(L10n.commonName, text: $name)
@@ -401,7 +407,7 @@ struct AddPromptTemplateSheet: View {
                                 .font(.caption.monospaced())
                                 .padding(.horizontal, 10)
                                 .frame(minHeight: 40)
-                                .background(Color(.systemGray6))
+                                .background(DesignTokens.elevatedColor)
                                 .cornerRadius(6)
                             }
                         }
@@ -413,7 +419,8 @@ struct AddPromptTemplateSheet: View {
                         .frame(minHeight: 260)
                         .font(.system(.body, design: .monospaced))
                         .padding(6)
-                        .background(Color(.systemGroupedBackground))
+                        .scrollContentBackground(.hidden)
+                        .background(DesignTokens.elevatedColor)
                         .cornerRadius(8)
 
                     HStack(spacing: 12) {
@@ -440,7 +447,11 @@ struct AddPromptTemplateSheet: View {
                         }
                     }
                 }
+                }
+                .listRowBackground(DesignTokens.surfaceColor)
+                .listRowSeparatorTint(DesignTokens.borderColor)
             }
+            .nolaGroupedSurface()
             .navigationTitle(L10n.promptTemplatesNewTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -527,6 +538,7 @@ struct EditPromptTemplateSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                Group {
                 if let saveError { Text(saveError).foregroundStyle(.red) }
                 Section(header: Text(L10n.promptTemplatesBasicInfo)) {
                     TextField(L10n.commonName, text: $name)
@@ -544,7 +556,7 @@ struct EditPromptTemplateSheet: View {
                                 .font(.caption.monospaced())
                                 .padding(.horizontal, 10)
                                 .frame(minHeight: 40)
-                                .background(Color(.systemGray6))
+                                .background(DesignTokens.elevatedColor)
                                 .cornerRadius(6)
                             }
                         }
@@ -555,7 +567,8 @@ struct EditPromptTemplateSheet: View {
                         .frame(minHeight: 260)
                         .font(.system(.body, design: .monospaced))
                         .padding(6)
-                        .background(Color(.systemGroupedBackground))
+                        .scrollContentBackground(.hidden)
+                        .background(DesignTokens.elevatedColor)
                         .cornerRadius(8)
 
                     HStack(spacing: 12) {
@@ -582,7 +595,11 @@ struct EditPromptTemplateSheet: View {
                         }
                     }
                 }
+                }
+                .listRowBackground(DesignTokens.surfaceColor)
+                .listRowSeparatorTint(DesignTokens.borderColor)
             }
+            .nolaGroupedSurface()
             .navigationTitle(L10n.promptTemplatesEditTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -673,12 +690,14 @@ struct PromptPreviewSheet: View {
                         .textSelection(.enabled)
                         .padding(16)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .background(DesignTokens.surfaceColor, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .overlay { RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(DesignTokens.borderColor, lineWidth: 0.5) }
                 }
                 .padding()
                 .frame(maxWidth: 760)
                 .frame(maxWidth: .infinity)
             }
+            .background(DesignTokens.backgroundColor)
             .navigationTitle(L10n.preview)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

@@ -30,7 +30,8 @@ struct ModelsView: View {
     @State private var protocolTarget: ModelInfo? = nil
     @State private var capabilityTarget: ModelInfo? = nil
     @State private var modelTestTarget: ModelInfo? = nil
-    @State private var showsConfiguredModels = false
+    @State private var deleteTarget: ModelInfo? = nil
+    @State private var showsConfiguredModels = true
     @State private var localRuntime = MLXService.shared
     @State private var runtimeError: String?
     @State private var statusMessage: String?
@@ -204,6 +205,26 @@ struct ModelsView: View {
                 Button(L10n.ok, role: .cancel) { runtimeError = nil }
             } message: {
                 Text(runtimeError ?? "")
+            }
+            .confirmationDialog(
+                NSLocalizedString("model.delete.title", value: "Delete Model?", comment: "Delete configured model title"),
+                isPresented: Binding(
+                    get: { deleteTarget != nil },
+                    set: { if !$0 { deleteTarget = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button(L10n.modelDeleteConfirm, role: .destructive) {
+                    if let target = deleteTarget {
+                        deleteConfiguredModel(target)
+                    }
+                    deleteTarget = nil
+                }
+                Button(L10n.cancel, role: .cancel) { deleteTarget = nil }
+            } message: {
+                if let target = deleteTarget {
+                    Text(target.name)
+                }
             }
     }
 
@@ -479,7 +500,33 @@ struct ModelsView: View {
                     .buttonStyle(.bordered)
                     .accessibilityLabel(NSLocalizedString("model.center.parameters", value: "参数", comment: "Parameters button"))
                     .accessibilityIdentifier("model.parameters.\(model.id)")
+                    if !model.isLocal {
+                        Button(role: .destructive) {
+                            deleteTarget = model
+                        } label: {
+                            Label(L10n.commonDelete, systemImage: "trash")
+                                .font(.caption.weight(.semibold))
+                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("model.delete.\(model.id)")
+                    }
                 }
+            }
+            if model.isLocal,
+               let runtimeModel = resolveLocalModel(model),
+               !localRuntime.isRunning(runtimeModel),
+               localRuntime.loadingModelName != runtimeModel.name,
+               isSelected(model),
+               runningLocalModel != nil {
+                Text(NSLocalizedString(
+                    "model.center.start_blocked_hint",
+                    value: "Stop the running local model before starting this one.",
+                    comment: "Helper shown when Start is disabled because another local model is running"
+                ))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.leading, 28)
             }
         }
         .padding(.vertical, DesignTokens.spacing_sm)
@@ -521,6 +568,22 @@ struct ModelsView: View {
             RoundedRectangle(cornerRadius: DesignTokens.radius_lg, style: .continuous)
                 .stroke(DesignTokens.successColor.opacity(0.20), lineWidth: 1)
         )
+    }
+
+    private func deleteConfiguredModel(_ model: ModelInfo) {
+        let wasSelected = isSelected(model)
+        ModelSelectionManager.removeModel(model)
+        reloadModels()
+        if wasSelected {
+            if let fallback = models.first {
+                ModelSelectionManager.saveSelectedModel(fallback)
+                container.chatManager.selectModel(fallback)
+                selectedModel = fallback
+            } else {
+                container.chatManager.selectedModelInfo = nil
+                selectedModel = nil
+            }
+        }
     }
 
     private func reloadModels() {
@@ -606,6 +669,7 @@ private struct IOSModelExecutionCapabilitiesView: View {
 
     var body: some View {
         Form {
+            Group {
             Section {
                 Text(NSLocalizedString("model.execution.hint", value: "Tool calls are enabled by default on import. Provider declarations and your explicit settings override this default.", comment: "Model execution capability guidance"))
                     .font(.footnote)
@@ -627,7 +691,11 @@ private struct IOSModelExecutionCapabilitiesView: View {
             if let errorMessage {
                 Text(errorMessage).foregroundStyle(.red)
             }
+            }
+            .listRowBackground(DesignTokens.surfaceColor)
+            .listRowSeparatorTint(DesignTokens.borderColor)
         }
+        .nolaGroupedSurface()
         .navigationTitle(model.name)
         .navigationBarTitleDisplayMode(.inline)
         .interactiveDismissDisabled(isDirty)
@@ -729,6 +797,7 @@ struct WebHostConfigurationView: View {
 
     var body: some View {
         Form {
+            Group {
             Section {
                 VStack(alignment: .leading, spacing: 12) {
                     Label {
@@ -861,7 +930,37 @@ struct WebHostConfigurationView: View {
 
             if embedded { Section { connectButton } }
 
+            if let url = IOSHostConnectionDraftPolicy.endpoint(hostURL.trimmingCharacters(in: .whitespacesAndNewlines)),
+               ModelSelectionManager.pairedWebHostIdentity(for: url) != nil {
+                Section {
+                    Button(role: .destructive) {
+                        ModelSelectionManager.forgetWebHostIdentity(for: url)
+                        errorMessage = nil
+                    } label: {
+                        Label(
+                            NSLocalizedString(
+                                "model.web_host.forget_pairing",
+                                value: "Forget previous pairing",
+                                comment: "Forget paired Web Host identity"
+                            ),
+                            systemImage: "trash"
+                        )
+                    }
+                    .accessibilityIdentifier("model.web_host.forget_pairing")
+                } footer: {
+                    Text(NSLocalizedString(
+                        "model.web_host.forget_pairing.footer",
+                        value: "Clears the remembered identity and saved token for this host address so you can pair again.",
+                        comment: "Forget paired Web Host identity footer"
+                    ))
+                }
+            }
+
+            }
+            .listRowBackground(DesignTokens.surfaceColor)
+            .listRowSeparatorTint(DesignTokens.borderColor)
         }
+        .nolaGroupedSurface()
         .navigationTitle(embedded ? L10n.modelsTitle : NSLocalizedString("model.web_host.title", value: "Host connection", comment: "Web Host configuration title"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

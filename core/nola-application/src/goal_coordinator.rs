@@ -791,6 +791,22 @@ pub fn run_goal_cycle_inner<H: Default>(
         if terminal_reason == "incomplete" {
             return pause_goal(config, GoalCyclePause::Incomplete);
         }
+        let consecutive_missing_signal_rounds = config
+            .load_projection()?
+            .and_then(|projection| projection.active)
+            .map(|goal| {
+                goal.audit_reports
+                    .iter()
+                    .rev()
+                    .take_while(|audit| {
+                        audit.summary == "Execution ended without an explicit Goal status"
+                    })
+                    .count()
+            })
+            .unwrap_or(0);
+        if consecutive_missing_signal_rounds >= 2 {
+            return pause_goal(config, GoalCyclePause::Incomplete);
+        }
         request = compose_goal_prompt(
             goal_target,
             user_prompt,
@@ -1115,6 +1131,54 @@ mod tests {
         let active = round_port.projection.borrow().active.clone().unwrap();
         assert_eq!(active.status, GoalStatus::Running);
         assert!(active.lease.is_none());
+    }
+
+    #[test]
+    fn repeated_missing_goal_signal_rounds_pause_as_incomplete() {
+        use std::cell::{Cell, RefCell};
+        struct Port {
+            projection: RefCell<GoalProjection>,
+            nonce: Cell<u64>,
+            rounds: usize,
+        }
+        impl GoalRuntimePort for Port {
+            type Handoff = ();
+            fn session_id(&self) -> &str { "conversation" }
+            fn load_projection(&self) -> Result<Option<GoalProjection>, String> { Ok(Some(self.projection.borrow().clone())) }
+            fn submit(&self, command: GoalRuntimeCommandEnvelope) -> Result<(), String> { self.projection.borrow_mut().apply(command) }
+            fn active_run_id(&self) -> Result<Option<String>, String> { Ok(None) }
+            fn prepare_exact_run(&mut self, _: &str) -> Result<nola_agent_engine::agent::AgentInputOrigin, String> { unreachable!() }
+            fn execute_round(&mut self, _: &str, _: &str, _: &str, _: bool) -> Result<GoalRoundResult<()>, String> {
+                self.rounds += 1;
+                Ok(GoalRoundResult {
+                    turn_status: AgentTurnStatus::Completed,
+                    output: "No goal tool called".into(),
+                    goal_signal: None,
+                    terminal_reason: Some("completed".into()),
+                    pending_user_input: false,
+                    handoff: (),
+                })
+            }
+            fn resume_round(&mut self, _: &str) -> Result<GoalRoundResult<()>, String> { unreachable!() }
+            fn now_epoch_ms(&self) -> i64 { 100 }
+            fn next_nonce(&self) -> String { let n = self.nonce.get() + 1; self.nonce.set(n); n.to_string() }
+            fn new_lease_owner(&self) -> String { format!("owner-{}", self.next_nonce()) }
+            fn owner_is_dead(&self, _: &str) -> bool { false }
+            fn is_scheduled(&self) -> bool { false }
+            fn explicit_resume(&self) -> bool { false }
+            fn runtime_limit(&self) -> Duration { Duration::from_secs(60) }
+            fn stop_requested(&self) -> bool { false }
+            fn acknowledge_slice(&mut self) -> Result<(), String> { Ok(()) }
+            fn discard_slice_snapshot(&mut self) {}
+        }
+        let mut projection = GoalProjection::default();
+        projection.apply(create_goal_command("action", "Goal", "Finish", 1)).unwrap();
+        let mut port = Port { projection: RefCell::new(projection), nonce: Cell::new(0), rounds: 0 };
+        assert!(matches!(run_goal_cycle(&mut port, "start", "Goal", "Finish").unwrap(), GoalCycleOutcome::Paused));
+        assert_eq!(port.rounds, 2);
+        let goal = port.projection.borrow().active.clone().unwrap();
+        assert_eq!(goal.status, GoalStatus::Paused);
+        assert_eq!(goal.stop_reason, Some(nola_agent_engine::agent::goal::GoalStopReason::Incomplete));
     }
 
 }

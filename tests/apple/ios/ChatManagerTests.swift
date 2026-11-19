@@ -958,6 +958,13 @@ final class ChatManagerTests: XCTestCase {
             maxTokens: 32_768, additionalComponents: [], tools: [])
         let profileIDs = Set(profileStore.loadProfile().activeMemoryRecords.map { "profile:memory:\($0.id)" })
         XCTAssertEqual(profileIDs.count, 2)
+
+        let savedDocs = try manager.saveUploadedDocuments([
+            UserUploadedContextItem(name: "Updated Brief", content: "Updated document text")
+        ])
+        XCTAssertEqual(savedDocs.count, 1)
+        XCTAssertEqual(profileStore.loadProfile().uploadedDocuments.map(\.name), ["Updated Brief"])
+        XCTAssertEqual(profileStore.loadProfile().uploadedDocuments.map(\.content), ["Updated document text"])
         let usedMemoryIDs = Set(prepared.componentMetrics.filter { $0.kind == .memory }.flatMap(\.usedIds))
         XCTAssertTrue(profileIDs.isSubset(of: usedMemoryIDs), "Both durable namespaces must survive Core budgeting")
         XCTAssertEqual(Set(prepared.contextComponents.filter { profileIDs.contains($0.id) }.map(\.kind)), [.memory])

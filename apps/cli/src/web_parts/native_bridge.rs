@@ -2726,7 +2726,7 @@ fn chat_agent_stream_response_body_with_room_retry(
     })};
     let client_id = dispatch.identity.client_id.clone();
     let host_session_id = dispatch.identity.conversation_id.clone();
-    turn_agent_settings.mcp_servers = match crate::mcp_connection_authority::bind_configurations(
+    turn_agent_settings.mcp_servers = match bind_available_mcp_configurations(
         &crate::resource_access::mcp_runtime_resources(&turn_agent_settings.mcp_servers),
         "nola-cli-host", &host_session_id,
     ) {

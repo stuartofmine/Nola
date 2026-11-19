@@ -27,7 +27,7 @@ class ScheduledActionAgentContractTest {
 
         val component = scheduledActionReferenceComponent(action, source, "execution-1")
 
-        assertEquals("reference", component.kind)
+        assertEquals("web_retrieval", component.kind)
         assertEquals("scheduled_source:action-1:execution-1", component.id)
         assertEquals(action.url, component.source?.uri)
         assertEquals("text/csv", component.source?.mimeType)

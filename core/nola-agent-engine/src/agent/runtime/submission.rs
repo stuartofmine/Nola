@@ -4113,6 +4113,70 @@ mod embedded_tool_protocol_tests {
             permission_rationale: None,
         }]));
     }
+
+    #[test]
+    fn materialized_fork_skill_sets_distinct_child_turn_id() {
+        use crate::agent::runtime::{AgentRuntime, MaterializedSkillInvocation, SkillExecutionMode};
+        use crate::agent::{AgentCoreConfig, SessionId, TurnId};
+        let mut runtime = AgentRuntime::try_new(AgentCoreConfig {
+            turn_identity: crate::agent::model_capability::test_host_identity(),
+            session_id: Some(SessionId::from_string("fork-skill-session".into())),
+            ..Default::default()
+        })
+        .unwrap();
+        let turn = TurnId::from_string("parent-turn".into());
+        let fork_call = CallId::from_string("fork-call".into());
+        let inline_call = CallId::from_string("inline-call".into());
+        runtime
+            .start_materialized_skill(
+                &turn,
+                &fork_call,
+                MaterializedSkillInvocation {
+                    skill_id: "forked".into(),
+                    version: "1.0.0".into(),
+                    display_name: "Forked".into(),
+                    instructions_ref: "skill://forked/1.0.0/SKILL.md".into(),
+                    required_tools: vec![],
+                    mode: Some(SkillExecutionMode::Fork),
+                    budget: None,
+                    execution_contract: Default::default(),
+                },
+                &mut vec![],
+                &mut vec![],
+            )
+            .unwrap();
+        runtime
+            .start_materialized_skill(
+                &turn,
+                &inline_call,
+                MaterializedSkillInvocation {
+                    skill_id: "inlined".into(),
+                    version: "1.0.0".into(),
+                    display_name: "Inlined".into(),
+                    instructions_ref: "skill://inlined/1.0.0/SKILL.md".into(),
+                    required_tools: vec![],
+                    mode: Some(SkillExecutionMode::Inline),
+                    budget: None,
+                    execution_contract: Default::default(),
+                },
+                &mut vec![],
+                &mut vec![],
+            )
+            .unwrap();
+
+        let fork_run = &runtime.session.skill_runtime.runs["skill:parent-turn:fork-call"];
+        assert_eq!(
+            fork_run.owner.child_turn_id.as_deref(),
+            Some("parent-turn:fork:fork-call")
+        );
+        assert_ne!(
+            fork_run.owner.child_turn_id.as_deref(),
+            Some(turn.as_str())
+        );
+
+        let inline_run = &runtime.session.skill_runtime.runs["skill:parent-turn:inline-call"];
+        assert_eq!(inline_run.owner.child_turn_id, None);
+    }
 }
 
 impl AgentRuntime {
@@ -4368,6 +4432,7 @@ impl AgentRuntime {
     ) -> Result<(), String> {
         self.synchronize_skill_catalog(events, effects)?;
         let run_id = format!("skill:{}:{}", turn_id.as_str(), call_id.as_str());
+        let mode = invocation.mode.unwrap_or(SkillExecutionMode::Inline);
         self.apply_skill_runtime_command(
             SkillRuntimeCommandEnvelope {
                 operation_id: format!("skill_start:{}", call_id.as_str()),
@@ -4376,10 +4441,11 @@ impl AgentRuntime {
                     owner: SkillRunOwner {
                         session_id: self.session.session_id.as_str().to_string(),
                         parent_turn_id: turn_id.as_str().to_string(),
-                        child_turn_id: None,
+                        child_turn_id: (mode == SkillExecutionMode::Fork)
+                            .then(|| format!("{}:fork:{}", turn_id.as_str(), call_id.as_str())),
                     },
                     descriptor: invocation.descriptor(),
-                    mode: invocation.mode.unwrap_or(SkillExecutionMode::Inline),
+                    mode,
                     budget: invocation.budget.unwrap_or_else(SkillRunBudget::default),
                 },
             },

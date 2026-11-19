@@ -627,18 +627,31 @@ fn materialize_custom_at(root: &Path, uploaded: &[Value]) -> Result<(), String> 
                 staging.display()
             )
         })?;
+        if target.is_dir() {
+            copy_dir_preserving_companion_files(&target, &staging)?;
+        }
         fs::write(staging.join("SKILL.md"), content.as_bytes()).map_err(|error| {
             format!(
                 "write custom Skill instructions {} failed: {error}",
                 staging.display()
             )
         })?;
-        let manifest = json!({
-            "id": id,
-            "name": item.get("name").cloned().unwrap_or_else(|| Value::String(id.to_string())),
-            "description": item.get("description").cloned().unwrap_or(Value::Null),
-            "source": "custom",
-        });
+        let mut manifest_obj = fs::read_to_string(target.join("NOLA_MANIFEST.json"))
+            .ok()
+            .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+            .and_then(|value| value.as_object().cloned())
+            .unwrap_or_default();
+        manifest_obj.insert("id".to_string(), Value::String(id.to_string()));
+        manifest_obj.insert(
+            "name".to_string(),
+            item.get("name").cloned().unwrap_or_else(|| Value::String(id.to_string())),
+        );
+        manifest_obj.insert(
+            "description".to_string(),
+            item.get("description").cloned().unwrap_or(Value::Null),
+        );
+        manifest_obj.insert("source".to_string(), Value::String("custom".to_string()));
+        let manifest = Value::Object(manifest_obj);
         fs::write(
             staging.join("NOLA_MANIFEST.json"),
             serde_json::to_vec_pretty(&manifest)
@@ -680,6 +693,92 @@ fn materialize_custom_at(root: &Path, uploaded: &[Value]) -> Result<(), String> 
                 format!(
                     "remove custom Skill backup {} failed: {error}",
                     backup.display()
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn copy_dir_preserving_companion_files(source: &Path, destination: &Path) -> Result<(), String> {
+    let entries = fs::read_dir(source).map_err(|error| {
+        format!(
+            "read existing custom Skill {} failed: {error}",
+            source.display()
+        )
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!(
+                "read existing custom Skill entry in {} failed: {error}",
+                source.display()
+            )
+        })?;
+        let name = entry.file_name();
+        if name == "SKILL.md" || name == "NOLA_MANIFEST.json" {
+            continue;
+        }
+        let target_path = destination.join(&name);
+        let file_type = entry.file_type().map_err(|error| {
+            format!(
+                "inspect custom Skill entry {} failed: {error}",
+                entry.path().display()
+            )
+        })?;
+        if file_type.is_dir() {
+            fs::create_dir_all(&target_path).map_err(|error| {
+                format!(
+                    "create custom Skill companion dir {} failed: {error}",
+                    target_path.display()
+                )
+            })?;
+            copy_dir_preserving_companion_files_all(&entry.path(), &target_path)?;
+        } else if file_type.is_file() {
+            fs::copy(entry.path(), &target_path).map_err(|error| {
+                format!(
+                    "copy custom Skill companion file {} failed: {error}",
+                    entry.path().display()
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn copy_dir_preserving_companion_files_all(source: &Path, destination: &Path) -> Result<(), String> {
+    let entries = fs::read_dir(source).map_err(|error| {
+        format!(
+            "read custom Skill directory {} failed: {error}",
+            source.display()
+        )
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!(
+                "read custom Skill directory entry in {} failed: {error}",
+                source.display()
+            )
+        })?;
+        let target_path = destination.join(entry.file_name());
+        let file_type = entry.file_type().map_err(|error| {
+            format!(
+                "inspect custom Skill entry {} failed: {error}",
+                entry.path().display()
+            )
+        })?;
+        if file_type.is_dir() {
+            fs::create_dir_all(&target_path).map_err(|error| {
+                format!(
+                    "create custom Skill directory {} failed: {error}",
+                    target_path.display()
+                )
+            })?;
+            copy_dir_preserving_companion_files_all(&entry.path(), &target_path)?;
+        } else if file_type.is_file() {
+            fs::copy(entry.path(), &target_path).map_err(|error| {
+                format!(
+                    "copy custom Skill companion file {} failed: {error}",
+                    entry.path().display()
                 )
             })?;
         }
@@ -1045,6 +1144,40 @@ mod tests {
             fs::read_to_string(root.join(id).join("SKILL.md")).unwrap(),
             "# Private instructions\nNever place this body in discovery context."
         );
+        let script_dir = root.join(id).join("scripts");
+        fs::create_dir_all(&script_dir).unwrap();
+        fs::write(script_dir.join("helper.sh"), b"echo ok\n").unwrap();
+        let existing_manifest: Value = serde_json::from_str(
+            &fs::read_to_string(root.join(id).join("NOLA_MANIFEST.json")).unwrap(),
+        )
+        .unwrap();
+        let mut extended_manifest = existing_manifest.as_object().unwrap().clone();
+        extended_manifest.insert("execution_mode".into(), json!("fork"));
+        fs::write(
+            root.join(id).join("NOLA_MANIFEST.json"),
+            serde_json::to_vec_pretty(&Value::Object(extended_manifest)).unwrap(),
+        )
+        .unwrap();
+        let updated = crate::resource_access::restore_local_user_resource_identity(
+            &json!({"id": id, "name": "Quarterly report", "description": "Updated", "content": "# Updated instructions", "enabled": true}),
+            nola_core::agent::resource_access::AgentResourceKind::Skill,
+        )
+        .unwrap();
+        materialize_custom_at(&root, &[updated]).unwrap();
+        assert_eq!(
+            fs::read_to_string(root.join(id).join("SKILL.md")).unwrap(),
+            "# Updated instructions"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join(id).join("scripts").join("helper.sh")).unwrap(),
+            "echo ok\n"
+        );
+        let merged_manifest: Value = serde_json::from_str(
+            &fs::read_to_string(root.join(id).join("NOLA_MANIFEST.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(merged_manifest["execution_mode"], "fork");
+        assert_eq!(merged_manifest["description"], "Updated");
         let disabled = crate::resource_access::restore_local_user_resource_identity(
             &json!({"id": id, "content": "ignored", "enabled": false}),
             nola_core::agent::resource_access::AgentResourceKind::Skill,

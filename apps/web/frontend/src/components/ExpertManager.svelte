@@ -150,12 +150,12 @@
             <label>{t($locale, 'rooms.agentDescription')}<textarea bind:value={description} rows="3"></textarea></label>
             <label>{t($locale, 'rooms.model')}<select bind:value={model}>
                 <option value="">{t($locale, 'rooms.useAppDefaultModel')}</option>
-                {#if model && !profiles.some(p => `configured:${p.id}` === model)}<option value={model}>{model}</option>{/if}
+                {#if model && !profiles.some(p => `configured:${p.id}` === model)}<option value={model}>{t($locale, 'rooms.inactive')} ({model.replace(/^configured:/, '').slice(0, 8)})</option>{/if}
                 {#each profiles as profile (profile.id)}<option value={`configured:${profile.id}`}>{profile.displayName}</option>{/each}
             </select></label>
             <label>{t($locale, 'rooms.promptTemplate')}<select bind:value={template}>
                 <option value="">{t($locale, 'rooms.defaultPromptTemplate')}</option>
-                {#if template && !templates.some(p => p.id === template) && !roles.some(p => p.id === template)}<option value={template}>{template}</option>{/if}
+                {#if template && !templates.some(p => p.id === template) && !roles.some(p => p.id === template)}<option value={template}>{t($locale, 'rooms.inactive')} ({template.slice(0, 8)})</option>{/if}
                 {#each roles as role (role.id)}<option value={role.id}>{expertLocalized(role.name, $locale)}</option>{/each}
                 {#each templates.filter(item => !roles.some(role => role.id === item.id)) as item (item.id)}<option value={item.id}>{item.name}</option>{/each}
             </select></label>
@@ -168,7 +168,7 @@
             {#if selectedRole}<section class="role-preview" aria-label={expertLocalized(selectedRole.name, $locale)}>
                 <p>{expertLocalized(selectedRole.description, $locale)}</p>
                 <details><summary>{t($locale, 'rooms.rolePrompt')}</summary><pre>{selectedRole.prompt}</pre></details>
-                <details><summary>{t($locale, 'rooms.roleTools')} · {selectedRole.tool_pack.tools.length}</summary><code>{selectedRole.tool_pack.id}</code><ul>{#each selectedRole.tool_pack.tools as tool}<li><code>{tool}</code></li>{/each}</ul></details>
+                <details><summary>{t($locale, 'rooms.roleTools')} · {selectedRole.tool_pack.tools.length}</summary><ul>{#each selectedRole.tool_pack.tools as tool}<li><code>{tool}</code></li>{/each}</ul></details>
                 <details><summary>{t($locale, 'rooms.roleSkills')} · {selectedRole.skills.length}</summary>{#each selectedRole.skills as skill}<h3>{expertLocalized(skill.name, $locale)}</h3><pre>{skill.instructions}</pre>{/each}</details>
             </section>{/if}
             <p class="muted">{t($locale,'rooms.roleNextIntroduction')}</p>

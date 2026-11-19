@@ -91,7 +91,7 @@ struct MacChatWindowChromeConfigurator: NSViewRepresentable {
                 window.titlebarAppearsTransparent = true
                 window.styleMask.insert(.fullSizeContentView)
                 window.styleMask.formUnion([.titled, .closable, .miniaturizable, .resizable])
-                window.backgroundColor = .windowBackgroundColor
+                window.backgroundColor = NSColor(named: "NolaCanvas") ?? .windowBackgroundColor
                 window.isMovableByWindowBackground = false
                 window.toolbar?.isVisible = false
                 window.toolbar = nil

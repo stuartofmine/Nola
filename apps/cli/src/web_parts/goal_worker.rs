@@ -880,7 +880,7 @@ mod web_goal_worker_tests {
                     "temperature": 0.7,
                     "topP": 0.9,
                     "maxOutputTokens": 4096,
-                    "maxContextLength": 32768
+                    "maxContextLength": 65536
                 }).to_string(),
                 selected: true,
                 enabled: true,
@@ -946,7 +946,7 @@ mod web_goal_worker_tests {
                 submitted_assistant_message_id: Some("web-goal-sub-1:assistant".into()),
                 stop_after_sealed_round: true,
             }).unwrap();
-            assert_eq!(step["instruction"]["run_id"], "web-goal-sub-1");
+            assert_eq!(step["instruction"]["run_id"], "web-goal-sub-1", "{step}");
             let admitted = dispatch.read().unwrap();
             assert_eq!(admitted.phase, nola_domain::remote_submission::RemoteSubmissionPhase::Admitted);
             let observed = read_run_observation(

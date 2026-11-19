@@ -1227,7 +1227,7 @@ struct HomeSummaryDetailView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical)
         }
-        .background(Color(.systemGroupedBackground))
+        .background(DesignTokens.backgroundColor)
         .navigationTitle(NSLocalizedString("data.title", value: "数据", comment: "Data tab page title"))
     }
 }

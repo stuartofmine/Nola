@@ -112,8 +112,9 @@
                 <dt>{t($locale, 'activity.source')}</dt><dd>{detail.sourceName || detail.sourceId}</dd>
                 <dt>{t($locale, 'activity.location')}</dt><dd>{#if resultLink(detail.sourceUrl)}<a href={resultLink(detail.sourceUrl)} target="_blank" rel="noopener noreferrer">{detail.sourceUrl}</a>{:else}{detail.sourceUrl || '—'}{/if}</dd>
                 <dt>{t($locale, 'activity.scheduled_time')}</dt><dd>{resultTime(detail.scheduledAt, $locale)}</dd><dt>{t($locale, 'activity.completed_time')}</dt><dd>{resultTime(detail.fetchedAt, $locale)}</dd>
-                <dt>{t($locale, 'activity.ack_count')}</dt><dd>{detail.ackCount}</dd><dt>{t($locale, 'activity.result_id')}</dt><dd>{detail.resultId}</dd>
+                <dt>{t($locale, 'activity.ack_count')}</dt><dd>{detail.ackCount}</dd>
             </dl>
+            <details class="muted"><summary>{t($locale, 'activity.result_id')}</summary><code>{detail.resultId}</code></details>
             {#if detail.failureReason}<section><h2>{t($locale, 'activity.failure')}</h2><p class="error prose">{detail.failureReason}</p></section>{/if}
             {#if detail.llmSummaryText && detail.previewText && detail.llmSummaryText !== detail.previewText}<section><h2>{t($locale, 'activity.summary')}</h2><Markdown source={detail.llmSummaryText} /></section>{/if}
             {#if detail.htmlSnapshot}

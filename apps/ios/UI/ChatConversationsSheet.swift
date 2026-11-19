@@ -103,7 +103,7 @@ struct ChatConversationsList: View {
             listHeader
                 .listRowInsets(EdgeInsets())
                 .listRowSeparator(.hidden)
-                .listRowBackground(DesignTokens.surfaceColor)
+                .listRowBackground(DesignTokens.backgroundColor)
             if let loadError {
                 Section {
                     Text(loadError).foregroundStyle(.secondary)
@@ -114,10 +114,10 @@ struct ChatConversationsList: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(String(localized: "chat.history.empty.title")).font(.headline)
                     Text(String(localized: "chat.history.empty.message")).foregroundStyle(.secondary)
-                }.padding(.vertical, 20).listRowSeparator(.hidden).listRowBackground(DesignTokens.surfaceColor)
+                }.padding(.vertical, 20).listRowSeparator(.hidden).listRowBackground(DesignTokens.backgroundColor)
             }
             if !conversations.isEmpty && visibleConversations.isEmpty {
-                Text(String(localized: "chat.history.no_results")).foregroundStyle(.secondary).padding(.vertical, 20).listRowBackground(DesignTokens.surfaceColor)
+                Text(String(localized: "chat.history.no_results")).foregroundStyle(.secondary).padding(.vertical, 20).listRowBackground(DesignTokens.backgroundColor)
             }
             Section {
                 ForEach(visibleConversations, id: \.id) { conversation in
@@ -128,7 +128,7 @@ struct ChatConversationsList: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
-        .background(DesignTokens.surfaceColor)
+        .background(DesignTokens.backgroundColor)
         .background(IOSWorkspaceWidthObserver(width: $pageWidth))
         .accessibilityIdentifier("chat.conversations.list")
         .navigationTitle("")
@@ -240,7 +240,7 @@ struct ChatConversationsList: View {
                         }
                     }
                     .listRowSeparator(.visible, edges: .bottom)
-                    .listRowBackground(DesignTokens.surfaceColor)
+                    .listRowBackground(DesignTokens.backgroundColor)
                     .listRowInsets(EdgeInsets(top: 12, leading: pageWidth < 359 ? 16 : 20, bottom: 12, trailing: pageWidth < 359 ? 16 : 20))
     }
 
@@ -280,7 +280,7 @@ struct ChatConversationsList: View {
         .buttonStyle(.plain)
         .padding(.horizontal, pageWidth < 359 ? 16 : 20)
         .padding(.top, 4).padding(.bottom, 16)
-        .background(DesignTokens.surfaceColor)
+        .background(DesignTokens.backgroundColor)
     }
 
     private func waiting(_ id: UUID) -> Bool {

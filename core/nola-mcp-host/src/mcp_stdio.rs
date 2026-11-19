@@ -143,8 +143,13 @@ pub fn freeze_configuration(value:&Value, server:&str) -> Result<(String,String)
     // Minimal runtime environment, not the caller's provider/backend secrets.
     // Explicit server env is part of the privately frozen launch identity.
     let mut environment = BTreeMap::new();
-    for name in ["PATH","HOME","USERPROFILE","SYSTEMROOT","WINDIR","COMSPEC","PATHEXT",
-        "TEMP","TMP","TMPDIR","LANG","LC_ALL","LC_CTYPE","TZ"] {
+    for name in [
+        "PATH", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA",
+        "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP", "TMPDIR",
+        "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "LANG", "LC_ALL", "LC_CTYPE", "TZ",
+        "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
+        "SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS",
+    ] {
         if let Some(value) = std::env::var_os(name) {
             environment.insert(name.into(),value.into_string().map_err(|_|McpHostError::new("mcp_environment_invalid","Runtime environment is not UTF-8"))?);
         }
@@ -161,9 +166,13 @@ pub fn freeze_configuration(value:&Value, server:&str) -> Result<(String,String)
                 let path = directory.join(&requested);
                 #[allow(unused_mut)]
                 let mut candidates = vec![path.clone()];
-                // CreateProcess launches executable images, not implicit batch interpreters.
+                // Resolve native executables and Windows npm/uvx batch shims.
                 #[cfg(windows)]
-                if path.extension().is_none() { candidates.push(path.with_extension("exe")); candidates.push(path.with_extension("com")); }
+                if path.extension().is_none() {
+                    for ext in ["exe", "cmd", "bat", "com"] {
+                        candidates.push(path.with_extension(ext));
+                    }
+                }
                 candidates
             }).find(|path|path.is_file())
             .ok_or_else(||McpHostError::new("mcp_program_missing","MCP program is not available on the frozen PATH"))?
@@ -1133,8 +1142,13 @@ mod tests {
         assert_eq!(configured[0]["env"],json!({"EXPLICIT_SERVER_TOKEN":"synthetic-private-value"}));
         let snapshots = launch_snapshots().lock().unwrap();
         let launch = &snapshots[&resource.config_digest];
-        let allowed = ["PATH","HOME","USERPROFILE","SYSTEMROOT","WINDIR","COMSPEC","PATHEXT",
-            "TEMP","TMP","TMPDIR","LANG","LC_ALL","LC_CTYPE","TZ","EXPLICIT_SERVER_TOKEN"];
+        let allowed = [
+            "PATH", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA",
+            "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP", "TMPDIR",
+            "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "LANG", "LC_ALL", "LC_CTYPE", "TZ",
+            "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
+            "SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS", "EXPLICIT_SERVER_TOKEN",
+        ];
         assert!(launch.environment.keys().all(|key|allowed.contains(&key.as_str())));
         assert_eq!(launch.environment["EXPLICIT_SERVER_TOKEN"],"synthetic-private-value");
         assert!(registry().read().unwrap()[reference].lock().unwrap().client.is_none());

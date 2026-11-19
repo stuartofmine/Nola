@@ -230,7 +230,16 @@
         <h2>{t($locale, 'capability.reviewTitle')}</h2>
         {#if skillReview.pending}<p>{t($locale, 'capability.reviewHint')}</p>{/if}
         {#if error}<p class="error" role="alert">{t($locale, error, { detail: errorDetail })}</p>{/if}
-        <h3>{t($locale, 'capability.previousSettings')}</h3><pre>{JSON.stringify(skillReview.previous, null, 2)}</pre>
+        <h3>{t($locale, 'capability.previousSettings')}</h3>
+        {#if Array.isArray(skillReview.previous)}
+            {#each skillReview.previous as prev}<p>{typeof prev === 'object' && prev !== null ? displayName(prev as Capability) : String(prev)}{#if typeof prev === 'object' && prev !== null && 'enabled' in prev} · {t($locale, (prev as { enabled?: boolean }).enabled === false ? 'capability.disabled' : 'capability.enabled')}{/if}</p>{/each}
+        {:else if skillReview.previous && typeof skillReview.previous === 'object'}
+            {#each Object.entries(skillReview.previous as Record<string, unknown>) as [key, value]}
+                <p>{key}{#if typeof value === 'boolean'} · {t($locale, value ? 'capability.enabled' : 'capability.disabled')}{:else if value && typeof value === 'object' && 'enabled' in value} · {t($locale, (value as { enabled?: boolean }).enabled === false ? 'capability.disabled' : 'capability.enabled')}{/if}</p>
+            {/each}
+        {:else}
+            <p class="muted">{t($locale, 'capability.empty')}</p>
+        {/if}
         <details><summary>{t($locale, 'capability.coreSettings')}</summary>
             {#each skillReview.current as item}<p>{displayName(item)} · {t($locale, item.enabled === false ? 'capability.disabled' : 'capability.enabled')}</p>{/each}
         </details>

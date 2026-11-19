@@ -122,7 +122,6 @@ struct MacChatExpertPicker: View {
     @Binding var selection: Set<String>
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
-    @State private var colorAgent: MacPersistentAgent?
     var manage: (() -> Void)? = nil
     var selected: ((MacPersistentAgent) -> Void)? = nil
 
@@ -148,7 +147,6 @@ struct MacChatExpertPicker: View {
                 .font(.callout).foregroundStyle(.secondary)
             TextField("chat.experts.search", text: $query)
             List(visibleAgents, id: \.id) { agent in
-                HStack {
                 Button {
                     if selection.contains(agent.id) { selection.remove(agent.id) }
                     else { selection.insert(agent.id); selected?(agent) }
@@ -169,14 +167,9 @@ struct MacChatExpertPicker: View {
                 }.buttonStyle(.plain)
                     .accessibilityLabel(agent.name)
                     .accessibilityValue(selection.contains(agent.id) ? String(localized: "chat.experts.selected") : String(localized: "chat.experts.not_selected"))
-                Button { colorAgent = agent } label: { Image(systemName: "paintpalette").frame(width: 36, height: 36) }
-                    .buttonStyle(.plain).help(String(localized: "Bubble Color"))
-                    .accessibilityLabel(String(localized: "Bubble Color") + " " + agent.name)
-                }
             }
             if visibleAgents.isEmpty { Text("chat.experts.empty").foregroundStyle(.secondary) }
         }.padding(16)
-            .sheet(item: $colorAgent) { agent in MacExpertColorEditor(agentID: agent.id, name: agent.name) }
     }
 }
 
@@ -264,6 +257,23 @@ struct MacUnifiedExpertTranscript: View {
 struct MacExpertPermissionDock: View {
     @ObservedObject var workspace: MacAgentRoomWorkspace
     let conversationID: String?
+
+    static func hasControls(workspace: MacAgentRoomWorkspace?, conversationID: String?) -> Bool {
+        guard let workspace,
+              let association = workspace.conversationAssociation,
+              association.conversationID == conversationID else { return false }
+        return association.room.room.participants.contains { participant in
+            guard let owner = workspace.executionService?.owners[participant.contextConversationID] else { return false }
+            return owner.isRunning
+                || owner.selectedPendingRemotePermission != nil
+                || owner.selectedPendingUserInputRequest != nil
+                || owner.hasDeferredUserInputWaits
+                || owner.currentUnknownEffectRecovery != nil
+                || owner.localRunRecovery != nil
+                || owner.remoteRunRecovery != nil
+        }
+    }
+
     var body: some View {
         if let association = workspace.conversationAssociation, association.conversationID == conversationID {
             ForEach(association.room.room.participants) { participant in
@@ -333,33 +343,44 @@ struct MacExpertDirectoryManagementView: View {
                         Section(String(localized: "Built-in experts", table: "ExpertLibrary")) {
                             ForEach(roleTemplates) { role in
                                 Button { requestNavigation(.preview(role)) } label: {
-                                    Label(role.localizedName(locale: locale), systemImage: "person.crop.circle")
-                                        .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
-                                        .contentShape(Rectangle())
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "person.crop.circle")
+                                            .foregroundStyle(builtinPreview?.id == role.id ? MacDesignColor.brand : .secondary)
+                                        Text(role.localizedName(locale: locale))
+                                            .foregroundStyle(.primary)
+                                    }
+                                    .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
+                                    .contentShape(Rectangle())
                                 }.buttonStyle(.plain)
                                     .accessibilityIdentifier("mac-expert-builtin-" + role.id)
-                                    .listRowBackground(builtinPreview?.id == role.id ? Color.primary.opacity(0.07) : Color.clear)
+                                    .macSelectableListRow(isSelected: builtinPreview?.id == role.id)
                             }
                         }
                         Section(String(localized: "My experts", table: "ExpertLibrary")) {
                             if workspace.directory.isEmpty {
                                 Text(String(localized: "No custom experts yet", table: "ExpertLibrary"))
                                     .font(.caption).foregroundStyle(.secondary)
+                                    .listRowBackground(Color.clear)
                             }
                             ForEach(workspace.directory, id: \.id) { agent in
                                 Button { requestNavigation(.select(agent)) } label: {
                                     HStack {
                                         Text(agent.name)
+                                            .foregroundStyle(.primary)
                                         Spacer()
-                                        if agent.availability != "active" { Image(systemName: "pause.circle") }
-                                    }.frame(maxWidth: .infinity, minHeight: 36).contentShape(Rectangle())
+                                        if agent.availability != "active" { Image(systemName: "pause.circle").foregroundStyle(.secondary) }
+                                    }.frame(maxWidth: .infinity, minHeight: 34).contentShape(Rectangle())
                                 }.buttonStyle(.plain)
                                     .accessibilityIdentifier("mac-expert-edit-" + agent.id)
-                                    .listRowBackground(builtinPreview == nil && selected?.id == agent.id ? Color.primary.opacity(0.07) : Color.clear)
+                                    .macSelectableListRow(isSelected: builtinPreview == nil && selected?.id == agent.id)
                             }
                         }
                     }
-                }.frame(minWidth: 170, idealWidth: 210, maxWidth: 260)
+                    .listStyle(.sidebar)
+                    .scrollContentBackground(.hidden)
+                }
+                .frame(minWidth: 190, idealWidth: 220, maxWidth: 260, maxHeight: .infinity, alignment: .topLeading)
+                .background(MacDesignColor.canvas)
                 if let role = builtinPreview {
                     builtinDetail(role)
                 } else {
@@ -448,11 +469,12 @@ struct MacExpertDirectoryManagementView: View {
                             Text(error).foregroundStyle(.red).textSelection(.enabled)
                         }
                         if let configurationError { Text(configurationError).foregroundStyle(.red).textSelection(.enabled) }
-                    }.formStyle(.grouped).frame(minWidth: 320)
+                    }.formStyle(.grouped).scrollContentBackground(.hidden).frame(minWidth: 320, maxHeight: .infinity)
                 }
             }.disabled(isSaving)
         }
         .padding(16)
+        .background(MacPageBackground())
         .frame(
             minWidth: showsCloseButton ? 760 : 0,
             idealWidth: showsCloseButton ? 860 : nil,

@@ -251,7 +251,7 @@ fun SettingsMain(
         )
     }
 
-    NolaPage {
+    NolaPage(scrollKey = detailSection ?: "root") {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             if (detailSection != null) NolaIconButton(label = stringResource(R.string.common_back), onClick = { detailSection = null }) {
                 Icon(painterResource(R.drawable.nola_back), stringResource(R.string.common_back))

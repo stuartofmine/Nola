@@ -197,3 +197,50 @@ fn goal_wire_contract_projects_core_token_and_rejects_legacy_revision_control() 
     }))
     .is_err());
 }
+
+#[test]
+fn automation_run_config_resolves_default_profile_when_cli_flags_absent() {
+    let root = tempfile::tempdir().unwrap();
+    let db_path = root.path().join("automation-default-model.sqlite");
+    let store = NolaStore::open(&db_path).unwrap();
+    let profile = nola_application::ModelProfile {
+        id: "auto-default".into(),
+        provider: "openai-compatible".into(),
+        runtime: "remote".into(),
+        display_name: "Auto Default".into(),
+        model_name: "gpt-4o-mini".into(),
+        source_json: json!({
+            "endpointID": "ep-1",
+            "endpointName": "OpenAI",
+            "baseURL": "https://api.example.test/v1",
+            "wireProtocol": "responses",
+            "endpointEnabled": true,
+            "modelEnabled": true,
+            "capabilities": ["chat"],
+            "executionCapabilities": {
+                "toolCalls": true,
+                "imageInput": false,
+                "reasoning": false,
+                "samplingParameters": true,
+                "samplingRequiresNoReasoning": false,
+                "chatOutputTokenField": "max_tokens"
+            }
+        })
+        .to_string(),
+        parameters_json: json!({}).to_string(),
+        enabled: true,
+        selected: true,
+        revision: 1,
+        created_at_ms: 1,
+        updated_at_ms: 1,
+        deleted_at_ms: None,
+    };
+    store.replace_remote_model_profiles(vec![profile], std::collections::BTreeMap::new()).unwrap();
+    let mut cfg = Config::for_test().unwrap();
+    cfg.endpoint.clear();
+    cfg.model.clear();
+    let resolved = resolve_web_automation_config(&store, &cfg, "automation-conv-1").unwrap();
+    assert_eq!(resolved.endpoint, "https://api.example.test/v1");
+    assert_eq!(resolved.model, "gpt-4o-mini");
+    assert_eq!(resolved.session_id.as_deref(), Some("automation-conv-1"));
+}

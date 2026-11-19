@@ -39,6 +39,7 @@ struct IOSConversationWorkTools: View {
     var body: some View {
         NavigationStack {
             List {
+                Group {
                 Section {
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 6) {
@@ -73,11 +74,14 @@ struct IOSConversationWorkTools: View {
                             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                             .contentShape(Rectangle())
                         }
-                        .disabled(!hasOwner)
                         .accessibilityIdentifier("chat.work_tools." + item.rawValue)
                     }
                 }
+                }
+                .listRowBackground(DesignTokens.surfaceColor)
+                .listRowSeparatorTint(DesignTokens.borderColor)
             }
+            .nolaGroupedSurface()
             .navigationTitle(String(localized: "work.tools.title"))
             .toolbar { ToolbarItem(placement: .confirmationAction) {
                 Button(L10n.close) { dismiss() }.accessibilityIdentifier("chat.work_tools.close")

@@ -12,6 +12,8 @@ import com.nola.domain.model.DataSourceCatalogBuilder
 import com.nola.domain.model.DataSourceSnapshot
 import com.nola.domain.model.MemorySearchHit
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import java.time.Instant
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -172,25 +174,37 @@ class ContextRepositoryImpl @Inject constructor(
                     add(component("session_memory", "compacted-${entry.id}", entry.summary))
                 }
             }
-            enabledSkills.forEachIndexed { index, skill ->
-                val description = skill.content.lineSequence()
-                    .map(String::trim)
-                    .firstOrNull { it.isNotEmpty() && !it.startsWith("#") }
-                    ?.take(240)
-                    .orEmpty()
+            enabledSkills.forEach { skill ->
+                val skillId = skill.resourceId?.trim()?.takeIf(String::isNotEmpty) ?: skill.name
+                val summary = skill.description.trim()
+                    .ifEmpty {
+                        skill.content.lineSequence()
+                            .map(String::trim)
+                            .firstOrNull { it.isNotEmpty() && !it.startsWith("#") }
+                            ?.take(240)
+                            .orEmpty()
+                    }
+                    .ifEmpty { skill.name }
+                val metadata = buildJsonObject {
+                    put("schema_version", 1)
+                    put("type", "available_skill")
+                    put("id", skillId)
+                    put("name", skill.name)
+                    put("summary", summary)
+                    put("usage_contract", "Metadata summary only; call skill_invoke before claiming Skill instructions.")
+                    put(
+                        "invocation",
+                        buildJsonObject {
+                            put("tool", "skill_invoke")
+                            put("arguments", buildJsonObject { put("skill", skill.name) })
+                        },
+                    )
+                }.toString()
                 add(
                     component(
                         kind = "skill",
-                        id = "skill-$index-${skill.name}",
-                        content = buildString {
-                            append("Enabled Skill metadata. Invoke skill_invoke with the exact id to load instructions.\n")
-                            append("id: ")
-                            append(skill.name)
-                            if (description.isNotEmpty()) {
-                                append("\ndescription: ")
-                                append(description)
-                            }
-                        },
+                        id = "skill:$skillId",
+                        content = metadata,
                         source = AgentCoreContextComponentSource(
                             platform = "android",
                             title = skill.name,

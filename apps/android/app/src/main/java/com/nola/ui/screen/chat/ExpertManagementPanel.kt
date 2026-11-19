@@ -131,7 +131,7 @@ internal fun ExpertManagementPanel(viewModel: ChatViewModel, onBack: () -> Unit)
         ExpertBubbleColorEditor(it.id, it.name, onDismiss = { colorID = null })
     }
     val editorScroll = rememberScrollState()
-    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp).imePadding()
+    Column(Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(horizontal = 20.dp, vertical = 12.dp)
         .then(if (editing) Modifier.verticalScroll(editorScroll) else Modifier)) {
         TextButton(onClick = ::back, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
             Text(stringResource(R.string.common_back))

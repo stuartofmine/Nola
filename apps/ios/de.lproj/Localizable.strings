@@ -3242,3 +3242,11 @@
 "a2ui.queue.cancel_rejected" = "Nicht ausgeführte Formularaktion entfernen";
 "chat.host.reconnect_bound" = "Mit dem gebundenen Host dieser Unterhaltung neu verbinden.";
 "chat.host.source_unavailable" = "Quell-Host dieser Unterhaltung nicht verifizierbar.";
+
+"composer.command.goal" = "Ziel";
+"chat.composer.attach_photos" = "Fotos";
+"model.center.start_blocked_hint" = "Stoppen Sie das laufende lokale Modell, bevor Sie dieses starten.";
+"model.web_host.forget_pairing" = "Vorherige Kopplung vergessen";
+"model.web_host.forget_pairing.footer" = "Löscht die gespeicherte Host-Identität und das Token für diese Adresse, sodass Sie erneut koppeln können.";
+"chat.context.mcp.empty" = "Noch keine MCP-Server konfiguriert.";
+"chat.context.mcp.local.footer" = "Lokale MCP-Server unter Mediathek > Fähigkeiten verwalten.";

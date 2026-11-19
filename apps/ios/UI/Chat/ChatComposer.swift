@@ -9,6 +9,7 @@
 //   - none
 //
 import SwiftUI
+import PhotosUI
 import UniformTypeIdentifiers
 import PDFKit
 import UIKit
@@ -580,6 +581,8 @@ struct ChatComposer<ModelControl: View>: View {
 
     @State private var pageWidth: CGFloat = 390
     @State private var showAttachmentImporter = false
+    @State private var showPhotosPicker = false
+    @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var attachmentCompletion: ((Result<[URL], Error>) -> Void)?
     private let composerButtonSize: CGFloat = 44
 
@@ -610,7 +613,9 @@ struct ChatComposer<ModelControl: View>: View {
             Group {
                 if showsModelControl {
                     VStack(spacing: 0) {
-                        messageEditor.padding(.horizontal, 12)
+                        messageEditor
+                            .padding(.horizontal, 12)
+                            .padding(.top, 6)
                         HStack(spacing: 0) {
                             attachmentButton
                             modelControl
@@ -636,10 +641,11 @@ struct ChatComposer<ModelControl: View>: View {
             }
             .animation(reduceMotion ? nil : .snappy(duration: 0.22), value: focus.wrappedValue)
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 12)
         .tint(DesignTokens.primaryColor)
         .background(IOSWorkspaceWidthObserver(width: $pageWidth))
-        .padding(.vertical, 4)
+        .padding(.top, 4)
+        .padding(.bottom, 8)
         .animation(reduceMotion ? nil : .snappy(duration: 0.24), value: attachments.count)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: attachmentMessage)
         .onDisappear(perform: cancelAttachmentPicker)
@@ -658,6 +664,39 @@ struct ChatComposer<ModelControl: View>: View {
                 }
             )
             .ignoresSafeArea()
+        }
+        .photosPicker(
+            isPresented: $showPhotosPicker,
+            selection: $selectedPhotoItems,
+            maxSelectionCount: 10,
+            matching: .images
+        )
+        .onChange(of: selectedPhotoItems) { _, items in
+            guard !items.isEmpty else { return }
+            let picked = items
+            selectedPhotoItems = []
+            let completion = attachmentCompletion
+            attachmentCompletion = nil
+            Task {
+                var urls: [URL] = []
+                for item in picked {
+                    if let data = try? await item.loadTransferable(type: Data.self) {
+                        let ext = item.supportedContentTypes.first?.preferredFilenameExtension ?? "jpg"
+                        let tempURL = FileManager.default.temporaryDirectory
+                            .appendingPathComponent("photo-\(UUID().uuidString).\(ext)")
+                        if (try? data.write(to: tempURL)) != nil {
+                            urls.append(tempURL)
+                        }
+                    }
+                }
+                await MainActor.run {
+                    if urls.isEmpty {
+                        completion?(.failure(CocoaError(.fileReadUnknown)))
+                    } else {
+                        completion?(.success(urls))
+                    }
+                }
+            }
         }
     }
 
@@ -725,7 +764,7 @@ struct ChatComposer<ModelControl: View>: View {
     }
 
     private var inactiveComposerForeground: Color {
-        Color(uiColor: .label).opacity(0.68)
+        DesignTokens.secondaryContentColor
     }
 
     private var composerPrompt: Text {
@@ -734,18 +773,36 @@ struct ChatComposer<ModelControl: View>: View {
     }
 
     private var attachmentButton: some View {
-        Button {
-            attachmentCompletion = onBeginAttachFiles()
-            focus.wrappedValue = false
-            UIApplication.shared.connectedScenes
-                .compactMap { $0 as? UIWindowScene }
-                .flatMap(\.windows)
-                .first(where: \.isKeyWindow)?
-                .endEditing(true)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
-                guard attachmentCompletion != nil else { return }
-                showAttachmentImporter = true
+        Menu {
+            Button {
+                attachmentCompletion = onBeginAttachFiles()
+                dismissKeyboardForPicker()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
+                    guard attachmentCompletion != nil else { return }
+                    showPhotosPicker = true
+                }
+            } label: {
+                Label(
+                    tr("chat.composer.attach_photos", "Photos", comment: "Menu item to pick photos"),
+                    systemImage: "photo"
+                )
             }
+            .accessibilityIdentifier("chat.composer.attach.photos")
+
+            Button {
+                attachmentCompletion = onBeginAttachFiles()
+                dismissKeyboardForPicker()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
+                    guard attachmentCompletion != nil else { return }
+                    showAttachmentImporter = true
+                }
+            } label: {
+                Label(
+                    tr("chat.composer.attach_files", "Attach files", comment: "Menu item to pick files"),
+                    systemImage: "doc"
+                )
+            }
+            .accessibilityIdentifier("chat.composer.attach.files")
         } label: {
             ZStack {
                 if isImportingAttachments {
@@ -770,6 +827,15 @@ struct ChatComposer<ModelControl: View>: View {
             )
         )
         .accessibilityIdentifier("chat.composer.attach")
+    }
+
+    private func dismissKeyboardForPicker() {
+        focus.wrappedValue = false
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow)?
+            .endEditing(true)
     }
 
     private var attachmentTray: some View {

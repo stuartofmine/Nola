@@ -20,6 +20,7 @@ let restartingHost = false;
 let strings: DesktopStrings;
 let explainedBackgroundMode = false;
 let windowStateTimer: NodeJS.Timeout | undefined;
+let lastRoutePath = "/chat";
 const debugEnabled = process.argv.includes("--debug") || process.env.NOLA_DEBUG === "1";
 const launchInBackground = process.argv.includes("--background");
 
@@ -228,7 +229,21 @@ function createWindow(): BrowserWindow {
             if (allowedExternalUrl(url)) void shell.openExternal(url);
         }
     });
+    window.webContents.on("did-navigate", (_event, url) => recordRoutePath(url));
+    window.webContents.on("did-navigate-in-page", (_event, url) => recordRoutePath(url));
     return window;
+}
+
+function recordRoutePath(rawUrl: string): void {
+    if (!hostOrigin) return;
+    try {
+        const parsed = new URL(rawUrl);
+        if (parsed.origin === hostOrigin) {
+            lastRoutePath = `${parsed.pathname}${parsed.search}${parsed.hash}` || "/chat";
+        }
+    } catch {
+        // Ignore non-URL internal data URIs.
+    }
 }
 
 function createMenu(): void {
@@ -289,6 +304,7 @@ function createTray(): void {
         { type: "separator" },
         { label: strings.quit, click: () => { quitting = true; app.quit(); } },
     ]));
+    tray.on("click", () => { mainWindow?.show(); mainWindow?.focus(); });
     tray.on("double-click", () => { mainWindow?.show(); mainWindow?.focus(); });
 }
 
@@ -331,19 +347,31 @@ function isTrustedRendererUrl(rawUrl: string): boolean {
     }
 }
 
+function isNonRecoverableStartupError(detail: string): boolean {
+    return detail.includes("was not found at ");
+}
+
 function handleHostState(state: HostState): void {
     log(`[state] ${JSON.stringify(state)}`);
     if (state.kind === "ready") {
         hostOrigin = state.origin;
         automaticRecoveryCount = 0;
         if (recoveryTimer) clearTimeout(recoveryTimer);
-        void mainWindow?.loadURL(`${state.origin}/chat`);
+        recoveryTimer = undefined;
+        const targetPath = lastRoutePath.startsWith("/") ? lastRoutePath : "/chat";
+        void mainWindow?.loadURL(`${state.origin}${targetPath}`);
         return;
     }
-    if (state.kind === "failed" && !quitting && automaticRecoveryCount < 3) {
-        automaticRecoveryCount += 1;
-        void showInternalPage("starting");
-        recoveryTimer = setTimeout(() => void startHost(), 700 * automaticRecoveryCount);
+    if (state.kind === "failed" && !quitting) {
+        if (!isNonRecoverableStartupError(state.detail) && automaticRecoveryCount < 3) {
+            automaticRecoveryCount += 1;
+            void showInternalPage("starting");
+            recoveryTimer = setTimeout(() => void startHost(), 700 * automaticRecoveryCount);
+        } else {
+            automaticRecoveryCount = 3;
+            if (recoveryTimer) { clearTimeout(recoveryTimer); recoveryTimer = undefined; }
+            void showInternalPage("failed", state.detail);
+        }
     }
 }
 
@@ -357,6 +385,7 @@ async function startHost(): Promise<void> {
             llamaServerPath: paths.llamaServerPath,
             llamaBackend: loadNativeRuntimeInfo().backend,
             debug: debugEnabled,
+            maxAttempts: 1,
             log,
             onState: handleHostState,
         });
@@ -365,7 +394,7 @@ async function startHost(): Promise<void> {
     try {
         await host.start();
     } catch (error) {
-        if (automaticRecoveryCount >= 3) {
+        if (!recoveryTimer) {
             await showInternalPage("failed", error instanceof Error ? error.message : String(error));
         }
     }

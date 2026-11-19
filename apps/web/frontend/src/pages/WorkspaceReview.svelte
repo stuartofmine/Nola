@@ -27,16 +27,28 @@
     }
     onMount(() => { mounted = true; return () => { mounted = false; ++sequence; request?.abort(); }; });
     $effect(() => { selected; hostId; if (mounted) void load(); });
+    function entryStatusKey(index: string, worktree: string): string {
+        const code = `${index}${worktree}`.trim();
+        if (code === '??') return 'chatInspector.gitUntracked';
+        if (code.includes('U') || code === 'AA' || code === 'DD') return 'chatInspector.gitConflicted';
+        if (code.includes('R')) return 'chatInspector.gitRenamed';
+        if (code.includes('C')) return 'chatInspector.gitCopied';
+        if (code.includes('A')) return 'chatInspector.gitAdded';
+        if (code.includes('D')) return 'chatInspector.gitDeleted';
+        if (code.includes('M')) return 'chatInspector.gitModified';
+        return 'chatInspector.gitChanged';
+    }
 </script>
-<section class="workspace-review" aria-label={t($locale, 'chatInspector.review')}>
-    <header><h2>{t($locale, 'chatInspector.review')}</h2><button type="button" onclick={load} disabled={loading || !selected}>{t($locale, 'chatPage.refresh')}</button></header>
-    {#if onopen}<button type="button" onclick={onopen}>{t($locale, 'chatResource.openTab')}</button>{/if}
-    {#if !selected}<p>{t($locale, 'chatPage.choose')}</p><a class="button" href="/conversations">{t($locale, 'shell.conversations')}</a>{/if}
+{#snippet reviewBody()}
+    {#if !selected}
+        {#if onopen}<p>{t($locale, 'chatPage.choose')}</p>{/if}
+        <div class="actions start"><a class="button" href="/conversations">{t($locale, 'shell.conversations')}</a></div>
+    {/if}
     {#if loading}<p role="status">{t($locale, 'chatPage.loading')}</p>{/if}
     {#if failed}<p role="alert">{t($locale, 'chatInspector.reviewUnavailable')}</p>{/if}
     {#if review}
         <p class="workspace-root">{t($locale, 'chatInspector.hostWorkspace')}<code>{review.root}</code></p>
-        {#if review.entries.length}<ul>{#each review.entries as entry}<li><code>{entry.index}{entry.worktree}</code><span>{entry.path}</span></li>{/each}</ul>
+        {#if review.entries.length}<ul>{#each review.entries as entry}<li><span class="badge">{t($locale, entryStatusKey(entry.index, entry.worktree))}</span> <span>{entry.path}</span></li>{/each}</ul>
         {:else}<p>{t($locale, 'chatInspector.noChanges')}</p>{/if}
         {#if review.truncated}<p role="status">{t($locale, 'chatInspector.reviewTruncated')}</p>{/if}
         {#each [{label: 'unstaged', value: review.unstaged}, {label: 'staged', value: review.staged}] as section}
@@ -49,13 +61,30 @@
             </details>
         {/each}
     {/if}
+{/snippet}
+<section class="workspace-review" class:embedded-review={!!onopen} aria-label={t($locale, 'chatInspector.review')}>
+    {#if onopen}
+        <header class="review-header"><h2>{t($locale, 'chatInspector.review')}</h2><button type="button" onclick={load} disabled={loading || !selected}>{t($locale, 'chatPage.refresh')}</button></header>
+        <div class="actions start"><button type="button" onclick={onopen}>{t($locale, 'chatResource.openTab')}</button></div>
+        {@render reviewBody()}
+    {:else}
+        <header class="page-header">
+            <div><h1>{t($locale, 'chatInspector.review')}</h1>{#if !selected}<p class="muted">{t($locale, 'chatPage.choose')}</p>{/if}</div>
+            <div class="actions"><button type="button" onclick={load} disabled={loading || !selected}>{t($locale, 'chatPage.refresh')}</button></div>
+        </header>
+        <div class="content management-content">{@render reviewBody()}</div>
+    {/if}
 </section>
 <style>
-    .workspace-review { min-width: 0; display: grid; gap: 12px; }
-    header { display: flex; justify-content: space-between; align-items: center; gap: 12px; } h2 { margin: 0; font-size: 1rem; }
-    p { margin: 0; color: var(--muted); font-size: .875rem; line-height: 1.6; } .workspace-root code { display: block; overflow-wrap: anywhere; }
-    ul { list-style: none; margin: 0; padding: 0; } li { display: flex; gap: 8px; border-bottom: 1px solid var(--border); padding-block: 10px; font-size: .875rem; } li span { overflow-wrap: anywhere; min-width: 0; } li code { white-space: pre; flex: none; }
+    .workspace-review { min-width: 0; }
+    .embedded-review { display: grid; gap: 12px; }
+    .review-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+    .review-header h2 { margin: 0; font-size: 1rem; }
+    .embedded-review p { margin: 0; color: var(--muted); font-size: .875rem; line-height: 1.6; }
+    .workspace-root code { display: block; overflow-wrap: anywhere; }
+    .actions.start { justify-content: flex-start; }
+    ul { list-style: none; margin: 0; padding: 0; } li { display: flex; gap: 8px; border-bottom: 1px solid var(--border); padding-block: 10px; font-size: .875rem; } li span { overflow-wrap: anywhere; min-width: 0; }
     summary { min-height: 44px; padding-block: 10px; cursor: pointer; font-size: .875rem; }
     pre { max-height: min(60dvh, 600px); overflow: auto; padding: 12px; border: 1px solid var(--border); border-radius: 10px; font: 12px/1.65 var(--font-code, monospace); white-space: pre; }
-    button { min-height: var(--control-hit-size); }
+    .embedded-review button { min-height: var(--control-hit-size); }
 </style>

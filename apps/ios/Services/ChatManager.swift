@@ -513,6 +513,49 @@ public final class ChatManager: ObservableObject {
         }
     }
 
+    private func beginBackgroundGraceWindow() {
+        cancelBackgroundGraceWindow()
+        let taskID = UIApplication.shared.beginBackgroundTask(withName: "nola.chat.backgroundGrace") { [weak self] in
+            Task { @MainActor in
+                await self?.finishBackgroundGraceTeardown()
+            }
+        }
+        backgroundTaskIdentifier = taskID
+        backgroundGraceTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(20))
+            } catch {
+                return
+            }
+            guard let self, !Task.isCancelled else { return }
+            await self.finishBackgroundGraceTeardown()
+        }
+    }
+
+    private func cancelBackgroundGraceWindow() {
+        backgroundGraceTask?.cancel()
+        backgroundGraceTask = nil
+        if backgroundTaskIdentifier != .invalid {
+            UIApplication.shared.endBackgroundTask(backgroundTaskIdentifier)
+            backgroundTaskIdentifier = .invalid
+        }
+    }
+
+    private func finishBackgroundGraceTeardown() async {
+        backgroundGraceTask?.cancel()
+        backgroundGraceTask = nil
+        remoteObservationForeground = false
+        await pauseLocalGoalForLifecycle()
+        remoteRunObserver.cancel()
+        remoteTaskObservation.cancel()
+        remoteResumeTask?.cancel()
+        remoteRecoveryGeneration &+= 1
+        if backgroundTaskIdentifier != .invalid {
+            UIApplication.shared.endBackgroundTask(backgroundTaskIdentifier)
+            backgroundTaskIdentifier = .invalid
+        }
+    }
+
     private func pauseLocalGoalForLifecycle() async {
         guard isConversationExecution, let owner = currentConversationId, localGoalDriver != nil else { return }
         do {
@@ -1343,6 +1386,8 @@ public final class ChatManager: ObservableObject {
     private var localGoalDriver: Task<Void, Never>?
     private var remoteObservationForeground = true
     private var remoteLifecycleSubscriptions = Set<AnyCancellable>()
+    private var backgroundGraceTask: Task<Void, Never>?
+    private var backgroundTaskIdentifier: UIBackgroundTaskIdentifier = .invalid
     @Published public private(set) var remoteRunNeedsResume = false
     @Published public private(set) var remoteRunObservationError: String?
     @Published public private(set) var remoteSubmissionPending = false
@@ -2300,6 +2345,7 @@ public final class ChatManager: ObservableObject {
             .sink { [weak self] _ in
                 Task { @MainActor in
                     guard let self else { return }
+                    self.cancelBackgroundGraceWindow()
                     self.remoteObservationForeground = true
                     self.wakeLocalGoal()
                     await self.recoverEmbeddedChildTasks()
@@ -2307,15 +2353,16 @@ public final class ChatManager: ObservableObject {
                     self.wakeRemoteUIQueue()
                 }
             }.store(in: &remoteLifecycleSubscriptions)
-        NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)
+        NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)
             .sink { [weak self] _ in
                 Task { @MainActor in
-                    self?.remoteObservationForeground = false
-                    await self?.pauseLocalGoalForLifecycle()
-                    self?.remoteRunObserver.cancel()
-                    self?.remoteTaskObservation.cancel()
-                    self?.remoteResumeTask?.cancel()
-                    self?.remoteRecoveryGeneration &+= 1
+                    self?.cancelBackgroundGraceWindow()
+                }
+            }.store(in: &remoteLifecycleSubscriptions)
+        NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    self?.beginBackgroundGraceWindow()
                 }
             }.store(in: &remoteLifecycleSubscriptions)
         hostPermissionSession.onStateChange = { [weak self] state in
@@ -3530,6 +3577,11 @@ public final class ChatManager: ObservableObject {
         }
         try await ctx.updateSessionMemory(for: convId, sessionMemory: sessionMemory)
         return convId
+    }
+
+    @discardableResult
+    public func updateUploadedDocuments(_ items: [UserUploadedContextItem]) throws -> [UserUploadedContextItem] {
+        try container.chatMemoryProfileStore.saveUploadedDocuments(items)
     }
 
     @discardableResult

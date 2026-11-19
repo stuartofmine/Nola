@@ -69,7 +69,7 @@ struct MacTranscriptView: View {
     var readUIChanges: (AppleUISurfaceIdentity, UInt64?) async throws -> AppleUISurfaceUpdate<MacCanonicalJSONValue> = { _, _ in throw MacRemoteHostError.invalidResponse }
     var readUIRevision: (AppleUISurfaceReference) async throws -> AppleUISnapshot<MacCanonicalJSONValue>? = { _ in nil }
     var pendingUI: (AppleUISurfaceIdentity) throws -> AppleUISubmission<MacCanonicalJSONValue>? = { _ in nil }
-    var submitUI: (AppleUISubmission<MacCanonicalJSONValue>) async -> AppleUISubmissionOutcome<MacCanonicalJSONValue> = { _ in .rejected("交互入口不可用。") }
+    var submitUI: (AppleUISubmission<MacCanonicalJSONValue>) async -> AppleUISubmissionOutcome<MacCanonicalJSONValue> = { _ in .rejected(String(localized: "Interactive controls are unavailable.", table: "Chat")) }
     var readLocalSource: () throws -> Bool = { false }
     var permitsFollowupUIActions = true
     var sourceAuthors: [String: String] = [:]

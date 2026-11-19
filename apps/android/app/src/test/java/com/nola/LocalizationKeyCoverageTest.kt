@@ -21,6 +21,8 @@ class LocalizationKeyCoverageTest {
             "models_host_messaging_running",
             "models_host_messaging_stopped",
             "models_host_messaging_manage",
+            "chat_skill_description",
+            "models_web_host_disconnect",
         )
 
         val localeFiles = resourceRoot.listFiles()

@@ -61,22 +61,7 @@ struct MacOnboardingView: View {
 
     var body: some View {
         ZStack {
-            LinearGradient(
-                colors: [
-                    Color(nsColor: .windowBackgroundColor),
-                    Color.accentColor.opacity(0.045),
-                    Color(nsColor: .windowBackgroundColor)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
-
-            Circle()
-                .fill(Color.teal.opacity(0.07))
-                .frame(width: 480, height: 480)
-                .blur(radius: 100)
-                .offset(x: 390, y: -290)
+            MacPageBackground()
 
             VStack(spacing: 0) {
                 header
@@ -121,10 +106,10 @@ struct MacOnboardingView: View {
             HStack(spacing: 12) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color.accentColor.opacity(0.13))
+                        .fill(MacDesignColor.selected)
                     Image(systemName: "sparkles")
                         .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(MacDesignColor.brand)
                 }
                 .frame(width: 42, height: 42)
                 .accessibilityHidden(true)
@@ -163,7 +148,7 @@ struct MacOnboardingView: View {
             HStack(spacing: 7) {
                 ForEach(0..<totalSteps, id: \.self) { index in
                     Capsule()
-                        .fill(index <= step ? Color.accentColor : Color.secondary.opacity(0.17))
+                        .fill(index <= step ? MacDesignColor.primaryAction : Color.secondary.opacity(0.20))
                         .frame(height: 4)
                 }
             }
@@ -320,10 +305,9 @@ struct MacOnboardingView: View {
                         step -= 1
                     } label: {
                         Image(systemName: "chevron.left")
-                            .frame(width: 42, height: 42)
+                            .frame(width: 34, height: 34)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.large)
+                    .buttonStyle(MacActionButtonStyle())
                     .help(String(localized: "onboarding.guide.back"))
                     .keyboardShortcut(.cancelAction)
                     .transition(.opacity)
@@ -352,12 +336,16 @@ struct MacOnboardingView: View {
                     Spacer()
                     Image(systemName: step == totalSteps - 1 ? "checkmark" : "arrow.right")
                 }
-                .padding(.horizontal, 16)
+                .foregroundStyle(MacDesignColor.onPrimaryAction)
+                .padding(.horizontal, 18)
                 .frame(height: 44)
+                .background(
+                    MacDesignColor.primaryAction,
+                    in: RoundedRectangle(cornerRadius: MacDesignTokens.Radius.control, style: .continuous)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: MacDesignTokens.Radius.control, style: .continuous))
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .tint(Color.accentColor)
+            .buttonStyle(.plain)
             .frame(maxWidth: 360)
             .keyboardShortcut(.defaultAction)
             .accessibilityIdentifier("onboarding.next")
@@ -370,7 +358,12 @@ struct MacOnboardingView: View {
         .padding(.horizontal, 30)
         .frame(maxWidth: 840)
         .frame(maxWidth: .infinity)
-        .background(.ultraThinMaterial)
+        .background(MacDesignColor.chrome)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(MacDesignColor.borderSubtle)
+                .frame(height: 1)
+        }
     }
 
     private func completeOnboarding() {
@@ -402,7 +395,7 @@ private struct MacGuidePage<Content: View>: View {
                 Text(eyebrow)
                     .font(.caption.weight(.bold))
                     .tracking(1)
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(MacDesignColor.brand.opacity(0.75))
                 Text(title)
                     .font(.system(.largeTitle, design: .rounded, weight: .bold))
                     .fixedSize(horizontal: false, vertical: true)
@@ -458,9 +451,9 @@ private struct MacTaskRow: View {
         HStack(spacing: 13) {
             Image(systemName: icon)
                 .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(MacDesignColor.brand)
                 .frame(width: 38, height: 38)
-                .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+                .background(MacDesignColor.selected, in: RoundedRectangle(cornerRadius: 10))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
                 Text(title).font(.subheadline.weight(.semibold))
@@ -481,7 +474,7 @@ private struct MacGuideNote: View {
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
             Image(systemName: icon)
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(MacDesignColor.brand)
                 .accessibilityHidden(true)
             Text(text)
                 .font(.footnote)
@@ -491,9 +484,13 @@ private struct MacGuideNote: View {
         .padding(.horizontal, 13)
         .padding(.vertical, 11)
         .background(
-            Color.accentColor.opacity(0.075),
+            MacDesignColor.subtleFill,
             in: RoundedRectangle(cornerRadius: 14, style: .continuous)
         )
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(MacDesignColor.borderSubtle, lineWidth: 0.5)
+        }
     }
 }
 

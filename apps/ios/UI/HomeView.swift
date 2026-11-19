@@ -785,6 +785,7 @@ private struct DataSourcesScheduleHubView: View {
                 }
             }
         }
+        .nolaGroupedSurface()
         .navigationTitle(L10n.homeSectionDataSources)
         .navigationBarTitleDisplayMode(.inline)
     }

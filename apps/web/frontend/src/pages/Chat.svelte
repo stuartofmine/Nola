@@ -6,7 +6,7 @@
     import { activityReturnPath } from '../lib/activity';
     let returnToActivity = $state(typeof window === 'undefined' ? null : activityReturnPath(new URL(window.location.href)));
     import PrototypeIcon from '../components/PrototypeIcon.svelte';
-    import { toggleAppearance } from '../lib/appearance';
+    import { darkAppearance, toggleAppearance } from '../lib/appearance';
     import { workspaceTabCloseEvent } from '../lib/workspacePageLocation';
     import { composerCommands, commandQuery, parseComposerCommand } from '../lib/composerCommands';
     import { navigateWorkspace, workspaceContentNavigationEvent } from '../lib/workspaceNavigation';
@@ -53,7 +53,6 @@
     import ExpertConversationReply from '../components/ExpertConversationReply.svelte';
     import ExpertReplyFrame from '../components/ExpertReplyFrame.svelte';
     import ExpertManager from '../components/ExpertManager.svelte';
-    import ExpertBubbleColorPicker from '../components/ExpertBubbleColorPicker.svelte';
     import ChatConversationManager from '../components/ChatConversationManager.svelte';
     import ChatResponsivePanel from '../components/ChatResponsivePanel.svelte';
     let navigationPanel: ChatResponsivePanel;
@@ -585,6 +584,11 @@
             case 'experts': void openExperts(); break;
             case 'resources': inspectorTab = 'resources'; inspectorVisited.resources = true; break;
             case 'permissions': inspectorTab = 'settings'; break;
+            case 'goal':
+                inspectorTab = 'goal';
+                inspectorVisited.progress = true;
+                if (parsed.argument && active) workspaceHost?.objectives.write(active.conversationId, parsed.argument);
+                break;
             case 'search': searchQuery = parsed.argument; void openSearch(); break;
             case 'plan': navigateWorkspace('/data-sources?tab=plans' + (parsed.argument ? `&draft=${encodeURIComponent(parsed.argument)}` : '')); break;
             case 'stop': void stop(); break;
@@ -940,6 +944,7 @@
             if(!current()||draft!==original||attachments!==originalAttachments||JSON.stringify(selectedExperts)!==JSON.stringify(selected))return;
         }
         if ((!active.executionBackend || active.executionBackend === 'nola') && !active.selectedModelId) {
+            error = 'chatSession.invalidModel';
             inspectorTab = 'settings';
             void sessionSettings?.refreshModelCatalog();
             return;
@@ -1273,7 +1278,7 @@
         {:else if expertDirectory}
             {#each expertDirectory.agents.filter(agent => agent.availability === 'active') as agent (agent.id)}
                 {@const member = expertRoom?.room.participants.find(person => person.agent_id === agent.id && person.active)}
-                <div class="expert-choice"><label><input type="checkbox" checked={!!member && selectedExperts.includes(member.id)} disabled={expertsLoading || !canInteract} onchange={() => void toggleExpert(agent.id)} /> <span>{agent.name}</span></label><ExpertBubbleColorPicker {hostId} agentId={agent.id} name={agent.name} /></div>
+                <div class="expert-choice"><label><input type="checkbox" checked={!!member && selectedExperts.includes(member.id)} disabled={expertsLoading || !canInteract} onchange={() => void toggleExpert(agent.id)} /> <span>{agent.name}</span></label></div>
             {:else}<span>{t($locale, 'rooms.noExperts')}</span>{/each}
         {/if}
         {#if expertRejoin}<button type="button" disabled={expertsLoading} onclick={rejoinExpert}>{t($locale,'rooms.rejoinExpert')}</button>{/if}
@@ -1317,7 +1322,7 @@
                 selectedPath={selectedContentTab?.kind === 'page' ? selectedContentTab.path : ''} /></div>
             <footer class="workspace-footer">
                 <button class="workspace-identity" onclick={() => openManagementTab('/settings?section=general')}><span aria-hidden="true">n</span><span>{t($locale, 'shell.workspace')}<small>Nola</small></span></button>
-                <button aria-label={t($locale, 'shell.toggleAppearance')} title={t($locale, 'shell.toggleAppearance')} onclick={toggleAppearance}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 14A8 8 0 0 1 10 4a8 8 0 1 0 10 10Z"/></svg></button>
+                <button aria-label={t($locale, 'shell.toggleAppearance')} title={t($locale, 'shell.toggleAppearance')} onclick={toggleAppearance}><svg aria-hidden="true" viewBox="0 0 24 24">{#if $darkAppearance}<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41m11.32-11.32 1.41-1.41"/>{:else}<path d="M20 14A8 8 0 0 1 10 4a8 8 0 1 0 10 10Z"/>{/if}</svg></button>
                 <button aria-label={t($locale, 'shell.settings')} title={t($locale, 'shell.settings')} onclick={() => openManagementTab('/settings')}><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3M5 5l2 2m10 10 2 2M5 19l2-2M17 7l2-2"/></svg></button>
             </footer>
         </aside>

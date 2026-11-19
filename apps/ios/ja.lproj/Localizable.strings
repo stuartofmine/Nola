@@ -3227,3 +3227,11 @@
 "a2ui.queue.cancel_rejected" = "未実行のフォーム操作を削除";
 "chat.host.reconnect_bound" = "この会話に紐づく Host に再接続してください。";
 "chat.host.source_unavailable" = "この会話の接続元 Host を確認できません。";
+
+"composer.command.goal" = "目標";
+"chat.composer.attach_photos" = "写真";
+"model.center.start_blocked_hint" = "別のローカルモデルが実行中です。先に停止してから開始してください。";
+"model.web_host.forget_pairing" = "以前のペアリングを解除";
+"model.web_host.forget_pairing.footer" = "このホストアドレスの記録済み ID と保存済みトークンを削除し、再ペアリングできるようにします。";
+"chat.context.mcp.empty" = "利用可能な MCP サーバーはまだありません。";
+"chat.context.mcp.local.footer" = "ローカル MCP サーバーはライブラリ > 機能で設定・管理できます。";

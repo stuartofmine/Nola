@@ -28,7 +28,11 @@ fn descriptors(owner: &Owner) -> Result<BTreeMap<String,HostCapabilityDescriptor
     for value in transport::describe_connected_cache(&configs).map_err(|e|e.message)? {
         let server:nola_core::agent::capability::McpServerDescriptor=serde_json::from_value(value).map_err(|e|e.to_string())?;
         if server.availability != nola_core::agent::capability::McpServerAvailability::Available {continue;}
-        for tool in server.tools.values() {let d=catalog::tool_descriptor(&server,tool);out.insert(d.id.clone(),d);}
+        for tool in server.tools.values() {
+            let mut d=catalog::tool_descriptor(&server,tool);
+            d.exposure = nola_core::agent::host::HostCapabilityExposure::Visible;
+            out.insert(d.id.clone(),d);
+        }
     }
     let policy=registry().lock().map_err(|_|"MCP registry unavailable")?.policies.get(owner).cloned();
     out.retain(|_,d|policy.as_ref().is_some_and(|p| nola_core::tool_policy::mcp_host_descriptor_allowed(p,d)));
@@ -36,7 +40,7 @@ fn descriptors(owner: &Owner) -> Result<BTreeMap<String,HostCapabilityDescriptor
 }
 fn prepared(owner:&Owner) -> Result<Value,String> {
     let caps=descriptors(owner)?;
-    let tools=caps.values().filter(|d| d.id==authority::CONNECT_CAPABILITY).map(|d|json!({"type":"function","function":{"name":d.id,"description":d.input_schema.get("description").unwrap_or(&json!(d.title)),"parameters":d.input_schema}})).collect::<Vec<_>>();
+    let tools=caps.values().filter(|d| d.exposure.is_model_visible()).map(|d|json!({"type":"function","function":{"name":d.id,"description":d.input_schema.get("description").unwrap_or(&json!(d.title)),"parameters":d.input_schema}})).collect::<Vec<_>>();
     Ok(json!({"capabilities":caps,"tools":tools,"permission_rules":[
         {"capability_pattern":"mcp_connection","resource_pattern":"*","decision":"ask","source":"host"},
         {"capability_pattern":"mcp","resource_pattern":"*","decision":"ask","source":"host"},
@@ -172,5 +176,133 @@ mod tests {
         let stdio=json!({"id":"process","display_name":"Unsupported on mobile","enabled":true,"configuration_json":r#"{"transport":"stdio","command":"must-not-launch"}"#});
         let prepared=command(json!({"type":"prepare","host_id":host,"session_id":session,"servers":[stdio]})).unwrap();
         assert_eq!(prepared["capabilities"],json!({}));
+    }
+
+    #[test]
+    fn mobile_connected_server_tools_stay_visible_on_subsequent_turns() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}/mcp", listener.local_addr().unwrap());
+        let server_thread = std::thread::spawn(move || {
+            for stream in listener.incoming().take(6) {
+                let mut stream = stream.unwrap();
+                let mut bytes = Vec::new();
+                let mut buf = [0u8; 4096];
+                let head = loop {
+                    let n = stream.read(&mut buf).unwrap();
+                    if n == 0 {
+                        break 0;
+                    }
+                    bytes.extend_from_slice(&buf[..n]);
+                    if let Some(pos) = bytes.windows(4).position(|v| v == b"\r\n\r\n") {
+                        break pos + 4;
+                    }
+                };
+                if head == 0 {
+                    continue;
+                }
+                let headers = String::from_utf8_lossy(&bytes[..head]);
+                let length = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (k, v) = line.split_once(':')?;
+                        k.eq_ignore_ascii_case("content-length")
+                            .then(|| v.trim().parse::<usize>().ok())
+                            .flatten()
+                    })
+                    .unwrap_or_default();
+                while bytes.len() < head + length {
+                    let n = stream.read(&mut buf).unwrap();
+                    if n == 0 {
+                        break;
+                    }
+                    bytes.extend_from_slice(&buf[..n]);
+                }
+                let req: Value = serde_json::from_slice(&bytes[head..head + length]).unwrap();
+                let body = match req["method"].as_str().unwrap_or("") {
+                    "initialize" => json!({"jsonrpc":"2.0","id":req["id"],"result":{"protocolVersion":"2025-06-18","capabilities":{}}}).to_string(),
+                    "tools/list" => json!({"jsonrpc":"2.0","id":req["id"],"result":{"tools":[{"name":"echo","description":"Echo tool","inputSchema":{"type":"object"}}]}}).to_string(),
+                    "resources/list" | "resources/templates/list" | "prompts/list" => json!({"jsonrpc":"2.0","id":req["id"],"result":{}}).to_string(),
+                    "notifications/initialized" => String::new(),
+                    _ => String::new(),
+                };
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+                .unwrap();
+            }
+        });
+        let host = uuid::Uuid::new_v4().to_string();
+        let session = uuid::Uuid::new_v4().to_string();
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let server = json!({
+            "id": "connected-srv",
+            "display_name": "Connected Server",
+            "enabled": true,
+            "deleted_at_ms": null,
+            "configuration_json": json!({"url": endpoint}).to_string(),
+        });
+        let policy = json!({
+            "expected_identity": {"host_id": host, "session_id": session},
+            "runtime": {
+                "manifest_id": "mobile-mcp-test",
+                "manifest_version": 1,
+                "issued_at_ms": now_ms,
+                "expires_at_ms": now_ms + 60_000,
+                "host_id": host,
+                "session_id": session,
+                "routes": ["device"],
+                "capabilities": ["network"],
+                "authorizations": {"network": "granted"}
+            },
+            "user_policy": {"max_risk": "high"}
+        });
+        let turn1 = command(json!({
+            "type": "prepare",
+            "host_id": host,
+            "session_id": session,
+            "policy": policy,
+            "servers": [server.clone()]
+        }))
+        .unwrap();
+        let conn_ref = turn1["capabilities"]["mcp_connect"]["input_schema"]["properties"]["connection_ref"]["enum"][0]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let expected = authority::permission_resource(&conn_ref).unwrap();
+        transport::connect_approved(&conn_ref, &expected).unwrap();
+        let turn2 = command(json!({
+            "type": "prepare",
+            "host_id": host,
+            "session_id": session,
+            "policy": policy,
+            "servers": [server]
+        }))
+        .unwrap();
+        let tool_names: Vec<&str> = turn2["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|t| t.pointer("/function/name").and_then(Value::as_str))
+            .collect();
+        assert!(tool_names.contains(&"mcp_connect"));
+        let caps = turn2["capabilities"].as_object().unwrap();
+        let echo_cap_id = caps
+            .iter()
+            .find_map(|(id, desc)| {
+                (desc.pointer("/input_normalization/mcp_route/tool_name") == Some(&json!("echo"))
+                    && desc["exposure"] == json!("visible"))
+                .then_some(id.as_str())
+            })
+            .expect("connected echo tool must be marked visible");
+        assert!(tool_names.contains(&echo_cap_id), "{tool_names:?}");
+        server_thread.join().unwrap();
     }
 }

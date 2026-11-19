@@ -40,7 +40,7 @@ struct URLDataSourcesView: View {
 
     private var baseView: some View {
         contentScroll
-            .background(Color(.systemGroupedBackground))
+            .background(DesignTokens.backgroundColor)
             .navigationTitle(NSLocalizedString("url_sources.navigation.title", value: "Data sources", comment: "URL sources navigation title"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -962,6 +962,7 @@ struct AddURLDataSourceSheet: View {
                 // Prompt/template selection, model choice, scheduling, and test-run UI
                 // are intentionally not handled in this editor.
             }
+            .nolaGroupedSurface()
             .navigationTitle(navTitle)
             .disabled(isSaving || isValidating)
             .accessibilityIdentifier("data.center.editor")

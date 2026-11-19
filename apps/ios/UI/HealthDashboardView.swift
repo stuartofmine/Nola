@@ -174,7 +174,7 @@ struct HealthDashboardView: View {
                     .frame(height: 150)
                 }
                 .padding(14)
-                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .background(DesignTokens.surfaceColor, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             }
 
             VStack(spacing: 0) {
@@ -215,7 +215,7 @@ struct HealthDashboardView: View {
                     detailRow(title: tr("health.dashboard.recent_workout", "Recent workout"), value: tr("health.dashboard.no_workout_30_days", "No workout in 30 days"), subtitle: nil, icon: "figure.run.circle", color: .secondary)
                 }
             }
-            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .background(DesignTokens.surfaceColor, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
     }
 
@@ -238,7 +238,7 @@ struct HealthDashboardView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(DesignTokens.surfaceColor, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     private func detailRow(title: String, value: String, subtitle: String?, icon: String, color: Color) -> some View {

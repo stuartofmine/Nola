@@ -234,6 +234,7 @@ struct IOSModelProtocolEditor: View {
             }.disabled(saving || wire == model.wireProtocol)
                 .frame(minHeight: 44).accessibilityIdentifier("model.protocol.save")
         }
+        .nolaGroupedSurface()
         .navigationTitle(NSLocalizedString("model.connections.protocol", comment: "Protocol"))
         .toolbar { ToolbarItem(placement: .cancellationAction) { Button(L10n.close) { dismiss() } } }
     }

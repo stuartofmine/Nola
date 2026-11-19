@@ -158,6 +158,7 @@ struct MacInspectorReviewView: View {
     @State private var diffRequestID: UUID?
     @State private var loading = false
     @State private var loadRequestID: UUID?
+    @State private var loadedOwner = ""
     @State private var retry = 0
     private var owner: String { (model.selectedConversationID ?? "") + "/" + model.effectiveWorkspaceURL.path }
     var body: some View {
@@ -183,12 +184,19 @@ struct MacInspectorReviewView: View {
                 if let snapshot {
                     MacInspectorGitChangesView(snapshot: snapshot, selected: selected,
                         diff: diff, diffError: diffError, isLoadingDiff: isLoadingDiff,
-                        select: { selected = $0 }, openReview: openReview)
+                        select: { selected = selected == $0 ? nil : $0 }, openReview: openReview)
                 }
             }
         }
+        .onChange(of: model.inspectorSelectedConversationIsRunning) { wasRunning, isRunning in
+            if wasRunning && !isRunning { retry += 1 }
+        }
         .task(id: "\(owner)/\(retry)/\(model.executionHost)/\(model.effectiveWorkspaceURL.path)") {
-            snapshot = nil; selected = nil; diff = ""; error = nil; loading = false; isNotRepository = false
+            let scopeKey = "\(owner)/\(model.executionHost)/\(model.effectiveWorkspaceURL.path)"
+            if loadedOwner != scopeKey {
+                snapshot = nil; selected = nil; diff = ""; loadedOwner = scopeKey
+            }
+            error = nil; loading = false; isNotRepository = false
             guard model.executionHost == .local else { return }
             let requestedOwner = owner, url = model.effectiveWorkspaceURL
             let requestID = UUID()

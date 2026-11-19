@@ -141,6 +141,8 @@ struct MacPromptLibraryView: View {
             promptTemplateListContent
         }
         .listStyle(.sidebar)
+        .scrollContentBackground(.hidden)
+        .background(MacDesignColor.sidebar)
         .searchable(
             text: $query,
             placement: .automatic,
@@ -314,7 +316,7 @@ struct MacPromptLibraryView: View {
     private func templateRow(_ template: PromptTemplate) -> some View {
         HStack(spacing: 9) {
             Image(systemName: template.isBuiltIn ? "text.book.closed" : "doc.text")
-                .foregroundStyle(template.isBuiltIn ? Color.accentColor : Color.green)
+                .foregroundStyle(template.isBuiltIn ? MacDesignColor.brand : MacDesignColor.success)
                 .frame(width: 17)
             VStack(alignment: .leading, spacing: 2) {
                 Text(template.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
@@ -514,6 +516,7 @@ private struct MacPromptTemplateEditor: View {
                     .lineLimit(2...4)
                 TextEditor(text: $content)
                     .font(.system(size: 12, design: .monospaced))
+                    .scrollContentBackground(.hidden)
                     .frame(minHeight: 220)
                 LabeledContent(String(localized: "Variables")) {
                     ViewThatFits(in: .horizontal) {

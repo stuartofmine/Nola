@@ -117,7 +117,7 @@ struct MainTabView: View {
                 .tabItem { Label(L10n.chatTitle, image: NolaTab.chat.icon).accessibilityIdentifier("tab.chat") }
                 .tag(NolaTab.chat)
             tabContent(.activity)
-                .tabItem { Label(String(localized: "information.activity"), image: NolaTab.activity.icon) }
+                .tabItem { Label(String(localized: "information.activity"), image: NolaTab.activity.icon).accessibilityIdentifier("tab.activity") }
                 .tag(NolaTab.activity)
             tabContent(.information)
                 .tabItem { Label(String(localized: "navigation.library"), image: NolaTab.information.icon).accessibilityIdentifier("tab.information") }
@@ -137,9 +137,7 @@ struct MainTabView: View {
                 .accessibilityIdentifier("screen.chat")
         case .activity:
             NavigationStack {
-                IOSConversationActivityView()
-                    .navigationTitle(String(localized: "information.activity"))
-                    .navigationBarTitleDisplayMode(.inline)
+                IOSConversationActivityView(isRootTab: true)
             }
         case .information:
             IOSInformationView(path: $informationPath, pendingRequests: $informationRequests)
@@ -151,24 +149,23 @@ struct MainTabView: View {
     private var bottomNavigation: some View {
         HStack(spacing: 0) {
             ForEach([NolaTab.chat, .activity, .information, .settings], id: \.self) { tab in
+                let isSelected = selectedTabBinding.wrappedValue == tab
                 Button { selectedTabBinding.wrappedValue = tab } label: {
-                    VStack(spacing: 5) {
-                        Image(tab.icon).renderingMode(.template).resizable().scaledToFit().frame(width: 20, height: 20)
-                        Text(tab.title).font(.caption2)
+                    VStack(spacing: 4) {
+                        Image(tab.icon).renderingMode(.template).resizable().scaledToFit().frame(width: 22, height: 22)
+                        Text(tab.title).font(.caption2.weight(isSelected ? .semibold : .regular))
                     }
-                    .foregroundStyle(selectedTabBinding.wrappedValue == tab ? DesignTokens.actionColor : DesignTokens.secondaryContentColor)
-                    .frame(minWidth: 64, minHeight: 52)
-                    .background(selectedTabBinding.wrappedValue == tab ? DesignTokens.elevatedColor : .clear,
-                                in: RoundedRectangle(cornerRadius: 12))
+                    .foregroundStyle(isSelected ? DesignTokens.actionColor : DesignTokens.secondaryContentColor)
+                    .frame(minWidth: 64, minHeight: 50)
                 }
                 .frame(maxWidth: .infinity)
                 .accessibilityLabel(Text(tab.title))
                 .accessibilityIdentifier("main.tab.\(tab.rawValue)")
-                .accessibilityAddTraits(selectedTabBinding.wrappedValue == tab ? .isSelected : [])
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
         }
-        .buttonStyle(.plain).padding(.horizontal, 8).padding(.top, 6)
-        .background(DesignTokens.surfaceColor.ignoresSafeArea(edges: .bottom))
+        .buttonStyle(.plain).padding(.horizontal, 8).padding(.top, 6).padding(.bottom, 4)
+        .background(DesignTokens.backgroundColor.ignoresSafeArea(edges: .bottom))
         .overlay(alignment: .top) { Rectangle().fill(DesignTokens.borderColor).frame(height: 0.5) }
         .accessibilityElement(children: .contain)
         .accessibilityAddTraits(.isTabBar)

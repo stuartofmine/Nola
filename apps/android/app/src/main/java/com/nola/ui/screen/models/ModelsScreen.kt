@@ -41,6 +41,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -143,7 +144,8 @@ internal const val MODEL_HOST_CONNECTION_TEST_TAG = "models.connection.host"
 fun ModelsScreen(
     viewModel: ModelsViewModel = hiltViewModel(),
     initialShowEndpointSheet: Boolean = false,
-    endpointSheetRequestKey: String = ""
+    endpointSheetRequestKey: String = "",
+    onBack: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val reduceMotion = rememberReduceMotionEnabled()
@@ -163,7 +165,7 @@ fun ModelsScreen(
             title = { Text(stringResource(R.string.common_delete)) },
             text = { Text(stringResource(R.string.ui_delete_model_message, model.name)) },
             confirmButton = {
-                TextButton(onClick = { viewModel.deleteLocalModel(model); modelToDelete = null }) {
+                TextButton(onClick = { viewModel.deleteModel(model); modelToDelete = null }) {
                     Text(stringResource(R.string.common_delete), color = MaterialTheme.colorScheme.error)
                 }
             },
@@ -261,25 +263,36 @@ fun ModelsScreen(
     }
 
     NolaPage(modifier = Modifier.imePadding()) {
-        NolaPageHeader(
-            title = stringResource(R.string.models_title),
-            subtitle = stringResource(R.string.models_subtitle),
-            compactTrailing = true
-        ) {
-            val refreshLabel = stringResource(R.string.common_refresh)
-            val loadingLabel = stringResource(R.string.models_loading)
-            NolaIconButton(label = refreshLabel, onClick = { viewModel.loadModels() }, enabled = !state.isLoading,
-                modifier = Modifier.size(48.dp).testTag("models.refresh").semantics {
-                    contentDescription = refreshLabel
-                    if (state.isLoading) stateDescription = loadingLabel
-                }) {
-                if (state.isLoading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
-                        strokeWidth = 2.dp
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            if (onBack != null) {
+                IconButton(onClick = onBack) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = stringResource(R.string.common_back),
                     )
-                } else {
-                    Icon(Icons.Filled.Refresh, null, tint = MaterialTheme.colorScheme.primary)
+                }
+            }
+            NolaPageHeader(
+                title = stringResource(R.string.models_title),
+                subtitle = stringResource(R.string.models_subtitle),
+                compactTrailing = true,
+                modifier = Modifier.weight(1f),
+            ) {
+                val refreshLabel = stringResource(R.string.common_refresh)
+                val loadingLabel = stringResource(R.string.models_loading)
+                NolaIconButton(label = refreshLabel, onClick = { viewModel.loadModels() }, enabled = !state.isLoading,
+                    modifier = Modifier.size(48.dp).testTag("models.refresh").semantics {
+                        contentDescription = refreshLabel
+                        if (state.isLoading) stateDescription = loadingLabel
+                    }) {
+                    if (state.isLoading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Icon(Icons.Filled.Refresh, null, tint = MaterialTheme.colorScheme.primary)
+                    }
                 }
             }
         }
@@ -377,6 +390,7 @@ fun ModelsScreen(
                     activatingModelId = state.activatingModelId,
                     activatingModelSource = state.activatingModelSource,
                     onSelect = { viewModel.selectModel(it) },
+                    onDeleteLocal = { modelToDelete = it },
                     onTest = { viewModel.openModelTest(it) },
                     onParams = { viewModel.openParameters(it) },
                     onCapabilities = { capabilityError = null; capabilityTarget = it },
@@ -437,6 +451,15 @@ fun ModelsScreen(
                     onSelect = { viewModel.selectModel(it) },
                     onParams = { viewModel.openParameters(it) }
                 )
+                TextButton(
+                    onClick = viewModel::disconnectWebHost,
+                    modifier = Modifier.fillMaxWidth().testTag("models.web_host.disconnect")
+                ) {
+                    Text(
+                        stringResource(R.string.models_web_host_disconnect),
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
 
         }
@@ -806,7 +829,7 @@ private fun ModelRowActions(
                 Text(stringResource(if (isRunning) R.string.models_stop else R.string.models_start))
             }
         }
-        if (model.source == ModelInfo.ModelSource.Local && onDeleteLocal != null) {
+        if (model.source != ModelInfo.ModelSource.WebHost && onDeleteLocal != null) {
             IconButton(
                 onClick = {
                     haptics.warning()
@@ -1131,7 +1154,6 @@ private fun EndpointConfigFields(
     var key by draft::key
     var model by draft::model
     var protocol by draft::protocol
-    var advanced by remember { mutableStateOf(false) }
     LaunchedEffect(endpoint, key, model, protocol) {
         onDirtyChange(endpoint != initialEndpoint || key != initialApiKey || model != initialModel || protocol != initialWireProtocol)
     }
@@ -1151,22 +1173,15 @@ private fun EndpointConfigFields(
             keyboardOptions = KeyboardOptions(autoCorrect = false, imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus(); keyboard?.hide() }),
             modifier = Modifier.fillMaxWidth().testTag("model.setup.modelID"))
-        NolaDisclosureBar(
-            title = stringResource(R.string.models_advanced_configuration),
-            expanded = advanced,
-            onToggle = { advanced = !advanced }
-        )
-        if (advanced) {
-            ModelWireProtocol.entries.forEach { value ->
-                NolaRadioOption(
-                    label = stringResource(
-                        if (value == ModelWireProtocol.Responses) R.string.models_protocol_responses
-                        else R.string.models_protocol_chat_completions
-                    ),
-                    selected = protocol == value,
-                    enabled = !saving
-                ) { protocol = value }
-            }
+        ModelWireProtocol.entries.forEach { value ->
+            NolaRadioOption(
+                label = stringResource(
+                    if (value == ModelWireProtocol.Responses) R.string.models_protocol_responses
+                    else R.string.models_protocol_chat_completions
+                ),
+                selected = protocol == value,
+                enabled = !saving
+            ) { protocol = value }
         }
         Text(stringResource(R.string.models_manual_setup_summary), style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant)

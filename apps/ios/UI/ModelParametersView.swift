@@ -224,10 +224,10 @@ struct ModelParametersView: View {
                 .font(.body)
                 .padding(DesignTokens.spacing_sm)
                 .scrollContentBackground(.hidden)
-                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .background(DesignTokens.elevatedColor, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+                        .stroke(DesignTokens.borderColor, lineWidth: 0.5)
                 }
             Text(
                 NSLocalizedString(
@@ -292,10 +292,8 @@ struct ModelParametersView: View {
         .frame(maxWidth: .infinity)
         .padding(.horizontal, DesignTokens.spacing_lg)
         .padding(.vertical, DesignTokens.spacing_sm)
-        .background(.regularMaterial)
-        .overlay(alignment: .top) {
-            Divider().opacity(0.55)
-        }
+        .background(DesignTokens.backgroundColor)
+        .overlay(alignment: .top) { NolaDivider() }
     }
 
     @ViewBuilder

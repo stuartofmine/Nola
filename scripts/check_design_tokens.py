@@ -483,6 +483,73 @@ def check_apple_fallbacks(light: dict[str, str], dark: dict[str, str], errors: l
             errors,
         )
 
+    for match in re.findall(r"0x[0-9A-Fa-f]{6}\b", mac_swift):
+        if normalize_hex(match) in FORBIDDEN_COLD_OR_OLED_SURFACES:
+            errors.append(
+                f"apps/macos/UI/MacPageChrome.swift: contains forbidden cold/OLED surface literal {match}"
+            )
+
+
+def check_apple_colorsets(light: dict[str, str], dark: dict[str, str], errors: list[str]) -> None:
+    role_map = {
+        "NolaCanvas": (light["canvas"], dark["canvas"]),
+        "NolaSurface": (light["surface"], dark["surface"]),
+        "NolaSurfaceRaised": (light["surfaceSubtle"], dark["surfaceSubtle"]),
+        "NolaAccentSubtle": (light["accentSubtle"], dark["accentSubtle"]),
+        "NolaDivider": (light["border"], dark["border"]),
+        "NolaControlOutline": (light["outline"], dark["outline"]),
+        "NolaTextPrimary": (light["ink"], dark["ink"]),
+        "AccentColor": (light["accent"], dark["accent"]),
+        "NolaTextSecondary": (light["inkSecondary"], dark["inkSecondary"]),
+        "NolaOnAccent": (light["onAccent"], dark["onAccent"]),
+        "NolaSuccess": (light["success"], dark["success"]),
+        "NolaWarning": (light["warning"], dark["warning"]),
+        "NolaDanger": (light["danger"], dark["danger"]),
+    }
+
+    def entry_hex(entry: dict) -> str | None:
+        comp = entry.get("color", {}).get("components", {})
+        r, g, b = comp.get("red"), comp.get("green"), comp.get("blue")
+        if not (isinstance(r, str) and isinstance(g, str) and isinstance(b, str)):
+            return None
+        if not all(val.lower().startswith("0x") and len(val) == 4 for val in (r, g, b)):
+            return None
+        return f"#{r[2:].lower()}{g[2:].lower()}{b[2:].lower()}"
+
+    for platform_dir in ("apps/macos/Assets.xcassets", "apps/ios/Assets.xcassets"):
+        base = ROOT / platform_dir
+        for colorset_name, (exp_light, exp_dark) in role_map.items():
+            contents_path = base / f"{colorset_name}.colorset" / "Contents.json"
+            if not contents_path.is_file():
+                errors.append(f"{contents_path.relative_to(ROOT)}: missing colorset Contents.json")
+                continue
+            payload = json.loads(contents_path.read_text(encoding="utf-8"))
+            actual_light = None
+            actual_dark = None
+            for entry in payload.get("colors", []):
+                appearances = entry.get("appearances") or []
+                app_pairs = {(a.get("appearance"), a.get("value")) for a in appearances}
+                hx = entry_hex(entry)
+                if hx is None:
+                    errors.append(f"{contents_path.relative_to(ROOT)}: non-hex srgb components in entry")
+                    continue
+                if hx in FORBIDDEN_COLD_OR_OLED_SURFACES:
+                    errors.append(
+                        f"{contents_path.relative_to(ROOT)}: contains forbidden cold/OLED surface {hx}"
+                    )
+                if not appearances:
+                    actual_light = hx
+                elif app_pairs == {("luminosity", "dark")}:
+                    actual_dark = hx
+            if actual_light != normalize_hex(exp_light):
+                errors.append(
+                    f"{contents_path.relative_to(ROOT)} (light): expected {normalize_hex(exp_light)}, got {actual_light!r}"
+                )
+            if actual_dark != normalize_hex(exp_dark):
+                errors.append(
+                    f"{contents_path.relative_to(ROOT)} (dark): expected {normalize_hex(exp_dark)}, got {actual_dark!r}"
+                )
+
 
 def main() -> int:
     if not TOKENS_PATH.is_file():
@@ -500,6 +567,7 @@ def main() -> int:
         check_android_theme(light, dark, errors)
         check_windows_shell(light, dark, errors)
         check_apple_fallbacks(light, dark, errors)
+        check_apple_colorsets(light, dark, errors)
 
     if errors:
         for error in errors:

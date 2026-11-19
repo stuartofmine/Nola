@@ -55,12 +55,19 @@ internal fun ModelConnectionsSection(state: ModelsUiState, refresh: () -> Unit, 
         state.connectionInventory?.let { inventory ->
             if (inventory.connections.isEmpty()) Text(stringResource(R.string.model_connections_empty), color = MaterialTheme.colorScheme.onSurfaceVariant)
             inventory.connections.forEach { connection ->
+                val sourceLabel = when (connection.source.lowercase()) {
+                    "open_code", "opencode" -> "OpenCode"
+                    "claude_code" -> "Claude Code"
+                    "codex" -> "Codex"
+                    else -> connection.source.replace('_', ' ').replaceFirstChar { it.uppercase() }
+                }
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(connection.name, style = MaterialTheme.typography.titleSmall)
                     Text(connection.address, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(connection.source, style = MaterialTheme.typography.labelMedium)
+                    Text(sourceLabel, style = MaterialTheme.typography.labelMedium)
                     inventory.accounts.find { it.id == connection.accountId }?.let { account ->
-                        Text("${account.name} · ${account.state}", style = MaterialTheme.typography.bodyMedium)
+                        val accountState = account.state.replace('_', ' ').replaceFirstChar { it.uppercase() }
+                        Text("${account.name} · $accountState", style = MaterialTheme.typography.bodyMedium)
                     }
                     connection.models.forEach { name -> Text(name, style = MaterialTheme.typography.bodyMedium) }
                 }

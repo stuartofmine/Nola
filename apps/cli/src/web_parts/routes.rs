@@ -503,6 +503,7 @@ pub fn run_web_server(config: &Config) -> Result<(), String> {
     let server_id = host_identity();
     let _messaging_channel_worker = crate::messaging_channel_worker::start_if_configured()?;
     let _goal_worker = start_web_goal_worker(config)?;
+    let _automation_scheduler = start_web_automation_scheduler(config);
     if !bound_socket.ip().is_loopback() {
         eprintln!(
             "WARNING: remote Web access is enabled; use a trusted LAN or an HTTPS reverse proxy and keep the Host token private"
@@ -3826,7 +3827,7 @@ fn list_scheduled_actions_response() -> Response<Box<dyn Read + Send>> {
     });
     json_response(
         StatusCode(200),
-        json!({"actions": actions, "localFirst": true, "backend": "cli-rust", "executionCapabilities": {"manualRun": true, "scheduledDispatch": false, "timezone": "local", "promptAutomations": true}}),
+        json!({"actions": actions, "localFirst": true, "backend": "cli-rust", "executionCapabilities": {"manualRun": true, "scheduledDispatch": true, "timezone": "local", "promptAutomations": true}}),
     )
 }
 
@@ -4205,6 +4206,247 @@ fn web_automation_observation_response(store: &NolaStore, id: &str, error: Optio
     }
 }
 
+fn resolve_web_automation_config(
+    store: &NolaStore,
+    config: &Config,
+    conversation_id: &str,
+) -> Result<Config, String> {
+    if !config.model.trim().is_empty() && !config.endpoint.trim().is_empty() {
+        return Ok(config.clone());
+    }
+    let (resolution, _) = mobile_default_chat_model_projection(store)?;
+    if resolution.get("kind").and_then(Value::as_str) == Some("resolved") {
+        if let Some(profile_id) = resolution.get("profile_id").and_then(Value::as_str) {
+            if let Some(profile) = store.model_profile(profile_id)? {
+                let source: Value = serde_json::from_str(&profile.source_json)
+                    .map_err(|_| "Invalid default Host model profile source".to_string())?;
+                let secret = crate::host_credentials::for_profile(store, &profile, None)?;
+                let mut resolved = resolve_remote_profile_settings(
+                    &profile,
+                    &json!({}),
+                    &config.runtime,
+                    &[(
+                        source["baseURL"].as_str().unwrap_or(""),
+                        secret.as_deref().unwrap_or(""),
+                    )],
+                )?;
+                crate::model_profile_resolution::bind_siwc_profile(&mut resolved, &profile, store)?;
+                return Ok(conversation_execution_config(config, resolved, conversation_id));
+            }
+        }
+    }
+    let state = load_state().unwrap_or_default();
+    if let Ok(resolved) = resolve_llm_settings(&json!({}), config, Some(&state.agent_settings), None) {
+        return Ok(conversation_execution_config(config, resolved, conversation_id));
+    }
+    Err("No default model is configured for Automations; configure a model profile first.".into())
+}
+
+fn execute_claimed_web_automation_occurrence(
+    store: &NolaStore,
+    config: &Config,
+    run_id: &str,
+    expected_revision: i64,
+    lease: nola_domain::automation_execution::AutomationExecutionLease,
+    spec: &nola_domain::automation_execution::AutomationExecutionSpec,
+    skills: &crate::skill_runtime::SkillRuntimeContext,
+    artifacts: Vec<crate::host_invocation_request::AutomationArtifact>,
+) -> Option<String> {
+    use nola_domain::automation_execution::*;
+    let result = (|| -> Result<(), String> {
+        if !store.observe_web_automation_worker(lease.clone(), AutomationWorkerObservation::Preparing, Utc::now().timestamp_millis())? {
+            return Err("automation preparation fact was not committed".into());
+        }
+        let identity = AutomationExecutionIdentity::for_occurrence(run_id);
+        let exec_config = resolve_web_automation_config(store, config, &identity.conversation_id)?;
+        let mut invocation = exec_config.host_invocation_request()?;
+        let AutomationExecutionScope::LocalWorkspace { root } = &spec.execution_scope else { return Err("local workspace required".into()) };
+        let profile = match spec.permission_profile {
+            AutomationPermissionProfile::Cautious => crate::permissions::PermissionProfile::Cautious,
+            AutomationPermissionProfile::AllowAll => crate::permissions::PermissionProfile::AllowAll,
+        };
+        invocation.tool_settings.project_root = std::path::PathBuf::from(root);
+        invocation.tool_settings.allowed_dirs = vec![invocation.tool_settings.project_root.clone()];
+        invocation.tool_settings.permission_profile = Some(profile);
+        invocation.tool_settings.auto_approve = profile.auto_approve();
+        invocation.tool_settings.network_policy = profile.network_policy().into();
+        invocation.tool_settings.bash_prefixes.clear();
+        invocation.runtime.permissions.clear();
+        invocation.runtime.core_permission_rules.clear();
+        invocation.session.session_id = Some(identity.conversation_id);
+        invocation.session.host_submission_id = Some(identity.submission_id);
+        invocation.session.host_user_message_id = Some(identity.user_message_id);
+        invocation.session.host_assistant_message_id = Some(identity.assistant_message_id);
+        invocation.session.expected_configuration_revision = None;
+        invocation.session.expected_parent_message_id = None;
+        invocation.session.permission_scope_id = None;
+        invocation.session.save_session = true;
+        invocation.session.resume_snapshot = None;
+        invocation.session.desktop_resume = None;
+        invocation.session.desktop_cancel = None;
+        invocation.session.host_task_execution = None;
+        invocation.session.automation_execution_lease = Some(lease.clone());
+        invocation.session.automation_execution_spec = Some(spec.clone());
+        invocation.tool_settings.skill_dirs = skills.configured_dirs().map(|dirs| dirs.to_vec());
+        invocation.session.automation_artifacts = artifacts;
+        invocation.input.message = spec.prompt.clone();
+        invocation.input.host_input_origin = nola_core::agent::protocol::AgentInputOrigin::ScheduledAction;
+        invocation.input.host_turn_context = None;
+        invocation.input.host_context_components.clear();
+        invocation.input.host_attachments.clear();
+        invocation.input.context_files.clear();
+        invocation.input.expected_artifact_refs.clear();
+        crate::core_agent_runtime::admit_automation_artifacts(&mut invocation)?;
+        let mut output = crate::native_runtime_output::NativeRuntimeOutput::with_event_sink(|_| {});
+        // A synchronous caller has no interactive approval channel.
+        // Preserve the committed permission wait; never prompt server stdin.
+        let _permission_transport = crate::tools::enter_host_permission_resolver(std::sync::Arc::new(|_, _, _| {
+            crate::tools::HostPermissionResolution::TransportInterrupted(
+                nola_host_protocol::PermissionTransportInterruptionReason::Unavailable)
+        }));
+        if !store.observe_web_automation_worker(lease.clone(), AutomationWorkerObservation::AdmissionRequested, Utc::now().timestamp_millis())? {
+            return Err("automation admission request fact was not committed".into());
+        }
+        crate::core_agent_runtime::run_agent_core(&invocation, &spec.prompt, &mut output)?;
+        Ok(())
+    })();
+    let _ = expected_revision;
+    let error = result.err();
+    if let Some(error) = &error {
+        match store.observe_web_automation_worker(lease,
+            AutomationWorkerObservation::LaunchFailed { detail: error.chars().take(8_000).collect() },
+            Utc::now().timestamp_millis()) {
+            Ok(true) => {}
+            Ok(false) => return Some("Automation failure fact was not committed; reconcile this exact occurrence".into()),
+            Err(persistence_error) => return Some(format!("Automation failure fact could not be persisted: {persistence_error}")),
+        }
+    }
+    error
+}
+
+struct WebAutomationSchedulerGuard(Arc<std::sync::atomic::AtomicBool>);
+
+impl Drop for WebAutomationSchedulerGuard {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+fn start_web_automation_scheduler(config: &Config) -> Option<WebAutomationSchedulerGuard> {
+    let stopped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let worker_stopped = Arc::clone(&stopped);
+    let config = config.clone();
+    if std::thread::Builder::new()
+        .name("web-automation-scheduler".into())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
+            let mut in_flight: std::collections::HashSet<String> = std::collections::HashSet::new();
+            while !worker_stopped.load(std::sync::atomic::Ordering::SeqCst) {
+                for _ in 0..30 {
+                    if worker_stopped.load(std::sync::atomic::Ordering::SeqCst) {
+                        return;
+                    }
+                    std::thread::sleep(StdDuration::from_secs(1));
+                }
+                let Ok(store) = NolaStore::open_default() else { continue };
+                let Ok(raw_actions) = store.load_web_scheduled_actions() else { continue };
+                let now_ms = Utc::now().timestamp_millis();
+                let lookback_ms = now_ms.saturating_sub(15 * 60 * 1_000);
+                for value in raw_actions {
+                    if worker_stopped.load(std::sync::atomic::Ordering::SeqCst) {
+                        return;
+                    }
+                    let Ok(action) = serde_json::from_value::<WebScheduledAction>(value) else { continue };
+                    if !action.enabled || (action.format == "script" && action.script_approved != Some(true)) {
+                        continue;
+                    }
+                    if in_flight.contains(&action.id) {
+                        continue;
+                    }
+                    let Ok(spec) = web_automation_spec(&action.execution_spec).cloned() else { continue };
+                    let tz = if action.timezone.trim().is_empty() || action.timezone.eq_ignore_ascii_case("local") {
+                        "system".to_string()
+                    } else {
+                        action.timezone.clone()
+                    };
+                    let Ok(page) = nola_application::automation_occurrence::query(
+                        &nola_application::automation_occurrence::OccurrenceQuery {
+                            automation_id: action.id.clone(),
+                            timezone: tz,
+                            frequency: action.frequency.clone(),
+                            time: Some(action.time.clone()),
+                            weekday: action.weekday.map(|day| u32::from((day + 5) % 7 + 1)),
+                            once_at_ms: None,
+                            after_ms: lookback_ms,
+                            through_ms: now_ms,
+                            limit: 4,
+                        },
+                    ) else {
+                        continue;
+                    };
+                    let Some(occurrence) = page.occurrences.last() else { continue };
+                    let occurrence_key = format!("scheduled:{}:{}", action.revision, occurrence.scheduled_for_ms);
+                    if store.find_web_automation_run(&action.id, &occurrence_key).ok().flatten().is_some() {
+                        continue;
+                    }
+                    let Ok((skills, artifacts)) = automation_skill_runtime(&config).and_then(|skills| {
+                        let artifacts = automation_skill_artifacts(&skills, &spec.skill_refs)?;
+                        Ok((skills, artifacts))
+                    }) else {
+                        continue;
+                    };
+                    let Ok(run) = store.enqueue_web_automation_run(
+                        &action.id,
+                        &occurrence_key,
+                        "scheduled",
+                        occurrence.scheduled_for_ms,
+                        action.revision,
+                    ) else {
+                        continue;
+                    };
+                    let lease_token = new_id("lease");
+                    let worker_id = format!("cli-web-scheduler:{}", std::process::id());
+                    if !store
+                        .claim_web_automation_run(
+                            &run.id,
+                            &worker_id,
+                            &lease_token,
+                            Utc::now().timestamp_millis(),
+                            Utc::now().timestamp_millis().saturating_add(5 * 60 * 1_000),
+                        )
+                        .unwrap_or(false)
+                    {
+                        continue;
+                    }
+                    let lease = nola_domain::automation_execution::AutomationExecutionLease {
+                        occurrence_id: run.id.clone(),
+                        definition_revision: action.revision,
+                        worker_id,
+                        lease_token,
+                    };
+                    in_flight.insert(action.id.clone());
+                    let _ = execute_claimed_web_automation_occurrence(
+                        &store,
+                        &config,
+                        &run.id,
+                        action.revision,
+                        lease,
+                        &spec,
+                        &skills,
+                        artifacts,
+                    );
+                    in_flight.remove(&action.id);
+                }
+            }
+        })
+        .is_ok()
+    {
+        Some(WebAutomationSchedulerGuard(stopped))
+    } else {
+        None
+    }
+}
+
 fn run_scheduled_action_now_response(request: &mut Request, action_id: &str, config: &Config) -> Response<Box<dyn Read + Send>> {
     use nola_domain::automation_execution::*;
     #[derive(Deserialize)]
@@ -4276,78 +4518,16 @@ fn run_scheduled_action_now_response(request: &mut Request, action_id: &str, con
     let lease = AutomationExecutionLease {
         occurrence_id:run.id.clone(), definition_revision:input.expected_revision, worker_id, lease_token,
     };
-    let result = (|| -> Result<(), String> {
-        if !store.observe_web_automation_worker(lease.clone(), AutomationWorkerObservation::Preparing, Utc::now().timestamp_millis())? {
-            return Err("automation preparation fact was not committed".into());
-        }
-        let mut invocation = config.host_invocation_request()?;
-        let AutomationExecutionScope::LocalWorkspace { root } = &spec.execution_scope else { return Err("local workspace required".into()) };
-        let profile = match spec.permission_profile {
-            AutomationPermissionProfile::Cautious => crate::permissions::PermissionProfile::Cautious,
-            AutomationPermissionProfile::AllowAll => crate::permissions::PermissionProfile::AllowAll,
-        };
-        invocation.tool_settings.project_root = std::path::PathBuf::from(root);
-        invocation.tool_settings.allowed_dirs = vec![invocation.tool_settings.project_root.clone()];
-        invocation.tool_settings.permission_profile = Some(profile);
-        invocation.tool_settings.auto_approve = profile.auto_approve();
-        invocation.tool_settings.network_policy = profile.network_policy().into();
-        invocation.tool_settings.bash_prefixes.clear();
-        invocation.runtime.permissions.clear();
-        invocation.runtime.core_permission_rules.clear();
-        let identity = AutomationExecutionIdentity::for_occurrence(&run.id);
-        invocation.session.session_id = Some(identity.conversation_id);
-        invocation.session.host_submission_id = Some(identity.submission_id);
-        invocation.session.host_user_message_id = Some(identity.user_message_id);
-        invocation.session.host_assistant_message_id = Some(identity.assistant_message_id);
-        invocation.session.expected_configuration_revision = None;
-        invocation.session.expected_parent_message_id = None;
-        invocation.session.permission_scope_id = None;
-        invocation.session.save_session = true;
-        invocation.session.resume_snapshot = None;
-        invocation.session.desktop_resume = None;
-        invocation.session.desktop_cancel = None;
-        invocation.session.host_task_execution = None;
-        invocation.session.automation_execution_lease = Some(lease.clone());
-        invocation.session.automation_execution_spec = Some(spec.clone());
-        invocation.tool_settings.skill_dirs = skills.configured_dirs().map(|dirs| dirs.to_vec());
-        invocation.session.automation_artifacts = artifacts;
-        invocation.input.message = spec.prompt.clone();
-        invocation.input.host_input_origin = nola_core::agent::protocol::AgentInputOrigin::ScheduledAction;
-        invocation.input.host_turn_context = None;
-        invocation.input.host_context_components.clear();
-        invocation.input.host_attachments.clear();
-        invocation.input.context_files.clear();
-        invocation.input.expected_artifact_refs.clear();
-        crate::core_agent_runtime::admit_automation_artifacts(&mut invocation)?;
-        let mut output = crate::native_runtime_output::NativeRuntimeOutput::with_event_sink(|_| {});
-        // A synchronous HTTP caller has no interactive approval channel.
-        // Preserve the committed permission wait; never prompt server stdin.
-        let _permission_transport = crate::tools::enter_host_permission_resolver(std::sync::Arc::new(|_, _, _| {
-            crate::tools::HostPermissionResolution::TransportInterrupted(
-                nola_host_protocol::PermissionTransportInterruptionReason::Unavailable)
-        }));
-        if !store.observe_web_automation_worker(lease.clone(), AutomationWorkerObservation::AdmissionRequested, Utc::now().timestamp_millis())? {
-            return Err("automation admission request fact was not committed".into());
-        }
-        crate::core_agent_runtime::run_agent_core(&invocation, &spec.prompt, &mut output)?;
-        Ok(())
-    })();
-    // Pump exit is neither completion nor success. Only the exact canonical
-    // terminal seal can reconcile this occurrence; waits retain their identity.
-    let error = result.err();
-    if let Some(error) = &error {
-        // Binding and failure closure compete under one Store transaction.
-        // A lost ACK therefore never revokes or replays an admitted Run.
-        match store.observe_web_automation_worker(lease,
-            AutomationWorkerObservation::LaunchFailed { detail: error.chars().take(8_000).collect() },
-            Utc::now().timestamp_millis()) {
-            Ok(true) => {},
-            Ok(false) => return web_automation_observation_response(&store, &run.id,
-                Some("Automation failure fact was not committed; reconcile this exact occurrence".into())),
-            Err(persistence_error) => return web_automation_observation_response(&store, &run.id,
-                Some(format!("Automation failure fact could not be persisted: {persistence_error}"))),
-        }
-    }
+    let error = execute_claimed_web_automation_occurrence(
+        &store,
+        config,
+        &run.id,
+        input.expected_revision,
+        lease,
+        &spec,
+        &skills,
+        artifacts,
+    );
     web_automation_observation_response(&store, &run.id, error)
 }
 

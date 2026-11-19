@@ -83,10 +83,13 @@
         let payload;
         try { payload = workerPayload(draft, settings, token, clearToken); } catch (cause) { workerError = messagingErrorKey(cause); return; }
         saving = true; workerError = ''; workerNotice = ''; workerRead.cancel(); channelsRead.cancel(); ++workerVersion; ++channelsVersion; workerLoading = false; channelsLoading = false;
-        token = ''; workerUncertain = true; channels = []; channelsLoaded = false;
         try {
             const value = workerSnapshot(await api('/api/messaging-channel-worker', { method: 'PUT', body: JSON.stringify(payload) }));
-            if (!disposed) { settings = value; draft = workerDraft(value); clearToken = false; workerNotice = 'messaging.saved'; workerUncertain = false; await loadChannels(); }
+            if (!disposed) {
+                settings = value; draft = workerDraft(value); token = ''; clearToken = false;
+                workerNotice = 'messaging.saved'; workerUncertain = false; channels = []; channelsLoaded = false;
+                await loadChannels();
+            }
         } catch (cause) { if (!disposed) workerError = messagingErrorKey(cause); }
         finally { if (!disposed) saving = false; }
     }

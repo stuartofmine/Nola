@@ -34,6 +34,7 @@ struct ModelPickerSheet: View {
                         .listRowBackground(Color.clear)
                     }
                 } else {
+                    Group {
                     modelSection(
                         title: NSLocalizedString("chat.model.group.device", value: "On Device", comment: "Device model group"),
                         icon: "iphone",
@@ -49,8 +50,12 @@ struct ModelPickerSheet: View {
                         icon: "cloud",
                         models: cloudModels
                     )
+                    }
+                    .listRowBackground(DesignTokens.surfaceColor)
+                    .listRowSeparatorTint(DesignTokens.borderColor)
                 }
             }
+            .nolaGroupedSurface()
             .navigationTitle(L10n.modelPickerTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

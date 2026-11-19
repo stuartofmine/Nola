@@ -1152,10 +1152,10 @@ private struct PersonalCapabilityCard: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, minHeight: 154, alignment: .topLeading)
-        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(DesignTokens.surfaceColor, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color.primary.opacity(0.055), lineWidth: 1)
+                .stroke(DesignTokens.borderColor, lineWidth: 0.75)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(identifier)
@@ -1215,6 +1215,7 @@ private struct PersonalCapabilityEditorView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Group {
                 if let errorMessage {
                     Section {
                         Text(errorMessage).foregroundStyle(.red)
@@ -1252,7 +1253,11 @@ private struct PersonalCapabilityEditorView: View {
                         }
                     }
                 }
+                }
+                .listRowBackground(DesignTokens.surfaceColor)
+                .listRowSeparatorTint(DesignTokens.borderColor)
             }
+            .nolaGroupedSurface()
             .navigationTitle(isSkill
                 ? piText("personal.capabilities.skill", "Skill")
                 : "MCP")

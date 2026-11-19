@@ -32,6 +32,7 @@ struct ModelDownloadView: View {
     
     var body: some View {
         List {
+            Group {
             if let operationError {
                 Section { Label(operationError, systemImage: "exclamationmark.triangle").foregroundStyle(DesignTokens.dangerColor) }
             }
@@ -74,7 +75,11 @@ struct ModelDownloadView: View {
             diskSpaceSection
             
             notesSection
+            }
+            .listRowBackground(DesignTokens.surfaceColor)
+            .listRowSeparatorTint(DesignTokens.borderColor)
         }
+        .nolaGroupedSurface()
         .navigationTitle(embedded ? L10n.modelsTitle : L10n.modelManagementTitle)
         .toolbar {
             if !embedded {

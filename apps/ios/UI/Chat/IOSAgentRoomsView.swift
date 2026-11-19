@@ -32,10 +32,15 @@ struct IOSAgentRoomsView: View {
     var body: some View {
         NavigationStack {
             List {
-                if let error { Text(error).foregroundStyle(.red) }
-                expertDirectorySection
-                expertEditorSection
+                Group {
+                    if let error { Text(error).foregroundStyle(.red) }
+                    expertDirectorySection
+                    expertEditorSection
+                }
+                .listRowBackground(DesignTokens.surfaceColor)
+                .listRowSeparatorTint(DesignTokens.borderColor)
             }
+            .nolaGroupedSurface()
             .scrollDismissesKeyboard(.immediately)
             .navigationTitle("experts.manage")
             .sheet(isPresented: $showingTemplateLibrary, onDismiss: {
@@ -743,7 +748,6 @@ struct IOSChatExpertPicker: View {
     @Binding var selection: Set<String>
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
-    @State private var configuringAgent: IOSPersistentAgent?
     @State private var showingManagement = false
 
     private var visibleAgents: [IOSPersistentAgent] {
@@ -762,8 +766,17 @@ struct IOSChatExpertPicker: View {
             Text("chat.experts.description")
                 .font(.callout).foregroundStyle(.secondary)
             TextField("chat.experts.search", text: $query)
+                .textFieldStyle(.plain)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(
+                    NolaSurfaceBackground(
+                        fill: DesignTokens.surfaceColor,
+                        border: DesignTokens.borderColor,
+                        cornerRadius: 12
+                    )
+                )
             List(visibleAgents, id: \.id) { agent in
-                HStack(spacing: 8) {
                 Button {
                     if selection.contains(agent.id) { selection.remove(agent.id) }
                     else { selection.insert(agent.id) }
@@ -771,7 +784,7 @@ struct IOSChatExpertPicker: View {
                     HStack(spacing: 10) {
                         Text(String(agent.name.prefix(2)).uppercased())
                             .font(.caption.bold()).frame(width: 32, height: 32)
-                            .background(Color.accentColor.opacity(0.12), in: Circle())
+                            .background(DesignTokens.accentSubtleColor, in: Circle())
                         VStack(alignment: .leading, spacing: 3) {
                             Text(agent.name).font(.body.weight(.medium))
                             if !agent.description.isEmpty {
@@ -782,15 +795,13 @@ struct IOSChatExpertPicker: View {
                         Image(systemName: selection.contains(agent.id) ? "checkmark.circle.fill" : "circle")
                     }.frame(minHeight: 44).contentShape(Rectangle())
                 }.buttonStyle(.plain)
+                    .listRowBackground(DesignTokens.surfaceColor)
                     .accessibilityIdentifier("experts.select." + agent.id)
                     .accessibilityLabel(agent.name)
                     .accessibilityValue(selection.contains(agent.id) ? String(localized: "chat.experts.selected") : String(localized: "chat.experts.not_selected"))
-                Button { configuringAgent = agent } label: {
-                    Image(systemName: "slider.horizontal.3").frame(width: 44, height: 44)
-                }.buttonStyle(.plain).accessibilityLabel(String(localized: "expert.color.title") + " · " + agent.name)
-                    .accessibilityIdentifier("experts.color." + agent.id)
-                }
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
             if visibleAgents.isEmpty { Text("chat.experts.empty").foregroundStyle(.secondary) }
             if allowsManagement {
             Button { showingManagement = true } label: {
@@ -800,8 +811,10 @@ struct IOSChatExpertPicker: View {
             }.buttonStyle(.plain).accessibilityIdentifier("experts.manage")
             }
         }.padding(16)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(DesignTokens.backgroundColor.ignoresSafeArea())
+            .presentationBackground(DesignTokens.backgroundColor)
             .sheet(isPresented: $showingManagement, onDismiss: onManagementClosed) { IOSAgentRoomsView() }
-            .sheet(item: $configuringAgent) { agent in IOSExpertColorEditor(agentID: agent.id, name: agent.name) }
     }
 }
 

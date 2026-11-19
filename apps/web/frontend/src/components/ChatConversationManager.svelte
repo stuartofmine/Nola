@@ -32,7 +32,7 @@
     let renameOpener: HTMLElement | undefined;
     let listElement: HTMLDivElement;
     async function rename(conversation: ChatConversation, opener?: HTMLElement) {
-        if (locked) return;
+        if (rowLocked(conversation)) return;
         const captured = owner();
         if (editing === conversation.conversationId) { renameInput?.focus(); return; }
         if (!await discardRename() || !current(captured)) return;
@@ -64,6 +64,9 @@
     let loadVersion = $state(0);
     let loadController: AbortController | undefined;
     const locked = $derived(navigationDisabled || busy || writing);
+    function rowLocked(target?: ChatConversation) {
+        return navigationDisabled || writing || (busy && (!target || target.conversationId === activeId));
+    }
     const renameDirty = $derived(editingTarget !== null && title !== editingTarget.baseline);
     const active = $derived(conversations.find(item => item.conversationId === activeId));
     const visible = $derived(conversations.filter(item => !query.trim() || item.title.toLocaleLowerCase($locale).includes(query.trim().toLocaleLowerCase($locale))).sort((a, b) => Number(b.isPinned) - Number(a.isPinned)));
@@ -107,7 +110,7 @@
         onselect(conversation);
     }
     async function pin(target: ChatConversation, opener: HTMLButtonElement) {
-        if (locked || !conversations.some(item => item.conversationId === target.conversationId)) return;
+        if (rowLocked(target) || !conversations.some(item => item.conversationId === target.conversationId)) return;
         const captured = owner();
         const expectedPinned = target.isPinned;
         writing = true; error = '';
@@ -149,14 +152,14 @@
     export async function createConversation() { return await mutate('create'); }
     export async function renameConversationById(id: string, nextTitle: string, expectedRevision?: number): Promise<string | undefined> {
         const target = conversations.find(item => item.conversationId === id) ?? (active?.conversationId === id ? active : undefined);
-        if (!target || locked) return 'chatConversations.writeFailed';
+        if (!target || rowLocked(target)) return 'chatConversations.writeFailed';
         return await mutate('rename', undefined, target, nextTitle, expectedRevision ?? target.revision);
     }
     async function mutate(operation: 'create' | 'rename' | 'delete' | 'branch' | 'truncate', explicitMessageId?: string, rowTarget?: ChatConversation, explicitTitle?: string, explicitRevision?: number) {
-        if (navigationDisabled || writing || busy && operation !== 'create') return;
+        const target = rowTarget ?? active;
+        if (navigationDisabled || writing || (busy && operation !== 'create' && (!target || target.conversationId === activeId))) return;
         const captured = owner();
         if (operation !== 'rename' && (!await discardRename() || !current(captured))) return;
-        const target = rowTarget ?? active;
         if (rowTarget && (!['rename', 'delete'].includes(operation) || !conversations.some(item => item.conversationId === rowTarget.conversationId))) return;
         const messageId = explicitMessageId ?? selectedMessageId;
         if (operation !== 'create' && !target) return;
@@ -173,7 +176,7 @@
                 const confirmKey = operation === 'branch' && !messageId ? 'chatConversations.branchWhole' : `chatConversations.${operation}`;
                 const accepted = await (confirm ?? confirmation!.ask)({ title: t($locale, `chatConversations.${operation}Title`), description: t($locale, descriptionKey, { name: target!.title }), confirmLabel: t($locale, confirmKey), destructive: operation !== 'branch' });
                 const boundaryValid = explicitMessageId === undefined ? selectedMessageId === messageId : messageIds.includes(explicitMessageId);
-                if (!accepted || !current(captured) || busy || (operation !== 'delete' && !boundaryValid)) return;
+                if (!accepted || !current(captured) || (operation !== 'delete' || target!.conversationId === activeId) && busy || (operation !== 'delete' && !boundaryValid)) return;
             }
             if (!current(captured)) return;
             const path = operation === 'create' ? '/api/chat/conversations' : `${conversationUrl(target!.conversationId)}${operation === 'branch' || operation === 'truncate' ? `/${operation}` : ''}`;
@@ -194,7 +197,7 @@
         finally { if (!disposed) writing = false; }
     }
     async function download(format: 'markdown' | 'json', target = active) {
-        if (locked || !target || !conversations.some(item => item.conversationId === target.conversationId)) return;
+        if (rowLocked(target) || !target || !conversations.some(item => item.conversationId === target.conversationId)) return;
         const captured = owner();
         writing = true; error = '';
         try {
@@ -215,7 +218,7 @@
 <section class="conversation-manager" class:page-list={layout === 'page'} class:sidebar-list={layout === 'sidebar'} aria-label={t($locale, 'chatInspector.list.conversations')}>
     <header class="list-heading">
         {#if layout === 'page'}<h1>{t($locale, 'chatInspector.list.conversations')}</h1>{@render createEntry()}
-        {:else}<h2>{t($locale, 'chatInspector.list.conversations')}</h2>{/if}
+        {:else}<h2>{t($locale, 'chatInspector.list.conversations')}</h2>{@render createEntry()}{/if}
     </header>
     <div class="search-row">
         <label class="conversation-search"><span class="sr-only">{t($locale, 'chatConversations.search')}</span><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="7"/><path d="m16 16 5 5"/></svg><input type="search" bind:value={query} placeholder={t($locale, 'chatConversations.search')} title={t($locale, 'chatConversations.localSearch')} /></label>
@@ -232,12 +235,12 @@
                 {#if layout === 'page'}<ConversationRowDetails conversationId={conversation.conversationId} version={JSON.stringify([generation, loadVersion, conversation.updatedAt, conversation.revision])} />{/if}
             </button>
             <details class="row-actions" use:dismissibleDisclosure>
-                <summary aria-label={t($locale, 'chatConversations.actionsFor', {name: conversation.title || t($locale, 'chatConversations.untitled')})} aria-disabled={locked} onclick={event => { if (locked) event.preventDefault(); }}>⋯</summary>
+                <summary aria-label={t($locale, 'chatConversations.actionsFor', {name: conversation.title || t($locale, 'chatConversations.untitled')})} aria-disabled={rowLocked(conversation)} onclick={event => { if (rowLocked(conversation)) event.preventDefault(); }}>⋯</summary>
                 <div class="row-action-buttons">
-                    <button disabled={locked} onclick={event => pin(conversation, event.currentTarget)}>{t($locale, conversation.isPinned ? 'chatConversations.unpin' : 'chatConversations.pin')}</button>
-                    <button disabled={locked} onclick={event => rename(conversation, event.currentTarget)}>{t($locale, 'chatConversations.rename')}</button>
-                    <button disabled={locked} onclick={() => download('markdown', conversation)}>{t($locale, 'chatConversations.exportMarkdown')}</button>
-                    <button disabled={locked} onclick={() => download('json', conversation)}>{t($locale, 'chatConversations.exportJson')}</button>
+                    <button disabled={rowLocked(conversation)} onclick={event => pin(conversation, event.currentTarget)}>{t($locale, conversation.isPinned ? 'chatConversations.unpin' : 'chatConversations.pin')}</button>
+                    <button disabled={rowLocked(conversation)} onclick={event => rename(conversation, event.currentTarget)}>{t($locale, 'chatConversations.rename')}</button>
+                    <button disabled={rowLocked(conversation)} onclick={() => download('markdown', conversation)}>{t($locale, 'chatConversations.exportMarkdown')}</button>
+                    <button disabled={rowLocked(conversation)} onclick={() => download('json', conversation)}>{t($locale, 'chatConversations.exportJson')}</button>
                     {#if activeId === conversation.conversationId && showHistoryActions}
                         <div class="history-actions">
                             <button disabled={locked || !hasMessages} onclick={() => mutate('branch')}>{t($locale, selectedMessageId ? 'chatConversations.branch' : 'chatConversations.branchWhole')}</button>
@@ -245,28 +248,27 @@
                             <p class="muted">{t($locale, 'chatConversations.selectionHint')}</p>
                         </div>
                     {/if}
-                    <button class="danger" disabled={locked} onclick={event => deleteRow(conversation, event.currentTarget)}>{t($locale, 'chatConversations.delete')}</button>
+                    <button class="danger" disabled={rowLocked(conversation)} onclick={event => deleteRow(conversation, event.currentTarget)}>{t($locale, 'chatConversations.delete')}</button>
                 </div>
             </details>
             {#if editing === conversation.conversationId}
                 <form class="row rename-form" onsubmit={event => { event.preventDefault(); void mutate('rename', undefined, conversation); }}>
-                    <label>{t($locale, 'chatConversations.titleField')}<input bind:this={renameInput} bind:value={title} disabled={locked} required onkeydown={event => { if (event.key === 'Escape' && !locked) { event.preventDefault(); void closeRename(); } }} /></label>
-                    <button type="submit" disabled={locked}>{t($locale, 'chatConversations.save')}</button>
-                    <button type="button" disabled={locked} onclick={closeRename}>{t($locale, 'chatConversations.cancel')}</button>
+                    <label>{t($locale, 'chatConversations.titleField')}<input bind:this={renameInput} bind:value={title} disabled={rowLocked(conversation)} required onkeydown={event => { if (event.key === 'Escape' && !rowLocked(conversation)) { event.preventDefault(); void closeRename(); } }} /></label>
+                    <button type="submit" disabled={rowLocked(conversation)}>{t($locale, 'chatConversations.save')}</button>
+                    <button type="button" disabled={rowLocked(conversation)} onclick={closeRename}>{t($locale, 'chatConversations.cancel')}</button>
                 </form>
             {/if}
-            {#key `${generation}:${conversation.conversationId}`}<ExpertChildHistory parentId={conversation.conversationId} disabled={locked}/>{/key}
+            {#key `${generation}:${conversation.conversationId}`}<ExpertChildHistory parentId={conversation.conversationId} disabled={rowLocked(conversation)} preload={activeId === conversation.conversationId || layout === 'page'}/>{/key}
         </div>
     {/each}</div>
     {#if !loading && !loadError && !visible.length}<p class="muted">{t($locale, 'chatConversations.empty')}</p>{/if}
-    {#if layout === 'sidebar'}{@render createEntry()}{/if}
 </section>
 <style>
     .conversation-manager { display: grid; gap: 12px; min-width: 0; }
     .list-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
     .list-heading h1 { font-size: 28px; line-height: 36px; font-weight: 650; margin: 0; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .list-heading h2 { font-size: 12px; line-height: 20px; font-weight: 600; margin: 0; }
-    .new-conversation { display: inline-flex; align-items: center; justify-content: flex-start; gap: 6px; min-height: 44px; max-width: 100%; padding: 6px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); text-align: start; }
+    .list-heading h2 { font-size: 12px; line-height: 20px; font-weight: 600; margin: 0; white-space: nowrap; flex: none; }
+    .new-conversation { display: inline-flex; align-items: center; justify-content: flex-start; gap: 6px; min-height: 44px; max-width: 100%; flex-shrink: 0; padding: 6px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); text-align: start; }
     .new-conversation span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     svg { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; }
     .search-row { position: relative; display: flex; min-width: 0; }
@@ -293,14 +295,15 @@
     .page-list .conversation { padding: 16px 0; gap: 6px; border-radius: 0; min-height: 80px; align-content: start; }
     .page-list .conversation-heading > span { font-size: 17px; line-height: 24px; font-weight: 550; }
     .page-list .conversation :global(.row-details) { padding-right: 36px; }
-    .sidebar-list .list-heading { min-height: 24px; padding-inline: 12px; }
+    .sidebar-list .list-heading { min-height: 24px; padding-inline: 12px; flex-wrap: wrap; gap: 4px 8px; }
     .sidebar-list .conversation-search { padding-left: 10px; gap: 0; }
     .sidebar-list .conversation-search > svg { display: none; }
     .sidebar-list .conversation-search input { min-height: 36px; font-size: 12px; }
     .sidebar-list .refresh-list { min-height: 36px; width: 36px; }
     .sidebar-list .group-title { margin-left: 12px; margin-top: 4px; }
-    .sidebar-list .new-conversation { justify-self: start; color: var(--content); }
-    @media (max-width: 700px), (pointer: coarse) { .sidebar-list .conversation, .sidebar-list .conversation-search input, .sidebar-list .refresh-list { min-height: 44px; } }
+    .sidebar-list .new-conversation { justify-self: start; color: var(--content); font-size: 12px; line-height: 18px; min-height: 32px; padding: 4px 6px; }
+    .sidebar-list .new-conversation svg { width: 16px; height: 16px; }
+    @media (max-width: 700px), (pointer: coarse) { .sidebar-list .conversation, .sidebar-list .conversation-search input, .sidebar-list .refresh-list, .sidebar-list .new-conversation { min-height: 44px; } }
     form label { flex: 1; min-width: 160px; }
     .muted { font-size: 12px; margin: 0; }
     .row-actions { display: block; grid-column: 1 / -1; min-width: 0; }

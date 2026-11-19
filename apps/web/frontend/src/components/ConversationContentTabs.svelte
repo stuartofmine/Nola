@@ -67,7 +67,7 @@
         {#if entry.key === conversationTabKey && renameTarget && conversationId === renameTarget.id && canRename}
             <form class="tab-rename" onsubmit={event => { event.preventDefault(); void commitRename(); }}>
                 <input bind:this={renameInput} bind:value={draftTitle} disabled={renaming} aria-label={t($locale, 'chatConversations.titleField')}
-                    onblur={() => { if (!renaming && renameTarget && draftTitle.trim() === renameTarget.baseline) renameTarget = null; }}
+                    onblur={() => { if (!renaming && renameTarget) { const next = draftTitle.trim(); if (next && next !== renameTarget.baseline) void commitRename(); else renameTarget = null; } }}
                     onkeydown={event => { if (event.key === 'Escape') { event.preventDefault(); renameTarget = null; } }} />
             </form>
         {:else}

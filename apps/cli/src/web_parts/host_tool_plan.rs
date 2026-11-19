@@ -24,13 +24,40 @@ struct HostToolPlanRead {
 
 fn host_tool_plan_now() -> u64 { unix_time_seconds().saturating_mul(1_000) }
 
+fn bind_available_mcp_configurations(values: &[Value], host: &str, session: &str) -> Result<Vec<Value>, String> {
+    if host.trim().is_empty() || session.trim().is_empty() {
+        return Err("MCP requires a concrete Host/session owner".into());
+    }
+    let mut bound = Vec::with_capacity(values.len());
+    for value in values {
+        match crate::mcp_connection_authority::bind_configurations(
+            std::slice::from_ref(value),
+            host,
+            session,
+        ) {
+            Ok(mut items) => bound.append(&mut items),
+            Err(error) => {
+                crate::llm::log_local_debug_payload(
+                    "mcp_server_unavailable",
+                    &json!({
+                        "type": "mcp_server_unavailable",
+                        "server_id": value.get("server_id").or_else(|| value.get("id")).or_else(|| value.get("name")),
+                        "error": error,
+                    }),
+                );
+            }
+        }
+    }
+    Ok(bound)
+}
+
 fn host_tool_plan_tools(settings: &AgentSettings, skills: &crate::skill_runtime::SkillRuntimeContext, session: &str)
     -> Result<(Vec<HostToolPlanTool>, String), String> {
     use sha2::{Digest, Sha256};
     let mut schemas = resolve_web_agent_host_tools_from_catalog(settings, &[], &crate::tools::tool_schemas_with_skills(skills));
     schemas.push(nola_core::agent::generative_ui::tool_schema());
     let registry = crate::resource_access::mcp_runtime_resources(&settings.mcp_servers);
-    let registry = crate::mcp_connection_authority::bind_configurations(&registry,"nola-cli-host",session)?;
+    let registry = bind_available_mcp_configurations(&registry, "nola-cli-host", session)?;
     crate::mcp_host::register_configured_servers(&registry).map_err(|error|error.message)?;
     let registry = crate::mcp_host::describe_connected_cache(&registry).map_err(|error|error.message)?;
     let catalog = crate::agent_host_driver::configured_mcp_capability_catalog(&registry,
@@ -63,7 +90,7 @@ fn bind_and_catalog_web_mcp(config: &mut Config, raw_servers: &[Value], session:
         );
         return Ok(());
     }
-    let bound = crate::mcp_connection_authority::bind_configurations(
+    let bound = bind_available_mcp_configurations(
         raw_servers,
         "nola-cli-host",
         session,

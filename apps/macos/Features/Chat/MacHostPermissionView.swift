@@ -187,9 +187,8 @@ struct MacHostPermissionCard: View {
             }
         }
         .accessibilityIdentifier("chat.permission.guidance.open")
-        Button(String(localized: "Deny for Run"), role: .cancel, action: deny)
+        Button(String(localized: "Deny for Run"), role: .destructive, action: deny)
             .accessibilityIdentifier("chat.permission.deny")
-            .keyboardShortcut(.escape, modifiers: [])
         if requestedFolder == nil {
             if request.allowConversation {
                 Button(String(localized: "Remember This Approval", table: "Chat"), action: allowConversation)

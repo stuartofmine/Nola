@@ -886,8 +886,7 @@ fn private_state_root() -> Result<PathBuf, String> {
     if let Some(root) = std::env::var_os("NOLA_HOME").filter(|value| !value.is_empty()) {
         return Ok(PathBuf::from(root).join("cli"));
     }
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
+    let home = crate::platform_paths::home_dir()
         .ok_or("HOME is unavailable; cannot locate Nola private state")?;
     Ok(home.join(".nola").join("cli"))
 }
@@ -905,9 +904,16 @@ fn set_private_permissions(path: &Path) -> Result<(), String> {
 fn agent_host_executable() -> Result<PathBuf, String> {
     let current = std::env::current_exe()
         .map_err(|error| format!("cannot locate current Nola executable: {error}"))?;
-    let sibling = current.with_file_name("nola-agent-host");
-    if sibling.is_file() {
-        return Ok(sibling);
+    let candidates: &[&str] = if cfg!(windows) {
+        &["nola-agent-host.exe", "nola-agent-host"]
+    } else {
+        &["nola-agent-host"]
+    };
+    for name in candidates {
+        let sibling = current.with_file_name(name);
+        if sibling.is_file() {
+            return Ok(sibling);
+        }
     }
     Err(format!(
         "nola-agent-host is not installed beside {}",

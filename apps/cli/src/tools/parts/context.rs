@@ -2205,6 +2205,15 @@ fn skill_invoke(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
     if !matches!(mode, "inline" | "fork") {
         return error(format!("Invalid Skill execution mode: {mode}"));
     }
+    let activation = args
+        .get("activation")
+        .and_then(Value::as_str)
+        .or_else(|| manifest.get("activation").and_then(Value::as_str))
+        .unwrap_or("turn")
+        .trim();
+    if !matches!(activation, "turn" | "session" | "conversation" | "pinned") {
+        return error(format!("Invalid Skill activation scope: {activation}"));
+    }
     let execution_context = json!({
         "workspace_root": ctx.allowed_dirs.first().map(|path| path.to_string_lossy()),
         "base_directory": base_directory.to_string_lossy(),
@@ -2222,6 +2231,7 @@ fn skill_invoke(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
         "display_name": display_name,
         "instructions_ref": instructions_ref,
         "mode": mode,
+        "activation": activation,
         // A Host may relay a Skill-authored explicit budget, but it must not
         // invent one. Core owns the default lifecycle policy and interprets a
         // missing/null budget as SkillRunBudget::default().

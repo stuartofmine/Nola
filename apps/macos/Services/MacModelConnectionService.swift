@@ -128,8 +128,18 @@ nonisolated final class MacModelConnectionService: Sendable {
     func disconnect(_ snapshot: MacModelConnectionSnapshot) throws -> MacModelConnectionSnapshot {
         var document = snapshot.document; document.connection.enabled = false
         let input = try JSONDecoder().decode(MacCanonicalJSONValue.self, from: JSONEncoder().encode(document.connection))
-        return try command(["type": .string("save_connection"), "input": input,
+        let updated: MacModelConnectionSnapshot = try command(["type": .string("save_connection"), "input": input,
             "expected_revision": .signedInteger(snapshot.revision), "updated_at_ms": now])
+        NotificationCenter.default.post(name: .nolaMacConfigurationDidChange, object: nil)
+        return updated
+    }
+    func reconnect(_ snapshot: MacModelConnectionSnapshot) throws -> MacModelConnectionSnapshot {
+        var document = snapshot.document; document.connection.enabled = true
+        let input = try JSONDecoder().decode(MacCanonicalJSONValue.self, from: JSONEncoder().encode(document.connection))
+        let updated: MacModelConnectionSnapshot = try command(["type": .string("save_connection"), "input": input,
+            "expected_revision": .signedInteger(snapshot.revision), "updated_at_ms": now])
+        NotificationCenter.default.post(name: .nolaMacConfigurationDidChange, object: nil)
+        return updated
     }
     func discover(_ snapshot: MacModelConnectionSnapshot) async throws -> MacModelConnectionSnapshot {
         try Task.checkCancellation()

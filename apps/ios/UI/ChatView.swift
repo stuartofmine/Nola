@@ -210,6 +210,7 @@ struct ChatView: View {
     @State private var showSkillsSheet: Bool = false
     @State private var showMoreSettingsSheet: Bool = false
     @State private var conversationInspectorPane: IOSConversationInspectorPane?
+    @State private var initialGoalObjective = ""
     private struct WorkToolsPresentation: Identifiable {
         let id = UUID()
         let owner: UUID?
@@ -934,15 +935,17 @@ struct ChatView: View {
             .accessibilityLabel(Text(L10n.chatTitle))
             .accessibilityIdentifier("chat.navigation.back")
             Button(action: openWorkTools) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(verbatim: currentConversationSubtitle).font(.callout.weight(.semibold)).lineLimit(1)
+                VStack(alignment: .center, spacing: 2) {
+                    HStack(spacing: 4) {
+                        Text(verbatim: currentConversationSubtitle).font(.headline).lineLimit(1)
+                        Image("nola-chevron").renderingMode(.template).resizable().scaledToFit()
+                            .frame(width: 10, height: 10).foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+                    }
                     Text(verbatim: conversationParticipantSummary).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(DesignTokens.surfaceColor, in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(DesignTokens.borderColor, lineWidth: 1))
+                .padding(.horizontal, 8)
+                .frame(maxWidth: .infinity, minHeight: 44)
                 .contentShape(Rectangle())
             }.accessibilityIdentifier("chat.conversation.details")
             Button { showIMSearch = true } label: {
@@ -951,9 +954,11 @@ struct ChatView: View {
             }.accessibilityLabel(Text("chat.search.loaded.title"))
 
         }
-        .buttonStyle(.plain).padding(.horizontal, 4).padding(.vertical, 8)
-        .background(DesignTokens.backgroundColor)
-        .overlay(alignment: .bottom) { NolaDivider() }
+        .buttonStyle(.plain).padding(.horizontal, 4).padding(.vertical, 6)
+        .background(DesignTokens.backgroundColor.ignoresSafeArea(edges: .top))
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(DesignTokens.borderColor).frame(height: 0.5)
+        }
     }
 
     private var chatPrimaryContent: some View {
@@ -965,12 +970,16 @@ struct ChatView: View {
                 catch { attachmentImportMessage = error.localizedDescription; return }
                 selectChatModel(model)
             }
-            .background { if horizontalSizeClass == .compact { ChatNavigationGestureBridge().frame(width: 0, height: 0) } }
+            .background { ChatNavigationGestureBridge().frame(width: 0, height: 0) }
             .navigationTitle(horizontalSizeClass == .compact ? "" : currentConversationSubtitle)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar(horizontalSizeClass == .compact ? .hidden : .visible, for: .navigationBar)
+            .toolbar(.hidden, for: .navigationBar)
             .safeAreaInset(edge: .top, spacing: 0) {
-                if horizontalSizeClass == .compact { compactConversationHeader }
+                if horizontalSizeClass == .compact {
+                    compactConversationHeader
+                } else {
+                    chatTopBar(showsHistoryToggle: false)
+                }
             }
             .task(id: container.chatManager.currentConversationId) {
                 guard let id = container.chatManager.currentConversationId else { return }
@@ -1050,14 +1059,15 @@ struct ChatView: View {
             .onChange(of: hybridClipboardEnabled) { _, _ in saveHybridCapabilitySettings() }
             .onChange(of: hybridLocationEnabled) { _, _ in saveHybridCapabilitySettings() }
             .onChange(of: hybridCalendarEnabled) { _, _ in saveHybridCapabilitySettings() }
-            .sheet(item: $conversationInspectorPane) { pane in
+            .sheet(item: $conversationInspectorPane, onDismiss: { initialGoalObjective = "" }) { pane in
                 IOSConversationInspector(pane: pane,
                     conversationID: container.chatManager.currentConversationId?.uuidString,
                     loadProgress: { try await container.chatManager.loadConversationProgress(conversationID: $0) },
                     submitGoalControl: { try await container.chatManager.controlConversationGoal(conversationID: $0, control: $1) },
                     discardGoalControl: { try await container.chatManager.discardConversationGoalControl(conversationID: $0) },
                     documents: currentUploadedDocuments + currentHostUploadedDocuments,
-                    processingState: container.chatManager.processingState)
+                    processingState: container.chatManager.processingState,
+                    initialObjective: initialGoalObjective)
                 .toggleStyle(NolaSwitchToggleStyle())
             }
             .onReceive(NotificationCenter.default.publisher(for: .nolaOpenChatTab)) { _ in }
@@ -1070,9 +1080,12 @@ struct ChatView: View {
                         queuedRenameOwner = (owner, baseline)
                         workToolsPresentation = nil
                     } }) { destination in
-                    if let owner = presentation.owner { queuedWorkDestination = (owner, destination) }
+                    if let owner = presentation.owner ?? container.chatManager.ensureCurrentConversation() {
+                        queuedWorkDestination = (owner, destination)
+                    }
                     workToolsPresentation = nil
                 }
+                .toggleStyle(NolaSwitchToggleStyle())
             }
             .modifier(IOSRenameConversationAlert(target: $renameTarget, draft: $renameDraft, confirm: confirmRenameConversation))
             .sheet(isPresented: $showIMSearch) {
@@ -1088,6 +1101,8 @@ struct ChatView: View {
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar { ToolbarItem(placement: .cancellationAction) { Button(L10n.close) { showIMSearch = false } } }
                 }
+                .nolaGroupedSurface()
+                .toggleStyle(NolaSwitchToggleStyle())
             }
             .sheet(isPresented: $showContextSheet) {
                 NavigationStack {
@@ -1129,6 +1144,10 @@ struct ChatView: View {
                         memoryEditorBaseline = saved
                         currentLongTermMemory = saved.longTermMemory
                         currentUserPreferences = saved.userPreferences
+                    } onSaveUploadedDocuments: { items in
+                        let savedDocuments = try container.chatManager.updateUploadedDocuments(items)
+                        memoryEditorBaseline?.uploadedDocuments = savedDocuments
+                        return savedDocuments
                     } onSaveConversationKnowledge: { snapshot in
                         let conversationId = try container.chatManager.updateConversationKnowledge(
                             knowledgePoints: snapshot.knowledgePoints,
@@ -1200,6 +1219,7 @@ struct ChatView: View {
                         }
                     }
                 }
+                .toggleStyle(NolaSwitchToggleStyle())
             }
             .sheet(isPresented: $showMoreSettingsSheet) { conversationSettingsSheet.toggleStyle(NolaSwitchToggleStyle()) }
             .alert(L10n.modelNoAvailableTitle, isPresented: $showNoModelWarning) {
@@ -1227,10 +1247,6 @@ struct ChatView: View {
         let permissionDecision = execution?.permissionDecisionHandler(
             localRequest: localPermission, hostRequest: hostPermission)
         return VStack(spacing: 0) {
-            if horizontalSizeClass != .compact {
-                chatTopBar(showsHistoryToggle: showsHistoryToggle)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
             if let expertSendError { Text(expertSendError).font(.callout).foregroundStyle(.red).padding(8) }
             if let submission = expertSubmission,
                submission.conversationAssociation?.conversationID == container.chatManager.currentConversationId?.uuidString {
@@ -1406,6 +1422,8 @@ struct ChatView: View {
             onShowProgress: { conversationInspectorPane = .progress },
             onShowResources: { conversationInspectorPane = .resources },
             onShowWorkTools: openWorkTools,
+            onBack: { dismiss() },
+            onSearch: { showIMSearch = true },
             reasoningEfforts: composerReasoningEfforts,
             reasoningPreference: composerReasoningPreference,
             reasoningSelectionEnabled: !processingState.blocksInput,
@@ -1517,7 +1535,6 @@ struct ChatView: View {
         .frame(maxWidth: .infinity)
         .fixedSize(horizontal: false, vertical: true)
         .background(DesignTokens.backgroundColor)
-        .overlay(NolaDivider(), alignment: .top)
     }
 
     private var permissionApplicationStatusText: String {
@@ -1778,7 +1795,7 @@ struct ChatView: View {
     }
     private func executeComposerCommand() -> Bool {
         guard let parsed = ComposerCommand.parse(inputText) else { return false }
-        guard let command = parsed.command, command != .plan || parsed.argument.isEmpty else {
+        guard let command = parsed.command else {
             commandError = ComposerCommand.invalidMessage; return true
         }
         if command == .stop && !processingState.blocksInput {
@@ -1792,6 +1809,10 @@ struct ChatView: View {
         case .resources: conversationInspectorPane = .resources
         case .permissions: openConversationSettings()
         case .plan: NotificationCenter.default.post(name: .nolaOpenWorkspace, object: 2)
+        case .goal:
+            _ = container.chatManager.ensureCurrentConversation()
+            initialGoalObjective = parsed.argument.trimmingCharacters(in: .whitespacesAndNewlines)
+            conversationInspectorPane = .goals
         case .search: NotificationCenter.default.post(name: .nolaSearchConversations, object: parsed.argument)
         case .stop: stopGeneration()
         case .help: inputText = "/"; composerFocused = true

@@ -58,6 +58,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -656,7 +657,7 @@ internal fun ChatScreen(
                     showExpertManagement = false
                     if (expertSourceAvailable) viewModel.refreshConversationExperts(restoreSelection = false) else showExpertPicker = false
                 })
-            } else Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp)) {
+            } else Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp)) {
                 TextButton(onClick = { showExpertManagement = true }, modifier = Modifier.testTag("chat.experts.manage").heightIn(min = 48.dp)) { Text(stringResource(R.string.expert_manage)) }
                 Text(stringResource(R.string.chat_experts), style = MaterialTheme.typography.titleLarge)
                 Text(stringResource(R.string.chat_experts_hint), style = MaterialTheme.typography.bodySmall,
@@ -812,7 +813,7 @@ internal fun ChatScreen(
             onLongTermMemoryChange = { viewModel.updateLongTermMemory(it) },
             onUserPreferencesChange = { viewModel.updateUserPreferences(it) },
             onSkillToggle = { skill, enabled -> viewModel.toggleSkill(skill, enabled) },
-            onSaveSkill = { original, name, content -> viewModel.saveSkill(original, name, content) },
+            onSaveSkill = { original, name, description, content -> viewModel.saveSkill(original, name, description, content) },
             onSkillDelete = { viewModel.deleteSkill(it) },
             onDocumentAdd = { viewModel.addDocument(it) },
             onDocumentDelete = { viewModel.deleteDocument(it) },
@@ -1012,7 +1013,17 @@ internal fun ChatScreen(
                     ) {
                         Icon(painterResource(R.drawable.nola_more), contentDescription = stringResource(R.string.common_more))
                     }
-                    if (showActions) ModalBottomSheet(onDismissRequest = { showActions = false }) {
+                    if (showActions) ModalBottomSheet(
+                        onDismissRequest = { showActions = false },
+                        sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .verticalScroll(rememberScrollState())
+                                .navigationBarsPadding()
+                                .padding(bottom = 32.dp)
+                        ) {
                         state.conversationId?.let { activeConversationId ->
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.chat_rename_conversation)) },
@@ -1049,6 +1060,7 @@ internal fun ChatScreen(
                                     inspector = toggleInspector(inspector, target)
                                 }
                             })
+                        }
                         }
                     }
                 }

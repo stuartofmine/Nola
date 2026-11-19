@@ -26,7 +26,7 @@ struct MacConversationCanvas: View {
     var modelSetupRequired: Bool
     var conversationControls: AnyView
     var modelControls: AnyView
-    var onCommand: (ComposerCommand) -> Void
+    var onCommand: (ComposerCommand, String) -> Void
     @State private var viewportStore = MacTranscriptViewportStore()
     @State private var commandError: String?
     @State private var highlightedCommand: String?
@@ -43,7 +43,7 @@ struct MacConversationCanvas: View {
         modelSetupRequired: Bool = false,
         conversationControls: AnyView = AnyView(EmptyView()),
         modelControls: AnyView = AnyView(EmptyView()),
-        onCommand: @escaping (ComposerCommand) -> Void = { _ in }
+        onCommand: @escaping (ComposerCommand, String) -> Void = { _, _ in }
     ) {
         self.modelSetupRequired = modelSetupRequired
         self.conversationControls = conversationControls
@@ -262,9 +262,12 @@ struct MacConversationCanvas: View {
                     }
                     if model.canCancelRejectedUIQueue {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(model.remoteRecoveryError ?? "表单操作未执行").font(.caption).foregroundStyle(.secondary)
-                            Button("移除未执行的表单操作") { Task { await model.cancelRejectedUIQueue() } }
-                                .accessibilityIdentifier("chat.ui.cancelRejectedQueue")
+                            Text(model.remoteRecoveryError ?? String(localized: "Form action was not executed", table: "Chat"))
+                                .font(.caption).foregroundStyle(.secondary)
+                            Button(String(localized: "Remove pending form action", table: "Chat")) {
+                                Task { await model.cancelRejectedUIQueue() }
+                            }
+                            .accessibilityIdentifier("chat.ui.cancelRejectedQueue")
                         }
                     }
                     if let pending = model.remotePendingSubmission, pending.identity.conversation_id == model.selectedConversationID {
@@ -306,6 +309,13 @@ struct MacConversationCanvas: View {
                             Button(String(localized: "Retry", table: "Chat")) { model.recheckRemoteRun() }
                                 .accessibilityIdentifier("chat.remote.recheck")
                         }
+                    }
+                    if let permissionError = model.selectedPermissionResolutionError {
+                        MacInlineNotice(
+                            message: permissionError,
+                            kind: .failure,
+                            dismiss: { model.dismissPermissionResolutionError() }
+                        )
                     }
                     if let request = model.selectedPendingRemotePermission {
                         MacHostPermissionCard(
@@ -436,14 +446,14 @@ struct MacConversationCanvas: View {
             expertMentionFailure = nil
         }
         .confirmationDialog(String(localized: "Use the expert’s latest configuration?"), isPresented: expertReintroductionPresented) {
-            Button("Reintroduce expert") {
+            Button(String(localized: "Reintroduce expert")) {
                 guard let intent = pendingExpertReintroduction else { return }
                 pendingExpertReintroduction = nil
                 performExpertMention(intent, allowReintroduction: true)
             }
-            Button("Cancel", role: .cancel) { pendingExpertReintroduction = nil }
+            Button(String(localized: "Cancel"), role: .cancel) { pendingExpertReintroduction = nil }
         } message: {
-            Text("This adds a new expert context with the latest model and template. Previous replies stay in this conversation.")
+            Text(String(localized: "This adds a new expert context with the latest model and template. Previous replies stay in this conversation."))
         }
     }
 
@@ -522,7 +532,7 @@ struct MacConversationCanvas: View {
     }
     private func executeCommand() -> Bool {
         guard let parsed = ComposerCommand.parse(model.draft) else { return false }
-        guard let command = parsed.command, command != .plan || parsed.argument.isEmpty else {
+        guard let command = parsed.command else {
             commandError = ComposerCommand.invalidMessage; return true
         }
         if command == .stop {
@@ -536,7 +546,7 @@ struct MacConversationCanvas: View {
         case .search: model.transcriptSearchText = parsed.argument; model.isTranscriptSearchVisible = true
         case .help: completeCommand(""); model.setDraft("/", conversationID: model.selectedComposerState.conversationID)
         case .stop: break
-        default: onCommand(command)
+        default: onCommand(command, parsed.argument)
         }
         return true
     }
@@ -559,6 +569,11 @@ struct MacConversationCanvas: View {
             || (model.remoteRunRecovery?.conversationID == model.selectedConversationID && model.remoteRunRecovery != nil)
             || (model.remoteRunRecovery == nil && model.remoteObservationNeedsAttention)
             || model.selectedPendingRemotePermission != nil
+            || model.selectedPermissionResolutionError != nil
             || model.selectedPendingUserInputRequest != nil
+            || model.hasDeferredUserInputWaits
+            || model.selectedUserInputWaitError != nil
+            || model.canCancelRejectedUIQueue
+            || MacExpertPermissionDock.hasControls(workspace: expertWorkspace, conversationID: model.selectedConversationID)
     }
 }

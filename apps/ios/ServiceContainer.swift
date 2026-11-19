@@ -170,7 +170,11 @@ public final class ServiceContainer: ObservableObject {
     }
     
     // Data sources & pipeline
-    var dataSources: [DataSource]
+    var dataSources: [DataSource] {
+        didSet {
+            contextManager?.dataSources = dataSources
+        }
+    }
     public internal(set) var healthDataSource: HealthDataSource? = nil
     let preprocessor: EventPreprocessor
     let rulesEngine: RulesEngine
@@ -414,6 +418,7 @@ public final class ServiceContainer: ObservableObject {
             self.conversationStore = convStore
             self.contextManager = DefaultContextManager(store: convStore, profileStore: self.chatMemoryProfileStore)
             self.contextManager?.localJSONStorage = self.localJSONStorage
+            self.contextManager?.dataSources = self.dataSources
         } catch {
             self.conversationStore = nil
             self.contextManager = nil

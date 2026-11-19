@@ -394,7 +394,7 @@ internal fun scheduledActionReferenceComponent(
     source: DataSourceReadResult,
     executionId: String,
 ): AgentCoreContextComponent = AgentCoreContextComponent(
-    kind = "reference",
+    kind = "web_retrieval",
     id = "scheduled_source:${action.id}:$executionId",
     content = JsonPrimitive(source.content),
     source = AgentCoreContextComponentSource(

@@ -171,7 +171,7 @@ fun ChatContextScreen(
     onLongTermMemoryChange: (String) -> Unit,
     onUserPreferencesChange: (String) -> Unit,
     onSkillToggle: (UploadedContent, Boolean) -> Unit,
-    onSaveSkill: suspend (UploadedContent?, String, String) -> Unit,
+    onSaveSkill: suspend (UploadedContent?, String, String, String) -> Unit,
     onSkillDelete: (UploadedContent) -> Unit,
     onDocumentAdd: (UploadedContent) -> Unit,
     onDocumentDelete: (UploadedContent) -> Unit,

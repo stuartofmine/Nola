@@ -47,6 +47,22 @@
     let results = $state<ImportResult[]>([]);
     let gateway = $state({revision: 0, enabled: false});
     let gatewayToken = $state('');
+    let tokenCopied = $state(false);
+    function attemptLabel(profileId: string) {
+        const match = inventory.selections.find(item => `${item.connection_id}:${item.catalog_key}` === profileId);
+        if (!match) return profileId;
+        const conn = inventory.connections.find(item => item.document.connection.id === match.connection_id);
+        const model = conn?.document.catalog?.models.find(item => `${item.protocol}:${item.model_id}` === match.catalog_key || item.model_id === match.catalog_key);
+        return model?.display_name || conn?.document.connection.display_name || profileId;
+    }
+    async function copyGatewayToken() {
+        if (!gatewayToken) return;
+        try {
+            await navigator.clipboard?.writeText(gatewayToken);
+            tokenCopied = true;
+            setTimeout(() => { if (alive) tokenCopied = false; }, 2000);
+        } catch { tokenCopied = false; }
+    }
     let attempts = $state<{record: {id: string; profile_id: string; outcome: string; usage: {input_tokens?: number | null; output_tokens?: number | null} | null}}[]>([]);
     let planSource = $state('');
     let expiredPlan = $state(false);
@@ -123,7 +139,7 @@
     function configureGateway(revoke: boolean) {
         void operation(async () => {
             const value = await api<{revision: number; token?: string}>('/api/model-gateway/access', {method: 'POST', body: JSON.stringify({expected_revision: gateway.revision, revoke})});
-            if (alive) { gatewayToken = value.token ?? ''; gateway = {revision: value.revision, enabled: !revoke}; }
+            if (alive) { gatewayToken = value.token ?? ''; tokenCopied = false; gateway = {revision: value.revision, enabled: !revoke}; }
         });
     }
     function readAttempts() { void operation(async () => { const value = await api<typeof attempts>('/api/model-gateway/attempts'); if (alive) attempts = value; }); }
@@ -179,13 +195,13 @@
         <p>{t($locale, 'connections.gatewayHint')}</p><code>{typeof location === 'undefined' ? '' : location.origin}/gateway/v1</code>
         <p><button disabled={busy} onclick={() => configureGateway(false)}>{t($locale, 'connections.issueToken')}</button>
         {#if gateway.enabled}<button disabled={busy} onclick={() => configureGateway(true)}>{t($locale, 'connections.revokeToken')}</button>{/if}</p>
-        {#if gatewayToken}<label>{t($locale, 'connections.tokenOnce')}<input readonly type="password" value={gatewayToken} onclick={event => event.currentTarget.select()} /></label>{/if}
+        {#if gatewayToken}<div class="gateway-token"><label>{t($locale, 'connections.tokenOnce')}<input readonly type="text" class="token-value" value={gatewayToken} onclick={event => event.currentTarget.select()} /></label><button type="button" onclick={copyGatewayToken}>{t($locale, tokenCopied ? 'shell.login.copied' : 'shell.markdown.copy')}</button></div>{/if}
     </details>
     <GatewayClients />
     <SourceAccounts />
     <details><summary>{t($locale, 'connections.gatewayUsage')}</summary>
         <button disabled={busy} onclick={readAttempts}>{t($locale, 'rooms.refresh')}</button>
-        {#each attempts as attempt (attempt.record.id)}<p>{attempt.record.profile_id} · {attempt.record.outcome} · {attempt.record.usage?.input_tokens ?? '—'} / {attempt.record.usage?.output_tokens ?? '—'}</p>{/each}
+        {#each attempts as attempt (attempt.record.id)}<p>{attemptLabel(attempt.record.profile_id)} · {attempt.record.outcome} · {attempt.record.usage?.input_tokens ?? '—'} / {attempt.record.usage?.output_tokens ?? '—'}</p>{/each}
     </details>
     </section>
 </section>
@@ -215,5 +231,8 @@
     .model small { display: block; font-size: .75rem; }
     .integrations > h3 { font-size: .9375rem; font-weight: 600; margin: 0 0 8px; }
     summary { cursor: pointer; min-height: 44px; padding: 10px 0; }
+    .gateway-token { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
+    .gateway-token label { flex: 1 1 240px; min-width: 0; }
+    .token-value { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
     @media (max-width: 480px) { .connection-summary { align-items: start; gap: 12px; } .connection-count { flex: 0 1 90px; overflow-wrap: anywhere; } }
 </style>

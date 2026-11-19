@@ -392,6 +392,21 @@ struct MacModelConnectionsView: View {
                             Divider()
                         }
 
+                    } else {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(String(localized: "This connection is disabled. Reconnect it to use its models in chat.", table: "ModelCenter"))
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Button(String(localized: "Reconnect", table: "ModelCenter")) {
+                                perform {
+                                    _ = try service.reconnect(connection)
+                                    status = String(localized: "Connection enabled. Discover or enable models below.", table: "ModelCenter")
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(busy)
+                        }
                     }
                 }
             }

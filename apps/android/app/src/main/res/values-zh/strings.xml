@@ -1383,4 +1383,6 @@
     <string name="chat_ui_host_submission_unknown">Host 提交结果尚未确认。</string>
     <string name="chat_ui_submission_rejected">提交被拒绝。</string>
     <string name="chat_ui_submission_unknown">提交结果尚未确认。</string>
+    <string name="chat_skill_description">描述（可选）</string>
+    <string name="models_web_host_disconnect">断开连接</string>
 </resources>

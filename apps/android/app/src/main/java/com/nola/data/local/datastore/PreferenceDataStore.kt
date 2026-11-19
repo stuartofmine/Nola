@@ -76,6 +76,10 @@ class PreferenceDataStore @Inject constructor(
         context.preferenceDataStore.edit { it[KEY_DEFAULT_MODEL_SELECTION] = value.toString() }
     }
 
+    suspend fun clearDefaultModelSelection() {
+        context.preferenceDataStore.edit { it.remove(KEY_DEFAULT_MODEL_SELECTION) }
+    }
+
     suspend fun defaultModelSelection(models: List<com.nola.domain.model.ModelInfo>): com.nola.domain.model.ModelInfo? {
         val raw = context.preferenceDataStore.data.first()[KEY_DEFAULT_MODEL_SELECTION] ?: return null
         val value = kotlinx.serialization.json.Json.parseToJsonElement(raw) as? kotlinx.serialization.json.JsonObject ?: return null

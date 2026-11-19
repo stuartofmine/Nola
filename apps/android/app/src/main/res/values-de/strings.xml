@@ -1384,4 +1384,6 @@
     <string name="chat_ui_host_submission_unknown">Das Ergebnis der Host-Übermittlung wurde noch nicht bestätigt.</string>
     <string name="chat_ui_submission_rejected">Die Übermittlung wurde abgelehnt.</string>
     <string name="chat_ui_submission_unknown">Das Ergebnis der Übermittlung wurde noch nicht bestätigt.</string>
+    <string name="chat_skill_description">Beschreibung (optional)</string>
+    <string name="models_web_host_disconnect">Host trennen</string>
 </resources>
