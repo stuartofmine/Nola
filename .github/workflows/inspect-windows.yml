@@ -1,0 +1,51 @@
+name: Verify existing Tauri installer
+on:
+  push:
+    branches: [release/windows-tauri-acceptance]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  accept:
+    runs-on: windows-2025
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 44518745086
+          name: windows-tauri-installer
+          path: installer
+      - run: npm ci
+        working-directory: apps/windows
+      - name: Inspect installed WebView2 and Host startup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $env:RUNNER_TEMP 'NolaInstalled'
+          $setup = (Get-ChildItem installer -Filter '*.exe').FullName
+          $installer = Start-Process $setup -ArgumentList "/S /D=$dir" -Wait -PassThru
+          if ($installer.ExitCode) { throw "Installer exited $($installer.ExitCode)" }
+          $env:NOLA_INSTALLED_DESKTOP = Join-Path $dir 'nola-desktop.exe'
+          $env:NOLA_HOME = Join-Path $env:RUNNER_TEMP 'nola-test'
+          $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=19223'
+          $env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $env:NOLA_HOME 'WebProfile'
+          $p = Start-Process $env:NOLA_INSTALLED_DESKTOP -PassThru
+          Start-Sleep -Seconds 12
+          Get-Process -Name nola*,msedgewebview2 -ErrorAction SilentlyContinue | Select-Object Name,Id,SessionId,MainWindowTitle | Format-Table
+          Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" | ForEach-Object { Write-Output ("WebView2 has test port: " + ($_.CommandLine -like '*19223*')) }
+          Get-ChildItem "${env:ProgramFiles(x86)}/Microsoft/EdgeWebView/Application" -Directory -ErrorAction SilentlyContinue | Select-Object Name
+          foreach ($file in @('host-port','host-startup.log')) {
+            $path = Join-Path "$env:LOCALAPPDATA/com.nola.assistant.windows" $file
+            if (Test-Path $path) { Get-Content $path -Tail 12 }
+          }
+          $meta = Invoke-RestMethod http://127.0.0.1:19223/json/version
+          Write-Output ("CDP version: " + $meta.Browser + " protocol " + $meta.'Protocol-Version' + " websocket present " + [bool]$meta.webSocketDebuggerUrl)
+          Push-Location apps/windows
+          node -e "const p=require('playwright-core'); (async()=>{const b=await p.chromium.connectOverCDP('http://127.0.0.1:19223',{noDefaults:true,timeout:10000});for(const c of b.contexts())for(const page of c.pages()) console.log('Page',new URL(page.url()).origin, await page.title()); await b.close()})().catch(e=>{console.error(e.message);process.exitCode=1})"
