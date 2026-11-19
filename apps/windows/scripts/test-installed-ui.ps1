@@ -10,6 +10,7 @@ public class DesktopInput {
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, System.UIntPtr extra);
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+    [DllImport("user32.dll")] public static extern System.IntPtr GetForegroundWindow();
 }
 '@
 [void][DesktopInput]::SetProcessDPIAware()
@@ -86,7 +87,15 @@ try {
     $saved = @((Invoke-RestMethod "$before/api/chat/conversations").conversations)
     if ($saved.Count -ne 1 -or !$saved[0].conversationId) { throw 'Conversation creation did not commit' }
     Click-Control (Find-Control name 'Add text files')
-    Start-Sleep -Milliseconds 900
+    $dialog = $null
+    for ($i = 0; $i -lt 50; $i++) {
+        $foreground = $uia::FromHandle([DesktopInput]::GetForegroundWindow())
+        if ($foreground.Current.ClassName -eq '#32770') { $dialog = $foreground; break }
+        Start-Sleep -Milliseconds 200
+    }
+    if (!$dialog) { throw 'Clicking Add text files did not open the Windows file picker' }
+    [Windows.Forms.SendKeys]::SendWait('%n')
+    [Windows.Forms.SendKeys]::SendWait('^a')
     Paste-Text $note
     [Windows.Forms.SendKeys]::SendWait('{ENTER}')
     $null = Find-Control name 'restart-note.txt'
