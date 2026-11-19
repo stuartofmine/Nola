@@ -33,31 +33,4 @@ jobs:
           $installer = Start-Process $setup -ArgumentList "/S /D=$dir" -Wait -PassThru
           if ($installer.ExitCode) { throw "Installer exited $($installer.ExitCode)" }
           $env:NOLA_INSTALLED_DESKTOP = Join-Path $dir 'nola-desktop.exe'
-          $env:NOLA_HOME = Join-Path $env:RUNNER_TEMP 'nola-test'
-          $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=19223'
-          $env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $env:NOLA_HOME 'WebProfile'
-          $env:NOLA_E2E_USER_DATA = Join-Path $env:NOLA_HOME 'desktop'
-          Add-Type -AssemblyName UIAutomationClient
-          Add-Type -AssemblyName UIAutomationTypes
-          Add-Type -AssemblyName System.Windows.Forms
-          $proc = Start-Process $env:NOLA_INSTALLED_DESKTOP -PassThru
-          Start-Sleep -Seconds 5
-          $proc.Refresh()
-          $shell = New-Object -ComObject WScript.Shell
-          $null = $shell.AppActivate($proc.Id)
-          $root = [System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)
-          for ($i=0; $i -lt 10; $i++) {
-            $nodes = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
-            if ($nodes.Count -gt 30) { break }
-            [System.Windows.Forms.SendKeys]::SendWait('{TAB}')
-            Start-Sleep -Milliseconds 800
-          }
-          $nodes | Select-Object -First 90 | ForEach-Object { Write-Output ($_.Current.ControlType.ProgrammaticName + ' ' + $_.Current.Name + ' id=' + $_.Current.AutomationId) }
-          foreach ($file in @('host-port','host-startup.log')) {
-            $path = Join-Path $env:NOLA_E2E_USER_DATA $file
-            if (Test-Path $path) { Get-Content $path -Tail 12 }
-          }
-          $session = Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" | Where-Object ParentProcessId -eq $proc.Id
-          $flags = [regex]::Matches($session.CommandLine,'--[a-zA-Z0-9-]+') | ForEach-Object Value
-          Write-Output ("Browser options " + ($flags -join ' '))
-          if ($nodes.Count -lt 30) { throw 'Installed WebView accessible tree unavailable' }
+          & apps/windows/scripts/test-installed-ui.ps1
