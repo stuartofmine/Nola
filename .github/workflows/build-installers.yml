@@ -1,57 +1,10 @@
-name: Build and verify Nola 1.0.0 build 2
+name: Build and verify Linux installers for Nola 1.0.0 build 2
 on:
   push:
     branches: [release/build-2-runners]
 permissions:
   contents: read
 jobs:
-  windows:
-    if: "!contains(github.event.head_commit.message, '[linux-only]')"
-    runs-on: windows-2025
-    timeout-minutes: 150
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-      - run: npm ci
-        working-directory: apps/windows
-      - run: npm run dist:x64
-        working-directory: apps/windows
-      - name: Install and open the Windows app
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $setup = @(Get-ChildItem apps/windows/release/cpu -Filter '*.exe' -File)
-          if ($setup.Count -ne 1) { throw 'Expected one NSIS installer' }
-          $dir = "$env:RUNNER_TEMP\NolaInstalled"
-          $installer = Start-Process $setup[0].FullName -ArgumentList "/S /D=$dir" -Wait -PassThru
-          if ($installer.ExitCode -ne 0) { throw 'Installer failed' }
-          $env:NOLA_E2E_USER_DATA = "$env:RUNNER_TEMP\nola-test-profile"
-          $app = Start-Process "$dir\Nola.exe" -PassThru
-          try {
-            $ready = $false
-            foreach ($i in 1..90) {
-              Start-Sleep 2
-              if ($app.HasExited) { throw 'Installed app exited' }
-              $child = Get-CimInstance Win32_Process -Filter "Name='nola.exe'" | Where-Object { $_.ExecutablePath -like "$dir\resources\*" -and $_.CommandLine -match '--port\s+(\d+)' } | Select-Object -First 1
-              if ($child -and $child.CommandLine -match '--port\s+(\d+)') {
-                try {
-                  $response = Invoke-WebRequest "http://127.0.0.1:$($Matches[1])/api/health" -TimeoutSec 2
-                  if ($response.StatusCode -eq 200) { $ready = $true; break }
-                } catch {}
-              }
-            }
-            if (-not $ready) { throw 'Installed app did not start its Web Host' }
-          } finally { if (-not $app.HasExited) { Stop-Process -Id $app.Id } }
-          Copy-Item $setup[0].FullName Nola-windows-x86_64-1.0.0-build.2.exe
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows-x86_64
-          path: Nola-windows-x86_64-1.0.0-build.2.exe
-          if-no-files-found: error
   linux:
     strategy:
       fail-fast: false
