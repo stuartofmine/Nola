@@ -105,9 +105,26 @@ class AndroidProductDataSourceRealEndToEndTest {
 
     @Test
     fun modelParametersSurviveCanonicalModelProfileColdReopen() = runBlocking {
-        val database = File(context.cacheDir, "model-parameters-${UUID.randomUUID()}.db")
+        val root = File(context.cacheDir, "model-parameters-${UUID.randomUUID()}").apply { mkdirs() }
+        val database = File(root, "product.db")
         try {
             AndroidApplicationRuntime(context, database).use { firstStore ->
+                firstStore.upsertModelProfile(
+                    com.nola.data.local.CanonicalModelProfile(
+                        id = "qwen3.5-4b",
+                        displayName = "Qwen 3.5 4B",
+                        provider = "llama_cpp",
+                        modelName = "qwen3.5-4b",
+                        runtime = "local",
+                        sourceJson = "{}",
+                        parametersJson = "{}",
+                        selected = true,
+                        enabled = true,
+                        revision = 0,
+                        createdAtMs = 1,
+                        updatedAtMs = 1,
+                    )
+                )
                 ModelParametersStore(firstStore).saveParameters(
                     "qwen3.5-4b",
                     ModelParametersStore.defaultParameters.copy(
@@ -125,7 +142,7 @@ class AndroidProductDataSourceRealEndToEndTest {
                 assertTrue(reopenedStore.listModelProfiles().single().parametersJson.isNotEmpty())
             }
         } finally {
-            database.delete()
+            root.deleteRecursively()
         }
     }
 

@@ -25,15 +25,47 @@ window.addEventListener("DOMContentLoaded", () => {
     document.getElementById("nola-open-logs")?.addEventListener("click", () => {
         void ipcRenderer.invoke("desktop:open-log-folder");
     });
-    if (location.pathname === "/models") {
-        void ipcRenderer.invoke("desktop:native-runtime").then((runtime: { architecture?: string; backend?: string } | null) => {
-            const engineState = document.querySelector(".model-engine-state");
-            if (!engineState || !runtime?.backend) return;
-            const badge = document.createElement("span");
-            badge.className = "desktop-native-runtime";
-            badge.textContent = `${runtime.backend.toUpperCase()} · ${(runtime.architecture ?? "").toUpperCase()}`;
-            badge.title = "llama.cpp";
-            engineState.appendChild(badge);
+    const isModelsLocation = () =>
+        location.pathname === "/models" ||
+        (new URLSearchParams(location.search).get("content") ?? "").startsWith("/models");
+    let cachedRuntime: Promise<{ architecture?: string; backend?: string } | null> | undefined;
+    let badgeObserver: MutationObserver | undefined;
+    const attachRuntimeBadge = (runtime: { architecture?: string; backend?: string } | null): boolean => {
+        const engineState = document.querySelector("[data-local-runtime-host], .model-engine-state");
+        if (!engineState || !runtime?.backend) return false;
+        if (engineState.querySelector(".desktop-native-runtime")) return true;
+        const badge = document.createElement("span");
+        badge.className = "desktop-native-runtime";
+        badge.textContent = `${runtime.backend.toUpperCase()} · ${(runtime.architecture ?? "").toUpperCase()}`;
+        badge.title = "llama.cpp";
+        engineState.appendChild(badge);
+        return true;
+    };
+    const syncNativeRuntimeBadge = () => {
+        if (!isModelsLocation()) {
+            badgeObserver?.disconnect();
+            badgeObserver = undefined;
+            return;
+        }
+        cachedRuntime ??= ipcRenderer.invoke("desktop:native-runtime");
+        void cachedRuntime.then((runtime) => {
+            if (attachRuntimeBadge(runtime) || !runtime?.backend || !document.body) {
+                badgeObserver?.disconnect();
+                badgeObserver = undefined;
+                return;
+            }
+            if (!badgeObserver) {
+                badgeObserver = new MutationObserver(() => {
+                    if (attachRuntimeBadge(runtime) || !isModelsLocation()) {
+                        badgeObserver?.disconnect();
+                        badgeObserver = undefined;
+                    }
+                });
+                badgeObserver.observe(document.body, { childList: true, subtree: true });
+            }
         });
-    }
+    };
+    syncNativeRuntimeBadge();
+    window.addEventListener("popstate", syncNativeRuntimeBadge);
+    document.addEventListener("click", () => setTimeout(syncNativeRuntimeBadge, 50), true);
 });

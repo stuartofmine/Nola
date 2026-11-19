@@ -1,14 +1,16 @@
 use std::env;
-use std::sync::OnceLock;
+use std::sync::RwLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Language {
     ZhHans,
+    ZhHant,
     En,
     De,
     Es,
     Fr,
     Ja,
+    Ko,
     Ru,
 }
 
@@ -230,7 +232,7 @@ pub enum Message {
     InteractiveRawModeFailedPrefix,
 }
 
-static LANGUAGE_OVERRIDE: OnceLock<Language> = OnceLock::new();
+static LANGUAGE_OVERRIDE: RwLock<Option<Language>> = RwLock::new(None);
 
 #[derive(Debug, Clone, Copy)]
 pub struct PermissionText {
@@ -275,6 +277,27 @@ pub fn permission_text() -> PermissionText {
             path: "路径",
             directory: "目录",
             allowed: "已允许",
+            tool: "工具",
+            summary: "摘要",
+        },
+        Language::ZhHant => PermissionText {
+            allow_once_option: "僅允許本次",
+            deny_option: "拒絕",
+            keyboard_hint: "使用 ↑/↓ 選擇，Enter 確認 · 也可按 1/2/3/N",
+            once_only_keyboard_hint: "使用 ↑/↓ 選擇，Enter 確認 · 也可按 1/3/N",
+            session_unavailable_option: "本對話允許（目前請求未提供此選項）",
+            custom_response: "返回主輸入框…",
+            allow_conversation_prefix: "本對話允許：",
+            file_access_title: "檔案存取需要授權",
+            default_working_directory: "預設工作目錄",
+            cwd: "工作目錄",
+            command: "指令",
+            reason: "原因",
+            endpoint: "端點",
+            model: "模型",
+            path: "路徑",
+            directory: "目錄",
+            allowed: "已允許",
             tool: "工具",
             summary: "摘要",
         },
@@ -361,6 +384,27 @@ pub fn permission_text() -> PermissionText {
             allowed: "許可済み",
             tool: "ツール",
             summary: "概要",
+        },
+        Language::Ko => PermissionText {
+            allow_once_option: "한 번만 허용",
+            deny_option: "거부",
+            keyboard_hint: "↑/↓로 선택 후 Enter로 확인 · 1/2/3/N 사용 가능",
+            once_only_keyboard_hint: "↑/↓로 선택 후 Enter로 확인 · 1/3/N 사용 가능",
+            session_unavailable_option: "이 세션에서 허용(이 요청에서는 선택할 수 없음)",
+            custom_response: "입력창으로 돌아가기…",
+            allow_conversation_prefix: "이 세션에서 허용:",
+            file_access_title: "파일 접근 권한이 필요합니다",
+            default_working_directory: "기본 작업 디렉터리",
+            cwd: "작업 위치",
+            command: "명령어",
+            reason: "이유",
+            endpoint: "엔드포인트",
+            model: "모델",
+            path: "경로",
+            directory: "디렉터리",
+            allowed: "허용됨",
+            tool: "도구",
+            summary: "요약",
         },
         Language::Ru => PermissionText {
             allow_once_option: "Разрешить один раз",
@@ -556,7 +600,9 @@ pub enum UiText {
     CreateConfigPrompt,
     EndpointPrompt,
     EndpointRequired,
+    EndpointInvalidScheme,
     ModelPrompt,
+    ModelRequired,
     ApiKeyPrompt,
     ConfigCreated,
     InitCheckOutput,
@@ -604,167 +650,183 @@ pub fn ui_text(key: UiText) -> &'static str {
 
 fn ui_text_for(language: Language, key: UiText) -> &'static str {
     let values = match key {
-        UiText::HelpSources => ["管理数据源：/sources [list|add|test|remove|enable|disable|inherit]", "Manage data sources: /sources [list|add|test|remove|enable|disable|inherit]", "Datenquellen verwalten: /sources [list|add|test|remove|enable|disable|inherit]", "Gestionar fuentes de datos: /sources [list|add|test|remove|enable|disable|inherit]", "Gérer les sources de données : /sources [list|add|test|remove|enable|disable|inherit]", "データソースを管理: /sources [list|add|test|remove|enable|disable|inherit]", "Управление источниками данных: /sources [list|add|test|remove|enable|disable|inherit]"],
-        UiText::DataSourcesTitle => ["数据源", "Data sources", "Datenquellen", "Fuentes de datos", "Sources de données", "データソース", "Источники данных"],
-        UiText::DataSourcesUsage => ["用法", "Usage", "Verwendung", "Uso", "Utilisation", "使い方", "Использование"],
-        UiText::DataSourceAdded => ["数据源已测试并添加", "Data source tested and added", "Datenquelle getestet und hinzugefügt", "Fuente de datos probada y añadida", "Source de données testée et ajoutée", "データソースをテストして追加しました", "Источник данных проверен и добавлен"],
-        UiText::DataSourceTested => ["数据源测试成功", "Data source test passed", "Datenquellentest erfolgreich", "Prueba de fuente de datos superada", "Test de la source de données réussi", "データソースのテストに成功しました", "Проверка источника данных пройдена"],
-        UiText::DataSourceRemoved => ["数据源已删除", "Data source removed", "Datenquelle entfernt", "Fuente de datos eliminada", "Source de données supprimée", "データソースを削除しました", "Источник данных удалён"],
-        UiText::DataSourceEnabled => ["已在当前会话启用", "Enabled for this conversation", "Für diese Unterhaltung aktiviert", "Activada para esta conversación", "Activée pour cette conversation", "この会話で有効にしました", "Включено для этого диалога"],
-        UiText::DataSourceDisabled => ["已在当前会话停用", "Disabled for this conversation", "Für diese Unterhaltung deaktiviert", "Desactivada para esta conversación", "Désactivée pour cette conversation", "この会話で無効にしました", "Отключено для этого диалога"],
-        UiText::DataSourceInherited => ["已恢复默认策略", "Default policy restored", "Standardrichtlinie wiederhergestellt", "Política predeterminada restaurada", "Politique par défaut restaurée", "既定のポリシーに戻しました", "Политика по умолчанию восстановлена"],
-        UiText::DataSourceNoSession => ["当前没有可用会话", "No active conversation", "Keine aktive Unterhaltung", "No hay una conversación activa", "Aucune conversation active", "アクティブな会話がありません", "Нет активного диалога"],
-        UiText::DataSourceEmpty => ["尚未添加数据源", "No data sources yet", "Noch keine Datenquellen", "Aún no hay fuentes de datos", "Aucune source de données", "データソースはまだありません", "Источники данных ещё не добавлены"],
-        UiText::DataSourceUnknownAction => ["未知的数据源操作", "Unknown data-source action", "Unbekannte Datenquellenaktion", "Acción de fuente de datos desconocida", "Action de source de données inconnue", "不明なデータソース操作です", "Неизвестное действие с источником данных"],
-        UiText::DataSourcePolicy => ["策略", "Policy", "Richtlinie", "Política", "Politique", "ポリシー", "Политика"],
-        UiText::DataSourceRecords => ["条使用记录", "usage records", "Nutzungsprotokolle", "registros de uso", "enregistrements d’utilisation", "件の利用記録", "записей использования"],
-        UiText::DataSourceVerified => ["已验证", "Verified", "Verifiziert", "Verificada", "Vérifiée", "検証済み", "Проверено"],
-        UiText::PromptCache => ["提示缓存", "Prompt cache", "Prompt-Cache", "Caché de instrucciones", "Cache d’invite", "プロンプトキャッシュ", "Кэш промпта"],
-        UiText::CacheRead => ["读取", "read", "gelesen", "leída", "lecture", "読み取り", "чтение"],
-        UiText::CacheWrite => ["写入", "write", "geschrieben", "escrita", "écriture", "書き込み", "запись"],
-        UiText::CacheSections => ["片段变化", "section changes", "Abschnittsänderungen", "cambios de sección", "changements de section", "セクション変更", "изменения разделов"],
-        UiText::CacheDisabled => ["已关闭", "disabled", "deaktiviert", "deshabilitada", "désactivé", "無効", "отключено"],
-        UiText::CacheInvalidIdentity => ["标识无效", "invalid identity", "ungültige Identität", "identidad no válida", "identité non valide", "識別情報が無効", "недопустимый идентификатор"],
-        UiText::CacheFirstRequest => ["首次请求", "first request", "erste Anfrage", "primera solicitud", "première requête", "初回リクエスト", "первый запрос"],
-        UiText::CacheHit => ["命中", "hit", "Treffer", "acierto", "succès", "ヒット", "попадание"],
-        UiText::CacheHitRate => ["缓存命中率", "Cache hit rate", "Cache-Trefferrate", "Aciertos de caché", "Taux de cache", "キャッシュ命中率", "Попадания в кэш"],
-        UiText::CacheStored => ["已写入", "stored", "gespeichert", "guardada", "enregistré", "保存済み", "сохранено"],
-        UiText::CacheMiss => ["未命中", "miss", "nicht getroffen", "fallo", "échec", "ミス", "промах"],
-        UiText::CacheStableCandidate => ["稳定候选", "stable candidate", "stabiler Kandidat", "candidata estable", "candidat stable", "安定候補", "стабильный кандидат"],
-        UiText::CacheUnknown => ["状态未知", "unknown", "unbekannt", "desconocido", "inconnu", "不明", "неизвестно"],
-        UiText::Sources => ["来源", "Sources", "Quellen", "Fuentes", "Sources", "出典", "Источники"],
-        UiText::Page => ["页", "page", "Seite", "página", "page", "ページ", "страница"],
-        UiText::Lines => ["行", "lines", "Zeilen", "líneas", "lignes", "行", "строки"],
-        UiText::Answer => ["回答", "Answer", "Antwort", "Respuesta", "Réponse", "回答", "Ответ"],
-        UiText::Session => ["会话", "Session", "Sitzung", "Sesión", "Session", "セッション", "Сеанс"],
-        UiText::SessionBusy => ["正在执行", "Running", "Wird ausgeführt", "En ejecución", "En cours", "実行中", "Выполняется"],
-        UiText::WaitInOriginalTerminal => ["请在原终端中断或等待完成", "Wait or interrupt it in the original terminal", "Im ursprünglichen Terminal warten oder abbrechen", "Espera o interrumpe en el terminal original", "Attendez ou interrompez dans le terminal d’origine", "元のターミナルで待機または中断してください", "Дождитесь завершения или прервите в исходном терминале"],
-        UiText::Plan => ["计划", "Plan", "Plan", "Plan", "Plan", "計画", "План"],
-        UiText::AllComplete => ["全部完成", "All complete", "Alles abgeschlossen", "Todo completado", "Tout est terminé", "すべて完了", "Всё завершено"],
-        UiText::WaitingNextStep => ["等待下一步", "Waiting for next step", "Warten auf den nächsten Schritt", "Esperando el siguiente paso", "En attente de l’étape suivante", "次のステップを待機中", "Ожидание следующего шага"],
-        UiText::Background => ["后台", "Background", "Hintergrund", "Segundo plano", "Arrière-plan", "バックグラウンド", "Фон"],
-        UiText::TasksUnit => ["个任务", "tasks", "Aufgaben", "tareas", "tâches", "件のタスク", "задач"],
-        UiText::RunningUnit => ["个运行中", "running", "aktiv", "en ejecución", "en cours", "件を実行中", "выполняется"],
-        UiText::ManageJobs => ["用 /jobs 管理", "manage with /jobs", "mit /jobs verwalten", "gestionar con /jobs", "gérer avec /jobs", "/jobs で管理", "управление через /jobs"],
-        UiText::MoreTasks => ["其余任务请用 /jobs 查看", "more tasks; use /jobs", "weitere Aufgaben; /jobs verwenden", "tareas más; usa /jobs", "tâches supplémentaires ; utilisez /jobs", "件の残りは /jobs で確認", "других задач; используйте /jobs"],
-        UiText::Agents => ["子代理", "Agents", "Agenten", "Agentes", "Agents", "サブエージェント", "Агенты"],
-        UiText::AgentUsage => ["用法：/agent <类型> <任务>", "Usage: /agent <type> <task>", "Verwendung: /agent <Typ> <Aufgabe>", "Uso: /agent <tipo> <tarea>", "Utilisation : /agent <type> <tâche>", "使い方: /agent <種類> <タスク>", "Использование: /agent <тип> <задача>"],
-        UiText::Tasks => ["后台任务", "Tasks", "Aufgaben", "Tareas", "Tâches", "バックグラウンドタスク", "Задачи"],
-        UiText::TasksUsage => ["用法：/tasks [<任务ID> | stop <任务ID>]", "Usage: /tasks [<task-id> | stop <task-id>]", "Verwendung: /tasks [<Aufgaben-ID> | stop <Aufgaben-ID>]", "Uso: /tasks [<id-tarea> | stop <id-tarea>]", "Utilisation : /tasks [<id-tâche> | stop <id-tâche>]", "使い方: /tasks [<タスクID> | stop <タスクID>]", "Использование: /tasks [<ID-задачи> | stop <ID-задачи>]"],
-        UiText::ResumeUsage => ["用法：/resume", "Usage: /resume", "Verwendung: /resume", "Uso: /resume", "Utilisation : /resume", "使い方: /resume", "Использование: /resume"],
-        UiText::ContinueUsage => ["用法：/continue", "Usage: /continue", "Verwendung: /continue", "Uso: /continue", "Utilisation : /continue", "使い方: /continue", "Использование: /continue"],
-        UiText::AutonomousGoal => ["自主目标", "Autonomous goal", "Autonomes Ziel", "Objetivo autónomo", "Objectif autonome", "自律目標", "Автономная цель"],
-        UiText::Constraints => ["约束", "Constraints", "Einschränkungen", "Restricciones", "Contraintes", "制約", "Ограничения"],
-        UiText::DefaultSafeConstraints => ["使用默认安全约束", "Using default safety constraints", "Standard-Sicherheitsregeln werden verwendet", "Se usan las restricciones de seguridad predeterminadas", "Contraintes de sécurité par défaut utilisées", "既定の安全制約を使用", "Используются стандартные ограничения безопасности"],
-        UiText::Mode => ["模式", "Mode", "Modus", "Modo", "Mode", "モード", "Режим"],
-        UiText::AutonomousUntilComplete => ["持续推进，完成后自动报告", "Continue autonomously until complete", "Autonom bis zum Abschluss fortfahren", "Continuar de forma autónoma hasta terminar", "Continuer de façon autonome jusqu’à la fin", "完了まで自律的に継続", "Продолжать автономно до завершения"],
-        UiText::NoAvailableModels => ["没有可用模型", "No available models", "Keine Modelle verfügbar", "No hay modelos disponibles", "Aucun modèle disponible", "利用可能なモデルがありません", "Нет доступных моделей"],
-        UiText::HelpAgent => ["启动或列出可用的子代理", "Start or list available sub-agents", "Unteragenten starten oder auflisten", "Iniciar o listar subagentes", "Démarrer ou lister les sous-agents", "サブエージェントを開始または一覧表示", "Запустить или показать субагентов"],
-        UiText::Work => ["工作", "Work", "Arbeit", "Trabajo", "Travail", "作業", "Работа"],
-        UiText::WorkUsage => ["用法：/work [<工作ID> | status|stop|pause|resume|rerun <工作ID>]", "Usage: /work [<work-id> | status|stop|pause|resume|rerun <work-id>]", "Verwendung: /work [<Arbeits-ID> | status|stop|pause|resume|rerun <Arbeits-ID>]", "Uso: /work [<id-trabajo> | status|stop|pause|resume|rerun <id-trabajo>]", "Utilisation : /work [<id-travail> | status|stop|pause|resume|rerun <id-travail>]", "使い方: /work [<作業ID> | status|stop|pause|resume|rerun <作業ID>]", "Использование: /work [<ID-работы> | status|stop|pause|resume|rerun <ID-работы>]"],
-        UiText::WorkResolveHint => ["外部结果仍未知。保留原记录；只能通过精确执行恢复控制核验回执、授权风险重试或保持受阻。", "The external outcome is unknown. Preserve the record; use exact execution recovery to verify a receipt, authorize a risky retry, or remain blocked.", "Das externe Ergebnis ist unbekannt. Den Datensatz behalten; eine Wiederherstellung erfordert den genauen Ausführungsnachweis oder eine ausdrückliche Risikoentscheidung.", "El resultado externo es desconocido. Conserva el registro; la recuperación exige el recibo exacto o una decisión explícita sobre el riesgo.", "Le résultat externe est inconnu. Conservez la trace ; la reprise exige un reçu exact ou une décision explicite sur le risque.", "外部結果は不明です。記録を保持し、正確な実行の復旧操作で受領証または明示的なリスク判断を確認してください。", "Внешний результат неизвестен. Сохраните запись; восстановление требует точной квитанции или явного решения о риске."],
-        UiText::HelpWork => ["统一查看和控制目标、任务、后台进程与外部执行器", "Inspect and control goals, tasks, background processes, and external executors", "Ziele, Aufgaben, Hintergrundprozesse und externe Ausführer gemeinsam verwalten", "Inspeccionar y controlar objetivos, tareas, procesos en segundo plano y ejecutores externos", "Afficher et contrôler les objectifs, tâches, processus en arrière-plan et exécuteurs externes", "目標、タスク、バックグラウンド処理、外部実行環境をまとめて管理", "Просмотр и управление целями, задачами, фоновыми процессами и внешними исполнителями"],
-        UiText::NoWork => ["当前会话没有工作记录。", "No work in this conversation.", "Keine Arbeit in dieser Unterhaltung.", "No hay trabajo en esta conversación.", "Aucun travail dans cette conversation.", "この会話に作業はありません。", "В этом диалоге нет работы."],
-        UiText::WorkActive => ["项进行中", "active", "aktiv", "activos", "actifs", "件進行中", "активно"],
-        UiText::WorkFooter => ["使用 `/work <工作ID>` 查看详情；使用 `/work stop <工作ID>` 停止。已结束的流程可用 `/work rerun <工作ID>` 按当前定义重新运行。", "Use `/work <work-id>` for details and `/work stop <work-id>` to stop. A finished SOP can be started as a new run with `/work rerun <work-id>`.", "Details mit `/work <Arbeits-ID>`, stoppen mit `/work stop <Arbeits-ID>`. Einen beendeten SOP-Ablauf starten Sie mit `/work rerun <Arbeits-ID>` als neuen Lauf.", "Usa `/work <id-trabajo>` para ver detalles y `/work stop <id-trabajo>` para detener. Un SOP finalizado puede iniciarse como una ejecución nueva con `/work rerun <id-trabajo>`.", "Utilisez `/work <id-travail>` pour les détails et `/work stop <id-travail>` pour arrêter. Un SOP terminé peut être relancé dans une nouvelle exécution avec `/work rerun <id-travail>`.", "`/work <作業ID>` で詳細、`/work stop <作業ID>` で停止します。終了した SOP は `/work rerun <作業ID>` で新しい実行として開始できます。", "Используйте `/work <ID-работы>` для подробностей и `/work stop <ID-работы>` для остановки. Завершённый SOP можно запустить заново командой `/work rerun <ID-работы>`."],
-        UiText::WorkId => ["工作 ID", "Work ID", "Arbeits-ID", "ID de trabajo", "ID du travail", "作業 ID", "ID работы"],
-        UiText::WorkKind => ["类型", "Kind", "Typ", "Tipo", "Type", "種類", "Тип"],
-        UiText::WorkParent => ["上级工作", "Parent work", "Übergeordnete Arbeit", "Trabajo principal", "Travail parent", "親作業", "Родительская работа"],
-        UiText::WorkCurrentStep => ["当前步骤", "Current step", "Aktueller Schritt", "Paso actual", "Étape actuelle", "現在のステップ", "Текущий шаг"],
-        UiText::WorkSopVersion => ["流程版本", "SOP version", "SOP-Version", "Versión del SOP", "Version du SOP", "SOP バージョン", "Версия SOP"],
-        UiText::WorkSopUpdateAvailable => ["有新的流程定义", "Definition update available", "Neue SOP-Definition verfügbar", "Hay una definición nueva disponible", "Nouvelle définition disponible", "新しい定義があります", "Доступно обновление определения"],
-        UiText::WorkSopPinnedHint => ["当前运行继续使用已固定的定义；结束后可运行 `/work rerun <工作ID>`，以最新定义创建新运行。", "This run remains pinned to its original definition. After it ends, use `/work rerun <work-id>` to create a new run from the latest definition.", "Dieser Lauf bleibt an seine ursprüngliche Definition gebunden. Danach erstellt `/work rerun <Arbeits-ID>` einen neuen Lauf mit der neuesten Definition.", "Esta ejecución permanece fijada a su definición original. Cuando termine, usa `/work rerun <id-trabajo>` para crear otra con la definición más reciente.", "Cette exécution reste liée à sa définition d’origine. Une fois terminée, utilisez `/work rerun <id-travail>` pour créer une nouvelle exécution avec la dernière définition.", "この実行は開始時の定義に固定されています。終了後に `/work rerun <作業ID>` を使うと最新定義で新しい実行を作成できます。", "Этот запуск остаётся привязан к исходному определению. После завершения используйте `/work rerun <ID-работы>`, чтобы создать новый запуск с актуальным определением."],
-        UiText::WorkRerunStarted => ["已创建新的流程运行", "Started a new SOP run", "Neuen SOP-Lauf gestartet", "Se inició una ejecución SOP nueva", "Nouvelle exécution SOP créée", "新しい SOP 実行を開始しました", "Создан новый запуск SOP"],
-        UiText::WorkRerunRequiresTerminal => ["请先停止或完成原流程运行，再创建新运行。", "Stop or finish the original SOP run before creating a new run.", "Beenden oder stoppen Sie den ursprünglichen SOP-Lauf, bevor Sie einen neuen erstellen.", "Detén o finaliza la ejecución SOP original antes de crear otra.", "Arrêtez ou terminez l’exécution SOP d’origine avant d’en créer une nouvelle.", "新しい実行を作成する前に、元の SOP 実行を停止または完了してください。", "Перед созданием нового запуска остановите или завершите исходный запуск SOP."],
-        UiText::WorkSopDefinitionUnavailable => ["当前客户端没有可用于该流程的新定义。", "No current definition is available for this SOP.", "Für diesen SOP ist keine aktuelle Definition verfügbar.", "No hay una definición actual disponible para este SOP.", "Aucune définition actuelle n’est disponible pour ce SOP.", "この SOP に利用できる現在の定義がありません。", "Для этого SOP нет доступного актуального определения."],
-        UiText::WorkNotFound => ["未找到工作", "Work not found", "Arbeit nicht gefunden", "Trabajo no encontrado", "Travail introuvable", "作業が見つかりません", "Работа не найдена"],
-        UiText::WorkControlUnsupported => ["该工作类型暂不支持此操作。", "This control is not supported for that work type.", "Diese Aktion wird für diesen Arbeitstyp nicht unterstützt.", "Este control no es compatible con ese tipo de trabajo.", "Cette commande n’est pas prise en charge pour ce type de travail.", "この作業タイプではその操作を利用できません。", "Эта операция не поддерживается для данного типа работы."],
-        UiText::WorkStopped => ["已请求停止", "Stop requested", "Stopp angefordert", "Detención solicitada", "Arrêt demandé", "停止を要求しました", "Запрошена остановка"],
-        UiText::WorkPaused => ["已暂停", "Paused", "Pausiert", "En pausa", "En pause", "一時停止しました", "Приостановлено"],
-        UiText::WorkResumed => ["已继续", "Resumed", "Fortgesetzt", "Reanudado", "Repris", "再開しました", "Возобновлено"],
-        UiText::WorkGoal => ["目标", "Goal", "Ziel", "Objetivo", "Objectif", "目標", "Цель"],
-        UiText::WorkSop => ["标准流程", "SOP run", "SOP-Ablauf", "Ejecución SOP", "Exécution SOP", "SOP 実行", "Выполнение SOP"],
-        UiText::WorkSkill => ["技能运行", "Skill run", "Skill-Ausführung", "Ejecución de habilidad", "Exécution de compétence", "スキル実行", "Запуск навыка"],
-        UiText::WorkTask => ["任务", "Task", "Aufgabe", "Tarea", "Tâche", "タスク", "Задача"],
-        UiText::WorkProcess => ["后台进程", "Background process", "Hintergrundprozess", "Proceso en segundo plano", "Processus en arrière-plan", "バックグラウンド処理", "Фоновый процесс"],
-        UiText::WorkExecutor => ["外部执行器", "External executor", "Externer Ausführer", "Ejecutor externo", "Exécuteur externe", "外部実行環境", "Внешний исполнитель"],
-        UiText::WorkQueued => ["排队中", "Queued", "In Warteschlange", "En cola", "En file d’attente", "待機中", "В очереди"],
-        UiText::InputQueueFull => ["队列已满，输入已保留", "Queue full; draft retained", "Warteschlange voll; Entwurf behalten", "Cola llena; borrador conservado", "File pleine ; brouillon conservé", "待機列がいっぱいです。下書きは保持されました", "Очередь заполнена; черновик сохранён"],
-        UiText::InputAdmissionFailed => ["未确认输入已接收，草稿已保留", "Input admission unconfirmed; draft retained", "Eingangsbestätigung fehlt; Entwurf behalten", "Recepción sin confirmar; borrador conservado", "Réception non confirmée ; brouillon conservé", "入力の受領を確認できません。下書きは保持されました", "Приём ввода не подтверждён; черновик сохранён"],
+        UiText::HelpSources => [
+            "管理数据源：/sources [list|add|test|remove|enable|disable|inherit]",
+            "管理資料來源：/sources [list|add|test|remove|enable|disable|inherit]",
+            "Manage data sources: /sources [list|add|test|remove|enable|disable|inherit]",
+            "Datenquellen verwalten: /sources [list|add|test|remove|enable|disable|inherit]",
+            "Gestionar fuentes de datos: /sources [list|add|test|remove|enable|disable|inherit]",
+            "Gérer les sources de données : /sources [list|add|test|remove|enable|disable|inherit]",
+            "データソースを管理: /sources [list|add|test|remove|enable|disable|inherit]",
+            "데이터 소스 관리: /sources [list|add|test|remove|enable|disable|inherit]",
+            "Управление источниками данных: /sources [list|add|test|remove|enable|disable|inherit]",
+        ],
+        UiText::DataSourcesTitle => ["数据源", "資料來源", "Data sources", "Datenquellen", "Fuentes de datos", "Sources de données", "データソース", "데이터 소스", "Источники данных"],
+        UiText::DataSourcesUsage => ["用法", "用法", "Usage", "Verwendung", "Uso", "Utilisation", "使い方", "사용법", "Использование"],
+        UiText::DataSourceAdded => ["数据源已测试并添加", "資料來源已測試並新增", "Data source tested and added", "Datenquelle getestet und hinzugefügt", "Fuente de datos probada y añadida", "Source de données testée et ajoutée", "データソースをテストして追加しました", "데이터 소스를 테스트하고 추가했습니다", "Источник данных проверен и добавлен"],
+        UiText::DataSourceTested => ["数据源测试成功", "資料來源測試成功", "Data source test passed", "Datenquellentest erfolgreich", "Prueba de fuente de datos superada", "Test de la source de données réussi", "データソースのテストに成功しました", "데이터 소스 테스트 통과", "Проверка источника данных пройдена"],
+        UiText::DataSourceRemoved => ["数据源已删除", "資料來源已移除", "Data source removed", "Datenquelle entfernt", "Fuente de datos eliminada", "Source de données supprimée", "データソースを削除しました", "데이터 소스를 제거했습니다", "Источник данных удалён"],
+        UiText::DataSourceEnabled => ["已在当前会话启用", "已在此對話啟用", "Enabled for this conversation", "Für diese Unterhaltung aktiviert", "Activada para esta conversación", "Activée pour cette conversation", "この会話で有効にしました", "이 대화에서 사용 설정됨", "Включено для этого диалога"],
+        UiText::DataSourceDisabled => ["已在当前会话停用", "已在此對話停用", "Disabled for this conversation", "Für diese Unterhaltung deaktiviert", "Desactivada para esta conversación", "Désactivée pour cette conversation", "この会話で無効にしました", "이 대화에서 사용 안 함", "Отключено для этого диалога"],
+        UiText::DataSourceInherited => ["已恢复默认策略", "已恢復預設原則", "Default policy restored", "Standardrichtlinie wiederhergestellt", "Política predeterminada restaurada", "Politique par défaut restaurée", "既定のポリシーに戻しました", "기본 정책 복원됨", "Политика по умолчанию восстановлена"],
+        UiText::DataSourceNoSession => ["当前没有可用会话", "目前沒有可用對話", "No active conversation", "Keine aktive Unterhaltung", "No hay una conversación activa", "Aucune conversation active", "アクティブな会話がありません", "활성 대화 없음", "Нет активного диалога"],
+        UiText::DataSourceEmpty => ["尚未添加数据源", "尚未新增資料來源", "No data sources yet", "Noch keine Datenquellen", "Aún no hay fuentes de datos", "Aucune source de données", "データソースはまだありません", "데이터 소스가 아직 없습니다", "Источники данных ещё не добавлены"],
+        UiText::DataSourceUnknownAction => ["未知的数据源操作", "未知的資料來源操作", "Unknown data-source action", "Unbekannte Datenquellenaktion", "Acción de fuente de datos desconocida", "Action de source de données inconnue", "不明なデータソース操作です", "알 수 없는 데이터 소스 작업입니다", "Неизвестное действие с источником данных"],
+        UiText::DataSourcePolicy => ["策略", "原則", "Policy", "Richtlinie", "Política", "Politique", "ポリシー", "정책", "Политика"],
+        UiText::DataSourceRecords => ["条使用记录", "筆使用紀錄", "usage records", "Nutzungsprotokolle", "registros de uso", "enregistrements d’utilisation", "件の利用記録", "사용 기록", "записей использования"],
+        UiText::DataSourceVerified => ["已验证", "已驗證", "Verified", "Verifiziert", "Verificada", "Vérifiée", "検証済み", "확인됨", "Проверено"],
+        UiText::PromptCache => ["提示缓存", "提示快取", "Prompt cache", "Prompt-Cache", "Caché de instrucciones", "Cache d’invite", "プロンプトキャッシュ", "프롬프트 캐시", "Кэш промпта"],
+        UiText::CacheRead => ["读取", "讀取", "read", "gelesen", "leída", "lecture", "読み取り", "읽기", "чтение"],
+        UiText::CacheWrite => ["写入", "寫入", "write", "geschrieben", "escrita", "écriture", "書き込み", "쓰기", "запись"],
+        UiText::CacheSections => ["片段变化", "區段變更", "section changes", "Abschnittsänderungen", "cambios de sección", "changements de section", "セクション変更", "섹션 변경", "изменения разделов"],
+        UiText::CacheDisabled => ["已关闭", "已停用", "disabled", "deaktiviert", "deshabilitada", "désactivé", "無効", "비활성화됨", "отключено"],
+        UiText::CacheInvalidIdentity => ["标识无效", "識別無效", "invalid identity", "ungültige Identität", "identidad no válida", "identité non valide", "識別情報が無効", "잘못된 식별자", "недопустимый идентификатор"],
+        UiText::CacheFirstRequest => ["首次请求", "首次請求", "first request", "erste Anfrage", "primera solicitud", "première requête", "初回リクエスト", "첫 번째 요청", "первый запрос"],
+        UiText::CacheHit => ["命中", "命中", "hit", "Treffer", "acierto", "succès", "ヒット", "적중", "попадание"],
+        UiText::CacheHitRate => ["缓存命中率", "快取命中率", "Cache hit rate", "Cache-Trefferrate", "Aciertos de caché", "Taux de cache", "キャッシュ命中率", "캐시 적중률", "Попадания в кэш"],
+        UiText::CacheStored => ["已写入", "已寫入", "stored", "gespeichert", "guardada", "enregistré", "保存済み", "저장됨", "сохранено"],
+        UiText::CacheMiss => ["未命中", "未命中", "miss", "nicht getroffen", "fallo", "échec", "ミス", "미적중", "промах"],
+        UiText::CacheStableCandidate => ["稳定候选", "穩定候選", "stable candidate", "stabiler Kandidat", "candidata estable", "candidat stable", "安定候補", "안정 후보", "стабильный кандидат"],
+        UiText::CacheUnknown => ["状态未知", "狀態未知", "unknown", "unbekannt", "desconocido", "inconnu", "不明", "알 수 없음", "неизвестно"],
+        UiText::Sources => ["来源", "來源", "Sources", "Quellen", "Fuentes", "Sources", "出典", "출처", "Источники"],
+        UiText::Page => ["页", "頁", "page", "Seite", "página", "page", "ページ", "페이지", "страница"],
+        UiText::Lines => ["行", "行", "lines", "Zeilen", "líneas", "lignes", "行", "줄", "строки"],
+        UiText::Answer => ["回答", "回答", "Answer", "Antwort", "Respuesta", "Réponse", "回答", "답변", "Ответ"],
+        UiText::Session => ["会话", "工作階段", "Session", "Sitzung", "Sesión", "Session", "セッション", "세션", "Сеанс"],
+        UiText::SessionBusy => ["正在执行", "執行中", "Running", "Wird ausgeführt", "En ejecución", "En cours", "実行中", "실행 중", "Выполняется"],
+        UiText::WaitInOriginalTerminal => ["请在原终端中断或等待完成", "請在原終端機中斷或等待完成", "Wait or interrupt it in the original terminal", "Im ursprünglichen Terminal warten oder abbrechen", "Espera o interrumpe en el terminal original", "Attendez ou interrompez dans le terminal d’origine", "元のターミナルで待機または中断してください", "원래 터미널에서 대기하거나 중단하세요", "Дождитесь завершения или прервите в исходном терминале"],
+        UiText::Plan => ["计划", "計畫", "Plan", "Plan", "Plan", "Plan", "計画", "계획", "План"],
+        UiText::AllComplete => ["全部完成", "全部完成", "All complete", "Alles abgeschlossen", "Todo completado", "Tout est terminé", "すべて完了", "모두 완료", "Всё завершено"],
+        UiText::WaitingNextStep => ["等待下一步", "等待下一步", "Waiting for next step", "Warten auf den nächsten Schritt", "Esperando el siguiente paso", "En attente de l’étape suivante", "次のステップを待機中", "다음 단계 대기 중", "Ожидание следующего шага"],
+        UiText::Background => ["后台", "背景", "Background", "Hintergrund", "Segundo plano", "Arrière-plan", "バックグラウンド", "백그라운드", "Фон"],
+        UiText::TasksUnit => ["个任务", "項任務", "tasks", "Aufgaben", "tareas", "tâches", "件のタスク", "개 작업", "задач"],
+        UiText::RunningUnit => ["个运行中", "項執行中", "running", "aktiv", "en ejecución", "en cours", "件を実行中", "개 실행 중", "выполняется"],
+        UiText::ManageJobs => ["用 /jobs 管理", "以 /jobs 管理", "manage with /jobs", "mit /jobs verwalten", "gestionar con /jobs", "gérer avec /jobs", "/jobs で管理", "/jobs 로 관리", "управление через /jobs"],
+        UiText::MoreTasks => ["其余任务请用 /jobs 查看", "其餘任務請用 /jobs 查看", "more tasks; use /jobs", "weitere Aufgaben; /jobs verwenden", "tareas más; usa /jobs", "tâches supplémentaires ; utilisez /jobs", "件の残りは /jobs で確認", "개 남음 · /jobs 로 확인", "других задач; используйте /jobs"],
+        UiText::Agents => ["子代理", "子代理", "Agents", "Agenten", "Agentes", "Agents", "サブエージェント", "하위 에이전트", "Агенты"],
+        UiText::AgentUsage => ["用法：/agent <类型> <任务>", "用法：/agent <類型> <任務>", "Usage: /agent <type> <task>", "Verwendung: /agent <Typ> <Aufgabe>", "Uso: /agent <tipo> <tarea>", "Utilisation : /agent <type> <tâche>", "使い方: /agent <種類> <タスク>", "사용법: /agent <유형> <작업>", "Использование: /agent <тип> <задача>"],
+        UiText::Tasks => ["后台任务", "背景任務", "Tasks", "Aufgaben", "Tareas", "Tâches", "バックグラウンドタスク", "백그라운드 작업", "Задачи"],
+        UiText::TasksUsage => ["用法：/tasks [<任务ID> | stop <任务ID>]", "用法：/tasks [<任務 ID> | stop <任務 ID>]", "Usage: /tasks [<task-id> | stop <task-id>]", "Verwendung: /tasks [<Aufgaben-ID> | stop <Aufgaben-ID>]", "Uso: /tasks [<id-tarea> | stop <id-tarea>]", "Utilisation : /tasks [<id-tâche> | stop <id-tâche>]", "使い方: /tasks [<タスクID> | stop <タスクID>]", "사용법: /tasks [<작업-ID> | stop <작업-ID>]", "Использование: /tasks [<ID-задачи> | stop <ID-задачи>]"],
+        UiText::ResumeUsage => ["用法：/resume", "用法：/resume", "Usage: /resume", "Verwendung: /resume", "Uso: /resume", "Utilisation : /resume", "使い方: /resume", "사용법: /resume", "Использование: /resume"],
+        UiText::ContinueUsage => ["用法：/continue", "用法：/continue", "Usage: /continue", "Verwendung: /continue", "Uso: /continue", "Utilisation : /continue", "使い方: /continue", "사용법: /continue", "Использование: /continue"],
+        UiText::AutonomousGoal => ["自主目标", "自主目標", "Autonomous goal", "Autonomes Ziel", "Objetivo autónomo", "Objectif autonome", "自律目標", "자율 목표", "Автономная цель"],
+        UiText::Constraints => ["约束", "限制條件", "Constraints", "Einschränkungen", "Restricciones", "Contraintes", "制約", "제약 조건", "Ограничения"],
+        UiText::DefaultSafeConstraints => ["使用默认安全约束", "使用預設安全限制", "Using default safety constraints", "Standard-Sicherheitsregeln werden verwendet", "Se usan las restricciones de seguridad predeterminadas", "Contraintes de sécurité par défaut utilisées", "既定の安全制約を使用", "기본 안전 제약 조건 사용", "Используются стандартные ограничения безопасности"],
+        UiText::Mode => ["模式", "模式", "Mode", "Modus", "Modo", "Mode", "モード", "모드", "Режим"],
+        UiText::AutonomousUntilComplete => ["持续推进，完成后自动报告", "持續推進，完成後自動回報", "Continue autonomously until complete", "Autonom bis zum Abschluss fortfahren", "Continuar de forma autónoma hasta terminar", "Continuer de façon autonome jusqu’à la fin", "完了まで自律的に継続", "완료될 때까지 자율적으로 계속", "Продолжать автономно до завершения"],
+        UiText::NoAvailableModels => ["没有可用模型", "沒有可用模型", "No available models", "Keine Modelle verfügbar", "No hay modelos disponibles", "Aucun modèle disponible", "利用可能なモデルがありません", "사용 가능한 모델이 없습니다", "Нет доступных моделей"],
+        UiText::HelpAgent => ["启动或列出可用的子代理", "啟動或列出可用的子代理", "Start or list available sub-agents", "Unteragenten starten oder auflisten", "Iniciar o listar subagentes", "Démarrer ou lister les sous-agents", "サブエージェントを開始または一覧表示", "사용 가능한 하위 에이전트 시작 또는 목록 보기", "Запустить или показать субагентов"],
+        UiText::Work => ["工作", "工作", "Work", "Arbeit", "Trabajo", "Travail", "作業", "작업", "Работа"],
+        UiText::WorkUsage => ["用法：/work [<工作ID> | status|stop|pause|resume|rerun <工作ID>]", "用法：/work [<工作 ID> | status|stop|pause|resume|rerun <工作 ID>]", "Usage: /work [<work-id> | status|stop|pause|resume|rerun <work-id>]", "Verwendung: /work [<Arbeits-ID> | status|stop|pause|resume|rerun <Arbeits-ID>]", "Uso: /work [<id-trabajo> | status|stop|pause|resume|rerun <id-trabajo>]", "Utilisation : /work [<id-travail> | status|stop|pause|resume|rerun <id-travail>]", "使い方: /work [<作業ID> | status|stop|pause|resume|rerun <作業ID>]", "사용법: /work [<작업-ID> | status|stop|pause|resume|rerun <작업-ID>]", "Использование: /work [<ID-работы> | status|stop|pause|resume|rerun <ID-работы>]"],
+        UiText::WorkResolveHint => ["外部结果仍未知。保留原记录；只能通过精确执行恢复控制核验回执、授权风险重试或保持受阻。", "外部結果仍未知。請保留原始紀錄；僅能透過精確執行復原控制核驗回執、授權風險重試或維持受阻。", "The external outcome is unknown. Preserve the record; use exact execution recovery to verify a receipt, authorize a risky retry, or remain blocked.", "Das externe Ergebnis ist unbekannt. Den Datensatz behalten; eine Wiederherstellung erfordert den genauen Ausführungsnachweis oder eine ausdrückliche Risikoentscheidung.", "El resultado externo es desconocido. Conserva el registro; la recuperación exige el recibo exacto o una decisión explícita sobre el riesgo.", "Le résultat externe est inconnu. Conservez la trace ; la reprise exige un reçu exact ou une décision explicite sur le risque.", "外部結果は不明です。記録を保持し、正確な実行の復旧操作で受領証または明示的なリスク判断を確認してください。", "외부 결과를 알 수 없습니다. 기록을 유지하고 정확한 실행 복구 제어로 영수증을 확인하거나 위험한 재시도를 승인하거나 차단 상태를 유지하세요.", "Внешний результат неизвестен. Сохраните запись; восстановление требует точной квитанции или явного решения о риске."],
+        UiText::HelpWork => ["统一查看和控制目标、任务、后台进程与外部执行器", "統一檢視與控制目標、任務、背景處理程序與外部執行器", "Inspect and control goals, tasks, background processes, and external executors", "Ziele, Aufgaben, Hintergrundprozesse und externe Ausführer gemeinsam verwalten", "Inspeccionar y controlar objetivos, tareas, procesos en segundo plano y ejecutores externos", "Afficher et contrôler les objectifs, tâches, processus en arrière-plan et exécuteurs externes", "目標、タスク、バックグラウンド処理、外部実行環境をまとめて管理", "목표, 작업, 백그라운드 프로세스 및 외부 실행기 검사 및 제어", "Просмотр и управление целями, задачами, фоновыми процессами и внешними исполнителями"],
+        UiText::NoWork => ["当前会话没有工作记录。", "目前工作階段沒有工作紀錄。", "No work in this conversation.", "Keine Arbeit in dieser Unterhaltung.", "No hay trabajo en esta conversación.", "Aucun travail dans cette conversation.", "この会話に作業はありません。", "이 대화에 작업 기록이 없습니다.", "В этом диалоге нет работы."],
+        UiText::WorkActive => ["项进行中", "項進行中", "active", "aktiv", "activos", "actifs", "件進行中", "개 활성", "активно"],
+        UiText::WorkFooter => ["使用 `/work <工作ID>` 查看详情；使用 `/work stop <工作ID>` 停止。已结束的流程可用 `/work rerun <工作ID>` 按当前定义重新运行。", "使用 `/work <工作 ID>` 檢視詳細資料；使用 `/work stop <工作 ID>` 停止。已結束的流程可用 `/work rerun <工作 ID>` 依最新定義重新執行。", "Use `/work <work-id>` for details and `/work stop <work-id>` to stop. A finished SOP can be started as a new run with `/work rerun <work-id>`.", "Details mit `/work <Arbeits-ID>`, stoppen mit `/work stop <Arbeits-ID>`. Einen beendeten SOP-Ablauf starten Sie mit `/work rerun <Arbeits-ID>` als neuen Lauf.", "Usa `/work <id-trabajo>` para ver detalles y `/work stop <id-trabajo>` para detener. Un SOP finalizado puede iniciarse como una ejecución nueva con `/work rerun <id-trabajo>`.", "Utilisez `/work <id-travail>` pour les détails et `/work stop <id-travail>` pour arrêter. Un SOP terminé peut être relancé dans une nouvelle exécution avec `/work rerun <id-travail>`.", "`/work <作業ID>` で詳細、`/work stop <作業ID>` で停止します。終了した SOP は `/work rerun <作業ID>` で新しい実行として開始できます。", "세부 정보는 `/work <작업-ID>`, 중지는 `/work stop <작업-ID>`를 사용하세요. 완료된 SOP는 `/work rerun <작업-ID>`로 새 실행을 시작할 수 있습니다.", "Используйте `/work <ID-работы>` для подробностей и `/work stop <ID-работы>` для остановки. Завершённый SOP можно запустить заново командой `/work rerun <ID-работы>`."],
+        UiText::WorkId => ["工作 ID", "工作 ID", "Work ID", "Arbeits-ID", "ID de trabajo", "ID du travail", "作業 ID", "작업 ID", "ID работы"],
+        UiText::WorkKind => ["类型", "類型", "Kind", "Typ", "Tipo", "Type", "種類", "유형", "Тип"],
+        UiText::WorkParent => ["上级工作", "上層工作", "Parent work", "Übergeordnete Arbeit", "Trabajo principal", "Travail parent", "親作業", "상위 작업", "Родительская работа"],
+        UiText::WorkCurrentStep => ["当前步骤", "目前步驟", "Current step", "Aktueller Schritt", "Paso actual", "Étape actuelle", "現在のステップ", "현재 단계", "Текущий шаг"],
+        UiText::WorkSopVersion => ["流程版本", "流程版本", "SOP version", "SOP-Version", "Versión del SOP", "Version du SOP", "SOP バージョン", "SOP 버전", "Версия SOP"],
+        UiText::WorkSopUpdateAvailable => ["有新的流程定义", "有新的流程定義", "Definition update available", "Neue SOP-Definition verfügbar", "Hay una definición nueva disponible", "Nouvelle définition disponible", "新しい定義があります", "정의 업데이트 사용 가능", "Доступно обновление определения"],
+        UiText::WorkSopPinnedHint => ["当前运行继续使用已固定的定义；结束后可运行 `/work rerun <工作ID>`，以最新定义创建新运行。", "目前執行仍固定於原始定義；結束後可執行 `/work rerun <工作 ID>` 依最新定義建立新執行。", "This run remains pinned to its original definition. After it ends, use `/work rerun <work-id>` to create a new run from the latest definition.", "Dieser Lauf bleibt an seine ursprüngliche Definition gebunden. Danach erstellt `/work rerun <Arbeits-ID>` einen neuen Lauf mit der neuesten Definition.", "Esta ejecución permanece fijada a su definición original. Cuando termine, usa `/work rerun <id-trabajo>` para crear otra con la definición más reciente.", "Cette exécution reste liée à sa définition d’origine. Une fois terminée, utilisez `/work rerun <id-travail>` pour créer une nouvelle exécution avec la dernière définition.", "この実行は開始時の定義に固定されています。終了後に `/work rerun <作業ID>` を使うと最新定義で新しい実行を作成できます。", "이 실행은 원래 정의에 고정되어 있습니다. 종료 후 `/work rerun <작업-ID>`로 최신 정의에서 새 실행을 만들 수 있습니다.", "Этот запуск остаётся привязан к исходному определению. После завершения используйте `/work rerun <ID-работы>`, чтобы создать новый запуск с актуальным определением."],
+        UiText::WorkRerunStarted => ["已创建新的流程运行", "已建立新的流程執行", "Started a new SOP run", "Neuen SOP-Lauf gestartet", "Se inició una ejecución SOP nueva", "Nouvelle exécution SOP créée", "新しい SOP 実行を開始しました", "새 SOP 실행을 시작했습니다", "Создан новый запуск SOP"],
+        UiText::WorkRerunRequiresTerminal => ["请先停止或完成原流程运行，再创建新运行。", "請先停止或完成原流程執行，再建立新執行。", "Stop or finish the original SOP run before creating a new run.", "Beenden oder stoppen Sie den ursprünglichen SOP-Lauf, bevor Sie einen neuen erstellen.", "Detén o finaliza la ejecución SOP original antes de crear otra.", "Arrêtez ou terminez l’exécution SOP d’origine avant d’en créer une nouvelle.", "新しい実行を作成する前に、元の SOP 実行を停止または完了してください。", "새 실행을 만들기 전에 원래 SOP 실행을 중지하거나 완료하세요.", "Перед созданием нового запуска остановите или завершите исходный запуск SOP."],
+        UiText::WorkSopDefinitionUnavailable => ["当前客户端没有可用于该流程的新定义。", "目前用戶端沒有可用於此流程的新定義。", "No current definition is available for this SOP.", "Für diesen SOP ist keine aktuelle Definition verfügbar.", "No hay una definición actual disponible para este SOP.", "Aucune définition actuelle n’est disponible pour ce SOP.", "この SOP に利用できる現在の定義がありません。", "이 SOP에 사용할 수 있는 최신 정의가 없습니다.", "Для этого SOP нет доступного актуального определения."],
+        UiText::WorkNotFound => ["未找到工作", "找不到工作", "Work not found", "Arbeit nicht gefunden", "Trabajo no encontrado", "Travail introuvable", "作業が見つかりません", "작업을 찾을 수 없습니다", "Работа не найдена"],
+        UiText::WorkControlUnsupported => ["该工作类型暂不支持此操作。", "此工作類型暫不支援該操作。", "This control is not supported for that work type.", "Diese Aktion wird für diesen Arbeitstyp nicht unterstützt.", "Este control no es compatible con ese tipo de trabajo.", "Cette commande n’est pas prise en charge pour ce type de travail.", "この作業タイプではその操作を利用できません。", "이 작업 유형에서는 해당 제어가 지원되지 않습니다.", "Эта операция не поддерживается для данного типа работы."],
+        UiText::WorkStopped => ["已请求停止", "已要求停止", "Stop requested", "Stopp angefordert", "Detención solicitada", "Arrêt demandé", "停止を要求しました", "중지 요청됨", "Запрошена остановка"],
+        UiText::WorkPaused => ["已暂停", "已暫停", "Paused", "Pausiert", "En pausa", "En pause", "一時停止しました", "일시 중지됨", "Приостановлено"],
+        UiText::WorkResumed => ["已继续", "已繼續", "Resumed", "Fortgesetzt", "Reanudado", "Repris", "再開しました", "재개됨", "Возобновлено"],
+        UiText::WorkGoal => ["目标", "目標", "Goal", "Ziel", "Objetivo", "Objectif", "目標", "목표", "Цель"],
+        UiText::WorkSop => ["标准流程", "標準流程", "SOP run", "SOP-Ablauf", "Ejecución SOP", "Exécution SOP", "SOP 実行", "SOP 실행", "Выполнение SOP"],
+        UiText::WorkSkill => ["技能运行", "技能執行", "Skill run", "Skill-Ausführung", "Ejecución de habilidad", "Exécution de compétence", "スキル実行", "스킬 실행", "Запуск навыка"],
+        UiText::WorkTask => ["任务", "任務", "Task", "Aufgabe", "Tarea", "Tâche", "タスク", "작업", "Задача"],
+        UiText::WorkProcess => ["后台进程", "背景處理程序", "Background process", "Hintergrundprozess", "Proceso en segundo plano", "Processus en arrière-plan", "バックグラウンド処理", "백그라운드 프로세스", "Фоновый процесс"],
+        UiText::WorkExecutor => ["外部执行器", "外部執行器", "External executor", "Externer Ausführer", "Ejecutor externo", "Exécuteur externe", "外部実行環境", "외부 실행기", "Внешний исполнитель"],
+        UiText::WorkQueued => ["排队中", "排隊中", "Queued", "In Warteschlange", "En cola", "En file d’attente", "待機中", "대기 중", "В очереди"],
+        UiText::InputQueueFull => ["队列已满，输入已保留", "佇列已滿，已保留輸入", "Queue full; draft retained", "Warteschlange voll; Entwurf behalten", "Cola llena; borrador conservado", "File pleine ; brouillon conservé", "待機列がいっぱいです。下書きは保持されました", "대기열이 가득 찼습니다. 초안은 유지됩니다", "Очередь заполнена; черновик сохранён"],
+        UiText::InputAdmissionFailed => ["未确认输入已接收，草稿已保留", "未確認已接收輸入，已保留草稿", "Input admission unconfirmed; draft retained", "Eingangsbestätigung fehlt; Entwurf behalten", "Recepción sin confirmar; borrador conservado", "Réception non confirmée ; brouillon conservé", "入力の受領を確認できません。下書きは保持されました", "입력 수락이 확인되지 않았습니다. 초안은 유지됩니다", "Приём ввода не подтверждён; черновик сохранён"],
         UiText::RecoveryBlockedUseResume => [
             "恢复尚未完成，未启动新任务。请用 /resume 重试或选择其他会话。",
+            "復原尚未完成，未啟動新任務。請用 /resume 重試或選擇其他工作階段。",
             "Recovery has not completed; no new task was started. Use /resume to retry or switch to another session.",
             "Die Wiederherstellung wurde noch nicht abgeschlossen; es wurde keine neue Aufgabe gestartet. Nutzen Sie /resume oder wechseln Sie die Sitzung.",
             "La recuperación no se ha completado; no se inició una tarea nueva. Usa /resume para reintentar o cambia de sesión.",
             "La reprise n’est pas terminée ; aucune nouvelle tâche n’a été lancée. Utilisez /resume pour réessayer ou changez de session.",
             "復旧が完了していないため、新しいタスクを開始しませんでした。/resume で再試行するか別のセッションを選択してください。",
+            "복구가 완료되지 않아 새 작업을 시작하지 않았습니다. /resume 로 다시 시도하거나 다른 세션을 선택하세요.",
             "Восстановление ещё не завершено; новая задача не запущена. Используйте /resume для повтора или выберите другой сеанс.",
         ],
-        UiText::WorkPlanning => ["规划中", "Planning", "Planung", "Planificando", "Planification", "計画中", "Планирование"],
-        UiText::WorkReady => ["就绪", "Ready", "Bereit", "Listo", "Prêt", "準備完了", "Готово"],
-        UiText::WorkWaitingUser => ["等待用户", "Waiting for user", "Wartet auf Benutzer", "Esperando al usuario", "En attente de l’utilisateur", "ユーザー待ち", "Ожидание пользователя"],
-        UiText::WorkWaitingExternal => ["等待外部操作", "Waiting for external work", "Wartet auf externe Arbeit", "Esperando trabajo externo", "En attente d’un travail externe", "外部処理待ち", "Ожидание внешней работы"],
-        UiText::WorkVerifying => ["验证中", "Verifying", "Überprüfung", "Verificando", "Vérification", "検証中", "Проверка"],
-        UiText::WorkCompensating => ["补偿中", "Compensating", "Kompensation", "Compensando", "Compensation", "補償中", "Компенсация"],
-        UiText::WorkArtifacts => ["产物", "Artifacts", "Artefakte", "Artefactos", "Artefacts", "成果物", "Артефакты"],
-        UiText::WorkEvidence => ["证据", "Evidence", "Nachweise", "Evidencia", "Preuves", "証拠", "Доказательства"],
-        UiText::HelpTasks => ["查看或停止后台任务；权限请求会自动弹出", "Inspect or stop background tasks; permission prompts open automatically", "Hintergrundaufgaben anzeigen oder stoppen; Berechtigungen öffnen automatisch", "Ver o detener tareas en segundo plano; los permisos se abren automáticamente", "Voir ou arrêter les tâches en arrière-plan ; les autorisations s’ouvrent automatiquement", "バックグラウンドタスクの確認・停止。権限画面は自動表示", "Просмотреть или остановить фоновые задачи; запрос разрешения откроется автоматически"],
-        UiText::HelpJobs => ["管理后台任务", "Manage background tasks", "Hintergrundaufgaben verwalten", "Gestionar tareas en segundo plano", "Gérer les tâches en arrière-plan", "バックグラウンドタスクを管理", "Управление фоновыми задачами"],
-        UiText::GoalPaused => ["目标已暂停", "Goal paused", "Ziel pausiert", "Objetivo en pausa", "Objectif en pause", "目標を一時停止", "Цель приостановлена"],
-        UiText::ConfigNotFound => ["未找到 Nola 配置：", "Nola config was not found at", "Nola-Konfiguration nicht gefunden:", "No se encontró la configuración de Nola en", "Configuration Nola introuvable :", "Nola 設定が見つかりません:", "Конфигурация Nola не найдена:"],
-        UiText::CreateConfigPrompt => ["现在创建？[Y/n] ", "Create it now? [Y/n] ", "Jetzt erstellen? [Y/n] ", "¿Crearla ahora? [Y/n] ", "La créer maintenant ? [Y/n] ", "今すぐ作成しますか？ [Y/n] ", "Создать сейчас? [Y/n] "],
-        UiText::EndpointPrompt => ["LLM 端点（通常以 /v1 结尾）：", "LLM endpoint, usually ending with /v1: ", "LLM-Endpunkt, meist mit /v1 am Ende: ", "Endpoint LLM, normalmente termina en /v1: ", "Endpoint LLM, se terminant généralement par /v1 : ", "LLM エンドポイント（通常 /v1 で終わります）: ", "Эндпоинт LLM, обычно с /v1 в конце: "],
-        UiText::EndpointRequired => ["端点不能为空。", "Endpoint is required.", "Endpunkt ist erforderlich.", "El endpoint es obligatorio.", "L’endpoint est requis.", "エンドポイントは必須です。", "Эндпоинт обязателен."],
-        UiText::ModelPrompt => ["模型名称（可选）：", "Model name (optional): ", "Modellname (optional): ", "Nombre del modelo (opcional): ", "Nom du modèle (facultatif) : ", "モデル名（任意）: ", "Название модели (необязательно): "],
-        UiText::ApiKeyPrompt => ["API Key（可选，本地模型可留空）：", "API key (optional, leave empty for local models): ", "API-Key (optional, für lokale Modelle leer lassen): ", "Clave API (opcional, vacía para modelos locales): ", "Clé API (facultative, vide pour les modèles locaux) : ", "API キー（任意、ローカルモデルは空欄可）: ", "API-ключ (необязательно, для локальных моделей можно оставить пустым): "],
-        UiText::ConfigCreated => ["已创建", "Created", "Erstellt", "Creado", "Créé", "作成しました", "Создано"],
-        UiText::InitCheckOutput => ["检查输出位置", "Check output location", "Ausgabeort prüfen", "Comprobar ubicación de salida", "Vérifier l’emplacement de sortie", "出力先を確認", "Проверка места вывода"],
-        UiText::InitScanFiles => ["扫描项目文件", "Scan project files", "Projektdateien scannen", "Examinar archivos del proyecto", "Analyser les fichiers du projet", "プロジェクトファイルを走査", "Сканирование файлов проекта"],
-        UiText::InitAnalyzeProject => ["分析项目结构", "Analyze project structure", "Projektstruktur analysieren", "Analizar estructura del proyecto", "Analyser la structure du projet", "プロジェクト構造を分析", "Анализ структуры проекта"],
-        UiText::InitGenerateMemory => ["生成项目记忆", "Generate project memory", "Projektspeicher erzeugen", "Generar memoria del proyecto", "Générer la mémoire du projet", "プロジェクトメモリを生成", "Создание памяти проекта"],
-        UiText::InitWriteNola => ["写入 NOLA.md", "Write NOLA.md", "NOLA.md schreiben", "Escribir NOLA.md", "Écrire NOLA.md", "NOLA.md を書き込み", "Запись NOLA.md"],
-        UiText::NoBackgroundTasks => ["当前工作区没有后台任务。", "No background tasks in this workspace.", "In diesem Arbeitsbereich gibt es keine Hintergrundaufgaben.", "No hay tareas en segundo plano en este espacio de trabajo.", "Aucune tâche en arrière-plan dans cet espace de travail.", "このワークスペースにバックグラウンドタスクはありません。", "В этой рабочей области нет фоновых задач."],
-        UiText::BackgroundTasksTitle => ["# 后台任务", "# Background tasks", "# Hintergrundaufgaben", "# Tareas en segundo plano", "# Tâches en arrière-plan", "# バックグラウンドタスク", "# Фоновые задачи"],
-        UiText::TasksFooter => ["使用 `/tasks <任务ID>` 查看结果，`/tasks stop <任务ID>` 停止任务；权限请求会自动打开审批面板。", "Use `/tasks <task-id>` to inspect results and `/tasks stop <task-id>` to stop a task; permission requests open the approval panel automatically.", "Mit `/tasks <Aufgaben-ID>` Ergebnisse anzeigen und mit `/tasks stop <Aufgaben-ID>` stoppen; Berechtigungsanfragen öffnen automatisch den Dialog.", "Usa `/tasks <id-tarea>` para ver resultados y `/tasks stop <id-tarea>` para detenerla; los permisos abren el panel automáticamente.", "Utilisez `/tasks <id-tâche>` pour voir les résultats et `/tasks stop <id-tâche>` pour l’arrêter ; les autorisations ouvrent automatiquement le panneau.", "`/tasks <タスクID>` で結果を確認し、`/tasks stop <タスクID>` で停止します。権限要求は自動的に承認画面を開きます。", "Используйте `/tasks <ID-задачи>` для результатов и `/tasks stop <ID-задачи>` для остановки; запросы разрешений автоматически откроют панель."],
-        UiText::Task => ["任务", "Task", "Aufgabe", "Tarea", "Tâche", "タスク", "Задача"],
-        UiText::Status => ["状态", "Status", "Status", "Estado", "État", "状態", "Статус"],
-        UiText::Agent => ["代理", "Agent", "Agent", "Agente", "Agent", "エージェント", "Агент"],
-        UiText::Progress => ["进度", "Progress", "Fortschritt", "Progreso", "Progression", "進捗", "Прогресс"],
-        UiText::Result => ["结果", "Result", "Ergebnis", "Resultado", "Résultat", "結果", "Результат"],
-        UiText::Error => ["错误", "Error", "Fehler", "Error", "Erreur", "エラー", "Ошибка"],
-        UiText::RecentActivity => ["最近活动", "Recent activity", "Letzte Aktivität", "Actividad reciente", "Activité récente", "最近のアクティビティ", "Недавняя активность"],
-        UiText::Queued => ["排队中", "Queued", "In Warteschlange", "En cola", "En file d’attente", "待機中", "В очереди"],
-        UiText::Running => ["运行中", "Running", "Läuft", "En ejecución", "En cours", "実行中", "Выполняется"],
-        UiText::WaitingPermission => ["等待授权", "Waiting for approval", "Wartet auf Freigabe", "Esperando aprobación", "En attente d’autorisation", "承認待ち", "Ожидание разрешения"],
-        UiText::Completed => ["已完成", "Completed", "Abgeschlossen", "Completada", "Terminée", "完了", "Завершено"],
-        UiText::Failed => ["失败", "Failed", "Fehlgeschlagen", "Fallida", "Échec", "失敗", "Ошибка"],
-        UiText::GoalIntro => ["把要完成的结果写在下方，例如：检查 CLI 交互，修复问题并运行测试。Nola 会持续推进；需要你补充信息或授权时会暂停。", "Describe the result below, for example: review the CLI, fix interaction issues, and run tests. Nola keeps working and pauses when it needs your input or permission.", "Beschreibe unten das Ergebnis. Nola arbeitet weiter und pausiert bei Fragen oder nötiger Erlaubnis.", "Describe abajo el resultado. Nola continúa y se detiene cuando necesita información o permiso.", "Décrivez le résultat ci-dessous. Nola continue et s’arrête si une précision ou une autorisation est nécessaire.", "下に達成したい結果を入力してください。Nola は作業を進め、確認や権限が必要な場合に一時停止します。", "Опишите результат ниже. Nola продолжит работу и остановится, если нужны уточнения или разрешение."],
-        UiText::GoalInputHint => ["目标 · Enter 开始 · Alt+Enter 换行 · Esc 返回对话", "Goal · Enter start · Alt+Enter newline · Esc return to chat", "Ziel · Enter starten · Alt+Enter neue Zeile · Esc zurück", "Objetivo · Enter iniciar · Alt+Enter nueva línea · Esc volver", "Objectif · Entrée démarrer · Alt+Entrée nouvelle ligne · Échap retour", "目標 · Enter 開始 · Alt+Enter 改行 · Esc 会話に戻る", "Цель · Enter начать · Alt+Enter новая строка · Esc назад"],
-        UiText::GoalPlaceholder => ["你希望 Nola 完成什么？", "What should Nola accomplish?", "Was soll Nola erledigen?", "¿Qué debe completar Nola?", "Que doit accomplir Nola ?", "Nola に何を達成してほしいですか？", "Что должна выполнить Nola?"],
-        UiText::GoalLifecycle => ["Nola 会持续推进，需要你提供信息或授权时暂停。/goal 查看状态 · /goal pause 暂停 · /goal resume 继续 · /goal off 结束目标", "Nola keeps working and pauses for input or permission. /goal status · /goal pause · /goal resume · /goal off", "Nola arbeitet weiter und pausiert bei Rückfragen. /goal status · /goal pause · /goal resume · /goal off", "Nola continúa y se detiene para pedir información. /goal status · /goal pause · /goal resume · /goal off", "Nola continue et s’arrête pour une précision. /goal status · /goal pause · /goal resume · /goal off", "確認が必要な場合は一時停止します。/goal status · /goal pause · /goal resume · /goal off", "Nola продолжает работу и останавливается для уточнений. /goal status · /goal pause · /goal resume · /goal off"],
-        UiText::Cancelled => ["已取消", "Cancelled", "Abgebrochen", "Cancelada", "Annulée", "キャンセル済み", "Отменено"],
-        UiText::ExitCode => ["退出码", "Exit code", "Exit-Code", "Código de salida", "Code de sortie", "終了コード", "Код выхода"],
-        UiText::Using => ["正在使用", "Using", "Verwendet", "Usando", "Utilisation de", "使用中", "Используется"],
-        UiText::SubagentPermissionRequest => ["子代理请求执行", "Sub-agent requests", "Unteragent fordert an", "El subagente solicita", "Le sous-agent demande", "サブエージェントが要求", "Субагент запрашивает"],
-        UiText::AllowResourceForTask => ["本任务允许此资源", "Allow this resource for this task", "Diese Ressource für diese Aufgabe erlauben", "Permitir este recurso para esta tarea", "Autoriser cette ressource pour cette tâche", "このタスクでこのリソースを許可", "Разрешить этот ресурс для этой задачи"],
-        UiText::AllowedTaskOnce => ["已允许任务执行一次", "Allowed the task once", "Aufgabe einmalig zugelassen", "Tarea permitida una vez", "Tâche autorisée une fois", "タスクを一度許可", "Задача разрешена один раз"],
-        UiText::AllowedConversationSession => ["已允许本会话执行同类操作", "Allowed similar operations for this session", "Ähnliche Aktionen für diese Sitzung zugelassen", "Acciones similares permitidas para esta sesión", "Actions similaires autorisées pour cette session", "このセッションで同様の操作を許可しました", "Похожие действия разрешены для этого сеанса"],
-        UiText::SentCustomTaskResponse => ["已向任务发送自定义回复", "Sent a custom response to the task", "Eigene Antwort an die Aufgabe gesendet", "Respuesta personalizada enviada a la tarea", "Réponse personnalisée envoyée à la tâche", "タスクにカスタム回答を送信", "Пользовательский ответ отправлен задаче"],
-        UiText::DeniedTaskRequest => ["已拒绝任务请求", "Denied the task request", "Aufgabenanfrage abgelehnt", "Solicitud de tarea rechazada", "Demande de tâche refusée", "タスク要求を拒否", "Запрос задачи отклонён"],
-        UiText::Goal => ["目标", "Goal", "Ziel", "Objetivo", "Objectif", "目標", "Цель"],
-        UiText::Items => ["项任务", "items", "Einträge", "elementos", "éléments", "件", "элементов"],
-        UiText::Risks => ["注意", "Risks", "Risiken", "Riesgos", "Risques", "注意", "Риски"],
-        UiText::Verify => ["验证", "Verify", "Prüfen", "Verificar", "Vérifier", "検証", "Проверка"],
-        UiText::ExecutionPlan => ["执行计划", "Execution plan", "Ausführungsplan", "Plan de ejecución", "Plan d’exécution", "実行計画", "План выполнения"],
+        UiText::WorkPlanning => ["规划中", "規劃中", "Planning", "Planung", "Planificando", "Planification", "計画中", "계획 중", "Планирование"],
+        UiText::WorkReady => ["就绪", "就緒", "Ready", "Bereit", "Listo", "Prêt", "準備完了", "준비됨", "Готово"],
+        UiText::WorkWaitingUser => ["等待用户", "等待使用者", "Waiting for user", "Wartet auf Benutzer", "Esperando al usuario", "En attente de l’utilisateur", "ユーザー待ち", "사용자 대기 중", "Ожидание пользователя"],
+        UiText::WorkWaitingExternal => ["等待外部操作", "等待外部操作", "Waiting for external work", "Wartet auf externe Arbeit", "Esperando trabajo externo", "En attente d’un travail externe", "外部処理待ち", "외부 작업 대기 중", "Ожидание внешней работы"],
+        UiText::WorkVerifying => ["验证中", "驗證中", "Verifying", "Überprüfung", "Verificando", "Vérification", "検証中", "검증 중", "Проверка"],
+        UiText::WorkCompensating => ["补偿中", "補償中", "Compensating", "Kompensation", "Compensando", "Compensation", "補償中", "보상 중", "Компенсация"],
+        UiText::WorkArtifacts => ["产物", "產物", "Artifacts", "Artefakte", "Artefactos", "Artefacts", "成果物", "아티팩트", "Артефакты"],
+        UiText::WorkEvidence => ["证据", "證據", "Evidence", "Nachweise", "Evidencia", "Preuves", "証拠", "증거", "Доказательства"],
+        UiText::HelpTasks => ["查看或停止后台任务；权限请求会自动弹出", "檢視或停止背景任務；權限請求會自動顯示", "Inspect or stop background tasks; permission prompts open automatically", "Hintergrundaufgaben anzeigen oder stoppen; Berechtigungen öffnen automatisch", "Ver o detener tareas en segundo plano; los permisos se abren automáticamente", "Voir ou arrêter les tâches en arrière-plan ; les autorisations s’ouvrent automatiquement", "バックグラウンドタスクの確認・停止。権限画面は自動表示", "백그라운드 작업 확인 또는 중지; 권한 요청이 자동으로 열립니다", "Просмотреть или остановить фоновые задачи; запрос разрешения откроется автоматически"],
+        UiText::HelpJobs => ["管理后台任务", "管理背景任務", "Manage background tasks", "Hintergrundaufgaben verwalten", "Gestionar tareas en segundo plano", "Gérer les tâches en arrière-plan", "バックグラウンドタスクを管理", "백그라운드 작업 관리", "Управление фоновыми задачами"],
+        UiText::GoalPaused => ["目标已暂停", "目標已暫停", "Goal paused", "Ziel pausiert", "Objetivo en pausa", "Objectif en pause", "目標を一時停止", "목표 일시 중지됨", "Цель приостановлена"],
+        UiText::ConfigNotFound => ["未找到 Nola 配置：", "找不到 Nola 設定：", "Nola config was not found at", "Nola-Konfiguration nicht gefunden:", "No se encontró la configuración de Nola en", "Configuration Nola introuvable :", "Nola 設定が見つかりません:", "Nola 설정을 찾을 수 없습니다:", "Конфигурация Nola не найдена:"],
+        UiText::CreateConfigPrompt => ["现在创建？[Y/n] ", "現在建立？[Y/n] ", "Create it now? [Y/n] ", "Jetzt erstellen? [Y/n] ", "¿Crearla ahora? [Y/n] ", "La créer maintenant ? [Y/n] ", "今すぐ作成しますか？ [Y/n] ", "지금 만드시겠습니까? [Y/n] ", "Создать сейчас? [Y/n] "],
+        UiText::EndpointPrompt => ["LLM 端点（通常以 /v1 结尾）：", "LLM 端點（通常以 /v1 結尾）：", "LLM endpoint, usually ending with /v1: ", "LLM-Endpunkt, meist mit /v1 am Ende: ", "Endpoint LLM, normalmente termina en /v1: ", "Endpoint LLM, se terminant généralement par /v1 : ", "LLM エンドポイント（通常 /v1 で終わります）: ", "LLM 엔드포인트 (보통 /v1로 끝남): ", "Эндпоинт LLM, обычно с /v1 в конце: "],
+        UiText::EndpointRequired => ["端点不能为空。", "端點不能為空。", "Endpoint is required.", "Endpunkt ist erforderlich.", "El endpoint es obligatorio.", "L’endpoint est requis.", "エンドポイントは必須です。", "엔드포인트는 필수입니다.", "Эндпоинт обязателен."],
+        UiText::EndpointInvalidScheme => ["端点必须以 http:// 或 https:// 开头。", "端點必須以 http:// 或 https:// 開頭。", "Endpoint must start with http:// or https://.", "Der Endpunkt muss mit http:// oder https:// beginnen.", "El endpoint debe comenzar con http:// o https://.", "L’endpoint doit commencer par http:// ou https://.", "エンドポイントは http:// または https:// で始まる必要があります。", "엔드포인트는 http:// 또는 https://로 시작해야 합니다.", "Эндпоинт должен начинаться с http:// или https://."],
+        UiText::ModelPrompt => ["模型名称（例如 gpt-4o）：", "模型名稱（例如 gpt-4o）：", "Model ID (e.g. gpt-4o): ", "Modell-ID (z. B. gpt-4o): ", "ID del modelo (p. ej. gpt-4o): ", "ID du modèle (ex. gpt-4o) : ", "モデル ID（例: gpt-4o）: ", "모델 ID (예: gpt-4o): ", "ID модели (напр. gpt-4o): "],
+        UiText::ModelRequired => ["模型名称不能为空。", "模型名稱不能為空。", "Model ID is required.", "Modell-ID ist erforderlich.", "El ID del modelo es obligatorio.", "L’ID du modèle est requis.", "モデル ID は必須です。", "모델 ID는 필수입니다.", "ID модели обязателен."],
+        UiText::ApiKeyPrompt => ["API Key（可选，本地模型可留空）：", "API Key（選填，本機模型可留空）：", "API key (optional, leave empty for local models): ", "API-Key (optional, für lokale Modelle leer lassen): ", "Clave API (opcional, vacía para modelos locales): ", "Clé API (facultative, vide pour les modèles locaux) : ", "API キー（任意、ローカルモデルは空欄可）: ", "API 키 (선택 사항, 로컬 모델은 비워 두기): ", "API-ключ (необязательно, для локальных моделей можно оставить пустым): "],
+        UiText::ConfigCreated => ["已创建", "已建立", "Created", "Erstellt", "Creado", "Créé", "作成しました", "생성됨", "Создано"],
+        UiText::InitCheckOutput => ["检查输出位置", "檢查輸出位置", "Check output location", "Ausgabeort prüfen", "Comprobar ubicación de salida", "Vérifier l’emplacement de sortie", "出力先を確認", "출력 위치 확인", "Проверка места вывода"],
+        UiText::InitScanFiles => ["扫描项目文件", "掃描專案檔案", "Scan project files", "Projektdateien scannen", "Examinar archivos del proyecto", "Analyser les fichiers du projet", "プロジェクトファイルを走査", "프로젝트 파일 스캔", "Сканирование файлов проекта"],
+        UiText::InitAnalyzeProject => ["分析项目结构", "分析專案結構", "Analyze project structure", "Projektstruktur analysieren", "Analizar estructura del proyecto", "Analyser la structure du projet", "プロジェクト構造を分析", "프로젝트 구조 분석", "Анализ структуры проекта"],
+        UiText::InitGenerateMemory => ["生成项目记忆", "產生專案記憶", "Generate project memory", "Projektspeicher erzeugen", "Generar memoria del proyecto", "Générer la mémoire du projet", "プロジェクトメモリを生成", "프로젝트 메모리 생성", "Создание памяти проекта"],
+        UiText::InitWriteNola => ["写入 NOLA.md", "寫入 NOLA.md", "Write NOLA.md", "NOLA.md schreiben", "Escribir NOLA.md", "Écrire NOLA.md", "NOLA.md を書き込み", "NOLA.md 쓰기", "Запись NOLA.md"],
+        UiText::NoBackgroundTasks => ["当前工作区没有后台任务。", "目前工作區沒有背景任務。", "No background tasks in this workspace.", "In diesem Arbeitsbereich gibt es keine Hintergrundaufgaben.", "No hay tareas en segundo plano en este espacio de trabajo.", "Aucune tâche en arrière-plan dans cet espace de travail.", "このワークスペースにバックグラウンドタスクはありません。", "이 작업 공간에 백그라운드 작업이 없습니다.", "В этой рабочей области нет фоновых задач."],
+        UiText::BackgroundTasksTitle => ["# 后台任务", "# 背景任務", "# Background tasks", "# Hintergrundaufgaben", "# Tareas en segundo plano", "# Tâches en arrière-plan", "# バックグラウンドタスク", "# 백그라운드 작업", "# Фоновые задачи"],
+        UiText::TasksFooter => ["使用 `/tasks <任务ID>` 查看结果，`/tasks stop <任务ID>` 停止任务；权限请求会自动打开审批面板。", "使用 `/tasks <任務 ID>` 檢視結果，`/tasks stop <任務 ID>` 停止任務；權限請求會自動開啟核准面板。", "Use `/tasks <task-id>` to inspect results and `/tasks stop <task-id>` to stop a task; permission requests open the approval panel automatically.", "Mit `/tasks <Aufgaben-ID>` Ergebnisse anzeigen und mit `/tasks stop <Aufgaben-ID>` stoppen; Berechtigungsanfragen öffnen automatisch den Dialog.", "Usa `/tasks <id-tarea>` para ver resultados y `/tasks stop <id-tarea>` para detenerla; los permisos abren el panel automáticamente.", "Utilisez `/tasks <id-tâche>` pour voir les résultats et `/tasks stop <id-tâche>` pour l’arrêter ; les autorisations ouvrent automatiquement le panneau.", "`/tasks <タスクID>` で結果を確認し、`/tasks stop <タスクID>` で停止します。権限要求は自動的に承認画面を開きます。", "결과를 확인하려면 `/tasks <작업-ID>`, 중지하려면 `/tasks stop <작업-ID>`를 사용하세요. 권한 요청 시 승인 패널이 자동으로 열립니다.", "Используйте `/tasks <ID-задачи>` для результатов и `/tasks stop <ID-задачи>` для остановки; запросы разрешений автоматически откроют панель."],
+        UiText::Task => ["任务", "任務", "Task", "Aufgabe", "Tarea", "Tâche", "タスク", "작업", "Задача"],
+        UiText::Status => ["状态", "狀態", "Status", "Status", "Estado", "État", "状態", "상태", "Статус"],
+        UiText::Agent => ["代理", "代理", "Agent", "Agent", "Agente", "Agent", "エージェント", "에이전트", "Агент"],
+        UiText::Progress => ["进度", "進度", "Progress", "Fortschritt", "Progreso", "Progression", "進捗", "진행률", "Прогресс"],
+        UiText::Result => ["结果", "結果", "Result", "Ergebnis", "Resultado", "Résultat", "結果", "결과", "Результат"],
+        UiText::Error => ["错误", "錯誤", "Error", "Fehler", "Error", "Erreur", "エラー", "오류", "Ошибка"],
+        UiText::RecentActivity => ["最近活动", "最近活動", "Recent activity", "Letzte Aktivität", "Actividad reciente", "Activité récente", "最近のアクティビティ", "최근 활동", "Недавняя активность"],
+        UiText::Queued => ["排队中", "排隊中", "Queued", "In Warteschlange", "En cola", "En file d’attente", "待機中", "대기 중", "В очереди"],
+        UiText::Running => ["运行中", "執行中", "Running", "Läuft", "En ejecución", "En cours", "実行中", "실행 중", "Выполняется"],
+        UiText::WaitingPermission => ["等待授权", "等待授權", "Waiting for approval", "Wartet auf Freigabe", "Esperando aprobación", "En attente d’autorisation", "承認待ち", "승인 대기 중", "Ожидание разрешения"],
+        UiText::Completed => ["已完成", "已完成", "Completed", "Abgeschlossen", "Completada", "Terminée", "完了", "완료됨", "Завершено"],
+        UiText::Failed => ["失败", "失敗", "Failed", "Fehlgeschlagen", "Fallida", "Échec", "失敗", "실패", "Ошибка"],
+        UiText::GoalIntro => ["把要完成的结果写在下方，例如：检查 CLI 交互，修复问题并运行测试。Nola 会持续推进；需要你补充信息或授权时会暂停。", "請在下方填寫要達成的結果，例如：檢查 CLI 互動、修正問題並執行測試。Nola 會持續推進；需要您補充資訊或授權時會暫停。", "Describe the result below, for example: review the CLI, fix interaction issues, and run tests. Nola keeps working and pauses when it needs your input or permission.", "Beschreibe unten das Ergebnis. Nola arbeitet weiter und pausiert bei Rückfragen oder nötiger Erlaubnis.", "Describe abajo el resultado. Nola continúa y se detiene cuando necesita información o permiso.", "Décrivez le résultat ci-dessous. Nola continue et s’arrête si une précision ou une autorisation est nécessaire.", "下に達成したい結果を入力してください。Nola は作業を進め、確認や権限が必要な場合に一時停止します。", "아래에 달성할 결과를 입력하세요(예: CLI 상호작용 검토, 문제 수정 및 테스트 실행). Nola가 계속 진행하며 입력이나 권한이 필요할 때 일시 중지합니다.", "Опишите результат ниже. Nola продолжит работу и остановится, если нужны уточнения или разрешение."],
+        UiText::GoalInputHint => ["目标 · Enter 开始 · Alt+Enter 换行 · Esc 返回对话", "目標 · Enter 開始 · Alt+Enter 換行 · Esc 返回對話", "Goal · Enter start · Alt+Enter newline · Esc return to chat", "Ziel · Enter starten · Alt+Enter neue Zeile · Esc zurück", "Objetivo · Enter iniciar · Alt+Enter nueva línea · Esc volver", "Objectif · Entrée démarrer · Alt+Entrée nouvelle ligne · Échap retour", "目標 · Enter 開始 · Alt+Enter 改行 · Esc 会話に戻る", "목표 · Enter 시작 · Alt+Enter 줄 바꿈 · Esc 대화로 돌아가기", "Цель · Enter начать · Alt+Enter новая строка · Esc назад"],
+        UiText::GoalPlaceholder => ["你希望 Nola 完成什么？", "您希望 Nola 完成什麼？", "What should Nola accomplish?", "Was soll Nola erledigen?", "¿Qué debe completar Nola?", "Que doit accomplir Nola ?", "Nola に何を達成してほしいですか？", "Nola가 무엇을 완료하길 원하시나요?", "Что должна выполнить Nola?"],
+        UiText::GoalLifecycle => ["Nola 会持续推进，需要你提供信息或授权时暂停。/goal 查看状态 · /goal pause 暂停 · /goal resume 继续 · /goal off 结束目标", "Nola 會持續推進，需要您提供資訊或授權時暫停。/goal 檢視狀態 · /goal pause 暫停 · /goal resume 繼續 · /goal off 結束目標", "Nola keeps working and pauses for input or permission. /goal status · /goal pause · /goal resume · /goal off", "Nola arbeitet weiter und pausiert bei Rückfragen. /goal status · /goal pause · /goal resume · /goal off", "Nola continúa y se detiene para pedir información. /goal status · /goal pause · /goal resume · /goal off", "Nola continue et s’arrête pour une précision. /goal status · /goal pause · /goal resume · /goal off", "確認が必要な場合は一時停止します。/goal status · /goal pause · /goal resume · /goal off", "Nola가 계속 진행하며 입력이나 권한이 필요할 때 일시 중지합니다. /goal status · /goal pause · /goal resume · /goal off", "Nola продолжает работу и останавливается для уточнений. /goal status · /goal pause · /goal resume · /goal off"],
+        UiText::Cancelled => ["已取消", "已取消", "Cancelled", "Abgebrochen", "Cancelada", "Annulée", "キャンセル済み", "취소됨", "Отменено"],
+        UiText::ExitCode => ["退出码", "結束代碼", "Exit code", "Exit-Code", "Código de salida", "Code de sortie", "終了コード", "종료 코드", "Код выхода"],
+        UiText::Using => ["正在使用", "正在使用", "Using", "Verwendet", "Usando", "Utilisation de", "使用中", "사용 중", "Используется"],
+        UiText::SubagentPermissionRequest => ["子代理请求执行", "子代理請求執行", "Sub-agent requests", "Unteragent fordert an", "El subagente solicita", "Le sous-agent demande", "サブエージェントが要求", "하위 에이전트 요청", "Субагент запрашивает"],
+        UiText::AllowResourceForTask => ["本任务允许此资源", "此任務允許此資源", "Allow this resource for this task", "Diese Ressource für diese Aufgabe erlauben", "Permitir este recurso para esta tarea", "Autoriser cette ressource pour cette tâche", "このタスクでこのリソースを許可", "이 작업에서 이 리소스 허용", "Разрешить этот ресурс для этой задачи"],
+        UiText::AllowedTaskOnce => ["已允许任务执行一次", "已允許任務執行一次", "Allowed the task once", "Aufgabe einmalig zugelassen", "Tarea permitida una vez", "Tâche autorisée une fois", "タスクを一度許可", "작업을 한 번 허용함", "Задача разрешена один раз"],
+        UiText::AllowedConversationSession => ["已允许本会话执行同类操作", "已允許此工作階段執行同類操作", "Allowed similar operations for this session", "Ähnliche Aktionen für diese Sitzung zugelassen", "Acciones similares permitidas para esta sesión", "Actions similaires autorisées pour cette session", "このセッションで同様の操作を許可しました", "이 세션에서 유사한 작업 허용됨", "Похожие действия разрешены для этого сеанса"],
+        UiText::SentCustomTaskResponse => ["已向任务发送自定义回复", "已傳送自訂回覆至任務", "Sent a custom response to the task", "Eigene Antwort an die Aufgabe gesendet", "Respuesta personalizada enviada a la tarea", "Réponse personnalisée envoyée à la tâche", "タスクにカスタム回答を送信", "작업에 사용자 지정 응답을 보냈습니다", "Пользовательский ответ отправлен задаче"],
+        UiText::DeniedTaskRequest => ["已拒绝任务请求", "已拒絕任務請求", "Denied the task request", "Aufgabenanfrage abgelehnt", "Solicitud de tarea rechazada", "Demande de tâche refusée", "タスク要求を拒否", "작업 요청 거부됨", "Запрос задачи отклонён"],
+        UiText::Goal => ["目标", "目標", "Goal", "Ziel", "Objetivo", "Objectif", "目標", "목표", "Цель"],
+        UiText::Items => ["项任务", "項", "items", "Einträge", "elementos", "éléments", "件", "개", "элементов"],
+        UiText::Risks => ["注意", "注意", "Risks", "Risiken", "Riesgos", "Risques", "注意", "주의", "Риски"],
+        UiText::Verify => ["验证", "驗證", "Verify", "Prüfen", "Verificar", "Vérifier", "検証", "검증", "Проверка"],
+        UiText::ExecutionPlan => ["执行计划", "執行計畫", "Execution plan", "Ausführungsplan", "Plan de ejecución", "Plan d’exécution", "実行計画", "실행 계획", "План выполнения"],
     };
     values[match language {
         Language::ZhHans => 0,
-        Language::En => 1,
-        Language::De => 2,
-        Language::Es => 3,
-        Language::Fr => 4,
-        Language::Ja => 5,
-        Language::Ru => 6,
+        Language::ZhHant => 1,
+        Language::En => 2,
+        Language::De => 3,
+        Language::Es => 4,
+        Language::Fr => 5,
+        Language::Ja => 6,
+        Language::Ko => 7,
+        Language::Ru => 8,
     }]
 }
 
@@ -806,6 +868,43 @@ fn interaction_text_for(language: Language) -> InteractionText {
             answers_received_suffix: "个回答已收到",
             validation_pipeline_rejected: "验证命令必须直接运行完成，不能通过 head 或 tail 截断输出",
             custom_permission_return: "已返回主输入框，请继续输入",
+        },
+        Language::ZhHant => InteractionText {
+            selection_hint: "↑/↓ 選擇 · Enter 確認 · Esc 取消",
+            current_label: "目前：",
+            question_input_prefix: "  輸入",
+            question_or_direct_answer: "，或直接輸入回答",
+            question_invalid_range_prefix: "  請輸入有效序號，範圍為 1-",
+            question_invalid: "  請輸入有效序號，或輸入 q 取消",
+            custom_answer: "自訂回答…",
+            resume_title: "恢復工作階段",
+            resume_inline_unsupported: "恢復工作階段模式不支援行內提示",
+            resume_json_unsupported: "恢復工作階段模式不支援 --json",
+            resume_terminal_only: "恢復工作階段模式僅支援互動式終端機",
+            session_list: "工作階段清單",
+            recent_sessions_hint: "最近工作階段 · ↑↓ 選擇 · Enter 恢復 · Esc 結束",
+            resume_input_prompt: "輸入序號並按 Enter（輸入 q 結束）：",
+            resume_invalid_prefix: "輸入無效，請輸入 1-",
+            resume_invalid_suffix: "，或輸入 q 結束",
+            empty_value: "<空>",
+            no_execution_plan: "目前工作階段尚無執行計畫",
+            execution_plan: "執行計畫",
+            completed: "完成",
+            complete: "已完成",
+            in_progress: "進行中",
+            pending: "待處理",
+            current_project_session: "目前專案工作階段",
+            loading_session_history: "載入工作階段歷史",
+            messages_suffix: "則訊息",
+            no_matches: "無符合項目",
+            no_matches_in_window: "目前視窗無符合項目",
+            confirmation_required: "需要使用者確認",
+            decision_required: "需要您的選擇",
+            question_cancelled: "使用者取消了選擇",
+            question_input_required: "需要使用者輸入",
+            answers_received_suffix: "個回答已收到",
+            validation_pipeline_rejected: "驗證命令必須直接執行完成，不能透過 head 或 tail 截斷輸出",
+            custom_permission_return: "已返回主輸入框，請繼續輸入",
         },
         Language::De => InteractionText {
             selection_hint: "↑/↓ wählen · Enter bestätigen · Esc abbrechen",
@@ -955,6 +1054,43 @@ fn interaction_text_for(language: Language) -> InteractionText {
             validation_pipeline_rejected: "検証コマンドは head または tail で出力を切らずに完了させてください",
             custom_permission_return: "メイン入力欄に戻りました。入力を続けてください",
         },
+        Language::Ko => InteractionText {
+            selection_hint: "↑/↓ 이동 · Enter 확인 · Esc 취소",
+            current_label: "현재:",
+            question_input_prefix: "  입력",
+            question_or_direct_answer: ", 또는 직접 답변 입력",
+            question_invalid_range_prefix: "  유효한 번호를 입력하세요: 1-",
+            question_invalid: "  유효한 번호를 입력하거나 q 로 취소",
+            custom_answer: "사용자 지정 답변…",
+            resume_title: "세션 재개",
+            resume_inline_unsupported: "재개 모드에서는 인라인 입력을 사용할 수 없습니다",
+            resume_json_unsupported: "재개 모드에서는 --json 을 지원하지 않습니다",
+            resume_terminal_only: "재개 모드에는 대화형 터미널이 필요합니다",
+            session_list: "세션 목록",
+            recent_sessions_hint: "최근 세션 · ↑↓ 선택 · Enter 재개 · Esc 종료",
+            resume_input_prompt: "번호를 입력하고 Enter를 누르세요 (q 로 종료):",
+            resume_invalid_prefix: "잘못된 입력입니다. 1-",
+            resume_invalid_suffix: " 또는 q 를 입력하세요",
+            empty_value: "<비어 있음>",
+            no_execution_plan: "이 세션에는 아직 실행 계획이 없습니다",
+            execution_plan: "실행 계획",
+            completed: "완료",
+            complete: "완료됨",
+            in_progress: "진행 중",
+            pending: "대기 중",
+            current_project_session: "현재 프로젝트 세션",
+            loading_session_history: "세션 기록 불러오는 중",
+            messages_suffix: "개 메시지",
+            no_matches: "일치 항목 없음",
+            no_matches_in_window: "현재 창에 일치 항목 없음",
+            confirmation_required: "사용자 확인 필요",
+            decision_required: "결정이 필요합니다",
+            question_cancelled: "선택이 취소되었습니다",
+            question_input_required: "사용자 입력 필요",
+            answers_received_suffix: "개 답변 수신됨",
+            validation_pipeline_rejected: "검증 명령은 head 또는 tail 로 출력을 자르지 않고 완료되어야 합니다",
+            custom_permission_return: "기본 입력란으로 돌아왔습니다. 계속 입력하세요",
+        },
         Language::Ru => InteractionText {
             selection_hint: "↑/↓ выбрать · Enter подтвердить · Esc отменить",
             current_label: "Текущий:",
@@ -1068,11 +1204,20 @@ enum ToolDisplayError<'a> {
 }
 
 pub fn current_language() -> Language {
-    if let Some(language) = LANGUAGE_OVERRIDE.get() {
-        return *language;
+    if let Ok(guard) = LANGUAGE_OVERRIDE.read() {
+        if let Some(language) = *guard {
+            return language;
+        }
     }
 
-    for name in ["NOLA_CLI_LANG", "LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"] {
+    for name in [
+        "NOLA_CLI_LANG",
+        "NOLA_LANG",
+        "LANGUAGE",
+        "LC_ALL",
+        "LC_MESSAGES",
+        "LANG",
+    ] {
         if let Ok(value) = env::var(name) {
             let language = language_from_tag(&value);
             if language != Language::En || is_explicit_english(&value) {
@@ -1095,6 +1240,16 @@ pub fn parse_language_tag(tag: &str) -> Option<Language> {
 
     if normalized == "en" || normalized.starts_with("en-") {
         Some(Language::En)
+    } else if normalized == "zh-hant"
+        || normalized.starts_with("zh-hant-")
+        || normalized == "zh-tw"
+        || normalized.starts_with("zh-tw-")
+        || normalized == "zh-hk"
+        || normalized.starts_with("zh-hk-")
+        || normalized == "zh-mo"
+        || normalized.starts_with("zh-mo-")
+    {
+        Some(Language::ZhHant)
     } else if normalized == "zh" || normalized.starts_with("zh-") {
         Some(Language::ZhHans)
     } else if normalized == "de" || normalized.starts_with("de-") {
@@ -1105,6 +1260,8 @@ pub fn parse_language_tag(tag: &str) -> Option<Language> {
         Some(Language::Fr)
     } else if normalized == "ja" || normalized.starts_with("ja-") {
         Some(Language::Ja)
+    } else if normalized == "ko" || normalized.starts_with("ko-") {
+        Some(Language::Ko)
     } else if normalized == "ru" || normalized.starts_with("ru-") {
         Some(Language::Ru)
     } else {
@@ -1113,7 +1270,16 @@ pub fn parse_language_tag(tag: &str) -> Option<Language> {
 }
 
 pub fn set_language(language: Language) {
-    let _ = LANGUAGE_OVERRIDE.set(language);
+    *LANGUAGE_OVERRIDE
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(language);
+}
+
+#[cfg(test)]
+pub(crate) fn clear_language_override_for_test() {
+    *LANGUAGE_OVERRIDE
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
 }
 
 pub fn help_text() -> &'static str {
@@ -1131,11 +1297,13 @@ pub fn browser_accept_language() -> &'static str {
 pub fn browser_locale_for(language: Language) -> &'static str {
     match language {
         Language::ZhHans => "zh-CN",
+        Language::ZhHant => "zh-TW",
         Language::En => "en-US",
         Language::De => "de-DE",
         Language::Es => "es-ES",
         Language::Fr => "fr-FR",
         Language::Ja => "ja-JP",
+        Language::Ko => "ko-KR",
         Language::Ru => "ru-RU",
     }
 }
@@ -1143,11 +1311,13 @@ pub fn browser_locale_for(language: Language) -> &'static str {
 pub fn browser_accept_language_for(language: Language) -> &'static str {
     match language {
         Language::ZhHans => "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+        Language::ZhHant => "zh-TW,zh-Hant;q=0.9,zh;q=0.8,en-US;q=0.7,en;q=0.6",
         Language::En => "en-US,en;q=0.9",
         Language::De => "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
         Language::Es => "es-ES,es;q=0.9,en-US;q=0.8,en;q=0.7",
         Language::Fr => "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
         Language::Ja => "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7",
+        Language::Ko => "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
         Language::Ru => "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
     }
 }
@@ -1164,6 +1334,13 @@ pub fn help_text_for(language: Language) -> &'static str {
   nola web [选项]
   nola server [选项]
   nola sessions
+  nola room list|inspect|create|send ...
+  nola skills [list|enable <id>|disable <id>]
+  nola mcp [list|add <name> <target> [args...]|remove <id>|enable <id>|disable <id>]
+  nola memory [list|add <text>|search <query>|create|revise|delete]
+  nola model [list|discover|configure|apply-config|import|probe|override|chatgpt]
+  nola update [check|download <dir>]
+  nola version
   nola plugin inspect|install <directory>
   nola plugin list [--after <id>]
   nola plugin enable|disable|remove <id>
@@ -1174,34 +1351,37 @@ pub fn help_text_for(language: Language) -> &'static str {
   nola session delete <id>
 
 选项：
-  --endpoint URL          OpenAI 兼容端点，通常以 /v1 结尾
-  --api-key KEY           API Key；为空时不发送
-  --model MODEL           发送给端点的模型名
-  --project PATH          项目根目录，默认当前目录
-  --allow-dir PATH        允许本地工具访问的目录；可重复
-  --bash-prefix PREFIX    允许执行的 Bash 命令前缀；可重复
-  --json                  输出按行分隔的 JSON 事件
-  --debug                 写入本地调试日志，并开启更详细终端交互（完整状态、工具调用与关键工具参数）
-  --lang LANGUAGE         覆盖界面语言 (zh | en | de | es | fr | ja | ru)
-  --yes, -y               仅确认 init/wiki 的模型联网请求；不授予 Agent 工具权限
-  --network-policy MODE    联网策略：allow、ask、deny（默认 allow）
-  --force-tool-set MODE    限制暴露工具：auto、all 或 write（默认 auto）
-  --no-tools              禁用本地工具
-  --max-iterations N      限制可调用工具的模型请求轮次；0 表示不限
-  --session ID            加载/保存指定会话
-  --continue, -c          打开恢复会话页并继续最近保存的会话
-  --resume                打开恢复会话页（按↑/↓选择）并选择要继续的会话
-  --no-save               本次运行不保存到会话
-  --output PATH           init 输出 NOLA.md 路径；wiki 输出 wiki 路径
-  --force                 覆盖已存在的 init/wiki 输出文件
-  --dry-run               预览 init/wiki 输出但不写文件
-  --host HOST             web 服务监听地址，默认 127.0.0.1
-  --port PORT             web 服务端口，默认 5001
-  --web-root PATH         web 资源目录，默认 <project>/web
-  --help, -h              显示帮助
+  --endpoint URL              OpenAI 兼容端点，通常以 /v1 结尾
+  --api-key KEY               API Key；为空时不发送
+  --model, -m MODEL           发送给端点的模型名
+  --project PATH              项目根目录，默认当前目录
+  --allow-dir PATH            允许本地工具访问的目录；可重复
+  --bash-prefix PREFIX        允许执行的 Bash 命令前缀；可重复
+  --json                      输出按行分隔的 JSON 事件
+  --debug                     写入本地调试日志，并开启更详细终端交互（完整状态、工具调用与关键工具参数）
+  --lang LANGUAGE             覆盖界面语言 (zh | zh-hant | en | de | es | fr | ja | ko | ru)
+  --permission-profile MODE   权限配置：cautious 或 allow_all（覆盖 --yes/-y 的权限提升）
+  --yes, -y                   自动确认 init/wiki 的模型联网请求，并启用 allow_all 工具权限（除非显式指定 --permission-profile）
+  --network-policy MODE       联网策略：allow、ask、deny（默认 allow）
+  --force-tool-set MODE       限制暴露工具：auto、all 或 write（默认 auto）
+  --no-tools                  禁用本地工具
+  --max-iterations N          限制可调用工具的模型请求轮次；0 表示不限
+  --session ID                加载/保存指定会话
+  --continue, -c              打开恢复会话页并继续最近保存的会话
+  --resume                    打开恢复会话页（按↑/↓选择）并选择要继续的会话
+  --no-save                   本次运行不保存到会话
+  --output PATH               init 输出 NOLA.md 路径；wiki 输出 wiki 路径
+  --force                     覆盖已存在的 init/wiki 输出文件
+  --dry-run                   预览 init/wiki 输出但不写文件
+  --host HOST                 web 服务监听地址，默认 127.0.0.1
+  --port PORT                 web 服务端口，默认 5001
+  --web-root PATH             web 资源目录，默认优先 <project>/apps/web，其次 <project>/web
+  --version, -V               显示版本信息
+  --help, -h                  显示帮助
 
 环境变量：
-  NOLA_CLI_LANG
+  NOLA_CLI_LANG, NOLA_LANG
+  NOLA_PERMISSION_PROFILE
   NOLA_CLI_PROJECT_ROOT
   NOLA_AGENT_CONTEXT_TOKEN_THRESHOLD
   NOLA_AGENT_CONTEXT_WINDOW_TOKENS
@@ -1220,6 +1400,82 @@ pub fn help_text_for(language: Language) -> &'static str {
   支持 llm、allowed_dirs、bash_prefixes、permissions、agents、compaction、external_execution、instructions、debug、language
 "#
         }
+        Language::ZhHant => {
+            r#"Nola CLI
+
+用法：
+  nola [訊息...] [選項]
+  nola init [選項]
+  nola wiki [選項]
+  nola web [選項]
+  nola server [選項]
+  nola sessions
+  nola room list|inspect|create|send ...
+  nola skills [list|enable <id>|disable <id>]
+  nola mcp [list|add <name> <target> [args...]|remove <id>|enable <id>|disable <id>]
+  nola memory [list|add <text>|search <query>|create|revise|delete]
+  nola model [list|discover|configure|apply-config|import|probe|override|chatgpt]
+  nola update [check|download <dir>]
+  nola version
+  nola plugin inspect|install <directory>
+  nola plugin list [--after <id>]
+  nola plugin enable|disable|remove <id>
+  nola plugin credential-set|credential-clear <id> <reference>
+  nola session show <id>
+  nola session part <conversation> <message> <part> <revision>
+  nola session sources <conversation> [compaction-part]
+  nola session delete <id>
+
+選項：
+  --endpoint URL              OpenAI 相容端點，通常以 /v1 結尾
+  --api-key KEY               API Key；為空時不傳送
+  --model, -m MODEL           傳送給端點的模型名稱
+  --project PATH              專案根目錄，預設為目前目錄
+  --allow-dir PATH            允許本機工具存取的目錄；可重複指定
+  --bash-prefix PREFIX        允許執行的 Bash 命令前綴；可重複指定
+  --json                      輸出以換行分隔的 JSON 事件
+  --debug                     寫入本機除錯日誌並開啟詳細終端互動
+  --lang LANGUAGE             覆蓋介面語言 (zh | zh-hant | en | de | es | fr | ja | ko | ru)
+  --permission-profile MODE   權限設定檔：cautious 或 allow_all（優先於 --yes/-y 的權限設定）
+  --yes, -y                   自動核准 init/wiki 模型網路請求，並啟用 allow_all 工具權限（除非已明確指定 --permission-profile）
+  --network-policy MODE       網路原則：allow、ask、deny（預設 allow）
+  --force-tool-set MODE       限制公開的工具集合：auto、all 或 write（預設 auto）
+  --no-tools                  停用本機工具
+  --max-iterations N          限制可呼叫工具的模型請求輪次；0 表示不限
+  --session ID                載入或儲存指定工作階段
+  --continue, -c              開啟工作階段恢復頁並繼續最近儲存的工作階段
+  --resume                    開啟工作階段恢復頁（按 ↑/↓ 選擇）並挑選要繼續的工作階段
+  --no-save                   本次執行不儲存至工作階段
+  --output PATH               init 輸出 NOLA.md 路徑；wiki 輸出 wiki 路徑
+  --force                     覆蓋已存在的 init/wiki 輸出檔案
+  --dry-run                   預覽 init/wiki 輸出但不寫入檔案
+  --host HOST                 web 伺服器監聽位址，預設 127.0.0.1
+  --port PORT                 web 伺服器連接埠，預設 5001
+  --web-root PATH             web 資源目錄，預設依序尋找 <project>/apps/web 與 <project>/web
+  --version, -V               顯示版本資訊
+  --help, -h                  顯示說明
+
+環境變數：
+  NOLA_CLI_LANG, NOLA_LANG
+  NOLA_PERMISSION_PROFILE
+  NOLA_CLI_NETWORK_POLICY
+  NOLA_CLI_PROJECT_ROOT
+  NOLA_AGENT_CONTEXT_TOKEN_THRESHOLD
+  NOLA_AGENT_CONTEXT_WINDOW_TOKENS
+  NOLA_CLI_ALLOWED_DIRS, NOLA_CLI_BASH_PREFIXES
+  NOLA_CLI_DEBUG
+  NOLA_CLI_DEBUG_LOG_PATH
+  NOLA_CLI_DEBUG_LOG_MAX_BYTES, NOLA_CLI_DEBUG_LOG_BACKUPS
+  NOLA_CLI_INTERACTION_MODE (auto, always, never)
+  NOLA_DB_PATH, NOLA_CLI_PYTHON
+
+設定檔：
+  ~/.nola/config.json(.jsonc)
+  <project>/.nola/config.json(.jsonc), <project>/nola.json(.jsonc)
+  相容 <project>/.nola/current_config.json(.jsonc)
+  支援 llm、allowed_dirs、bash_prefixes、permissions、agents、compaction、external_execution、instructions、debug、language
+"#
+        }
         Language::En => {
             r#"Nola CLI
 
@@ -1230,6 +1486,13 @@ Usage:
   nola web [options]
   nola server [options]
   nola sessions
+  nola room list|inspect|create|send ...
+  nola skills [list|enable <id>|disable <id>]
+  nola mcp [list|add <name> <target> [args...]|remove <id>|enable <id>|disable <id>]
+  nola memory [list|add <text>|search <query>|create|revise|delete]
+  nola model [list|discover|configure|apply-config|import|probe|override|chatgpt]
+  nola update [check|download <dir>]
+  nola version
   nola plugin inspect|install <directory>
   nola plugin list [--after <id>]
   nola plugin enable|disable|remove <id>
@@ -1242,14 +1505,15 @@ Usage:
 Options:
   --endpoint URL          OpenAI-compatible endpoint, usually ending in /v1
   --api-key KEY           API key; omitted when empty
-  --model MODEL           Model name sent to the endpoint
+  --model, -m MODEL       Model name sent to the endpoint
   --project PATH          Project root, default current directory
   --allow-dir PATH        Local directory tools may access; repeatable
   --bash-prefix PREFIX    Bash command prefix to allow; repeatable
   --json                  Emit newline-delimited JSON events
   --debug                 Write local debug logs and enable detailed terminal interaction (full status + tool details)
-  --lang LANGUAGE         Override interface language (zh | en | de | es | fr | ja | ru)
-  --yes, -y               Approve init/wiki model-network requests only; never grants Agent tool permission
+  --lang LANGUAGE         Override interface language (zh | zh-hant | en | de | es | fr | ja | ko | ru)
+  --permission-profile MODE   Permission profile: cautious|allow_all (overrides --yes/-y tool profile)
+  --yes, -y               Approve init/wiki model-network requests and enable allow_all tool permissions (unless --permission-profile is set)
   --network-policy MODE   Network policy: allow|ask|deny (default allow)
   --force-tool-set MODE   Restrict exposed tools: auto|all|write (default auto)
   --no-tools              Disable local tools
@@ -1263,11 +1527,13 @@ Options:
   --dry-run               Preview init/wiki output without writing files
   --host HOST             Web server bind host, default 127.0.0.1
   --port PORT             Web server port, default 5001
-  --web-root PATH         Web asset root, default <project>/web
+  --web-root PATH         Web asset root, default <project>/apps/web or <project>/web
+  --version, -V           Show version information
   --help, -h              Show help
 
 Environment:
-  NOLA_CLI_LANG
+  NOLA_CLI_LANG, NOLA_LANG
+  NOLA_PERMISSION_PROFILE
   NOLA_CLI_NETWORK_POLICY
   NOLA_CLI_PROJECT_ROOT
   NOLA_AGENT_CONTEXT_TOKEN_THRESHOLD
@@ -1296,6 +1562,13 @@ Verwendung:
   nola web [Optionen]
   nola server [Optionen]
   nola sessions
+  nola room list|inspect|create|send ...
+  nola skills [list|enable <id>|disable <id>]
+  nola mcp [list|add <name> <target> [args...]|remove <id>|enable <id>|disable <id>]
+  nola memory [list|add <text>|search <query>|create|revise|delete]
+  nola model [list|discover|configure|apply-config|import|probe|override|chatgpt]
+  nola update [check|download <dir>]
+  nola version
   nola plugin inspect|install <directory>
   nola plugin list [--after <id>]
   nola plugin enable|disable|remove <id>
@@ -1308,32 +1581,35 @@ Verwendung:
 Optionen:
   --endpoint URL          OpenAI-kompatibler Endpunkt, meist mit /v1 am Ende
   --api-key KEY           API-Schlüssel; leer bedeutet nicht senden
-  --model MODEL           Modellname für den Endpunkt
-  --project PATH          Projektstamm, standardmäßig das aktuelle Verzeichnis
-  --allow-dir PATH        Verzeichnis, auf das lokale Tools zugreifen dürfen; wiederholbar
-  --bash-prefix PREFIX    Erlaubter Bash-Befehlspräfix; wiederholbar
-  --json                  Zeilengetrennte JSON-Ereignisse ausgeben
-  --debug                 Lokale Debug-Protokolle und ausführliche Terminaldetails aktivieren
-  --lang LANGUAGE         Sprache der Oberfläche überschreiben (zh | en | de | es | fr | ja | ru)
-  --yes, -y               Nur Modell-Netzwerkanfragen für init/wiki bestätigen; keine Agent-Tool-Freigabe
-  --network-policy MODE   Netzwerkregel: allow|ask|deny (Standard: allow)
-  --force-tool-set MODE   Sichtbare Tools begrenzen: auto|all|write (Standard: auto)
-  --no-tools              Lokale Tools deaktivieren
-  --max-iterations N      Modellanfragen mit Tools begrenzen; 0 bedeutet unbegrenzt
-  --session ID            Benannte Sitzung laden/speichern
-  --continue, -c          Sitzungswiederherstellungsseite öffnen und zuletzt gespeicherte Sitzung fortsetzen
-  --resume                Sitzungswiederherstellungsseite öffnen (neueste zuerst) und eine Sitzung zum Fortsetzen wählen
-  --no-save               Diesen Lauf nicht als Sitzung speichern
-  --output PATH           Ausgabepfad für init NOLA.md beziehungsweise wiki
-  --force                 Vorhandene init/wiki-Ausgabedateien überschreiben
-  --dry-run               init/wiki-Ausgabe nur anzeigen, ohne Dateien zu schreiben
-  --host HOST             Bind-Adresse des Webservers, Standard 127.0.0.1
-  --port PORT             Port des Webservers, Standard 5001
-  --web-root PATH         Stammverzeichnis der Webressourcen, Standard <project>/web
-  --help, -h              Hilfe anzeigen
+  --model, -m MODEL           Modellname für den Endpunkt
+  --project PATH              Projektstamm, standardmäßig das aktuelle Verzeichnis
+  --allow-dir PATH            Verzeichnis, auf das lokale Tools zugreifen dürfen; wiederholbar
+  --bash-prefix PREFIX        Erlaubter Bash-Befehlspräfix; wiederholbar
+  --json                      Zeilengetrennte JSON-Ereignisse ausgeben
+  --debug                     Lokale Debug-Protokolle und ausführliche Terminaldetails aktivieren
+  --lang LANGUAGE             Sprache der Oberfläche überschreiben (zh | zh-hant | en | de | es | fr | ja | ko | ru)
+  --permission-profile MODE   Berechtigungsprofil: cautious|allow_all (überschreibt das Tool-Profil von --yes/-y)
+  --yes, -y                   Modell-Netzwerkanfragen für init/wiki bestätigen und allow_all-Toolberechtigungen aktivieren (außer bei --permission-profile)
+  --network-policy MODE       Netzwerkregel: allow|ask|deny (Standard: allow)
+  --force-tool-set MODE       Sichtbare Tools begrenzen: auto|all|write (Standard: auto)
+  --no-tools                  Lokale Tools deaktivieren
+  --max-iterations N          Modellanfragen mit Tools begrenzen; 0 bedeutet unbegrenzt
+  --session ID                Benannte Sitzung laden/speichern
+  --continue, -c              Sitzungswiederherstellungsseite öffnen und zuletzt gespeicherte Sitzung fortsetzen
+  --resume                    Sitzungswiederherstellungsseite öffnen (neueste zuerst) und eine Sitzung zum Fortsetzen wählen
+  --no-save                   Diesen Lauf nicht als Sitzung speichern
+  --output PATH               Ausgabepfad für init NOLA.md beziehungsweise wiki
+  --force                     Vorhandene init/wiki-Ausgabedateien überschreiben
+  --dry-run                   init/wiki-Ausgabe nur anzeigen, ohne Dateien zu schreiben
+  --host HOST                 Bind-Adresse des Webservers, Standard 127.0.0.1
+  --port PORT                 Port des Webservers, Standard 5001
+  --web-root PATH             Stammverzeichnis der Webressourcen, Standard <project>/apps/web oder <project>/web
+  --version, -V               Version anzeigen
+  --help, -h                  Hilfe anzeigen
 
 Umgebung:
-  NOLA_CLI_LANG
+  NOLA_CLI_LANG, NOLA_LANG
+  NOLA_PERMISSION_PROFILE
   NOLA_CLI_NETWORK_POLICY
   NOLA_CLI_PROJECT_ROOT
   NOLA_AGENT_CONTEXT_TOKEN_THRESHOLD
@@ -1361,6 +1637,13 @@ Uso:
   nola web [opciones]
   nola server [opciones]
   nola sessions
+  nola room list|inspect|create|send ...
+  nola skills [list|enable <id>|disable <id>]
+  nola mcp [list|add <name> <target> [args...]|remove <id>|enable <id>|disable <id>]
+  nola memory [list|add <text>|search <query>|create|revise|delete]
+  nola model [list|discover|configure|apply-config|import|probe|override|chatgpt]
+  nola update [check|download <dir>]
+  nola version
   nola plugin inspect|install <directory>
   nola plugin list [--after <id>]
   nola plugin enable|disable|remove <id>
@@ -1373,32 +1656,35 @@ Uso:
 Opciones:
   --endpoint URL          Endpoint compatible con OpenAI, normalmente terminado en /v1
   --api-key KEY           Clave API; si está vacía no se envía
-  --model MODEL           Nombre del modelo enviado al endpoint
-  --project PATH          Raíz del proyecto, por defecto el directorio actual
-  --allow-dir PATH        Directorio accesible para herramientas locales; repetible
-  --bash-prefix PREFIX    Prefijo de comando Bash permitido; repetible
-  --json                  Emitir eventos JSON separados por líneas
-  --debug                 Escribir registros locales y mostrar detalles completos en el terminal
-  --lang LANGUAGE         Cambiar el idioma de la interfaz (zh | en | de | es | fr | ja | ru)
-  --yes, -y               Aprobar solo la red del modelo de init/wiki; no concede permisos de herramientas
-  --network-policy MODE   Política de red: allow|ask|deny (predeterminado: allow)
-  --force-tool-set MODE   Limitar herramientas visibles: auto|all|write (predeterminado: auto)
-  --no-tools              Desactivar herramientas locales
-  --max-iterations N      Limitar solicitudes del modelo con herramientas; 0 sin límite
-  --session ID            Cargar/guardar una sesión con nombre
-  --continue, -c          Abrir la página de recuperación de sesión y continuar la última sesión guardada
-  --resume                Abrir la página de recuperación de sesión (de la más reciente a la más antigua) y elegir una para continuar
-  --no-save               No guardar esta ejecución en una sesión
-  --output PATH           Ruta de salida de init NOLA.md o de wiki
-  --force                 Sobrescribir los archivos de salida de init/wiki
-  --dry-run               Previsualizar init/wiki sin escribir archivos
-  --host HOST             Dirección del servidor web, predeterminada 127.0.0.1
-  --port PORT             Puerto del servidor web, predeterminado 5001
-  --web-root PATH         Raíz de recursos web, predeterminada <project>/web
-  --help, -h              Mostrar ayuda
+  --model, -m MODEL           Nombre del modelo enviado al endpoint
+  --project PATH              Raíz del proyecto, por defecto el directorio actual
+  --allow-dir PATH            Directorio accesible para herramientas locales; repetible
+  --bash-prefix PREFIX        Prefijo de comando Bash permitido; repetible
+  --json                      Emitir eventos JSON separados por líneas
+  --debug                     Escribir registros locales y mostrar detalles completos en el terminal
+  --lang LANGUAGE             Cambiar el idioma de la interfaz (zh | zh-hant | en | de | es | fr | ja | ko | ru)
+  --permission-profile MODE   Perfil de permisos: cautious|allow_all (prevalece sobre --yes/-y)
+  --yes, -y                   Aprobar red de init/wiki y activar permisos allow_all para herramientas (salvo --permission-profile)
+  --network-policy MODE       Política de red: allow|ask|deny (predeterminado: allow)
+  --force-tool-set MODE       Limitar herramientas visibles: auto|all|write (predeterminado: auto)
+  --no-tools                  Desactivar herramientas locales
+  --max-iterations N          Limitar solicitudes del modelo con herramientas; 0 sin límite
+  --session ID                Cargar/guardar una sesión con nombre
+  --continue, -c              Abrir la página de recuperación de sesión y continuar la última sesión guardada
+  --resume                    Abrir la página de recuperación de sesión (de la más reciente a la más antigua) y elegir una para continuar
+  --no-save                   No guardar esta ejecución en una sesión
+  --output PATH               Ruta de salida de init NOLA.md o de wiki
+  --force                     Sobrescribir los archivos de salida de init/wiki
+  --dry-run                   Previsualizar init/wiki sin escribir archivos
+  --host HOST                 Dirección del servidor web, predeterminada 127.0.0.1
+  --port PORT                 Puerto del servidor web, predeterminado 5001
+  --web-root PATH             Raíz de recursos web, predeterminada <project>/apps/web o <project>/web
+  --version, -V               Mostrar la versión
+  --help, -h                  Mostrar ayuda
 
 Entorno:
-  NOLA_CLI_LANG
+  NOLA_CLI_LANG, NOLA_LANG
+  NOLA_PERMISSION_PROFILE
   NOLA_CLI_NETWORK_POLICY
   NOLA_CLI_PROJECT_ROOT
   NOLA_AGENT_CONTEXT_TOKEN_THRESHOLD
@@ -1426,6 +1712,13 @@ Utilisation :
   nola web [options]
   nola server [options]
   nola sessions
+  nola room list|inspect|create|send ...
+  nola skills [list|enable <id>|disable <id>]
+  nola mcp [list|add <name> <target> [args...]|remove <id>|enable <id>|disable <id>]
+  nola memory [list|add <text>|search <query>|create|revise|delete]
+  nola model [list|discover|configure|apply-config|import|probe|override|chatgpt]
+  nola update [check|download <dir>]
+  nola version
   nola plugin inspect|install <directory>
   nola plugin list [--after <id>]
   nola plugin enable|disable|remove <id>
@@ -1438,32 +1731,35 @@ Utilisation :
 Options :
   --endpoint URL          Point de terminaison compatible OpenAI, souvent terminé par /v1
   --api-key KEY           Clé API ; vide signifie ne pas l'envoyer
-  --model MODEL           Nom du modèle envoyé au point de terminaison
-  --project PATH          Racine du projet, répertoire actuel par défaut
-  --allow-dir PATH        Répertoire accessible aux outils locaux ; répétable
-  --bash-prefix PREFIX    Préfixe de commande Bash autorisé ; répétable
-  --json                  Émettre des événements JSON séparés par lignes
-  --debug                 Écrire les journaux locaux et afficher les détails complets du terminal
-  --lang LANGUAGE         Remplacer la langue de l'interface (zh | en | de | es | fr | ja | ru)
-  --yes, -y               Confirmer le réseau du modèle pour init/wiki uniquement ; aucun droit sur les outils
-  --network-policy MODE   Politique réseau : allow|ask|deny (allow par défaut)
-  --force-tool-set MODE   Limiter les outils visibles : auto|all|write (auto par défaut)
-  --no-tools              Désactiver les outils locaux
-  --max-iterations N      Limiter les requêtes du modèle avec outils ; 0 sans limite
-  --session ID            Charger/enregistrer une session nommée
-  --continue, -c          Ouvrir la page de reprise de session et continuer la dernière session enregistrée
-  --resume                Ouvrir la page de reprise de session (plus récentes d'abord) et en choisir une
-  --no-save               Ne pas enregistrer cette exécution dans une session
-  --output PATH           Chemin de sortie de init NOLA.md ou du wiki
-  --force                 Remplacer les fichiers de sortie init/wiki existants
-  --dry-run               Prévisualiser init/wiki sans écrire de fichier
-  --host HOST             Adresse d'écoute du serveur web, 127.0.0.1 par défaut
-  --port PORT             Port du serveur web, 5001 par défaut
-  --web-root PATH         Racine des ressources web, <project>/web par défaut
-  --help, -h              Afficher l'aide
+  --model, -m MODEL           Nom du modèle envoyé au point de terminaison
+  --project PATH              Racine du projet, répertoire actuel par défaut
+  --allow-dir PATH            Répertoire accessible aux outils locaux ; répétable
+  --bash-prefix PREFIX        Préfixe de commande Bash autorisé ; répétable
+  --json                      Émettre des événements JSON séparés par lignes
+  --debug                     Écrire les journaux locaux et afficher les détails complets du terminal
+  --lang LANGUAGE             Remplacer la langue de l'interface (zh | zh-hant | en | de | es | fr | ja | ko | ru)
+  --permission-profile MODE   Profil d'autorisation : cautious|allow_all (prioritaire sur --yes/-y)
+  --yes, -y                   Approuver le réseau init/wiki et activer le profil allow_all pour les outils (sauf si --permission-profile est défini)
+  --network-policy MODE       Politique réseau : allow|ask|deny (allow par défaut)
+  --force-tool-set MODE       Limiter les outils visibles : auto|all|write (auto par défaut)
+  --no-tools                  Désactiver les outils locaux
+  --max-iterations N          Limiter les requêtes du modèle avec outils ; 0 sans limite
+  --session ID                Charger/enregistrer une session nommée
+  --continue, -c              Ouvrir la page de reprise de session et continuer la dernière session enregistrée
+  --resume                    Ouvrir la page de reprise de session (plus récentes d'abord) et en choisir une
+  --no-save                   Ne pas enregistrer cette exécution dans une session
+  --output PATH               Chemin de sortie de init NOLA.md ou du wiki
+  --force                     Remplacer les fichiers de sortie init/wiki existants
+  --dry-run                   Prévisualiser init/wiki sans écrire de fichier
+  --host HOST                 Adresse d'écoute du serveur web, 127.0.0.1 par défaut
+  --port PORT                 Port du serveur web, 5001 par défaut
+  --web-root PATH             Racine des ressources web, <project>/apps/web ou <project>/web par défaut
+  --version, -V               Afficher la version
+  --help, -h                  Afficher l'aide
 
 Environnement :
-  NOLA_CLI_LANG
+  NOLA_CLI_LANG, NOLA_LANG
+  NOLA_PERMISSION_PROFILE
   NOLA_CLI_NETWORK_POLICY
   NOLA_CLI_PROJECT_ROOT
   NOLA_AGENT_CONTEXT_TOKEN_THRESHOLD
@@ -1491,6 +1787,13 @@ Fichiers de configuration :
   nola web [オプション]
   nola server [オプション]
   nola sessions
+  nola room list|inspect|create|send ...
+  nola skills [list|enable <id>|disable <id>]
+  nola mcp [list|add <name> <target> [args...]|remove <id>|enable <id>|disable <id>]
+  nola memory [list|add <text>|search <query>|create|revise|delete]
+  nola model [list|discover|configure|apply-config|import|probe|override|chatgpt]
+  nola update [check|download <dir>]
+  nola version
   nola plugin inspect|install <directory>
   nola plugin list [--after <id>]
   nola plugin enable|disable|remove <id>
@@ -1503,32 +1806,35 @@ Fichiers de configuration :
 オプション:
   --endpoint URL          OpenAI 互換エンドポイント。通常は /v1 で終わります
   --api-key KEY           API キー。空の場合は送信しません
-  --model MODEL           エンドポイントへ送るモデル名
-  --project PATH          プロジェクトルート。既定は現在のディレクトリ
-  --allow-dir PATH        ローカルツールがアクセスできるディレクトリ。複数指定可
-  --bash-prefix PREFIX    許可する Bash コマンド接頭辞。複数指定可
-  --json                  改行区切りの JSON イベントを出力
-  --debug                 ローカルデバッグログと詳細なターミナル表示を有効化
-  --lang LANGUAGE         インターフェース言語の上書き (zh | en | de | es | fr | ja | ru)
-  --yes, -y               init/wiki のモデル通信のみ承認。Agent ツールの権限は付与しません
-  --network-policy MODE   ネットワーク方針: allow|ask|deny (既定: allow)
-  --force-tool-set MODE   公開ツールを制限: auto|all|write (既定: auto)
-  --no-tools              ローカルツールを無効化
-  --max-iterations N      ツール利用可能なモデル要求を制限（0 は無制限）
-  --session ID            名前付きセッションを読み込み/保存
-  --continue, -c          セッション再開ページを開いて、最後に保存したセッションを続行
-  --resume                セッション再開ページを開いて（新しい順）続けるものを選択
-  --no-save               この実行をセッションに保存しない
-  --output PATH           init の NOLA.md または wiki の出力先
-  --force                 既存の init/wiki 出力ファイルを上書き
-  --dry-run               ファイルを書かずに init/wiki 出力をプレビュー
-  --host HOST             Web サーバーの待受アドレス。既定 127.0.0.1
-  --port PORT             Web サーバーのポート。既定 5001
-  --web-root PATH         Web リソースのルート。既定 <project>/web
-  --help, -h              ヘルプを表示
+  --model, -m MODEL           エンドポイントへ送るモデル名
+  --project PATH              プロジェクトルート。既定は現在のディレクトリ
+  --allow-dir PATH            ローカルツールがアクセスできるディレクトリ。複数指定可
+  --bash-prefix PREFIX        許可する Bash コマンド接頭辞。複数指定可
+  --json                      改行区切りの JSON イベントを出力
+  --debug                     ローカルデバッグログと詳細なターミナル表示を有効化
+  --lang LANGUAGE             インターフェース言語の上書き (zh | zh-hant | en | de | es | fr | ja | ko | ru)
+  --permission-profile MODE   権限プロファイル: cautious|allow_all (--yes/-y のツール権限設定を上書き)
+  --yes, -y                   init/wiki のモデル通信を承認し allow_all ツール権限を有効化（--permission-profile 指定時を除く）
+  --network-policy MODE       ネットワーク方針: allow|ask|deny (既定: allow)
+  --force-tool-set MODE       公開ツールを制限: auto|all|write (既定: auto)
+  --no-tools                  ローカルツールを無効化
+  --max-iterations N          ツール利用可能なモデル要求を制限（0 は無制限）
+  --session ID                名前付きセッションを読み込み/保存
+  --continue, -c              セッション再開ページを開いて、最後に保存したセッションを続行
+  --resume                    セッション再開ページを開いて（新しい順）続けるものを選択
+  --no-save                   この実行をセッションに保存しない
+  --output PATH               init の NOLA.md または wiki の出力先
+  --force                     既存の init/wiki 出力ファイルを上書き
+  --dry-run                   ファイルを書かずに init/wiki 出力をプレビュー
+  --host HOST                 Web サーバーの待受アドレス。既定 127.0.0.1
+  --port PORT                 Web サーバーのポート。既定 5001
+  --web-root PATH             Web リソースのルート。既定 <project>/apps/web または <project>/web
+  --version, -V               バージョン情報を表示
+  --help, -h                  ヘルプを表示
 
 環境変数:
-  NOLA_CLI_LANG
+  NOLA_CLI_LANG, NOLA_LANG
+  NOLA_PERMISSION_PROFILE
   NOLA_CLI_NETWORK_POLICY
   NOLA_CLI_PROJECT_ROOT
   NOLA_AGENT_CONTEXT_TOKEN_THRESHOLD
@@ -1546,6 +1852,81 @@ Fichiers de configuration :
   llm, allowed_dirs, bash_prefixes, permissions, agents, compaction, external_execution, instructions, debug, language に対応
 "#
         }
+        Language::Ko => {
+            r#"Nola CLI
+
+사용법:
+  nola [메시지...] [옵션]
+  nola init [옵션]
+  nola wiki [옵션]
+  nola web [옵션]
+  nola server [옵션]
+  nola sessions
+  nola room list|inspect|create|send ...
+  nola skills [list|enable <id>|disable <id>]
+  nola mcp [list|add <name> <target> [args...]|remove <id>|enable <id>|disable <id>]
+  nola memory [list|add <text>|search <query>|create|revise|delete]
+  nola model [list|discover|configure|apply-config|import|probe|override|chatgpt]
+  nola update [check|download <dir>]
+  nola version
+  nola plugin inspect|install <directory>
+  nola plugin list [--after <id>]
+  nola plugin enable|disable|remove <id>
+  nola plugin credential-set|credential-clear <id> <reference>
+  nola session show <id>
+  nola session part <conversation> <message> <part> <revision>
+  nola session sources <conversation> [compaction-part]
+  nola session delete <id>
+
+옵션:
+  --endpoint URL              OpenAI 호환 엔드포인트 (보통 /v1 로 끝남)
+  --api-key KEY               API 키 (비어 있으면 전송하지 않음)
+  --model, -m MODEL           엔드포인트에 전달할 모델 이름
+  --project PATH              프로젝트 루트 (기본값: 현재 디렉터리)
+  --allow-dir PATH            로컬 도구가 접근할 수 있는 디렉터리 (반복 가능)
+  --bash-prefix PREFIX        허용할 Bash 명령 접두사 (반복 가능)
+  --json                      줄바꿈으로 구분된 JSON 이벤트 출력
+  --debug                     로컬 디버그 로그 기록 및 상세 터미널 표시 활성화
+  --lang LANGUAGE             인터페이스 언어 재정의 (zh | zh-hant | en | de | es | fr | ja | ko | ru)
+  --permission-profile MODE   권한 프로필: cautious|allow_all (--yes/-y 도구 권한 설정보다 우선)
+  --yes, -y                   init/wiki 모델 네트워크 요청 승인 및 allow_all 도구 권한 활성화 (--permission-profile 지정 시 제외)
+  --network-policy MODE       네트워크 정책: allow|ask|deny (기본값: allow)
+  --force-tool-set MODE       노출할 도구 제한: auto|all|write (기본값: auto)
+  --no-tools                  로컬 도구 비활성화
+  --max-iterations N          도구 호출 모델 요청 횟수 제한 (0 은 무제한)
+  --session ID                지정한 세션 불러오기/저장
+  --continue, -c              세션 복원 페이지를 열고 최근 저장된 세션 계속하기
+  --resume                    세션 복원 페이지를 열고 (최신순) 이어서 할 세션 선택
+  --no-save                   이번 실행을 세션에 저장하지 않음
+  --output PATH               init NOLA.md 또는 wiki 출력 경로
+  --force                     기존 init/wiki 출력 파일 덮어쓰기
+  --dry-run                   파일을 쓰지 않고 init/wiki 출력 미리보기
+  --host HOST                 웹 서버 바인딩 호스트 (기본값: 127.0.0.1)
+  --port PORT                 웹 서버 포트 (기본값: 5001)
+  --web-root PATH             웹 리소스 루트 (기본값: <project>/apps/web 또는 <project>/web)
+  --version, -V               버전 정보 표시
+  --help, -h                  도움말 표시
+
+환경 변수:
+  NOLA_CLI_LANG, NOLA_LANG
+  NOLA_PERMISSION_PROFILE
+  NOLA_CLI_NETWORK_POLICY
+  NOLA_CLI_PROJECT_ROOT
+  NOLA_AGENT_CONTEXT_TOKEN_THRESHOLD
+  NOLA_AGENT_CONTEXT_WINDOW_TOKENS
+  NOLA_CLI_ALLOWED_DIRS, NOLA_CLI_BASH_PREFIXES
+  NOLA_CLI_DEBUG, NOLA_CLI_DEBUG_LOG_PATH
+  NOLA_CLI_DEBUG_LOG_MAX_BYTES, NOLA_CLI_DEBUG_LOG_BACKUPS
+  NOLA_CLI_INTERACTION_MODE (auto, always, never)
+  NOLA_DB_PATH, NOLA_CLI_PYTHON
+
+구성 파일:
+  ~/.nola/config.json(.jsonc)
+  <project>/.nola/config.json(.jsonc), <project>/nola.json(.jsonc)
+  <project>/.nola/current_config.json(.jsonc) 와 호환
+  llm, allowed_dirs, bash_prefixes, permissions, agents, compaction, external_execution, instructions, debug, language 지원
+"#
+        }
         Language::Ru => {
             r#"Nola CLI
 
@@ -1556,6 +1937,13 @@ Fichiers de configuration :
   nola web [параметры]
   nola server [параметры]
   nola sessions
+  nola room list|inspect|create|send ...
+  nola skills [list|enable <id>|disable <id>]
+  nola mcp [list|add <name> <target> [args...]|remove <id>|enable <id>|disable <id>]
+  nola memory [list|add <text>|search <query>|create|revise|delete]
+  nola model [list|discover|configure|apply-config|import|probe|override|chatgpt]
+  nola update [check|download <dir>]
+  nola version
   nola plugin inspect|install <directory>
   nola plugin list [--after <id>]
   nola plugin enable|disable|remove <id>
@@ -1566,34 +1954,37 @@ Fichiers de configuration :
   nola session delete <id>
 
 Параметры:
-  --endpoint URL          OpenAI-совместимый endpoint, обычно оканчивается на /v1
-  --api-key KEY           API-ключ; если пустой, не отправляется
-  --model MODEL           Имя модели, отправляемое в endpoint
-  --project PATH          Корень проекта, по умолчанию текущий каталог
-  --allow-dir PATH        Каталог, доступный локальным инструментам; можно повторять
-  --bash-prefix PREFIX    Разрешенный префикс Bash-команды; можно повторять
-  --json                  Выводить события JSON по одному на строку
-  --debug                 Включить локальные журналы и подробный вывод терминала
-  --lang LANGUAGE         Перекрывать язык интерфейса (zh | en | de | es | fr | ja | ru)
-  --yes, -y               Подтверждать только сеть модели init/wiki; не даёт прав инструментам агента
-  --network-policy MODE   Сетевая политика: allow|ask|deny (по умолчанию allow)
-  --force-tool-set MODE   Ограничить доступные инструменты: auto|all|write (по умолчанию auto)
-  --no-tools              Отключить локальные инструменты
-  --max-iterations N      Ограничить запросы модели с инструментами; 0 — без ограничения
-  --session ID            Загрузить/сохранить именованный сеанс
-  --continue, -c          Открыть страницу восстановления сессии и продолжить последний сохраненный сеанс
-  --resume                Открыть страницу восстановления сессии (сначала новые) и выбрать для продолжения
-  --no-save               Не сохранять этот запуск в сеанс
-  --output PATH           Путь вывода init NOLA.md или wiki
-  --force                 Перезаписать существующие файлы init/wiki
-  --dry-run               Предпросмотр init/wiki без записи файлов
-  --host HOST             Адрес веб-сервера, по умолчанию 127.0.0.1
-  --port PORT             Порт веб-сервера, по умолчанию 5001
-  --web-root PATH         Корень веб-ресурсов, по умолчанию <project>/web
-  --help, -h              Показать справку
+  --endpoint URL              OpenAI-совместимый endpoint, обычно оканчивается на /v1
+  --api-key KEY               API-ключ; если пустой, не отправляется
+  --model, -m MODEL           Имя модели, отправляемое в endpoint
+  --project PATH              Корень проекта, по умолчанию текущий каталог
+  --allow-dir PATH            Каталог, доступный локальным инструментам; можно повторять
+  --bash-prefix PREFIX        Разрешенный префикс Bash-команды; можно повторять
+  --json                      Выводить события JSON по одному на строку
+  --debug                     Включить локальные журналы и подробный вывод терминала
+  --lang LANGUAGE             Перекрывать язык интерфейса (zh | zh-hant | en | de | es | fr | ja | ko | ru)
+  --permission-profile MODE   Профиль разрешений: cautious|allow_all (имеет приоритет над --yes/-y)
+  --yes, -y                   Подтверждать сеть init/wiki и включать профиль allow_all для инструментов (если не задан --permission-profile)
+  --network-policy MODE       Сетевая политика: allow|ask|deny (по умолчанию allow)
+  --force-tool-set MODE       Ограничить доступные инструменты: auto|all|write (по умолчанию auto)
+  --no-tools                  Отключить локальные инструменты
+  --max-iterations N          Ограничить запросы модели с инструментами; 0 — без ограничения
+  --session ID                Загрузить/сохранить именованный сеанс
+  --continue, -c              Открыть страницу восстановления сессии и продолжить последний сохраненный сеанс
+  --resume                    Открыть страницу восстановления сессии (сначала новые) и выбрать для продолжения
+  --no-save                   Не сохранять этот запуск в сеанс
+  --output PATH               Путь вывода init NOLA.md или wiki
+  --force                     Перезаписать существующие файлы init/wiki
+  --dry-run                   Предпросмотр init/wiki без записи файлов
+  --host HOST                 Адрес веб-сервера, по умолчанию 127.0.0.1
+  --port PORT                 Порт веб-сервера, по умолчанию 5001
+  --web-root PATH             Корень веб-ресурсов, по умолчанию <project>/apps/web или <project>/web
+  --version, -V               Показать версию
+  --help, -h                  Показать справку
 
 Окружение:
-  NOLA_CLI_LANG
+  NOLA_CLI_LANG, NOLA_LANG
+  NOLA_PERMISSION_PROFILE
   NOLA_CLI_NETWORK_POLICY
   NOLA_CLI_PROJECT_ROOT
   NOLA_AGENT_CONTEXT_TOKEN_THRESHOLD
@@ -1621,7 +2012,7 @@ pub fn tr(message: Message) -> &'static str {
 pub fn format_error(message: &str) -> String {
     let language = current_language();
     let prefix = text_for(language, Message::ErrorPrefix);
-    if matches!(language, Language::ZhHans | Language::Ja) {
+    if matches!(language, Language::ZhHans | Language::ZhHant | Language::Ja) {
         format!("{prefix}{message}")
     } else {
         format!("{prefix} {message}")
@@ -1644,6 +2035,14 @@ pub fn localize_agent_phase(phase: &str) -> String {
         (Language::ZhHans, "answer_review_approved") => Some("正文已核验"),
         (Language::ZhHans, "answer_review_rejected") => Some("此版本未通过核验，已失效"),
         (Language::ZhHans, "answer_review_interrupted") => Some("此版本核验已中断，请勿视为最终结论"),
+        (Language::ZhHant, "answer_review_pending") => Some("待核驗正文"),
+        (Language::ZhHant, "answer_review_approved") => Some("正文已核驗"),
+        (Language::ZhHant, "answer_review_rejected") => Some("此版本未通過核驗，已失效"),
+        (Language::ZhHant, "answer_review_interrupted") => Some("此版本核驗已中斷，請勿視為最終結論"),
+        (Language::Ko, "answer_review_pending") => Some("초안 — 검토 대기 중"),
+        (Language::Ko, "answer_review_approved") => Some("답변 검증 완료"),
+        (Language::Ko, "answer_review_rejected") => Some("초안 거부됨 — 대체됨"),
+        (Language::Ko, "answer_review_interrupted") => Some("검토 중단됨 — 최종 답변이 아닙니다"),
         (_, "answer_review_pending") => Some("Draft — pending review"),
         (_, "answer_review_approved") => Some("Answer verified"),
         (_, "answer_review_rejected") => Some("Draft rejected — superseded"),
@@ -1654,7 +2053,9 @@ pub fn localize_agent_phase(phase: &str) -> String {
     if phase == "reviewing" {
         return match language {
             Language::ZhHans => "正在核验回答",
+            Language::ZhHant => "正在核驗回答",
             Language::Ja => "回答を確認中",
+            Language::Ko => "답변 검토 중",
             Language::De => "Antwort wird geprüft",
             Language::Es => "Verificando respuesta",
             Language::Fr => "Vérification de la réponse",
@@ -1665,7 +2066,9 @@ pub fn localize_agent_phase(phase: &str) -> String {
     if phase == "compacting" {
         return match language {
             Language::ZhHans => "正在整理上下文",
+            Language::ZhHant => "正在整理上下文",
             Language::Ja => "コンテキストを整理中",
+            Language::Ko => "컨텍스트 압축 중",
             Language::De => "Kontext wird komprimiert",
             Language::Es => "Compactando contexto",
             Language::Fr => "Compression du contexte",
@@ -1682,6 +2085,14 @@ pub fn localize_agent_phase(phase: &str) -> String {
             "awaiting_assessment" => "正在评估结果",
             _ => "正在处理",
         },
+        Language::ZhHant => match phase.as_str() {
+            "diagnosing" => "正在診斷",
+            "modifying" => "正在修改",
+            "verifying" => "正在驗證",
+            "correcting" => "正在修正",
+            "awaiting_assessment" => "正在評估結果",
+            _ => "正在處理",
+        },
         Language::Ja => match phase.as_str() {
             "diagnosing" => "診断中",
             "modifying" => "変更中",
@@ -1689,6 +2100,14 @@ pub fn localize_agent_phase(phase: &str) -> String {
             "correcting" => "修正中",
             "awaiting_assessment" => "結果を評価中",
             _ => "処理中",
+        },
+        Language::Ko => match phase.as_str() {
+            "diagnosing" => "진단 중",
+            "modifying" => "변경 적용 중",
+            "verifying" => "검증 중",
+            "correcting" => "수정 중",
+            "awaiting_assessment" => "결과 평가 중",
+            _ => "처리 중",
         },
         Language::De => match phase.as_str() {
             "diagnosing" => "Diagnose läuft",
@@ -1747,6 +2166,7 @@ pub(crate) fn localize_tool_display_name_for(language: Language, name: &str) -> 
         };
         return match language {
             Language::ZhHans => ["读取 MCP 资源", "读取 MCP 模板资源", "获取 MCP 提示词"][action],
+            Language::ZhHant => ["讀取 MCP 資源", "讀取 MCP 範本資源", "取得 MCP 提示詞"][action],
             Language::De => [
                 "MCP-Ressource lesen",
                 "MCP-Vorlagenressource lesen",
@@ -1766,6 +2186,11 @@ pub(crate) fn localize_tool_display_name_for(language: Language, name: &str) -> 
                 "MCP リソースを読み取る",
                 "MCP テンプレートリソースを読み取る",
                 "MCP プロンプトを取得",
+            ][action],
+            Language::Ko => [
+                "MCP 리소스 읽기",
+                "MCP 템플릿 리소스 읽기",
+                "MCP 프롬프트 가져오기",
             ][action],
             Language::Ru => [
                 "Прочитать ресурс MCP",
@@ -1803,6 +2228,13 @@ pub(crate) fn localize_tool_display_name_for(language: Language, name: &str) -> 
                 "创建提醒事项",
                 "更新提醒事项",
             ][action],
+            Language::ZhHant => [
+                "搜尋行事曆",
+                "建立行事曆事件",
+                "搜尋提醒事項",
+                "建立提醒事項",
+                "更新提醒事項",
+            ][action],
             Language::De => [
                 "Kalender durchsuchen",
                 "Kalenderereignis erstellen",
@@ -1830,6 +2262,13 @@ pub(crate) fn localize_tool_display_name_for(language: Language, name: &str) -> 
                 "リマインダーを検索",
                 "リマインダーを作成",
                 "リマインダーを更新",
+            ][action],
+            Language::Ko => [
+                "캘린더 검색",
+                "캘린더 일정 생성",
+                "미리 알림 검색",
+                "미리 알림 생성",
+                "미리 알림 업데이트",
             ][action],
             Language::Ru => [
                 "Поиск в календаре",
@@ -1971,6 +2410,58 @@ pub(crate) fn localize_tool_display_name_for(language: Language, name: &str) -> 
             "mcp" => "调用 MCP",
             "background" => "后台任务",
             _ => "工具",
+        },
+        Language::ZhHant => match key {
+            "command" => "執行命令",
+            "read_file" => "讀取檔案",
+            "write_file" => "寫入檔案",
+            "edit_file" => "編輯檔案",
+            "delete_file" => "刪除檔案",
+            "list_folder" => "瀏覽目錄",
+            "search_files" => "搜尋檔案",
+            "workspace" => "檢查工作區",
+            "changes" => "檢查變更",
+            "project_overview" => "檢視專案概覽",
+            "web_search" => "網路搜尋",
+            "web_read" => "讀取網頁",
+            "read_output" => "讀取工具輸出",
+            "search_tools" => "搜尋工具",
+            "memory" => "管理記憶",
+            "subtask" => "執行子任務",
+            "plan" => "更新計畫",
+            "time" => "讀取系統時間",
+            "browser" => "控制瀏覽器",
+            "computer" => "操作電腦",
+            "skill" => "使用技能",
+            "mcp" => "呼叫 MCP",
+            "background" => "背景任務",
+            _ => "工具",
+        },
+        Language::Ko => match key {
+            "command" => "명령 실행",
+            "read_file" => "파일 읽기",
+            "write_file" => "파일 쓰기",
+            "edit_file" => "파일 편집",
+            "delete_file" => "파일 삭제",
+            "list_folder" => "폴더 보기",
+            "search_files" => "파일 검색",
+            "workspace" => "작업 공간 검사",
+            "changes" => "변경 사항 검사",
+            "project_overview" => "프로젝트 개요 보기",
+            "web_search" => "웹 검색",
+            "web_read" => "웹 페이지 읽기",
+            "read_output" => "도구 출력 읽기",
+            "search_tools" => "도구 검색",
+            "memory" => "메모리 관리",
+            "subtask" => "하위 작업 실행",
+            "plan" => "계획 업데이트",
+            "time" => "시스템 시간 읽기",
+            "browser" => "브라우저 제어",
+            "computer" => "컴퓨터 제어",
+            "skill" => "스킬 사용",
+            "mcp" => "MCP 호출",
+            "background" => "백그라운드 작업",
+            _ => "도구",
         },
         Language::Ja => match key {
             "command" => "コマンドを実行",
@@ -2148,11 +2639,13 @@ fn localize_tool_error_display_for(language: Language, text: &str) -> String {
 fn text_for(language: Language, message: Message) -> &'static str {
     match language {
         Language::ZhHans => zh_hans(message),
+        Language::ZhHant => zh_hant(message),
         Language::En => en(message),
         Language::De => de(message),
         Language::Es => es(message),
         Language::Fr => fr(message),
         Language::Ja => ja(message),
+        Language::Ko => ko(message),
         Language::Ru => ru(message),
     }
 }
@@ -3751,6 +4244,454 @@ fn ru(message: Message) -> &'static str {
     }
 }
 
+fn zh_hant(message: Message) -> &'static str {
+    match message {
+        Message::ErrorPrefix => "錯誤：",
+        Message::NoSavedSessions => "尚無已儲存的工作階段。",
+        Message::MessagesUnit => "則訊息",
+        Message::SessionLabel => "工作階段：",
+        Message::CreatedLabel => "建立時間：",
+        Message::UpdatedLabel => "更新時間：",
+        Message::MessagesLabel => "訊息數：",
+        Message::DeletedSessionPrefix => "已刪除工作階段",
+        Message::FailedReadPromptPrefix => "讀取提示詞失敗：",
+        Message::PromptRequired => "必須輸入訊息內容",
+        Message::SessionRequiresAction => "session 需要指定操作：show 或 delete",
+        Message::RequiresSessionIdSuffix => "需要工作階段 ID",
+        Message::UnknownSessionActionPrefix => "未知的 session 操作：",
+        Message::UnknownCommandPrefix => "未知命令：",
+        Message::MaxIterationsPositive => "--max-iterations 必須為非負整數",
+        Message::UnknownOptionPrefix => "未知選項：",
+        Message::UnexpectedSessionArgs => "session 命令不接受額外引數",
+        Message::MissingEndpoint => "缺少 --endpoint 或 Nola 設定檔中的 llm.endpoint",
+        Message::ContinueOrSession => "--continue 與 --session 僅能擇一使用",
+        Message::CurrentDirFailedPrefix => "讀取目前目錄失敗：",
+        Message::RequiresValueSuffix => "需要提供值",
+        Message::FailedResolvePathPrefix => "解析路徑失敗",
+        Message::ActiveSessionLabel => "工作階段：",
+        Message::FailedCreateSessionDirPrefix => "建立工作階段目錄失敗：",
+        Message::FailedReadSessionPrefix => "讀取工作階段失敗",
+        Message::FailedParseSessionPrefix => "解析工作階段失敗",
+        Message::FailedSerializeSessionPrefix => "序列化工作階段失敗：",
+        Message::FailedSaveSessionPrefix => "儲存工作階段失敗：",
+        Message::FailedReadSessionsPrefix => "讀取工作階段清單失敗：",
+        Message::FailedReadSessionEntryPrefix => "讀取工作階段項目失敗：",
+        Message::FailedDeleteSessionPrefix => "刪除工作階段失敗",
+        Message::HomeNotSet => "未設定 HOME，無法儲存工作階段",
+        Message::FailedReadLatestSessionPrefix => "讀取最近工作階段失敗：",
+        Message::FailedSaveLatestSessionPrefix => "儲存最近工作階段失敗：",
+        Message::InvalidSessionId => "工作階段 ID 僅能包含字母、數字、'-' 與 '_'",
+        Message::FailedCreateHttpClientPrefix => "建立 HTTP 用戶端失敗：",
+        Message::LlmRequestFailedPrefix => "LLM 請求失敗",
+        Message::LlmStreamReadFailedPrefix => "讀取 LLM 串流失敗：",
+        Message::ToolRequiresApprovalPrefix => "工具",
+        Message::ToolRequiresApprovalSuffix => "需要核准。",
+        Message::ArgsLabel => "引數：",
+        Message::AllowOncePrompt => "允許本次執行？[y/N] ",
+        Message::PermissionDeniedByUser => "使用者已拒絕授權",
+        Message::PermissionDeniedGuidance => {
+            "權限未核准，操作未執行。輸入 /allow 可檢視權限設定；設定檔中的明確 deny 規則需先調整設定後再明確要求重試。系統權限約束依然有效。"
+        }
+        Message::SubAgentLabel => "子代理：",
+        Message::TaskLabel => "任務：",
+        Message::CapabilityLabel => "能力：",
+        Message::PromptLabel => "提示詞：",
+        Message::DelegateAgentCapability => "可在已設定的權限內執行命令或修改檔案",
+        Message::DelegateAgentConfirmationRequired => {
+            "需要明確核准子代理；其每個工具仍須遵守各自的資源權限。"
+        }
+        Message::NetworkAskNonInteractive => {
+            "非互動模式下已封鎖網路請求（policy=ask）。若要繼續，請改用 --network-policy=allow。"
+        }
+        Message::NetworkAskPrompt => "是否允許本次模型網路請求？[y/N]: ",
+        Message::NetworkAllowedByUser => "使用者已允許本次模型網路請求。",
+        Message::NetworkDeniedByUser => "使用者已拒絕本次模型網路請求。",
+        Message::DisplayReadPrefix => "已讀取",
+        Message::DisplayWrotePrefix => "已寫入",
+        Message::DisplayEditedPrefix => "已編輯",
+        Message::DisplayListedPrefix => "已列出",
+        Message::EntriesUnit => "項",
+        Message::MatchesUnit => "筆符合",
+        Message::ReachedMaxIterationsPrefix => "\n\n已達到最大輪次（",
+        Message::ReachedMaxIterationsSuffix => "），傳回目前結果。",
+        Message::InteractiveQueuedRequest => "  已排隊請求：",
+        Message::InteractiveRunning => "  執行中...",
+        Message::InteractiveReadyForNextRequest => "  已就緒，可處理下一個請求",
+        Message::InteractiveModelLabel => "模型",
+        Message::InteractiveParamsLabel => "參數",
+        Message::InteractiveWorkingDirLabel => "工作目錄",
+        Message::InteractiveWorkspaceLabel => "工作區",
+        Message::InteractiveProviderLabel => "提供者",
+        Message::InteractiveProviderLocal => "本機設定",
+        Message::InteractiveModeFieldLabel => "模式",
+        Message::InteractiveNetworkFieldLabel => "網路",
+        Message::InteractiveEndpointLabel => "端點",
+        Message::InteractiveAvailableModels => "可用模型：",
+        Message::InteractiveModelUsageHint => "用法：/model <name>",
+        Message::InteractiveAvailableCommands => "可用命令：",
+        Message::InteractiveSlashHelpHint => "顯示說明",
+        Message::InteractiveSlashModelHint => "列出模型，/model <name> 切換模型",
+        Message::InteractiveSlashExecutorHint => "列出或切換核心執行單元",
+        Message::InteractiveAvailableExecutors => "執行單元：",
+        Message::InteractiveExecutorUsage => "用法：/executor <nola|codex|claude_code|opencode>",
+        Message::InteractiveExecutorSelected => "已選擇執行單元：",
+        Message::InteractiveExecutorUnavailable => "執行單元無法使用：",
+        Message::InteractiveExecutorLabel => "執行單元",
+        Message::InteractiveSlashDebugHint => "顯示或切換除錯詳細資訊",
+        Message::InteractiveSlashDebugUsage => "用法：/debug on | /debug off",
+        Message::InteractiveSlashAllowHint => "設定權限模式",
+        Message::InteractiveSlashAllowUsage => "用法：/allow — 開啟權限選擇面板",
+        Message::InteractiveAllowPanelTitle => "權限模式",
+        Message::InteractiveAllowPanelCautious => "謹慎",
+        Message::InteractiveAllowPanelCautiousDesc => "刪除、覆寫、敏感資料存取、對外傳輸與新連線前先確認；一般讀取與新增檔案直接執行。",
+        Message::InteractiveAllowPanelAllowAll => "全部允許",
+        Message::InteractiveAllowPanelAllowAllDesc => "此工作階段內無需 Nola 確認提示，系統權限約束依然適用。",
+        Message::InteractiveAllowPanelSelected => "已選擇：",
+        Message::InteractiveAllowPanelCancelled => "已取消",
+        Message::InteractiveSlashGoalHint => "自主推進並達成目標",
+        Message::InteractiveGoalControlPending => "目標操作已排入佇列；請用 /goal status 檢視實際狀態。",
+        Message::InteractiveGoalAlreadyActive => "已有進行中的目標。請用 /goal resume 繼續，或先以 /goal off 結束後再啟動新目標。",
+        Message::InteractiveSlashGoalUsage => "用法：/goal [start] <objective> [-c/--constraints <constraints>] | /goal status | /goal pause | /goal resume | /goal off",
+        Message::InteractiveSlashInitHint => "產生 NOLA.md 專案記憶（--dry-run、--force、--output PATH）",
+        Message::InteractiveSlashCdHint => "切換工作區並開啟新的專案工作階段（/cd - 返回先前的目錄）",
+        Message::InteractiveSlashCompactHint => "精簡模型上下文，同時保留完整重播歷史",
+        Message::InteractiveSlashNewHint => "在目前工作區開啟全新工作階段",
+        Message::InteractiveSlashPlanHint => "顯示目前工作階段的執行計畫",
+        Message::InteractiveSlashJobsHint => "列出、檢視或停止持久化背景任務",
+        Message::InteractiveSlashResumeHint => "開啟工作階段恢復頁面",
+        Message::InteractiveSlashContinueHint => "繼續目前的專案最新工作階段",
+        Message::InteractiveSlashHistoryHint => "重新顯示完整工作階段歷史",
+        Message::InteractiveSlashStatusHint => "顯示目前執行狀態",
+        Message::InteractiveSlashExitHint => "結束目前工作階段",
+        Message::InteractiveSlashQuitHint => "q/quit/exit 亦可結束",
+        Message::InteractiveWelcomeTagline => "本機優先的個人助手",
+        Message::InteractiveWelcomeHint => "輸入 /help 檢視命令 · 使用 /model 切換模型",
+        Message::InteractiveAutoValue => "自動",
+        Message::InteractiveNetworkAllowValue => "允許",
+        Message::InteractiveNetworkAskValue => "詢問",
+        Message::InteractiveNetworkDenyValue => "禁止",
+        Message::InteractiveContextLabel => "上下文",
+        Message::InteractiveTokensLabel => "權杖",
+        Message::InteractiveTokensUnit => "權杖",
+        Message::InteractiveMessagesUnit => "則訊息",
+        Message::InteractiveAllowPanelErrorPrefix => "權限面板錯誤：",
+        Message::InteractiveGoalStatusPrefix => "目標：",
+        Message::InteractiveGoalStatePrefix => "狀態：",
+        Message::InteractiveGoalStateRunning => "執行中",
+        Message::InteractiveGoalStatePaused => "已暫停",
+        Message::InteractiveGoalStateNeedsUser => "等待使用者",
+        Message::InteractiveGoalStateFailed => "執行失敗",
+        Message::InteractiveGoalResumeStarted => "正在恢復目標：",
+        Message::InteractiveGoalNoResumable => "目前工作階段沒有可恢復的目標。",
+        Message::InteractiveWorkspaceStatusPrefix => "工作區：",
+        Message::InteractiveCdUsage => "用法：/cd PATH · /cd - 返回先前的目錄",
+        Message::InteractiveCompactTitle => "上下文壓縮",
+        Message::InteractiveCompactNoActiveSession => "目前沒有作用中的工作階段",
+        Message::InteractiveCompactAlready => "已完成壓縮",
+        Message::InteractiveCompactCompleted => "壓縮完成",
+        Message::InteractiveCompactSummarized => "已摘要",
+        Message::InteractiveCompactKeptRecent => "保留最近",
+        Message::InteractiveCompactSaved => "已節省",
+        Message::InteractiveCompactHistoryPreserved => "完整對話紀錄仍會保留以供重播",
+        Message::InteractiveCompactFailedPrefix => "上下文壓縮失敗：",
+        Message::InteractiveNewSessionTitle => "新工作階段",
+        Message::InteractiveNewSessionPending => "下一則訊息將開始全新工作階段",
+        Message::InteractiveJobsTitle => "背景任務",
+        Message::InteractiveJobsUsage => "用法：/jobs · /jobs ID · /jobs status ID · /jobs stop ID",
+        Message::InteractiveUnknownCommandHint => "未知命令；請輸入 /help 檢視可用命令",
+        Message::InteractiveChoiceLabel => "請選擇",
+        Message::InteractiveModelStatusPrefix => "模型：",
+        Message::InteractiveDebugStatusPrefix => "除錯：",
+        Message::InteractiveAllowStatusPrefix => "權限：",
+        Message::InteractiveDefaultModelLabel => "(預設)",
+        Message::InteractiveTurnsLabel => "輪次",
+        Message::InteractiveToolsLabel => "工具",
+        Message::InteractiveNetworkLabel => "網路",
+        Message::InteractiveInputPlaceholder => "輸入訊息…",
+        Message::InteractiveExecutionDraftPrefix => "↳",
+        Message::InteractiveExecutionQueuedPrefix => "已排隊補充指示：",
+        Message::InteractiveExecutionInterruptHint => "按 Esc 中斷目前執行",
+        Message::InteractiveExecutionInputHint => "Esc 中斷 · Enter 排隊補充指示",
+        Message::AgentStatusThinking => "正在思考",
+        Message::AgentStatusRetryingModel => "正在重試模型回應",
+        Message::AgentStatusStrictToolStrategy => "嚴格工具原則",
+        Message::AgentStatusChooseFromAvailableTools => "從可用工具中選取",
+        Message::AgentStatusReadyToContinue => "已就緒，等待下一步",
+        Message::AgentStatusEnteredMode => "已進入模式",
+        Message::AgentStatusReplyingDirectly => "準備直接回覆",
+        Message::AgentStatusExecutingPlan => "正在執行計畫",
+        Message::AgentStatusWaitingForUserConfirmation => "等待使用者確認",
+        Message::AgentStatusProcessing => "處理中",
+        Message::AgentStatusPreparing => "正在準備",
+        Message::AgentStatusModelUnavailable => "模型暫時無法使用",
+        Message::AgentDoneLabel => "完成",
+        Message::AgentErrorLabel => "錯誤",
+        Message::AgentToolLabel => "工具",
+        Message::AgentAgentLabel => "代理",
+        Message::AgentSessionLabel => "工作階段",
+        Message::AgentStatusLabel => "狀態",
+        Message::AgentInfoLabel => "資訊",
+        Message::AgentReadyCurrentModePrefix => "已就緒，目前為",
+        Message::AgentReadyCurrentModeSuffix => "模式",
+        Message::AgentStatusDetailsSeparator => "、",
+        Message::AgentPreparingToExecutePrefix => "準備執行",
+        Message::AgentActionCountSuffixSingle => "個動作",
+        Message::AgentActionCountSuffixPlural => "個動作",
+        Message::AgentTurnPrefix => "第",
+        Message::AgentTurnSuffix => "輪",
+        Message::AgentInspectingProject => "正在檢視專案",
+        Message::AgentEditingFiles => "正在修改檔案",
+        Message::AgentRunningCommand => "正在執行命令",
+        Message::AgentAccessingNetwork => "正在存取網路",
+        Message::AgentSearchingTools => "正在尋找工具",
+        Message::AgentStartingSubtask => "正在啟動子任務",
+        Message::AgentFileModified => "已修改檔案",
+        Message::AgentCommandCompleted => "命令已完成",
+        Message::AgentNetworkRequestCompleted => "網路請求已完成",
+        Message::AgentSubtaskCompleted => "子任務已完成",
+        Message::AgentFailedToModifyFile => "無法修改檔案",
+        Message::AgentCommandFailed => "命令執行失敗",
+        Message::AgentNetworkRequestFailed => "網路請求失敗",
+        Message::AgentSubtaskFailed => "子任務失敗",
+        Message::AgentOperationFailed => "操作失敗",
+        Message::InteractiveUnknownPath => "(未知)",
+        Message::InteractiveStatusOn => "開啟",
+        Message::InteractiveStatusOff => "關閉",
+        Message::InteractiveInvalidLanguageValue => "不支援的語言",
+        Message::InvalidPortValue => "--port 必須是 1 到 65535 之間的數字",
+        Message::UnknownAgentModePrefix => "未知的 --agent-mode",
+        Message::NetworkPolicyMustBeOneOf => "--network-policy 僅能為 allow、ask、deny 之一",
+        Message::ForceToolSetMustBeOneOf => "--force-tool-set 僅能為 auto、all、write 之一",
+        Message::FailedReadKeyEventPrefix => "讀取按鍵事件失敗：",
+        Message::FailedFlushPromptPrefix => "重新整理輸入提示失敗：",
+        Message::InteractiveRawModeFailedPrefix => "開啟原始輸入模式失敗：",
+    }
+}
+
+fn ko(message: Message) -> &'static str {
+    match message {
+        Message::ErrorPrefix => "오류:",
+        Message::NoSavedSessions => "저장된 세션이 없습니다.",
+        Message::MessagesUnit => "개 메시지",
+        Message::SessionLabel => "세션:",
+        Message::CreatedLabel => "생성 시각:",
+        Message::UpdatedLabel => "업데이트 시각:",
+        Message::MessagesLabel => "메시지 수:",
+        Message::DeletedSessionPrefix => "세션 삭제됨",
+        Message::FailedReadPromptPrefix => "프롬프트 읽기 실패:",
+        Message::PromptRequired => "메시지 내용이 필요합니다",
+        Message::SessionRequiresAction => "session 은 작업을 지정해야 합니다: show 또는 delete",
+        Message::RequiresSessionIdSuffix => "세션 ID 가 필요합니다",
+        Message::UnknownSessionActionPrefix => "알 수 없는 session 작업:",
+        Message::UnknownCommandPrefix => "알 수 없는 명령:",
+        Message::MaxIterationsPositive => "--max-iterations 는 0 이상의 정수여야 합니다",
+        Message::UnknownOptionPrefix => "알 수 없는 옵션:",
+        Message::UnexpectedSessionArgs => "session 명령은 추가 인수를 받지 않습니다",
+        Message::MissingEndpoint => "--endpoint 또는 Nola 설정 파일의 llm.endpoint 가 누락되었습니다",
+        Message::ContinueOrSession => "--continue 와 --session 은 동시에 사용할 수 없습니다",
+        Message::CurrentDirFailedPrefix => "현재 디렉터리 확인 실패:",
+        Message::RequiresValueSuffix => "값이 필요합니다",
+        Message::FailedResolvePathPrefix => "경로 확인 실패",
+        Message::ActiveSessionLabel => "세션:",
+        Message::FailedCreateSessionDirPrefix => "세션 디렉터리 생성 실패:",
+        Message::FailedReadSessionPrefix => "세션 읽기 실패",
+        Message::FailedParseSessionPrefix => "세션 구문 분석 실패",
+        Message::FailedSerializeSessionPrefix => "세션 직렬화 실패:",
+        Message::FailedSaveSessionPrefix => "세션 저장 실패:",
+        Message::FailedReadSessionsPrefix => "세션 목록 읽기 실패:",
+        Message::FailedReadSessionEntryPrefix => "세션 항목 읽기 실패:",
+        Message::FailedDeleteSessionPrefix => "세션 삭제 실패",
+        Message::HomeNotSet => "HOME 이 설정되지 않아 세션을 저장할 수 없습니다",
+        Message::FailedReadLatestSessionPrefix => "최근 세션 읽기 실패:",
+        Message::FailedSaveLatestSessionPrefix => "최근 세션 저장 실패:",
+        Message::InvalidSessionId => "세션 ID 는 영문자, 숫자, '-' 및 '_' 만 포함할 수 있습니다",
+        Message::FailedCreateHttpClientPrefix => "HTTP 클라이언트 생성 실패:",
+        Message::LlmRequestFailedPrefix => "LLM 요청 실패",
+        Message::LlmStreamReadFailedPrefix => "LLM 스트림 읽기 실패:",
+        Message::ToolRequiresApprovalPrefix => "도구",
+        Message::ToolRequiresApprovalSuffix => "실행에 승인이 필요합니다.",
+        Message::ArgsLabel => "인수:",
+        Message::AllowOncePrompt => "이번 한 번 허용하시겠습니까? [y/N] ",
+        Message::PermissionDeniedByUser => "사용자가 권한을 거부했습니다",
+        Message::PermissionDeniedGuidance => {
+            "권한이 거부되어 작업이 실행되지 않았습니다. /allow 로 권한을 확인하세요. 설정의 명시적 deny 규칙을 변경한 뒤 다시 시도해 달라고 요청하세요. 시스템 권한 제한은 계속 적용됩니다."
+        }
+        Message::SubAgentLabel => "하위 에이전트:",
+        Message::TaskLabel => "작업:",
+        Message::CapabilityLabel => "기능:",
+        Message::PromptLabel => "프롬프트:",
+        Message::DelegateAgentCapability => "설정된 권한 내에서 명령을 실행하거나 파일을 수정할 수 있습니다",
+        Message::DelegateAgentConfirmationRequired => {
+            "하위 에이전트에 대한 명시적 승인이 필요합니다. 각 도구는 여전히 개별 리소스 권한의 적용을 받습니다."
+        }
+        Message::NetworkAskNonInteractive => {
+            "비대화형 모드에서 네트워크 요청이 차단되었습니다(policy=ask). 계속하려면 --network-policy=allow 를 사용하세요."
+        }
+        Message::NetworkAskPrompt => "이번 모델 네트워크 요청을 허용하시겠습니까? [y/N]: ",
+        Message::NetworkAllowedByUser => "사용자가 이번 모델 네트워크 요청을 허용했습니다.",
+        Message::NetworkDeniedByUser => "사용자가 이번 모델 네트워크 요청을 거부했습니다.",
+        Message::DisplayReadPrefix => "읽음",
+        Message::DisplayWrotePrefix => "기록함",
+        Message::DisplayEditedPrefix => "편집함",
+        Message::DisplayListedPrefix => "목록 조회함",
+        Message::EntriesUnit => "개 항목",
+        Message::MatchesUnit => "개 일치",
+        Message::ReachedMaxIterationsPrefix => "\n\n최대 반복 횟수(",
+        Message::ReachedMaxIterationsSuffix => ")에 도달하여 현재 결과를 반환합니다.",
+        Message::InteractiveQueuedRequest => "  대기 중인 요청:",
+        Message::InteractiveRunning => "  실행 중...",
+        Message::InteractiveReadyForNextRequest => "  다음 요청을 받을 준비가 되었습니다",
+        Message::InteractiveModelLabel => "모델",
+        Message::InteractiveParamsLabel => "매개변수",
+        Message::InteractiveWorkingDirLabel => "작업 디렉터리",
+        Message::InteractiveWorkspaceLabel => "작업 공간",
+        Message::InteractiveProviderLabel => "공급자",
+        Message::InteractiveProviderLocal => "로컬 설정",
+        Message::InteractiveModeFieldLabel => "모드",
+        Message::InteractiveNetworkFieldLabel => "네트워크",
+        Message::InteractiveEndpointLabel => "엔드포인트",
+        Message::InteractiveAvailableModels => "사용 가능한 모델:",
+        Message::InteractiveModelUsageHint => "사용법: /model <name>",
+        Message::InteractiveAvailableCommands => "사용 가능한 명령:",
+        Message::InteractiveSlashHelpHint => "도움말 표시",
+        Message::InteractiveSlashModelHint => "모델 목록 보기, /model <name> 으로 전환",
+        Message::InteractiveSlashExecutorHint => "코어 실행 단위 나열 또는 전환",
+        Message::InteractiveAvailableExecutors => "실행 단위:",
+        Message::InteractiveExecutorUsage => "사용법: /executor <nola|codex|claude_code|opencode>",
+        Message::InteractiveExecutorSelected => "선택한 실행 단위:",
+        Message::InteractiveExecutorUnavailable => "사용할 수 없는 실행 단위:",
+        Message::InteractiveExecutorLabel => "실행기",
+        Message::InteractiveSlashDebugHint => "디버그 세부 정보 표시 또는 전환",
+        Message::InteractiveSlashDebugUsage => "사용법: /debug on | /debug off",
+        Message::InteractiveSlashAllowHint => "권한 모드 설정",
+        Message::InteractiveSlashAllowUsage => "사용법: /allow — 권한 선택 패널 열기",
+        Message::InteractiveAllowPanelTitle => "권한 모드",
+        Message::InteractiveAllowPanelCautious => "신중",
+        Message::InteractiveAllowPanelCautiousDesc => "삭제, 덮어쓰기, 민감한 데이터 접근, 외부 전송 및 새 연결은 먼저 확인하며, 일반 읽기와 새 파일 생성은 바로 진행합니다.",
+        Message::InteractiveAllowPanelAllowAll => "모두 허용",
+        Message::InteractiveAllowPanelAllowAllDesc => "이 세션에서는 Nola 승인 프롬프트가 표시되지 않습니다. 시스템 권한은 계속 적용됩니다.",
+        Message::InteractiveAllowPanelSelected => "선택됨:",
+        Message::InteractiveAllowPanelCancelled => "취소됨",
+        Message::InteractiveSlashGoalHint => "목표를 향해 자율적으로 작업",
+        Message::InteractiveGoalControlPending => "목표 제어 작업이 대기열에 추가되었습니다. 적용 상태는 /goal status 로 확인하세요.",
+        Message::InteractiveGoalAlreadyActive => "이미 활성 목표가 있습니다. /goal resume 를 사용하거나 /goal off 로 종료한 뒤 새로 시작하세요.",
+        Message::InteractiveSlashGoalUsage => "사용법: /goal [start] <objective> [-c/--constraints <constraints>] | /goal status | /goal pause | /goal resume | /goal off",
+        Message::InteractiveSlashInitHint => "NOLA.md 프로젝트 메모리 생성 (--dry-run, --force, --output PATH)",
+        Message::InteractiveSlashCdHint => "작업 공간을 전환하고 새 프로젝트 세션 시작 (/cd - 로 이전 위치로 복귀)",
+        Message::InteractiveSlashCompactHint => "전체 재생 기록을 유지하면서 모델 컨텍스트 압축",
+        Message::InteractiveSlashNewHint => "현재 작업 공간에서 새 세션 시작",
+        Message::InteractiveSlashPlanHint => "현재 세션의 실행 계획 표시",
+        Message::InteractiveSlashJobsHint => "지속된 백그라운드 작업 목록 보기, 검사 또는 중지",
+        Message::InteractiveSlashResumeHint => "세션 복원 페이지 열기",
+        Message::InteractiveSlashContinueHint => "가장 최근 프로젝트 세션 계속하기",
+        Message::InteractiveSlashHistoryHint => "전체 세션 기록 다시 출력",
+        Message::InteractiveSlashStatusHint => "현재 런타임 상태 표시",
+        Message::InteractiveSlashExitHint => "현재 세션 종료",
+        Message::InteractiveSlashQuitHint => "q/quit/exit 로도 종료 가능",
+        Message::InteractiveWelcomeTagline => "로컬 우선 개인 어시스턴트",
+        Message::InteractiveWelcomeHint => "명령 목록은 /help · 모델 전환은 /model 을 입력하세요",
+        Message::InteractiveAutoValue => "자동",
+        Message::InteractiveNetworkAllowValue => "허용",
+        Message::InteractiveNetworkAskValue => "확인",
+        Message::InteractiveNetworkDenyValue => "차단",
+        Message::InteractiveContextLabel => "컨텍스트",
+        Message::InteractiveTokensLabel => "토큰",
+        Message::InteractiveTokensUnit => "토큰",
+        Message::InteractiveMessagesUnit => "개 메시지",
+        Message::InteractiveAllowPanelErrorPrefix => "권한 패널 오류:",
+        Message::InteractiveGoalStatusPrefix => "목표:",
+        Message::InteractiveGoalStatePrefix => "상태:",
+        Message::InteractiveGoalStateRunning => "실행 중",
+        Message::InteractiveGoalStatePaused => "일시 중지됨",
+        Message::InteractiveGoalStateNeedsUser => "사용자 대기 중",
+        Message::InteractiveGoalStateFailed => "실패",
+        Message::InteractiveGoalResumeStarted => "목표 재개 중:",
+        Message::InteractiveGoalNoResumable => "이 세션에는 재개할 수 있는 목표가 없습니다.",
+        Message::InteractiveWorkspaceStatusPrefix => "작업 공간:",
+        Message::InteractiveCdUsage => "사용법: /cd PATH · /cd - 이전 작업 공간으로 돌아가기",
+        Message::InteractiveCompactTitle => "컨텍스트 압축",
+        Message::InteractiveCompactNoActiveSession => "활성 세션 없음",
+        Message::InteractiveCompactAlready => "이미 압축됨",
+        Message::InteractiveCompactCompleted => "압축 완료",
+        Message::InteractiveCompactSummarized => "요약됨",
+        Message::InteractiveCompactKeptRecent => "최근 항목 유지",
+        Message::InteractiveCompactSaved => "절감됨",
+        Message::InteractiveCompactHistoryPreserved => "재생을 위해 전체 대화 기록이 보존됩니다",
+        Message::InteractiveCompactFailedPrefix => "컨텍스트 압축 실패:",
+        Message::InteractiveNewSessionTitle => "새 세션",
+        Message::InteractiveNewSessionPending => "다음 메시지부터 새 세션이 시작됩니다",
+        Message::InteractiveJobsTitle => "백그라운드 작업",
+        Message::InteractiveJobsUsage => "사용법: /jobs · /jobs ID · /jobs status ID · /jobs stop ID",
+        Message::InteractiveUnknownCommandHint => "알 수 없는 명령입니다. 사용 가능한 명령을 보려면 /help 를 입력하세요",
+        Message::InteractiveChoiceLabel => "선택해 주세요",
+        Message::InteractiveModelStatusPrefix => "모델:",
+        Message::InteractiveDebugStatusPrefix => "디버그:",
+        Message::InteractiveAllowStatusPrefix => "권한:",
+        Message::InteractiveDefaultModelLabel => "(기본값)",
+        Message::InteractiveTurnsLabel => "턴",
+        Message::InteractiveToolsLabel => "도구",
+        Message::InteractiveNetworkLabel => "네트워크",
+        Message::InteractiveInputPlaceholder => "메시지를 입력하세요…",
+        Message::InteractiveExecutionDraftPrefix => "↳",
+        Message::InteractiveExecutionQueuedPrefix => "대기 중인 후속 지시:",
+        Message::InteractiveExecutionInterruptHint => "Esc 를 눌러 현재 실행 중단",
+        Message::InteractiveExecutionInputHint => "Esc 중단 · Enter 후속 지시 대기열 추가",
+        Message::AgentStatusThinking => "생각 중",
+        Message::AgentStatusRetryingModel => "모델 응답 재시도 중",
+        Message::AgentStatusStrictToolStrategy => "엄격한 도구 전략",
+        Message::AgentStatusChooseFromAvailableTools => "사용 가능한 도구에서 선택",
+        Message::AgentStatusReadyToContinue => "계속할 준비 완료",
+        Message::AgentStatusEnteredMode => "모드 진입",
+        Message::AgentStatusReplyingDirectly => "직접 응답 중",
+        Message::AgentStatusExecutingPlan => "계획 실행 중",
+        Message::AgentStatusWaitingForUserConfirmation => "사용자 확인 대기 중",
+        Message::AgentStatusProcessing => "처리 중",
+        Message::AgentStatusPreparing => "준비 중",
+        Message::AgentStatusModelUnavailable => "모델을 일시적으로 사용할 수 없음",
+        Message::AgentDoneLabel => "완료",
+        Message::AgentErrorLabel => "오류",
+        Message::AgentToolLabel => "도구",
+        Message::AgentAgentLabel => "에이전트",
+        Message::AgentSessionLabel => "세션",
+        Message::AgentStatusLabel => "상태",
+        Message::AgentInfoLabel => "정보",
+        Message::AgentReadyCurrentModePrefix => "준비됨, 현재 모드:",
+        Message::AgentReadyCurrentModeSuffix => "",
+        Message::AgentStatusDetailsSeparator => ", ",
+        Message::AgentPreparingToExecutePrefix => "실행 준비 중:",
+        Message::AgentActionCountSuffixSingle => "개 작업",
+        Message::AgentActionCountSuffixPlural => "개 작업",
+        Message::AgentTurnPrefix => "턴",
+        Message::AgentTurnSuffix => "",
+        Message::AgentInspectingProject => "프로젝트 검사 중",
+        Message::AgentEditingFiles => "파일 편집 중",
+        Message::AgentRunningCommand => "명령 실행 중",
+        Message::AgentAccessingNetwork => "네트워크 접근 중",
+        Message::AgentSearchingTools => "도구 검색 중",
+        Message::AgentStartingSubtask => "하위 작업 시작 중",
+        Message::AgentFileModified => "파일 수정됨",
+        Message::AgentCommandCompleted => "명령 완료됨",
+        Message::AgentNetworkRequestCompleted => "네트워크 요청 완료됨",
+        Message::AgentSubtaskCompleted => "하위 작업 완료됨",
+        Message::AgentFailedToModifyFile => "파일 수정 실패",
+        Message::AgentCommandFailed => "명령 실행 실패",
+        Message::AgentNetworkRequestFailed => "네트워크 요청 실패",
+        Message::AgentSubtaskFailed => "하위 작업 실패",
+        Message::AgentOperationFailed => "작업 실패",
+        Message::InteractiveUnknownPath => "(알 수 없음)",
+        Message::InteractiveStatusOn => "켜짐",
+        Message::InteractiveStatusOff => "꺼짐",
+        Message::InteractiveInvalidLanguageValue => "지원되지 않는 언어",
+        Message::InvalidPortValue => "--port 는 1 에서 65535 사이의 숫자여야 합니다",
+        Message::UnknownAgentModePrefix => "알 수 없는 --agent-mode",
+        Message::NetworkPolicyMustBeOneOf => "--network-policy 는 allow, ask, deny 중 하나여야 합니다",
+        Message::ForceToolSetMustBeOneOf => "--force-tool-set 은 auto, all, write 중 하나여야 합니다",
+        Message::FailedReadKeyEventPrefix => "키 이벤트 읽기 실패:",
+        Message::FailedFlushPromptPrefix => "프롬프트 플러시 실패:",
+        Message::InteractiveRawModeFailedPrefix => "로우 입력 모드 활성화 실패:",
+    }
+}
+
 fn normalized_locale_tag(tag: &str) -> String {
     tag.split(':')
         .next()
@@ -3767,839 +4708,4 @@ fn is_explicit_english(tag: &str) -> bool {
     normalized == "en" || normalized.starts_with("en-")
 }
 
-fn parse_tool_display_error(text: &str) -> Option<ToolDisplayError<'_>> {
-    if let Some(name) = quoted_suffix(text, "Unknown tool '") {
-        return Some(ToolDisplayError::UnknownTool(name));
-    }
-    if let Some(rest) = text.strip_prefix("Not a file: ") {
-        return Some(ToolDisplayError::NotFile(rest));
-    }
-    if let Some(rest) = text.strip_prefix("Read failed: ") {
-        return Some(ToolDisplayError::ReadFailed(rest));
-    }
-    if text == "content is required" {
-        return Some(ToolDisplayError::ContentRequired);
-    }
-    if let Some(rest) = text
-        .strip_prefix("content exceeds ")
-        .and_then(|value| value.strip_suffix(" bytes"))
-    {
-        return Some(ToolDisplayError::ContentExceeds(rest));
-    }
-    if let Some(rest) = text.strip_prefix("Create parent directory failed: ") {
-        return Some(ToolDisplayError::CreateParentFailed(rest));
-    }
-    if let Some(rest) = text.strip_prefix("Write failed: ") {
-        return Some(ToolDisplayError::WriteFailed(rest));
-    }
-    if text == "old_text is required" {
-        return Some(ToolDisplayError::OldTextRequired);
-    }
-    if text == "new_text is required" {
-        return Some(ToolDisplayError::NewTextRequired);
-    }
-    if text == "old_text was not found" {
-        return Some(ToolDisplayError::OldTextNotFound);
-    }
-    if let Some(rest) = text
-        .strip_prefix("old_text matched ")
-        .and_then(|value| value.strip_suffix("; set replace_all=true or provide more context"))
-    {
-        return Some(ToolDisplayError::OldTextMatched(rest));
-    }
-    if let Some(rest) = text.strip_prefix("Not a directory: ") {
-        return Some(ToolDisplayError::NotDirectory(rest));
-    }
-    if let Some(rest) = text.strip_prefix("List failed: ") {
-        return Some(ToolDisplayError::ListFailed(rest));
-    }
-    if let Some(rest) = text.strip_prefix("invalid regex: ") {
-        return Some(ToolDisplayError::InvalidRegex(rest));
-    }
-    if text == "command too long" {
-        return Some(ToolDisplayError::CommandTooLong);
-    }
-    if text == "shell metacharacters/substitutions are not allowed" {
-        return Some(ToolDisplayError::ShellMetacharacters);
-    }
-    if text == "No bash prefixes whitelisted. Use --bash-prefix." {
-        return Some(ToolDisplayError::NoBashPrefixes);
-    }
-    if let Some(head) = text
-        .strip_prefix('\'')
-        .and_then(|value| value.strip_suffix("' is not in the bash allow-list"))
-    {
-        return Some(ToolDisplayError::NotInBashAllowList(head));
-    }
-    if let Some(rest) = text.strip_prefix("cwd is not a directory: ") {
-        return Some(ToolDisplayError::CwdNotDirectory(rest));
-    }
-    if let Some(rest) = text.strip_prefix("temp stdout failed: ") {
-        return Some(ToolDisplayError::TempStdoutFailed(rest));
-    }
-    if let Some(rest) = text.strip_prefix("temp stderr failed: ") {
-        return Some(ToolDisplayError::TempStderrFailed(rest));
-    }
-    if let Some(rest) = text.strip_prefix("Exec failed: ") {
-        return Some(ToolDisplayError::ExecFailed(rest));
-    }
-    if let Some(rest) = text
-        .strip_prefix("Command timed out after ")
-        .and_then(|value| value.strip_suffix('s'))
-    {
-        return Some(ToolDisplayError::CommandTimedOut(rest));
-    }
-    if let Some(rest) = text.strip_prefix("Wait failed: ") {
-        return Some(ToolDisplayError::WaitFailed(rest));
-    }
-    if let Some(rest) = text.strip_suffix(" is required") {
-        return Some(ToolDisplayError::Required(rest));
-    }
-    if text == "no allowed directories configured" {
-        return Some(ToolDisplayError::NoAllowedDirs);
-    }
-    if let Some(rest) = text.strip_prefix("failed to resolve ") {
-        return Some(ToolDisplayError::FailedResolve(rest));
-    }
-    if let Some(rest) = text.strip_prefix("path does not exist: ") {
-        return Some(ToolDisplayError::PathDoesNotExist(rest));
-    }
-    if let Some(rest) = text.strip_prefix("failed to resolve parent for ") {
-        return Some(ToolDisplayError::FailedResolveParent(rest));
-    }
-    if let Some(rest) = text.strip_prefix("path is outside allowed directories: ") {
-        return Some(ToolDisplayError::OutsideAllowed(rest));
-    }
-    if let Some(rest) = text.strip_prefix("invalid glob pattern: ") {
-        return Some(ToolDisplayError::InvalidGlob(rest));
-    }
-    None
-}
-
-fn format_tool_display_error(language: Language, error: ToolDisplayError<'_>) -> String {
-    match language {
-        Language::En => match error {
-            ToolDisplayError::UnknownTool(name) => format!("Unknown tool '{name}'"),
-            ToolDisplayError::NotFile(path) => format!("Not a file: {path}"),
-            ToolDisplayError::ReadFailed(err) => format!("Read failed: {err}"),
-            ToolDisplayError::ContentRequired => "content is required".to_string(),
-            ToolDisplayError::ContentExceeds(size) => format!("content exceeds {size} bytes"),
-            ToolDisplayError::CreateParentFailed(err) => {
-                format!("Create parent directory failed: {err}")
-            }
-            ToolDisplayError::WriteFailed(err) => format!("Write failed: {err}"),
-            ToolDisplayError::OldTextRequired => "old_text is required".to_string(),
-            ToolDisplayError::NewTextRequired => "new_text is required".to_string(),
-            ToolDisplayError::OldTextNotFound => "old_text was not found".to_string(),
-            ToolDisplayError::OldTextMatched(count) => format!(
-                "old_text matched {count} times; set replace_all=true or provide more context"
-            ),
-            ToolDisplayError::NotDirectory(path) => format!("Not a directory: {path}"),
-            ToolDisplayError::ListFailed(err) => format!("List failed: {err}"),
-            ToolDisplayError::InvalidRegex(err) => format!("invalid regex: {err}"),
-            ToolDisplayError::CommandTooLong => "command too long".to_string(),
-            ToolDisplayError::ShellMetacharacters => {
-                "shell metacharacters/substitutions are not allowed".to_string()
-            }
-            ToolDisplayError::NoBashPrefixes => {
-                "No bash prefixes whitelisted. Use --bash-prefix.".to_string()
-            }
-            ToolDisplayError::NotInBashAllowList(head) => {
-                format!("'{head}' is not in the bash allow-list")
-            }
-            ToolDisplayError::CwdNotDirectory(path) => {
-                format!("cwd is not a directory: {path}")
-            }
-            ToolDisplayError::TempStdoutFailed(err) => format!("temp stdout failed: {err}"),
-            ToolDisplayError::TempStderrFailed(err) => format!("temp stderr failed: {err}"),
-            ToolDisplayError::ExecFailed(err) => format!("Exec failed: {err}"),
-            ToolDisplayError::CommandTimedOut(sec) => {
-                format!("Command timed out after {sec}s")
-            }
-            ToolDisplayError::WaitFailed(err) => format!("Wait failed: {err}"),
-            ToolDisplayError::Required(key) => format!("{key} is required"),
-            ToolDisplayError::NoAllowedDirs => "no allowed directories configured".to_string(),
-            ToolDisplayError::FailedResolve(path) => format!("failed to resolve {path}"),
-            ToolDisplayError::PathDoesNotExist(path) => format!("path does not exist: {path}"),
-            ToolDisplayError::FailedResolveParent(path) => {
-                format!("failed to resolve parent for {path}")
-            }
-            ToolDisplayError::OutsideAllowed(path) => {
-                format!("path is outside allowed directories: {path}")
-            }
-            ToolDisplayError::InvalidGlob(err) => format!("invalid glob pattern: {err}"),
-        },
-        Language::ZhHans => match error {
-            ToolDisplayError::UnknownTool(name) => format!("未知工具 '{name}'"),
-            ToolDisplayError::NotFile(path) => format!("不是文件：{path}"),
-            ToolDisplayError::ReadFailed(err) => format!("读取失败：{err}"),
-            ToolDisplayError::ContentRequired => "缺少 content".to_string(),
-            ToolDisplayError::ContentExceeds(size) => format!("content 超过 {size} 字节"),
-            ToolDisplayError::CreateParentFailed(err) => format!("创建父目录失败：{err}"),
-            ToolDisplayError::WriteFailed(err) => format!("写入失败：{err}"),
-            ToolDisplayError::OldTextRequired => "缺少 old_text".to_string(),
-            ToolDisplayError::NewTextRequired => "缺少 new_text".to_string(),
-            ToolDisplayError::OldTextNotFound => "未找到 old_text".to_string(),
-            ToolDisplayError::OldTextMatched(count) => format!(
-                "old_text 匹配 {count} 次；请设置 replace_all=true 或提供更多上下文"
-            ),
-            ToolDisplayError::NotDirectory(path) => format!("不是目录：{path}"),
-            ToolDisplayError::ListFailed(err) => format!("列出目录失败：{err}"),
-            ToolDisplayError::InvalidRegex(err) => format!("正则表达式无效：{err}"),
-            ToolDisplayError::CommandTooLong => "命令过长".to_string(),
-            ToolDisplayError::ShellMetacharacters => {
-                "不允许使用 shell 元字符或替换表达式".to_string()
-            }
-            ToolDisplayError::NoBashPrefixes => {
-                "未配置允许的 Bash 前缀。请使用 --bash-prefix。".to_string()
-            }
-            ToolDisplayError::NotInBashAllowList(head) => {
-                format!("'{head}' 不在 Bash 允许列表中")
-            }
-            ToolDisplayError::CwdNotDirectory(path) => format!("cwd 不是目录：{path}"),
-            ToolDisplayError::TempStdoutFailed(err) => {
-                format!("创建临时 stdout 文件失败：{err}")
-            }
-            ToolDisplayError::TempStderrFailed(err) => {
-                format!("创建临时 stderr 文件失败：{err}")
-            }
-            ToolDisplayError::ExecFailed(err) => format!("执行失败：{err}"),
-            ToolDisplayError::CommandTimedOut(sec) => format!("命令在 {sec}s 后超时"),
-            ToolDisplayError::WaitFailed(err) => format!("等待命令结束失败：{err}"),
-            ToolDisplayError::Required(key) => format!("缺少 {key}"),
-            ToolDisplayError::NoAllowedDirs => "未配置允许访问的目录".to_string(),
-            ToolDisplayError::FailedResolve(path) => format!("解析路径失败 {path}"),
-            ToolDisplayError::PathDoesNotExist(path) => format!("路径不存在：{path}"),
-            ToolDisplayError::FailedResolveParent(path) => format!("解析父目录失败：{path}"),
-            ToolDisplayError::OutsideAllowed(path) => {
-                format!("路径不在允许访问的目录内：{path}")
-            }
-            ToolDisplayError::InvalidGlob(err) => format!("glob 模式无效：{err}"),
-        },
-        Language::De => match error {
-            ToolDisplayError::UnknownTool(name) => format!("Unbekanntes Tool '{name}'"),
-            ToolDisplayError::NotFile(path) => format!("Keine Datei: {path}"),
-            ToolDisplayError::ReadFailed(err) => format!("Lesen fehlgeschlagen: {err}"),
-            ToolDisplayError::ContentRequired => "content ist erforderlich".to_string(),
-            ToolDisplayError::ContentExceeds(size) => {
-                format!("content überschreitet {size} Bytes")
-            }
-            ToolDisplayError::CreateParentFailed(err) => {
-                format!("Übergeordnetes Verzeichnis konnte nicht erstellt werden: {err}")
-            }
-            ToolDisplayError::WriteFailed(err) => format!("Schreiben fehlgeschlagen: {err}"),
-            ToolDisplayError::OldTextRequired => "old_text ist erforderlich".to_string(),
-            ToolDisplayError::NewTextRequired => "new_text ist erforderlich".to_string(),
-            ToolDisplayError::OldTextNotFound => "old_text wurde nicht gefunden".to_string(),
-            ToolDisplayError::OldTextMatched(count) => format!(
-                "old_text wurde {count} Mal gefunden; setze replace_all=true oder gib mehr Kontext an"
-            ),
-            ToolDisplayError::NotDirectory(path) => format!("Kein Verzeichnis: {path}"),
-            ToolDisplayError::ListFailed(err) => format!("Auflisten fehlgeschlagen: {err}"),
-            ToolDisplayError::InvalidRegex(err) => format!("ungültiger Regex: {err}"),
-            ToolDisplayError::CommandTooLong => "Befehl ist zu lang".to_string(),
-            ToolDisplayError::ShellMetacharacters => {
-                "Shell-Metazeichen/Substitutionen sind nicht erlaubt".to_string()
-            }
-            ToolDisplayError::NoBashPrefixes => {
-                "Keine Bash-Präfixe erlaubt. Nutze --bash-prefix.".to_string()
-            }
-            ToolDisplayError::NotInBashAllowList(head) => {
-                format!("'{head}' ist nicht in der Bash-Erlaubnisliste")
-            }
-            ToolDisplayError::CwdNotDirectory(path) => {
-                format!("cwd ist kein Verzeichnis: {path}")
-            }
-            ToolDisplayError::TempStdoutFailed(err) => {
-                format!("temporäre stdout-Datei fehlgeschlagen: {err}")
-            }
-            ToolDisplayError::TempStderrFailed(err) => {
-                format!("temporäre stderr-Datei fehlgeschlagen: {err}")
-            }
-            ToolDisplayError::ExecFailed(err) => format!("Ausführung fehlgeschlagen: {err}"),
-            ToolDisplayError::CommandTimedOut(sec) => {
-                format!("Befehl nach {sec}s abgebrochen")
-            }
-            ToolDisplayError::WaitFailed(err) => format!("Warten fehlgeschlagen: {err}"),
-            ToolDisplayError::Required(key) => format!("{key} ist erforderlich"),
-            ToolDisplayError::NoAllowedDirs => "keine erlaubten Verzeichnisse konfiguriert".to_string(),
-            ToolDisplayError::FailedResolve(path) => format!("Auflösung fehlgeschlagen {path}"),
-            ToolDisplayError::PathDoesNotExist(path) => format!("Pfad existiert nicht: {path}"),
-            ToolDisplayError::FailedResolveParent(path) => {
-                format!("übergeordnetes Verzeichnis konnte nicht aufgelöst werden: {path}")
-            }
-            ToolDisplayError::OutsideAllowed(path) => {
-                format!("Pfad liegt außerhalb der erlaubten Verzeichnisse: {path}")
-            }
-            ToolDisplayError::InvalidGlob(err) => format!("ungültiges Glob-Muster: {err}"),
-        },
-        Language::Es => match error {
-            ToolDisplayError::UnknownTool(name) => format!("Herramienta desconocida '{name}'"),
-            ToolDisplayError::NotFile(path) => format!("No es un archivo: {path}"),
-            ToolDisplayError::ReadFailed(err) => format!("Falló la lectura: {err}"),
-            ToolDisplayError::ContentRequired => "content es obligatorio".to_string(),
-            ToolDisplayError::ContentExceeds(size) => {
-                format!("content supera {size} bytes")
-            }
-            ToolDisplayError::CreateParentFailed(err) => {
-                format!("No se pudo crear el directorio padre: {err}")
-            }
-            ToolDisplayError::WriteFailed(err) => format!("Falló la escritura: {err}"),
-            ToolDisplayError::OldTextRequired => "old_text es obligatorio".to_string(),
-            ToolDisplayError::NewTextRequired => "new_text es obligatorio".to_string(),
-            ToolDisplayError::OldTextNotFound => "old_text no se encontró".to_string(),
-            ToolDisplayError::OldTextMatched(count) => format!(
-                "old_text coincidió {count} veces; usa replace_all=true o da más contexto"
-            ),
-            ToolDisplayError::NotDirectory(path) => format!("No es un directorio: {path}"),
-            ToolDisplayError::ListFailed(err) => format!("Falló el listado: {err}"),
-            ToolDisplayError::InvalidRegex(err) => format!("regex no válida: {err}"),
-            ToolDisplayError::CommandTooLong => "comando demasiado largo".to_string(),
-            ToolDisplayError::ShellMetacharacters => {
-                "no se permiten metacaracteres ni sustituciones de shell".to_string()
-            }
-            ToolDisplayError::NoBashPrefixes => {
-                "No hay prefijos Bash permitidos. Usa --bash-prefix.".to_string()
-            }
-            ToolDisplayError::NotInBashAllowList(head) => {
-                format!("'{head}' no está en la lista permitida de Bash")
-            }
-            ToolDisplayError::CwdNotDirectory(path) => {
-                format!("cwd no es un directorio: {path}")
-            }
-            ToolDisplayError::TempStdoutFailed(err) => {
-                format!("falló el stdout temporal: {err}")
-            }
-            ToolDisplayError::TempStderrFailed(err) => {
-                format!("falló el stderr temporal: {err}")
-            }
-            ToolDisplayError::ExecFailed(err) => format!("Falló la ejecución: {err}"),
-            ToolDisplayError::CommandTimedOut(sec) => {
-                format!("El comando agotó el tiempo tras {sec}s")
-            }
-            ToolDisplayError::WaitFailed(err) => format!("Falló la espera: {err}"),
-            ToolDisplayError::Required(key) => format!("{key} es obligatorio"),
-            ToolDisplayError::NoAllowedDirs => "no hay directorios permitidos configurados".to_string(),
-            ToolDisplayError::FailedResolve(path) => format!("no se pudo resolver {path}"),
-            ToolDisplayError::PathDoesNotExist(path) => format!("la ruta no existe: {path}"),
-            ToolDisplayError::FailedResolveParent(path) => {
-                format!("no se pudo resolver el directorio padre de {path}")
-            }
-            ToolDisplayError::OutsideAllowed(path) => {
-                format!("la ruta está fuera de los directorios permitidos: {path}")
-            }
-            ToolDisplayError::InvalidGlob(err) => format!("patrón glob no válido: {err}"),
-        },
-        Language::Fr => match error {
-            ToolDisplayError::UnknownTool(name) => format!("Outil inconnu '{name}'"),
-            ToolDisplayError::NotFile(path) => format!("Ce n'est pas un fichier : {path}"),
-            ToolDisplayError::ReadFailed(err) => format!("Échec de lecture : {err}"),
-            ToolDisplayError::ContentRequired => "content est requis".to_string(),
-            ToolDisplayError::ContentExceeds(size) => {
-                format!("content dépasse {size} octets")
-            }
-            ToolDisplayError::CreateParentFailed(err) => {
-                format!("Échec de création du répertoire parent : {err}")
-            }
-            ToolDisplayError::WriteFailed(err) => format!("Échec d'écriture : {err}"),
-            ToolDisplayError::OldTextRequired => "old_text est requis".to_string(),
-            ToolDisplayError::NewTextRequired => "new_text est requis".to_string(),
-            ToolDisplayError::OldTextNotFound => "old_text est introuvable".to_string(),
-            ToolDisplayError::OldTextMatched(count) => format!(
-                "old_text correspond {count} fois ; définissez replace_all=true ou ajoutez du contexte"
-            ),
-            ToolDisplayError::NotDirectory(path) => format!("Ce n'est pas un répertoire : {path}"),
-            ToolDisplayError::ListFailed(err) => format!("Échec du listage : {err}"),
-            ToolDisplayError::InvalidRegex(err) => format!("regex invalide : {err}"),
-            ToolDisplayError::CommandTooLong => "commande trop longue".to_string(),
-            ToolDisplayError::ShellMetacharacters => {
-                "les métacaractères/substitutions shell ne sont pas autorisés".to_string()
-            }
-            ToolDisplayError::NoBashPrefixes => {
-                "Aucun préfixe Bash autorisé. Utilisez --bash-prefix.".to_string()
-            }
-            ToolDisplayError::NotInBashAllowList(head) => {
-                format!("'{head}' n'est pas dans la liste Bash autorisée")
-            }
-            ToolDisplayError::CwdNotDirectory(path) => {
-                format!("cwd n'est pas un répertoire : {path}")
-            }
-            ToolDisplayError::TempStdoutFailed(err) => {
-                format!("échec du stdout temporaire : {err}")
-            }
-            ToolDisplayError::TempStderrFailed(err) => {
-                format!("échec du stderr temporaire : {err}")
-            }
-            ToolDisplayError::ExecFailed(err) => format!("Échec d'exécution : {err}"),
-            ToolDisplayError::CommandTimedOut(sec) => {
-                format!("La commande a expiré après {sec}s")
-            }
-            ToolDisplayError::WaitFailed(err) => format!("Échec d'attente : {err}"),
-            ToolDisplayError::Required(key) => format!("{key} est requis"),
-            ToolDisplayError::NoAllowedDirs => "aucun répertoire autorisé configuré".to_string(),
-            ToolDisplayError::FailedResolve(path) => format!("échec de résolution {path}"),
-            ToolDisplayError::PathDoesNotExist(path) => format!("le chemin n'existe pas : {path}"),
-            ToolDisplayError::FailedResolveParent(path) => {
-                format!("échec de résolution du parent pour {path}")
-            }
-            ToolDisplayError::OutsideAllowed(path) => {
-                format!("le chemin est hors des répertoires autorisés : {path}")
-            }
-            ToolDisplayError::InvalidGlob(err) => format!("motif glob invalide : {err}"),
-        },
-        Language::Ja => match error {
-            ToolDisplayError::UnknownTool(name) => format!("不明なツール '{name}'"),
-            ToolDisplayError::NotFile(path) => format!("ファイルではありません: {path}"),
-            ToolDisplayError::ReadFailed(err) => format!("読み取りに失敗しました: {err}"),
-            ToolDisplayError::ContentRequired => "content が必要です".to_string(),
-            ToolDisplayError::ContentExceeds(size) => {
-                format!("content が {size} バイトを超えています")
-            }
-            ToolDisplayError::CreateParentFailed(err) => {
-                format!("親ディレクトリの作成に失敗しました: {err}")
-            }
-            ToolDisplayError::WriteFailed(err) => format!("書き込みに失敗しました: {err}"),
-            ToolDisplayError::OldTextRequired => "old_text が必要です".to_string(),
-            ToolDisplayError::NewTextRequired => "new_text が必要です".to_string(),
-            ToolDisplayError::OldTextNotFound => "old_text が見つかりません".to_string(),
-            ToolDisplayError::OldTextMatched(count) => format!(
-                "old_text が {count} 回一致しました。replace_all=true を設定するか、さらに文脈を指定してください"
-            ),
-            ToolDisplayError::NotDirectory(path) => format!("ディレクトリではありません: {path}"),
-            ToolDisplayError::ListFailed(err) => format!("一覧取得に失敗しました: {err}"),
-            ToolDisplayError::InvalidRegex(err) => format!("正規表現が無効です: {err}"),
-            ToolDisplayError::CommandTooLong => "コマンドが長すぎます".to_string(),
-            ToolDisplayError::ShellMetacharacters => {
-                "shell メタ文字または置換式は使用できません".to_string()
-            }
-            ToolDisplayError::NoBashPrefixes => {
-                "許可された Bash 接頭辞がありません。--bash-prefix を使用してください。".to_string()
-            }
-            ToolDisplayError::NotInBashAllowList(head) => {
-                format!("'{head}' は Bash 許可リストにありません")
-            }
-            ToolDisplayError::CwdNotDirectory(path) => {
-                format!("cwd はディレクトリではありません: {path}")
-            }
-            ToolDisplayError::TempStdoutFailed(err) => {
-                format!("一時 stdout の作成に失敗しました: {err}")
-            }
-            ToolDisplayError::TempStderrFailed(err) => {
-                format!("一時 stderr の作成に失敗しました: {err}")
-            }
-            ToolDisplayError::ExecFailed(err) => format!("実行に失敗しました: {err}"),
-            ToolDisplayError::CommandTimedOut(sec) => {
-                format!("コマンドが {sec}s 後にタイムアウトしました")
-            }
-            ToolDisplayError::WaitFailed(err) => format!("待機に失敗しました: {err}"),
-            ToolDisplayError::Required(key) => format!("{key} が必要です"),
-            ToolDisplayError::NoAllowedDirs => "許可されたディレクトリが設定されていません".to_string(),
-            ToolDisplayError::FailedResolve(path) => format!("パスの解決に失敗しました {path}"),
-            ToolDisplayError::PathDoesNotExist(path) => format!("パスが存在しません: {path}"),
-            ToolDisplayError::FailedResolveParent(path) => {
-                format!("親ディレクトリの解決に失敗しました: {path}")
-            }
-            ToolDisplayError::OutsideAllowed(path) => {
-                format!("パスは許可されたディレクトリの外です: {path}")
-            }
-            ToolDisplayError::InvalidGlob(err) => format!("glob パターンが無効です: {err}"),
-        },
-        Language::Ru => match error {
-            ToolDisplayError::UnknownTool(name) => format!("Неизвестный инструмент '{name}'"),
-            ToolDisplayError::NotFile(path) => format!("Не файл: {path}"),
-            ToolDisplayError::ReadFailed(err) => format!("Ошибка чтения: {err}"),
-            ToolDisplayError::ContentRequired => "требуется content".to_string(),
-            ToolDisplayError::ContentExceeds(size) => {
-                format!("content превышает {size} байт")
-            }
-            ToolDisplayError::CreateParentFailed(err) => {
-                format!("не удалось создать родительский каталог: {err}")
-            }
-            ToolDisplayError::WriteFailed(err) => format!("Ошибка записи: {err}"),
-            ToolDisplayError::OldTextRequired => "требуется old_text".to_string(),
-            ToolDisplayError::NewTextRequired => "требуется new_text".to_string(),
-            ToolDisplayError::OldTextNotFound => "old_text не найден".to_string(),
-            ToolDisplayError::OldTextMatched(count) => format!(
-                "old_text найден {count} раз; задайте replace_all=true или добавьте контекст"
-            ),
-            ToolDisplayError::NotDirectory(path) => format!("Не каталог: {path}"),
-            ToolDisplayError::ListFailed(err) => format!("Ошибка списка: {err}"),
-            ToolDisplayError::InvalidRegex(err) => format!("недопустимое regex: {err}"),
-            ToolDisplayError::CommandTooLong => "команда слишком длинная".to_string(),
-            ToolDisplayError::ShellMetacharacters => {
-                "метасимволы/подстановки shell не разрешены".to_string()
-            }
-            ToolDisplayError::NoBashPrefixes => {
-                "Нет разрешенных Bash-префиксов. Используйте --bash-prefix.".to_string()
-            }
-            ToolDisplayError::NotInBashAllowList(head) => {
-                format!("'{head}' отсутствует в списке разрешений Bash")
-            }
-            ToolDisplayError::CwdNotDirectory(path) => {
-                format!("cwd не является каталогом: {path}")
-            }
-            ToolDisplayError::TempStdoutFailed(err) => {
-                format!("ошибка временного stdout: {err}")
-            }
-            ToolDisplayError::TempStderrFailed(err) => {
-                format!("ошибка временного stderr: {err}")
-            }
-            ToolDisplayError::ExecFailed(err) => format!("Ошибка выполнения: {err}"),
-            ToolDisplayError::CommandTimedOut(sec) => {
-                format!("Команда превысила время ожидания {sec}s")
-            }
-            ToolDisplayError::WaitFailed(err) => format!("Ошибка ожидания: {err}"),
-            ToolDisplayError::Required(key) => format!("требуется {key}"),
-            ToolDisplayError::NoAllowedDirs => "не настроены разрешенные каталоги".to_string(),
-            ToolDisplayError::FailedResolve(path) => format!("не удалось разрешить {path}"),
-            ToolDisplayError::PathDoesNotExist(path) => format!("путь не существует: {path}"),
-            ToolDisplayError::FailedResolveParent(path) => {
-                format!("не удалось разрешить родительский каталог для {path}")
-            }
-            ToolDisplayError::OutsideAllowed(path) => {
-                format!("путь вне разрешенных каталогов: {path}")
-            }
-            ToolDisplayError::InvalidGlob(err) => format!("недопустимый glob-шаблон: {err}"),
-        },
-    }
-}
-
-fn quoted_suffix<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
-    text.strip_prefix(prefix)?.strip_suffix('\'')
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn permission_profile_copy_does_not_promise_unrestricted_execution() {
-        use super::*;
-        assert!(text_for(Language::ZhHans, Message::InteractiveAllowPanelAllowAllDesc).contains("系统权限"));
-        assert!(!text_for(Language::ZhHans, Message::InteractiveAllowPanelCautiousDesc).contains("仅在"));
-        let allow_all = text_for(Language::En, Message::InteractiveAllowPanelAllowAllDesc);
-        assert!(allow_all.contains("No Nola approval prompts"));
-        assert!(allow_all.contains("System permissions still apply"));
-    }
-    use super::{
-        browser_accept_language_for, browser_locale_for, help_text_for, interaction_text_for,
-        language_from_tag, localize_tool_display_name_for, localize_tool_error_display_for,
-        text_for, ui_text_for, Language, Message, UiText,
-    };
-
-    #[test]
-    fn detects_supported_locale_tags() {
-        assert_eq!(language_from_tag("zh-Hans"), Language::ZhHans);
-        assert_eq!(language_from_tag("zh_CN.UTF-8"), Language::ZhHans);
-        assert_eq!(language_from_tag("en_US.UTF-8"), Language::En);
-        assert_eq!(language_from_tag("de_DE.UTF-8"), Language::De);
-        assert_eq!(language_from_tag("es-ES"), Language::Es);
-        assert_eq!(language_from_tag("fr_FR.UTF-8"), Language::Fr);
-        assert_eq!(language_from_tag("ja_JP.UTF-8"), Language::Ja);
-        assert_eq!(language_from_tag("ru_RU.UTF-8"), Language::Ru);
-    }
-
-    #[test]
-    fn falls_back_to_english_for_unknown_locale_tags() {
-        assert_eq!(language_from_tag("C"), Language::En);
-        assert_eq!(language_from_tag("it_IT.UTF-8"), Language::En);
-    }
-
-    #[test]
-    fn localizes_common_tool_display_names_without_hiding_unknown_names() {
-        assert_eq!(
-            localize_tool_display_name_for(Language::ZhHans, "mcp_resources_read"),
-            "读取 MCP 资源"
-        );
-        assert_eq!(
-            localize_tool_display_name_for(Language::En, "mcp_resource_templates_read"),
-            "Read MCP template resource"
-        );
-        assert_eq!(
-            localize_tool_display_name_for(Language::ZhHans, "git_diff"),
-            "检查变更"
-        );
-        assert_eq!(
-            localize_tool_display_name_for(Language::ZhHans, "project_overview"),
-            "查看项目概览"
-        );
-        assert_eq!(
-            localize_tool_display_name_for(Language::ZhHans, "codebase_search"),
-            "搜索文件"
-        );
-        assert_eq!(
-            localize_tool_display_name_for(Language::En, "codebase_index_status"),
-            "Inspect workspace"
-        );
-        assert_eq!(
-            localize_tool_display_name_for(Language::ZhHans, "focused_context"),
-            "检查工作区"
-        );
-        assert_eq!(
-            localize_tool_display_name_for(Language::ZhHans, "find_files"),
-            "浏览目录"
-        );
-        assert_eq!(
-            localize_tool_display_name_for(Language::ZhHans, "tool_search"),
-            "搜索工具"
-        );
-        assert_eq!(
-            localize_tool_display_name_for(Language::ZhHans, "computer_click"),
-            "操作电脑"
-        );
-        assert_eq!(
-            localize_tool_display_name_for(Language::En, "read_file"),
-            "Read file"
-        );
-        assert_eq!(
-            localize_tool_display_name_for(Language::ZhHans, "custom_tool"),
-            "工具 · custom_tool"
-        );
-    }
-
-    #[test]
-    fn localizes_interaction_panels_without_cross_language_fallbacks() {
-        let english = interaction_text_for(Language::En);
-        assert_eq!(english.custom_answer, "Custom answer…");
-        assert_eq!(english.resume_title, "Resume session");
-        assert!(!english.selection_hint.contains('选'));
-        assert!(!english.question_cancelled.contains('取'));
-
-        let chinese = interaction_text_for(Language::ZhHans);
-        assert_eq!(chinese.custom_answer, "自定义回答…");
-        assert_eq!(chinese.resume_title, "恢复会话");
-        assert!(!chinese.selection_hint.contains("confirm"));
-        assert!(!chinese.validation_pipeline_rejected.contains("must"));
-    }
-
-    #[test]
-    fn localizes_secondary_cli_surfaces_for_every_supported_language() {
-        let languages = [
-            Language::ZhHans,
-            Language::En,
-            Language::De,
-            Language::Es,
-            Language::Fr,
-            Language::Ja,
-            Language::Ru,
-        ];
-        let keys = [
-            UiText::Answer,
-            UiText::SessionBusy,
-            UiText::TasksUsage,
-            UiText::HelpAgent,
-            UiText::NoBackgroundTasks,
-            UiText::WaitingPermission,
-            UiText::ConfigNotFound,
-            UiText::ExecutionPlan,
-        ];
-        for language in languages {
-            for key in keys {
-                assert!(
-                    !ui_text_for(language, key).trim().is_empty(),
-                    "{language:?} {key:?}"
-                );
-            }
-        }
-        assert_eq!(ui_text_for(Language::ZhHans, UiText::Answer), "回答");
-        assert_eq!(
-            ui_text_for(Language::Ja, UiText::WaitingPermission),
-            "承認待ち"
-        );
-        assert_eq!(
-            ui_text_for(Language::De, UiText::NoAvailableModels),
-            "Keine Modelle verfügbar"
-        );
-        assert!(!ui_text_for(Language::Fr, UiText::HelpTasks).contains('权'));
-    }
-
-    #[test]
-    fn provides_localized_help_text_for_supported_languages() {
-        let cases = [
-            (Language::ZhHans, "用法："),
-            (Language::En, "Usage:"),
-            (Language::De, "Verwendung:"),
-            (Language::Es, "Uso:"),
-            (Language::Fr, "Utilisation :"),
-            (Language::Ja, "使い方:"),
-            (Language::Ru, "Использование:"),
-        ];
-        for (language, marker) in cases {
-            assert!(help_text_for(language).contains(marker));
-        }
-    }
-
-    #[test]
-    fn setup_yes_never_advertises_agent_tool_authority() {
-        for language in [Language::ZhHans, Language::En, Language::De, Language::Es,
-            Language::Fr, Language::Ja, Language::Ru] {
-            let line = help_text_for(language).lines().find(|line|line.contains("--yes, -y")).unwrap();
-            assert!(line.contains("init/wiki"));
-            assert!(!text_for(language, Message::PermissionDeniedGuidance).contains("--yes"));
-            assert!(!text_for(language, Message::DelegateAgentConfirmationRequired).contains("--yes"));
-        }
-        assert!(help_text_for(Language::En).contains("never grants Agent tool permission"));
-    }
-
-    #[test]
-    fn primary_help_does_not_advertise_removed_agent_modes() {
-        for language in [Language::ZhHans, Language::En] {
-            let help = help_text_for(language);
-            assert!(!help.contains("--swe-mode"));
-            assert!(!help.contains("--agent-mode"));
-            assert!(help.contains("--resume"));
-            assert!(help.contains("NOLA_CLI_DEBUG_LOG_MAX_BYTES"));
-        }
-    }
-
-    #[test]
-    fn provides_browser_locale_for_supported_languages() {
-        let cases = [
-            (Language::ZhHans, "zh-CN", "zh-CN,zh;q=0.9"),
-            (Language::En, "en-US", "en-US,en;q=0.9"),
-            (Language::De, "de-DE", "de-DE,de;q=0.9"),
-            (Language::Es, "es-ES", "es-ES,es;q=0.9"),
-            (Language::Fr, "fr-FR", "fr-FR,fr;q=0.9"),
-            (Language::Ja, "ja-JP", "ja-JP,ja;q=0.9"),
-            (Language::Ru, "ru-RU", "ru-RU,ru;q=0.9"),
-        ];
-        for (language, locale, accept_language_prefix) in cases {
-            assert_eq!(browser_locale_for(language), locale);
-            assert!(
-                browser_accept_language_for(language).starts_with(accept_language_prefix),
-                "{language:?} should prioritize its own browser language"
-            );
-        }
-    }
-
-    #[test]
-    fn localizes_interaction_guidance_for_supported_languages() {
-        let languages = [
-            Language::ZhHans,
-            Language::En,
-            Language::De,
-            Language::Es,
-            Language::Fr,
-            Language::Ja,
-            Language::Ru,
-        ];
-        let messages = [
-            Message::PermissionDeniedGuidance,
-            Message::SubAgentLabel,
-            Message::TaskLabel,
-            Message::CapabilityLabel,
-            Message::PromptLabel,
-            Message::DelegateAgentCapability,
-            Message::DelegateAgentConfirmationRequired,
-            Message::NetworkAskNonInteractive,
-            Message::NetworkAskPrompt,
-            Message::NetworkAllowedByUser,
-            Message::NetworkDeniedByUser,
-        ];
-        for language in languages {
-            for message in messages {
-                let text = text_for(language, message);
-                assert!(!text.trim().is_empty(), "{language:?} {message:?}");
-            }
-        }
-        assert_eq!(text_for(Language::ZhHans, Message::TaskLabel), "任务：");
-        assert_eq!(
-            text_for(Language::En, Message::NetworkAskPrompt),
-            "Allow model network request now? [y/N]: "
-        );
-    }
-
-    #[test]
-    fn localizes_interactive_debug_and_compaction_surface() {
-        let messages = [
-            Message::InteractiveWelcomeHint,
-            Message::InteractiveContextLabel,
-            Message::InteractiveSlashCompactHint,
-            Message::InteractiveCompactCompleted,
-            Message::InteractiveCompactHistoryPreserved,
-        ];
-        for message in messages {
-            assert!(!text_for(Language::En, message).trim().is_empty());
-            assert!(!text_for(Language::ZhHans, message).trim().is_empty());
-        }
-        assert_eq!(
-            text_for(Language::ZhHans, Message::InteractiveContextLabel),
-            "上下文"
-        );
-        assert_eq!(
-            text_for(Language::ZhHans, Message::InteractiveCompactCompleted),
-            "压缩完成"
-        );
-    }
-
-    #[test]
-    fn every_help_locale_exposes_the_complete_cli_surface() {
-        let languages = [
-            Language::ZhHans,
-            Language::En,
-            Language::De,
-            Language::Es,
-            Language::Fr,
-            Language::Ja,
-            Language::Ru,
-        ];
-        let required_commands = [
-            "nola init",
-            "nola wiki",
-            "nola web",
-            "nola sessions",
-            "nola session show",
-            "nola session delete",
-        ];
-        let required_options = [
-            "--endpoint",
-            "--project",
-            "--debug",
-            "--network-policy",
-            "--force-tool-set",
-            "--resume",
-            "--output",
-            "--dry-run",
-            "--host",
-            "--port",
-            "--web-root",
-        ];
-        let required_environment = [
-            "NOLA_AGENT_CONTEXT_WINDOW_TOKENS",
-            "NOLA_CLI_DEBUG_LOG_PATH",
-            "NOLA_CLI_INTERACTION_MODE",
-            "NOLA_DB_PATH",
-        ];
-
-        for language in languages {
-            let help = super::help_text_for(language);
-            for needle in required_commands
-                .iter()
-                .chain(required_options.iter())
-                .chain(required_environment.iter())
-            {
-                assert!(
-                    help.contains(needle),
-                    "{language:?} help is missing {needle}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn localizes_common_tool_error_display_text() {
-        assert_eq!(
-            localize_tool_error_display_for(Language::ZhHans, "Not a file: README.md"),
-            "不是文件：README.md"
-        );
-        assert_eq!(
-            localize_tool_error_display_for(
-                Language::De,
-                "path is outside allowed directories: /tmp/x"
-            ),
-            "Pfad liegt außerhalb der erlaubten Verzeichnisse: /tmp/x"
-        );
-        assert_eq!(
-            localize_tool_error_display_for(Language::Ja, "old_text was not found"),
-            "old_text が見つかりません"
-        );
-    }
-}
+include!("i18n_tool_errors.rs");

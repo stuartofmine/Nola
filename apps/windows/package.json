@@ -17,7 +17,9 @@
     "dist:x64:vulkan": "npm run build && npm run native:x64:vulkan && electron-builder --win nsis --x64 --config.directories.output=release/vulkan",
     "dist:x64:cuda": "npm run build && npm run native:x64:cuda && electron-builder --win nsis --x64 --config.directories.output=release/cuda",
     "dist:arm64": "npm run build && npm run native:arm64:cpu && electron-builder --win nsis --arm64 --config.directories.output=release/arm64",
-    "test:e2e": "playwright test",
+    "test": "npm run build && npm run test:unit && npx playwright test --project=chromium-desktop-shell",
+    "test:e2e": "playwright test --project=windows-electron",
+    "pretest:unit": "npm run build",
     "test:unit": "node --test unit/*.test.cjs"
   },
   "devDependencies": {

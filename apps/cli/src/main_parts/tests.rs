@@ -301,10 +301,10 @@ mod tests {
         let mut terminal = vt100::Parser::new(20, 24, 0);
         terminal.process(rendered.replace('\n', "\r\n").as_bytes());
         for row in 0..rendered.lines().count() as u16 {
-            assert_eq!(terminal.screen().cell(row, 0).unwrap().bgcolor(), vt100::Color::Idx(236));
+            assert_eq!(terminal.screen().cell(row, 0).unwrap().bgcolor(), vt100::Color::Rgb(35, 35, 32));
             let last = terminal.screen().cell(row, 23).unwrap();
             if !last.is_wide_continuation() {
-                assert_eq!(last.bgcolor(), vt100::Color::Idx(236), "row={row} {rendered:?}");
+                assert_eq!(last.bgcolor(), vt100::Color::Rgb(35, 35, 32), "row={row} {rendered:?}");
             }
         }
         let plain = interactive_user_history_at_width(text, 24, false);
@@ -1028,81 +1028,89 @@ mod tests {
 
     #[test]
     fn goal_resume_restores_persisted_target_constraints_and_running_state() {
-        let _guard = env_lock();
-        let db_root = temporary_session_db_root("goal-resume");
-        let _ = fs::remove_dir_all(&db_root);
-        fs::create_dir_all(&db_root).unwrap();
-        std::env::set_var("NOLA_DB_PATH", db_root.join("nola.db"));
+        std::thread::Builder::new()
+            .name("goal-resume-test".into())
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                let _guard = env_lock();
+                let db_root = temporary_session_db_root("goal-resume");
+                let _ = fs::remove_dir_all(&db_root);
+                fs::create_dir_all(&db_root).unwrap();
+                std::env::set_var("NOLA_DB_PATH", db_root.join("nola.db"));
 
-        let project_root = db_root.join("workspace");
-        fs::create_dir_all(&project_root).unwrap();
-        let session_id = "goal-resume-session";
-        let mut config = Config::from_args(vec![
-            "nola".to_string(),
-            "--session".to_string(),
-            session_id.to_string(),
-            "--project".to_string(),
-            project_root.to_string_lossy().to_string(),
-            "--endpoint".to_string(),
-            "http://127.0.0.1:11434/v1".to_string(),
-        ])
-        .unwrap();
-        config.save_session = true;
-        submit_goal_command(
-            &config,
-            "goal-resume-test:start".to_string(),
-            GoalRuntimeCommand::Start {
-                id: format!("goal-{session_id}"),
-                objective: "finish parser".to_string(),
-                constraints: vec!["run focused tests".to_string()],
-                requirements: goal_requirement_records("finish parser", "run focused tests"),
-                now_epoch_ms: goal_now_epoch_ms(),
-            },
-        )
-        .unwrap();
-        let projection = session::load_session_goal_projection(session_id).unwrap().unwrap();
-        submit_goal_command(
-            &config, "goal-resume-test:pause".to_string(),
-            GoalRuntimeCommand::GuardedControl {
-                expected_goal_id: projection.active.as_ref().unwrap().id.clone(),
-                expected_control_token: projection.control_token().unwrap(),
-                control: Box::new(GoalRuntimeCommand::Pause { status: GoalStatus::Paused,
-                    wake_at_epoch_ms: None, now_epoch_ms: goal_now_epoch_ms() }),
-            },
-        ).unwrap();
-        let mut application = crate::application_port::CliApplicationPort::persistent_default().unwrap();
-        let active = application.active_run(session_id).unwrap().unwrap();
-        let mut output = crate::native_runtime_output::NativeRuntimeOutput::with_event_sink(|_| {});
-        crate::core_agent_runtime::resume_frozen_core_agent_run(session_id, &active.run_id,
-            &mut output, crate::runtime_control::RuntimeExecutionControl::default()).unwrap();
-        let mut goal_target = None;
-        let mut goal_constraints = None;
-        let mut previous_workspace = None;
-        let mut last_context_usage = None;
-        let result = handle_interactive_slash_command(
-            "/goal resume",
-            &mut config,
-            &mut goal_target,
-            &mut goal_constraints,
-            &mut previous_workspace,
-            &mut last_context_usage,
-            1,
-        )
-        .unwrap();
+                let project_root = db_root.join("workspace");
+                fs::create_dir_all(&project_root).unwrap();
+                let session_id = "goal-resume-session";
+                let mut config = Config::from_args(vec![
+                    "nola".to_string(),
+                    "--session".to_string(),
+                    session_id.to_string(),
+                    "--project".to_string(),
+                    project_root.to_string_lossy().to_string(),
+                    "--endpoint".to_string(),
+                    "http://127.0.0.1:11434/v1".to_string(),
+                ])
+                .unwrap();
+                config.save_session = true;
+                submit_goal_command(
+                    &config,
+                    "goal-resume-test:start".to_string(),
+                    GoalRuntimeCommand::Start {
+                        id: format!("goal-{session_id}"),
+                        objective: "finish parser".to_string(),
+                        constraints: vec!["run focused tests".to_string()],
+                        requirements: goal_requirement_records("finish parser", "run focused tests"),
+                        now_epoch_ms: goal_now_epoch_ms(),
+                    },
+                )
+                .unwrap();
+                let projection = session::load_session_goal_projection(session_id).unwrap().unwrap();
+                submit_goal_command(
+                    &config, "goal-resume-test:pause".to_string(),
+                    GoalRuntimeCommand::GuardedControl {
+                        expected_goal_id: projection.active.as_ref().unwrap().id.clone(),
+                        expected_control_token: projection.control_token().unwrap(),
+                        control: Box::new(GoalRuntimeCommand::Pause { status: GoalStatus::Paused,
+                            wake_at_epoch_ms: None, now_epoch_ms: goal_now_epoch_ms() }),
+                    },
+                ).unwrap();
+                let mut application = crate::application_port::CliApplicationPort::persistent_default().unwrap();
+                let active = application.active_run(session_id).unwrap().unwrap();
+                let mut output = crate::native_runtime_output::NativeRuntimeOutput::with_event_sink(|_| {});
+                crate::core_agent_runtime::resume_frozen_core_agent_run(session_id, &active.run_id,
+                    &mut output, crate::runtime_control::RuntimeExecutionControl::default()).unwrap();
+                let mut goal_target = None;
+                let mut goal_constraints = None;
+                let mut previous_workspace = None;
+                let mut last_context_usage = None;
+                let result = handle_interactive_slash_command(
+                    "/goal resume",
+                    &mut config,
+                    &mut goal_target,
+                    &mut goal_constraints,
+                    &mut previous_workspace,
+                    &mut last_context_usage,
+                    1,
+                )
+                .unwrap();
 
-        assert!(matches!(
-            result,
-            SlashCommandResult::RunGoalPrompt(ref prompt) if prompt.is_empty()
-        ));
-        assert_eq!(goal_target.as_deref(), Some("finish parser"));
-        assert_eq!(goal_constraints.as_deref(), Some("run focused tests"));
-        let resumed = session::load_session_goal_projection(session_id)
-            .unwrap()
-            .and_then(|projection| projection.active)
-            .expect("resumed canonical goal");
-        assert_eq!(resumed.status, GoalStatus::Running);
-        std::env::remove_var("NOLA_DB_PATH");
-        let _ = fs::remove_dir_all(db_root);
+                assert!(matches!(
+                    result,
+                    SlashCommandResult::RunGoalPrompt(ref prompt) if prompt.is_empty()
+                ));
+                assert_eq!(goal_target.as_deref(), Some("finish parser"));
+                assert_eq!(goal_constraints.as_deref(), Some("run focused tests"));
+                let resumed = session::load_session_goal_projection(session_id)
+                    .unwrap()
+                    .and_then(|projection| projection.active)
+                    .expect("resumed canonical goal");
+                assert_eq!(resumed.status, GoalStatus::Running);
+                std::env::remove_var("NOLA_DB_PATH");
+                let _ = fs::remove_dir_all(db_root);
+            })
+            .expect("spawn goal-resume-test thread")
+            .join()
+            .expect("goal resume test panicked");
     }
 
     #[test]
@@ -2781,5 +2789,104 @@ mod runtime_provider_environment_tests {
         for key in ["NOLA_LLM_ENDPOINT", "NOLA_LLM_API_KEY", "NOLA_LLM_MODEL"] {
             std::env::remove_var(key);
         }
+    }
+
+    #[test]
+    fn combine_args_and_stdin_prompt_preserves_both_inputs() {
+        assert_eq!(combine_args_and_stdin_prompt("review this", "line 1\nline 2\n"), "line 1\nline 2\n\nreview this");
+        assert_eq!(combine_args_and_stdin_prompt("only args", "   \n"), "only args");
+        assert_eq!(combine_args_and_stdin_prompt("", "piped\n"), "piped\n");
+        assert_eq!(combine_args_and_stdin_prompt("", ""), "");
+    }
+
+    #[test]
+    fn composer_zwj_emoji_and_cjk_alignment_uses_graphemes_and_warm_ink_pair() {
+        let line = "a👨‍👩‍👧‍👦中";
+        let cursor = "a👨‍👩‍👧‍👦".len();
+        let (rows, cursor_row, cursor_col) = composer_input_multiline(line, cursor, 40, "  ");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(cursor_row, 0);
+        // "  " (2) + "a" (1) + "👨‍👩‍👧‍👦" (width 2, not sum of 4 code points!) = 5
+        assert_eq!(cursor_col, 2 + 1 + unicode_width::UnicodeWidthStr::width("👨‍👩‍👧‍👦"));
+
+        let bar = interactive_input_bar_line_with_color("hello", false, false, "  ", 20, true);
+        let mut terminal = vt100::Parser::new(4, 20, 0);
+        terminal.process(bar.as_bytes());
+        let text_cell = terminal.screen().cell(0, 2).unwrap();
+        assert_eq!(text_cell.fgcolor(), vt100::Color::Rgb(242, 240, 235));
+        assert_eq!(text_cell.bgcolor(), vt100::Color::Rgb(35, 35, 32));
+    }
+
+    #[test]
+    fn paste_threshold_atomic_delete_and_backslash_continuation_work_cleanly() {
+        assert!(!should_collapse_pasted_content("line1\nline2\nline3"));
+        assert!(!should_collapse_pasted_content(&"a".repeat(300)));
+        assert!(should_collapse_pasted_content("1\n2\n3\n4\n5\n6"));
+        assert!(should_collapse_pasted_content(&"a".repeat(301)));
+
+        let placeholder = "[Pasted Content 400 chars]".to_string();
+        let mut draft = format!("prefix {placeholder} suffix");
+        let mut cursor = "prefix ".len() + placeholder.len();
+        let mut pasted = vec![InteractivePastedContent {
+            placeholder: placeholder.clone(),
+            content: "full body".to_string(),
+        }];
+        assert!(try_delete_pasted_placeholder(
+            &mut draft,
+            &mut cursor,
+            &mut pasted,
+            &KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+        ));
+        assert_eq!(draft, "prefix  suffix");
+        assert_eq!(cursor, "prefix ".len());
+        assert!(pasted.is_empty());
+
+        let mut cont = "line1\\".to_string();
+        let mut cont_cursor = cont.len();
+        assert!(handle_backslash_enter_continuation(
+            &mut cont,
+            &mut cont_cursor,
+            &KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        ));
+        assert_eq!(cont, "line1\n");
+    }
+
+    #[test]
+    fn slash_parity_resume_target_and_tab_cycling_cover_commands_and_files() {
+        for (raw, canonical) in [
+            ("/clear", "/clear"),
+            ("/models", "/model"),
+            ("/experts", "/experts"),
+            ("/permissions", "/allow"),
+            ("/resources", "/sources"),
+            ("/stop", "/stop"),
+            ("/skills", "/skills"),
+            ("/mcp", "/mcp"),
+            ("/memory", "/memory"),
+            ("/questions", "/questions"),
+            ("/guide", "/guide"),
+        ] {
+            assert_eq!(normalize_interactive_command(raw), Some(canonical), "{raw}");
+        }
+        assert_eq!(resume_command_target("/resume"), Some(None));
+        assert_eq!(resume_command_target("/resume ses-42"), Some(Some("ses-42".to_string())));
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("alpha.rs"), "").unwrap();
+        std::fs::write(dir.path().join("alpha_two.rs"), "").unwrap();
+        let mut config = Config::for_test().unwrap();
+        config.project_root = dir.path().to_path_buf();
+
+        let mut cycle = None;
+        let mut line = "read @al".to_string();
+        let mut cursor = line.len();
+        assert!(apply_composer_completion_cycle(&mut line, &mut cursor, &config, &mut cycle, false));
+        let first = line.clone();
+        assert!(first == "read @alpha.rs" || first == "read @alpha_two.rs", "{first}");
+        assert!(apply_composer_completion_cycle(&mut line, &mut cursor, &config, &mut cycle, false));
+        let second = line.clone();
+        assert_ne!(first, second);
+        assert!(apply_composer_completion_cycle(&mut line, &mut cursor, &config, &mut cycle, true));
+        assert_eq!(line, first);
     }
 }

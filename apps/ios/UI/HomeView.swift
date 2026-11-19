@@ -205,7 +205,7 @@ private struct HomeHealthDashboardCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
-        .background(Color(.tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+        .background(DesignTokens.secondaryBackgroundColor, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
     }
 
     private func freshnessLabel(_ date: Date) -> String {
@@ -784,6 +784,8 @@ private struct DataSourcesScheduleHubView: View {
                     Label(L10n.settingsDataSourceReminders, systemImage: DataSourceType.reminders.iconSystemName)
                 }
             }
+            .listRowBackground(DesignTokens.cardBackgroundColor)
+            .listRowSeparatorTint(DesignTokens.borderColor)
         }
         .nolaGroupedSurface()
         .navigationTitle(L10n.homeSectionDataSources)
@@ -859,7 +861,7 @@ struct CategorizedTodayView: View {
                     .foregroundColor(.secondary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(Capsule().fill(Color(.tertiarySystemFill)))
+                    .background(Capsule().fill(DesignTokens.mutedFillColor))
             }
             
             if source.history.isEmpty {
@@ -1195,7 +1197,7 @@ struct HistoryDetailView: View {
                 .padding()
                 .background(
                     RoundedRectangle(cornerRadius: 12)
-                        .fill(Color(.secondarySystemBackground))
+                        .fill(DesignTokens.cardBackgroundColor)
                 )
 
                 VStack(alignment: .leading, spacing: 8) {
@@ -1210,7 +1212,7 @@ struct HistoryDetailView: View {
                 .padding()
                 .background(
                     RoundedRectangle(cornerRadius: 12)
-                        .fill(Color(.secondarySystemBackground))
+                        .fill(DesignTokens.cardBackgroundColor)
                 )
 
                 if entry.tokensUsed != nil || entry.processingDuration != nil || entry.modelUsed != nil {
@@ -1261,7 +1263,7 @@ struct HistoryDetailView: View {
                     .padding()
                     .background(
                         RoundedRectangle(cornerRadius: 12)
-                            .fill(Color(.secondarySystemBackground))
+                            .fill(DesignTokens.cardBackgroundColor)
                     )
                 }
 
@@ -1278,7 +1280,7 @@ struct HistoryDetailView: View {
                 .padding()
                 .background(
                     RoundedRectangle(cornerRadius: 12)
-                        .fill(Color(.secondarySystemBackground))
+                        .fill(DesignTokens.cardBackgroundColor)
                 )
 
                 if let details = entry.details {
@@ -1294,7 +1296,7 @@ struct HistoryDetailView: View {
                     .padding()
                     .background(
                         RoundedRectangle(cornerRadius: 12)
-                            .fill(Color(.secondarySystemBackground))
+                            .fill(DesignTokens.cardBackgroundColor)
                     )
                 }
 
@@ -1325,7 +1327,7 @@ struct HistoryDetailView: View {
                     .padding()
                     .background(
                         RoundedRectangle(cornerRadius: 12)
-                            .fill(Color(.secondarySystemBackground))
+                            .fill(DesignTokens.cardBackgroundColor)
                     )
                 }
 
@@ -1341,13 +1343,14 @@ struct HistoryDetailView: View {
                         .padding()
                         .background(
                             RoundedRectangle(cornerRadius: 12)
-                                .fill(Color(.secondarySystemBackground))
+                                .fill(DesignTokens.cardBackgroundColor)
                         )
                     }
                 }
             }
             .padding()
         }
+        .background(DesignTokens.backgroundColor)
         .navigationTitle(L10n.historyDetailsTitle)
         .navigationBarTitleDisplayMode(.inline)
     }

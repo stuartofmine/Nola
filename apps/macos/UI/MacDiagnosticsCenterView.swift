@@ -562,7 +562,7 @@ struct MacDiagnosticsCenterView: View {
                     .padding(.vertical, 6)
                 }
             }
-            .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
+            .background(MacDesignColor.panel)
             .onChange(of: model.revision) { _, _ in
                 guard !isPaused, followsLatest, let last = filteredEntries.last else { return }
                 withAnimation(reduceMotion ? nil : .easeOut(duration: 0.28)) {

@@ -44,7 +44,7 @@ class AndroidPermissionRunRecoveryNativeTest {
                     put("preference", buildJsonObject { put("explicit", 1024) })
                 })
                 binding = buildJsonObject {
-                    put("version", 7); put("primary", route); put("fallbacks", JsonArray(emptyList()))
+                    put("version", ANDROID_HOST_INVOCATION_BINDING_VERSION); put("primary", route); put("fallbacks", JsonArray(emptyList()))
                     put("generation", captured.invocationGeneration(true)); put("output_admission", admission)
                     put("execution_policy_sha256", invocationSha256("fixture-read-only-tool-contract"))
                 }
@@ -189,9 +189,19 @@ class AndroidPermissionRunRecoveryNativeTest {
     }
 
     private fun config(binding: JsonObject): JsonObject = buildJsonObject {
+        val capability = androidModelCapabilityProfile(
+            ModelInfo("original-model", "Original"),
+            ModelParameters(maxCompletionTokens = 1024, maxContextTokens = 8192),
+            supportsNativeEventStream = true,
+        )
         put("session_id", "core-session-distinct"); put("model", "original-model")
         put("context_window", json("""{"context_window_tokens":8192,"reserved_output_tokens":1024}"""))
-        put("turn_identity", buildJsonObject { put("host_invocation", binding) })
+        put("turn_identity", buildJsonObject {
+            put("model_capability_id", capability.id)
+            put("model_capability_revision", capability.revision)
+            put("model_capability", capability.wire())
+            put("host_invocation", binding)
+        })
         put("tools", JsonArray(listOf(json("""{"type":"function","function":{"name":"fixture_read","parameters":{"type":"object","properties":{}}}}"""))))
         put("permission_rules", buildJsonObject { put("rules", JsonArray(listOf(permissionRule("fixture_read", decision = "ask", source = "host")))) })
         put("host_catalog", buildJsonObject {

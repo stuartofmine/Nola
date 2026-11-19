@@ -10,7 +10,6 @@ import com.nola.BuildConfig
 import java.io.File
 import androidx.test.platform.app.InstrumentationRegistry
 import com.nola.core.AgentCoreNative
-import com.nola.ui.screen.chat.requireIsolatedProductTestUser
 import com.nola.ui.theme.NolaTheme
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -21,7 +20,6 @@ import org.junit.Test
 class SoftwareUpdateInteractionTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
     @Test fun apkIdentityMustMatchTheSignedOfferAndCurrentApplication() {
-        requireIsolatedProductTestUser(compose.activity)
         val own = File(compose.activity.applicationInfo.sourceDir)
         validateDownloadedAndroidUpdate(compose.activity, own, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE.toLong())
         assertFalse(runCatching {
@@ -34,7 +32,6 @@ class SoftwareUpdateInteractionTest {
     }
 
     @Test fun updaterExposesCheckAndAbiCannotInstall() {
-        requireIsolatedProductTestUser(compose.activity)
         compose.setContent { NolaTheme { SoftwareUpdateControls() } }
         compose.onNodeWithText(compose.activity.getString(R.string.software_update_check)).assertHasClickAction()
         compose.onNodeWithText(compose.activity.getString(R.string.software_update_not_checked)).assertExists()

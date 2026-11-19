@@ -28,7 +28,6 @@ class MessageCopyActionInteractionTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
 
     @Test fun compactCopyKeepsSeparateTouchTargetsAndAnnouncesItsResult() {
-        requireIsolatedProductTestUser(compose.activity)
         var dark by mutableStateOf(false)
         var density = 1f
         compose.setContent {

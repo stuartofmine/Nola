@@ -2718,7 +2718,8 @@ mod configured_skill_invocation_admission_tests {
         let oversized_context = context(vec![oversized], fixture.path());
         let outcome = invoke(&oversized_context, "oversized-skill");
         assert!(outcome.error);
-        assert!(outcome.text.contains("100000-byte instruction limit"));
+        let expected_limit = format!("{MAX_SKILL_BYTES}-byte instruction limit");
+        assert!(outcome.text.contains(&expected_limit), "{}", outcome.text);
         assert!(outcome.data.is_none());
     }
 

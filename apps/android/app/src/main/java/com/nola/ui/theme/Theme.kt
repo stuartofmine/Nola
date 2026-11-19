@@ -7,6 +7,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
@@ -15,6 +16,7 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
@@ -187,9 +189,12 @@ fun NolaTheme(
         colorScheme = colorScheme,
         typography = NolaTypography,
         shapes = Shapes(extraSmall = NolaContinuousShape(6.dp), small = NolaContinuousShape(10.dp),
-            medium = NolaContinuousShape(14.dp), large = NolaContinuousShape(18.dp), extraLarge = NolaContinuousShape(24.dp)),
-        content = content
-    )
+            medium = NolaContinuousShape(14.dp), large = NolaContinuousShape(18.dp), extraLarge = NolaContinuousShape(24.dp))
+    ) {
+        CompositionLocalProvider(LocalContentColor provides colorScheme.onBackground) {
+            content()
+        }
+    }
 }
 
 private tailrec fun Context.findComponentActivity(): ComponentActivity? = when (this) {

@@ -750,6 +750,7 @@ struct AddURLDataSourceSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                Group {
                 if let error = errorMessage {
                     Section {
                         Text(error)
@@ -961,6 +962,9 @@ struct AddURLDataSourceSheet: View {
 
                 // Prompt/template selection, model choice, scheduling, and test-run UI
                 // are intentionally not handled in this editor.
+                }
+                .listRowBackground(DesignTokens.cardBackgroundColor)
+                .listRowSeparatorTint(DesignTokens.borderColor)
             }
             .nolaGroupedSurface()
             .navigationTitle(navTitle)

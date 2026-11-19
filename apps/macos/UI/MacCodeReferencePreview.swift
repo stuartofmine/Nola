@@ -850,7 +850,7 @@ private struct MacCodeReferenceDocumentView: View {
                 document: document,
                 targetLine: targetLine
             )
-            .background(Color(nsColor: .textBackgroundColor).opacity(0.28))
+            .background(MacDesignColor.panel)
 
             HStack(spacing: 7) {
                 Text("\(document.lineCount.formatted()) lines")

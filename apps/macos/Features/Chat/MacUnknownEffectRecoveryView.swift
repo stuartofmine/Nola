@@ -89,7 +89,7 @@ struct MacUnknownEffectRecoveryView: View {
         .font(.system(size: 13))
         .controlSize(.large)
         .padding(12)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+        .background(MacDesignColor.subtleFill, in: RoundedRectangle(cornerRadius: 10))
         .disabled(isBusy)
         .sheet(isPresented: Binding(get: { confirmation != nil }, set: { if !$0 { confirmation = nil } })) {
             if let frozen = confirmation {

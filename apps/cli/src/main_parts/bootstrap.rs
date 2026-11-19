@@ -36,8 +36,10 @@ use unicode_width::UnicodeWidthChar;
 const INTERACTIVE_DIM: &str = "\x1b[22;39m";
 const INTERACTIVE_LABEL: &str = "\x1b[22;39m";
 const INTERACTIVE_VALUE: &str = "\x1b[22;39m";
-const INTERACTIVE_ACCENT: &str = "\x1b[1;38;5;108m";
-const INTERACTIVE_COMPOSER_BG: &str = "\x1b[48;5;236m";
+const INTERACTIVE_ACCENT: &str = "\x1b[1;32m";
+const INTERACTIVE_COMPOSER_BG: &str = "\x1b[38;2;242;240;235;48;2;35;35;32m";
+const INTERACTIVE_COMPOSER_DIM_FG: &str = "\x1b[38;2;184;181;173;48;2;35;35;32m";
+const INTERACTIVE_COMPOSER_PREFIX_FG: &str = "\x1b[1;32;48;2;35;35;32m";
 const INTERACTIVE_SELECTION_BG: &str = "\x1b[7m";
 const INTERACTIVE_RESET: &str = "\x1b[0m";
 const INTERACTIVE_LABEL_WIDTH: usize = 11;
@@ -229,7 +231,7 @@ impl CliApplication {
             Err(message) => {
                 eprintln!("{message}");
                 eprintln!();
-                print_help();
+                eprintln!("{}", crate::i18n::help_text());
                 process::exit(2);
             }
         };
@@ -424,11 +426,11 @@ fn configure_command_surface(config: &mut Config) {
 }
 
 /// Resolves the standalone CLI's effective permission profile into its typed
-/// request configuration. An explicit environment profile remains
-/// authoritative. Without an explicit profile the CLI remains Cautious;
-/// `--yes` only approves init/wiki model-network confirmation and never
-/// grants Agent tool authority. Resolution must not rewrite the environment because
-/// tests and in-process product surfaces may configure independent requests.
+/// request configuration. `--yes` / `-y` enables `AllowAll` unless
+/// `--permission-profile` is specified explicitly. Without an explicit
+/// `--permission-profile` or `--yes`, the CLI remains `Cautious`. Resolution
+/// must not rewrite the environment because tests and in-process product
+/// surfaces may configure independent requests.
 fn configured_cli_permission_profile(config: &Config) -> crate::permissions::PermissionProfile {
     resolve_cli_permission_profile(config, config.permission_profile)
 }
@@ -1137,11 +1139,14 @@ fn run_prompt_with_optional_cancellation(
         }
         None => run_single_prompt(config, &prompt)?,
     };
-    if !result.run_outcome.is_terminal() && !config.json_output {
-        eprintln!(
-            "Run remains pending ({:?}); no completion or permission decision was recorded.",
-            result.run_outcome.turn_status
-        );
+    if !result.run_outcome.is_terminal() {
+        if !config.json_output {
+            eprintln!(
+                "Run remains pending ({:?}); no completion or permission decision was recorded.",
+                result.run_outcome.turn_status
+            );
+        }
+        return Err(String::new());
     }
     if result.terminal_reason.as_deref() == Some("failed") {
         // The emitter already rendered the structured or human-readable
@@ -1487,7 +1492,11 @@ fn resume_session_list_page_size() -> usize {
 }
 
 fn enter_resume_session_screen() -> io::Result<()> {
-    if !crate::terminal_ui::owns_terminal() { print!("\x1b[?1049h"); }
+    if crate::terminal_ui::owns_terminal() {
+        crate::terminal_ui::invalidate_presented_screen();
+    } else {
+        print!("\x1b[?1049h");
+    }
     print!("\r{INTERACTIVE_RESET}\x1b[0m\x1b[?25l\x1b[2J\x1b[H");
     io::stdout()
         .flush()
@@ -1495,11 +1504,17 @@ fn enter_resume_session_screen() -> io::Result<()> {
 }
 
 fn restore_resume_session_screen() -> io::Result<()> {
-    if !crate::terminal_ui::owns_terminal() { print!("\x1b[?1049l"); }
+    if !crate::terminal_ui::owns_terminal() {
+        print!("\x1b[?1049l");
+    }
     print!("\r{INTERACTIVE_RESET}\x1b[0m\x1b[?25h\x1b[2J\x1b[H");
     io::stdout()
         .flush()
-        .map_err(|err| io::Error::new(io::ErrorKind::Other, err))
+        .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+    if crate::terminal_ui::owns_terminal() {
+        crate::terminal_ui::invalidate_presented_screen();
+    }
+    Ok(())
 }
 
 fn resolve_resume_session_list_window(
@@ -1520,23 +1535,31 @@ fn resolve_resume_session_list_window(
     page_start
 }
 
+fn emit_plan_or_history_notice(line: &str) {
+    if crate::terminal_ui::owns_terminal() {
+        crate::terminal_ui::commit_history(line);
+    } else {
+        println!("{line}");
+    }
+}
+
 fn print_interactive_session_plan(config: &Config) -> Result<(), String> {
     let text = crate::i18n::interaction_text();
     let Some(saved) = load_interactive_session_for_command(config)? else {
-        println!("  {}", text.no_execution_plan);
+        emit_plan_or_history_notice(&format!("  {}", text.no_execution_plan));
         return Ok(());
     };
     let Some(plan) = agent::session_plan_summary_for_session(&saved.id, &saved.messages) else {
-        println!("  {}", text.no_execution_plan);
+        emit_plan_or_history_notice(&format!("  {}", text.no_execution_plan));
         return Ok(());
     };
     let stored_plan = crate::store::NolaStore::open_default()?.session_plan_record(&saved.id)?;
     let revision = stored_plan.as_ref().map(|plan| plan.revision);
     let frozen_revision = stored_plan.as_ref().and_then(|plan| plan.frozen_revision);
 
-    println!("{}", interactive_layer_rule(Some("plan")));
+    emit_plan_or_history_notice(&interactive_layer_rule(Some("plan")));
     if interactive_color_enabled() {
-        println!(
+        emit_plan_or_history_notice(&format!(
             "  {INTERACTIVE_ACCENT}{}{INTERACTIVE_RESET}{INTERACTIVE_DIM}{} · {}/{} {}{INTERACTIVE_RESET}",
             text.execution_plan,
             revision
@@ -1550,9 +1573,9 @@ fn print_interactive_session_plan(config: &Config) -> Result<(), String> {
             plan.completed,
             plan.total,
             text.completed
-        );
+        ));
     } else {
-        println!(
+        emit_plan_or_history_notice(&format!(
             "  {}{} · {}/{} {}",
             text.execution_plan,
             revision
@@ -1566,12 +1589,12 @@ fn print_interactive_session_plan(config: &Config) -> Result<(), String> {
             plan.completed,
             plan.total,
             text.completed
-        );
+        ));
     }
     let width = terminal_columns().saturating_sub(12).max(24);
     for step in &plan.steps {
         let (icon, label, color) = match step.status.as_str() {
-            "completed" => ("✓", text.complete, "\x1b[38;5;108m"),
+            "completed" => ("✓", text.complete, "\x1b[32m"),
             "in_progress" => ("●", text.in_progress, INTERACTIVE_ACCENT),
             _ => ("○", text.pending, INTERACTIVE_DIM),
         };
@@ -1593,15 +1616,15 @@ fn print_interactive_session_plan(config: &Config) -> Result<(), String> {
             format!(" ← {}", step.dependency_ids.join(","))
         };
         if interactive_color_enabled() {
-            println!(
+            emit_plan_or_history_notice(&format!(
                 "  {color}{icon} {label:<6}{INTERACTIVE_RESET} {content}{INTERACTIVE_DIM} · {approval} {} · #{}{}{INTERACTIVE_RESET}",
                 step.priority, step.id, dependencies
-            );
+            ));
         } else {
-            println!(
+            emit_plan_or_history_notice(&format!(
                 "  {icon} {label:<6} {content} · {approval} {} · #{}{}",
                 step.priority, step.id, dependencies
-            );
+            ));
         }
     }
     Ok(())
@@ -1620,7 +1643,7 @@ fn update_interactive_session_plan_approval(
         return Err("the current session does not have a persisted execution plan".to_string());
     }
     let changed = state.set_plan_approval(&step_ids, approved)?;
-    println!("  {} · {changed}", if approved { "✓" } else { "×" });
+    emit_plan_or_history_notice(&format!("  {} · {changed}", if approved { "✓" } else { "×" }));
     print_interactive_session_plan(config)
 }
 
@@ -1709,14 +1732,14 @@ fn print_interactive_session_plan_history(config: &Config) -> Result<(), String>
         return Err("an active session is required".to_string());
     };
     let revisions = crate::store::NolaStore::open_default()?.session_plan_history(&saved.id)?;
-    println!("{}", interactive_layer_rule(Some("plan history")));
+    emit_plan_or_history_notice(&interactive_layer_rule(Some("plan history")));
     for revision in revisions {
         let summary = if revision.change_summary.is_empty() {
             revision.change_kind.clone()
         } else {
             format!("{} · {}", revision.change_kind, revision.change_summary)
         };
-        println!(
+        emit_plan_or_history_notice(&format!(
             "  r{} · {} · {} steps · {}",
             revision.revision,
             summary,
@@ -1724,7 +1747,7 @@ fn print_interactive_session_plan_history(config: &Config) -> Result<(), String>
             chrono::DateTime::from_timestamp_millis(revision.updated_at_ms)
                 .map(|value| value.with_timezone(&Local).to_rfc3339())
                 .unwrap_or_else(|| revision.updated_at_ms.to_string())
-        );
+        ));
     }
     Ok(())
 }
@@ -1742,18 +1765,18 @@ fn print_interactive_session_plan_diff(
         from_revision,
         to_revision,
     )?;
-    println!("{}", interactive_layer_rule(Some("plan diff")));
-    println!("  r{} → r{}", diff.from_revision, diff.to_revision);
+    emit_plan_or_history_notice(&interactive_layer_rule(Some("plan diff")));
+    emit_plan_or_history_notice(&format!("  r{} → r{}", diff.from_revision, diff.to_revision));
     for step in diff.added {
-        println!("  + #{} {}", step.id, step.content);
+        emit_plan_or_history_notice(&format!("  + #{} {}", step.id, step.content));
     }
     for step in diff.removed {
-        println!("  - #{} {}", step.id, step.content);
+        emit_plan_or_history_notice(&format!("  - #{} {}", step.id, step.content));
     }
     for change in diff.changed {
-        println!("  ~ #{}", change.id);
-        println!("    - {}", change.before.content);
-        println!("    + {}", change.after.content);
+        emit_plan_or_history_notice(&format!("  ~ #{}", change.id));
+        emit_plan_or_history_notice(&format!("    - {}", change.before.content));
+        emit_plan_or_history_notice(&format!("    + {}", change.after.content));
     }
     Ok(())
 }
@@ -1793,9 +1816,11 @@ fn print_interactive_session_history(config: &Config) -> Result<(), String> {
         } else {
             print_interactive_progress_completion(text.loading_session_history, &detail);
         }
-        println!("{}", interactive_layer_rule(Some("history")));
+        emit_plan_or_history_notice(&interactive_layer_rule(Some("history")));
     }
-    println!();
+    if !crate::terminal_ui::owns_terminal() {
+        println!();
+    }
     print_interactive_session_replay(&saved);
     if !config.json_output { crate::terminal_ui::set_restoring_view(false); }
     Ok(())
@@ -1882,7 +1907,7 @@ fn print_interactive_session_replay_notice(visible: usize, total: usize) {
         Language::Fr => format!("Affichage des {visible} messages les plus récents sur {total} ; l’historique complet reste disponible pour la suite."),
         Language::Ja => format!("直近 {visible} 件を表示しています（全 {total} 件）。会話の続行時には完全な履歴が使用されます。"),
         Language::Ru => format!("Показаны последние {visible} из {total} сообщений; полная история будет доступна при продолжении диалога."),
-        Language::En => format!("Showing the latest {visible} of {total} messages; the complete transcript remains available to the next turn."),
+        Language::En | _ => format!("Showing the latest {visible} of {total} messages; the complete transcript remains available to the next turn."),
     };
     let rendered = if interactive_color_enabled() {
         format!("  {INTERACTIVE_DIM}{notice}{INTERACTIVE_RESET}\n\n")

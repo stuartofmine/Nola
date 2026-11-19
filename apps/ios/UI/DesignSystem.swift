@@ -44,9 +44,11 @@ struct DesignTokens {
     // Both Apple clients align fallback surfaces with canonical Warm Ink & Warm Paper tokens.
     static let backgroundColor = mobileColor(0xF7F6F3, 0x131312)
     static let surfaceColor = mobileColor(0xFFFFFF, 0x1B1B19)
+    static let cardBackgroundColor = surfaceColor
     static let elevatedColor = mobileColor(0xF1F0EC, 0x232320)
+    static let secondaryBackgroundColor = elevatedColor
     static let rowFillColor = mobileColor(0xF1F0EC, 0x232320)
-    static let mutedFillColor = Color(.tertiarySystemFill)
+    static let mutedFillColor = secondaryBackgroundColor
     static let switchTintColor = mobileColor(0x237047, 0x2E8B57)
     static let borderColor = mobileColor(0xE5E3DD, 0x2E2D2A)
     static let strongBorderColor = Color("NolaControlOutline")
@@ -650,5 +652,20 @@ extension View {
         scrollContentBackground(.hidden)
             .background(DesignTokens.backgroundColor.ignoresSafeArea())
             .presentationBackground(DesignTokens.backgroundColor)
+    }
+
+    /// Replaces UIKit `.roundedBorder` UITextField chrome that renders pure black in Dark mode.
+    func nolaInputFieldSurface() -> some View {
+        textFieldStyle(.plain)
+            .padding(.horizontal, DesignTokens.spacing_md)
+            .frame(minHeight: 44)
+            .background(
+                NolaSurfaceBackground(
+                    fill: DesignTokens.surfaceColor,
+                    border: DesignTokens.strongBorderColor,
+                    cornerRadius: 12,
+                    raised: false
+                )
+            )
     }
 }

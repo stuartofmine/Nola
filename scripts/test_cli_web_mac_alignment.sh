@@ -19,29 +19,32 @@ run() {
     "$@"
 }
 
+run "Cross-platform Warm Paper/Ink design tokens and full-source enforcement" \
+    python3 "$ROOT/scripts/check_design_tokens.py"
+
+run "Design-token enforcement mutation regression tests" \
+    python3 -m unittest discover -s "$ROOT/scripts" -p 'test_check_design_tokens.py' -v
+
 run "Core journal publication, bounded reads, and terminal admission" \
-    bash -lc "cd '$ROOT' && mbx test -p nola_application -p nola_store assistant_journal -- --nocapture"
+    bash -c "bash '$ROOT/scripts/test_rust.sh' nola_application assistant_journal -- --nocapture && bash '$ROOT/scripts/test_rust.sh' nola_store assistant_journal -- --nocapture"
 
 run "CLI journal consumption and authenticated transport" \
-    bash -lc "cd '$ROOT' && mbx test -p nola_cli --lib journal -- --nocapture"
+    bash -c "bash '$ROOT/scripts/test_rust.sh' nola_cli journal -- --nocapture"
 
 run "Host real HTTP submission, receipt, and model configuration" \
-    bash -lc "cd '$ROOT' && mbx test -p nola_cli --test web_host_e2e conversation_configuration_web_e2e -- --nocapture"
+    bash -c "bash '$ROOT/scripts/test_rust.sh' nola_cli conversation_configuration_web_e2e --test web_host_e2e -- --nocapture"
 
-run "Web production submission and journal observation contracts" \
-    node --test \
-        "$ROOT/apps/web/frontend/src/lib/sourceSubmission.test.ts" \
-        "$ROOT/apps/web/frontend/src/lib/runObservation.test.ts" \
-        "$ROOT/apps/web/frontend/src/lib/chatTurn.test.ts" \
-        "$ROOT/apps/web/frontend/src/lib/chatFlow.test.ts"
+run "Web frontend typecheck, full unit suite, and production build" \
+    bash -c "cd '$ROOT/apps/web/frontend' && npm run check && npm test && npm run build"
 
-run "Web current Markdown renderer regressions" \
-    node --test "$ROOT/apps/web/frontend/src/lib/markdown.test.ts"
+run "Web Playwright runtime unit suite and visual/workflow regressions" \
+    bash -c "cd '$ROOT' && cargo build --locked --manifest-path '$ROOT/Cargo.toml' -p nola_cli --bin nola && cd '$ROOT/apps/web/playwright_runtime' && npm test && npm run test:ui"
 
 run "macOS real journal reads, terminal, and visible-run lifecycle" \
     xcodebuild test -quiet \
         -project "$ROOT/apple/Nola.xcodeproj" \
         -scheme NolaMac \
+        -configuration Test \
         -destination "$MAC_DESTINATION" \
         -destination-timeout 10 \
         ARCHS="$MAC_ARCH" \

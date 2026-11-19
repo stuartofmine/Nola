@@ -3,7 +3,7 @@
 // - Purpose: Stable local JSON control plane for user-visible memory management.
 // - Boundary: Thin Application Service client; never opens canonical storage.
 
-use std::io::{self, Read};
+use std::io::{self, IsTerminal, Read};
 
 use chrono::Utc;
 use serde::Deserialize;
@@ -20,6 +20,7 @@ use nola_core::agent::{
 };
 
 use crate::application_port::CliApplicationPort;
+use crate::i18n::{parse_language_tag, set_language};
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct MemoryDraft {
@@ -38,15 +39,48 @@ pub(crate) struct MemoryDraft {
 }
 
 pub fn run_if_requested() -> Option<i32> {
-    let args = std::env::args().collect::<Vec<_>>();
-    if args.get(1).map(String::as_str) != Some("memory") {
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let mut json_output = false;
+    let mut index = 0;
+    while index < args.len() {
+        let arg = &args[index];
+        if arg == "--" {
+            break;
+        }
+        if arg == "--json" {
+            json_output = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--lang" {
+            let Some(value) = args.get(index + 1) else {
+                eprintln!("--lang requires a language tag");
+                return Some(1);
+            };
+            let Some(language) = parse_language_tag(value) else {
+                eprintln!("--lang unsupported language: {value}");
+                return Some(1);
+            };
+            set_language(language);
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--lang=") {
+            let Some(language) = parse_language_tag(value) else {
+                eprintln!("--lang unsupported language: {value}");
+                return Some(1);
+            };
+            set_language(language);
+            index += 1;
+            continue;
+        }
+        break;
+    }
+    if args.get(index).map(String::as_str) != Some("memory") {
         return None;
     }
-    Some(match run(&args[2..]) {
-        Ok(value) => {
-            println!("{value}");
-            0
-        }
+    Some(match run_cli_args(&args[index + 1..], json_output) {
+        Ok(()) => 0,
         Err(error) => {
             eprintln!("{error}");
             1
@@ -54,35 +88,251 @@ pub fn run_if_requested() -> Option<i32> {
     })
 }
 
-fn run(args: &[String]) -> Result<Value, String> {
-    let action = args.first().map(String::as_str).unwrap_or("list");
+fn memory_usage() -> &'static str {
+    "Usage:\n  nola memory [list] [--json]\n  nola memory add \"<text>\" [--scope global|project] [--json]\n  nola memory search \"<query>\" [--json]\n  nola memory create [--json]   (reads MemoryDraft JSON from stdin)\n  nola memory revise <id> [--json] (reads MemoryDraft JSON from stdin)\n  nola memory delete <id> [--json]"
+}
+
+pub(crate) fn run_cli_args(args: &[String], leading_json: bool) -> Result<(), String> {
+    let mut json_output = leading_json;
+    let mut show_help = false;
+    let mut filtered = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        let arg = &args[index];
+        if arg == "--" {
+            filtered.extend(args[index + 1..].iter().cloned());
+            break;
+        }
+        if arg == "--help" || arg == "-h" {
+            show_help = true;
+            index += 1;
+        } else if arg == "--json" {
+            json_output = true;
+            index += 1;
+        } else if arg == "--lang" {
+            let value = args
+                .get(index + 1)
+                .ok_or_else(|| "--lang requires a language tag".to_string())?;
+            let language = parse_language_tag(value)
+                .ok_or_else(|| format!("--lang unsupported language: {value}"))?;
+            set_language(language);
+            index += 2;
+        } else if let Some(value) = arg.strip_prefix("--lang=") {
+            let language = parse_language_tag(value)
+                .ok_or_else(|| format!("--lang unsupported language: {value}"))?;
+            set_language(language);
+            index += 1;
+        } else {
+            filtered.push(arg.clone());
+            index += 1;
+        }
+    }
+    if show_help {
+        println!("{}", memory_usage());
+        return Ok(());
+    }
+
     let mut application = CliApplicationPort::persistent_default()?;
+    execute_memory_args(&mut application, &filtered, json_output, io::stdin().is_terminal())
+}
+
+fn execute_memory_args(
+    application: &mut CliApplicationPort,
+    args: &[String],
+    json_output: bool,
+    stdin_is_terminal: bool,
+) -> Result<(), String> {
+    let action = args.first().map(String::as_str).unwrap_or("list");
     match action {
-        "list" => Ok(json!({
-            "type": "memory_records",
-            "records": list_memories(&mut application, 2_000)?,
-        })),
+        "list" => {
+            if args.len() > 1 {
+                return Err(memory_usage().to_string());
+            }
+            let records = list_memories(application, 2_000)?;
+            if json_output {
+                println!(
+                    "{}",
+                    json!({
+                        "type": "memory_records",
+                        "records": records,
+                    })
+                );
+            } else if records.is_empty() {
+                println!("No memories stored.");
+            } else {
+                for record in &records {
+                    println!(
+                        "[{} / {}] {}: {}",
+                        record["scope"].as_str().unwrap_or("global"),
+                        record["kind"].as_str().unwrap_or("other"),
+                        record["id"].as_str().unwrap_or(""),
+                        record["content"].as_str().unwrap_or("")
+                    );
+                }
+            }
+            Ok(())
+        }
+        "add" => {
+            let (content, scope) = parse_add_args(&args[1..])?;
+            let kind = if scope == "project" || scope == "workspace" {
+                "project"
+            } else {
+                "preference"
+            };
+            let draft = MemoryDraft {
+                scope,
+                kind: kind.to_string(),
+                content,
+                summary: None,
+                tags: Vec::new(),
+                confidence: None,
+                importance: Some(0.6),
+                sensitivity: None,
+                expires_at: None,
+                source: None,
+                provenance_kind: None,
+            };
+            let created = save_memory(application, &draft, None)?;
+            if json_output {
+                println!("{created}");
+            } else {
+                let id = created["record"]["id"].as_str().unwrap_or("");
+                let stored_scope = created["record"]["scope"].as_str().unwrap_or("global");
+                println!("Added memory {id} ({stored_scope}).");
+            }
+            Ok(())
+        }
+        "search" => {
+            if args.len() < 2 {
+                return Err("Usage: nola memory search \"<query>\" [--json]".to_string());
+            }
+            let query = args[1..].join(" ");
+            let matched = search_memories(application, &query)?;
+            if json_output {
+                println!(
+                    "{}",
+                    json!({
+                        "type": "memory_search_results",
+                        "query": query,
+                        "records": matched,
+                    })
+                );
+            } else if matched.is_empty() {
+                println!("No memories matched \"{query}\".");
+            } else {
+                for record in &matched {
+                    println!(
+                        "[{} / {}] {}: {}",
+                        record["scope"].as_str().unwrap_or("global"),
+                        record["kind"].as_str().unwrap_or("other"),
+                        record["id"].as_str().unwrap_or(""),
+                        record["content"].as_str().unwrap_or("")
+                    );
+                }
+            }
+            Ok(())
+        }
         "create" => {
+            if stdin_is_terminal {
+                return Err("memory create reads a MemoryDraft JSON object from stdin; pipe JSON or use: nola memory add \"<text>\" [--scope global|project]".to_string());
+            }
             let draft = read_draft()?;
-            save_memory(&mut application, &draft, None)
+            let value = save_memory(application, &draft, None)?;
+            println!("{value}");
+            Ok(())
         }
         "revise" => {
             let id = args
                 .get(1)
                 .map(String::as_str)
                 .ok_or("memory revise requires an id")?;
+            if stdin_is_terminal {
+                return Err("memory revise <id> reads a MemoryDraft JSON object from stdin".to_string());
+            }
             let draft = read_draft()?;
-            save_memory(&mut application, &draft, Some(id))
+            let value = save_memory(application, &draft, Some(id))?;
+            println!("{value}");
+            Ok(())
         }
         "delete" => {
             let id = args
                 .get(1)
                 .map(String::as_str)
                 .ok_or("memory delete requires an id")?;
-            delete_memory(&mut application, id)
+            let value = delete_memory(application, id)?;
+            println!("{value}");
+            Ok(())
         }
-        _ => Err("usage: memory [list|create|revise ID|delete ID] --json".to_string()),
+        _ => Err(memory_usage().to_string()),
     }
+}
+
+fn parse_add_args(args: &[String]) -> Result<(String, String), String> {
+    let mut scope = "global".to_string();
+    let mut parts = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        let arg = &args[index];
+        if arg == "--scope" {
+            let value = args
+                .get(index + 1)
+                .ok_or_else(|| "--scope requires global or project".to_string())?;
+            scope = validate_cli_add_scope(value)?;
+            index += 2;
+        } else if let Some(value) = arg.strip_prefix("--scope=") {
+            scope = validate_cli_add_scope(value)?;
+            index += 1;
+        } else if arg.starts_with('-') {
+            return Err(format!("unknown option for memory add: {arg}"));
+        } else {
+            parts.push(arg.clone());
+            index += 1;
+        }
+    }
+    let content = parts.join(" ").trim().to_string();
+    if content.is_empty() {
+        return Err("Usage: nola memory add \"<text>\" [--scope global|project]".to_string());
+    }
+    Ok((content, scope))
+}
+
+fn validate_cli_add_scope(raw: &str) -> Result<String, String> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "global" | "personal" => Ok("global".to_string()),
+        "project" | "workspace" => Ok("project".to_string()),
+        _ => Err("memory add --scope must be global or project".to_string()),
+    }
+}
+
+pub(crate) fn search_memories(
+    application: &mut CliApplicationPort,
+    query: &str,
+) -> Result<Vec<Value>, String> {
+    let needle = query.trim().to_ascii_lowercase();
+    if needle.is_empty() {
+        return Err("memory search query must be non-empty".to_string());
+    }
+    let records = list_memories(application, 2_000)?;
+    Ok(records
+        .into_iter()
+        .filter(|record| {
+            let haystack_fields = [
+                record["content"].as_str().unwrap_or(""),
+                record["summary"].as_str().unwrap_or(""),
+                record["scope"].as_str().unwrap_or(""),
+                record["kind"].as_str().unwrap_or(""),
+            ];
+            let tags_match = record["tags"].as_array().is_some_and(|tags| {
+                tags.iter()
+                    .filter_map(Value::as_str)
+                    .any(|tag| tag.to_ascii_lowercase().contains(&needle))
+            });
+            tags_match
+                || haystack_fields
+                    .iter()
+                    .any(|field| field.to_ascii_lowercase().contains(&needle))
+        })
+        .collect())
 }
 
 fn read_draft() -> Result<MemoryDraft, String> {
@@ -207,8 +457,22 @@ fn commit_draft(
         .unwrap_or("explicit_user");
     let (scope, namespace) = parse_scope(&draft.scope)?;
     let owner = match owner {
-        Some(owner) => { owner.validate_scope(&namespace, scope)?; owner }
-        None => nola_domain::memory_owner::MemoryExecutionBinding::local_profile().owner_for(&namespace, scope)?,
+        Some(owner) => {
+            owner.validate_scope(&namespace, scope)?;
+            owner
+        }
+        None => {
+            let mut binding = nola_domain::memory_owner::MemoryExecutionBinding::local_profile();
+            if matches!(namespace, MemoryNamespace::Workspace) {
+                let cwd = std::env::current_dir()
+                    .map_err(|err| format!("current_dir failed: {err}"))?;
+                let workspace = crate::host_execution_settings::execution_workspace_identity(
+                    &cwd, None, None, None,
+                )?;
+                binding.workspace_id = Some(workspace.workspace_id);
+            }
+            binding.owner_for(&namespace, scope)?
+        }
     };
     let record = MemoryRecord {
         id: format!("mem-{}", Uuid::new_v4()),
@@ -272,7 +536,7 @@ fn parse_scope(value: &str) -> Result<(MemoryScope, MemoryNamespace), String> {
         "global" | "personal" => Ok((MemoryScope::Global, MemoryNamespace::Personal)),
         "conversation" => Ok((MemoryScope::Conversation, MemoryNamespace::Conversation)),
         "turn" => Ok((MemoryScope::Turn, MemoryNamespace::Conversation)),
-        "workspace" => Ok((MemoryScope::Global, MemoryNamespace::Workspace)),
+        "workspace" | "project" => Ok((MemoryScope::Global, MemoryNamespace::Workspace)),
         _ if normalized.starts_with("custom:") => {
             let name = value.trim()["custom:".len()..].trim();
             if name.is_empty() {
@@ -419,5 +683,50 @@ mod tests {
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0]["id"], original.record.id);
         assert!(delete_memory(&mut application, " ").is_err());
+    }
+
+    #[test]
+    fn cli_memory_add_search_and_tty_create_guard_work() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut application =
+            CliApplicationPort::persistent(&directory.path().join("cli-memory.db")).unwrap();
+
+        execute_memory_args(
+            &mut application,
+            &[
+                "add".into(),
+                "Prefer four-space indentation".into(),
+                "--scope".into(),
+                "global".into(),
+            ],
+            false,
+            true,
+        )
+        .unwrap();
+        execute_memory_args(
+            &mut application,
+            &[
+                "add".into(),
+                "Use NolaStore in CLI tests".into(),
+                "--scope=project".into(),
+            ],
+            true,
+            true,
+        )
+        .unwrap();
+
+        let matches = search_memories(&mut application, "four-space").unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0]["scope"], "global");
+
+        let proj_matches = search_memories(&mut application, "NolaStore").unwrap();
+        assert_eq!(proj_matches.len(), 1);
+        assert_eq!(proj_matches[0]["scope"], "workspace");
+
+        // TTY stdin create/revise fails fast with usage guidance rather than blocking.
+        let tty_err = execute_memory_args(&mut application, &["create".into()], false, true)
+            .unwrap_err();
+        assert!(tty_err.contains("stdin"));
+        assert!(tty_err.contains("memory add"));
     }
 }

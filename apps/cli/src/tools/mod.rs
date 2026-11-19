@@ -58,3 +58,4 @@ include!("parts/git_worktree.rs");
 include!("parts/git_source_snapshot.rs");
 include!("parts/browser.rs");
 include!("parts/permissions_output.rs");
+include!("parts/permissions_output_tests.rs");

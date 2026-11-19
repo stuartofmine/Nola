@@ -2843,7 +2843,32 @@ pub fn execution_backend_display_name(id: &str) -> &str {
 /// It intentionally runs before ordinary CLI configuration loading, so
 /// discovery never requires an LLM endpoint or credentials.
 pub fn run_catalog_command_if_requested() -> Option<i32> {
-    if !std::env::args().any(|argument| argument == "--list-execution-backends") {
+    run_catalog_command_for_args(std::env::args())
+}
+
+fn should_list_execution_backends<I, S>(args: I) -> bool
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    for argument in args.into_iter().skip(1) {
+        let argument = argument.as_ref();
+        if argument == "--" {
+            break;
+        }
+        if argument == "--list-execution-backends" {
+            return true;
+        }
+    }
+    false
+}
+
+fn run_catalog_command_for_args<I, S>(args: I) -> Option<i32>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    if !should_list_execution_backends(args) {
         return None;
     }
     match serde_json::to_string(&discover_execution_backends()) {
@@ -3530,3 +3555,21 @@ fn read_version(path: &Path) -> Option<String> {
 
 #[cfg(test)]
 include!("external_executor_process_tests.rs");
+
+#[cfg(test)]
+mod catalog_tests {
+    use super::should_list_execution_backends;
+
+    #[test]
+    fn catalog_flag_is_ignored_after_double_dash_separator() {
+        assert!(should_list_execution_backends([
+            "nola",
+            "--list-execution-backends",
+        ]));
+        assert!(!should_list_execution_backends([
+            "nola",
+            "--",
+            "--list-execution-backends",
+        ]));
+    }
+}

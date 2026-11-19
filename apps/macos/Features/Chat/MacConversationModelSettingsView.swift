@@ -173,6 +173,7 @@ struct MacConversationModelSettingsView: View {
                         .font(.caption).foregroundStyle(.red)
                 }
               }
+              .scrollContentBackground(.hidden)
             }.frame(maxHeight: 500)
             if let validationError { Text(validationError).foregroundStyle(.red).font(.caption) }
             HStack {

@@ -7,7 +7,7 @@ Rust command-line agent for local coding workflows. It follows the same high-lev
 To save the connections and default model declared in your configuration, run
 `nola model apply-config`. It reads `~/.nola/config.json`, or `config.jsonc` when
 the JSON file is absent (`NOLA_HOME` overrides the application home). To select
-a different file, pass its absolute path. This explicit command updates the
+a different file, pass its path (relative, `~/`, or absolute). This explicit command updates the
 Host model center without making a model request; ordinary startup does not
 import or rewrite model configuration. When the binary is not on `PATH`, use
 `/absolute/path/to/nola model apply-config`.
@@ -58,9 +58,8 @@ fixture; it does not remove the Host's required identity/receipt checks.
 
 ```bash
 cd apps/cli
-NOLA_LLM_ENDPOINT=http://127.0.0.1:11434/v1 \
-NOLA_LLM_MODEL=qwen2.5-coder \
-cargo run -- "Inspect this repository and summarize the Android Web Host bridge"
+cargo run -- --endpoint http://127.0.0.1:11434/v1 --model qwen2.5-coder \
+  "Inspect this repository and summarize the Android Web Host bridge"
 ```
 
 也可直接用编译脚本在同一命令里完成编译并进交互：
@@ -85,12 +84,21 @@ cd apps/cli
 ./scripts/build.sh
 ```
 
-直接启动交互模式（默认进入命令行对话）：
+直接启动交互模式（默认进入命令行对话；`./scripts/build.sh` 与 `apps/cli/scripts/build.sh` 会将 release 二进制输出到仓库根目录的 `target/release/nola`）：
 
 ```bash
 cd apps/cli
-../target/release/nola
-``` 
+../../target/release/nola
+```
+
+管理本地 Skills、MCP 服务、长期记忆与版本信息（无需连接模型）：
+
+```bash
+nola skills [list | enable <id> | disable <id>] [--json]
+nola mcp [list | add <name> <command-or-url> [args...] | remove <id-or-name> | enable <id-or-name> | disable <id-or-name>] [--json]
+nola memory [list | add "<text>" [--scope global|project] | search "<query>" | create | revise <id> | delete <id>] [--json]
+nola version [--json]   # 等价于 nola --version / nola -V
+```
 
 Continue work across invocations:
 
@@ -122,10 +130,10 @@ a trusted private network or behind an HTTPS reverse proxy.
 Start the same Server with the Nola Web interface:
 
 ```bash
-cargo run -- web --host 127.0.0.1 --port 5001 --web-root ../web
+cargo run -- web --host 127.0.0.1 --port 5001 --web-root ../../apps/web
 ```
 
-Opening `/` redirects to the Chat workspace. The automation dashboard remains
+When `--web-root` is omitted, `nola web` automatically checks `<project>/apps/web`, `<project>/web`, and `<project>/../web` in order. Opening `/` redirects to the Chat workspace. The automation dashboard remains
 available at `/dashboard`; models, automations, settings, and local capabilities
 are linked from the Chat sidebar.
 
@@ -336,23 +344,23 @@ Instruction context is loaded automatically from `NOLA.md`, `NOLA.local.md`, `AG
 Useful options:
 
 - `--endpoint URL`: provider endpoint. Otherwise read from `llm.endpoint` in Nola config.
-- `--api-key KEY`: API key. Otherwise read from `llm.api_key` in Nola config.
-- `--model MODEL`: model name. Otherwise read from `llm.model` in Nola config. DeepSeek endpoints default to `deepseek-chat`.
+- `--api-key KEY`: API key. Otherwise read from `llm.api_key` in Nola config (updates the stored `HostCredentialVault` secret when a differing non-empty key is supplied).
+- `--model, -m MODEL`: model name. Otherwise read from `llm.model` in Nola config. DeepSeek endpoints default to `deepseek-chat`.
 - `llm.provider`: optional provider hint in Nola config when auto-detection is ambiguous. Supported values: `openai`, `deepseek`, `llamacpp`, `vllm`, `dashscope`, `anthropic`.
 - `--allow-dir PATH`: directory tools may access. Repeatable; defaults to the current directory.
 - `--bash-prefix PREFIX`: allowed bash command prefix, for example `git`, `rg`, `cargo test`.
-- `--yes`: approve model-network confirmation for `init` / `wiki` only. It never grants Agent tool permission; select the conversation's `cautious` or `allow_all` permission profile explicitly.
+- `--permission-profile MODE`: explicit conversation permission profile (`cautious` or `allow_all`); overrides `-y` / `--yes` permission escalation regardless of flag order.
+- `--yes, -y`: approve model-network confirmation for `init` / `wiki` and enable `allow_all` tool permissions (unless `--permission-profile` is explicitly specified).
 - `--json`: print newline-delimited JSON events.
 - `--debug`: enable detailed terminal interaction (full status/tool traces) and write local debug logs for LLM/tool interactions (same as `"debug": true` in config).
 - `--max-iterations N`: cap tool-capable model requests, then allow one tool-free final synthesis; unlimited by default, and `0` also means unlimited.
 - `--force-tool-set MODE`: choose exposed tools. `auto` sends a focused coding set plus `tool_search`, `all` sends every tool schema, and `write` sends the SWE write-focused set.
-- `--agent-mode MODE`: set agent mode explicitly (`swe` or `standard`).
-- `--swe-mode`: shortcut for `--agent-mode=swe`.
 - `--session ID`: load and save a named session.
-- `--continue`: continue the latest saved session.
+- `--continue, -c`: continue the latest saved session.
 - `--no-save`: run without writing a session file.
-- `--root PATH`: project root for `init` / `wiki`; defaults to the current directory.
+- `--project PATH`: project root for runs, `init`, and `wiki`; defaults to the current directory.
 - `--output PATH`: output file for `init` (`NOLA.md`) or `wiki`.
+- `--version, -V`: print installed Nola version and build metadata (same as `nola version`).
 - `NOLA_OPENAI_PROMPT_CACHE`: optional `true/false/on/off/1/0`, controls OpenAI 官方 KV 缓存注入（默认 `true`）。
 - `NOLA_OPENAI_PROMPT_CACHE_KEY`: 完整 `prompt_cache_key`，覆盖 `key_prefix` 自动组合。
 - `NOLA_OPENAI_PROMPT_CACHE_KEY_PREFIX`: key 前缀（默认 `nola-openai`）。
@@ -383,11 +391,18 @@ Computer-use tools operate the host desktop. On macOS they use `open`, `screenca
 
 Interactive commands are recognized only when the submitted line starts with `/`; ordinary words such as `init`, `resume`, and `continue` remain normal model input.
 
-- `/resume` opens the session restore page; `/continue` resumes the latest project session.
+- `/resume [id]` opens the session restore page (or resumes `<id>` directly); `/continue` resumes the latest project session.
 - `/history` replays the complete user/assistant session view.
-- `/new` starts a clean session in the current workspace.
+- `/new` starts a clean session in the current workspace; `/clear` clears the terminal display and starts a clean session.
 - `/goal TARGET` runs an autonomous goal until completion or a genuine user blocker. Use `/goal status`, `/goal resume`, and `/goal off` to inspect, resume, or cancel the current session goal.
 - `/plan` shows the current session execution checklist without calling the model.
+- `/experts` lists available specialized expert sub-agents.
+- `/permissions` opens or inspects session permission settings (same panel as `/allow`).
+- `/resources` lists current workspace resources, data sources, and runtime access scope.
+- `/skills [list|enable|disable]` inspects or toggles built-in and uploaded skills.
+- `/mcp [list|enable|disable]` inspects or toggles configured MCP servers.
+- `/memory [list|search|add]` inspects, searches, or adds persisted long-term memories.
+- `/stop [id]` stops the active run or a persisted background task.
 - `/compact` compacts model context while preserving the complete replay transcript.
 - `/cd PATH` changes the persistent CLI workspace and starts a project session there.
 - `/jobs`, `/jobs ID`, and `/jobs stop ID` list, inspect, and stop persisted background tasks.
@@ -399,14 +414,15 @@ Transient model failures are retried only before any text or reasoning delta rea
 
 ## Localization
 
-The CLI follows `NOLA_CLI_LANG`, then `NOLA_LANG`, then the system locale variables. It supports the same common UI languages as the mobile clients: `zh-Hans`, `en`, `de`, `es`, `fr`, `ja`, and `ru`. Unknown locales fall back to English. JSON event field names, tool names, and model-facing tool schemas stay in English for script and LLM compatibility.
+The CLI follows `NOLA_CLI_LANG`, then `NOLA_LANG`, then the system locale variables. It supports all 9 Nola product UI languages: `zh-Hans`, `zh-Hant`, `en`, `de`, `es`, `fr`, `ja`, `ko`, and `ru`. Unknown locales fall back to English. JSON event field names, tool names, and model-facing tool schemas stay in English for script and LLM compatibility.
 
 ```bash
 NOLA_CLI_LANG=zh-Hans cargo run -- --help
+NOLA_LANG=ko cargo run -- version
 NOLA_CLI_LANG=ja cargo run -- sessions
 ```
 
-Sessions are stored in the current schema-epoch database (currently `~/.nola/nola-v4.db`) by default together with tool events and resumable task state. Advancing the Store epoch selects a new default file instead of reopening or migrating an incompatible database. Set `NOLA_DB_PATH` to override the SQLite path. Persisted conversation/tool payloads are sanitized before storage; API keys remain in environment or config sources rather than session messages.
+Sessions are stored in the current schema-epoch database (`~/.nola/nola-v1.db`) by default together with tool events and resumable task state. Advancing the Store epoch selects a new default file instead of reopening or migrating an incompatible database. Set `NOLA_DB_PATH` to override the SQLite path. Persisted conversation/tool payloads are sanitized before storage; API keys remain in `HostCredentialVault` or explicit config sources rather than session messages.
 
 ### 运行期间的终端命令
 

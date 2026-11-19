@@ -1129,14 +1129,30 @@ mod model_profile_web_tests {
             assert!(store.configure_model_endpoint("endpoint", endpoint_revisions(&store), "Name".into(), url.into(), "responses".into(), true).is_err());
             assert_eq!(store.model_profiles().unwrap(), before);
         }
-        for protocol in ["anthropic", "chat_completions", "unknown"] {
-            assert!(store.configure_model_endpoint("endpoint", endpoint_revisions(&store), "Name".into(), "https://fixture.invalid".into(), protocol.into(), true).is_err());
-            assert_eq!(store.model_profiles().unwrap(), before);
-        }
+        assert!(store.configure_model_endpoint("endpoint", endpoint_revisions(&store), "Name".into(), "https://fixture.invalid".into(), "unknown".into(), true).is_err());
+        assert_eq!(store.model_profiles().unwrap(), before);
         let mut revisions = endpoint_revisions(&store);
         revisions.remove("second");
         assert!(store.configure_model_endpoint("endpoint", revisions, "Name".into(), "https://fixture.invalid".into(), "responses".into(), true).is_err());
         assert_eq!(store.model_profiles().unwrap(), before);
+        let mut budget_profile = route_profile();
+        budget_profile.id = "anthropic-budget".into();
+        let mut source: Value = serde_json::from_str(&budget_profile.source_json).unwrap();
+        source["endpointID"] = json!("anthropic-endpoint");
+        source["wireProtocol"] = json!("anthropic");
+        source["reasoning"] = json!({"control":"budget", "budgets":[1024,4096,8192]});
+        budget_profile.source_json = source.to_string();
+        store.upsert_model_profile(budget_profile).unwrap();
+        let expected_after_insert = store.model_profiles().unwrap();
+        let budget_revisions = store.model_profiles().unwrap().into_iter()
+            .filter(|profile| profile.id == "anthropic-budget")
+            .map(|profile| (profile.id, profile.revision))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        for protocol in ["responses", "chat_completions", "unknown"] {
+            assert!(store.configure_model_endpoint("anthropic-endpoint", budget_revisions.clone(), "Name".into(), "https://fixture.invalid".into(), protocol.into(), true).is_err());
+            assert_eq!(store.model_profiles().unwrap(), expected_after_insert);
+        }
+        assert!(store.configure_model_endpoint("anthropic-endpoint", budget_revisions, "Name".into(), "https://fixture.invalid".into(), "anthropic".into(), true).is_ok());
     }
 
     #[test]
@@ -1361,9 +1377,10 @@ mod model_profile_web_tests {
         let profiles = mobile_model_profile_catalog(&store).unwrap();
         assert_eq!(profiles.len(), 3);
         for item in profiles {
-            assert_eq!(item.as_object().unwrap().len(), 4);
+            assert_eq!(item.as_object().unwrap().len(), 5);
             assert!(item.get("profile_id").is_some());
             assert!(item.get("revision").is_some());
+            assert!(item.get("reasoning").is_some());
             assert!(!item.to_string().contains("fixture-secret"));
         }
         assert_eq!(version(), before);
@@ -1825,8 +1842,11 @@ mod model_profile_web_tests {
         assert!(validate_profile_reasoning(&budget, "responses", 16384).is_err());
         let effort = json!({"control":"effort", "efforts":["high"]});
         assert!(validate_profile_reasoning(&effort, "responses", 16384).is_ok());
-        assert!(validate_profile_reasoning(&effort, "anthropic", 16384).is_err());
-        assert!(validate_profile_reasoning(&effort, "chat_completions", 16384).is_err());
+        assert!(validate_profile_reasoning(&effort, "anthropic", 16384).is_ok());
+        assert!(validate_profile_reasoning(&effort, "chat_completions", 16384).is_ok());
+        assert!(validate_profile_reasoning(&budget, "chat_completions", 16384).is_err());
+        assert!(validate_profile_reasoning(&json!({"control":"effort", "efforts":[]}), "responses", 16384).is_err());
+        assert!(validate_profile_reasoning(&json!({"control":"unknown"}), "responses", 16384).is_err());
         assert!(validate_profile_reasoning(&json!({"control":"automatic","efforts":"high"}), "responses", 16384).is_err());
         assert!(validate_profile_reasoning(&Value::Null, "responses", 16384).is_ok());
     }

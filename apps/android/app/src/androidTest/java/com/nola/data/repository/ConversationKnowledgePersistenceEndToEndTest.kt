@@ -23,6 +23,8 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class ConversationKnowledgePersistenceEndToEndTest {
     private lateinit var repository: ConversationRepositoryImpl
+    private lateinit var baseRuntime: AndroidApplicationRuntime
+    private lateinit var canonicalRoot: File
     private lateinit var canonicalFile: File
 
     @Test
@@ -34,7 +36,7 @@ class ConversationKnowledgePersistenceEndToEndTest {
                 id = "profile-canonical-17", displayName = "Research", provider = "openai-compatible",
                 modelName = "wire-model-2027", runtime = "remote",
                 sourceJson = """{"schemaVersion":1,"baseURL":"https://example.invalid/v1"}""",
-                parametersJson = """{"maxCompletionTokens":2048}""",
+                parametersJson = """{"maxOutputTokens":2048}""",
                 selected = true, enabled = true, revision = 0, createdAtMs = 1, updatedAtMs = 1,
             ))
             val option = AndroidModelConfiguration(runtime).configuredProfiles().single().toConfiguredModelInfo()
@@ -102,41 +104,51 @@ class ConversationKnowledgePersistenceEndToEndTest {
     @Before
     fun setUp() {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        canonicalFile = File(context.cacheDir, "conversation-knowledge-${System.nanoTime()}.db")
-        repository = AndroidApplicationRuntime(context, canonicalFile).let {
-            ConversationRepositoryImpl(it, com.nola.data.local.AndroidAssistantJournal(it), com.nola.llm.local.DeviceModelStore(context))
-        }
+        canonicalRoot = File(context.cacheDir, "conversation-knowledge-${System.nanoTime()}").apply { mkdirs() }
+        canonicalFile = File(canonicalRoot, "product.db")
+        baseRuntime = AndroidApplicationRuntime(context, canonicalFile)
+        repository = ConversationRepositoryImpl(
+            baseRuntime,
+            com.nola.data.local.AndroidAssistantJournal(baseRuntime),
+            com.nola.llm.local.DeviceModelStore(context),
+        )
     }
 
     @After
     fun tearDown() {
-        canonicalFile.delete()
+        if (::baseRuntime.isInitialized) baseRuntime.close()
+        if (::canonicalRoot.isInitialized) canonicalRoot.deleteRecursively()
     }
 
     @Test
     fun promptStyleIsConversationScopedAndSurvivesColdReopen() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val runtime = AndroidApplicationRuntime(context, canonicalFile)
-        val model = com.nola.data.local.CanonicalModelProfile(
-            id = "style-fixture", displayName = "Style", provider = "test", modelName = "style",
-            runtime = "android", sourceJson = "{}", parametersJson = """{"responseStyle":"professional"}""",
-            selected = false, enabled = true, revision = 0, createdAtMs = 1, updatedAtMs = 1, deletedAtMs = null,
-        )
-        runtime.upsertModelProfile(model)
-        val savedModel = runtime.modelProfile(model.id)
-        val first = repository.createConversation(title = "First")
-        val second = repository.createConversation(title = "Second")
-        assertNull(first.promptResponseStyle)
-        assertNull(second.promptResponseStyle)
-        repository.updateResponseStyle(first.id, "playful")
-        repository.updateSessionMemory(first.id, "Keep style")
-        val reopened = AndroidApplicationRuntime(context, canonicalFile).let { ConversationRepositoryImpl(it, com.nola.data.local.AndroidAssistantJournal(it), com.nola.llm.local.DeviceModelStore(context)) }
-        assertEquals("playful", reopened.getConversation(first.id)?.promptResponseStyle)
-        assertNull(reopened.getConversation(second.id)?.promptResponseStyle)
-        reopened.updateResponseStyle(first.id, null)
-        assertNull(repository.getConversation(first.id)?.promptResponseStyle)
-        assertEquals(savedModel, runtime.modelProfile(model.id))
-        runtime.close()
+        try {
+            val model = com.nola.data.local.CanonicalModelProfile(
+                id = "style-fixture", displayName = "Style", provider = "test", modelName = "style",
+                runtime = "android", sourceJson = "{}", parametersJson = """{"responseStyle":"professional"}""",
+                selected = false, enabled = true, revision = 0, createdAtMs = 1, updatedAtMs = 1, deletedAtMs = null,
+            )
+            runtime.upsertModelProfile(model)
+            val savedModel = runtime.modelProfile(model.id)
+            val first = repository.createConversation(title = "First")
+            val second = repository.createConversation(title = "Second")
+            assertNull(first.promptResponseStyle)
+            assertNull(second.promptResponseStyle)
+            repository.updateResponseStyle(first.id, "playful")
+            repository.updateSessionMemory(first.id, "Keep style")
+            AndroidApplicationRuntime(context, canonicalFile).use { reopenedRuntime ->
+                val reopened = ConversationRepositoryImpl(reopenedRuntime, com.nola.data.local.AndroidAssistantJournal(reopenedRuntime), com.nola.llm.local.DeviceModelStore(context))
+                assertEquals("playful", reopened.getConversation(first.id)?.promptResponseStyle)
+                assertNull(reopened.getConversation(second.id)?.promptResponseStyle)
+                reopened.updateResponseStyle(first.id, null)
+                assertNull(repository.getConversation(first.id)?.promptResponseStyle)
+            }
+            assertEquals(savedModel, runtime.modelProfile(model.id))
+        } finally {
+            runtime.close()
+        }
     }
 
     @Test

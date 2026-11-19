@@ -39,25 +39,45 @@ fn prompt_create_global_config() -> Result<Option<GeneratedConfiguration>, Strin
     let endpoint = loop {
         let value = prompt_config_line(ui_text(UiText::EndpointPrompt))?;
         let value = value.trim().to_string();
+        if value.is_empty() {
+            println!("{}", ui_text(UiText::EndpointRequired));
+            continue;
+        }
+        if !is_valid_endpoint_url(&value) {
+            println!("{}", ui_text(UiText::EndpointInvalidScheme));
+            continue;
+        }
+        break value;
+    };
+    let model = loop {
+        let value = prompt_config_line(ui_text(UiText::ModelPrompt))?;
+        let value = value.trim().to_string();
         if !value.is_empty() {
             break value;
         }
-        println!("{}", ui_text(UiText::EndpointRequired));
+        println!("{}", ui_text(UiText::ModelRequired));
     };
-    let model = prompt_config_line(ui_text(UiText::ModelPrompt))?
-        .trim()
-        .to_string();
     let api_key = prompt_config_secret(ui_text(UiText::ApiKeyPrompt))?
         .trim()
         .to_string();
 
     write_global_config(&path, &endpoint, &api_key, &model)?;
+    let _ = crate::onboarding::mark_completed();
     println!("{} {}.", ui_text(UiText::ConfigCreated), path.display());
     Ok(Some(GeneratedConfiguration {
         endpoint,
         api_key,
         model,
     }))
+}
+
+fn is_valid_endpoint_url(value: &str) -> bool {
+    let trimmed = value.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    (lower.starts_with("http://") || lower.starts_with("https://"))
+        && trimmed
+            .split_once("://")
+            .is_some_and(|(_, host)| !host.trim().is_empty())
 }
 
 fn prompt_config_line(prompt: &str) -> Result<String, String> {
@@ -91,33 +111,107 @@ fn prompt_config_secret(prompt: &str) -> Result<String, String> {
     enable_raw_mode().map_err(|err| format!("enable secure input failed: {err}"))?;
     let _raw_mode = ConfigSecretRawModeGuard;
     let mut value = String::new();
+    let mut out = io::stdout();
     loop {
         match read().map_err(|err| format!("read secure input failed: {err}"))? {
             Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
                 KeyCode::Enter => {
                     print!("\r\n");
-                    io::stdout()
-                        .flush()
+                    out.flush()
                         .map_err(|err| format!("flush prompt failed: {err}"))?;
                     return Ok(value);
                 }
                 KeyCode::Backspace | KeyCode::Delete => {
-                    value.pop();
+                    if pop_secret_char(&mut value) {
+                        erase_secret_stars(&mut out, 1)?;
+                    }
                 }
                 KeyCode::Char(ch)
                     if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(ch, 'c' | 'C') =>
                 {
                     print!("\r\n");
-                    let _ = io::stdout().flush();
+                    let _ = out.flush();
                     return Err("configuration input cancelled".to_string());
                 }
-                KeyCode::Char(ch) if !ch.is_control() => value.push(ch),
+                KeyCode::Char(ch)
+                    if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(ch, 'u' | 'U') =>
+                {
+                    let removed = clear_secret_line(&mut value);
+                    if removed > 0 {
+                        erase_secret_stars(&mut out, removed)?;
+                    }
+                }
+                KeyCode::Char(ch)
+                    if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(ch, 'w' | 'W') =>
+                {
+                    let removed = pop_secret_word(&mut value);
+                    if removed > 0 {
+                        erase_secret_stars(&mut out, removed)?;
+                    }
+                }
+                KeyCode::Char(ch) if !ch.is_control() => {
+                    value.push(ch);
+                    write_secret_stars(&mut out, 1)?;
+                }
                 _ => {}
             },
-            Event::Paste(text) => value.push_str(&text),
+            Event::Paste(text) => {
+                let added = append_secret_paste(&mut value, &text);
+                if added > 0 {
+                    write_secret_stars(&mut out, added)?;
+                }
+            }
             _ => {}
         }
     }
+}
+
+fn pop_secret_char(value: &mut String) -> bool {
+    value.pop().is_some()
+}
+
+fn clear_secret_line(value: &mut String) -> usize {
+    let count = value.chars().count();
+    value.clear();
+    count
+}
+
+fn pop_secret_word(value: &mut String) -> usize {
+    let mut removed = 0usize;
+    while value.chars().next_back().is_some_and(char::is_whitespace) {
+        value.pop();
+        removed += 1;
+    }
+    while value.chars().next_back().is_some_and(|ch| !ch.is_whitespace()) {
+        value.pop();
+        removed += 1;
+    }
+    removed
+}
+
+fn append_secret_paste(value: &mut String, text: &str) -> usize {
+    let mut added = 0usize;
+    for ch in text.chars() {
+        if !ch.is_control() {
+            value.push(ch);
+            added += 1;
+        }
+    }
+    added
+}
+
+fn write_secret_stars(out: &mut impl Write, count: usize) -> Result<(), String> {
+    let stars = "*".repeat(count);
+    out.write_all(stars.as_bytes())
+        .and_then(|_| out.flush())
+        .map_err(|err| format!("flush prompt failed: {err}"))
+}
+
+fn erase_secret_stars(out: &mut impl Write, count: usize) -> Result<(), String> {
+    let seq = "\x08 \x08".repeat(count);
+    out.write_all(seq.as_bytes())
+        .and_then(|_| out.flush())
+        .map_err(|err| format!("flush prompt failed: {err}"))
 }
 
 fn write_global_config(
@@ -180,4 +274,39 @@ fn write_global_config(
 
 fn global_config_path() -> Option<PathBuf> {
     crate::platform_paths::home_dir().map(|home| home.join(".nola").join("config.json"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn endpoint_url_validation_requires_http_or_https_with_host() {
+        assert!(is_valid_endpoint_url("https://api.openai.com/v1"));
+        assert!(is_valid_endpoint_url("http://127.0.0.1:11434/v1"));
+        assert!(!is_valid_endpoint_url(""));
+        assert!(!is_valid_endpoint_url("ftp://example.com/v1"));
+        assert!(!is_valid_endpoint_url("http://"));
+        assert!(!is_valid_endpoint_url("localhost:11434/v1"));
+    }
+
+    #[test]
+    fn secret_line_editing_and_paste_filtering_behave_cleanly() {
+        let mut secret = String::new();
+        assert_eq!(append_secret_paste(&mut secret, "sk-\n1234\x07 56"), 10);
+        assert_eq!(secret, "sk-1234 56");
+
+        assert!(pop_secret_char(&mut secret));
+        assert_eq!(secret, "sk-1234 5");
+
+        assert_eq!(pop_secret_word(&mut secret), 1);
+        assert_eq!(secret, "sk-1234 ");
+
+        assert_eq!(pop_secret_word(&mut secret), 8);
+        assert_eq!(secret, "");
+
+        append_secret_paste(&mut secret, "token");
+        assert_eq!(clear_secret_line(&mut secret), 5);
+        assert!(secret.is_empty());
+    }
 }

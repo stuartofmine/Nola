@@ -1091,17 +1091,21 @@ struct ChatView: View {
             .sheet(isPresented: $showIMSearch) {
                 NavigationStack {
                     List {
-                        Text("chat.search.loaded.scope").font(.caption).foregroundStyle(.secondary)
-                        ForEach((messages + agentRoomWorkspace.rows.map(\.message)).filter { !imSearch.isEmpty && $0.content.localizedStandardContains(imSearch) }) { message in
-                            Text(verbatim: message.content).font(.body).textSelection(.enabled)
+                        Group {
+                            Text("chat.search.loaded.scope").font(.caption).foregroundStyle(.secondary)
+                            ForEach((messages + agentRoomWorkspace.rows.map(\.message)).filter { !imSearch.isEmpty && $0.content.localizedStandardContains(imSearch) }) { message in
+                                Text(verbatim: message.content).font(.body).textSelection(.enabled)
+                            }
                         }
+                        .listRowBackground(DesignTokens.cardBackgroundColor)
+                        .listRowSeparatorTint(DesignTokens.borderColor)
                     }
+                    .nolaGroupedSurface()
                     .searchable(text: $imSearch, prompt: Text("chat.search.loaded.title"))
                     .navigationTitle(Text("chat.search.loaded.title"))
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar { ToolbarItem(placement: .cancellationAction) { Button(L10n.close) { showIMSearch = false } } }
                 }
-                .nolaGroupedSurface()
                 .toggleStyle(NolaSwitchToggleStyle())
             }
             .sheet(isPresented: $showContextSheet) {

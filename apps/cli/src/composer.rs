@@ -3,6 +3,7 @@
 //! is routed by the focused surface, never interpreted by the text editor.
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 /// Paste is authored content. Preserve whitespace and never silently truncate it.
 pub(crate) fn normalize_paste(value: &str) -> String {
@@ -13,7 +14,7 @@ pub(crate) fn normalize_paste(value: &str) -> String {
 pub(crate) fn is_submit(key: &KeyEvent) -> bool {
     key.kind == KeyEventKind::Press && match key.code {
         KeyCode::Enter | KeyCode::Char('\r' | '\n') => key.modifiers.is_empty(),
-        KeyCode::Char('m' | 'M' | 'j' | 'J') => key.modifiers == KeyModifiers::CONTROL,
+        KeyCode::Char('m' | 'M') => key.modifiers == KeyModifiers::CONTROL,
         _ => false,
     }
 }
@@ -56,7 +57,7 @@ pub(crate) fn edit(text: &mut String, cursor: &mut usize, key: &KeyEvent) -> boo
         }
         KeyCode::Up | KeyCode::Down if text.contains('\n') => {
             let start = text[..*cursor].rfind('\n').map_or(0, |i| i + 1);
-            let column = text[start..*cursor].graphemes(true).count();
+            let target_col = UnicodeWidthStr::width(&text[start..*cursor]);
             let end = *cursor + text[*cursor..].find('\n').unwrap_or(text.len() - *cursor);
             let target = if key.code == KeyCode::Up {
                 if start == 0 { return true; }
@@ -67,15 +68,33 @@ pub(crate) fn edit(text: &mut String, cursor: &mut usize, key: &KeyEvent) -> boo
                 let start = end + 1;
                 (start, start + text[start..].find('\n').unwrap_or(text.len() - start))
             };
-            *cursor = text[target.0..target.1].grapheme_indices(true).nth(column)
-                .map_or(target.1, |(offset, _)| target.0 + offset);
+            let mut width_so_far = 0usize;
+            let mut landed = target.1;
+            for (offset, grapheme) in text[target.0..target.1].grapheme_indices(true) {
+                let g_width = UnicodeWidthStr::width(grapheme);
+                if width_so_far >= target_col || width_so_far + g_width > target_col {
+                    landed = target.0 + offset;
+                    break;
+                }
+                width_so_far += g_width;
+            }
+            *cursor = landed;
         }
+        KeyCode::Char(ch) if key.modifiers == KeyModifiers::ALT => match ch {
+            'b' | 'B' => *cursor = word_left(text, *cursor),
+            'f' | 'F' => *cursor = word_right(text, *cursor),
+            _ => return false,
+        },
         KeyCode::Char(ch) if key.modifiers.contains(KeyModifiers::CONTROL) => match ch {
             'b' | 'B' => *cursor = previous(text, *cursor),
             'f' | 'F' => *cursor = next(text, *cursor),
+            'j' | 'J' if key.modifiers == KeyModifiers::CONTROL => {
+                text.insert(*cursor, '\n');
+                *cursor += 1;
+            }
             'k' | 'K' => { let end = *cursor + text[*cursor..].find('\n').unwrap_or(text.len() - *cursor); text.drain(*cursor..end); }
-            'a' | 'A' => *cursor = 0,
-            'e' | 'E' => *cursor = text.len(),
+            'a' | 'A' => *cursor = text[..*cursor].rfind('\n').map_or(0, |i| i + 1),
+            'e' | 'E' => *cursor += text[*cursor..].find('\n').unwrap_or(text.len() - *cursor),
             'u' | 'U' => { text.drain(..*cursor); *cursor = 0; }
             'w' | 'W' => {
                 let start = text[..*cursor].trim_end_matches(char::is_whitespace)
@@ -159,7 +178,26 @@ mod tests {
             assert!(is_submit(&KeyEvent::new(code, KeyModifiers::NONE)));
             assert!(!is_submit(&KeyEvent::new_with_kind(code, KeyModifiers::NONE, KeyEventKind::Release)));
         }
-        assert!(is_submit(&KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL)));
+        assert!(is_submit(&KeyEvent::new(KeyCode::Char('m'), KeyModifiers::CONTROL)));
+        assert!(!is_submit(&KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL)));
         assert!(!is_submit(&KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL | KeyModifiers::ALT)));
+
+        let mut text = "hello world".to_string();
+        let mut cursor = text.len();
+        assert!(edit(&mut text, &mut cursor, &KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL)));
+        assert_eq!(text, "hello world\n");
+        assert!(edit(&mut text, &mut cursor, &KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT)));
+        assert_eq!(cursor, "hello ".len());
+        assert!(edit(&mut text, &mut cursor, &KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL)));
+        assert_eq!(cursor, 0);
+        assert!(edit(&mut text, &mut cursor, &KeyEvent::new(KeyCode::Char('f'), KeyModifiers::ALT)));
+        assert_eq!(cursor, "hello".len());
+        assert!(edit(&mut text, &mut cursor, &KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL)));
+        assert_eq!(cursor, "hello world".len());
+
+        let mut wide = "一二\nabcdef".to_string();
+        let mut wide_cursor = "一二\nabc".len();
+        assert!(edit(&mut wide, &mut wide_cursor, &KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)));
+        assert_eq!(wide_cursor, "一".len());
     }
 }

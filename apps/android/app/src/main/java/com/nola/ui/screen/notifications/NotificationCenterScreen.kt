@@ -11,6 +11,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -332,7 +333,8 @@ fun NotificationCard(
             .fillMaxWidth()
             .clickable(role = Role.Button, onClick = onClick),
         color = containerColor,
-        tonalElevation = if (isRead) 1.dp else 2.dp,
+        tonalElevation = 0.dp,
+        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
         shape = MaterialTheme.shapes.large
     ) {
         Row(

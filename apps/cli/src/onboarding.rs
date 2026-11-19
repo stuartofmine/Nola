@@ -1,6 +1,6 @@
 use std::env;
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 
 use crate::config::Config;
@@ -48,25 +48,50 @@ pub fn show(config: &Config) {
         config.model.trim()
     };
     let workspace = config.project_root.display();
+    let use_color = onboarding_color_enabled(io::stdout().is_terminal());
 
     println!();
-    println!("  \x1b[1;38;5;117mNola\x1b[0m  {}", copy.title);
+    if use_color {
+        println!("  \x1b[1;38;5;117mNola\x1b[0m  {}", copy.title);
+    } else {
+        println!("  Nola  {}", copy.title);
+    }
     println!("  {}", copy.subtitle);
     println!();
-    print_step(1, copy.value_title, copy.value_body);
-    print_step(2, copy.runtime_title, copy.runtime_body);
+    print_step(1, copy.value_title, copy.value_body, use_color);
+    print_step(2, copy.runtime_title, copy.runtime_body, use_color);
     println!("       {}: {}", copy.current_model, model);
-    print_step(3, copy.sources_title, copy.sources_body);
+    print_step(3, copy.sources_title, copy.sources_body, use_color);
     println!("       {}: {}", copy.workspace, workspace);
-    print_step(4, copy.ready_title, copy.ready_body);
+    print_step(4, copy.ready_title, copy.ready_body, use_color);
     println!();
     println!("  {}", copy.replay_hint);
     println!();
 }
 
-fn print_step(number: usize, title: &str, body: &str) {
-    println!("  \x1b[38;5;117m{}\x1b[0m  \x1b[1m{}\x1b[0m", number, title);
+fn print_step(number: usize, title: &str, body: &str, use_color: bool) {
+    if use_color {
+        println!("  \x1b[38;5;117m{}\x1b[0m  \x1b[1m{}\x1b[0m", number, title);
+    } else {
+        println!("  {}  {}", number, title);
+    }
     println!("     {}", body);
+}
+
+fn onboarding_color_enabled(stdout_is_terminal: bool) -> bool {
+    if !stdout_is_terminal {
+        return false;
+    }
+    if env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty()) {
+        return false;
+    }
+    if env::var("TERM")
+        .ok()
+        .is_some_and(|term| term.trim().eq_ignore_ascii_case("dumb"))
+    {
+        return false;
+    }
+    true
 }
 
 fn skip_requested() -> bool {
@@ -79,7 +104,7 @@ fn completion_path() -> Option<PathBuf> {
     crate::platform_paths::home_dir().map(|home| home.join(".nola").join("onboarding-v2.json"))
 }
 
-fn mark_completed() -> Result<(), String> {
+pub(crate) fn mark_completed() -> Result<(), String> {
     let Some(path) = completion_path() else {
         return Ok(());
     };
@@ -111,6 +136,23 @@ fn copy_for_language(language: Language) -> GuideCopy {
             not_configured: "未配置；运行 nola model manage 查看配置入口和 Host 启动命令",
             continue_hint: "按 Enter 进入 Nola",
             replay_hint: "随时输入 /guide 重新查看本引导。",
+        },
+        Language::ZhHant => GuideCopy {
+            title: "首次使用導覽",
+            subtitle: "四個步驟認識 Nola，系統權限不會在這裡一次索取。",
+            value_title: "了解運作方式",
+            value_body: "Nola 連接您選擇的內容，顯示採用的來源，並讓長期記憶維持可編輯。",
+            runtime_title: "確認執行方式",
+            runtime_body: "CLI 在本機編排工具；模型來自您設定的本機或遠端提供者。",
+            sources_title: "從工作區開始",
+            sources_body: "檔案與網路僅在任務需要時存取，敏感操作仍會個別徵詢確認。",
+            ready_title: "執行第一個任務",
+            ready_body: "直接說明目標，例如：「檢視這個專案並列出三個最高風險的問題」。",
+            current_model: "目前模型",
+            workspace: "工作區",
+            not_configured: "尚未設定；執行 nola model manage 查看設定與 Host 啟動命令",
+            continue_hint: "按 Enter 進入 Nola",
+            replay_hint: "隨時輸入 /guide 即可再次開啟本導覽。",
         },
         Language::De => GuideCopy {
             title: "Erste Schritte",
@@ -161,7 +203,7 @@ fn copy_for_language(language: Language) -> GuideCopy {
             workspace: "Espace de travail",
             not_configured: "Non configuré ; nola model manage affiche la configuration et le démarrage du Host",
             continue_hint: "Appuyez sur Entrée pour ouvrir Nola",
-            replay_hint: "Saisissez /guide pour revoir cette introduction.",
+            replay_hint: "Entrez /guide à tout moment pour revoir ce guide.",
         },
         Language::Ja => GuideCopy {
             title: "はじめてのガイド",
@@ -179,6 +221,23 @@ fn copy_for_language(language: Language) -> GuideCopy {
             not_configured: "未設定。nola model manage で設定先と Host の起動方法を確認",
             continue_hint: "Enter で Nola を開く",
             replay_hint: "/guide でいつでもこのガイドを再表示できます。",
+        },
+        Language::Ko => GuideCopy {
+            title: "처음 사용 가이드",
+            subtitle: "4단계로 Nola를 살펴보세요. 여기서는 시스템 권한을 한꺼번에 요청하지 않습니다.",
+            value_title: "동작 방식 이해하기",
+            value_body: "Nola는 선택한 컨텍스트를 연결하고, 사용한 출처를 표시하며, 장기 기억을 언제든 편집할 수 있게 유지합니다.",
+            runtime_title: "실행 방식 확인하기",
+            runtime_body: "CLI가 이 기기에서 도구를 조율하며, 모델은 설정된 로컬 또는 원격 공급자를 사용합니다.",
+            sources_title: "작업 공간에서 시작하기",
+            sources_body: "파일과 네트워크는 작업에 필요할 때만 사용되며, 민감한 작업은 별도로 확인합니다.",
+            ready_title: "첫 작업 실행하기",
+            ready_body: "예를 들어 “이 프로젝트를 검토하고 가장 위험한 문제 세 가지를 알려줘”처럼 목표를 입력하세요.",
+            current_model: "현재 모델",
+            workspace: "작업 공간",
+            not_configured: "설정되지 않음; nola model manage 에서 설정 및 Host 시작 명령을 확인하세요",
+            continue_hint: "Enter를 눌러 Nola 시작",
+            replay_hint: "언제든 /guide 를 입력해 이 가이드를 다시 볼 수 있습니다.",
         },
         Language::Ru => GuideCopy {
             title: "Первое знакомство",
@@ -223,10 +282,48 @@ mod tests {
 
     #[test]
     fn setup_hint_points_to_model_management_instead_of_document_generation() {
-        for language in [Language::ZhHans, Language::En, Language::De, Language::Es, Language::Fr, Language::Ja, Language::Ru] {
+        for language in [
+            Language::ZhHans,
+            Language::ZhHant,
+            Language::En,
+            Language::De,
+            Language::Es,
+            Language::Fr,
+            Language::Ja,
+            Language::Ko,
+            Language::Ru,
+        ] {
             let hint = copy_for_language(language).not_configured;
             assert!(hint.contains("nola model manage"));
             assert!(!hint.contains("nola init"));
+        }
+    }
+
+    #[test]
+    fn color_output_respects_tty_no_color_and_dumb_term() {
+        let _guard = crate::store::test_env_lock();
+        let prev_no_color = env::var_os("NO_COLOR");
+        let prev_term = env::var_os("TERM");
+
+        env::remove_var("NO_COLOR");
+        env::set_var("TERM", "xterm-256color");
+        assert!(!onboarding_color_enabled(false));
+        assert!(onboarding_color_enabled(true));
+
+        env::set_var("NO_COLOR", "1");
+        assert!(!onboarding_color_enabled(true));
+
+        env::remove_var("NO_COLOR");
+        env::set_var("TERM", "dumb");
+        assert!(!onboarding_color_enabled(true));
+
+        match prev_no_color {
+            Some(value) => env::set_var("NO_COLOR", value),
+            None => env::remove_var("NO_COLOR"),
+        }
+        match prev_term {
+            Some(value) => env::set_var("TERM", value),
+            None => env::remove_var("TERM"),
         }
     }
 

@@ -159,6 +159,7 @@ struct MacWebSourcesView: View {
             }
         }
         .listStyle(.sidebar)
+        .scrollContentBackground(.hidden)
     }
 
     @ViewBuilder
@@ -521,6 +522,7 @@ private struct MacWebSourceEditor: View {
                 }
             }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
             .disabled(isSaving)
             HStack {
                 Group {

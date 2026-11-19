@@ -65,9 +65,30 @@ impl ModalEditor {
         if key.kind != crossterm::event::KeyEventKind::Release
             && (matches!(key.code, KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End
                 | KeyCode::Up | KeyCode::Down | KeyCode::Backspace | KeyCode::Delete)
-                || key.modifiers == KeyModifiers::CONTROL && matches!(key.code, KeyCode::Char('a' | 'A' | 'e' | 'E' | 'b' | 'B' | 'f' | 'F' | 'u' | 'U' | 'w' | 'W' | 'k' | 'K')))
+                || key.modifiers == KeyModifiers::ALT && matches!(key.code, KeyCode::Char('b' | 'B' | 'f' | 'F'))
+                || key.modifiers == KeyModifiers::CONTROL && matches!(key.code, KeyCode::Char('a' | 'A' | 'e' | 'E' | 'b' | 'B' | 'f' | 'F' | 'j' | 'J' | 'u' | 'U' | 'w' | 'W' | 'k' | 'K')))
         {
             return if crate::composer::edit(&mut self.text, &mut self.cursor, &key) { EditorAction::Redraw } else { EditorAction::Ignore };
+        }
+        if key.kind != crossterm::event::KeyEventKind::Release
+            && key.code == KeyCode::Enter
+            && key.modifiers.intersects(KeyModifiers::SHIFT | KeyModifiers::ALT)
+        {
+            self.insert("\n");
+            return EditorAction::Redraw;
+        }
+        if key.kind == crossterm::event::KeyEventKind::Press
+            && key.code == KeyCode::Enter
+            && key.modifiers.is_empty()
+        {
+            let before = &self.text[..self.cursor];
+            let trailing_backslashes = before.chars().rev().take_while(|ch| *ch == '\\').count();
+            if trailing_backslashes % 2 == 1 {
+                self.cursor -= 1;
+                self.text.remove(self.cursor);
+                self.insert("\n");
+                return EditorAction::Redraw;
+            }
         }
         if key.kind == crossterm::event::KeyEventKind::Repeat
             && !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER | KeyModifiers::HYPER | KeyModifiers::META)
@@ -82,7 +103,7 @@ impl ModalEditor {
             ModalKey::Action => {}
         }
         match key.code {
-            KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => self.insert("\n"),
+            KeyCode::Enter if key.modifiers.intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) => self.insert("\n"),
             KeyCode::Enter if !self.text.trim().is_empty() => return EditorAction::Submit(self.text.trim().to_string()),
             KeyCode::Char(ch) if !ch.is_control() => self.insert(&ch.to_string()),
             _ => return EditorAction::Ignore,
@@ -199,11 +220,22 @@ mod tests {
         editor.apply(Event::Key(KeyEvent::new_with_kind(KeyCode::Right, KeyModifiers::NONE, KeyEventKind::Repeat)));
         assert_eq!(editor.cursor, 7);
         editor.apply(Event::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL)));
+        assert_eq!(editor.cursor, 6);
+        editor.apply(Event::Key(KeyEvent::new(KeyCode::Home, KeyModifiers::CONTROL)));
         assert_eq!(editor.cursor, 0);
         editor.apply(Event::Key(KeyEvent::new_with_kind(KeyCode::Char('x'), KeyModifiers::NONE, KeyEventKind::Repeat)));
         assert!(editor.text.starts_with("xfirst"));
         assert_eq!(editor.apply(Event::Key(KeyEvent::new_with_kind(KeyCode::Enter, KeyModifiers::NONE, KeyEventKind::Repeat))), EditorAction::Ignore);
         assert_eq!(editor.apply(Event::Key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::SUPER))), EditorAction::Ignore);
+
+        let mut multiline = ModalEditor::default();
+        multiline.apply(Event::Paste("line1\\".into()));
+        assert_eq!(multiline.apply(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))), EditorAction::Redraw);
+        assert_eq!(multiline.text, "line1\n");
+        assert_eq!(multiline.apply(Event::Key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL))), EditorAction::Redraw);
+        assert_eq!(multiline.text, "line1\n\n");
+        assert_eq!(multiline.apply(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT))), EditorAction::Redraw);
+        assert_eq!(multiline.text, "line1\n\n\n");
     }
 
     #[test]

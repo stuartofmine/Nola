@@ -14,7 +14,6 @@ import org.junit.Test
 class HostPermissionReviewUiTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
     @Test fun missingDetailsDisableBothAllowChoicesButKeepDenyAvailable() {
-        requireIsolatedProductTestUser(compose.activity)
         var allowed = false
         var denied = false
         compose.setContent { NolaTheme {

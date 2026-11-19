@@ -262,7 +262,7 @@ fun ModelsScreen(
         )
     }
 
-    NolaPage(modifier = Modifier.imePadding()) {
+    NolaPage(modifier = Modifier.imePadding(), scrollKey = sourceTab) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             if (onBack != null) {
                 IconButton(onClick = onBack) {
@@ -924,7 +924,10 @@ internal fun ModelInferenceTestSheet(
     onStop: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()

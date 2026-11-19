@@ -367,7 +367,10 @@ struct IOSConversationInspector: View {
         }
         .sheet(isPresented: $showSchedule) {
             NavigationStack {
-                Form { DatePicker(goalText("goal.wake", "Continue at"), selection: $goalWake, in: Date()...) }
+                Form {
+                    DatePicker(goalText("goal.wake", "Continue at"), selection: $goalWake, in: Date()...)
+                        .listRowBackground(DesignTokens.cardBackgroundColor)
+                }
                     .nolaGroupedSurface()
                     .navigationTitle(goalText("goal.schedule", "Schedule continuation"))
                     .toolbar {

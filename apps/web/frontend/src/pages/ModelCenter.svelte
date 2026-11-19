@@ -180,7 +180,7 @@
                 </div>
             </section>{/if}
             <section class="card runtime-card" aria-label={t($locale, 'local.engine_status')}>
-                <div><h2>{t($locale, 'local.engine_status')}</h2><p class="muted">{runningModel ? t($locale, 'local.running_model', { name: runningModel.displayName || runningModel.name || runningModel.id }) : catalog.binaryAvailable ? t($locale, 'models.engineReady') : t($locale, 'models.engineMissing')}</p></div>
+                <div><div class="row between" data-local-runtime-host><h2>{t($locale, 'local.engine_status')}</h2></div><p class="muted">{runningModel ? t($locale, 'local.running_model', { name: runningModel.displayName || runningModel.name || runningModel.id }) : catalog.binaryAvailable ? t($locale, 'models.engineReady') : t($locale, 'models.engineMissing')}</p></div>
             {#if !catalog.binaryAvailable && catalog.installHint}<details><summary>{t($locale, 'models.configure')}</summary><p>{catalog.installHint}</p></details>{/if}</section>
             <div class="models">
                 {#each catalog.models as model (model.id)}
@@ -240,6 +240,7 @@
     .summary-card, .runtime-card, .storage-card { background: transparent; border: 0; border-radius: 0; padding: 16px 0; gap: 8px; }
     .summary-card, .runtime-card { border-bottom: 1px solid var(--border); }
     .summary-card h2, .runtime-card h2 { font-size: .9375rem; margin: 0 0 6px; }
+    .runtime-card :global(.desktop-native-runtime) { font-size: .8125rem; color: var(--muted); font-weight: 500; }
     .accent { color: var(--content); font-weight: 600; }
     .summary-details, .model-details { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; font-size: .8125rem; }
     .storage-card { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; margin-top: 12px; }

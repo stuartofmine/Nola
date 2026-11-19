@@ -14,6 +14,7 @@ mod application_service_entry;
 #[cfg(target_os = "macos")]
 mod background_scheduler;
 mod builtin_skills;
+mod cli_admin;
 mod code_intelligence_provider;
 mod codebase_memory;
 mod config;

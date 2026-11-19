@@ -92,15 +92,11 @@ class ScheduledActionWorker @AssistedInject constructor(
             return Result.retry()
         }
         outcomes.forEach { (action, outcome) ->
-            if (outcome != ScheduledActionOutcome.NeedsAttention) {
+            if (shouldScheduleNextForOutcome(outcome)) {
                 scheduler.scheduleNext(action)
             }
         }
-        if (outcomes.any { it.second == ScheduledActionOutcome.NeedsAttention }) {
-            Result.failure(workDataOf(KEY_NEEDS_ATTENTION to true))
-        } else {
-            Result.success()
-        }
+        return workResultForScheduledOutcomes(outcomes.map { it.second })
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
         } catch (_: Exception) {
@@ -170,25 +166,19 @@ class ScheduledActionWorker @AssistedInject constructor(
         require(identity.getValue("conversation_id").jsonPrimitive.content == session &&
             identity.getValue("run_id") == binding.getValue("run_id"))
         val kind = terminal.getValue("result").jsonObject.getValue("value").jsonObject.getValue("kind").jsonPrimitive.content
-        val outcome = when (kind) {
-            "answered", "action_completed" -> ScheduledActionOutcome.Success
-            "incomplete", "blocked" -> ScheduledActionOutcome.NeedsAttention
-            "delegation_accepted", "failed", "cancelled" -> ScheduledActionOutcome.AlreadyHandled
-            else -> error("Unknown canonical automation result")
-        }
+        val outcome = outcomeForCanonicalAutomationKind(kind)
         val text = com.nola.domain.projection.CanonicalConversationProjector
             .project(conversationRepo.getProjectionWindow(session, null).projection)
             .filter { it.id == identity.getValue("assistant_message_id").jsonPrimitive.content &&
                 it.role == com.nola.domain.model.ChatRole.assistant }.joinToString("\n\n") { it.text }
-        val existing = scheduledActionRepo.getResults(action.id).firstOrNull { it.id == "scheduled-result:$occurrenceID" }
-            ?: ExecutionResultEntity(id = "scheduled-result:$occurrenceID", actionId = action.id, sourceName = action.name)
-        scheduledActionRepo.recordResult(existing.copy(status = kind, llmSummaryText = text.takeIf(String::isNotBlank)))
+        val existing = scheduledActionRepo.getResults(action.id).firstOrNull { it.id == scheduledExecutionResultId(occurrenceID) }
+        scheduledActionRepo.recordResult(buildReceiptExecutionResult(existing, action, occurrenceID, kind, text))
         if (!delivered) {
             notifyResult(action, text.ifBlank { kind }, outcome == ScheduledActionOutcome.Success,
                 receipt.getValue("notification_id").jsonPrimitive.content)
             applicationRuntime.acknowledgeAutomationNotification(occurrenceId, receipt.getValue("notification_id").jsonPrimitive.content)
         }
-        if (action.scheduleFrequency == "none") scheduledActionRepo.setEnabled(action.id, false)
+        if (shouldAutoDisableAfterReceipt(action.scheduleFrequency)) scheduledActionRepo.setEnabled(action.id, false)
         return outcome
     }
 
@@ -417,12 +407,49 @@ internal fun scheduledActionMimeType(format: String): String = when (format.trim
     else -> "text/plain"
 }
 
-private enum class ScheduledActionOutcome {
+internal enum class ScheduledActionOutcome {
     Success,
     NeedsAttention,
     Deferred,
     AlreadyHandled;
 }
+
+internal fun outcomeForCanonicalAutomationKind(kind: String): ScheduledActionOutcome = when (kind) {
+    "answered", "action_completed" -> ScheduledActionOutcome.Success
+    "incomplete", "blocked" -> ScheduledActionOutcome.NeedsAttention
+    "delegation_accepted", "failed", "cancelled" -> ScheduledActionOutcome.AlreadyHandled
+    else -> error("Unknown canonical automation result")
+}
+
+internal fun shouldScheduleNextForOutcome(outcome: ScheduledActionOutcome): Boolean =
+    outcome != ScheduledActionOutcome.NeedsAttention
+
+internal fun shouldAutoDisableAfterReceipt(scheduleFrequency: String): Boolean =
+    scheduleFrequency == "none"
+
+internal fun workResultForScheduledOutcomes(
+    outcomes: List<ScheduledActionOutcome>,
+): androidx.work.ListenableWorker.Result = when {
+    outcomes.any { it == ScheduledActionOutcome.Deferred } -> androidx.work.ListenableWorker.Result.retry()
+    outcomes.any { it == ScheduledActionOutcome.NeedsAttention } -> androidx.work.ListenableWorker.Result.failure(
+        workDataOf(ScheduledActionWorker.KEY_NEEDS_ATTENTION to true)
+    )
+    else -> androidx.work.ListenableWorker.Result.success()
+}
+
+internal fun scheduledExecutionResultId(occurrenceId: String): String = "scheduled-result:$occurrenceId"
+
+internal fun buildReceiptExecutionResult(
+    existing: ExecutionResultEntity?,
+    action: ScheduledActionEntity,
+    occurrenceId: String,
+    kind: String,
+    summaryText: String,
+): ExecutionResultEntity = (existing ?: ExecutionResultEntity(
+    id = scheduledExecutionResultId(occurrenceId),
+    actionId = action.id,
+    sourceName = action.name,
+)).copy(status = kind, llmSummaryText = summaryText.takeIf(String::isNotBlank))
 
 private class ScheduledActionPermissionSuspended(
     val request: AndroidAgentPermissionRequest,

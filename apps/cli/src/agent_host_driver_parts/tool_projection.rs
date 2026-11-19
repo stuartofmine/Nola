@@ -2951,9 +2951,15 @@ mod model_text_presentation_gate_tests {
                 "missing protocol entry {required}"
             );
         }
+        let expected_initial = INITIAL_MODEL_TOOL_IDS
+            .iter()
+            .copied()
+            .filter(|&id| id != nola_domain::generative_ui_tool::UI_TOOL_ID)
+            .map(str::to_string)
+            .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(
-            names.len(),
-            INITIAL_MODEL_TOOL_IDS.len(),
+            names,
+            expected_initial,
             "the first request must stay bounded to the declared entry surface"
         );
         for deferred in [

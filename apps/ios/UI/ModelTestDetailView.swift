@@ -70,7 +70,7 @@ struct ModelTestDetailViewNew: View {
                     }
                 }
                 .padding(DesignTokens.spacing_md)
-                .background(Color(.systemBackground))
+                .background(DesignTokens.cardBackgroundColor)
                 .overlay(
                     Rectangle()
                         .frame(height: 1)
@@ -141,7 +141,7 @@ struct ModelTestDetailViewNew: View {
                             }
                         }
                         .padding(DesignTokens.spacing_md)
-                        .background(Color(.systemGray6))
+                        .background(DesignTokens.secondaryBackgroundColor)
                         .overlay(
                             RoundedRectangle(cornerRadius: DesignTokens.radius_md)
                                 .stroke(DesignTokens.borderColor, lineWidth: 1)
@@ -203,7 +203,7 @@ struct ModelTestDetailViewNew: View {
                             }
                         }
                         .padding(DesignTokens.spacing_md)
-                        .background(Color(.systemGray6))
+                        .background(DesignTokens.secondaryBackgroundColor)
                         .overlay(
                             RoundedRectangle(cornerRadius: DesignTokens.radius_md)
                                 .stroke(DesignTokens.borderColor, lineWidth: 1)
@@ -248,7 +248,7 @@ struct ModelTestDetailViewNew: View {
                                 }
                                 .frame(height: 150)
                                 .frame(maxWidth: .infinity)
-                                .background(Color(.systemGray6))
+                                .background(DesignTokens.secondaryBackgroundColor)
                                 .overlay(
                                     RoundedRectangle(cornerRadius: DesignTokens.radius_sm)
                                         .stroke(DesignTokens.borderColor, lineWidth: 1)
@@ -257,7 +257,7 @@ struct ModelTestDetailViewNew: View {
                             }
                         }
                         .padding(DesignTokens.spacing_md)
-                        .background(Color(.systemGray6))
+                        .background(DesignTokens.secondaryBackgroundColor)
                         .overlay(
                             RoundedRectangle(cornerRadius: DesignTokens.radius_md)
                                 .stroke(DesignTokens.borderColor, lineWidth: 1)
@@ -303,7 +303,7 @@ struct ModelTestDetailViewNew: View {
                         .disabled(promptText.isEmpty && !isRunning)
                     }
                     .padding(DesignTokens.spacing_md)
-                    .background(Color(.systemBackground))
+                    .background(DesignTokens.cardBackgroundColor)
                     .overlay(
                         Rectangle()
                             .frame(height: 1)
@@ -347,6 +347,7 @@ struct ModelTestDetailViewNew: View {
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
+        .background(DesignTokens.backgroundColor.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
         .sheet(isPresented: $showSettings) {
             VStack(spacing: DesignTokens.spacing_md) {
@@ -385,6 +386,7 @@ struct ModelTestDetailViewNew: View {
                 
                 Spacer()
             }
+            .background(DesignTokens.backgroundColor)
         }
     }
     

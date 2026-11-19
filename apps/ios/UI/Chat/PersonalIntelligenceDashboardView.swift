@@ -604,7 +604,7 @@ private enum PersonalCapabilityKind: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-private enum PersonalCapabilityEditorItem: Identifiable {
+enum PersonalCapabilityEditorItem: Identifiable {
     case skill(Int?, UserUploadedContextItem)
     case mcp(Int?, UserMCPServer)
 
@@ -764,7 +764,7 @@ struct PersonalCapabilitiesLibraryView: View {
             .padding(.horizontal, 18)
             .padding(.vertical, 16)
         }
-        .background(DesignTokens.backgroundColor)
+        .background(NolaPageBackground())
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("intelligence.capabilities.screen")
         .navigationTitle(piText("personal.capabilities.title", "Skills & MCP"))
@@ -818,7 +818,7 @@ struct PersonalCapabilitiesLibraryView: View {
 
     private var capabilitySearchField: some View {
         TextField(piText("personal.capabilities.search", "Search capabilities"), text: $query)
-            .textFieldStyle(.roundedBorder)
+            .nolaInputFieldSurface()
             .frame(maxWidth: .infinity)
             .accessibilityIdentifier("intelligence.capabilities.search")
     }
@@ -1162,7 +1162,7 @@ private struct PersonalCapabilityCard: View {
     }
 }
 
-private struct PersonalCapabilityEditorView: View {
+struct PersonalCapabilityEditorView: View {
     @Environment(\.dismiss) private var dismiss
     let item: PersonalCapabilityEditorItem
     let errorMessage: String?
@@ -1236,6 +1236,8 @@ private struct PersonalCapabilityEditorView: View {
                             .accessibilityIdentifier("intelligence.capabilities.editor.instructions")
                             .font(.body.monospaced())
                             .frame(minHeight: 260)
+                            .scrollContentBackground(.hidden)
+                            .background(DesignTokens.cardBackgroundColor)
                         Text("\(primary.count.formatted()) \(piText("personal.capabilities.characters", "characters"))")
                             .font(.caption)
                             .foregroundStyle(.secondary)

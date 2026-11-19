@@ -21,6 +21,7 @@ struct ScheduledActionsOptionsView: View {
     var body: some View {
         NavigationStack {
             List {
+                Group {
                 Section {
                     VStack(alignment: .leading, spacing: 10) {
                         if backgroundRefreshStatus != .available {
@@ -71,6 +72,9 @@ struct ScheduledActionsOptionsView: View {
                 } header: {
                     Text(L10n.scheduledActionsAdvancedOptionsTitle)
                 }
+                }
+                .listRowBackground(DesignTokens.cardBackgroundColor)
+                .listRowSeparatorTint(DesignTokens.borderColor)
             }
             .nolaGroupedSurface()
             .navigationTitle(L10n.scheduledActionsOptions)

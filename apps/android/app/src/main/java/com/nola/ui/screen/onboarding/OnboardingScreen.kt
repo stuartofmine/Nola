@@ -77,6 +77,17 @@ private const val GuideStepCount = 4
 @Composable
 fun OnboardingScreen(viewModel: OnboardingViewModel = hiltViewModel()) {
     val uiState by viewModel.uiState.collectAsState()
+    OnboardingContent(
+        uiState = uiState,
+        onComplete = viewModel::completeOnboarding,
+    )
+}
+
+@Composable
+internal fun OnboardingContent(
+    uiState: OnboardingUiState,
+    onComplete: () -> Unit,
+) {
     var step by rememberSaveable { mutableIntStateOf(0) }
     BackHandler(enabled = step > 0 && !uiState.isCompleting) { step-- }
 
@@ -101,7 +112,7 @@ fun OnboardingScreen(viewModel: OnboardingViewModel = hiltViewModel()) {
         ) {
             GuideHeader(step)
             androidx.compose.material3.TextButton(
-                onClick = { viewModel.completeOnboarding() },
+                onClick = onComplete,
                 enabled = !uiState.isCompleting,
             ) { Text(stringResource(R.string.onboarding_guide_action_later)) }
 
@@ -181,7 +192,7 @@ fun OnboardingScreen(viewModel: OnboardingViewModel = hiltViewModel()) {
                         if (step < GuideStepCount - 1) {
                             step++
                         } else {
-                            viewModel.completeOnboarding()
+                            onComplete()
                         }
                     },
                     modifier = Modifier

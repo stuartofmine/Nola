@@ -8,6 +8,7 @@ import androidx.compose.animation.animateColorAsState
 import com.nola.ui.components.rememberReduceMotionEnabled
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.Arrangement
@@ -930,7 +931,8 @@ private fun CapabilityTile(
         modifier = modifier.heightIn(min = 132.dp),
         shape = RoundedCornerShape(18.dp),
         color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 1.dp
+        tonalElevation = 0.dp,
+        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(
             modifier = Modifier.padding(14.dp),

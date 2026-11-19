@@ -558,7 +558,7 @@ private fun NotificationBellButton(
                     .align(Alignment.TopEnd)
                     .size(18.dp)
                     .clip(CircleShape)
-                    .background(Color.Red)
+                    .background(MaterialTheme.colorScheme.error)
                     .border(1.5.dp, MaterialTheme.colorScheme.surface, CircleShape),
                 contentAlignment = Alignment.Center
             ) {
@@ -566,7 +566,7 @@ private fun NotificationBellButton(
                     text = if (unreadCount > 9) "9+" else unreadCount.toString(),
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Bold,
-                    color = Color.White
+                    color = MaterialTheme.colorScheme.onError
                 )
             }
         }

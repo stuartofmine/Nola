@@ -74,7 +74,7 @@ class ChatContextPreparer @Inject constructor(
             sessionMemory = conversation.sessionMemory,
             compactedEntries = conversation.compactedMemoryEntries,
             selectedDataSourceIds = conversation.dataSourceIds,
-            disclosesToCloud = request.route != AndroidContextRoute.Local,
+            disclosesToCloud = disclosesContextToCloud(request.route),
         )
         val personalContext = PersonalIntelligenceCore.recallContext(request.currentUserText)
         val healthSummary = if (isHealthDataSourceSelected(conversation.dataSourceIds)) {
@@ -83,7 +83,7 @@ class ChatContextPreparer @Inject constructor(
             null
         }
         val payload = extractConversationPayload(request.messages)
-        val systemPrompt = if (request.route != AndroidContextRoute.Local) {
+        val systemPrompt = if (shouldIncludeSystemPrompt(request.route)) {
             com.nola.core.CoreAgentPromptComposer.compose(
                 com.nola.core.AndroidSystemPrompt.agentFragments(
                     context = context,
@@ -107,17 +107,7 @@ class ChatContextPreparer @Inject constructor(
             uploadedDocuments = request.uploadedDocuments,
             attachments = payload.attachments,
         )
-        val responseBasis = buildSet {
-            val kinds = components.mapTo(mutableSetOf()) { it.kind }
-            if ("attachment" in kinds) add("file")
-            if (kinds.any { it in setOf("memory", "user_preference", "personal_intelligence") }) {
-                add("memory")
-            }
-            if (kinds.any { it in setOf("document", "mcp", "web_retrieval", "platform_data") }) {
-                add("knowledge")
-            }
-            if ("skill" in kinds) add("skills")
-        }
+        val responseBasis = deriveResponseBasis(components)
         val prepared = archiveWriter.prepare(
             conversationId = conversation.id, projectMessages = { extractConversationPayload(it).messages }, request = AndroidContextRequest(
                 route = request.route,
@@ -334,6 +324,24 @@ internal fun assembleChatContextComponents(
 internal fun nonSystemTurnContextComponents(
     components: List<AgentCoreContextComponent>,
 ): List<AgentCoreContextComponent> = components.filter { it.kind != "system" }
+
+internal fun shouldIncludeSystemPrompt(route: AndroidContextRoute): Boolean =
+    route != AndroidContextRoute.Local
+
+internal fun disclosesContextToCloud(route: AndroidContextRoute): Boolean =
+    route != AndroidContextRoute.Local
+
+internal fun deriveResponseBasis(components: List<AgentCoreContextComponent>): Set<String> = buildSet {
+    val kinds = components.mapTo(mutableSetOf()) { it.kind }
+    if ("attachment" in kinds) add("file")
+    if (kinds.any { it in setOf("memory", "user_preference", "personal_intelligence") }) {
+        add("memory")
+    }
+    if (kinds.any { it in setOf("document", "mcp", "web_retrieval", "platform_data") }) {
+        add("knowledge")
+    }
+    if ("skill" in kinds) add("skills")
+}
 
 private fun contextComponent(
     kind: String,

@@ -238,12 +238,18 @@ fn ensure_remote_profile(
     Ok(profile)
 }
 
-/// Explicit initialization only. Existing current-vault credentials are never replaced.
+/// Initialize or update a stored endpoint credential when an explicit non-empty API key is supplied.
 fn initialize_credential(store: &NolaStore, endpoint_id: &str, route: &str, api_key: &str) -> Result<(), String> {
     #[cfg(any(unix, windows))]
     {
         let mut vault = crate::host_credentials::HostCredentialVault::open(store.path())?;
-        if vault.record(endpoint_id)?.is_none() {
+        if let Some(existing) = vault.record(endpoint_id)? {
+            if !api_key.is_empty()
+                && (existing.secret.as_deref() != Some(api_key) || existing.identity != route)
+            {
+                vault.write(endpoint_id, route, existing.revision, Some(api_key), || Ok(()))?;
+            }
+        } else {
             vault.write(endpoint_id, route, 0,
                 (!api_key.is_empty()).then_some(api_key), || Ok(()))?;
         }
@@ -892,5 +898,38 @@ mod tests {
         assert_eq!(config.api_key, "secret-fixture-key");
         config.endpoint = "https://other.invalid/v1".into();
         assert!(restore(&mut config, serde_json::from_str(&encoded).unwrap(), &store).is_err());
+    }
+
+    #[test]
+    fn initialize_credential_updates_differing_non_empty_api_key_and_preserves_on_empty() {
+        let _environment = crate::store::test_env_lock();
+        let directory = tempfile::tempdir().unwrap();
+        let store = NolaStore::open(&directory.path().join("credentials.sqlite")).unwrap();
+        let _ = store.model_profiles().unwrap();
+        let endpoint_id = "ep-test-rotate";
+        let route = "chat_completions\nhttps://fixture.invalid/v1";
+
+        initialize_credential(&store, endpoint_id, route, "first-secret").unwrap();
+        let vault = crate::host_credentials::HostCredentialVault::open(store.path()).unwrap();
+        let first = vault.record(endpoint_id).unwrap().unwrap();
+        assert_eq!(first.secret.as_deref(), Some("first-secret"));
+        assert_eq!(first.revision, 1);
+
+        // Passing the same key performs zero unnecessary writes.
+        initialize_credential(&store, endpoint_id, route, "first-secret").unwrap();
+        let unchanged = vault.record(endpoint_id).unwrap().unwrap();
+        assert_eq!(unchanged.revision, 1);
+
+        // Passing an empty key preserves the stored secret.
+        initialize_credential(&store, endpoint_id, route, "").unwrap();
+        let preserved = vault.record(endpoint_id).unwrap().unwrap();
+        assert_eq!(preserved.secret.as_deref(), Some("first-secret"));
+        assert_eq!(preserved.revision, 1);
+
+        // Passing a different non-empty API key updates the vault.
+        initialize_credential(&store, endpoint_id, route, "second-secret").unwrap();
+        let updated = vault.record(endpoint_id).unwrap().unwrap();
+        assert_eq!(updated.secret.as_deref(), Some("second-secret"));
+        assert_eq!(updated.revision, 2);
     }
 }

@@ -10,11 +10,13 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -85,6 +87,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -759,7 +762,8 @@ private fun CustomDataSourceCard(
         modifier = Modifier.testTag("data.sources.source.${source.id}"),
         shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 1.dp
+        tonalElevation = 0.dp,
+        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
             Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1298,7 +1302,13 @@ private fun DataSourceCard(
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null
 ) {
-    Surface(modifier = modifier, shape = RoundedCornerShape(19.dp), color = MaterialTheme.colorScheme.surface, tonalElevation = 1.dp) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(19.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 0.dp,
+        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Surface(
@@ -1312,31 +1322,64 @@ private fun DataSourceCard(
                     Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                FlowRow(
-                    modifier = Modifier.weight(1f),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    SourceStatusBadge(state)
-                    accessPolicy?.let { policy ->
-                        SourceMetadataPill(policyLabel(policy))
-                    }
-                }
-                if (actionLabel != null && onAction != null) {
-                    TextButton(
-                        onClick = onAction,
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+            BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                val stackAction = actionLabel != null && onAction != null &&
+                    (maxWidth < 300.dp || LocalDensity.current.fontScale >= 1.3f)
+                if (stackAction) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        if (state == SourceVisualState.Updating) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                            Spacer(Modifier.size(7.dp))
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            SourceStatusBadge(state)
+                            accessPolicy?.let { policy ->
+                                SourceMetadataPill(policyLabel(policy))
+                            }
                         }
-                        Text(actionLabel, maxLines = 1, softWrap = false)
+                        TextButton(
+                            onClick = onAction!!,
+                            modifier = Modifier.align(Alignment.End),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            if (state == SourceVisualState.Updating) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.size(7.dp))
+                            }
+                            Text(actionLabel!!, maxLines = 1, softWrap = false)
+                        }
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FlowRow(
+                            modifier = Modifier.weight(1f),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            SourceStatusBadge(state)
+                            accessPolicy?.let { policy ->
+                                SourceMetadataPill(policyLabel(policy))
+                            }
+                        }
+                        if (actionLabel != null && onAction != null) {
+                            TextButton(
+                                onClick = onAction,
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                if (state == SourceVisualState.Updating) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                    Spacer(Modifier.size(7.dp))
+                                }
+                                Text(actionLabel, maxLines = 1, softWrap = false)
+                            }
+                        }
                     }
                 }
             }
@@ -1370,7 +1413,7 @@ private fun SourceStatusBadge(state: SourceVisualState) {
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Icon(icon, contentDescription = null, modifier = Modifier.size(12.dp), tint = tint)
-            Text(label, style = MaterialTheme.typography.labelSmall, color = tint, maxLines = 1)
+            Text(label, style = MaterialTheme.typography.labelSmall, color = tint, maxLines = 1, softWrap = false)
         }
     }
 }

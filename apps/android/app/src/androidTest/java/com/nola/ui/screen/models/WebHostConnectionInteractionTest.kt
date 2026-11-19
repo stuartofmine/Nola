@@ -10,7 +10,6 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.nola.R
 import com.nola.ui.theme.NolaTheme
-import com.nola.ui.screen.chat.requireIsolatedProductTestUser
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -21,7 +20,6 @@ class WebHostConnectionInteractionTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
 
     @Test fun pasteRequiresExplicitConnectionAndFailedCheckCanBeRetried() {
-        requireIsolatedProductTestUser(compose.activity)
         val context = compose.activity
         var calls = 0
         var dismissed = false
@@ -59,7 +57,6 @@ class WebHostConnectionInteractionTest {
     }
 
     @Test fun cancelledCheckIgnoresLateSuccessAndKeepsDraft() {
-        requireIsolatedProductTestUser(compose.activity)
         val context = compose.activity
         var dismissed = false
         var cancelled = 0

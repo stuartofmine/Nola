@@ -5,6 +5,7 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -60,6 +61,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.nola.R
 import com.nola.core.PersonalIntelligenceCore
+import com.nola.ui.components.NolaColors
 import com.nola.ui.components.NolaMotion
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -68,9 +70,6 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-
-private val IntelligenceAccent = Color(0xFF14988C)
-private val IntelligenceBlue = Color(0xFF3C73DD)
 
 @Composable
 fun PersonalIntelligenceDialog(onDismiss: () -> Unit) {
@@ -107,22 +106,14 @@ fun PersonalIntelligenceDialog(onDismiss: () -> Unit) {
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             shape = RoundedCornerShape(30.dp),
             color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 6.dp,
+            tonalElevation = 0.dp,
+            border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
             shadowElevation = 18.dp
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(
-                                IntelligenceAccent.copy(alpha = 0.075f),
-                                MaterialTheme.colorScheme.surface,
-                                MaterialTheme.colorScheme.surface,
-                                IntelligenceBlue.copy(alpha = 0.035f)
-                            )
-                        )
-                    )
+                    .background(MaterialTheme.colorScheme.surface)
             ) {
                 IntelligenceTopBar(
                     title = stringResource(R.string.personal_intelligence_title),
@@ -288,8 +279,9 @@ private fun IntelligenceHero(
 ) {
     Surface(
         shape = RoundedCornerShape(26.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.86f),
-        tonalElevation = 2.dp
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        tonalElevation = 0.dp,
+        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Row(verticalAlignment = Alignment.Top) {
@@ -297,20 +289,20 @@ private fun IntelligenceHero(
                     modifier = Modifier
                         .size(48.dp)
                         .clip(CircleShape)
-                        .background(Brush.linearGradient(listOf(IntelligenceAccent, IntelligenceBlue))),
+                        .background(MaterialTheme.colorScheme.primary),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = Color.White)
+                    Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary)
                 }
                 Spacer(Modifier.width(13.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(7.dp).clip(CircleShape).background(IntelligenceAccent))
+                        Box(Modifier.size(7.dp).clip(CircleShape).background(NolaColors.success))
                         Spacer(Modifier.width(7.dp))
                         Text(
                             stringResource(R.string.personal_intelligence_learning_status),
                             style = MaterialTheme.typography.labelMedium,
-                            color = IntelligenceAccent,
+                            color = NolaColors.success,
                             fontWeight = FontWeight.SemiBold
                         )
                     }
@@ -386,7 +378,7 @@ private fun EmptyMemoryState(isAll: Boolean) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(9.dp)
         ) {
-            Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = IntelligenceAccent)
+            Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
             Text(
                 stringResource(if (isAll) R.string.personal_intelligence_empty_all else R.string.personal_intelligence_empty_filter),
                 style = MaterialTheme.typography.titleSmall,
@@ -454,10 +446,10 @@ private fun IntelligenceStrategyCard(strategy: JsonObject) {
     Surface(shape = RoundedCornerShape(19.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f)) {
         Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(
-                modifier = Modifier.size(38.dp).clip(CircleShape).background(IntelligenceBlue.copy(alpha = 0.11f)),
+                modifier = Modifier.size(38.dp).clip(CircleShape).background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.11f)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Filled.Storage, contentDescription = null, tint = IntelligenceBlue, modifier = Modifier.size(19.dp))
+                Icon(Icons.Filled.Storage, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(19.dp))
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
@@ -469,7 +461,7 @@ private fun IntelligenceStrategyCard(strategy: JsonObject) {
                 )
             }
             Column(horizontalAlignment = Alignment.End) {
-                Text("${(score * 100).toInt()}", color = IntelligenceBlue, fontWeight = FontWeight.Bold)
+                Text("${(score * 100).toInt()}", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                 Text(stringResource(R.string.personal_intelligence_fit), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -478,7 +470,7 @@ private fun IntelligenceStrategyCard(strategy: JsonObject) {
 
 @Composable
 private fun HowItWorksCard() {
-    Surface(shape = RoundedCornerShape(22.dp), color = IntelligenceAccent.copy(alpha = 0.065f)) {
+    Surface(shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surfaceContainer) {
         Column(Modifier.padding(17.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
             IntelligenceSectionHeader(
                 stringResource(R.string.personal_intelligence_how_title),
@@ -494,7 +486,7 @@ private fun HowItWorksCard() {
 @Composable
 private fun ExplanationRow(title: String, detail: String) {
     Row(verticalAlignment = Alignment.Top) {
-        Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = IntelligenceAccent, modifier = Modifier.size(19.dp))
+        Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = NolaColors.success, modifier = Modifier.size(19.dp))
         Spacer(Modifier.width(10.dp))
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(title, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
@@ -529,10 +521,11 @@ private fun memoryKind(raw: String?): String = when (raw) {
     else -> stringResource(R.string.personal_intelligence_kind_fact)
 }
 
+@Composable
 private fun memoryColor(raw: String?): Color = when (raw) {
-    "procedural" -> Color(0xFFD77A17)
-    "episodic" -> IntelligenceBlue
-    else -> IntelligenceAccent
+    "procedural" -> MaterialTheme.colorScheme.tertiary
+    "episodic" -> MaterialTheme.colorScheme.secondary
+    else -> NolaColors.success
 }
 
 @Composable

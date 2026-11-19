@@ -32,7 +32,9 @@ MAC_LOCALES = (
     "zh-Hant",
 )
 IOS_LOCALES = ("de", "es", "fr", "ja", "ru", "zh-Hans")
+CLI_LOCALES = ("en", "zh-Hans", "zh-Hant", "de", "es", "fr", "ja", "ko", "ru")
 WEB_LOCALES = ("zh-Hans", "en", "de", "es", "fr", "ja", "ru")
+WINDOWS_LOCALES = ("en", "zh-Hans", "zh-Hant", "ja", "ko", "de", "es", "fr", "ru")
 
 SWIFT_KEY_PATTERNS = (
     re.compile(r'String\(localized:\s*"([^"\\]+)"(?!\s*\+)'),
@@ -531,21 +533,30 @@ def audit_cli(quality: bool) -> list[str]:
     english = rust_match_strings(source, "en")
     for missing in sorted(variants - english.keys()):
         failures.append(f"cli: en: missing Message::{missing}")
-    for locale in ("zh_hans", "de", "es", "fr", "ja", "ru"):
-        values = rust_match_strings(source, locale)
+    for locale in CLI_LOCALES:
+        if locale == "en":
+            continue
+        function_name = locale.lower().replace("-", "_")
+        values = rust_match_strings(source, function_name)
         for missing in sorted(variants - values.keys()):
-            failures.append(f"cli: {locale}: missing Message::{missing}")
+            failures.append(f"cli: {function_name}: missing Message::{missing}")
         if re.search(
-            rf"fn {locale}\(message: Message\).*?_\s*=>\s*en\(message\)",
+            rf"fn {function_name}\(message: Message\).*?_\s*=>\s*en\(message\)",
             source,
             re.DOTALL,
         ):
-            failures.append(f"cli: {locale}: English fallback is not allowed")
+            failures.append(f"cli: {function_name}: English fallback is not allowed")
         if quality:
             for key in sorted(variants & values.keys() & english.keys()):
-                quality_locale = "zh-Hans" if locale == "zh_hans" else locale
-                if obviously_untranslated(english[key], values[key], quality_locale):
-                    failures.append(f"cli: {locale}: Message::{key}: untranslated")
+                if obviously_untranslated(english[key], values[key], locale):
+                    failures.append(f"cli: {function_name}: Message::{key}: untranslated")
+                if locale == "zh-Hant":
+                    for marker in SIMPLIFIED_CHINESE_MARKERS:
+                        if marker in values[key]:
+                            failures.append(
+                                f"cli: {function_name}: Message::{key}: contains simplified Chinese marker {marker!r}"
+                            )
+                            break
     return failures
 
 
@@ -630,11 +641,97 @@ def audit_web(quality: bool) -> list[str]:
         return [f"web: current runtime catalog/source audit unavailable: {type(error).__name__}: {error}"]
 
 
+def windows_runtime_snapshot() -> dict:
+    i18n_path = ROOT / "apps/windows/src/i18n.ts"
+    script = (
+        "import { pathToFileURL } from 'node:url';"
+        "const mod = await import(pathToFileURL(process.argv[1]).href);"
+        "const locales = ['en','zh-Hans','zh-Hant','ja','ko','de','es','fr','ru'];"
+        "const aliases = {'en-US':'en','zh-CN':'zh-Hans','zh-TW':'zh-Hant','zh-HK':'zh-Hant','ja-JP':'ja','ko-KR':'ko','de-DE':'de','es-ES':'es','fr-FR':'fr','ru-RU':'ru'};"
+        "const catalogs = Object.fromEntries(locales.map(l => [l, mod.stringsFor(l)]));"
+        "const resolvedAliases = Object.fromEntries(Object.keys(aliases).map(a => [a, mod.stringsFor(a)]));"
+        "process.stdout.write(JSON.stringify({ catalogs, aliases: resolvedAliases, expectedAliases: aliases }));"
+    )
+    result = subprocess.run(
+        ["node", "--experimental-strip-types", "--input-type=module", "-e", script, str(i18n_path)],
+        capture_output=True, text=True, check=True, timeout=60,
+    )
+    return json.loads(result.stdout)
+
+
+def audit_windows(quality: bool = False) -> list[str]:
+    windows_src = ROOT / "apps/windows/src"
+    i18n_path = windows_src / "i18n.ts"
+    if not i18n_path.exists():
+        return ["windows: missing apps/windows/src/i18n.ts"]
+
+    source = i18n_path.read_text(encoding="utf-8")
+    type_match = re.search(r"export type DesktopStrings\s*=\s*\{(.*?)\n\};", source, re.DOTALL)
+    if type_match is None:
+        return ["windows: DesktopStrings type definition not found"]
+    declared_keys = set(re.findall(r"^\s*([A-Za-z][A-Za-z0-9_]*)\s*:\s*string\s*;", type_match.group(1), re.MULTILINE))
+    if not declared_keys:
+        return ["windows: DesktopStrings has no string keys"]
+
+    failures: list[str] = []
+    for ts_file in sorted(windows_src.glob("*.ts")):
+        content = ts_file.read_text(encoding="utf-8")
+        for used_key in re.findall(r"\bstrings\.([A-Za-z][A-Za-z0-9_]*)\b", content):
+            if used_key not in declared_keys:
+                failures.append(f"windows: {ts_file.name}: unknown DesktopStrings key strings.{used_key}")
+
+    try:
+        snapshot = windows_runtime_snapshot()
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError, KeyError) as error:
+        return failures + [f"windows: runtime i18n audit unavailable: {type(error).__name__}: {error}"]
+
+    catalogs = snapshot.get("catalogs", {})
+    english = catalogs.get("en")
+    if not isinstance(english, dict):
+        return failures + ["windows: missing en catalog"]
+
+    for locale in WINDOWS_LOCALES:
+        values = catalogs.get(locale)
+        if not isinstance(values, dict):
+            failures.append(f"windows: missing {locale} catalog")
+            continue
+        for missing in sorted(declared_keys - values.keys()):
+            failures.append(f"windows: {missing}: missing {locale}")
+        for extra in sorted(values.keys() - declared_keys):
+            failures.append(f"windows: {extra}: unexpected key in {locale}")
+        for key in sorted(declared_keys & values.keys()):
+            val = values[key]
+            if not isinstance(val, str) or not val.strip():
+                failures.append(f"windows: {key}: empty value in {locale}")
+                continue
+            if locale == "zh-Hant" and any(marker in val for marker in SIMPLIFIED_CHINESE_MARKERS):
+                failures.append(f"windows: {key}: simplified Chinese leaked into zh-Hant")
+            if quality and locale != "en" and isinstance(english.get(key), str):
+                if obviously_untranslated(english[key], val, locale):
+                    failures.append(f"windows: {key}: untranslated {locale}")
+        if locale != "en" and values == english:
+            failures.append(f"windows: {locale}: fell back to English catalog")
+        elif locale != "en":
+            non_brand = [k for k in declared_keys if k != "appName"]
+            same_count = sum(1 for k in non_brand if values.get(k) == english.get(k))
+            if non_brand and same_count > 0:
+                untranslated_keys = ", ".join(sorted(k for k in non_brand if values.get(k) == english.get(k)))
+                failures.append(f"windows: {locale}: keys identical to English ({untranslated_keys})")
+
+    aliases = snapshot.get("aliases", {})
+    expected_aliases = snapshot.get("expectedAliases", {})
+    for alias, target_locale in expected_aliases.items():
+        if aliases.get(alias) != catalogs.get(target_locale):
+            failures.append(f"windows: locale alias {alias!r} did not resolve to {target_locale}")
+
+    return failures
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--platform",
-        choices=("all", "mac", "ios", "android", "cli", "web"),
+        choices=("all", "mac", "ios", "android", "cli", "web", "windows"),
         default="all",
     )
     parser.add_argument("--max-errors", type=int, default=200)
@@ -658,6 +755,8 @@ def main() -> int:
         failures.extend(audit_cli(args.quality))
     if args.platform in {"all", "web"}:
         failures.extend(audit_web(args.quality))
+    if args.platform in {"all", "windows"}:
+        failures.extend(audit_windows(args.quality))
 
     if failures:
         print(f"localization coverage failed: {len(failures)} issue(s)", file=sys.stderr)

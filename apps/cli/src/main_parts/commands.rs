@@ -323,6 +323,23 @@ fn select_interactive_model(config: &mut Config, model_id: &str) -> Result<(), S
         terminal_notice!("  {} {}", tr(Message::InteractiveModelStatusPrefix), config.model);
         return Ok(());
     }
+    if !local_models::contains_model(model_id) {
+        if let Ok(profiles) =
+            crate::store::NolaStore::open_default().and_then(|store| store.model_profiles())
+        {
+            let needle = model_id.trim();
+            if let Some(matched) = profiles.into_iter().find(|p| {
+                p.enabled
+                    && p.deleted_at_ms.is_none()
+                    && p.runtime == "remote"
+                    && (p.id == needle || p.model_name.eq_ignore_ascii_case(needle))
+            }) {
+                crate::conversation_invocation::select_profile(config, &matched.id)?;
+                terminal_notice!("  {} {}", tr(Message::InteractiveModelStatusPrefix), config.model);
+                return Ok(());
+            }
+        }
+    }
     if config.runtime.model_binding.is_some() && !local_models::contains_model(model_id) {
         return Err("Use /model to select a configured connection and model".into());
     }
@@ -821,12 +838,12 @@ fn local_model_cli_text(key: LocalModelCliText) -> &'static str {
     };
     match current_language() {
         Language::ZhHans => values[0],
-        Language::En => values[1],
         Language::De => values[2],
         Language::Es => values[3],
         Language::Fr => values[4],
         Language::Ja => values[5],
         Language::Ru => values[6],
+        Language::En | _ => values[1],
     }
 }
 
@@ -841,7 +858,17 @@ fn interactive_select_model(config: &Config) -> Result<Option<String>, String> {
     let labels: Vec<String> = models.iter().map(|model| interactive_model_picker_label(model, config)).collect();
     let mut selected = models
         .iter()
-        .position(|value| value == &preferred_model)
+        .enumerate()
+        .position(|(idx, value)| {
+            value == &preferred_model
+                || config
+                    .cli_profile_selection
+                    .as_ref()
+                    .is_some_and(|(id, _)| value == &format!("configured:{id}"))
+                || labels
+                    .get(idx)
+                    .is_some_and(|label| label.starts_with(&format!("{} · ", config.model)))
+        })
         .unwrap_or(0);
 
     let _modal = crate::interaction::acquire_terminal_modal();
@@ -954,10 +981,28 @@ fn model_picker_window_is_bounded_and_keeps_selection_visible() {
 }
 
 fn interactive_model_picker_label(model_id: &str, config: &Config) -> String {
+    let active_suffix = match current_language() {
+        Language::ZhHans => "当前",
+        _ => "current",
+    };
     if let Some(id) = model_id.strip_prefix("configured:") {
         if let Ok(Some(profile)) = crate::store::NolaStore::open_default().and_then(|store| store.model_profile(id)) {
             let source: serde_json::Value = serde_json::from_str(&profile.source_json).unwrap_or_default();
-            return format!("{} · {}", profile.model_name, source["connectionID"].as_str().unwrap_or(id));
+            let provider = source["connectionID"]
+                .as_str()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or(profile.provider.as_str());
+            let is_current = config
+                .cli_profile_selection
+                .as_ref()
+                .is_some_and(|(selected_id, _)| selected_id == id)
+                || config.model == profile.model_name;
+            let current = if is_current {
+                format!(" ({active_suffix})")
+            } else {
+                String::new()
+            };
+            return format!("{} · {}{current}", profile.model_name, provider);
         }
     }
     if let Some(profile) = local_models::profile(model_id) {
@@ -1310,14 +1355,15 @@ fn push_picker_border(
 
 fn push_picker_line(out: &mut String, text: &str, row_color: &str, color: bool, selected: bool) {
     if color {
-        out.push_str("\x1b[2;38;5;245m│\x1b[0m ");
+        out.push_str("\x1b[2;39m│\x1b[0m ");
         if selected {
-            out.push_str("\x1b[48;5;24m");
+            out.push_str("\x1b[7;1m");
+        } else {
+            out.push_str(row_color);
         }
-        out.push_str(row_color);
         out.push_str(text);
         out.push_str("\x1b[0m");
-        out.push_str(" \x1b[2;38;5;245m│\x1b[0m\n");
+        out.push_str(" \x1b[2;39m│\x1b[0m\n");
     } else {
         out.push_str("│ ");
         out.push_str(text);
@@ -1398,17 +1444,81 @@ fn interactive_help_rows() -> Vec<(String, String)> {
             tr(Message::InteractiveSlashNewHint).to_string(),
         ),
         (
+            "/clear".to_string(),
+            match current_language() {
+                Language::ZhHans => "清空当前显示并开启新会话",
+                _ => "Clear display and start a fresh conversation",
+            }
+            .to_string(),
+        ),
+        (
             "/plan".to_string(),
             tr(Message::InteractiveSlashPlanHint).to_string(),
         ),
         ("/agent".to_string(), ui_text(UiText::HelpAgent).to_string()),
+        (
+            "/experts".to_string(),
+            match current_language() {
+                Language::ZhHans => "查看可用专家与代理角色",
+                _ => "List available expert agents",
+            }
+            .to_string(),
+        ),
         ("/room".to_string(), "Room messages · @recipient + Tab, or automatic routing".to_string()),
         ("/work".to_string(), ui_text(UiText::HelpWork).to_string()),
         ("/recover".to_string(), crate::unknown_effect_recovery::usage().to_string()),
         ("/tasks".to_string(), ui_text(UiText::HelpTasks).to_string()),
         ("/jobs".to_string(), ui_text(UiText::HelpJobs).to_string()),
         (
-            "/resume".to_string(),
+            "/stop".to_string(),
+            match current_language() {
+                Language::ZhHans => "停止当前运行或指定后台任务",
+                _ => "Stop the active run or a background task",
+            }
+            .to_string(),
+        ),
+        (
+            "/questions".to_string(),
+            match current_language() {
+                Language::ZhHans => "查看并回答待处理问题（含子任务问题）",
+                _ => "Answer pending questions (including child tasks)",
+            }
+            .to_string(),
+        ),
+        (
+            "/skills [list|enable|disable]".to_string(),
+            match current_language() {
+                Language::ZhHans => "查看或启用/停用 Skills",
+                _ => "List, enable, or disable skills",
+            }
+            .to_string(),
+        ),
+        (
+            "/mcp [list|enable|disable]".to_string(),
+            match current_language() {
+                Language::ZhHans => "查看或启用/停用 MCP 服务",
+                _ => "List, enable, or disable MCP servers",
+            }
+            .to_string(),
+        ),
+        (
+            "/memory [list|search|add]".to_string(),
+            match current_language() {
+                Language::ZhHans => "查看、搜索或添加长期记忆",
+                _ => "List, search, or add memory entries",
+            }
+            .to_string(),
+        ),
+        (
+            "/guide".to_string(),
+            match current_language() {
+                Language::ZhHans => "显示快捷键与交互操作指南",
+                _ => "Show keyboard shortcuts and interactive guide",
+            }
+            .to_string(),
+        ),
+        (
+            "/resume [id]".to_string(),
             tr(Message::InteractiveSlashResumeHint).to_string(),
         ),
         (
@@ -1529,10 +1639,10 @@ mod interactive_terminal_ui_contract_tests {
 }
 
 fn interactive_color_enabled() -> bool {
-    (io::stdout().is_terminal() || io::stderr().is_terminal())
+    io::stdout().is_terminal()
         && std::env::var_os("NO_COLOR").is_none()
         && std::env::var("TERM")
-            .map(|value| value != "dumb")
+            .map(|value| !value.eq_ignore_ascii_case("dumb"))
             .unwrap_or(true)
 }
 
@@ -1756,6 +1866,8 @@ thread_local! {
 struct LiveCliCommands {
     config: std::sync::Mutex<Config>,
     permission_change: std::sync::Mutex<Option<PermissionLevel>>,
+    runtime: crate::runtime_control::RuntimeExecutionControl,
+    execution_id: u64,
 }
 impl interaction::ClientCommandHandler for LiveCliCommands {
     fn execute(&self, input: &str) {
@@ -1763,6 +1875,15 @@ impl interaction::ClientCommandHandler for LiveCliCommands {
         let command = input.split_whitespace().next().unwrap_or("");
         let command = normalize_interactive_command(command).unwrap_or(command);
         let result = match command {
+            "/stop" => {
+                self.runtime.request();
+                crate::terminal_ui::mark_turn_cancelling(self.execution_id);
+                crate::terminal_ui::commit_history(match current_language() {
+                    Language::ZhHans => "  正在停止当前运行…",
+                    _ => "  Stopping active run…",
+                });
+                Ok(())
+            }
             "/allow" => {
                 let before = PermissionLevel::from_config(&config);
                 let result = interactive_permission_panel(&mut config).map_err(|e| e.to_string());
@@ -1811,7 +1932,10 @@ fn with_cli_execution_control<T>(
         Some(crate::cli_view_state::ActiveView::bind(store))
     } else { None };
     let commands = std::sync::Arc::new(LiveCliCommands {
-        config: std::sync::Mutex::new(config.clone()), permission_change: Default::default(),
+        config: std::sync::Mutex::new(config.clone()),
+        permission_change: Default::default(),
+        runtime: cancellation.runtime_control(),
+        execution_id: cancellation.execution_id(),
     });
     let cancellation = cancellation.with_client_commands(commands.clone());
     let _scope = cancellation.enter();
@@ -2308,18 +2432,25 @@ fn interactive_history_prompt(
     input_history.get(next_index).cloned()
 }
 
-fn read_prompt(args_message: &str) -> io::Result<String> {
-    if !args_message.trim().is_empty() {
-        return Ok(args_message.to_string());
+fn combine_args_and_stdin_prompt(args_message: &str, piped_stdin: &str) -> String {
+    let args_trimmed = args_message.trim();
+    let stdin_trimmed = piped_stdin.trim();
+    match (stdin_trimmed.is_empty(), args_trimmed.is_empty()) {
+        (true, true) => String::new(),
+        (true, false) => args_message.to_string(),
+        (false, true) => piped_stdin.to_string(),
+        (false, false) => format!("{stdin_trimmed}\n\n{args_trimmed}"),
     }
+}
 
+fn read_prompt(args_message: &str) -> io::Result<String> {
     if io::stdin().is_terminal() {
-        return Ok(String::new());
+        return Ok(args_message.to_string());
     }
 
     let mut buffer = String::new();
     io::stdin().read_to_string(&mut buffer)?;
-    Ok(buffer)
+    Ok(combine_args_and_stdin_prompt(args_message, &buffer))
 }
 
 fn preview(text: &str, limit: usize) -> String {

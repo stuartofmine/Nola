@@ -468,7 +468,7 @@ struct MacNotificationCenterView: View {
                         .fill(Color.accentColor)
                         .frame(width: 7, height: 7)
                         .overlay {
-                            Circle().stroke(Color(nsColor: .controlBackgroundColor), lineWidth: 1.5)
+                            Circle().stroke(MacDesignColor.panel, lineWidth: 1.5)
                         }
                         .offset(x: 2, y: -2)
                 }

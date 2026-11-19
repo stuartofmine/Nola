@@ -44,7 +44,6 @@ class ChatComposerLayoutTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
 
     @Test fun nativeConversationKeepsReadingWidthAcrossThemesAndFontSizes() {
-        requireIsolatedProductTestUser(compose.activity)
         var width by mutableStateOf(320)
         var dark by mutableStateOf(false)
         var large by mutableStateOf(false)
@@ -104,7 +103,6 @@ class ChatComposerLayoutTest {
 
     @OptIn(ExperimentalTestApi::class)
     @Test fun attachmentPasteDoesNotHijackModifiedKeyboardShortcuts() {
-        requireIsolatedProductTestUser(compose.activity)
         var pastes = 0
         compose.setContent {
             NolaTheme {

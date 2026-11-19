@@ -41,8 +41,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.mapSaver
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -83,12 +87,12 @@ object NolaColors {
     val primary: Color @Composable get() = MaterialTheme.colorScheme.primary
     val primaryLight: Color @Composable get() = MaterialTheme.colorScheme.primaryContainer
     val accent: Color @Composable get() = MaterialTheme.colorScheme.primary
-    val success: Color @Composable get() = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color(0xFF7BC99B) else Color(0xFF237047)
+    val success: Color @Composable get() = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color(0xFF82C99B) else Color(0xFF237047)
     val warning: Color @Composable get() = MaterialTheme.colorScheme.tertiary
     val danger: Color @Composable get() = MaterialTheme.colorScheme.error
 
-    val bgLight = Color(0xFFFFFFFF)
-    val bgDark = Color(0xFF000000)
+    val bgLight = Color(0xFFF7F6F3)
+    val bgDark = Color(0xFF131312)
     val surfaceElevated: Color @Composable get() = MaterialTheme.colorScheme.surface
     val rowFill: Color @Composable get() = MaterialTheme.colorScheme.surfaceVariant
     val mutedFill: Color @Composable get() = MaterialTheme.colorScheme.surfaceContainer
@@ -279,7 +283,26 @@ fun NolaPage(
     content: @Composable ColumnScope.() -> Unit
 ) {
     val background = MaterialTheme.colorScheme.background
-    val scrollState = rememberSaveable(scrollKey, saver = ScrollState.Saver) { ScrollState(0) }
+    val keyName = scrollKey?.toString() ?: "nola-page-default"
+    val savedOffsets = rememberSaveable(
+        saver = mapSaver(
+            save = { map -> map.toMap() },
+            restore = { restored -> restored.mapValues { (_, v) -> v as Int }.toMutableMap() },
+        )
+    ) { mutableMapOf<String, Int>() }
+    val scrollState = remember(keyName) {
+        ScrollState(savedOffsets[keyName] ?: 0)
+    }
+    LaunchedEffect(keyName, scrollState) {
+        snapshotFlow { scrollState.value }.collect { offset ->
+            savedOffsets[keyName] = offset
+        }
+    }
+    DisposableEffect(keyName, scrollState) {
+        onDispose {
+            savedOffsets[keyName] = scrollState.value
+        }
+    }
     Box(
         modifier = modifier
             .fillMaxSize()

@@ -421,34 +421,146 @@ final class IOSUIInteractionPolicyTests: XCTestCase {
     }
 
     @MainActor
-    func testInkThemeMaintainsTextAndControlContrastAcrossAppearances() throws {
-        func luminance(_ color: UIColor) -> Double {
-            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-            XCTAssertTrue(color.getRed(&r, green: &g, blue: &b, alpha: &a))
-            let linear = [r, g, b].map { component -> Double in
-                let value = Double(component)
-                return value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
-            }
-            return linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722
+    func testColorsetsAndDesignTokensMatchCanonicalTokensAndWCAGContrast() throws {
+        struct TokenPalette: Decodable {
+            let light: [String: String]
+            let dark: [String: String]
         }
-        for appearance in [UIUserInterfaceStyle.light, .dark] {
+        struct TokenFile: Decodable {
+            let color: TokenPalette
+        }
+
+        func hexToSRGB(_ hex: String) throws -> (r: Double, g: Double, b: Double) {
+            let trimmed = hex.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+            guard trimmed.count == 6, let value = UInt32(trimmed, radix: 16) else {
+                throw NSError(domain: "TokenCheck", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid hex token: \(hex)"])
+            }
+            return (
+                Double((value >> 16) & 0xFF) / 255.0,
+                Double((value >> 8) & 0xFF) / 255.0,
+                Double(value & 0xFF) / 255.0
+            )
+        }
+
+        func resolveSRGB(_ color: UIColor, traits: UITraitCollection) throws -> (r: Double, g: Double, b: Double) {
+            let resolved = color.resolvedColor(with: traits)
+            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            if let srgb = CGColorSpace(name: CGColorSpace.sRGB),
+               let converted = resolved.cgColor.converted(to: srgb, intent: .defaultIntent, options: nil),
+               let components = converted.components,
+               components.count >= 3 {
+                return (Double(components[0]), Double(components[1]), Double(components[2]))
+            }
+            XCTAssertTrue(resolved.getRed(&r, green: &g, blue: &b, alpha: &a))
+            return (Double(r), Double(g), Double(b))
+        }
+
+        func relativeLuminance(_ rgb: (r: Double, g: Double, b: Double)) -> Double {
+            func linearize(_ c: Double) -> Double {
+                c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+            }
+            return linearize(rgb.r) * 0.2126 + linearize(rgb.g) * 0.7152 + linearize(rgb.b) * 0.0722
+        }
+
+        func contrastRatio(_ a: (r: Double, g: Double, b: Double), _ b: (r: Double, g: Double, b: Double)) -> Double {
+            let l1 = relativeLuminance(a)
+            let l2 = relativeLuminance(b)
+            return (max(l1, l2) + 0.05) / (min(l1, l2) + 0.05)
+        }
+
+        let repoRoot = try IOSVisualPixelAssertions.findRepositoryRoot()
+        let tokensURL = repoRoot.appendingPathComponent("shared/design-tokens/tokens.json")
+        let tokenFile = try JSONDecoder().decode(TokenFile.self, from: Data(contentsOf: tokensURL))
+        let lightRoles = tokenFile.color.light
+        let darkRoles = tokenFile.color.dark
+
+        let colorsetRoleMap: [(asset: String, role: String)] = [
+            ("AccentColor", "accent"),
+            ("NolaAccentSubtle", "accentSubtle"),
+            ("NolaCanvas", "canvas"),
+            ("NolaControlOutline", "outline"),
+            ("NolaDanger", "danger"),
+            ("NolaDivider", "border"),
+            ("NolaOnAccent", "onAccent"),
+            ("NolaSuccess", "success"),
+            ("NolaSurface", "surface"),
+            ("NolaSurfaceRaised", "surfaceSubtle"),
+            ("NolaTextPrimary", "ink"),
+            ("NolaTextSecondary", "inkSecondary"),
+            ("NolaWarning", "warning")
+        ]
+
+        let designTokenRoleMap: [(name: String, color: Color, role: String)] = [
+            ("backgroundColor", DesignTokens.backgroundColor, "canvas"),
+            ("chatBackgroundColor", DesignTokens.chatBackgroundColor, "canvas"),
+            ("surfaceColor", DesignTokens.surfaceColor, "surface"),
+            ("cardBackgroundColor", DesignTokens.cardBackgroundColor, "surface"),
+            ("elevatedColor", DesignTokens.elevatedColor, "surfaceSubtle"),
+            ("secondaryBackgroundColor", DesignTokens.secondaryBackgroundColor, "surfaceSubtle"),
+            ("rowFillColor", DesignTokens.rowFillColor, "surfaceSubtle"),
+            ("mutedFillColor", DesignTokens.mutedFillColor, "surfaceSubtle"),
+            ("contentColor", DesignTokens.contentColor, "ink"),
+            ("secondaryContentColor", DesignTokens.secondaryContentColor, "inkSecondary"),
+            ("primaryColor", DesignTokens.primaryColor, "accent"),
+            ("actionColor", DesignTokens.actionColor, "accent"),
+            ("accentSubtleColor", DesignTokens.accentSubtleColor, "accentSubtle"),
+            ("borderColor", DesignTokens.borderColor, "border"),
+            ("separatorColor", DesignTokens.separatorColor, "border"),
+            ("strongBorderColor", DesignTokens.strongBorderColor, "outline"),
+            ("onActionColor", DesignTokens.onActionColor, "onAccent"),
+            ("onAccentColor", DesignTokens.onAccentColor, "onAccent"),
+            ("successColor", DesignTokens.successColor, "success"),
+            ("warningColor", DesignTokens.warningColor, "warning"),
+            ("dangerColor", DesignTokens.dangerColor, "danger")
+        ]
+
+        for (style, roles) in [(UIUserInterfaceStyle.light, lightRoles), (.dark, darkRoles)] {
+            let traits = UITraitCollection {
+                $0.userInterfaceStyle = style
+                $0.accessibilityContrast = .normal
+            }
+            for (asset, role) in colorsetRoleMap {
+                let expectedHex = try XCTUnwrap(roles[role], "Missing \(role) in tokens.json")
+                let expected = try hexToSRGB(expectedHex)
+                let color = try XCTUnwrap(UIColor(named: asset), "Missing colorset \(asset)")
+                let actual = try resolveSRGB(color, traits: traits)
+                XCTAssertEqual(actual.r, expected.r, accuracy: 0.015, "\(asset) R mismatch (\(style.rawValue))")
+                XCTAssertEqual(actual.g, expected.g, accuracy: 0.015, "\(asset) G mismatch (\(style.rawValue))")
+                XCTAssertEqual(actual.b, expected.b, accuracy: 0.015, "\(asset) B mismatch (\(style.rawValue))")
+            }
+
+            for (name, tokenColor, role) in designTokenRoleMap {
+                let expectedHex = try XCTUnwrap(roles[role], "Missing \(role) in tokens.json")
+                let expected = try hexToSRGB(expectedHex)
+                let actual = try resolveSRGB(UIColor(tokenColor), traits: traits)
+                XCTAssertEqual(actual.r, expected.r, accuracy: 0.015, "DesignTokens.\(name) R mismatch (\(style.rawValue))")
+                XCTAssertEqual(actual.g, expected.g, accuracy: 0.015, "DesignTokens.\(name) G mismatch (\(style.rawValue))")
+                XCTAssertEqual(actual.b, expected.b, accuracy: 0.015, "DesignTokens.\(name) B mismatch (\(style.rawValue))")
+            }
+
             for contrast in [UIAccessibilityContrast.normal, .high] {
-                let traits = UITraitCollection(traitsFrom: [
-                    UITraitCollection(userInterfaceStyle: appearance),
-                    UITraitCollection(accessibilityContrast: contrast)
-                ])
+                let contrastTraits = UITraitCollection {
+                    $0.userInterfaceStyle = style
+                    $0.accessibilityContrast = contrast
+                }
                 for (foreground, background, minimum) in [
+                    ("NolaTextPrimary", "NolaCanvas", 4.5),
                     ("NolaTextPrimary", "NolaSurface", 4.5),
                     ("NolaTextSecondary", "NolaSurfaceRaised", 4.5),
                     ("AccentColor", "NolaSurface", 4.5),
                     ("NolaOnAccent", "AccentColor", 4.5),
+                    ("NolaSuccess", "NolaSurface", 4.5),
+                    ("NolaWarning", "NolaSurface", 4.5),
+                    ("NolaDanger", "NolaSurface", 4.5),
                     ("NolaControlOutline", "NolaSurfaceRaised", 3.0)
                 ] {
-                    let fg = try XCTUnwrap(UIColor(named: foreground)).resolvedColor(with: traits)
-                    let bg = try XCTUnwrap(UIColor(named: background)).resolvedColor(with: traits)
-                    let first = luminance(fg), second = luminance(bg)
-                    XCTAssertGreaterThanOrEqual((max(first, second) + 0.05) / (min(first, second) + 0.05), minimum,
-                        "\(foreground) / \(background), \(appearance), \(contrast)")
+                    let fg = try resolveSRGB(XCTUnwrap(UIColor(named: foreground)), traits: contrastTraits)
+                    let bg = try resolveSRGB(XCTUnwrap(UIColor(named: background)), traits: contrastTraits)
+                    XCTAssertGreaterThanOrEqual(
+                        contrastRatio(fg, bg), minimum,
+                        "\(foreground) / \(background), style=\(style.rawValue), contrast=\(contrast.rawValue)"
+                    )
                 }
             }
         }
@@ -586,147 +698,564 @@ final class IOSUIInteractionPolicyTests: XCTestCase {
         XCTAssertEqual(view.font, UIFont.preferredFont(forTextStyle: .body, compatibleWith: view.traitCollection))
         XCTAssertTrue(view.adjustsFontForContentSizeCategory)
     }
-}
 
-@MainActor final class IOSWorkspacePageMatrixTests: XCTestCase {
-    func testTopLevelTabsRespectIslandSafeAreaAtNarrowWidthsAndLargeText() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ios-tab-pages-\(UUID())")
+    @MainActor
+    func testChatContextSheetUploadedDocumentSaveRoundTrip() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ios-docs-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let runtime = try IOSApplicationRuntime(databaseURL: root.appendingPathComponent("fixture.sqlite"))
-        try runtime.createConversation(id: UUID().uuidString, title: "最近的研究对话", settingsJSON: #"{"knowledge":{"keyPointsMarkdown":"保留有来源的结论，之后可以从这里继续。"}}"#, createdAtMs: 1, updatedAtMs: 1)
+
+        let databaseURL = root.appendingPathComponent("fixture.sqlite")
+        let runtime = try IOSApplicationRuntime(databaseURL: databaseURL)
         let container = ServiceContainer(applicationRuntime: runtime)
         container.conversationStore = try LocalConversationStore(applicationRuntime: runtime)
         container.chatManager = ChatManager(container: container, restorePersistedState: false)
-        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
-        for (width, largeText): (CGFloat, Bool) in [(320, false), (390, false), (390, true)] {
-            for dark in [false, true] {
-                let controller = IOSCompactTabContainer<String>.Controller()
-                let window = UIWindow(windowScene: scene)
-                window.frame = CGRect(x: 0, y: 0, width: width, height: 844)
-                window.overrideUserInterfaceStyle = dark ? .dark : .light
-                window.rootViewController = controller; window.makeKeyAndVisible()
-                controller.additionalSafeAreaInsets.top = max(0, 62 - controller.view.safeAreaInsets.top)
-                defer { window.isHidden = true; window.rootViewController = nil; window.windowScene = nil }
-                for tab in ["chat", "information", "activity", "settings"] {
-                    let content: AnyView
-                    switch tab {
-                    case "chat": content = AnyView(NavigationStack { ChatConversationsList(search: .constant(""), onSelect: { _ in }) })
-                    case "information": content = AnyView(IOSInformationView(path: .constant([]), pendingRequests: .constant([])))
-                    case "activity": content = AnyView(NavigationStack { IOSConversationActivityView().navigationTitle(Text("information.activity")).navigationBarTitleDisplayMode(.inline) })
-                    default: content = AnyView(SettingsView())
-                    }
-                    controller.select(tab, content: AnyView(content.environmentObject(container)
-                        .environment(\.locale, Locale(identifier: "zh-Hans"))
-                        .environment(\.colorScheme, dark ? .dark : .light)
-                        .environment(\.dynamicTypeSize, largeText ? .accessibility3 : .large)), revision: 0)
-                    try await Task.sleep(for: .milliseconds(300))
-                    window.layoutIfNeeded()
-                    let child = try XCTUnwrap(controller.children.first)
-                    XCTAssertGreaterThanOrEqual(child.view.frame.minY, 61.5, tab)
-                    XCTAssertLessThanOrEqual(child.view.frame.maxX, width + 0.5, tab)
-                    let png = try XCTUnwrap(UIGraphicsImageRenderer(size: window.bounds.size).image { _ in
-                        window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
-                    }.pngData())
-                    XCTAssertGreaterThan(png.count, 10_000)
-                    let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
-                    attachment.name = "tab-\(tab)-\(Int(width))-\(dark ? "dark" : "light")\(largeText ? "-accessibility" : "")"
-                    attachment.lifetime = .keepAlways; add(attachment)
+
+        let expectedDoc = UserUploadedContextItem(
+            name: "Release Runbook",
+            content: "Step 1: Verify Warm Paper and Warm Ink parity.",
+            description: "Verification guide",
+            enabled: true
+        )
+        let savedFromCallback = try container.chatManager.updateUploadedDocuments([expectedDoc])
+        XCTAssertEqual(savedFromCallback.map(\.name), ["Release Runbook"])
+
+        let reopenedRuntime = try IOSApplicationRuntime(databaseURL: databaseURL)
+        let reopenedContainer = ServiceContainer(applicationRuntime: reopenedRuntime)
+        let reloaded = reopenedContainer.chatMemoryProfileStore.loadProfile().uploadedDocuments
+        XCTAssertEqual(reloaded.count, 1)
+        XCTAssertEqual(reloaded.first?.id, expectedDoc.id)
+        XCTAssertEqual(reloaded.first?.name, expectedDoc.name)
+        XCTAssertEqual(reloaded.first?.content, expectedDoc.content)
+        XCTAssertEqual(reloaded.first?.enabled, true)
+    }
+
+    @MainActor
+    func testChatContextSheetShowsLocalMCPServersWhenHostMCPListIsEmpty() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ios-local-mcp-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let runtime = try IOSApplicationRuntime(databaseURL: root.appendingPathComponent("fixture.sqlite"))
+        let container = ServiceContainer(applicationRuntime: runtime)
+        container.conversationStore = try LocalConversationStore(applicationRuntime: runtime)
+        container.chatManager = ChatManager(container: container, restorePersistedState: false)
+
+        let localMCP = UserMCPServer(
+            name: "Local Knowledge MCP",
+            endpoint: "https://mcp.local.example/sse",
+            description: "Local workspace index",
+            enabled: true
+        )
+        let sheet = NavigationStack {
+            ChatContextSheet(
+                displayMode: .context,
+                conversationID: UUID(),
+                conversationTitle: "MCP Check",
+                contextUsage: nil,
+                sessionMemory: .constant("Notes"),
+                knowledgePoints: .constant("Key facts"),
+                conversationWiki: .constant("Wiki"),
+                longTermMemory: .constant("Durable preference"),
+                userPreferences: .constant("Concise output"),
+                mcpServers: .constant([localMCP]),
+                uploadedSkills: .constant([]),
+                hostUploadedSkills: [],
+                hostUploadedDocuments: [],
+                hostMCPServers: [],
+                uploadedDocuments: .constant([]),
+                dataSources: [],
+                selectedDataSourceIDs: .constant([]),
+                selectedSystemDataSourceTypes: .constant([]),
+                onSave: {},
+                onSaveMemoryProfile: {},
+                onSaveUploadedDocuments: { $0 },
+                onSaveConversationKnowledge: { _ in },
+                onCompact: { "Compacted" },
+                onReload: { nil },
+                onDiscard: {},
+                onUseSkill: { _ in },
+                onSearchMemory: { _ in [] },
+                initialContextPane: .tools
+            )
+            .environmentObject(container)
+        }
+
+        let image = try await IOSVisualPixelAssertions.assertPresentedSheet(
+            sheet,
+            label: "sheet-chat-context-local-mcp-light",
+            userInterfaceStyle: .light,
+            locale: Locale(identifier: "en-US"),
+            settleMilliseconds: 260
+        )
+        let visibleText = try recognizeNormalizedText(in: image)
+        XCTAssertTrue(
+            visibleText.contains("LocalKnowledgeMCP"),
+            "Expected local MCP server to be visibly rendered when hostMCPServers is empty; OCR=\(visibleText)"
+        )
+    }
+
+    @MainActor
+    func testGoalSlashCommandPrefillsConversationInspectorObjective() async throws {
+        let parsed = try XCTUnwrap(ComposerCommand.parse("/goal Ship v1.0 release"))
+        XCTAssertEqual(parsed.command, .goal)
+        XCTAssertEqual(parsed.argument, "Ship v1.0 release")
+
+        let hostRoot = UIViewController()
+        hostRoot.view.backgroundColor = UIColor(DesignTokens.backgroundColor)
+        let window = try IOSVisualPixelAssertions.makeWindow(
+            size: CGSize(width: 390, height: 844),
+            userInterfaceStyle: .light,
+            rootViewController: hostRoot
+        )
+        defer { IOSVisualPixelAssertions.teardownWindow(window) }
+        try await IOSVisualPixelAssertions.settleLayout(on: window, milliseconds: 50)
+
+        let inspector = IOSConversationInspector(
+            pane: .goals,
+            conversationID: UUID().uuidString,
+            loadProgress: { _ in
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                return IOSInspectorProgressSnapshot(supportsGoalControl: true, facts: nil, plan: nil)
+            },
+            submitGoalControl: { _, _ in true },
+            documents: [],
+            processingState: .idle,
+            initialObjective: parsed.argument
+        )
+        .environment(\.colorScheme, .light)
+        .environment(\.locale, Locale(identifier: "en-US"))
+
+        let inspectorController = UIHostingController(rootView: inspector)
+        inspectorController.modalPresentationStyle = .pageSheet
+        hostRoot.present(inspectorController, animated: false)
+
+        let deadline = Date().addingTimeInterval(2.5)
+        var goalStartController: UIViewController?
+        while Date() < deadline {
+            await Task.yield()
+            if let nested = inspectorController.presentedViewController,
+               !nested.isBeingPresented,
+               nested.view.window != nil {
+                goalStartController = nested
+                break
+            }
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+
+        let targetController = try XCTUnwrap(
+            goalStartController,
+            "Goal start sheet should automatically present with /goal objective prefilled"
+        )
+        try await IOSVisualPixelAssertions.settleLayout(on: window, milliseconds: 220)
+        let image = try IOSVisualPixelAssertions.captureImage(of: targetController.view)
+        let cgImage = try XCTUnwrap(image.cgImage)
+        try IOSVisualPixelAssertions.assertCGImage(
+            cgImage,
+            label: "sheet-goal-slash-prefill-light",
+            isDark: false,
+            pointSize: targetController.view.bounds.size
+        )
+        IOSVisualPixelAssertions.maybeSaveArtifact(image: image, name: "sheet-goal-slash-prefill-light")
+        let visibleText = try recognizeNormalizedText(in: image)
+        XCTAssertTrue(
+            visibleText.contains("Shipv1.0release") || visibleText.contains("Shipv10release"),
+            "Prefilled /goal objective must render visibly in the inspector sheet; OCR=\(visibleText)"
+        )
+    }
+
+    @MainActor
+    func testSettingsClearLocalDataRemovesPersistedRecords() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ios-clear-all-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let databaseURL = root.appendingPathComponent("fixture.sqlite")
+        let runtime = try IOSApplicationRuntime(databaseURL: databaseURL)
+        try runtime.createConversation(
+            id: UUID().uuidString,
+            title: "Conversation to Clear",
+            settingsJSON: "{}",
+            createdAtMs: 1,
+            updatedAtMs: 1
+        )
+        let container = ServiceContainer(applicationRuntime: runtime)
+        container.conversationStore = try LocalConversationStore(applicationRuntime: runtime)
+        container.chatManager = ChatManager(container: container, restorePersistedState: false)
+
+        _ = try container.chatManager.updateUploadedDocuments([
+            UserUploadedContextItem(name: "Temp Doc", content: "Body", description: "Desc", enabled: true)
+        ])
+        let baseline = container.chatMemoryProfileStore.loadProfile()
+        _ = try container.chatMemoryProfileStore.saveMemoryText(
+            longTermMemory: "User prefers dark theme",
+            userPreferences: "Concise replies",
+            expected: baseline
+        )
+        let profileStore = CanonicalChatMemoryProfileStore(applicationRuntime: runtime)
+        _ = try profileStore.saveSkill(
+            UserUploadedContextItem(name: "Custom Skill", content: "Instructions", description: "Desc", enabled: true),
+            expected: nil
+        )
+        _ = try profileStore.saveMCP(
+            UserMCPServer(name: "Custom MCP", endpoint: "https://mcp.example.com/sse", description: "Desc", enabled: true),
+            expected: nil
+        )
+
+        let cleared = await SettingsView.clearLocalData(container: container)
+        XCTAssertTrue(cleared)
+
+        let reopenedRuntime = try IOSApplicationRuntime(databaseURL: databaseURL)
+        let reopenedStore = try LocalConversationStore(applicationRuntime: reopenedRuntime)
+        let reopenedContainer = ServiceContainer(applicationRuntime: reopenedRuntime)
+        XCTAssertTrue(try reopenedStore.getAllConversations().isEmpty)
+        XCTAssertTrue(reopenedContainer.chatMemoryProfileStore.loadProfile().uploadedDocuments.isEmpty)
+        XCTAssertTrue(try reopenedRuntime.listMemories().isEmpty)
+        XCTAssertTrue(try reopenedRuntime.listSkills().filter { $0.source != "built_in" }.isEmpty)
+        XCTAssertTrue(try reopenedRuntime.listMCPServers().isEmpty)
+    }
+
+    private func recognizeNormalizedText(in image: UIImage) throws -> String {
+        let recognition = VNRecognizeTextRequest()
+        recognition.recognitionLanguages = ["en-US", "zh-Hans"]
+        recognition.recognitionLevel = .accurate
+        try VNImageRequestHandler(cgImage: XCTUnwrap(image.cgImage)).perform([recognition])
+        return recognition.results?
+            .compactMap { $0.topCandidates(1).first?.string }
+            .joined()
+            .filter { !$0.isWhitespace } ?? ""
+    }
+}
+
+@MainActor final class IOSWorkspacePageMatrixTests: XCTestCase {
+    private struct RenderMatrixVariant {
+        let name: String
+        let size: CGSize
+        let safeArea: UIEdgeInsets
+        let sizeClass: UIUserInterfaceSizeClass
+        let dynamicType: DynamicTypeSize
+    }
+
+    private static let variants: [RenderMatrixVariant] = [
+        RenderMatrixVariant(
+            name: "compact-320",
+            size: CGSize(width: 320, height: 568),
+            safeArea: .zero,
+            sizeClass: .compact,
+            dynamicType: .large
+        ),
+        RenderMatrixVariant(
+            name: "island-390",
+            size: CGSize(width: 390, height: 844),
+            safeArea: UIEdgeInsets(top: 59, left: 0, bottom: 34, right: 0),
+            sizeClass: .compact,
+            dynamicType: .large
+        ),
+        RenderMatrixVariant(
+            name: "island-390-a11y3",
+            size: CGSize(width: 390, height: 844),
+            safeArea: UIEdgeInsets(top: 59, left: 0, bottom: 34, right: 0),
+            sizeClass: .compact,
+            dynamicType: .accessibility3
+        ),
+        RenderMatrixVariant(
+            name: "regular-834",
+            size: CGSize(width: 834, height: 1194),
+            safeArea: .zero,
+            sizeClass: .regular,
+            dynamicType: .large
+        )
+    ]
+
+    private func makeIsolatedFixture() throws -> (root: URL, container: ServiceContainer, conversationID: UUID) {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ios-matrix-\(UUID())")
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let runtime = try IOSApplicationRuntime(databaseURL: root.appendingPathComponent("fixture.sqlite"))
+        let convID = UUID()
+        try runtime.createConversation(
+            id: convID.uuidString,
+            title: "最近的研究对话",
+            settingsJSON: #"{"knowledge":{"keyPointsMarkdown":"保留有来源的结论，之后可以从这里继续。"}}"#,
+            createdAtMs: 1,
+            updatedAtMs: 1
+        )
+        let container = ServiceContainer(applicationRuntime: runtime)
+        container.conversationStore = try LocalConversationStore(applicationRuntime: runtime)
+        container.chatManager = ChatManager(container: container, restorePersistedState: false)
+        return (root, container, convID)
+    }
+
+    func testMainTabViewAndOnboardingRespectSafeAreaAcrossSizesThemesAndDynamicType() async throws {
+        let fixture = try makeIsolatedFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        for dark in [false, true] {
+            let style: UIUserInterfaceStyle = dark ? .dark : .light
+            let themeName = dark ? "dark" : "light"
+
+            for step in 0...3 {
+                try await IOSVisualPixelAssertions.assertHostedView(
+                    OnboardingView(initialStep: step),
+                    label: "onboarding-step-\(step)-\(themeName)",
+                    size: CGSize(width: 390, height: 844),
+                    safeAreaInsets: UIEdgeInsets(top: 59, left: 0, bottom: 34, right: 0),
+                    userInterfaceStyle: style,
+                    horizontalSizeClass: .compact,
+                    dynamicTypeSize: .large
+                )
+            }
+
+            try await IOSVisualPixelAssertions.assertHostedView(
+                NavigationStack { ChatView() }.environmentObject(fixture.container),
+                label: "chat-view-\(themeName)",
+                size: CGSize(width: 390, height: 844),
+                safeAreaInsets: UIEdgeInsets(top: 59, left: 0, bottom: 34, right: 0),
+                userInterfaceStyle: style,
+                horizontalSizeClass: .compact,
+                dynamicTypeSize: .large
+            )
+
+            for variant in Self.variants {
+                for tab in NolaTab.allCases {
+                    try await IOSVisualPixelAssertions.assertHostedView(
+                        MainTabView(initialTab: tab).environmentObject(fixture.container),
+                        label: "main-tab-\(tab.rawValue)-\(variant.name)-\(themeName)",
+                        size: variant.size,
+                        safeAreaInsets: variant.safeArea,
+                        userInterfaceStyle: style,
+                        horizontalSizeClass: variant.sizeClass,
+                        dynamicTypeSize: variant.dynamicType
+                    )
                 }
-                window.isHidden = true
             }
         }
     }
 
     func testEveryManagementDestinationAtPhoneAndTabletWidthsInBothThemes() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ios-pages-\(UUID())")
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700])
-        defer {
-            if FileManager.default.fileExists(atPath: root.path) { try? FileManager.default.removeItem(at: root) }
-        }
-        let runtime = try IOSApplicationRuntime(databaseURL: root.appendingPathComponent("fixture.sqlite"))
-        let container = ServiceContainer(applicationRuntime: runtime)
-        container.conversationStore = try LocalConversationStore(applicationRuntime: runtime)
-        container.chatManager = ChatManager(container: container, restorePersistedState: false)
-        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
-        let destinations = IOSWorkspaceDestination.allCases
-        for (width, largeText): (CGFloat, Bool) in [(320, false), (390, false), (768, false), (390, true)] {
+        let fixture = try makeIsolatedFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        for variant in Self.variants {
             for dark in [false, true] {
-                for destination in destinations {
-                    let view = NavigationStack { IOSWorkspaceManagementContent(destination: destination) }
-                        .environmentObject(container)
-                        .environment(\.colorScheme, dark ? .dark : .light)
-                        .environment(\.dynamicTypeSize, largeText ? .accessibility3 : .large)
-                    let controller = UIHostingController(rootView: view)
-                    let window = UIWindow(windowScene: scene)
-                    window.frame = CGRect(x: 0, y: 0, width: width, height: 900)
-                    window.overrideUserInterfaceStyle = dark ? .dark : .light
-                    window.rootViewController = controller
-                    window.makeKeyAndVisible()
-                    defer {
-                        window.isHidden = true
-                        window.rootViewController = nil
-                        window.windowScene = nil
-                    }
-                    controller.view.frame = window.bounds
-                    try await Task.sleep(for: .milliseconds(200))
-                    controller.view.layoutIfNeeded()
-                    XCTAssertEqual(controller.view.bounds.width, width, accuracy: 0.1)
-                    let image = UIGraphicsImageRenderer(size: window.bounds.size).image { _ in
-                        controller.view.drawHierarchy(in: controller.view.bounds, afterScreenUpdates: true)
-                    }
-                    let raster = try XCTUnwrap(image.cgImage)
-                    var pixels = [UInt8](repeating: 0, count: 64 * 64 * 4)
-                    try pixels.withUnsafeMutableBytes { bytes in
-                        let bitmap = try XCTUnwrap(CGContext(data: bytes.baseAddress, width: 64, height: 64,
-                            bitsPerComponent: 8, bytesPerRow: 64 * 4, space: CGColorSpaceCreateDeviceRGB(),
-                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
-                        bitmap.draw(raster, in: CGRect(x: 0, y: 0, width: 64, height: 64))
-                    }
-                    let luminance = stride(from: 0, to: pixels.count, by: 4).map { Int(pixels[$0]) + Int(pixels[$0 + 1]) + Int(pixels[$0 + 2]) }
-                    XCTAssertGreaterThan((luminance.max() ?? 0) - (luminance.min() ?? 0), 60,
-                        "Page content must actually be painted: \(destination)")
-                    let png = try XCTUnwrap(image.pngData())
-                    XCTAssertGreaterThan(png.count, 10_000, "Blank management page: \(destination)")
-                    // Keep native-resolution evidence without retaining a full
-                    // uncompressed bitmap for every page until this test ends.
-                    let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
-                    attachment.name = "page-\(destination)-\(Int(width))-\(dark ? "dark" : "light")\(largeText ? "-accessibility" : "")"
-                    attachment.lifetime = .keepAlways
-                    add(attachment)
-                    window.isHidden = true
+                let style: UIUserInterfaceStyle = dark ? .dark : .light
+                let themeName = dark ? "dark" : "light"
+                for destination in IOSWorkspaceDestination.allCases {
+                    try await IOSVisualPixelAssertions.assertHostedView(
+                        NavigationStack { IOSWorkspaceManagementContent(destination: destination) }
+                            .environmentObject(fixture.container),
+                        label: "page-\(destination)-\(variant.name)-\(themeName)",
+                        size: variant.size,
+                        safeAreaInsets: variant.safeArea,
+                        userInterfaceStyle: style,
+                        horizontalSizeClass: variant.sizeClass,
+                        dynamicTypeSize: variant.dynamicType
+                    )
                 }
             }
+        }
+    }
+
+    func testPresentedSheetsRenderCleanWarmSurfacesInBothThemes() async throws {
+        let fixture = try makeIsolatedFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        let sampleModel = ModelInfo(
+            id: "gpt-5-preview",
+            name: "GPT-5 Workspace",
+            source: "configured",
+            isLocal: false,
+            baseURL: "https://api.example.com/v1"
+        )
+        let sampleDoc = UserUploadedContextItem(
+            name: "Architecture Notes",
+            content: "Warm Paper & Warm Ink palette spec",
+            description: "Design guidelines",
+            enabled: true
+        )
+        let sampleSkill = UserUploadedContextItem(
+            name: "Release Verifier",
+            content: "Run all platform checks carefully.",
+            description: "Verification skill",
+            enabled: true
+        )
+
+        for dark in [false, true] {
+            let style: UIUserInterfaceStyle = dark ? .dark : .light
+            let themeName = dark ? "dark" : "light"
+
+            try await IOSVisualPixelAssertions.assertPresentedSheet(
+                NavigationStack {
+                    ChatContextSheet(
+                        displayMode: .context,
+                        conversationID: fixture.conversationID,
+                        conversationTitle: "最近的研究对话",
+                        contextUsage: nil,
+                        sessionMemory: .constant("Session notes"),
+                        knowledgePoints: .constant("Key findings"),
+                        conversationWiki: .constant("Wiki overview"),
+                        longTermMemory: .constant("Long term notes"),
+                        userPreferences: .constant("Warm Ink"),
+                        mcpServers: .constant([]),
+                        uploadedSkills: .constant([sampleSkill]),
+                        hostUploadedSkills: [],
+                        hostUploadedDocuments: [],
+                        hostMCPServers: [],
+                        uploadedDocuments: .constant([sampleDoc]),
+                        dataSources: [],
+                        selectedDataSourceIDs: .constant([]),
+                        selectedSystemDataSourceTypes: .constant([]),
+                        onSave: {},
+                        onSaveMemoryProfile: {},
+                        onSaveUploadedDocuments: { $0 },
+                        onSaveConversationKnowledge: { _ in },
+                        onCompact: { "Compacted" },
+                        onReload: { nil },
+                        onDiscard: {},
+                        onUseSkill: { _ in },
+                        onSearchMemory: { _ in [] }
+                    )
+                    .environmentObject(fixture.container)
+                },
+                label: "sheet-chat-context-\(themeName)",
+                userInterfaceStyle: style
+            )
+
+            try await IOSVisualPixelAssertions.assertPresentedSheet(
+                ChatMoreSettingsSheet(
+                    selectedModel: sampleModel,
+                    contextUsage: nil,
+                    hostUploadedSkills: [],
+                    hostUploadedDocuments: [],
+                    hostMCPServers: [],
+                    hostComputerUseStatus: nil,
+                    hostNativeBrowserStatus: nil,
+                    pairedHostIdentity: nil,
+                    conversationGenerationOverride: IOSConversationGenerationOverride(
+                        maxContextLength: nil,
+                        maxOutputTokens: nil
+                    ),
+                    onSaveGenerationOverride: { _ in },
+                    hybridDeviceToolsEnabled: .constant(true),
+                    hybridFilesEnabled: .constant(false),
+                    hybridClipboardEnabled: .constant(false),
+                    hybridLocationEnabled: .constant(false),
+                    hybridCalendarEnabled: .constant(false),
+                    enableRetrieval: .constant(true),
+                    permissionMode: .constant(.cautious),
+                    autoCompactTriggerPercent: .constant(85),
+                    responseStyle: .constant(nil),
+                    sessionMemory: .constant("Session memory"),
+                    longTermMemory: .constant("Long-term memory"),
+                    userPreferences: .constant("Warm Ink"),
+                    uploadedSkills: .constant([sampleSkill]),
+                    onSaveMemoryProfile: {},
+                    onSetSkillEnabled: { _, _ in },
+                    onOpenContextSettings: {},
+                    onOpenSkillLibrary: {},
+                    onForgetHostPairing: {}
+                )
+                .environmentObject(fixture.container),
+                label: "sheet-chat-more-settings-\(themeName)",
+                userInterfaceStyle: style
+            )
+
+            try await IOSVisualPixelAssertions.assertPresentedSheet(
+                ModelPickerSheet(
+                    selectedModel: .constant(sampleModel),
+                    availableModels: [sampleModel],
+                    onSelected: { _ in }
+                ),
+                label: "sheet-model-picker-\(themeName)",
+                userInterfaceStyle: style
+            )
+
+            try await IOSVisualPixelAssertions.assertPresentedSheet(
+                IOSConversationInspector(
+                    pane: .goals,
+                    conversationID: fixture.conversationID.uuidString,
+                    loadProgress: { _ in
+                        IOSInspectorProgressSnapshot(supportsGoalControl: true, facts: nil, plan: nil)
+                    },
+                    submitGoalControl: { _, _ in true },
+                    documents: [sampleDoc],
+                    processingState: .idle
+                ),
+                label: "sheet-conversation-inspector-\(themeName)",
+                userInterfaceStyle: style
+            )
+
+            try await IOSVisualPixelAssertions.assertPresentedSheet(
+                IOSConversationWorkTools(
+                    conversationTitle: "最近的研究对话",
+                    modelLabel: "GPT-5 Workspace",
+                    hasOwner: true,
+                    onRename: {},
+                    select: { _ in }
+                ),
+                label: "sheet-conversation-work-tools-\(themeName)",
+                userInterfaceStyle: style
+            )
+
+            try await IOSVisualPixelAssertions.assertPresentedSheet(
+                IOSWorkspaceManagementSheet(destination: .models, notificationKey: nil)
+                    .environmentObject(fixture.container),
+                label: "sheet-workspace-management-\(themeName)",
+                userInterfaceStyle: style
+            )
+
+            try await IOSVisualPixelAssertions.assertPresentedSheet(
+                NavigationStack {
+                    PersonalCapabilityEditorView(
+                        item: .skill(0, sampleSkill),
+                        errorMessage: nil,
+                        onSave: { _, _, _ in }
+                    )
+                },
+                label: "sheet-personal-capability-editor-\(themeName)",
+                userInterfaceStyle: style
+            )
+
+            try await IOSVisualPixelAssertions.assertPresentedSheet(
+                AddPromptTemplateSheet().environmentObject(fixture.container),
+                label: "sheet-add-prompt-template-\(themeName)",
+                userInterfaceStyle: style
+            )
+
+            try await IOSVisualPixelAssertions.assertPresentedSheet(
+                PermissionsSetupView().environmentObject(fixture.container),
+                label: "sheet-permissions-setup-\(themeName)",
+                userInterfaceStyle: style
+            )
+
+            try await IOSVisualPixelAssertions.assertPresentedSheet(
+                NavigationStack {
+                    WebHostConfigurationView(existingModel: nil) { _ in }
+                },
+                label: "sheet-web-host-config-\(themeName)",
+                userInterfaceStyle: style
+            )
         }
     }
 }
 
 @MainActor
 final class WebHostConnectionUIVisualTests: XCTestCase {
-    func testConnectionSheetRendersSetupAndInputsAtPhoneSize() throws {
+    func testConnectionSheetRendersSetupAndInputsAtPhoneSize() async throws {
         let view = NavigationStack {
             WebHostConfigurationView(existingModel: nil) { _ in }
         }
-        .environment(\.locale, Locale(identifier: "zh-Hans"))
-
-        let controller = UIHostingController(rootView: view)
-        let scene = try XCTUnwrap(
-            UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        let image = try await IOSVisualPixelAssertions.assertHostedView(
+            view,
+            label: "nola-ios-web-host-connection",
+            size: CGSize(width: 390, height: 844),
+            userInterfaceStyle: .light,
+            locale: Locale(identifier: "zh-Hans"),
+            settleMilliseconds: 150
         )
-        let window = UIWindow(windowScene: scene)
-        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
-        window.rootViewController = controller
-        window.makeKeyAndVisible()
-        controller.view.frame = window.bounds
-        controller.view.setNeedsLayout()
-        controller.view.layoutIfNeeded()
-
-        let renderer = UIGraphicsImageRenderer(bounds: window.bounds)
-        let image = renderer.image { _ in
-            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
-        }
-        let data = try XCTUnwrap(image.pngData())
-        XCTAssertGreaterThan(data.count, 20_000)
         let recognition = VNRecognizeTextRequest()
         recognition.recognitionLanguages = ["zh-Hans", "en-US"]
         recognition.recognitionLevel = .accurate
@@ -736,7 +1265,6 @@ final class WebHostConnectionUIVisualTests: XCTestCase {
         let pasteLabel = NSLocalizedString("model.web_host.paste_setup", value: "Paste Connection Setup", comment: "")
             .filter { !$0.isWhitespace }
         XCTAssertTrue(visibleText.contains(pasteLabel), "The pairing action must be visible, not an empty control row")
-        try data.write(to: URL(fileURLWithPath: "/tmp/nola-ios-web-host-connection.png"), options: .atomic)
     }
 
     func testConnectionFailuresUseStableLocalizedMessages() {

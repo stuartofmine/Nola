@@ -879,12 +879,16 @@ internal fun ExecutionResultDetailSheet(
     val hasTechnicalDetails = result.backendResultId?.isNotBlank() == true
         || result.eventsJson.trim() !in setOf("", "[]", "{}")
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
         LazyColumn(
             modifier = Modifier
                 .widthIn(max = 760.dp)
                 .fillMaxWidth()
-                .padding(horizontal = NolaSpacing.lg),
+                .navigationBarsPadding()
+                .padding(horizontal = NolaSpacing.lg, vertical = NolaSpacing.md),
             verticalArrangement = Arrangement.spacedBy(NolaSpacing.md)
         ) {
             item {

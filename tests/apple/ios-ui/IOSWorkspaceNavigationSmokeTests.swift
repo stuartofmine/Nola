@@ -10,7 +10,7 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
         app.launchEnvironment["NOLA_UI_TEST_RUN_ID"] = "model-draft-\(UUID().uuidString)"
         app.launch()
         defer { app.terminate() }
-        XCTAssertTrue(app.buttons["main.tab.settings"].waitForExistence(timeout: 10))
+        app.waitForRootTab("settings")
         app.openModelCenterFromSettings()
         let endpoint = app.textFields["model.setup.endpoint"]
         XCTAssertTrue(endpoint.waitForExistence(timeout: 5))
@@ -66,7 +66,7 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
         app.launchEnvironment["NOLA_UI_TEST_RUN_ID"] = "prompt-whitespace-\(UUID().uuidString)"
         app.launch()
         defer { app.terminate() }
-        XCTAssertTrue(app.buttons["main.tab.settings"].waitForExistence(timeout: 10))
+        app.waitForRootTab("settings")
         app.openModelCenterFromSettings()
         let endpoint = app.textFields["model.setup.endpoint"]
         XCTAssertTrue(endpoint.waitForExistence(timeout: 5))
@@ -104,8 +104,7 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
         app.launchEnvironment["NOLA_UI_TEST_RUN_ID"] = "capability-editors-\(UUID().uuidString)"
         app.launch()
         defer { app.terminate() }
-        XCTAssertTrue(app.buttons["main.tab.settings"].waitForExistence(timeout: 10))
-        app.buttons["main.tab.settings"].tap()
+        app.tapRootTab("settings")
         app.buttons["settings.category.agent"].tap()
         let add = app.buttons["intelligence.capabilities.add"]
         XCTAssertTrue(add.waitForExistence(timeout: 5))
@@ -152,8 +151,7 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
         app.launchEnvironment["NOLA_UI_TEST_RUN_ID"] = "expert-role-\(UUID().uuidString)"
         app.launch()
         defer { app.terminate() }
-        XCTAssertTrue(app.buttons["main.tab.settings"].waitForExistence(timeout: 10))
-        app.buttons["main.tab.settings"].tap()
+        app.tapRootTab("settings")
         app.buttons["settings.category.agents"].tap()
         let template = app.buttons["experts.template"]
         XCTAssertTrue(template.waitForExistence(timeout: 5)); template.tap()
@@ -180,7 +178,7 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
         XCTAssertEqual(expert.count, 1)
         let expertID = String(expert.element.identifier.dropFirst("experts.edit.".count))
         app.buttons["experts.management.done"].tap()
-        app.buttons["main.tab.chat"].tap()
+        app.tapRootTab("chat")
         let newChat = app.buttons["chat.conversations.new"]
         XCTAssertTrue(newChat.waitForExistence(timeout: 5)); newChat.tap()
         // The product's explicit New action creates a canonical owner before
@@ -224,8 +222,7 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
         app.launchEnvironment["NOLA_REAL_IOS_UI_DATABASE_PATH"] = database
         app.launch()
         defer { app.terminate() }
-        let chat = app.buttons["main.tab.chat"]
-        XCTAssertTrue(chat.waitForExistence(timeout: 10)); chat.tap()
+        app.tapRootTab("chat")
         let parentRow = app.buttons["chat.conversation." + parent.lowercased()]
         XCTAssertTrue(parentRow.waitForExistence(timeout: 5))
         let ordinaryRows = app.buttons.matching(NSPredicate(format: "identifier MATCHES %@", "chat\\.conversation\\.[0-9a-fA-F-]{36}"))
@@ -277,8 +274,7 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
         app.launchEnvironment["NOLA_REAL_IOS_UI_DATABASE_PATH"] = database
         app.launch()
         defer { app.terminate() }
-        XCTAssertTrue(app.buttons["main.tab.settings"].waitForExistence(timeout: 10))
-        app.buttons["main.tab.settings"].tap()
+        app.tapRootTab("settings")
         app.buttons["settings.category.agents"].tap()
         let model = app.buttons["experts.model"]
         XCTAssertTrue(model.waitForExistence(timeout: 5))
@@ -326,6 +322,10 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
         add(screenshot)
     }
 
+    private func waitAndTapRootTab(_ tab: String, in app: XCUIApplication, timeout: TimeInterval = 5) {
+        app.tapRootTab(tab, timeout: timeout)
+    }
+
     func testManagementPagesAndNavigationInBothThemesWithoutModelAccount() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -333,7 +333,7 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
         app.launchEnvironment["NOLA_UI_TEST_RUN_ID"] = "navigation-\(UUID().uuidString)"
         app.launch()
         defer { app.terminate() }
-        XCTAssertTrue(app.buttons["main.tab.chat"].waitForExistence(timeout: 10))
+        app.waitForRootTab("chat")
 
         func tap(_ identifier: String) {
             let button = app.buttons[identifier]
@@ -343,11 +343,13 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
             XCTAssertTrue(button.isHittable, identifier)
             button.tap()
         }
-        func capture(_ name: String) {
+        func capture(_ name: String, isDark: Bool) throws {
             // Accessibility nodes can exist before the native push settles.
             // Keep real animations enabled and capture their completed state.
             Thread.sleep(forTimeInterval: 0.6)
-            let attachment = XCTAttachment(data: app.screenshot().pngRepresentation, uniformTypeIdentifier: "public.png")
+            let screenshot = app.screenshot()
+            try XCUIElementPixelAssertions.assertScreenshot(screenshot, label: name, isDark: isDark)
+            let attachment = XCTAttachment(data: screenshot.pngRepresentation, uniformTypeIdentifier: "public.png")
             attachment.name = name
             attachment.lifetime = .keepAlways
             add(attachment)
@@ -360,60 +362,61 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
         }
 
         for theme in ["Light", "Dark"] {
-            tap("main.tab.settings")
+            let isDark = theme == "Dark"
+            waitAndTapRootTab("settings", in: app)
             tap("settings.category.general")
             tap("settings.appearance")
             let choice = app.buttons[theme]
             XCTAssertTrue(choice.waitForExistence(timeout: 3))
             choice.tap()
-            capture("appearance-\(theme)")
+            try capture("appearance-\(theme)", isDark: isDark)
             backToSettings()
 
             tap("settings.category.agents")
             XCTAssertTrue(app.buttons["experts.management.done"].waitForExistence(timeout: 5))
-            capture("experts-\(theme)")
+            try capture("experts-\(theme)", isDark: isDark)
             tap("experts.management.done")
 
             for identifier in ["settings.models", "settings.category.general", "settings.category.agent", "settings.category.privacy"] {
                 tap(identifier)
-                capture("\(identifier)-\(theme)")
+                try capture("\(identifier)-\(theme)", isDark: isDark)
                 if identifier == "settings.category.general" {
                     let update = app.buttons["Check for updates"]
                     for _ in 0..<6 where !update.isHittable { app.swipeUp() }
                     XCTAssertTrue(update.isHittable, "Software updates remain reachable in General")
-                    capture("general-lower-\(theme)")
+                    try capture("general-lower-\(theme)", isDark: isDark)
                 }
                 backToSettings()
             }
             for destination in ["knowledge", "memory", "sources"] {
-                tap("main.tab.information")
+                waitAndTapRootTab("information", in: app)
                 tap("information.\(destination)")
-                capture("library-\(destination)-\(theme)")
+                try capture("library-\(destination)-\(theme)", isDark: isDark)
                 let back = app.navigationBars.buttons.element(boundBy: 0)
                 XCTAssertTrue(back.waitForExistence(timeout: 3))
                 back.tap()
                 XCTAssertTrue(app.buttons["information.knowledge"].waitForExistence(timeout: 3))
             }
             for tab in ["chat", "activity", "information", "settings"] {
-                tap("main.tab.\(tab)")
-                capture("primary-\(tab)-\(theme)")
-
+                waitAndTapRootTab(tab, in: app)
+                try capture("primary-\(tab)-\(theme)", isDark: isDark)
             }
         }
     }
 
-    func testPlansRemainReachableFromActivityWithoutASettingsShortcut() {
+    func testPlansRemainReachableFromActivityWithoutASettingsShortcut() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         app.launchEnvironment["NOLA_UI_TEST_RUN_ID"] = "plans-navigation-\(UUID().uuidString)"
         app.launch()
         defer { app.terminate() }
-        XCTAssertTrue(app.buttons["main.tab.activity"].waitForExistence(timeout: 10))
+        app.waitForRootTab("activity")
         for theme in ["Light", "Dark"] {
+            let isDark = theme == "Dark"
             // Exercise the real setting instead of relying on the simulator's
             // appearance or a process argument overridden by saved preferences.
-            app.buttons["main.tab.settings"].tap()
+            waitAndTapRootTab("settings", in: app)
             let general = app.buttons["settings.category.general"]
             XCTAssertTrue(general.waitForExistence(timeout: 5)); general.tap()
             let appearance = app.buttons["settings.appearance"]
@@ -424,7 +427,7 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
             XCTAssertTrue(settingsBack.waitForExistence(timeout: 3)); settingsBack.tap()
             XCTAssertTrue(app.buttons["settings.models"].waitForExistence(timeout: 5))
 
-            app.buttons["main.tab.activity"].tap()
+            waitAndTapRootTab("activity", in: app)
             let plans = app.buttons["activity.plans"]
             let search = app.textFields["activity.search"]
             XCTAssertTrue(plans.waitForExistence(timeout: 5))
@@ -436,7 +439,13 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
             XCTAssertGreaterThan(search.frame.height, 0)
             XCTAssertTrue(plans.isHittable)
             XCTAssertTrue(search.isHittable)
-            let activityScreenshot = XCTAttachment(screenshot: app.screenshot())
+            let screenshot = app.screenshot()
+            try XCUIElementPixelAssertions.assertScreenshot(
+                screenshot,
+                label: "activity-plans-entry-and-search-\(theme)",
+                isDark: isDark
+            )
+            let activityScreenshot = XCTAttachment(screenshot: screenshot)
             activityScreenshot.name = "activity-plans-entry-and-search-\(theme)"
             activityScreenshot.lifetime = .keepAlways
             add(activityScreenshot)

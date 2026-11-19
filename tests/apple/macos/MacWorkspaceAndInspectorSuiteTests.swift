@@ -248,8 +248,12 @@ final class MacWorkspaceTabsLayoutAndComposerContractTests: XCTestCase {
             let image = try XCTUnwrap(renderer.cgImage)
             XCTAssertEqual(image.width, 320)
             XCTAssertGreaterThan(image.height, 200)
-            let png = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
-            try png.write(to: URL(fileURLWithPath: "/tmp/nola-progress-populated-\(scheme == .light ? "light" : "dark").png"))
+            if let artifactDir = ProcessInfo.processInfo.environment["NOLA_VISUAL_ARTIFACT_DIR"], !artifactDir.isEmpty {
+                let outputDir = URL(fileURLWithPath: artifactDir, isDirectory: true)
+                try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+                let png = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+                try png.write(to: outputDir.appendingPathComponent("nola-progress-populated-\(scheme == .light ? "light" : "dark").png"))
+            }
         }
         let duplicate = try JSONDecoder().decode([MacInspectorProgressSnapshot.Todo].self, from: JSONEncoder().encode(todos.map { ["id": $0.id, "content": $0.content, "status": $0.status] }))
         XCTAssertEqual(todos, duplicate)
@@ -733,10 +737,12 @@ final class MacComposerAndInspectorLayoutTests: XCTestCase {
                         XCTAssertEqual(inkCenter, scroll.contentView.bounds.height / 2, accuracy: 2,
                             "Single-line input must be vertically centered using native font metrics")
                     }
-                    if text.isEmpty || text == "你好 Nola Ag" {
+                    if (text.isEmpty || text == "你好 Nola Ag"),
+                       let artifactDir = ProcessInfo.processInfo.environment["NOLA_VISUAL_ARTIFACT_DIR"],
+                       !artifactDir.isEmpty {
                         let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
                         host.cacheDisplay(in: host.bounds, to: bitmap)
-                        let output = URL(fileURLWithPath: "/tmp/nola-composer-layout")
+                        let output = URL(fileURLWithPath: artifactDir, isDirectory: true)
                         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
                         try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to:
                             output.appendingPathComponent("\(Int(width))-\(dark ? "dark" : "light")-\(text.isEmpty ? "hint" : "typed").png"))
@@ -797,7 +803,7 @@ final class MacComposerAndInspectorLayoutTests: XCTestCase {
             dependencies: deps, navigation: navigation).environment(\.accessibilityEnabled, true)
             .frame(width: 360, height: 900))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 360, height: 900),
-            styleMask: [.borderless], backing: .buffered, defer: false)
+            styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = host
         window.orderFrontRegardless()
@@ -843,8 +849,6 @@ final class MacComposerAndInspectorLayoutTests: XCTestCase {
             localAgentRuntime: PersistenceTestLocalRuntime(), remoteHost: PersistenceTestRemoteHost(), modelApplication: port)
         model.newConversation()
         defer { model.presentationDidDetach() }
-        let output = URL(fileURLWithPath: "/tmp/nola-mac-sidebar-pages")
-        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         for dark in [false, true] { for width: CGFloat in [240, 340] {
             var selectedSection = MacWorkspaceSection.chat
             var openedSettingsCount = 0
@@ -879,10 +883,14 @@ final class MacComposerAndInspectorLayoutTests: XCTestCase {
             XCTAssertEqual(selectedSection, .extensions)
             XCTAssertTrue(try XCTUnwrap(settings.first).accessibilityPerformPress?() ?? false)
             XCTAssertEqual(openedSettingsCount, 1)
-            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-            host.cacheDisplay(in: host.bounds, to: bitmap)
-            try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to:
-                output.appendingPathComponent("sidebar-\(Int(width))-\(dark ? "dark" : "light").png"))
+            if let artifactDir = ProcessInfo.processInfo.environment["NOLA_VISUAL_ARTIFACT_DIR"], !artifactDir.isEmpty {
+                let output = URL(fileURLWithPath: artifactDir, isDirectory: true)
+                try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to:
+                    output.appendingPathComponent("sidebar-\(Int(width))-\(dark ? "dark" : "light").png"))
+            }
         } }
     }
 
@@ -1060,19 +1068,25 @@ final class MacInspectorInteractionTests: XCTestCase {
             let hosting = NSHostingView(rootView: view)
             hosting.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
             hosting.frame = NSRect(x: 0, y: 0, width: 320, height: 1000)
-            let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            let window = NSWindow(contentRect: hosting.frame, styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+            window.appearance = hosting.appearance
+            window.isReleasedWhenClosed = false
             window.contentView = hosting
-            defer { window.orderOut(nil); window.contentView = nil }
+            defer { window.orderOut(nil); window.contentView = nil; window.close() }
             try await Task.sleep(for: .milliseconds(100))
             hosting.layoutSubtreeIfNeeded()
             let size = hosting.fittingSize
             XCTAssertLessThan(size.height, 1400)
             window.setContentSize(NSSize(width: 320, height: size.height))
             hosting.layoutSubtreeIfNeeded()
-            let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
-            hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
-            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-            try png.write(to: URL(fileURLWithPath: "/tmp/nola-inspector-populated-\(scheme == .dark ? "dark" : "light").png"))
+            if let artifactDir = ProcessInfo.processInfo.environment["NOLA_VISUAL_ARTIFACT_DIR"], !artifactDir.isEmpty {
+                let outputDir = URL(fileURLWithPath: artifactDir, isDirectory: true)
+                try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+                let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+                hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+                let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                try png.write(to: outputDir.appendingPathComponent("nola-inspector-populated-\(scheme == .dark ? "dark" : "light").png"))
+            }
         }
     }
 
@@ -1091,8 +1105,6 @@ final class MacInspectorInteractionTests: XCTestCase {
             platformData: MacPlatformDataService(registry: registry, startsPeriodicRefresh: false),
             webSources: MacWebSourceStore(storeURL: root.appendingPathComponent("sources.json"), registry: registry),
             chromeMessaging: InspectorTestChromeMessaging())
-        let output = URL(fileURLWithPath: "/tmp/nola-mac-inspector-pages")
-        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         for scheme in [ColorScheme.light, .dark] {
             for width in [CGFloat(320), 440] {
                 let pages = MacChatInspector.InspectorTab.allCases.map { ($0.rawValue, $0) }
@@ -1110,10 +1122,12 @@ final class MacInspectorInteractionTests: XCTestCase {
                     let hosting = NSHostingView(rootView: view)
                     hosting.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
                     hosting.frame = NSRect(x: 0, y: 0, width: width, height: 1800)
-                    let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+                    let window = NSWindow(contentRect: hosting.frame, styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+                    window.appearance = hosting.appearance
+                    window.isReleasedWhenClosed = false
                     window.contentView = hosting
                     window.orderFrontRegardless()
-                    defer { window.orderOut(nil); window.contentView = nil }
+                    defer { window.orderOut(nil); window.contentView = nil; window.close() }
                     // These are real Application reads against an isolated Store.
                     // A yield alone snapshots loading rather than the page itself.
                     try await Task.sleep(for: .milliseconds(250))
@@ -1127,33 +1141,28 @@ final class MacInspectorInteractionTests: XCTestCase {
                     XCTAssertTrue(size.height.isFinite && size.height > 0)
                     window.setContentSize(NSSize(width: width, height: max(160, size.height)))
                     hosting.layoutSubtreeIfNeeded()
-                    let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
-                    hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
-                    let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-                    XCTAssertGreaterThan(png.count, 1000, "\(section.rawValue) must render visible content")
-                    try png.write(to: output.appendingPathComponent("\(page)-\(Int(width))-\(scheme == .dark ? "dark" : "light").png"))
+                    let target = window.contentView?.superview ?? hosting
+                    let cgImage = try MacVisualPixelAssertions.captureCGImage(of: target)
+                    let metrics = try MacVisualPixelAssertions.analyzePixels(
+                        cgImage: cgImage,
+                        contentRect: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height),
+                        isDark: scheme == .dark
+                    )
+                    XCTAssertGreaterThanOrEqual(metrics.warmSurfaceFraction, 0.35, "\(page)-\(Int(width))-\(scheme)")
+                    XCTAssertGreaterThanOrEqual(max(metrics.headerContrastDelta, metrics.bodyContrastDelta), 40.0, "\(page)-\(Int(width))-\(scheme)")
+                    if let artifactDir = ProcessInfo.processInfo.environment["NOLA_VISUAL_ARTIFACT_DIR"], !artifactDir.isEmpty {
+                        let output = URL(fileURLWithPath: artifactDir, isDirectory: true)
+                        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                        let png = try XCTUnwrap(NSBitmapImageRep(cgImage: cgImage).representation(using: .png, properties: [:]))
+                        try png.write(to: output.appendingPathComponent("\(page)-\(Int(width))-\(scheme == .dark ? "dark" : "light").png"))
+                    }
                 }
             }
         }
     }
 
     func testWarmInkColorsetsAndTopBarSingleHeaderPlacement() async throws {
-        func assertColor(_ name: String, appearance: NSAppearance.Name, expectedRGB: (CGFloat, CGFloat, CGFloat)) throws {
-            let color = try XCTUnwrap(NSColor(named: name))
-            let nsAppearance = try XCTUnwrap(NSAppearance(named: appearance))
-            var resolved: NSColor?
-            nsAppearance.performAsCurrentDrawingAppearance {
-                resolved = color.usingColorSpace(.sRGB)
-            }
-            let srgb = try XCTUnwrap(resolved)
-            XCTAssertEqual(srgb.redComponent, expectedRGB.0 / 255.0, accuracy: 0.01, "\(name) red")
-            XCTAssertEqual(srgb.greenComponent, expectedRGB.1 / 255.0, accuracy: 0.01, "\(name) green")
-            XCTAssertEqual(srgb.blueComponent, expectedRGB.2 / 255.0, accuracy: 0.01, "\(name) blue")
-        }
-        try assertColor("NolaCanvas", appearance: .darkAqua, expectedRGB: (0x13, 0x13, 0x12))
-        try assertColor("NolaSurface", appearance: .darkAqua, expectedRGB: (0x1B, 0x1B, 0x19))
-        try assertColor("NolaCanvas", appearance: .aqua, expectedRGB: (0xF7, 0xF6, 0xF3))
-        try assertColor("NolaSurface", appearance: .aqua, expectedRGB: (0xFF, 0xFF, 0xFF))
+        try validateAll15MacColorsetsAndPaletteAgainstTokensJSON()
 
         let accessibility = try MacHostedAccessibilitySession()
         defer { accessibility.restore() }
@@ -1169,52 +1178,530 @@ final class MacInspectorInteractionTests: XCTestCase {
             platformData: MacPlatformDataService(registry: registry, startsPeriodicRefresh: false),
             webSources: MacWebSourceStore(storeURL: root.appendingPathComponent("sources.json"), registry: registry),
             chromeMessaging: InspectorTestChromeMessaging())
-        let view = MacChatWorkspaceView(
+
+        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            let suffix = appearance == .darkAqua ? "dark" : "light"
+            for (layoutLabel, size, expectsSidebar) in [
+                ("threeColumn", CGSize(width: 1_280, height: 820), true),
+                ("inspectorOverlay", CGSize(width: 920, height: 720), true),
+                ("compactOverlay", CGSize(width: 680, height: 720), false),
+            ] {
+                let workspaceView = MacChatWorkspaceView(
+                    canonicalRepository: repo,
+                    localAgentRuntime: PersistenceTestLocalRuntime(),
+                    remoteHost: PersistenceTestRemoteHost(),
+                    inspectorDependencies: deps,
+                    model: model
+                ).environment(\.accessibilityEnabled, true)
+
+                try await MacVisualPixelAssertions.assertView(
+                    workspaceView,
+                    name: "workspace-\(layoutLabel)-\(suffix)",
+                    size: size,
+                    appearance: appearance,
+                    styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                    assertWindow: { window, hosting in
+                        XCTAssertTrue(window.styleMask.contains(.fullSizeContentView), "\(layoutLabel) must apply fullSizeContentView")
+                        XCTAssertEqual(window.titleVisibility, .hidden, "\(layoutLabel) must hide titleVisibility")
+                        XCTAssertEqual(window.titlebarSeparatorStyle, .none, "\(layoutLabel) must remove titlebar separator")
+                        XCTAssertTrue(window.titlebarAppearsTransparent, "\(layoutLabel) must keep transparent titlebar")
+
+                        let button = try await self.waitForAccessibleElement(identifier: "workspace.toggleSidebar", in: hosting)
+                        let frame = try XCTUnwrap(button.accessibilityFrame?())
+                        let bottomOffsetFromWindowTop = window.frame.maxY - frame.minY
+                        XCTAssertGreaterThanOrEqual(bottomOffsetFromWindowTop, 0.0)
+                        XCTAssertLessThanOrEqual(bottomOffsetFromWindowTop, 48.0, "Top header must sit at y=0..48 inside fullSizeContentView")
+                    }
+                )
+
+                if expectsSidebar && layoutLabel == "threeColumn" {
+                    for section in MacWorkspaceSection.allCases {
+                        let sectionView = MacChatWorkspaceView(
+                            canonicalRepository: repo,
+                            localAgentRuntime: PersistenceTestLocalRuntime(),
+                            remoteHost: PersistenceTestRemoteHost(),
+                            inspectorDependencies: deps,
+                            model: model
+                        ).environment(\.accessibilityEnabled, true)
+
+                        try await MacVisualPixelAssertions.assertView(
+                            sectionView,
+                            name: "workspace-section-\(section.rawValue)-\(suffix)",
+                            size: size,
+                            appearance: appearance,
+                            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                            beforeCapture: { _, hosting in
+                                let navButton = try await self.waitForAccessibleElement(
+                                    identifier: "workspace.nav." + section.rawValue,
+                                    in: hosting
+                                )
+                                XCTAssertTrue(navButton.accessibilityPerformPress?() ?? false)
+                                try await Task.sleep(for: .milliseconds(200))
+                            }
+                        )
+                    }
+                }
+            }
+
+            try await MacVisualPixelAssertions.assertView(
+                MacOnboardingView(onComplete: {}).environment(\.accessibilityEnabled, true),
+                name: "workspace-onboarding-chrome-\(suffix)",
+                size: CGSize(width: 980, height: 740),
+                appearance: appearance,
+                styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                assertWindow: { window, _ in
+                    XCTAssertTrue(window.styleMask.contains(.fullSizeContentView))
+                    XCTAssertEqual(window.titleVisibility, .hidden)
+                    XCTAssertEqual(window.titlebarSeparatorStyle, .none)
+                }
+            )
+        }
+    }
+
+    func testWorkspaceSheetsRenderAndPassPixelAssertionsViaRealNSWindowSheets() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("workspace-sheets-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let port = try MacApplicationPort(databaseURL: root.appendingPathComponent("test.sqlite"))
+        let repo = MacCanonicalConversationRepository(store: port)
+        let model = MacWorkspaceModel(
             canonicalRepository: repo,
             localAgentRuntime: PersistenceTestLocalRuntime(),
             remoteHost: PersistenceTestRemoteHost(),
+            modelApplication: port
+        )
+        model.newConversation()
+        defer { model.presentationDidDetach() }
+
+        let roomExecution = MacRoomExecutionService(
+            repository: repo,
+            localRuntime: PersistenceTestLocalRuntime(),
+            remoteHost: PersistenceTestRemoteHost()
+        )
+        let roomWorkspace = MacAgentRoomWorkspace(
+            service: repo.makeAgentRoomService(),
+            executeOwner: { try await roomExecution.execute($0, intent: $1) }
+        )
+        let sampleAgent = MacPersistentAgent(
+            id: "research-expert",
+            name: "Research Expert",
+            description: "Reviews citations and source documents.",
+            revision: 1,
+            availability: "active",
+            defaults: .object([:])
+        )
+        let recoveryPresentation = MacUnknownEffectRecoveryPresentation(
+            owner: MacLocalRunRecovery(
+                conversationID: "conv-recovery",
+                expectedRunID: "run-recovery",
+                canonicalAssistantMessageID: "msg-assistant",
+                assistantMessageID: UUID(),
+                generationID: 1
+            ),
+            inspection: MacUnknownEffectRecoveryInspection(
+                conversationID: "conv-recovery",
+                runID: "run-recovery",
+                assistantMessageID: "msg-assistant",
+                invocationConfigDigest: "digest-1",
+                targets: [
+                    MacUnknownEffectRecoveryTarget(
+                        effectID: "effect-1",
+                        requestID: "req-1",
+                        attemptID: "attempt-1",
+                        workerGeneration: "gen-1",
+                        leaseOwner: "worker-1",
+                        leaseToken: "token-1",
+                        expectedAttemptRevision: 1
+                    )
+                ],
+                retryAllowed: true,
+                independentPendingEffects: 0
+            ),
+            pendingDecision: nil
+        )
+
+        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            let suffix = appearance == .darkAqua ? "dark" : "light"
+            try await MacVisualPixelAssertions.assertSheet(
+                MacCommandPaletteView(
+                    model: model,
+                    newConversation: {},
+                    selectConversation: { _ in },
+                    focusComposer: {},
+                    toggleSidebar: {},
+                    toggleInspector: {},
+                    dismiss: {}
+                ),
+                name: "sheet-command-palette-\(suffix)",
+                sheetSize: CGSize(width: 640, height: 480),
+                appearance: appearance
+            )
+            try await MacVisualPixelAssertions.assertSheet(
+                MacMessageEditSheet(
+                    draft: AppleMessageEditDraft(
+                        sourceConversationID: "conv-edit",
+                        sourceMessageID: "msg-edit",
+                        expectedSourceRevision: 1,
+                        expectedMessageRevision: 1,
+                        text: "Review the revised release checklist."
+                    ),
+                    submit: { _ in },
+                    cancel: {}
+                ),
+                name: "sheet-message-edit-\(suffix)",
+                sheetSize: CGSize(width: 620, height: 430),
+                appearance: appearance
+            )
+            try await MacVisualPixelAssertions.assertSheet(
+                MacChatExpertPicker(agents: [sampleAgent], selection: .constant([sampleAgent.id]), manage: {}),
+                name: "sheet-expert-picker-\(suffix)",
+                sheetSize: CGSize(width: 460, height: 420),
+                appearance: appearance
+            )
+            try await MacVisualPixelAssertions.assertSheet(
+                MacExpertDirectoryManagementView(workspace: roomWorkspace),
+                name: "sheet-expert-management-\(suffix)",
+                sheetSize: CGSize(width: 780, height: 540),
+                appearance: appearance
+            )
+            try await MacVisualPixelAssertions.assertSheet(
+                MacConversationModelSettingsView(model: model),
+                name: "sheet-conversation-model-settings-\(suffix)",
+                sheetSize: CGSize(width: 580, height: 560),
+                appearance: appearance
+            )
+            try await MacVisualPixelAssertions.assertSheet(
+                MacUnknownEffectRecoveryView(
+                    presentation: recoveryPresentation,
+                    isBusy: false,
+                    submit: { _ in },
+                    recoverPending: {}
+                ),
+                name: "sheet-unknown-effect-recovery-\(suffix)",
+                sheetSize: CGSize(width: 520, height: 340),
+                appearance: appearance
+            )
+        }
+    }
+
+    func testSlashGoalCommandPrefillsGoalInspectorAgainstIsolatedStore() async throws {
+        let accessibility = try MacHostedAccessibilitySession()
+        defer { accessibility.restore() }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("workspace-goal-command-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let port = try MacApplicationPort(databaseURL: root.appendingPathComponent("store.db"))
+        let repo = MacCanonicalConversationRepository(store: port)
+        let host = PersistenceTestRemoteHost()
+        let model = MacWorkspaceModel(
+            canonicalRepository: repo,
+            localAgentRuntime: PersistenceTestLocalRuntime(),
+            remoteHost: host,
+            modelApplication: port,
+            readinessIssue: { _ in nil }
+        )
+        model.presentationDidAttach()
+        defer { model.presentationDidDetach() }
+        model.newConversation()
+        let conversationID = try XCTUnwrap(model.selectedConversationID)
+
+        let registry = MacDataSourceRegistry(storeURL: root.appendingPathComponent("registry.json"))
+        let deps = MacInspectorDependencies(
+            dataRegistry: registry,
+            platformData: MacPlatformDataService(registry: registry, startsPeriodicRefresh: false),
+            webSources: MacWebSourceStore(storeURL: root.appendingPathComponent("sources.json"), registry: registry),
+            chromeMessaging: InspectorTestChromeMessaging()
+        )
+        let workspaceView = MacChatWorkspaceView(
+            canonicalRepository: repo,
+            localAgentRuntime: PersistenceTestLocalRuntime(),
+            remoteHost: host,
             inspectorDependencies: deps,
             model: model
         )
-        .frame(width: 1080, height: 700)
+        .frame(width: 1_280, height: 820)
         .environment(\.accessibilityEnabled, true)
-        let hosting = NSHostingView(rootView: view)
+
+        let hosting = NSHostingView(rootView: workspaceView)
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1080, height: 700),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            contentRect: NSRect(origin: .zero, size: CGSize(width: 1_280, height: 820)),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
-        window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = true
-        window.titlebarSeparatorStyle = .none
         window.isReleasedWhenClosed = false
         window.contentView = hosting
-        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
         defer { window.orderOut(nil); window.contentView = nil; window.close() }
+
+        try await MacVisualPixelAssertions.settleLayout(window: window, hostingView: hosting)
+        let editor = try XCTUnwrap(findNSViews(in: hosting).compactMap { $0 as? MacAttachmentPasteTextView }.first)
+        model.setDraft("/goal Ship v1.0 release", conversationID: conversationID)
+        try await Task.sleep(for: .milliseconds(80))
+
+        let press = try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: window.windowNumber,
+            context: nil,
+            characters: "\r",
+            charactersIgnoringModifiers: "\r",
+            isARepeat: false,
+            keyCode: 36
+        ))
+        editor.keyDown(with: press)
+        try await Task.sleep(for: .milliseconds(250))
+        hosting.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(model.draft, "", "/goal command must be intercepted instead of remaining in draft")
+        XCTAssertTrue(
+            (model.messagesByConversation[conversationID] ?? []).isEmpty,
+            "/goal prefill must not dispatch a chat turn directly"
+        )
+
+        let goalEditor = try await waitForAccessibleElement(identifier: "mac-goal-objective", in: hosting)
         let deadline = ContinuousClock.now + .seconds(3)
-        var toggleButton: AnyObject?
-        while toggleButton == nil && ContinuousClock.now < deadline {
+        var capturedValue = ""
+        while ContinuousClock.now < deadline {
             hosting.layoutSubtreeIfNeeded()
-            var queue: [AnyObject] = [hosting], seen = Set<ObjectIdentifier>()
+            let accessibilityText = ((goalEditor as? NSView)?.accessibilityValue() as? String)
+                ?? ((goalEditor as? NSAccessibilityElement)?.accessibilityValue() as? String)
+                ?? (goalEditor as? NSControl)?.stringValue
+                ?? (goalEditor as? NSTextView)?.string
+            if let text = accessibilityText
+                ?? findNSViews(in: hosting).compactMap({ ($0 as? NSTextView)?.string }).first(where: { $0.contains("Ship v1.0 release") }) {
+                capturedValue = text
+                if capturedValue.contains("Ship v1.0 release") { break }
+            }
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        XCTAssertTrue(capturedValue.contains("Ship v1.0 release"), "Expected goal objective prefill in inspector, got '\(capturedValue)'")
+    }
+
+    func testModelConnectionDisconnectAndReconnectPostsConfigurationNotification() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("mac-connection-lifecycle-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let port = try MacApplicationPort(databaseURL: root.appendingPathComponent("store.db"))
+        let service = MacModelConnectionService(application: port)
+        let created = try service.create(
+            name: "Lifecycle Provider",
+            endpoint: "https://lifecycle.example.test/v1",
+            wireProtocol: "responses",
+            secret: "sk-lifecycle-secret"
+        )
+        XCTAssertTrue(created.document.connection.enabled)
+
+        var notificationCount = 0
+        let observer = NotificationCenter.default.addObserver(
+            forName: .nolaMacConfigurationDidChange,
+            object: nil,
+            queue: nil
+        ) { _ in
+            notificationCount += 1
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        let disconnected = try service.disconnect(created)
+        XCTAssertFalse(disconnected.document.connection.enabled)
+        XCTAssertEqual(notificationCount, 1)
+        XCTAssertThrowsError(try service.credential(
+            connectionID: created.id,
+            endpoint: "https://lifecycle.example.test/v1",
+            wireProtocol: "responses"
+        ))
+
+        let reconnected = try service.reconnect(disconnected)
+        XCTAssertTrue(reconnected.document.connection.enabled)
+        XCTAssertEqual(notificationCount, 2)
+        let resolved = try service.credential(
+            connectionID: created.id,
+            endpoint: "https://lifecycle.example.test/v1",
+            wireProtocol: "responses"
+        )
+        XCTAssertEqual(resolved.secret, "sk-lifecycle-secret")
+    }
+
+    private func validateAll15MacColorsetsAndPaletteAgainstTokensJSON() throws {
+        let tokensURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("shared/design-tokens/tokens.json")
+        let data = try Data(contentsOf: tokensURL)
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let colorSection = try XCTUnwrap(root["color"] as? [String: Any])
+        let lightTokens = try XCTUnwrap(colorSection["light"] as? [String: String])
+        let darkTokens = try XCTUnwrap(colorSection["dark"] as? [String: String])
+
+        func parseHex(_ hex: String) throws -> (Double, Double, Double) {
+            let trimmed = hex.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "#", with: "")
+            let value = try XCTUnwrap(UInt32(trimmed, radix: 16), "Invalid hex: \(hex)")
+            return (
+                Double((value >> 16) & 0xFF) / 255.0,
+                Double((value >> 8) & 0xFF) / 255.0,
+                Double(value & 0xFF) / 255.0
+            )
+        }
+
+        func luminance(_ rgb: (Double, Double, Double)) -> Double {
+            let channels = [rgb.0, rgb.1, rgb.2].map { c in
+                c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+            }
+            return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+        }
+
+        func contrast(_ a: (Double, Double, Double), _ b: (Double, Double, Double)) -> Double {
+            let l1 = luminance(a)
+            let l2 = luminance(b)
+            return (max(l1, l2) + 0.05) / (min(l1, l2) + 0.05)
+        }
+
+        func resolveNSColor(_ name: String, appearance: NSAppearance.Name) throws -> (r: Double, g: Double, b: Double, a: Double) {
+            let color = try XCTUnwrap(NSColor(named: name), "Missing macOS colorset: \(name)")
+            let nsAppearance = try XCTUnwrap(NSAppearance(named: appearance))
+            var resolved: NSColor?
+            nsAppearance.performAsCurrentDrawingAppearance {
+                resolved = color.usingColorSpace(.sRGB)
+            }
+            let srgb = try XCTUnwrap(resolved, "Could not resolve \(name) in sRGB")
+            return (Double(srgb.redComponent), Double(srgb.greenComponent), Double(srgb.blueComponent), Double(srgb.alphaComponent))
+        }
+
+        let colorsetMapping: [(String, String)] = [
+            ("NolaCanvas", "canvas"),
+            ("NolaSurface", "surface"),
+            ("NolaSurfaceRaised", "surfaceSubtle"),
+            ("NolaAccentSubtle", "accentSubtle"),
+            ("NolaDivider", "border"),
+            ("NolaControlOutline", "outline"),
+            ("NolaTextPrimary", "ink"),
+            ("AccentColor", "accent"),
+            ("NolaTextSecondary", "inkSecondary"),
+            ("NolaOnAccent", "onAccent"),
+            ("NolaSuccess", "success"),
+            ("NolaWarning", "warning"),
+            ("NolaDanger", "danger"),
+        ]
+
+        for (colorsetName, tokenRole) in colorsetMapping {
+            let expectedLight = try parseHex(try XCTUnwrap(lightTokens[tokenRole]))
+            let actualLight = try resolveNSColor(colorsetName, appearance: .aqua)
+            XCTAssertEqual(actualLight.r, expectedLight.0, accuracy: 0.004, "\(colorsetName) light red")
+            XCTAssertEqual(actualLight.g, expectedLight.1, accuracy: 0.004, "\(colorsetName) light green")
+            XCTAssertEqual(actualLight.b, expectedLight.2, accuracy: 0.004, "\(colorsetName) light blue")
+
+            let expectedDark = try parseHex(try XCTUnwrap(darkTokens[tokenRole]))
+            let actualDark = try resolveNSColor(colorsetName, appearance: .darkAqua)
+            XCTAssertEqual(actualDark.r, expectedDark.0, accuracy: 0.004, "\(colorsetName) dark red")
+            XCTAssertEqual(actualDark.g, expectedDark.1, accuracy: 0.004, "\(colorsetName) dark green")
+            XCTAssertEqual(actualDark.b, expectedDark.2, accuracy: 0.004, "\(colorsetName) dark blue")
+        }
+
+        for (name, lightAlpha, darkAlpha) in [
+            ("NolaControlHover", 0.055, 0.120),
+            ("NolaControlPressed", 0.090, 0.190),
+        ] {
+            let lightResolved = try resolveNSColor(name, appearance: .aqua)
+            XCTAssertEqual(lightResolved.r, 0.0, accuracy: 0.004, "\(name) light")
+            XCTAssertEqual(lightResolved.a, lightAlpha, accuracy: 0.01, "\(name) light alpha")
+            let darkResolved = try resolveNSColor(name, appearance: .darkAqua)
+            XCTAssertEqual(darkResolved.r, 1.0, accuracy: 0.004, "\(name) dark")
+            XCTAssertEqual(darkResolved.a, darkAlpha, accuracy: 0.01, "\(name) dark alpha")
+        }
+
+        let paletteChecks: [(String, UInt32, UInt32)] = [
+            ("canvas", MacDesignTokens.Palette.Light.canvas, MacDesignTokens.Palette.Dark.canvas),
+            ("surface", MacDesignTokens.Palette.Light.surface, MacDesignTokens.Palette.Dark.surface),
+            ("surfaceSubtle", MacDesignTokens.Palette.Light.surfaceSubtle, MacDesignTokens.Palette.Dark.surfaceSubtle),
+            ("surfaceElevated", MacDesignTokens.Palette.Light.surfaceElevated, MacDesignTokens.Palette.Dark.surfaceElevated),
+            ("ink", MacDesignTokens.Palette.Light.ink, MacDesignTokens.Palette.Dark.ink),
+            ("inkSecondary", MacDesignTokens.Palette.Light.inkSecondary, MacDesignTokens.Palette.Dark.inkSecondary),
+            ("inkMuted", MacDesignTokens.Palette.Light.inkMuted, MacDesignTokens.Palette.Dark.inkMuted),
+            ("border", MacDesignTokens.Palette.Light.border, MacDesignTokens.Palette.Dark.border),
+            ("outline", MacDesignTokens.Palette.Light.outline, MacDesignTokens.Palette.Dark.outline),
+            ("accent", MacDesignTokens.Palette.Light.accent, MacDesignTokens.Palette.Dark.accent),
+            ("onAccent", MacDesignTokens.Palette.Light.onAccent, MacDesignTokens.Palette.Dark.onAccent),
+            ("accentSubtle", MacDesignTokens.Palette.Light.accentSubtle, MacDesignTokens.Palette.Dark.accentSubtle),
+            ("success", MacDesignTokens.Palette.Light.success, MacDesignTokens.Palette.Dark.success),
+            ("warning", MacDesignTokens.Palette.Light.warning, MacDesignTokens.Palette.Dark.warning),
+            ("danger", MacDesignTokens.Palette.Light.danger, MacDesignTokens.Palette.Dark.danger),
+            ("info", MacDesignTokens.Palette.Light.info, MacDesignTokens.Palette.Dark.info),
+        ]
+        for (role, actualLightHex, actualDarkHex) in paletteChecks {
+            let expLight = try parseHex(try XCTUnwrap(lightTokens[role]))
+            let actLight = (
+                Double((actualLightHex >> 16) & 0xFF) / 255.0,
+                Double((actualLightHex >> 8) & 0xFF) / 255.0,
+                Double(actualLightHex & 0xFF) / 255.0
+            )
+            XCTAssertEqual(actLight.0, expLight.0, accuracy: 0.001, "Palette.Light.\(role)")
+            XCTAssertEqual(actLight.1, expLight.1, accuracy: 0.001, "Palette.Light.\(role)")
+            XCTAssertEqual(actLight.2, expLight.2, accuracy: 0.001, "Palette.Light.\(role)")
+
+            let expDark = try parseHex(try XCTUnwrap(darkTokens[role]))
+            let actDark = (
+                Double((actualDarkHex >> 16) & 0xFF) / 255.0,
+                Double((actualDarkHex >> 8) & 0xFF) / 255.0,
+                Double(actualDarkHex & 0xFF) / 255.0
+            )
+            XCTAssertEqual(actDark.0, expDark.0, accuracy: 0.001, "Palette.Dark.\(role)")
+            XCTAssertEqual(actDark.1, expDark.1, accuracy: 0.001, "Palette.Dark.\(role)")
+            XCTAssertEqual(actDark.2, expDark.2, accuracy: 0.001, "Palette.Dark.\(role)")
+        }
+
+        for (label, tokens) in [("light", lightTokens), ("dark", darkTokens)] {
+            for fg in ["ink", "inkSecondary", "inkMuted", "accent", "success", "warning", "danger", "info"] {
+                let fgRGB = try parseHex(try XCTUnwrap(tokens[fg]))
+                for bg in ["canvas", "surface", "surfaceSubtle", "surfaceElevated"] {
+                    let bgRGB = try parseHex(try XCTUnwrap(tokens[bg]))
+                    XCTAssertGreaterThanOrEqual(contrast(fgRGB, bgRGB), 4.5, "WCAG AA text \(label) \(fg)/\(bg)")
+                }
+            }
+            XCTAssertGreaterThanOrEqual(
+                contrast(try parseHex(try XCTUnwrap(tokens["onAccent"])), try parseHex(try XCTUnwrap(tokens["accent"]))),
+                4.5,
+                "WCAG AA \(label) onAccent/accent"
+            )
+            for bg in ["canvas", "surface"] {
+                XCTAssertGreaterThanOrEqual(
+                    contrast(try parseHex(try XCTUnwrap(tokens["outline"])), try parseHex(try XCTUnwrap(tokens[bg]))),
+                    3.0,
+                    "WCAG AA outline \(label) outline/\(bg)"
+                )
+            }
+        }
+    }
+
+    private func waitForAccessibleElement(identifier: String, in root: AnyObject) async throws -> AnyObject {
+        let deadline = ContinuousClock.now + .seconds(3)
+        while ContinuousClock.now < deadline {
+            if let nsView = root as? NSView {
+                nsView.layoutSubtreeIfNeeded()
+            }
+            var queue: [AnyObject] = [root], seen = Set<ObjectIdentifier>()
             while let item = queue.popLast() {
                 guard seen.insert(ObjectIdentifier(item)).inserted else { continue }
-                if (item.accessibilityIdentifier?() ?? nil) == "workspace.toggleSidebar" {
-                    toggleButton = item
-                    break
+                if (item.accessibilityIdentifier?() ?? nil) == identifier {
+                    return item
                 }
                 let children = item.accessibilityChildren?() ?? []
                 queue += (children + NSAccessibility.unignoredChildren(from: children)).map { $0 as AnyObject }
                 if let nsView = item as? NSView { queue += nsView.subviews }
             }
-            if toggleButton == nil {
-                try await Task.sleep(for: .milliseconds(25))
-            }
+            try await Task.sleep(for: .milliseconds(25))
         }
-        let button = try XCTUnwrap(toggleButton)
-        let frame = try XCTUnwrap(button.accessibilityFrame?())
-        let bottomOffsetFromWindowTop = window.frame.maxY - frame.minY
-        XCTAssertLessThanOrEqual(bottomOffsetFromWindowTop, 48.0, "Top header must sit at y=0..48 inside fullSizeContentView without a duplicate titlebar strip")
+        XCTFail("Missing accessible element with identifier \(identifier)")
+        throw NSError(domain: "NolaTest", code: 1)
+    }
+
+    private func findNSViews(in root: NSView) -> [NSView] {
+        [root] + root.subviews.flatMap(findNSViews)
     }
 
     private func hasLoadingIndicator(_ root: AnyObject) -> Bool {
@@ -1286,7 +1773,7 @@ final class MacRowHitRegionTests: XCTestCase {
             kinds: [.skill], navigation: navigation, catalog: catalog)
             .environment(\.accessibilityEnabled, true).frame(width: 520, height: 720))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 720),
-            styleMask: [.borderless], backing: .buffered, defer: false)
+            styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = host
         window.orderFrontRegardless()

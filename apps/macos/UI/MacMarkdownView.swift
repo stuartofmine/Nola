@@ -1130,7 +1130,7 @@ private struct MacCodeBlockView: View {
         .alert(String(localized: "Nola could not update the clipboard."), isPresented: $copyFailed) {
             Button("OK", role: .cancel) {}
         }
-        .background(Color(nsColor: .textBackgroundColor).opacity(0.72), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .background(MacDesignColor.subtleFill, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .stroke(Color.primary.opacity(0.09), lineWidth: 0.5)

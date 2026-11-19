@@ -525,6 +525,8 @@ struct ChatMoreSettingsSheet: View {
             TextEditor(text: $sessionMemory)
                 .frame(minHeight: 90)
                 .font(.body)
+                .scrollContentBackground(.hidden)
+                .background(DesignTokens.cardBackgroundColor)
         } header: {
             Text(tr("chat.more_settings.session_memory.header", "Session memory · Current conversation", comment: "Current conversation session memory section header"))
         } footer: {
@@ -535,10 +537,14 @@ struct ChatMoreSettingsSheet: View {
             TextEditor(text: $longTermMemory)
                 .frame(minHeight: 100)
                 .font(.body)
+                .scrollContentBackground(.hidden)
+                .background(DesignTokens.cardBackgroundColor)
 
             TextEditor(text: $userPreferences)
                 .frame(minHeight: 90)
                 .font(.body)
+                .scrollContentBackground(.hidden)
+                .background(DesignTokens.cardBackgroundColor)
         } header: {
             Text(tr("chat.more_settings.long_term.header", "Long-term memory and preferences · Global", comment: "Global long-term memory and preferences section header"))
         } footer: {

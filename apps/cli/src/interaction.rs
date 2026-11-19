@@ -464,6 +464,9 @@ pub fn start_execution_cancel_listener(
         return None;
     }
     restore_terminal_newline_output();
+    if std::io::stdout().is_terminal() {
+        let _ = execute!(std::io::stdout(), crossterm::event::EnableBracketedPaste);
+    }
     cancellation
         .terminal_listener_active
         .store(true, Ordering::SeqCst);
@@ -504,34 +507,14 @@ pub fn start_execution_cancel_listener(
                     break;
                 }
                 restore_terminal_newline_output();
+                if std::io::stdout().is_terminal() {
+                    let _ = execute!(std::io::stdout(), crossterm::event::EnableBracketedPaste);
+                }
                 terminal_prompt_was_active = false;
             }
             let mut view_changed = false;
             let stop_after_input = match poll(Duration::from_millis(25)) {
                 Ok(true) => match read() {
-                    // Terminals encode Alt+key as ESC followed by the key. If a
-                    // user starts typing immediately after pressing Esc,
-                    // crossterm can legitimately coalesce both physical keys
-                    // into one Alt-modified event. During execution there are
-                    // no Alt editing commands, so preserve the user's intent:
-                    // cancel the turn and hand the following character to the
-                    // persistent composer instead of silently dropping it.
-                    Ok(Event::Key(mut key))
-                        if key.kind == KeyEventKind::Press
-                            && matches!(key.code, KeyCode::Char(_))
-                            && key.modifiers.contains(KeyModifiers::ALT)
-                            && !key.modifiers.contains(KeyModifiers::CONTROL) =>
-                    {
-                        thread_cancellation.request();
-                        crate::terminal_ui::mark_turn_cancelling(
-                            thread_cancellation.execution_id(),
-                        );
-                        view_changed = true;
-                        key.modifiers.remove(KeyModifiers::ALT);
-                        update_execution_input_from_key(&thread_cancellation, &key);
-                        crate::terminal_ui::sync_composer(&thread_cancellation);
-                        false
-                    }
                     Ok(Event::Key(key)) if crate::composer_media::paste_key(&key) => {
                         match crate::composer_media::paste_image() {
                             Ok(marker) => append_execution_input(&thread_cancellation, &marker),
@@ -605,6 +588,9 @@ pub fn start_execution_cancel_listener(
             if stop_after_input {
                 break;
             }
+        }
+        if std::io::stdout().is_terminal() {
+            let _ = execute!(std::io::stdout(), crossterm::event::DisableBracketedPaste);
         }
         let _ = disable_raw_mode();
         thread_active.store(false, Ordering::SeqCst);
@@ -805,8 +791,51 @@ fn permission_choice_from_reader(
     PermissionChoice::Deny
 }
 
+const MODAL_POPUP_SHORTCUT_GUARD: Duration = Duration::from_millis(200);
+
+fn is_modal_quick_confirm_key(key: &crossterm::event::KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Enter | KeyCode::Char('\r' | '\n') => true,
+        KeyCode::Char(c) if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => {
+            matches!(
+                c,
+                'y' | 'Y' | 's' | 'S' | 'c' | 'C' | 'n' | 'N' | 'd' | 'D' | '1'..='9'
+            )
+        }
+        _ => false,
+    }
+}
+
+fn should_suppress_popup_shortcut(elapsed: Duration, key: &crossterm::event::KeyEvent) -> bool {
+    elapsed < MODAL_POPUP_SHORTCUT_GUARD && is_modal_quick_confirm_key(key)
+}
+
+fn modal_scroll_direction(key: &crossterm::event::KeyEvent) -> Option<bool> {
+    match key.code {
+        KeyCode::PageUp => Some(false),
+        KeyCode::PageDown => Some(true),
+        KeyCode::Up if key.modifiers.intersects(KeyModifiers::ALT | KeyModifiers::CONTROL) => {
+            Some(false)
+        }
+        KeyCode::Down if key.modifiers.intersects(KeyModifiers::ALT | KeyModifiers::CONTROL) => {
+            Some(true)
+        }
+        KeyCode::Char('u' | 'U') if key.modifiers == KeyModifiers::CONTROL => Some(false),
+        KeyCode::Char('d' | 'D') if key.modifiers == KeyModifiers::CONTROL => Some(true),
+        _ => None,
+    }
+}
+
+fn drain_pending_terminal_events() {
+    while matches!(poll(Duration::ZERO), Ok(true)) {
+        if read().is_err() {
+            break;
+        }
+    }
+}
+
 fn prompt_permission_keyboard(prompt: &PermissionPrompt) -> Option<PermissionChoice> {
-    if !stdin_confirmation_available() {
+    if !stdin_confirmation_available() || !std::io::stdout().is_terminal() {
         return Some(PermissionChoice::TransportInterrupted(
             nola_host_protocol::PermissionTransportInterruptionReason::Unavailable,
         ));
@@ -822,6 +851,8 @@ fn prompt_permission_keyboard(prompt: &PermissionPrompt) -> Option<PermissionCho
             ))
         }
     };
+    drain_pending_terminal_events();
+    let opened_at = std::time::Instant::now();
     let mut selected = 0usize;
     let mut rendered_lines = 0usize;
     if draw_permission_prompt_frame(prompt, selected, rendered_lines).is_err() {
@@ -858,6 +889,10 @@ fn prompt_permission_keyboard(prompt: &PermissionPrompt) -> Option<PermissionCho
         if key.kind != KeyEventKind::Press {
             continue;
         }
+        if let Some(down) = modal_scroll_direction(&key) {
+            crate::terminal_ui::scroll_permission_frame(down);
+            continue;
+        }
         match crate::terminal_input::modal_key(&key) {
             crate::terminal_input::ModalKey::Cancel => {
                 let _ = clear_permission_prompt_frame(rendered_lines);
@@ -866,10 +901,10 @@ fn prompt_permission_keyboard(prompt: &PermissionPrompt) -> Option<PermissionCho
             crate::terminal_input::ModalKey::Ignore => continue,
             crate::terminal_input::ModalKey::Action => {}
         }
+        if should_suppress_popup_shortcut(opened_at.elapsed(), &key) {
+            continue;
+        }
         match key.code {
-            KeyCode::PageUp | KeyCode::PageDown => {
-                crate::terminal_ui::scroll_permission_frame(key.code == KeyCode::PageDown);
-            }
             KeyCode::Up | KeyCode::Left => {
                 selected = if selected == 0 { 3 } else { selected - 1 };
                 if selected == 1 && !prompt.allow_conversation { selected = 0; }
@@ -1203,11 +1238,15 @@ fn prompt_user_question_line(prompt: &UserQuestionPrompt) -> UserQuestionAnswer 
 }
 
 fn prompt_user_question_keyboard(prompt: &UserQuestionPrompt) -> Option<UserQuestionAnswer> {
-    let _raw_mode = PermissionRawModeGuard::new().ok()?;
-    let option_count = prompt.options.len() + if prompt.allow_freeform { 1 } else { 0 };
-    if option_count == 0 {
+    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
         return Some(UserQuestionAnswer::Unavailable);
     }
+    let _raw_mode = PermissionRawModeGuard::new().ok()?;
+    drain_pending_terminal_events();
+    let opened_at = std::time::Instant::now();
+    let freeform_index = prompt.allow_freeform.then_some(prompt.options.len());
+    let decline_index = prompt.options.len() + usize::from(prompt.allow_freeform);
+    let option_count = decline_index + 1;
     let mut selected = 0usize;
     let mut rendered_lines = 0usize;
     if draw_user_question_frame(prompt, selected, rendered_lines).is_err() {
@@ -1236,6 +1275,10 @@ fn prompt_user_question_keyboard(prompt: &UserQuestionPrompt) -> Option<UserQues
         if key.kind != KeyEventKind::Press {
             continue;
         }
+        if let Some(down) = modal_scroll_direction(&key) {
+            crate::terminal_ui::scroll_permission_frame(down);
+            continue;
+        }
         match crate::terminal_input::modal_key(&key) {
             crate::terminal_input::ModalKey::Cancel => {
                 let _ = clear_permission_prompt_frame(rendered_lines);
@@ -1244,11 +1287,10 @@ fn prompt_user_question_keyboard(prompt: &UserQuestionPrompt) -> Option<UserQues
             crate::terminal_input::ModalKey::Ignore => continue,
             crate::terminal_input::ModalKey::Action => {}
         }
+        if should_suppress_popup_shortcut(opened_at.elapsed(), &key) {
+            continue;
+        }
         match key.code {
-            KeyCode::Char('d') => {
-                let _ = clear_permission_prompt_frame(rendered_lines);
-                return Some(UserQuestionAnswer::Declined);
-            }
             KeyCode::Up | KeyCode::Left => {
                 selected = if selected == 0 {
                     option_count - 1
@@ -1259,10 +1301,6 @@ fn prompt_user_question_keyboard(prompt: &UserQuestionPrompt) -> Option<UserQues
             KeyCode::Down | KeyCode::Right | KeyCode::Tab => {
                 selected = (selected + 1) % option_count;
             }
-            KeyCode::PageUp | KeyCode::PageDown => {
-                crate::terminal_ui::scroll_permission_frame(key.code == KeyCode::PageDown);
-                continue;
-            }
             KeyCode::Enter => {
                 let _ = clear_permission_prompt_frame(rendered_lines);
                 if selected < prompt.options.len() {
@@ -1271,7 +1309,10 @@ fn prompt_user_question_keyboard(prompt: &UserQuestionPrompt) -> Option<UserQues
                         label: prompt.options[selected].0.clone(),
                     });
                 }
-                return Some(read_user_question_freeform());
+                if freeform_index == Some(selected) {
+                    return Some(read_user_question_freeform());
+                }
+                return Some(UserQuestionAnswer::Declined);
             }
             KeyCode::Esc => {
                 let _ = clear_permission_prompt_frame(rendered_lines);
@@ -1343,7 +1384,7 @@ fn adaptive_panel_inner_width(rows: &[String], columns: usize) -> usize {
 fn render_user_question_prompt(prompt: &UserQuestionPrompt, selected: Option<usize>) -> String {
     let localized = interaction_text();
     let color = permission_color_enabled();
-    let accent = "\x1b[38;5;117m";
+    let accent = "\x1b[1;34m";
     let mut rows = vec![
         format!("◆ {}", prompt.header),
         prompt.question.clone(),
@@ -1364,10 +1405,17 @@ fn render_user_question_prompt(prompt: &UserQuestionPrompt, selected: Option<usi
         let marker = if selected == Some(index) { "›" } else { " " };
         rows.push(format!("{marker} {}", localized.custom_answer));
     }
+    let decline_index = prompt.options.len() + usize::from(prompt.allow_freeform);
+    let decline_marker = if selected == Some(decline_index) { "›" } else { " " };
+    let decline_label = match crate::i18n::current_language() {
+        crate::i18n::Language::ZhHans => "拒绝回答此问题",
+        _ => "Decline to answer",
+    };
+    rows.push(format!("{decline_marker} {decline_label}"));
     rows.push(localized.selection_hint.to_string());
     rows.push(match crate::i18n::current_language() {
-        crate::i18n::Language::ZhHans => "Esc: 保留问题稍后回答 · d / /decline: 明确拒绝回答",
-        _ => "Esc: keep open for later · d / /decline: decline to answer",
+        crate::i18n::Language::ZhHans => "Esc: 保留问题稍后回答 · Alt+↑↓/PgUp/PgDn: 滚动",
+        _ => "Esc: keep open for later · Alt+↑↓/PgUp/PgDn: scroll",
     }.to_string());
 
     let inner = adaptive_panel_inner_width(&rows, terminal_columns());
@@ -1381,9 +1429,9 @@ fn render_user_question_prompt(prompt: &UserQuestionPrompt, selected: Option<usi
         let row_color = if row_index == 0 {
             accent
         } else if selected_row {
-            "\x1b[38;5;255m"
+            ""
         } else {
-            "\x1b[38;5;250m"
+            "\x1b[39m"
         };
         for rendered in wrap_display_width(row, inner) {
             let padded = pad_right_display_width(&rendered, inner);
@@ -1412,39 +1460,55 @@ fn render_permission_prompt_with_selection(
     let option_custom = format!("3. {}", prompt.custom_label);
     let option_deny = format!("N. {}", localized.deny_option);
     let choose = if prompt.allow_conversation { localized.keyboard_hint } else { localized.once_only_keyboard_hint };
-    let mut plain_rows = Vec::new();
-    plain_rows.push(format!("{icon} {}", prompt.title));
+    let mut plain_rows: Vec<(String, Option<&'static str>)> = Vec::new();
+    plain_rows.push((format!("{icon} {}", prompt.title), None));
     for (label, value) in &prompt.rows {
-        for (index,line) in value.split('\n').enumerate() {
-            plain_rows.push(format!("{:<9} {}",if index==0 {label.as_str()} else {""},line.trim_end_matches('\r')));
+        for (index, line) in value.split('\n').enumerate() {
+            let trimmed = line.trim_end_matches('\r');
+            let diff_color = if trimmed.starts_with("+ ") || trimmed == "+" {
+                Some("\x1b[32m")
+            } else if trimmed.starts_with("- ") || trimmed == "-" {
+                Some("\x1b[31m")
+            } else if trimmed.starts_with("@@ ") || trimmed.starts_with("*** ") {
+                Some("\x1b[36m")
+            } else {
+                None
+            };
+            plain_rows.push((
+                format!("{:<9} {}", if index == 0 { label.as_str() } else { "" }, trimmed),
+                diff_color,
+            ));
         }
     }
-    plain_rows.push(String::new());
+    plain_rows.push((String::new(), None));
     let option_start = plain_rows.len();
     for (index, option) in [option_once, option_session, option_custom, option_deny]
         .into_iter()
         .enumerate()
     {
         let marker = if selected == Some(index) && (index != 1 || prompt.allow_conversation) { "›" } else { " " };
-        plain_rows.push(format!("{marker} {option}"));
+        plain_rows.push((format!("{marker} {option}"), None));
     }
-    plain_rows.push(choose.to_string());
+    plain_rows.push((choose.to_string(), Some("\x1b[2;39m")));
     if prompt.supports_instruction {
-        plain_rows.push(
+        plain_rows.push((
             "I. Add instruction; invocation stays paused until explicitly approved".to_string(),
-        );
+            None,
+        ));
         if selected.is_none() {
-            plain_rows.push(
+            plain_rows.push((
                 "Type i <instruction> to save guidance without granting permission".to_string(),
-            );
+                Some("\x1b[2;39m"),
+            ));
         }
     }
 
-    let inner = adaptive_panel_inner_width(&plain_rows, terminal_columns());
+    let plain_texts: Vec<String> = plain_rows.iter().map(|(row, _)| row.clone()).collect();
+    let inner = adaptive_panel_inner_width(&plain_texts, terminal_columns());
     let mut out = String::new();
     out.push('\n');
     push_permission_border(&mut out, "╭", "╮", inner, accent, color);
-    for (index, row) in plain_rows.iter().enumerate() {
+    for (index, (row, diff_color)) in plain_rows.iter().enumerate() {
         let selected_row = selected
             .filter(|selected| *selected != 1 || prompt.allow_conversation)
             .map(|selected| index == option_start + selected)
@@ -1453,11 +1517,13 @@ fn render_permission_prompt_with_selection(
         let row_color = if index == 0 {
             accent
         } else if option_index == Some(1) && !prompt.allow_conversation {
-            "\x1b[38;5;244m"
+            "\x1b[2;39m"
+        } else if selected_row {
+            ""
         } else if let Some(option_index) = option_index {
             permission_option_color(option_index)
         } else {
-            "\x1b[38;5;250m"
+            diff_color.unwrap_or("\x1b[39m")
         };
         for rendered in wrap_display_width(row, inner) {
             let padded = pad_right_display_width(&rendered, inner);
@@ -1562,19 +1628,19 @@ fn restore_terminal_newline_output_impl() {}
 
 fn permission_kind_style(kind: PermissionPromptKind) -> (&'static str, &'static str) {
     match kind {
-        PermissionPromptKind::Command => ("\x1b[38;5;179m", "◆"),
-        PermissionPromptKind::Tool => ("\x1b[38;5;117m", "◆"),
-        PermissionPromptKind::Network => ("\x1b[38;5;117m", "◆"),
-        PermissionPromptKind::Agent => ("\x1b[38;5;117m", "◆"),
+        PermissionPromptKind::Command => ("\x1b[1;33m", "◆"),
+        PermissionPromptKind::Tool => ("\x1b[1;34m", "◆"),
+        PermissionPromptKind::Network => ("\x1b[1;34m", "◆"),
+        PermissionPromptKind::Agent => ("\x1b[1;34m", "◆"),
     }
 }
 
 fn permission_option_color(index: usize) -> &'static str {
     match index {
-        0 => "\x1b[38;5;108m",
-        1 => "\x1b[38;5;110m",
-        2 => "\x1b[38;5;179m",
-        _ => "\x1b[38;5;203m",
+        0 => "\x1b[32m",
+        1 => "\x1b[34m",
+        2 => "\x1b[33m",
+        _ => "\x1b[31m",
     }
 }
 
@@ -1628,14 +1694,15 @@ fn push_permission_line(
     selected: bool,
 ) {
     if color {
-        out.push_str("\x1b[2;38;5;245m│\x1b[0m ");
+        out.push_str("\x1b[2;39m│\x1b[0m ");
         if selected {
-            out.push_str("\x1b[48;5;24m");
+            out.push_str("\x1b[7;1m");
+        } else {
+            out.push_str(row_color);
         }
-        out.push_str(row_color);
         out.push_str(text);
         out.push_str("\x1b[0m");
-        out.push_str(" \x1b[2;38;5;245m│\x1b[0m\n");
+        out.push_str(" \x1b[2;39m│\x1b[0m\n");
     } else {
         out.push_str("│ ");
         out.push_str(text);
@@ -1644,10 +1711,10 @@ fn push_permission_line(
 }
 
 fn permission_color_enabled() -> bool {
-    (std::io::stdout().is_terminal() || std::io::stderr().is_terminal())
+    std::io::stdout().is_terminal()
         && std::env::var_os("NO_COLOR").is_none()
         && std::env::var("TERM")
-            .map(|value| value != "dumb")
+            .map(|value| !value.eq_ignore_ascii_case("dumb"))
             .unwrap_or(true)
 }
 
@@ -1767,10 +1834,12 @@ mod tests {
     use crate::runtime_input::RuntimeInput;
     use super::{
         adaptive_panel_inner_width, append_execution_input, confirmation_answer_is_yes,
-        display_width, render_user_question_prompt, update_execution_input_from_key,
-        wrap_display_width, ExecutionCancellation, UserQuestionPrompt,
+        display_width, modal_scroll_direction, render_user_question_prompt,
+        should_suppress_popup_shortcut, update_execution_input_from_key, wrap_display_width,
+        ExecutionCancellation, UserQuestionPrompt,
     };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::time::Duration;
 
     #[test]
     fn runtime_input_does_not_mutate_composer_or_interpret_slash_text() {
@@ -2171,5 +2240,30 @@ mod tests {
         ] {
             assert!(rendered.contains(word), "missing {word}: {rendered}");
         }
+    }
+
+    #[test]
+    fn modal_popup_guard_suppresses_accidental_confirm_and_allows_scroll_or_later_keys() {
+        use crossterm::event::KeyEvent;
+        let quick_y = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE);
+        let quick_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        let quick_d = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE);
+        let up_arrow = KeyEvent::new(KeyCode::Up, KeyModifiers::NONE);
+        let esc_key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+
+        assert!(should_suppress_popup_shortcut(Duration::from_millis(50), &quick_y));
+        assert!(should_suppress_popup_shortcut(Duration::from_millis(199), &quick_enter));
+        assert!(should_suppress_popup_shortcut(Duration::from_millis(10), &quick_d));
+        assert!(!should_suppress_popup_shortcut(Duration::from_millis(50), &up_arrow));
+        assert!(!should_suppress_popup_shortcut(Duration::from_millis(50), &esc_key));
+        assert!(!should_suppress_popup_shortcut(Duration::from_millis(200), &quick_y));
+        assert!(!should_suppress_popup_shortcut(Duration::from_millis(250), &quick_enter));
+
+        assert_eq!(modal_scroll_direction(&KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE)), Some(false));
+        assert_eq!(modal_scroll_direction(&KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE)), Some(true));
+        assert_eq!(modal_scroll_direction(&KeyEvent::new(KeyCode::Up, KeyModifiers::ALT)), Some(false));
+        assert_eq!(modal_scroll_direction(&KeyEvent::new(KeyCode::Down, KeyModifiers::ALT)), Some(true));
+        assert_eq!(modal_scroll_direction(&KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL)), Some(false));
+        assert_eq!(modal_scroll_direction(&KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL)), Some(true));
     }
 }

@@ -736,7 +736,7 @@ struct ChatComposer<ModelControl: View>: View {
                 .frame(width: 44, height: 44)
                 .background(
                     Circle()
-                        .fill(canSend ? DesignTokens.actionColor : Color(.secondarySystemFill))
+                        .fill(canSend ? DesignTokens.actionColor : DesignTokens.secondaryBackgroundColor)
                 )
         }
         .frame(width: composerButtonSize, height: composerButtonSize)

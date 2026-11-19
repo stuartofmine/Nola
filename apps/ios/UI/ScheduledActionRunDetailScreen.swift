@@ -23,11 +23,15 @@ struct ScheduledActionRunDetailScreen: View {
     var body: some View {
         List {
             overviewSection
-            resultSection
-            errorSection
-            sourceSection
-            timeSection
-            technicalSection
+            Group {
+                resultSection
+                errorSection
+                sourceSection
+                timeSection
+                technicalSection
+            }
+            .listRowBackground(DesignTokens.cardBackgroundColor)
+            .listRowSeparatorTint(DesignTokens.borderColor)
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)

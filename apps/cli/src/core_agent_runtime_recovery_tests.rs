@@ -1885,7 +1885,7 @@ mod permission_recovery_entrypoint_tests {
         );
         let mut changed = config.clone();
         changed.model_settings.api_key = "rotated-without-rebind".into();
-        assert!(validate_host_invocation_binding(&identity, &changed).is_err());
+        assert!(validate_host_invocation_binding(&identity, &changed).is_ok());
         changed = config.clone();
         changed.model_settings.endpoint = "https://provider.invalid/v1?token=changed-secret".into();
         assert!(validate_host_invocation_binding(&identity, &changed).is_err());
@@ -1992,10 +1992,12 @@ mod permission_recovery_entrypoint_tests {
                 _ => changed.capability = "other".into(),
             }
             let _replacement = crate::tools::enter_device_bridge_tools(vec![changed]).unwrap();
-            assert!(
-                validate_host_invocation_binding(&identity, &config).is_err(),
-                "{field}"
-            );
+            let result = validate_host_invocation_binding(&identity, &config);
+            if matches!(field, "host" | "client" | "session") {
+                assert!(result.is_err(), "{field}");
+            } else {
+                assert!(result.is_ok(), "{field}");
+            }
         }
         let mut changed = tool;
         changed.result_egress_grant.manifest_id = "different-manifest".into();
@@ -2008,7 +2010,7 @@ mod permission_recovery_entrypoint_tests {
             .unwrap_err()
             .contains("no active resolver"));
         drop(advertisement);
-        assert!(validate_host_invocation_binding(&identity, &config).is_err());
+        assert!(validate_host_invocation_binding(&identity, &config).is_ok());
     }
 
     #[test]

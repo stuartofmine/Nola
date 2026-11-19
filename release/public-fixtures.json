@@ -83,5 +83,10 @@
     "path": "apps/cli/src/tools/test_parts/filesystem_context.rs",
     "rule": "secret_assignment",
     "sha256": "82be8a4d9cdebab78235e6d0618fdea34065fcb6f498073283ff4ec7376e551a"
+  },
+  {
+    "path": "apps/cli/src/tools/parts/permissions_output_tests.rs",
+    "rule": "provider_key",
+    "sha256": "732bf0a4abb56ad5500151284717421deba64a61aa5fd2672b34fafb802c82ad"
   }
 ]

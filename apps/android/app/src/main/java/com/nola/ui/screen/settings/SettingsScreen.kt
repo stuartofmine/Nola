@@ -141,6 +141,38 @@ fun SettingsMain(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val appearance by viewModel.appearance.collectAsStateWithLifecycle(initialValue = AppearancePreference.System)
+    SettingsContent(
+        state = state,
+        appearance = appearance,
+        onAppearanceChange = viewModel::setAppearance,
+        onRefresh = viewModel::refresh,
+        onClearAllData = viewModel::clearAllData,
+        onCreateExportArchive = viewModel::createExportArchive,
+        onNotifications = onNotifications,
+        onScheduledActions = onScheduledActions,
+        onOpenDataSources = onOpenDataSources,
+        onOpenModels = onOpenModels,
+        onOpenIntelligence = onOpenIntelligence,
+        detailState = detailState,
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun SettingsContent(
+    state: SettingsUiState,
+    appearance: AppearancePreference,
+    onAppearanceChange: (AppearancePreference) -> Unit,
+    onRefresh: () -> Unit,
+    onClearAllData: suspend () -> Unit = {},
+    onCreateExportArchive: suspend () -> java.io.File = { error("Export unavailable") },
+    onNotifications: () -> Unit = {},
+    onScheduledActions: () -> Unit = {},
+    onOpenDataSources: () -> Unit = {},
+    onOpenModels: () -> Unit = {},
+    onOpenIntelligence: () -> Unit = {},
+    detailState: androidx.compose.runtime.MutableState<String?> = rememberSaveable { mutableStateOf<String?>(null) }
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var showDeleteDialog by remember { mutableStateOf(false) }
@@ -181,7 +213,7 @@ fun SettingsMain(
                         isClearingData = true
                         scope.launch {
                             try {
-                                viewModel.clearAllData()
+                                onClearAllData()
                                 showDeleteDialog = false
                                 operationFailed = false
                                 operationMessage = context.getString(R.string.settings_all_data_cleared)
@@ -223,7 +255,7 @@ fun SettingsMain(
                         isExportingData = true
                         scope.launch {
                             try {
-                                val exportFile = viewModel.createExportArchive()
+                                val exportFile = onCreateExportArchive()
                                 val uri = androidx.core.content.FileProvider.getUriForFile(
                                     context, "${context.packageName}.fileprovider", exportFile
                                 )
@@ -289,7 +321,7 @@ fun SettingsMain(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Button(onClick = viewModel::refresh, enabled = !state.isLoading) {
+                Button(onClick = onRefresh, enabled = !state.isLoading) {
                     Text(stringResource(R.string.common_retry))
                 }
             }
@@ -311,7 +343,7 @@ fun SettingsMain(
                     Box(Modifier.weight(1f).heightIn(min = 44.dp)
                         .background(if (appearance == choice) MaterialTheme.colorScheme.surface else androidx.compose.ui.graphics.Color.Transparent, NolaContinuousShape(8.dp))
                         .selectable(selected = appearance == choice, role = Role.RadioButton,
-                            onClick = { viewModel.setAppearance(choice) }), contentAlignment = Alignment.Center) {
+                            onClick = { onAppearanceChange(choice) }), contentAlignment = Alignment.Center) {
                         Text(stringResource(when (choice) {
                             AppearancePreference.System -> R.string.appearance_system
                             AppearancePreference.Light -> R.string.appearance_light

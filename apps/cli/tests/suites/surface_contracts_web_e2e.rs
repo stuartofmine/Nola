@@ -741,7 +741,7 @@ fn workspace_shell_locale_settings_data_sources_and_automations_share_live_host(
 
     // 5. Scheduled actions / automations CRUD, script approval CAS, and skill admission guard.
     let (_, action_list) = host.json("GET", "/api/scheduled-actions", Value::Null);
-    assert_eq!(action_list["executionCapabilities"]["scheduledDispatch"], false);
+    assert_eq!(action_list["executionCapabilities"]["scheduledDispatch"], true);
     assert_eq!(action_list["executionCapabilities"]["promptAutomations"], true);
     assert_eq!(action_list["actions"], json!([]));
     let spec = json!({

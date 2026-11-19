@@ -151,7 +151,7 @@ struct MacHostPermissionCard: View {
                     }
                     .frame(maxHeight: 120)
                     .padding(8)
-                    .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .background(MacDesignColor.panel, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
                 .macDisclosureTransition(reduceMotion: reduceMotion)
             }

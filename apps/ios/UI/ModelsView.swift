@@ -1105,6 +1105,13 @@ struct IOSModelInferenceTestView: View {
                 NolaSectionTitle(icon: "bubble.left", title: NSLocalizedString("model.test.prompt", value: "Test prompt", comment: "Model test prompt"))
                 TextEditor(text: $prompt)
                     .frame(minHeight: 140)
+                    .padding(DesignTokens.spacing_sm)
+                    .scrollContentBackground(.hidden)
+                    .background(DesignTokens.secondaryBackgroundColor, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(DesignTokens.borderColor, lineWidth: 0.5)
+                    }
                     .accessibilityIdentifier("model.test.prompt")
                 HStack {
                     Button(NSLocalizedString("model.center.parameters", value: "Parameters", comment: "Model parameters")) {

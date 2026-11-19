@@ -14,7 +14,8 @@
           "parent_call_id": null,
           "child_session_id": null,
           "permission_scope_id": null,
-          "cancellation_scope_id": null
+          "cancellation_scope_id": null,
+          "title": null
         },
         "state": "running",
         "progress": 0.25,
@@ -59,7 +60,8 @@
           "parent_call_id": null,
           "child_session_id": null,
           "permission_scope_id": null,
-          "cancellation_scope_id": null
+          "cancellation_scope_id": null,
+          "title": null
         },
         "state": "waiting",
         "progress": 0.5,
@@ -102,7 +104,8 @@
           "parent_call_id": null,
           "child_session_id": null,
           "permission_scope_id": null,
-          "cancellation_scope_id": null
+          "cancellation_scope_id": null,
+          "title": null
         },
         "state": "completed",
         "progress": 1.0,

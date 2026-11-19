@@ -136,6 +136,7 @@ struct ChatContextSheet: View {
     let onDiscard: () -> Void
     let onUseSkill: (String) -> Void
     let onSearchMemory: (String) async throws -> [ContextMemorySearchHit]
+    var initialContextPane: ContextPane = .overview
 
     @State private var errorMessage: String? = nil
     @State private var noticeMessage: String? = nil
@@ -372,6 +373,8 @@ struct ChatContextSheet: View {
                         TextEditor(text: $sessionMemory)
                             .frame(minHeight: 140)
                             .font(.body)
+                            .scrollContentBackground(.hidden)
+                            .background(DesignTokens.cardBackgroundColor)
                             .accessibilityIdentifier("chat-context-session-memory")
                     } header: {
                         Text(tr("chat.context.session.header", "Session memory", "Session memory"))
@@ -385,6 +388,8 @@ struct ChatContextSheet: View {
                         TextEditor(text: $knowledgePoints)
                             .frame(minHeight: 140)
                             .font(.body)
+                            .scrollContentBackground(.hidden)
+                            .background(DesignTokens.cardBackgroundColor)
                             .accessibilityIdentifier("chat-context-knowledge")
                     } header: {
                         HStack {
@@ -399,6 +404,8 @@ struct ChatContextSheet: View {
                         TextEditor(text: $conversationWiki)
                             .frame(minHeight: 170)
                             .font(.body)
+                            .scrollContentBackground(.hidden)
+                            .background(DesignTokens.cardBackgroundColor)
                             .accessibilityIdentifier("chat-context-wiki")
                     } header: {
                         Text(tr("chat.context.wiki.header", "会话 Wiki", "Conversation Wiki"))
@@ -410,6 +417,8 @@ struct ChatContextSheet: View {
                         TextEditor(text: $longTermMemory)
                             .frame(minHeight: 130)
                             .font(.body)
+                            .scrollContentBackground(.hidden)
+                            .background(DesignTokens.cardBackgroundColor)
                     } header: {
                         Text(tr("chat.context.long_term.header", "长期记忆（全局）", "Long-term memory (global)"))
                     } footer: {
@@ -420,6 +429,8 @@ struct ChatContextSheet: View {
                         TextEditor(text: $userPreferences)
                             .frame(minHeight: 130)
                             .font(.body)
+                            .scrollContentBackground(.hidden)
+                            .background(DesignTokens.cardBackgroundColor)
                     } header: {
                         Text(tr("chat.context.preferences.header", "用户偏好（全局）", "User preferences (global)"))
                     } footer: {
@@ -779,6 +790,7 @@ struct ChatContextSheet: View {
         .onAppear {
             if initialMemoryText == nil {
                 initialMemoryText = [sessionMemory, longTermMemory, userPreferences]
+                selectedContextPane = initialContextPane
             }
         }
         .onChange(of: conversationID) { _, _ in
@@ -1021,6 +1033,8 @@ struct ChatContextSheet: View {
                     TextEditor(text: $item.content)
                         .frame(minHeight: 90)
                         .font(.caption)
+                        .scrollContentBackground(.hidden)
+                        .background(DesignTokens.cardBackgroundColor)
                 }
                 .padding(.vertical, 4)
             }
@@ -1194,6 +1208,8 @@ struct ChatContextSheet: View {
                 TextEditor(text: item.content)
                     .frame(minHeight: 260)
                     .font(.system(.caption, design: .monospaced))
+                    .scrollContentBackground(.hidden)
+                    .background(DesignTokens.cardBackgroundColor)
             } header: {
                 HStack {
                     Text(tr("chat.context.skills.instructions", "Skill 内容", "Skill instructions"))

@@ -806,7 +806,7 @@ private struct DataSourceCapabilityIntro: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(DesignTokens.cardBackgroundColor, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(DesignTokens.borderColor, lineWidth: 1)

@@ -293,12 +293,18 @@ struct ChatBubble: View {
         .sheet(item: $sourceDetails) { reference in
             NavigationStack {
                 Form {
-                    Text(reference.displayTitle)
-                    Text(reference.uri).font(.caption).textSelection(.enabled)
-                    if let location = reference.location?.displayText { Text(location).font(.caption) }
-                    if let memory = reference.memoryUsage { Text(memory.displayMetadata.joined(separator: " · ")).font(.caption) }
-                    if let start = reference.rangeStart { Text(verbatim: "[\(start), \(reference.rangeEnd ?? start))").font(.caption) }
-                }.toolbar { ToolbarItem(placement: .confirmationAction) { Button("common.done") { sourceDetails = nil } } }
+                    Group {
+                        Text(reference.displayTitle)
+                        Text(reference.uri).font(.caption).textSelection(.enabled)
+                        if let location = reference.location?.displayText { Text(location).font(.caption) }
+                        if let memory = reference.memoryUsage { Text(memory.displayMetadata.joined(separator: " · ")).font(.caption) }
+                        if let start = reference.rangeStart { Text(verbatim: "[\(start), \(reference.rangeEnd ?? start))").font(.caption) }
+                    }
+                    .listRowBackground(DesignTokens.cardBackgroundColor)
+                    .listRowSeparatorTint(DesignTokens.borderColor)
+                }
+                .nolaGroupedSurface()
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("common.done") { sourceDetails = nil } } }
             }.presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
         }
     }
@@ -3912,11 +3918,17 @@ private struct IOSSkillSummary: View {
         }.sheet(isPresented: $showsDetails) {
             NavigationStack {
                 Form {
-                    LabeledContent("chat.part.diagnostic.model_turns", value: String(turns))
-                    LabeledContent("chat.part.diagnostic.tool_calls", value: String(tools))
-                    Text(Duration.seconds(Double(millis) / 1000).formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated)))
-                    if let failure, !failure.isEmpty { Text(failure).foregroundStyle(DesignTokens.secondaryContentColor) }
-                }.navigationTitle(title).toolbar { ToolbarItem(placement: .confirmationAction) { Button("common.done") { showsDetails = false } } }
+                    Group {
+                        LabeledContent("chat.part.diagnostic.model_turns", value: String(turns))
+                        LabeledContent("chat.part.diagnostic.tool_calls", value: String(tools))
+                        Text(Duration.seconds(Double(millis) / 1000).formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated)))
+                        if let failure, !failure.isEmpty { Text(failure).foregroundStyle(DesignTokens.secondaryContentColor) }
+                    }
+                    .listRowBackground(DesignTokens.cardBackgroundColor)
+                    .listRowSeparatorTint(DesignTokens.borderColor)
+                }
+                .nolaGroupedSurface()
+                .navigationTitle(title).toolbar { ToolbarItem(placement: .confirmationAction) { Button("common.done") { showsDetails = false } } }
             }.presentationDetents([.medium]).presentationDragIndicator(.visible)
         }
     }

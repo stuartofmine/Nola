@@ -50,7 +50,7 @@ struct MedicationSearchView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding()
-                .background(Color(.systemGray6))
+                .background(DesignTokens.secondaryBackgroundColor)
                 .cornerRadius(10)
                 .padding(.horizontal)
             } else if let err = errorMsg {
@@ -65,6 +65,7 @@ struct MedicationSearchView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DesignTokens.backgroundColor)
         .navigationTitle(L10n.medicationTitle)
     }
 

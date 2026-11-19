@@ -115,7 +115,7 @@ struct NotificationDetailView: View {
                         .foregroundColor(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                .background(Color(.systemBackground))
+                .background(DesignTokens.backgroundColor)
             } else if let ev = event {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
@@ -210,11 +210,11 @@ struct NotificationDetailView: View {
                         .padding(16)
                         .background(
                             RoundedRectangle(cornerRadius: 16)
-                                .fill(Color(.secondarySystemBackground))
+                                .fill(DesignTokens.cardBackgroundColor)
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 16)
-                                .stroke(Color.primary.opacity(0.05), lineWidth: 1)
+                                .stroke(DesignTokens.borderColor, lineWidth: 1)
                         )
 
                         if hasPendingNotification {
@@ -336,7 +336,7 @@ struct NotificationDetailView: View {
                                 .padding(16)
                                 .background(
                                     RoundedRectangle(cornerRadius: 16)
-                                        .fill(Color(.secondarySystemBackground))
+                                        .fill(DesignTokens.cardBackgroundColor)
                                         .overlay(
                                             RoundedRectangle(cornerRadius: 16)
                                                 .stroke(DesignTokens.borderColor, lineWidth: 1)
@@ -384,7 +384,7 @@ struct NotificationDetailView: View {
                             .padding(16)
                             .background(
                                 RoundedRectangle(cornerRadius: 16)
-                                    .fill(Color(.secondarySystemBackground))
+                                    .fill(DesignTokens.cardBackgroundColor)
                             )
                         }
 
@@ -395,7 +395,7 @@ struct NotificationDetailView: View {
                     .frame(maxWidth: 720)
                     .frame(maxWidth: .infinity)
                 }
-                .background(Color(.systemGroupedBackground))
+                .background(DesignTokens.backgroundColor)
             } else {
                 VStack(alignment: .leading, spacing: DesignTokens.spacing_md) {
                     NolaInlineEmptyState(
@@ -415,6 +415,7 @@ struct NotificationDetailView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .padding()
+                .background(DesignTokens.backgroundColor)
             }
         }
         .navigationTitle(L10n.notificationDetailTitle)
@@ -519,7 +520,7 @@ struct NotificationDetailView: View {
                 }
             }
             .padding(14)
-            .background(RoundedRectangle(cornerRadius: 12).fill(Color(.secondarySystemBackground)))
+            .background(RoundedRectangle(cornerRadius: 12).fill(DesignTokens.cardBackgroundColor))
         }
     }
 
@@ -554,7 +555,7 @@ struct NotificationDetailView: View {
                 detailRow(NSLocalizedString("notification.detail.run.field.finished_at", value: "结束", comment: "Run finished at field"), Self.formatMetaDate(run.finishedAt))
             }
             .padding(14)
-            .background(RoundedRectangle(cornerRadius: 12).fill(Color(.secondarySystemBackground)))
+            .background(RoundedRectangle(cornerRadius: 12).fill(DesignTokens.cardBackgroundColor))
         }
     }
 
@@ -1114,7 +1115,7 @@ struct SummaryDetailView: View {
                     .padding(16)
                     .background(
                         RoundedRectangle(cornerRadius: 12)
-                            .fill(Color(.systemBackground))
+                            .fill(DesignTokens.cardBackgroundColor)
                             .shadow(color: Color.black.opacity(0.05), radius: 4, x: 0, y: 2)
                     )
                 }
@@ -1182,7 +1183,7 @@ struct SummaryDetailView: View {
                             .padding(12)
                             .background(
                                 RoundedRectangle(cornerRadius: 12)
-                                    .fill(Color(.secondarySystemBackground))
+                                    .fill(DesignTokens.secondaryBackgroundColor)
                             )
                         }
                         .buttonStyle(.plain)
@@ -1190,7 +1191,7 @@ struct SummaryDetailView: View {
                     .padding(16)
                     .background(
                         RoundedRectangle(cornerRadius: 12)
-                            .fill(Color(.systemBackground))
+                            .fill(DesignTokens.cardBackgroundColor)
                             .shadow(color: Color.black.opacity(0.05), radius: 4, x: 0, y: 2)
                     )
                 }
@@ -1199,7 +1200,7 @@ struct SummaryDetailView: View {
             }
             .padding(16)
         }
-        .background(Color(.secondarySystemBackground))
+        .background(DesignTokens.backgroundColor)
         .navigationTitle(L10n.notificationSummaryDetailTitle)
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -1342,7 +1343,7 @@ struct InfoCard: View {
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(Color(.secondarySystemBackground))
+                .fill(DesignTokens.cardBackgroundColor)
                 .overlay(
                     RoundedRectangle(cornerRadius: 16)
                         .stroke(iconColor.opacity(0.1), lineWidth: 1)

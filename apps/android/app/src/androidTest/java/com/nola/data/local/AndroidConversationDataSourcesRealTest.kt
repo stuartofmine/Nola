@@ -55,10 +55,8 @@ class AndroidConversationDataSourcesRealTest {
                 }, now)
                 val previousContract = requireNotNull(originalContract)
                 val updatedContract = requireNotNull(committed.validation.contract)
-                assertEquals(previousContract.filterKeys { it != "observedAt" },
-                    updatedContract.filterKeys { it != "observedAt" })
-                assertEquals(java.time.Instant.ofEpochMilli(now).toString(),
-                    updatedContract["observedAt"]!!.jsonPrimitive.content)
+                assertEquals(previousContract, updatedContract)
+                assertEquals(now, committed.readState["observed_at_ms"]!!.jsonPrimitive.content.toLong())
                 val selection = overrides.resolve("freshness-conversation", now + 1).single()
                 assertTrue("A fresh read must be usable without rewriting validation: ${selection.reason}", selection.usable)
                 assertFalse(selection.shouldRefresh)

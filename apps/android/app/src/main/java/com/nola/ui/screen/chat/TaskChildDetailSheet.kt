@@ -67,7 +67,7 @@ internal fun TaskChildDetailSheet(load: suspend (Long?) -> ConversationProjectio
     }
     ModalBottomSheet(onDismissRequest = close, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         modifier = Modifier.testTag("chat.task.detail")) {
-        Column(Modifier.fillMaxWidth().weight(1f, false).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.fillMaxWidth().weight(1f, false).navigationBarsPadding().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             TextButton(onClick = close, modifier = Modifier.testTag("chat.task.detail.back")) { Text(stringResource(R.string.chat_task_details_back)) }
             Text(stringResource(R.string.chat_task_details), style = MaterialTheme.typography.titleMedium)
             if (recovery != null) {

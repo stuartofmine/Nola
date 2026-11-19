@@ -2,6 +2,8 @@
 package com.nola.ui.screen.chat
 
 import android.graphics.Bitmap
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
@@ -10,6 +12,18 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.nola.MainActivity
 import com.nola.R
+import com.nola.ui.assertWarmThemeSurface
+import com.nola.ui.colorsMatchWithinTolerance
+import com.nola.ui.dominantInteriorColor
+import com.nola.ui.toHexRgb
+import com.nola.ui.wcagContrastRatio
+import com.nola.ui.screen.onboarding.OnboardingContent
+import com.nola.ui.screen.onboarding.OnboardingUiState
+import com.nola.ui.theme.NolaTheme
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.text.TextLayoutResult
 import java.io.File
 import org.junit.Rule
 import org.junit.Test
@@ -25,7 +39,7 @@ class WorkspacePageMatrixTest {
         compose.onNode((hasText(context.getString(label)) or hasContentDescription(context.getString(label))) and hasAnyAncestor(primaryNavigation)).performClick()
         compose.waitForIdle()
     }
-    private fun capture(name: String) {
+    private fun capture(name: String, darkTheme: Boolean? = null) {
         compose.mainClock.advanceTimeBy(500)
         compose.waitForIdle()
         // Android's native ripple runs on RenderThread, outside Compose's
@@ -36,9 +50,42 @@ class WorkspacePageMatrixTest {
             compose.onAllNodes(isSelected() and hasAnyAncestor(primaryNavigation))
                 .assertCountEquals(1)
         }
+        val image = compose.onRoot().captureToImage()
+        if (darkTheme != null) {
+            val pixels = image.assertWarmThemeSurface(darkTheme = darkTheme, label = "WorkspacePageMatrix($name)")
+            val surfaceSample = pixels.dominantInteriorColor()
+            val textNodes = compose.onAllNodes(
+                SemanticsMatcher.keyIsDefined(SemanticsActions.GetTextLayoutResult),
+                useUnmergedTree = true,
+            ).fetchSemanticsNodes()
+            val results = mutableListOf<TextLayoutResult>()
+            for (node in textNodes) {
+                results.clear()
+                node.config.getOrNull(SemanticsActions.GetTextLayoutResult)?.action?.invoke(results)
+                for (layout in results) {
+                    val color = layout.layoutInput.style.color
+                    if (color == Color.Unspecified || color.alpha < 0.9f) continue
+                    if (darkTheme) {
+                        org.junit.Assert.assertFalse(
+                            "WorkspacePageMatrix($name) rendered near-black text ${color.toHexRgb()} in Dark mode",
+                            colorsMatchWithinTolerance(color, Color.Black, 10),
+                        )
+                    }
+                    if (colorsMatchWithinTolerance(color, if (darkTheme) Color(0xFFF2F0EB) else Color(0xFF181817), 8) ||
+                        colorsMatchWithinTolerance(color, if (darkTheme) Color(0xFFA3A09A) else Color(0xFF5C5B57), 8)
+                    ) {
+                        val ratio = wcagContrastRatio(color, surfaceSample)
+                        org.junit.Assert.assertTrue(
+                            "WorkspacePageMatrix($name) text ${color.toHexRgb()} vs ${surfaceSample.toHexRgb()} contrast $ratio < 4.5",
+                            ratio >= 4.5f,
+                        )
+                    }
+                }
+            }
+        }
         val directory = File(context.filesDir, "page-matrix").apply { mkdirs() }
         File(directory, "$name.png").outputStream().use {
-            check(compose.onRoot().captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it))
+            check(image.asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it))
         }
     }
     private fun back(activity: ActivityScenario<MainActivity>) {
@@ -50,6 +97,30 @@ class WorkspacePageMatrixTest {
         requireIsolatedProductTestUser(context)
         // Only this test's prior screenshots; never clear application records.
         File(context.filesDir, "page-matrix").deleteRecursively()
+        // Verify OnboardingScreen renders Warm Paper & Warm Ink surfaces across both themes
+        // without mutating product onboarding persistence.
+        for ((theme, isDark) in listOf("light" to false, "dark" to true)) {
+            ActivityScenario.launch(ComponentActivity::class.java).use { host ->
+                host.onActivity { activity ->
+                    activity.setContent {
+                        NolaTheme(darkTheme = isDark) {
+                            OnboardingContent(uiState = OnboardingUiState(), onComplete = {})
+                        }
+                    }
+                }
+                compose.waitForIdle()
+                for (step in 0..3) {
+                    for (role in listOf(androidx.compose.ui.semantics.Role.RadioButton, androidx.compose.ui.semantics.Role.Checkbox)) {
+                        compose.onAllNodes(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.Role, role)).assertCountEquals(0)
+                    }
+                    capture("onboarding-$step-$theme", darkTheme = isDark)
+                    if (step < 3) {
+                        compose.onNodeWithText(context.getString(R.string.onboarding_guide_action_next)).performClick()
+                        compose.waitForIdle()
+                    }
+                }
+            }
+        }
         ActivityScenario.launch(MainActivity::class.java).use { activity ->
             compose.waitUntil(15_000) {
                 compose.onAllNodes(primaryNavigation).fetchSemanticsNodes().isNotEmpty()
@@ -70,6 +141,7 @@ class WorkspacePageMatrixTest {
             }
             compose.waitUntil(15_000) { compose.onAllNodes(primaryNavigation).fetchSemanticsNodes().isNotEmpty() }
             for ((theme, label) in listOf("light" to R.string.appearance_light, "dark" to R.string.appearance_dark)) {
+                val isDark = theme == "dark"
                 tab(R.string.tab_settings)
                 compose.onNodeWithText(context.getString(R.string.settings_general)).performClick()
                 compose.onNodeWithText(context.getString(label)).performClick()
@@ -78,31 +150,31 @@ class WorkspacePageMatrixTest {
                 }
                 compose.mainClock.advanceTimeBy(1_000)
                 compose.waitForIdle()
-                capture("settings-appearance-$theme")
+                capture("settings-appearance-$theme", darkTheme = isDark)
                 back(activity)
                 for (section in listOf(R.string.settings_general, R.string.settings_privacy, R.string.models_title,
                     R.string.settings_capabilities)) {
                     tab(R.string.tab_settings)
                     compose.onNodeWithText(context.getString(section)).performScrollTo().performClick()
-                    capture("settings-$section-$theme")
+                    capture("settings-$section-$theme", darkTheme = isDark)
                     if (section == R.string.settings_general) {
                         compose.onNodeWithTag("settings_notification_center").performScrollTo().performClick()
                         back(activity)
-                        capture("general-return-$theme")
+                        capture("general-return-$theme", darkTheme = isDark)
                         compose.onNodeWithTag("settings_notification_center").assertIsDisplayed()
                         compose.onNodeWithText(context.getString(R.string.software_update_check)).performScrollTo().assertIsDisplayed()
-                        capture("general-about-$theme")
+                        capture("general-about-$theme", darkTheme = isDark)
                     }
                     back(activity)
                     compose.onNodeWithText(context.getString(R.string.settings_general)).assertIsDisplayed()
                 }
                 tab(R.string.tab_information)
-                capture("information-$theme")
+                capture("information-$theme", darkTheme = isDark)
                 val overview = compose.onAllNodesWithTag("information.overview").fetchSemanticsNodes().isNotEmpty()
                 for (page in if (overview) listOf(4, 1, 0) else listOf(4, 1, 0, 2, 3)) {
                     compose.onNodeWithTag(if (overview) "information.category.$page" else "workspace.section.$page")
                         .performScrollTo().performClick()
-                    capture("information-$page-$theme")
+                    capture("information-$page-$theme", darkTheme = isDark)
                     if (overview) {
                         back(activity)
                         compose.onNodeWithTag("information.overview").assertIsDisplayed()
@@ -110,7 +182,7 @@ class WorkspacePageMatrixTest {
                 }
                 for (destination in listOf(R.string.tab_chat, R.string.tab_activity, R.string.tab_settings)) {
                     tab(destination)
-                    capture("primary-$destination-$theme")
+                    capture("primary-$destination-$theme", darkTheme = isDark)
                 }
             }
         }

@@ -692,6 +692,9 @@ class AndroidApplicationRuntime(
             "synced" -> "synced"
             else -> error("Automatic memory requires a Core quality assessment")
         }
+        require(record.kind in setOf("preference", "identity", "decision", "project", "feedback", "reference", "other")) {
+            "Unsupported memory kind: ${record.kind}"
+        }
         return buildJsonObject {
             put("type", "memory")
             put("command", buildJsonObject {

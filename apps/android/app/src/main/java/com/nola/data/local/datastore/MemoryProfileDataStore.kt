@@ -80,7 +80,12 @@ class MemoryProfileDataStore @Inject constructor(
     val agentLlmEndpoint: Flow<String> = revision.map { modelConfiguration.load()?.endpoint.orEmpty() }
 
     val agentLlmApiKey: Flow<String> = revision.map {
-        runCatching { configuredApiModelProfiles().let {all->all.firstOrNull {it.selected} ?: all.firstOrNull()}?.let {resolveApiProfile(it).second}.orEmpty() }.getOrDefault("")
+        runCatching {
+            configuredApiModelProfiles()
+                .let { all -> all.firstOrNull { it.selected } ?: all.firstOrNull() }
+                ?.let(::readConfiguredProfileApiKey)
+                .orEmpty()
+        }.getOrDefault("")
     }
 
     val agentLlmModel: Flow<String> = revision.map { modelConfiguration.load()?.model.orEmpty() }
@@ -111,6 +116,14 @@ class MemoryProfileDataStore @Inject constructor(
             ?: error("Model account credential is unavailable; reconnect this account")
         else { check(response["credential_required"]?.jsonPrimitive?.boolean==false) {"Model account needs reconnection"}; "" }
         return response.getValue("resolved").jsonObject to secret
+    }
+
+    private fun readConfiguredProfileApiKey(profile: com.nola.data.local.CanonicalModelProfile): String {
+        runCatching { return resolveApiProfile(profile).second }
+        val source = json.parseToJsonElement(profile.sourceJson).jsonObject
+        if (source["connectionID"]?.jsonPrimitive?.contentOrNull != null) return ""
+        val reference = source["credentialRef"]?.jsonPrimitive?.contentOrNull ?: return ""
+        return secureTokenStore.readModelAccountSecret(reference).orEmpty()
     }
 
     val responseStyle: Flow<String> = revision.map { productSetting(RESPONSE_STYLE_SETTING_KEY, "casual") }

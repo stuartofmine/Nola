@@ -142,8 +142,8 @@ enum MacDesignTokens {
             static let info: UInt32 = 0x8AB8E6
         }
 
-        static func fallbackColor(light: UInt32, dark: UInt32) -> Color {
-            Color(nsColor: NSColor(name: nil) { appearance in
+        static func fallbackNSColor(light: UInt32, dark: UInt32) -> NSColor {
+            NSColor(name: nil) { appearance in
                 let match = appearance.bestMatch(from: [.darkAqua, .vibrantDark, .aqua, .vibrantLight])
                 let rgb = (match == .darkAqua || match == .vibrantDark) ? dark : light
                 return NSColor(
@@ -152,7 +152,11 @@ enum MacDesignTokens {
                     blue: CGFloat(rgb & 0xFF) / 255.0,
                     alpha: 1.0
                 )
-            })
+            }
+        }
+
+        static func fallbackColor(light: UInt32, dark: UInt32) -> Color {
+            Color(nsColor: fallbackNSColor(light: light, dark: dark))
         }
     }
 

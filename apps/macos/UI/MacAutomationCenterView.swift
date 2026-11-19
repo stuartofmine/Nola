@@ -794,6 +794,7 @@ private struct MacAutomationEditor: View {
                 }
             }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
 
             if let saveError {
                 MacInlineNotice(

@@ -235,7 +235,19 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
         if offer_user_questions && !goal_entry && !interactive_config.json_output {
             offer_user_questions = false;
             if let Some(conversation) = interactive_config.session_id.as_deref() {
-                let include_children = std::mem::take(&mut include_child_questions);
+                let child_waits = crate::user_input_wait::owned(conversation, None).unwrap_or_default();
+                let include_children =
+                    std::mem::take(&mut include_child_questions) || !child_waits.is_empty();
+                if !child_waits.is_empty() {
+                    terminal_notice!(
+                        "\n  ◆ {} ({}) — /questions",
+                        match current_language() {
+                            Language::ZhHans => "子任务有待回答问题，正在打开交互提示",
+                            _ => "Pending question(s) from child task",
+                        },
+                        child_waits.len()
+                    );
+                }
                 match crate::user_input_wait::present_pending(
                     conversation,
                     include_children,
@@ -243,6 +255,15 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
                 ) {
                     Ok(outcome) => {
                         if let Some(error) = outcome.notice { terminal_notice!("{}", format_error(&error)); }
+                        if outcome.deferred && !child_waits.is_empty() {
+                            terminal_notice!(
+                                "  ◆ {}",
+                                match current_language() {
+                                    Language::ZhHans => "子任务问题仍处于等待中，可随时输入 /questions 回答。",
+                                    _ => "Child question remains open; run /questions anytime to answer.",
+                                }
+                            );
+                        }
                         if let Some(run_id) = outcome.resume_run {
                             let mut emitter = Emitter::new(false);
                             let result = interactive_config.host_invocation_request().and_then(|request|
@@ -319,14 +340,35 @@ fn run_interactive_session(config: &Config, resume_pending: bool) -> Result<Inte
             }
             break;
         }
-        if !goal_entry && (is_resume_command(prompt.as_str()) || is_continue_command(prompt.as_str())) {
-            match select_interactive_session_restore(&interactive_config, is_continue_command(prompt.as_str())) {
-                Ok(Some(next)) => return Ok(InteractiveSessionExit::Switch(Box::new(next))),
-                Ok(None) => {},
-                Err(error) => terminal_notice!("{}", format_error(&error)),
+        if !goal_entry {
+            if let Some(target) = resume_command_target(prompt.as_str()) {
+                match target {
+                    Some(id) => {
+                        match resume_interactive_session_by_id(&interactive_config, &id) {
+                            Ok(next) => return Ok(InteractiveSessionExit::Switch(Box::new(next))),
+                            Err(error) => terminal_notice!("{}", format_error(&error)),
+                        }
+                    }
+                    None => {
+                        match select_interactive_session_restore(&interactive_config, false) {
+                            Ok(Some(next)) => return Ok(InteractiveSessionExit::Switch(Box::new(next))),
+                            Ok(None) => {}
+                            Err(error) => terminal_notice!("{}", format_error(&error)),
+                        }
+                        crate::terminal_ui::invalidate_presented_screen();
+                    }
+                }
+                continue;
             }
-            crate::terminal_ui::invalidate_presented_screen();
-            continue;
+            if is_continue_command(prompt.as_str()) {
+                match select_interactive_session_restore(&interactive_config, true) {
+                    Ok(Some(next)) => return Ok(InteractiveSessionExit::Switch(Box::new(next))),
+                    Ok(None) => {}
+                    Err(error) => terminal_notice!("{}", format_error(&error)),
+                }
+                crate::terminal_ui::invalidate_presented_screen();
+                continue;
+            }
         }
         if recovery_blocked && !prompt.starts_with('/') {
             terminal_notice!("恢复尚未完成，未发送此消息。请用 /resume 重试或选择其他会话。");
@@ -524,6 +566,13 @@ fn interactive_session_resume_command(config: &Config) -> Option<String> {
 }
 
 fn print_interactive_session_exit_hint(config: &Config) {
+    if let Some(summary) = crate::terminal_ui::take_exit_assistant_summary() {
+        terminal_notice!();
+        terminal_notice!("{}", interactive_layer_rule(Some("last response")));
+        for line in summary.lines() {
+            terminal_notice!("  {line}");
+        }
+    }
     let Some(command) = interactive_session_resume_command(config) else { return; };
     terminal_notice!();
     terminal_notice!("{}", interactive_layer_rule(Some("continue")));
@@ -749,7 +798,9 @@ fn read_interactive_prompt_line(
     let snapshot = interaction::interactive_composer_snapshot();
     let mut line = initial_draft.unwrap_or(&snapshot.draft).to_string();
     let mut cursor = if snapshot.draft == line { snapshot.cursor } else { line.len() };
-    let mut pasted_contents = Vec::new();
+    let mut pasted_contents: Vec<InteractivePastedContent> = Vec::new();
+    let mut esc_pending_clear = false;
+    let mut completion_cycle: Option<ComposerCompletionCycle> = None;
     INTERACTIVE_COMPOSER_CURSOR_ROW.with(|row| row.set(0));
     INTERACTIVE_COMPOSER_FRAME_ROWS.with(|rows| rows.set(inherited_surface_rows));
     if show_prompt {
@@ -760,6 +811,7 @@ fn read_interactive_prompt_line(
     let mut scheduler_event_cursor = 0_i64;
 
     loop {
+        let effective_footer = interactive_effective_footer(prompt_footer, esc_pending_clear);
         let expanded = expand_interactive_pasted_content(&line, &pasted_contents);
         let expanded_cursor = expand_interactive_pasted_content(&line[..cursor], &pasted_contents).len();
         persist_interactive_view_state(view_store, expanded, expanded_cursor);
@@ -811,13 +863,13 @@ fn read_interactive_prompt_line(
                                 }),
                             );
                         }
-                        draw_interactive_prompt_area(&line, cursor, prompt_footer, config)?;
+                        draw_interactive_prompt_area(&line, cursor, effective_footer.as_deref(), config)?;
                     }
                 }
             }
             if let Ok(notifications) = task_runtime::take_runtime_task_notifications(&invocation_request) {
                 if !notifications.is_empty() {
-                    clear_interactive_prompt_area(prompt_footer)?;
+                    clear_interactive_prompt_area(effective_footer.as_deref())?;
                     let mut passive_notifications = Vec::new();
                     for notification in notifications {
                         llm::log_local_debug_payload(
@@ -863,7 +915,7 @@ fn read_interactive_prompt_line(
                     if !passive_notifications.is_empty() {
                         print_runtime_task_notifications(&passive_notifications)?;
                     }
-                    draw_interactive_prompt_area(&line, cursor, prompt_footer, config)?;
+                    draw_interactive_prompt_area(&line, cursor, effective_footer.as_deref(), config)?;
                 }
             }
             scheduler_event_cursor = scheduler_event_cursor.max(observed_scheduler_cursor);
@@ -899,18 +951,28 @@ fn read_interactive_prompt_line(
             // terminal changes size. The prior frame is cleared using its
             // recorded geometry before the new frame is laid out against the
             // current terminal dimensions.
-            draw_interactive_prompt_area(&line, cursor, prompt_footer, config)?;
+            draw_interactive_prompt_area(&line, cursor, effective_footer.as_deref(), config)?;
             // Equal composer text does not mean equal terminal geometry.
             crate::terminal_ui::invalidate_presented_screen();
             continue;
         }
         if let Event::Key(key) = event {
             if crate::terminal_ui::scroll_history_key(&key) { continue; }
+            if key.kind != KeyEventKind::Release && key.code != KeyCode::Esc {
+                esc_pending_clear = false;
+            }
+            if !matches!(key.code, KeyCode::Tab | KeyCode::BackTab) && key.kind != KeyEventKind::Release {
+                completion_cycle = None;
+            }
             if crate::composer_media::paste_key(&key) {
                 match crate::composer_media::paste_image() {
                     Ok(marker) => { line.insert_str(cursor, &marker); cursor += marker.len(); }
                     Err(error) => terminal_notice!("{}", crate::composer_media::paste_error(&error)),
                 }
+                redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
+                continue;
+            }
+            if key.kind == KeyEventKind::Press && handle_backslash_enter_continuation(&mut line, &mut cursor, &key) {
                 redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
                 continue;
             }
@@ -929,7 +991,12 @@ fn read_interactive_prompt_line(
             if key.kind != KeyEventKind::Press {
                 continue;
             }
+            if try_delete_pasted_placeholder(&mut line, &mut cursor, &mut pasted_contents, &key) {
+                redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
+                continue;
+            }
             if crate::composer::edit(&mut line, &mut cursor, &key) {
+                retain_present_pasted_contents(&line, &mut pasted_contents);
                 redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
                 continue;
             }
@@ -939,16 +1006,32 @@ fn read_interactive_prompt_line(
                         clear_interactive_composer_frame();
                         return Ok(Some(InteractivePromptInput::CancelGoal));
                     }
-                    line.clear();
-                    cursor = 0;
-                    pasted_contents.clear();
-                    redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
-                }
-                KeyCode::Tab => {
-                    if let Some(command) = (!goal_entry).then(|| first_matching_slash_completion(&line, config)).flatten() {
-                        line = command.name.to_string();
-                        cursor = line.len();
+                    if !line.is_empty() {
+                        if !esc_pending_clear {
+                            esc_pending_clear = true;
+                            let hint_footer = interactive_effective_footer(prompt_footer, true);
+                            redraw_interactive_prompt_line(&line, cursor, hint_footer.as_deref(), config)?;
+                            continue;
+                        }
+                        line.clear();
+                        cursor = 0;
                         pasted_contents.clear();
+                        esc_pending_clear = false;
+                        completion_cycle = None;
+                        redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
+                    }
+                }
+                KeyCode::Tab | KeyCode::BackTab => {
+                    if !goal_entry
+                        && apply_composer_completion_cycle(
+                            &mut line,
+                            &mut cursor,
+                            config,
+                            &mut completion_cycle,
+                            key.code == KeyCode::BackTab,
+                        )
+                    {
+                        retain_present_pasted_contents(&line, &mut pasted_contents);
                         redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
                     }
                 }
@@ -984,6 +1067,8 @@ fn read_interactive_prompt_line(
                         line.clear();
                         cursor = 0;
                         pasted_contents.clear();
+                        esc_pending_clear = false;
+                        completion_cycle = None;
                         *history_cursor = None;
                         redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
                         continue;
@@ -998,6 +1083,8 @@ fn read_interactive_prompt_line(
                 _ => {}
             }
         } else if let Event::Paste(text) = event {
+            esc_pending_clear = false;
+            completion_cycle = None;
             match crate::composer_media::paste_path(&text) {
                 Ok(Some(marker)) => {
                     line.insert_str(cursor, &marker); cursor += marker.len();
@@ -1013,13 +1100,18 @@ fn read_interactive_prompt_line(
             }
             let sanitized = normalize_interactive_paste(&text);
             if sanitized.chars().any(|ch| !ch.is_whitespace()) {
-                let placeholder = format!("[Pasted Content {} chars]", sanitized.chars().count());
-                line.insert_str(cursor, &placeholder);
-                cursor += placeholder.len();
-                pasted_contents.push(InteractivePastedContent {
-                    placeholder,
-                    content: sanitized,
-                });
+                if should_collapse_pasted_content(&sanitized) {
+                    let placeholder = format!("[Pasted Content {} chars]", sanitized.chars().count());
+                    line.insert_str(cursor, &placeholder);
+                    cursor += placeholder.len();
+                    pasted_contents.push(InteractivePastedContent {
+                        placeholder,
+                        content: sanitized,
+                    });
+                } else {
+                    line.insert_str(cursor, &sanitized);
+                    cursor += sanitized.len();
+                }
                 redraw_interactive_prompt_line(&line, cursor, prompt_footer, config)?;
             }
         }
@@ -1051,7 +1143,7 @@ fn interactive_submit_accepts_terminal_return_variants_but_not_release() {
         KeyCode::Char('m'),
         KeyModifiers::CONTROL,
     )));
-    assert!(is_interactive_submit_event(&KeyEvent::new(
+    assert!(!is_interactive_submit_event(&KeyEvent::new(
         KeyCode::Char('j'),
         KeyModifiers::CONTROL,
     )));
@@ -1068,6 +1160,82 @@ fn interactive_submit_accepts_terminal_return_variants_but_not_release() {
 
 fn normalize_interactive_paste(text: &str) -> String {
     crate::composer::normalize_paste(text)
+}
+
+fn should_collapse_pasted_content(text: &str) -> bool {
+    text.lines().count() > 5 || text.chars().count() > 300
+}
+
+fn handle_backslash_enter_continuation(
+    line: &mut String,
+    cursor: &mut usize,
+    key: &KeyEvent,
+) -> bool {
+    if key.code != KeyCode::Enter || !key.modifiers.is_empty() {
+        return false;
+    }
+    let idx = (*cursor).min(line.len());
+    if !line.is_char_boundary(idx) {
+        return false;
+    }
+    let trailing_backslashes = line[..idx].chars().rev().take_while(|ch| *ch == '\\').count();
+    if trailing_backslashes % 2 == 1 {
+        let remove_at = idx - 1;
+        line.remove(remove_at);
+        line.insert(remove_at, '\n');
+        *cursor = remove_at + 1;
+        true
+    } else {
+        false
+    }
+}
+
+fn try_delete_pasted_placeholder(
+    line: &mut String,
+    cursor: &mut usize,
+    pasted_contents: &mut Vec<InteractivePastedContent>,
+    key: &KeyEvent,
+) -> bool {
+    if !key.modifiers.is_empty() || !matches!(key.code, KeyCode::Backspace | KeyCode::Delete) {
+        return false;
+    }
+    let idx = (*cursor).min(line.len());
+    for pos in 0..pasted_contents.len() {
+        let placeholder = &pasted_contents[pos].placeholder;
+        if let Some(start) = line.find(placeholder.as_str()) {
+            let end = start + placeholder.len();
+            let hit = match key.code {
+                KeyCode::Backspace => idx > start && idx <= end,
+                KeyCode::Delete => idx >= start && idx < end,
+                _ => false,
+            };
+            if hit {
+                line.replace_range(start..end, "");
+                *cursor = start;
+                pasted_contents.remove(pos);
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn retain_present_pasted_contents(line: &str, pasted_contents: &mut Vec<InteractivePastedContent>) {
+    pasted_contents.retain(|item| line.contains(item.placeholder.as_str()));
+}
+
+fn interactive_effective_footer(base_footer: Option<&str>, esc_pending_clear: bool) -> Option<String> {
+    if !esc_pending_clear {
+        return base_footer.map(str::to_string);
+    }
+    let hint = match current_language() {
+        Language::ZhHans => "再按一次 Esc 清空当前输入",
+        _ => "Press Esc again to clear draft",
+    };
+    match base_footer.map(str::trim).filter(|v| !v.is_empty()) {
+        Some(existing) => Some(format!("{existing} · {hint}")),
+        None => Some(hint.to_string()),
+    }
 }
 
 fn expand_interactive_pasted_content(
@@ -1192,9 +1360,9 @@ fn print_background_task_notifications(
         let command = truncate_display_width(&notification.command, width);
         let text = if interactive_color_enabled() {
             let color = if success {
-                "\x1b[38;5;114m"
+                "\x1b[32m"
             } else {
-                "\x1b[38;5;203m"
+                "\x1b[31m"
             };
             format!(
                 "  {color}{marker}  {label}{INTERACTIVE_RESET}  {INTERACTIVE_VALUE}{command}{INTERACTIVE_RESET}  {INTERACTIVE_DIM}{elapsed}{INTERACTIVE_RESET}"
@@ -1228,11 +1396,11 @@ fn print_runtime_task_notifications(
         let title = truncate_display_width(&notification.title, width);
         let text = if interactive_color_enabled() {
             let color = if waiting_permission {
-                "\x1b[38;5;215m"
+                "\x1b[33m"
             } else if success {
-                "\x1b[38;5;114m"
+                "\x1b[32m"
             } else {
-                "\x1b[38;5;203m"
+                "\x1b[31m"
             };
             format!(
                 "  {color}{marker}  {label}{INTERACTIVE_RESET}  {INTERACTIVE_VALUE}{title}{INTERACTIVE_RESET}  {INTERACTIVE_DIM}{} · {elapsed} · {}{INTERACTIVE_RESET}",
@@ -1278,10 +1446,10 @@ fn background_task_notification_label(language: i18n::Language, state: &str) -> 
         (i18n::Language::Ru, "failed") => "Фоновая задача завершилась ошибкой",
         (i18n::Language::Ru, "cancelled") => "Фоновая задача отменена",
         (i18n::Language::Ru, _) => "Статус фоновой задачи не подтверждён",
-        (i18n::Language::En, "completed") => "Background task completed",
-        (i18n::Language::En, "failed") => "Background task failed",
-        (i18n::Language::En, "cancelled") => "Background task cancelled",
-        (i18n::Language::En, _) => "Background task status unconfirmed",
+        (_, "completed") => "Background task completed",
+        (_, "failed") => "Background task failed",
+        (_, "cancelled") => "Background task cancelled",
+        (_, _) => "Background task status unconfirmed",
     }
 }
 
@@ -1293,7 +1461,7 @@ fn runtime_task_notification_label(status: &str) -> &'static str {
         (i18n::Language::Fr, "waiting_input") => "La tâche de l’agent attend une réponse",
         (i18n::Language::Ja, "waiting_input") => "エージェントタスクは回答を待っています",
         (i18n::Language::Ru, "waiting_input") => "Задача агента ожидает ответа",
-        (i18n::Language::En, "waiting_input") => "Agent task needs an answer",
+        (_, "waiting_input") => "Agent task needs an answer",
         (i18n::Language::ZhHans, "waiting_permission") => "子代理等待授权",
         (i18n::Language::ZhHans, "sealed") => "子代理执行已封存",
         (i18n::Language::ZhHans, "failed") => "子代理失败",
@@ -1318,17 +1486,17 @@ fn runtime_task_notification_label(status: &str) -> &'static str {
         (i18n::Language::Ru, "sealed") => "Выполнение агента завершено",
         (i18n::Language::Ru, "failed") => "Задача агента завершилась с ошибкой",
         (i18n::Language::Ru, "cancelled") => "Задача агента отменена",
-        (i18n::Language::En, "waiting_permission") => "Agent task needs permission",
-        (i18n::Language::En, "sealed") => "Agent execution sealed",
-        (i18n::Language::En, "failed") => "Agent task failed",
-        (i18n::Language::En, "cancelled") => "Agent task cancelled",
+        (_, "waiting_permission") => "Agent task needs permission",
+        (_, "sealed") => "Agent execution sealed",
+        (_, "failed") => "Agent task failed",
+        (_, "cancelled") => "Agent task cancelled",
         (i18n::Language::ZhHans, _) => "子代理状态已更新",
         (i18n::Language::De, _) => "Agent-Aufgabe aktualisiert",
         (i18n::Language::Es, _) => "Tarea del agente actualizada",
         (i18n::Language::Fr, _) => "Tâche de l’agent mise à jour",
         (i18n::Language::Ja, _) => "エージェントタスクが更新されました",
         (i18n::Language::Ru, _) => "Задача агента обновлена",
-        (i18n::Language::En, _) => "Agent task updated",
+        (_, _) => "Agent task updated",
     }
 }
 
@@ -1358,7 +1526,11 @@ fn draw_interactive_prompt_area(
     footer: Option<&str>,
     config: &Config,
 ) -> io::Result<()> {
-    let completion_line = if GOAL_COMPOSER_ACTIVE.with(Cell::get) { None } else { composer_slash_completion_line(line, config) };
+    let completion_line = if GOAL_COMPOSER_ACTIVE.with(Cell::get) {
+        None
+    } else {
+        composer_completion_line(line, cursor, config)
+    };
     let dynamic_footer = interactive_footer_with_background_status(footer, config);
     draw_composer_frame(
         line,
@@ -1487,6 +1659,9 @@ fn composer_input_multiline(
     width: usize,
     prefix: &str,
 ) -> (Vec<(String, bool)>, usize, usize) {
+    use unicode_segmentation::UnicodeSegmentation;
+    use unicode_width::UnicodeWidthStr;
+
     let cursor = cursor.min(line.len());
     let cursor = if line.is_char_boundary(cursor) {
         cursor
@@ -1501,12 +1676,11 @@ fn composer_input_multiline(
     let mut cursor_row = 0usize;
     let mut cursor_col = prefix_width;
     let mut found_cursor = false;
-    // 光标在当前行中之前字符的累计宽度
+    // 光标在当前行中之前字素簇的累计显示宽度
     let mut cursor_line_width_before = 0usize;
 
-    for (idx, ch) in line.char_indices() {
-        // 显式换行符：强制换行
-        if ch == '\n' {
+    for (idx, grapheme) in line.grapheme_indices(true) {
+        if grapheme == "\n" || grapheme == "\r\n" {
             if !found_cursor && idx >= cursor {
                 cursor_row = lines.len();
                 cursor_col = prefix_width + cursor_line_width_before;
@@ -1517,8 +1691,8 @@ fn composer_input_multiline(
             cursor_line_width_before = 0;
             continue;
         }
-        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if current_width > 0 && current_width + ch_width > width {
+        let g_width = UnicodeWidthStr::width(grapheme);
+        if current_width > 0 && current_width + g_width > width {
             // 当前行满了，换行
             if !found_cursor && idx > cursor {
                 cursor_row = lines.len();
@@ -1535,10 +1709,10 @@ fn composer_input_multiline(
             }
         }
         if !found_cursor && idx < cursor {
-            cursor_line_width_before += ch_width;
+            cursor_line_width_before += g_width;
         }
-        current.push(ch);
-        current_width += ch_width;
+        current.push_str(grapheme);
+        current_width += g_width;
     }
 
     // 光标在末尾（或光标位置超出文本长度）
@@ -1590,12 +1764,12 @@ fn interactive_input_bar_line_with_color(
     let clear_prefix = if clear { "\x1b[2K" } else { "" };
     if color {
         let value_color = if use_placeholder {
-            INTERACTIVE_DIM
+            INTERACTIVE_COMPOSER_DIM_FG
         } else {
-            INTERACTIVE_VALUE
+            INTERACTIVE_COMPOSER_BG
         };
         format!(
-            "{clear_prefix}{INTERACTIVE_COMPOSER_BG}{INTERACTIVE_ACCENT}{prefix}{value_color}{visible}{INTERACTIVE_COMPOSER_BG}{padding}{INTERACTIVE_RESET}"
+            "{clear_prefix}{INTERACTIVE_COMPOSER_PREFIX_FG}{prefix}{value_color}{visible}{INTERACTIVE_COMPOSER_BG}{padding}{INTERACTIVE_RESET}"
         )
     } else if visible.is_empty() {
         format!("{clear_prefix}{prefix}")
@@ -1648,12 +1822,12 @@ fn interactive_input_bar(line: &str, placeholder: Option<&str>, clear: bool) -> 
     let clear_prefix = if clear { "\x1b[2K" } else { "" };
     if interactive_color_enabled() {
         let value_color = if use_placeholder {
-            INTERACTIVE_DIM
+            INTERACTIVE_COMPOSER_DIM_FG
         } else {
-            INTERACTIVE_VALUE
+            INTERACTIVE_COMPOSER_BG
         };
         format!(
-            "{clear_prefix}{INTERACTIVE_COMPOSER_BG}{INTERACTIVE_ACCENT}{prefix}{value_color}{visible}{INTERACTIVE_COMPOSER_BG}{padding}{INTERACTIVE_RESET}"
+            "{clear_prefix}{INTERACTIVE_COMPOSER_PREFIX_FG}{prefix}{value_color}{visible}{INTERACTIVE_COMPOSER_BG}{padding}{INTERACTIVE_RESET}"
         )
     } else if visible.is_empty() {
         format!("{clear_prefix}{prefix}")
@@ -1687,20 +1861,25 @@ fn composer_prompt_footer_line(footer: &str) -> String {
     lines.join("\n")
 }
 
-fn composer_slash_completion_line(line: &str, config: &Config) -> Option<String> {
-    let completions = matching_slash_commands_with_config(line, config);
-    if completions.is_empty() {
+fn composer_completion_line(line: &str, cursor: usize, config: &Config) -> Option<String> {
+    let trimmed = line.trim_start();
+    let mut parts = if trimmed.starts_with('/') {
+        matching_slash_commands_with_config(line, config)
+            .into_iter()
+            .map(|item| interactive_room_completion_label(&item.name).unwrap_or(item.name))
+            .collect::<Vec<_>>()
+    } else if let Some((_, _, prefix)) = active_at_file_token(line, cursor) {
+        workspace_file_completions(&config.project_root, prefix)
+            .into_iter()
+            .map(|rel| format!("@{rel}"))
+            .collect::<Vec<_>>()
+    } else {
+        return None;
+    };
+    if parts.is_empty() {
         return None;
     }
-    // Keep the final terminal column untouched. Writing exactly through the
-    // right edge puts many terminals into deferred-wrap state, which makes the
-    // next composer redraw advance one physical row even though our logical
-    // line count did not change.
     let width = terminal_columns().saturating_sub(3).max(1);
-    let mut parts = completions
-        .into_iter()
-        .map(|item| interactive_room_completion_label(&item.name).unwrap_or(item.name))
-        .collect::<Vec<_>>();
     if parts.len() > 4 {
         parts.truncate(4);
     }
@@ -1715,7 +1894,14 @@ fn composer_slash_completion_line(line: &str, config: &Config) -> Option<String>
     }
 }
 
-struct InteractiveRawModeGuard;
+#[allow(dead_code)]
+fn composer_slash_completion_line(line: &str, config: &Config) -> Option<String> {
+    composer_completion_line(line, line.len(), config)
+}
+
+struct InteractiveRawModeGuard {
+    keyboard_enhanced: bool,
+}
 
 impl InteractiveRawModeGuard {
     fn new() -> io::Result<Self> {
@@ -1725,7 +1911,15 @@ impl InteractiveRawModeGuard {
                 format!("{} {err}", tr(Message::InteractiveRawModeFailedPrefix)),
             )
         })?;
-        Ok(Self)
+        let keyboard_enhanced = io::stdout().is_terminal()
+            && execute!(
+                io::stdout(),
+                crossterm::event::PushKeyboardEnhancementFlags(
+                    crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                )
+            )
+            .is_ok();
+        Ok(Self { keyboard_enhanced })
     }
 
     fn enable_bracketed_paste(&self) -> io::Result<()> {
@@ -1746,6 +1940,9 @@ fn restore_interactive_raw_mode() -> io::Result<()> {
 
 impl Drop for InteractiveRawModeGuard {
     fn drop(&mut self) {
+        if self.keyboard_enhanced {
+            let _ = execute!(io::stdout(), crossterm::event::PopKeyboardEnhancementFlags);
+        }
         let _ = execute!(io::stdout(), crossterm::event::DisableBracketedPaste);
         let _ = disable_raw_mode();
     }
@@ -1754,7 +1951,7 @@ impl Drop for InteractiveRawModeGuard {
 fn reset_interactive_terminal_state() {
     let _ = disable_raw_mode();
     let _ = print!(
-        "{INTERACTIVE_RESET}\x1b[?25h\x1b[?2004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l"
+        "{INTERACTIVE_RESET}\x1b[?25h\x1b[?2004l\x1b[?1007l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l"
     );
     let _ = io::stdout().flush();
 }
@@ -2346,19 +2543,29 @@ const INTERACTIVE_SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand { name: "/executor" },
     SlashCommand { name: "/debug" },
     SlashCommand { name: "/allow" },
+    SlashCommand { name: "/permissions" },
     SlashCommand { name: "/sources" },
+    SlashCommand { name: "/resources" },
     SlashCommand { name: "/goal" },
     SlashCommand { name: "/init" },
     SlashCommand { name: "/cd" },
     SlashCommand { name: "/compact" },
     SlashCommand { name: "/new" },
+    SlashCommand { name: "/clear" },
     SlashCommand { name: "/plan" },
     SlashCommand { name: "/agent" },
+    SlashCommand { name: "/experts" },
     SlashCommand { name: "/room" },
     SlashCommand { name: "/work" },
     SlashCommand { name: "/recover" },
     SlashCommand { name: "/tasks" },
     SlashCommand { name: "/jobs" },
+    SlashCommand { name: "/stop" },
+    SlashCommand { name: "/questions" },
+    SlashCommand { name: "/skills" },
+    SlashCommand { name: "/mcp" },
+    SlashCommand { name: "/memory" },
+    SlashCommand { name: "/guide" },
     SlashCommand { name: "/resume" },
     SlashCommand { name: "/continue" },
     SlashCommand { name: "/history" },
@@ -2374,23 +2581,31 @@ fn normalize_interactive_command(command: &str) -> Option<&'static str> {
     let lower = command.to_ascii_lowercase();
     Some(match lower.as_str() {
         "/help" | "/h" => "/help",
-        "/model" | "/m" => "/model",
+        "/model" | "/models" | "/m" => "/model",
         "/executor" | "/exec" => "/executor",
         "/debug" | "/d" => "/debug",
-        "/allow" | "/a" => "/allow",
-        "/sources" | "/data" => "/sources",
+        "/allow" | "/permissions" | "/a" => "/allow",
+        "/sources" | "/resources" | "/data" => "/sources",
         "/goal" | "/g" => "/goal",
         "/init" | "/i" => "/init",
         "/cd" => "/cd",
         "/compact" => "/compact",
         "/new" | "/n" => "/new",
+        "/clear" | "/cls" => "/clear",
         "/plan" | "/p" => "/plan",
         "/agent" => "/agent",
+        "/experts" => "/experts",
         "/room" => "/room",
         "/work" | "/w" => "/work",
         "/recover" => "/recover",
         "/tasks" | "/t" => "/tasks",
         "/jobs" | "/j" => "/jobs",
+        "/stop" => "/stop",
+        "/questions" => "/questions",
+        "/skills" | "/skill" => "/skills",
+        "/mcp" => "/mcp",
+        "/memory" | "/mem" => "/memory",
+        "/guide" => "/guide",
         "/resume" | "/r" => "/resume",
         "/continue" | "/c" => "/continue",
         "/history" | "/hist" => "/history",
@@ -2400,15 +2615,32 @@ fn normalize_interactive_command(command: &str) -> Option<&'static str> {
     })
 }
 
-fn is_resume_command(prompt: &str) -> bool {
+fn resume_command_target(prompt: &str) -> Option<Option<String>> {
     let mut parts = prompt.trim().split_whitespace();
-    let Some(command) = parts.next() else {
-        return false;
-    };
-    if parts.next().is_some() {
-        return false;
+    let command = parts.next()?;
+    if normalize_interactive_command(command) != Some("/resume") {
+        return None;
     }
-    normalize_interactive_command(command).is_some_and(|value| value == "/resume")
+    let first = parts.next().map(str::to_string);
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(first)
+}
+
+#[allow(dead_code)]
+fn is_resume_command(prompt: &str) -> bool {
+    matches!(resume_command_target(prompt), Some(None))
+}
+
+fn resume_interactive_session_by_id(config: &Config, session_id: &str) -> Result<Config, String> {
+    let saved = session::load_session(session_id)?;
+    let mut next = config.clone();
+    next.session_id = Some(saved.id);
+    next.continue_last = false;
+    next.resume_session = false;
+    crate::conversation_invocation::initialize_or_restore(&mut next)?;
+    Ok(next)
 }
 
 fn is_continue_command(prompt: &str) -> bool {
@@ -2774,6 +3006,33 @@ fn matching_slash_commands_inner(input: &str, config: Option<&Config>) -> Vec<Sl
             })
             .collect();
     }
+    if command == "/skills" {
+        return ["list", "enable", "disable"]
+            .into_iter()
+            .filter(|sub| rest.is_empty() || sub.starts_with(&rest.to_ascii_lowercase()))
+            .map(|sub| SlashCompletion {
+                name: format!("/skills {sub}"),
+            })
+            .collect();
+    }
+    if command == "/mcp" {
+        return ["list", "enable", "disable"]
+            .into_iter()
+            .filter(|sub| rest.is_empty() || sub.starts_with(&rest.to_ascii_lowercase()))
+            .map(|sub| SlashCompletion {
+                name: format!("/mcp {sub}"),
+            })
+            .collect();
+    }
+    if command == "/memory" {
+        return ["list", "search", "add"]
+            .into_iter()
+            .filter(|sub| rest.is_empty() || sub.starts_with(&rest.to_ascii_lowercase()))
+            .map(|sub| SlashCompletion {
+                name: format!("/memory {sub}"),
+            })
+            .collect();
+    }
     if command == "/allow" {
         return Vec::new();
     }
@@ -2790,7 +3049,6 @@ fn matching_slash_commands_inner(input: &str, config: Option<&Config>) -> Vec<Sl
         .map(|command| SlashCompletion {
             name: command.name.to_string(),
         })
-        .take(4)
         .collect()
 }
 
@@ -2800,15 +3058,169 @@ fn first_matching_slash_completion(input: &str, config: &Config) -> Option<Slash
     matching_slash_commands_with_config(input, config).into_iter().next()
 }
 
-fn available_interactive_models(config: Option<&Config>, query: &str) -> Vec<String> {
-    let mut models: Vec<String> = Vec::new();
-    if config.is_some() {
-        if let Ok(profiles) = crate::store::NolaStore::open_default().and_then(|store| store.model_profiles()) {
-            for profile in profiles.into_iter().filter(|p| p.enabled && p.deleted_at_ms.is_none() && p.runtime == "remote") {
-                models.push(format!("configured:{}", profile.id));
+#[derive(Clone)]
+struct ComposerCompletionCycle {
+    span_start: usize,
+    candidates: Vec<String>,
+    index: usize,
+    last_inserted_end: usize,
+}
+
+fn active_at_file_token(line: &str, cursor: usize) -> Option<(usize, usize, &str)> {
+    let idx = cursor.min(line.len());
+    if !line.is_char_boundary(idx) {
+        return None;
+    }
+    let before = &line[..idx];
+    let token_start = before
+        .char_indices()
+        .rev()
+        .find(|(_, ch)| ch.is_whitespace())
+        .map(|(i, ch)| i + ch.len_utf8())
+        .unwrap_or(0);
+    let token = &before[token_start..];
+    let rest = token.strip_prefix('@')?;
+    if rest.contains('@') {
+        return None;
+    }
+    Some((token_start, idx, rest))
+}
+
+fn workspace_file_completions(project_root: &std::path::Path, prefix: &str) -> Vec<String> {
+    let mut stack = vec![project_root.to_path_buf()];
+    let mut collected = Vec::new();
+    let max_entries = 400usize;
+    let query = prefix.trim().to_ascii_lowercase();
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if collected.len() >= max_entries {
+                break;
+            }
+            let path = entry.path();
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.starts_with('.')
+                || matches!(
+                    name_str.as_ref(),
+                    "target" | "node_modules" | "dist" | "build" | ".git"
+                )
+            {
+                continue;
+            }
+            let Ok(rel) = path.strip_prefix(project_root) else {
+                continue;
+            };
+            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            if path.is_dir() {
+                stack.push(path);
+                let dir_entry = format!("{rel_str}/");
+                if query.is_empty() || dir_entry.to_ascii_lowercase().contains(&query) {
+                    collected.push(dir_entry);
+                }
+            } else if query.is_empty() || rel_str.to_ascii_lowercase().contains(&query) {
+                collected.push(rel_str);
             }
         }
-        if !models.is_empty() { return models; }
+        if collected.len() >= max_entries {
+            break;
+        }
+    }
+    collected.sort_by(|a, b| {
+        let a_pref = !query.is_empty() && a.to_ascii_lowercase().starts_with(&query);
+        let b_pref = !query.is_empty() && b.to_ascii_lowercase().starts_with(&query);
+        b_pref
+            .cmp(&a_pref)
+            .then_with(|| a.len().cmp(&b.len()))
+            .then_with(|| a.cmp(b))
+    });
+    collected.truncate(12);
+    collected
+}
+
+fn apply_composer_completion_cycle(
+    line: &mut String,
+    cursor: &mut usize,
+    config: &Config,
+    cycle: &mut Option<ComposerCompletionCycle>,
+    reverse: bool,
+) -> bool {
+    if let Some(existing) = cycle.as_mut() {
+        if *cursor == existing.last_inserted_end
+            && existing.span_start <= existing.last_inserted_end
+            && existing.last_inserted_end <= line.len()
+            && !existing.candidates.is_empty()
+        {
+            if reverse {
+                existing.index = (existing.index + existing.candidates.len() - 1)
+                    % existing.candidates.len();
+            } else {
+                existing.index = (existing.index + 1) % existing.candidates.len();
+            }
+            let next = existing.candidates[existing.index].clone();
+            line.replace_range(existing.span_start..existing.last_inserted_end, &next);
+            let new_end = existing.span_start + next.len();
+            existing.last_inserted_end = new_end;
+            *cursor = new_end;
+            return true;
+        }
+    }
+
+    let trimmed = line.trim_start();
+    let (span_start, span_end, candidates) = if trimmed.starts_with('/') {
+        let items: Vec<String> = matching_slash_commands_with_config(line, config)
+            .into_iter()
+            .map(|c| c.name)
+            .collect();
+        (0usize, line.len(), items)
+    } else if let Some((start, end, prefix)) = active_at_file_token(line, *cursor) {
+        let items: Vec<String> = workspace_file_completions(&config.project_root, prefix)
+            .into_iter()
+            .map(|rel| format!("@{rel}"))
+            .collect();
+        (start, end, items)
+    } else {
+        return false;
+    };
+    if candidates.is_empty() {
+        return false;
+    }
+    let idx = if reverse { candidates.len() - 1 } else { 0 };
+    let replacement = candidates[idx].clone();
+    line.replace_range(span_start..span_end, &replacement);
+    let new_end = span_start + replacement.len();
+    *cursor = new_end;
+    *cycle = Some(ComposerCompletionCycle {
+        span_start,
+        candidates,
+        index: idx,
+        last_inserted_end: new_end,
+    });
+    true
+}
+
+fn available_interactive_models(config: Option<&Config>, query: &str) -> Vec<String> {
+    let mut models: Vec<String> = Vec::new();
+    let mut profile_names: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    if config.is_some() {
+        if let Ok(profiles) =
+            crate::store::NolaStore::open_default().and_then(|store| store.model_profiles())
+        {
+            for profile in profiles
+                .into_iter()
+                .filter(|p| p.enabled && p.deleted_at_ms.is_none() && p.runtime == "remote")
+            {
+                let key = format!("configured:{}", profile.id);
+                profile_names.insert(
+                    key.clone(),
+                    format!("{} {} {}", profile.model_name, profile.provider, profile.id),
+                );
+                models.push(key);
+            }
+        }
     }
     if let Some(config) = config {
         for item in [
@@ -2837,7 +3249,14 @@ fn available_interactive_models(config: Option<&Config>, query: &str) -> Vec<Str
     }
     models
         .into_iter()
-        .filter(|model| model.to_ascii_lowercase().contains(&query))
+        .filter(|model| {
+            model.to_ascii_lowercase().contains(&query)
+                || profile_names
+                    .get(model)
+                    .is_some_and(|label| label.to_ascii_lowercase().contains(&query))
+                || local_models::profile(model)
+                    .is_some_and(|p| p.name.to_ascii_lowercase().contains(&query))
+        })
         .collect()
 }
 
@@ -3131,19 +3550,19 @@ fn resume_recovery_text(text: ResumeRecoveryText) -> &'static str {
         (Language::Ru, ResumeRecoveryText::RetryScheduled) => {
             "Повтор задачи уже запланирован; дублирующий запуск не выполняется:"
         }
-        (Language::En, ResumeRecoveryText::ObservedCommitted) => {
+        (_, ResumeRecoveryText::ObservedCommitted) => {
             "Committed recovered tool results:"
         }
-        (Language::En, ResumeRecoveryText::UncertainBlocked) => {
+        (_, ResumeRecoveryText::UncertainBlocked) => {
             "Automatic resume stopped because these operations have an uncertain outcome:"
         }
-        (Language::En, ResumeRecoveryText::InspectWork) => {
+        (_, ResumeRecoveryText::InspectWork) => {
             "Use /work and confirm the real external state before resolving them."
         }
-        (Language::En, ResumeRecoveryText::PermissionUnavailable) => {
+        (_, ResumeRecoveryText::PermissionUnavailable) => {
             "Could not restore pending permission:"
         }
-        (Language::En, ResumeRecoveryText::RetryScheduled) => {
+        (_, ResumeRecoveryText::RetryScheduled) => {
             "Task retry is scheduled and will not be started twice:"
         }
     }
@@ -3494,7 +3913,10 @@ fn handle_interactive_slash_command(
             Ok(SlashCommandResult::Handled)
         }
         "/guide" => {
-            onboarding::show(config);
+            if !crate::terminal_ui::owns_terminal() {
+                onboarding::show(config);
+            }
+            print_interactive_shortcuts_guide();
             Ok(SlashCommandResult::Handled)
         }
         "/cd" => {
@@ -3661,7 +4083,11 @@ fn handle_interactive_slash_command(
             }
             Ok(SlashCommandResult::Handled)
         }
-        "/new" => {
+        "/new" | "/clear" => {
+            if command == "/clear" {
+                crate::terminal_ui::clear_replayed_history();
+                crate::terminal_ui::invalidate_presented_screen();
+            }
             if let (Some(session_id), Some(_)) =
                 (config.session_id.as_deref(), goal_target.as_deref())
             {
@@ -3693,6 +4119,16 @@ fn handle_interactive_slash_command(
             );
             Ok(SlashCommandResult::SessionReset)
         }
+        "/experts" => {
+            terminal_notice!("{}", interactive_layer_rule(Some(ui_text(UiText::Agents))));
+            for (name, description) in
+                task_runtime::available_agent_profiles(&config.host_invocation_request()?)
+            {
+                terminal_notice!("  {name:<12} {description}");
+            }
+            terminal_notice!("  {}", ui_text(UiText::AgentUsage));
+            Ok(SlashCommandResult::Handled)
+        }
         "/agent" => {
             let Some(agent_type) = parts.next() else {
                 terminal_notice!("{}", interactive_layer_rule(Some(ui_text(UiText::Agents))));
@@ -3722,6 +4158,7 @@ fn handle_interactive_slash_command(
                             i18n::Language::Fr => "Déléguée ; consulter la progression de la sous-tâche",
                             i18n::Language::Ja => "委任しました。子タスクの進捗を確認してください",
                             i18n::Language::Ru => "Делегировано; проверьте ход подзадачи",
+                            _ => "Delegated; view child task progress",
                         };
                         if let Some((_, description)) = task_runtime::available_agent_profiles(&config.host_invocation_request()?)
                             .into_iter().find(|(name, _)| name == agent_type) {
@@ -3925,6 +4362,205 @@ fn handle_interactive_slash_command(
             terminal_notice!("  {}", ui_text(UiText::ResumeUsage));
             Ok(SlashCommandResult::Handled)
         }
+        "/stop" => {
+            let task_id = parts.next();
+            if let Some(task_id) = task_id {
+                let outcome = tools::manage_background_bash_tasks(
+                    "stop",
+                    Some(task_id),
+                    &config.allowed_dirs,
+                    config.session_id.as_deref(),
+                    &crate::skill_runtime::SkillRuntimeContext::from_configured_dirs(
+                        config.skill_dirs.clone(),
+                    ),
+                );
+                if outcome.error {
+                    terminal_notice!("  {}", format_error(&outcome.display));
+                } else {
+                    terminal_notice!("  {}", outcome.display);
+                }
+            } else {
+                terminal_notice!(
+                    "  {}",
+                    match current_language() {
+                        Language::ZhHans => "当前没有正在运行的前台回合；可用 /stop <task-id> 或 /jobs stop <id> 停止后台任务。",
+                        _ => "No active foreground turn; use /stop <task-id> or /jobs stop <id> to stop a background task.",
+                    }
+                );
+            }
+            Ok(SlashCommandResult::Handled)
+        }
+        "/questions" => {
+            Ok(SlashCommandResult::Handled)
+        }
+        "/skills" => {
+            let action = parts.next().unwrap_or("list");
+            let builtins = crate::skill_catalog_port::load_web_builtin_skills()?
+                .into_iter()
+                .map(|mut item| {
+                    if let Some(obj) = item.as_object_mut() {
+                        obj.entry("built_in").or_insert(json!(true));
+                    }
+                    item
+                })
+                .collect::<Vec<_>>();
+            let uploaded = crate::skill_catalog_port::load_web_uploaded_skills()?;
+            let mut baseline = Vec::with_capacity(builtins.len() + uploaded.len());
+            baseline.extend(builtins);
+            baseline.extend(uploaded);
+
+            if action.eq_ignore_ascii_case("list") {
+                terminal_notice!("{}", interactive_layer_rule(Some("skills")));
+                if baseline.is_empty() {
+                    terminal_notice!("  (none)");
+                } else {
+                    for skill in &baseline {
+                        let id = skill["id"].as_str().unwrap_or("");
+                        let name = skill["name"].as_str().unwrap_or(id);
+                        let summary = skill["description"].as_str().unwrap_or("");
+                        let enabled = skill["enabled"].as_bool().unwrap_or(true);
+                        let badge = if enabled { "on " } else { "off" };
+                        terminal_notice!("  [{badge}] {id} · {name} — {}", preview(summary, 60));
+                    }
+                }
+            } else if matches!(action.to_ascii_lowercase().as_str(), "enable" | "disable") {
+                let Some(target) = parts.next() else {
+                    terminal_notice!("  Usage: /skills [list|enable <id>|disable <id>]");
+                    return Ok(SlashCommandResult::Handled);
+                };
+                let desired = action.eq_ignore_ascii_case("enable");
+                let mut updated = baseline.clone();
+                let Some(entry) = updated.iter_mut().find(|item| {
+                    item["id"].as_str() == Some(target)
+                        || item["name"]
+                            .as_str()
+                            .is_some_and(|n| n.eq_ignore_ascii_case(target))
+                }) else {
+                    return Err(format!("Skill not found: {target}"));
+                };
+                entry["enabled"] = json!(desired);
+                crate::skill_catalog_port::save_web_uploaded_skills(&baseline, &updated)?;
+                terminal_notice!(
+                    "  {} -> {}",
+                    target,
+                    if desired { "enabled" } else { "disabled" }
+                );
+            } else {
+                terminal_notice!("  Usage: /skills [list|enable <id>|disable <id>]");
+            }
+            Ok(SlashCommandResult::Handled)
+        }
+        "/mcp" => {
+            let action = parts.next().unwrap_or("list");
+            let baseline = crate::mcp_catalog_port::load_web_mcp_servers()?;
+            if action.eq_ignore_ascii_case("list") {
+                terminal_notice!("{}", interactive_layer_rule(Some("mcp")));
+                if baseline.is_empty() {
+                    terminal_notice!("  (none)");
+                } else {
+                    for server in &baseline {
+                        let id = server["server_id"].as_str().unwrap_or("");
+                        let name = server["name"].as_str().unwrap_or(id);
+                        let enabled = server["enabled"].as_bool().unwrap_or(true);
+                        let badge = if enabled { "on " } else { "off" };
+                        terminal_notice!("  [{badge}] {id} · {name}");
+                    }
+                }
+            } else if matches!(action.to_ascii_lowercase().as_str(), "enable" | "disable") {
+                let Some(target) = parts.next() else {
+                    terminal_notice!("  Usage: /mcp [list|enable <id>|disable <id>]");
+                    return Ok(SlashCommandResult::Handled);
+                };
+                let desired = action.eq_ignore_ascii_case("enable");
+                let mut updated = baseline.clone();
+                let Some(entry) = updated.iter_mut().find(|item| {
+                    item["server_id"].as_str() == Some(target)
+                        || item["name"]
+                            .as_str()
+                            .is_some_and(|n| n.eq_ignore_ascii_case(target))
+                }) else {
+                    return Err(format!("MCP server not found: {target}"));
+                };
+                entry["enabled"] = json!(desired);
+                crate::mcp_catalog_port::save_web_mcp_changes(&baseline, &updated)?;
+                config.mcp_server_registry = crate::mcp_catalog_port::load_web_mcp_servers()?;
+                terminal_notice!(
+                    "  {} -> {}",
+                    target,
+                    if desired { "enabled" } else { "disabled" }
+                );
+            } else {
+                terminal_notice!("  Usage: /mcp [list|enable <id>|disable <id>]");
+            }
+            Ok(SlashCommandResult::Handled)
+        }
+        "/memory" => {
+            let action = parts.next().unwrap_or("list");
+            let mut app = crate::application_port::CliApplicationPort::persistent_default()?;
+            if action.eq_ignore_ascii_case("list") {
+                let records = crate::memory_admin::list_memories(&mut app, 30)?;
+                terminal_notice!("{}", interactive_layer_rule(Some("memory")));
+                if records.is_empty() {
+                    terminal_notice!("  (none)");
+                } else {
+                    for item in records {
+                        let id = item["id"].as_str().unwrap_or("");
+                        let scope = item["scope"].as_str().unwrap_or("");
+                        let content = item["content"].as_str().unwrap_or("");
+                        terminal_notice!("  [{scope}] {id} · {}", preview(content, 72));
+                    }
+                }
+            } else if action.eq_ignore_ascii_case("search") {
+                let query = parts.collect::<Vec<_>>().join(" ");
+                if query.trim().is_empty() {
+                    terminal_notice!("  Usage: /memory search <query>");
+                    return Ok(SlashCommandResult::Handled);
+                }
+                let q = query.trim().to_ascii_lowercase();
+                let records = crate::memory_admin::list_memories(&mut app, 200)?;
+                terminal_notice!("{}", interactive_layer_rule(Some("memory search")));
+                let mut count = 0usize;
+                for item in records {
+                    let hay = format!(
+                        "{} {} {}",
+                        item["content"].as_str().unwrap_or(""),
+                        item["summary"].as_str().unwrap_or(""),
+                        item["scope"].as_str().unwrap_or("")
+                    )
+                    .to_ascii_lowercase();
+                    if hay.contains(&q) {
+                        count += 1;
+                        let id = item["id"].as_str().unwrap_or("");
+                        let content = item["content"].as_str().unwrap_or("");
+                        terminal_notice!("  {id} · {}", preview(content, 72));
+                        if count >= 20 {
+                            break;
+                        }
+                    }
+                }
+                if count == 0 {
+                    terminal_notice!("  (no matches)");
+                }
+            } else if action.eq_ignore_ascii_case("add") {
+                let text = parts.collect::<Vec<_>>().join(" ");
+                if text.trim().is_empty() {
+                    terminal_notice!("  Usage: /memory add <text>");
+                    return Ok(SlashCommandResult::Handled);
+                }
+                let draft: crate::memory_admin::MemoryDraft = serde_json::from_value(json!({
+                    "scope": "workspace",
+                    "kind": "other",
+                    "content": text.trim(),
+                }))
+                .map_err(|e| e.to_string())?;
+                let saved = crate::memory_admin::save_memory(&mut app, &draft, None)?;
+                let id = saved["record"]["id"].as_str().unwrap_or("");
+                terminal_notice!("  Saved memory {id}");
+            } else {
+                terminal_notice!("  Usage: /memory [list|search <query>|add <text>]");
+            }
+            Ok(SlashCommandResult::Handled)
+        }
         "/continue" => {
             terminal_notice!("  {}", ui_text(UiText::ContinueUsage));
             Ok(SlashCommandResult::Handled)
@@ -3978,6 +4614,28 @@ fn handle_interactive_slash_command(
                 tr(Message::InteractiveUnknownCommandHint)
             );
             Ok(SlashCommandResult::Handled)
+        }
+    }
+}
+
+fn print_interactive_shortcuts_guide() {
+    terminal_notice!("{}", interactive_layer_rule(Some("guide")));
+    match current_language() {
+        Language::ZhHans => {
+            terminal_notice!("  换行：Shift+Enter · Alt+Enter · Ctrl+J · 行尾 \\+Enter");
+            terminal_notice!("  跳转：Option/Alt+←/→ 或 Alt+B/F 按词跳转 · Ctrl+A/E 行首/行尾 · Ctrl+Home/End 全文首尾");
+            terminal_notice!("  滚动：PgUp/PgDn · Alt+↑/↓ · Ctrl+↑/↓ · Ctrl+Home/End");
+            terminal_notice!("  补全：Tab / Shift+Tab 循环补全 /命令 与 @工作区文件");
+            terminal_notice!("  草稿：连按两次 Esc 清空输入 · /stop 停止当前运行 · /resume <id> 直接切换会话");
+            terminal_notice!("  扩展：/model · /experts · /skills · /mcp · /memory · /questions · /plan");
+        }
+        _ => {
+            terminal_notice!("  Newline: Shift+Enter · Alt+Enter · Ctrl+J · trailing \\+Enter");
+            terminal_notice!("  Word nav: Option/Alt+Left/Right or Alt+B/F · Ctrl+A/E line · Ctrl+Home/End buffer");
+            terminal_notice!("  Scroll: PgUp/PgDn · Alt+Up/Down · Ctrl+Up/Down · Ctrl+Home/End");
+            terminal_notice!("  Complete: Tab / Shift+Tab cycles /commands and @workspace files");
+            terminal_notice!("  Control: Esc x2 clears draft · /stop cancels active run · /resume <id> switches session");
+            terminal_notice!("  Catalog: /model · /experts · /skills · /mcp · /memory · /questions · /plan");
         }
     }
 }

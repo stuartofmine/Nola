@@ -25,9 +25,13 @@ fn run_with_expanded_stack(name: &str, f: impl FnOnce() + Send + 'static) {
 pub fn run_cli() {
     run_with_expanded_stack("nola-cli-main", || {
         let arguments = std::env::args().skip(1).collect::<Vec<_>>();
-        // Updating must work even when the model or conversation configuration is invalid.
-        if let Some(result) = crate::software_update::run_if_requested(&arguments) {
-            if let Err(error) = result { eprintln!("{error}"); std::process::exit(1); }
+        // Administrative commands (`version`, `update`, `memory`, `skills`, `mcp`)
+        // work even when model configuration is absent or invalid.
+        if let Some(result) = crate::cli_admin::run_if_requested(&arguments) {
+            if let Err(error) = result {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
             return;
         }
         if let Some(result) = crate::tailcat_web_client::run_if_requested(&arguments) {

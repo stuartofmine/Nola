@@ -536,7 +536,7 @@ private struct MacGitDiffDetail: View {
                 }
                 .defaultScrollAnchor(.topLeading)
             }
-            .background(Color(nsColor: .textBackgroundColor))
+            .background(MacDesignColor.panel)
             .overlay {
                 if isLoading {
                     Rectangle()

@@ -119,11 +119,11 @@ struct ModelTestView: View {
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .padding(.vertical, 8)
                                     .padding(.horizontal, 12)
-                                    .background(Color(.systemGray6))
+                                    .background(DesignTokens.secondaryBackgroundColor)
                                     .cornerRadius(8)
                                 }
                                 .padding(12)
-                                .background(Color(.systemGray6))
+                                .background(DesignTokens.secondaryBackgroundColor)
                                 .cornerRadius(10)
                                 
                                 // Comment in English.
@@ -164,7 +164,7 @@ struct ModelTestView: View {
                                     }
                                 }
                                 .padding(12)
-                                .background(Color(.systemGray6))
+                                .background(DesignTokens.secondaryBackgroundColor)
                                 .cornerRadius(10)
                             }
                             .padding(.horizontal, 12)
@@ -208,7 +208,7 @@ struct ModelTestView: View {
                                     }
                                 }
                                 .padding(12)
-                                .background(Color(.systemGray6))
+                                .background(DesignTokens.secondaryBackgroundColor)
                                 .cornerRadius(10)
                                 
                                 // Comment in English.
@@ -226,7 +226,7 @@ struct ModelTestView: View {
                                         )
                                 }
                                 .padding(12)
-                                .background(Color(.systemGray6))
+                                .background(DesignTokens.secondaryBackgroundColor)
                                 .cornerRadius(10)
                             }
                             .padding(.horizontal, 12)
@@ -289,7 +289,7 @@ struct ModelTestView: View {
                                                     }
                                                 }
                                                 .padding(10)
-                                                .background(Color(.systemGray6))
+                                                .background(DesignTokens.secondaryBackgroundColor)
                                                 .cornerRadius(8)
                                             }
                                             
@@ -305,7 +305,7 @@ struct ModelTestView: View {
                                                         .foregroundColor(.secondary)
                                                 }
                                                 .padding(10)
-                                                .background(Color(.systemGray6))
+                                                .background(DesignTokens.secondaryBackgroundColor)
                                                 .cornerRadius(8)
                                             }
                                         }
@@ -322,7 +322,7 @@ struct ModelTestView: View {
                                     }
                                     .frame(height: 200)
                                     .frame(maxWidth: .infinity)
-                                    .background(Color(.systemGray6))
+                                    .background(DesignTokens.secondaryBackgroundColor)
                                     .cornerRadius(10)
                                 }
                             }
@@ -353,6 +353,7 @@ struct ModelTestView: View {
                         }
                     }
                 }
+                .background(DesignTokens.backgroundColor)
             }
             .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $showSettings) {
@@ -724,6 +725,7 @@ struct SettingsSheet: View {
     var body: some View {
         NavigationStack {
             List {
+                Group {
                 Section(header: Text(L10n.modelTestTitle)) {
                     Picker(L10n.modelTestExecutionEnvironment, selection: $useLocal) {
                         Text(L10n.modelTestLocalLabel).tag(true)
@@ -765,7 +767,11 @@ struct SettingsSheet: View {
                         }
                     }
                 }
+                }
+                .listRowBackground(DesignTokens.cardBackgroundColor)
+                .listRowSeparatorTint(DesignTokens.borderColor)
             }
+            .nolaGroupedSurface()
             .navigationTitle(L10n.settings)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

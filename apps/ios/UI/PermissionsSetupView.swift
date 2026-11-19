@@ -168,6 +168,7 @@ struct PermissionsSetupView: View {
             .background(DesignTokens.backgroundColor)
             .overlay(alignment: .top) { NolaDivider() }
         }
+        .background(DesignTokens.backgroundColor.ignoresSafeArea())
         .interactiveDismissDisabled(isRequestingPermissions)
         .onDisappear {
             requestOwner = nil
@@ -414,7 +415,7 @@ struct PermissionSetupInfoCard: View {
         .padding()
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.secondarySystemBackground))
+                .fill(DesignTokens.cardBackgroundColor)
         )
     }
 }

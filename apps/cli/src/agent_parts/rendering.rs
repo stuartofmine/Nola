@@ -204,7 +204,7 @@ fn plan_ui_dimensions() -> (usize, usize) {
 fn plan_card_heading(label: &str, title: &str, width: usize, max_text: usize) -> String {
     let heading = format!("─ {label} · {} ", compact_plan_text(title, max_text));
     let rule = "─".repeat(width.saturating_sub(heading.chars().count() + 4));
-    plan_ui_style(format!("  {heading}{rule}"), "\x1b[1;38;5;117m")
+    plan_ui_style(format!("  {heading}{rule}"), "\x1b[1;34m")
 }
 
 fn plan_card_lines(request: &ToolRequest) -> Vec<String> {
@@ -236,8 +236,8 @@ fn plan_card_lines(request: &ToolRequest) -> Vec<String> {
     if !summary.trim().is_empty() {
         lines.push(format!(
             "  {}  {}",
-            plan_ui_style(ui_text(UiText::Goal).to_string(), "\x1b[38;5;244m"),
-            plan_ui_style(compact_plan_text(summary, max_text), "\x1b[38;5;252m")
+            plan_ui_style(ui_text(UiText::Goal).to_string(), "\x1b[2;39m"),
+            plan_ui_style(compact_plan_text(summary, max_text), "\x1b[39m")
         ));
     }
     lines.push(String::new());
@@ -245,9 +245,9 @@ fn plan_card_lines(request: &ToolRequest) -> Vec<String> {
         let active = index == 0;
         let marker = if active { "◉" } else { "○" };
         let color = if active {
-            "\x1b[1;38;5;117m"
+            "\x1b[1;34m"
         } else {
-            "\x1b[38;5;244m"
+            "\x1b[2;39m"
         };
         lines.push(plan_ui_style(
             format!(
@@ -291,10 +291,10 @@ fn todo_card_lines(request: &ToolRequest) -> Vec<String> {
             .and_then(Value::as_str)
             .unwrap_or_default();
         let (marker, color) = match status {
-            "completed" => ("✓", "\x1b[38;5;114m"),
-            "in_progress" => ("◉", "\x1b[1;38;5;117m"),
-            "cancelled" => ("–", "\x1b[38;5;244m"),
-            _ => ("○", "\x1b[38;5;244m"),
+            "completed" => ("✓", "\x1b[32m"),
+            "in_progress" => ("◉", "\x1b[1;34m"),
+            "cancelled" => ("–", "\x1b[2;39m"),
+            _ => ("○", "\x1b[2;39m"),
         };
         lines.push(plan_ui_style(
             format!(
@@ -333,18 +333,18 @@ fn append_plan_metadata_lines(lines: &mut Vec<String>, request: &ToolRequest, ma
     if !risks.is_empty() {
         lines.push(format!(
             "  {}  {}",
-            plan_ui_style(ui_text(UiText::Risks).to_string(), "\x1b[38;5;244m"),
+            plan_ui_style(ui_text(UiText::Risks).to_string(), "\x1b[2;39m"),
             plan_ui_style(
                 compact_plan_text(&risks.join(" · "), max_text),
-                "\x1b[38;5;252m"
+                "\x1b[39m"
             )
         ));
     }
     if let Some(verification) = verification {
         lines.push(format!(
             "  {}  {}",
-            plan_ui_style(ui_text(UiText::Verify).to_string(), "\x1b[38;5;244m"),
-            plan_ui_style(compact_plan_text(verification, max_text), "\x1b[38;5;252m")
+            plan_ui_style(ui_text(UiText::Verify).to_string(), "\x1b[2;39m"),
+            plan_ui_style(compact_plan_text(verification, max_text), "\x1b[39m")
         ));
     }
 }
@@ -832,30 +832,30 @@ fn remaining_items_label(count: usize) -> String {
         Language::Fr => format!("+{count} autres"),
         Language::Ja => format!("ほか {count} 件"),
         Language::Ru => format!("ещё {count}"),
-        Language::En => format!("+{count} more"),
+        Language::En | _ => format!("+{count} more"),
     }
 }
 
-const CODE_COLOR_COMMENT: &str = "\x1b[38;5;249m";
-pub(crate) const CODE_COLOR_KEYWORD: &str = "\x1b[38;5;110m";
-const CODE_COLOR_STRING: &str = "\x1b[38;5;108m";
-const CODE_COLOR_NUMBER: &str = "\x1b[38;5;179m";
-const CODE_COLOR_TYPE: &str = "\x1b[38;5;117m";
-const CODE_COLOR_FENCE: &str = "\x1b[2;38;5;245m";
+const CODE_COLOR_COMMENT: &str = "\x1b[2;39m";
+pub(crate) const CODE_COLOR_KEYWORD: &str = "\x1b[34m";
+const CODE_COLOR_STRING: &str = "\x1b[32m";
+const CODE_COLOR_NUMBER: &str = "\x1b[33m";
+const CODE_COLOR_TYPE: &str = "\x1b[36m";
+const CODE_COLOR_FENCE: &str = "\x1b[2;39m";
 const CODE_COLOR_RESET: &str = "\x1b[0m";
-const MD_COLOR_BODY: &str = "\x1b[38;5;252m";
-const MD_COLOR_LIST: &str = "\x1b[38;5;110m";
-const MD_COLOR_QUOTE: &str = "\x1b[2;38;5;245m";
-const MD_COLOR_HEADING_1: &str = "\x1b[1;38;5;117m";
-const MD_COLOR_HEADING_2: &str = "\x1b[1;38;5;110m";
-const MD_COLOR_HEADING_3: &str = "\x1b[1;38;5;109m";
-const MD_COLOR_HEADING_4: &str = "\x1b[1;38;5;108m";
-const MD_COLOR_HEADING_5: &str = "\x1b[1;38;5;179m";
-const MD_COLOR_HEADING_6: &str = "\x1b[1;38;5;245m";
+const MD_COLOR_BODY: &str = "\x1b[39m";
+const MD_COLOR_LIST: &str = "\x1b[34m";
+const MD_COLOR_QUOTE: &str = "\x1b[2;39m";
+const MD_COLOR_HEADING_1: &str = "\x1b[1;34m";
+const MD_COLOR_HEADING_2: &str = "\x1b[1;36m";
+const MD_COLOR_HEADING_3: &str = "\x1b[1;32m";
+const MD_COLOR_HEADING_4: &str = "\x1b[1;35m";
+const MD_COLOR_HEADING_5: &str = "\x1b[1;33m";
+const MD_COLOR_HEADING_6: &str = "\x1b[1;2;39m";
 const MD_COLOR_BOLD: &str = "\x1b[1m";
-const MD_COLOR_INLINE_CODE: &str = "\x1b[38;5;179m";
-const MD_COLOR_LINK: &str = "\x1b[4;38;5;110m";
-const MD_COLOR_RULE: &str = "\x1b[2;38;5;244m";
+const MD_COLOR_INLINE_CODE: &str = "\x1b[36m";
+const MD_COLOR_LINK: &str = "\x1b[4;34m";
+const MD_COLOR_RULE: &str = "\x1b[2;39m";
 const MARKDOWN_TABLE_INDENT: usize = 2;
 const MARKDOWN_TABLE_SAFETY_MARGIN: usize = 4;
 const MARKDOWN_TABLE_MIN_COLUMN_WIDTH: usize = 3;
@@ -2732,7 +2732,11 @@ const JS_TYPES: &[&str] = &[
 ];
 
 fn terminal_color_enabled() -> bool {
-    io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none()
+    io::stdout().is_terminal()
+        && std::env::var_os("NO_COLOR").is_none()
+        && std::env::var("TERM")
+            .map(|value| !value.eq_ignore_ascii_case("dumb"))
+            .unwrap_or(true)
 }
 
 fn clear_current_output_line() -> &'static str {
@@ -2884,11 +2888,11 @@ fn human_status_line(kind: &str, title: &str, detail: Option<&str>) -> String {
         .map(|value| truncate_display_value(value, HUMAN_STATUS_DETAIL_MAX_WIDTH));
     match (terminal_color_enabled(), detail) {
         (true, Some(detail)) => format!(
-            "  \x1b[38;5;75m{label:<width$}{CODE_COLOR_RESET}  {CODE_COLOR_COMMENT}{detail}{CODE_COLOR_RESET}",
+            "  \x1b[34m{label:<width$}{CODE_COLOR_RESET}  {CODE_COLOR_COMMENT}{detail}{CODE_COLOR_RESET}",
             width = HUMAN_STATUS_LABEL_WIDTH
         ),
         (true, None) => format!(
-            "  \x1b[38;5;75m{label}{CODE_COLOR_RESET}"
+            "  \x1b[34m{label}{CODE_COLOR_RESET}"
         ),
         (false, Some(detail)) => {
             format!("  {label:<width$}  {detail}", width = HUMAN_STATUS_LABEL_WIDTH)

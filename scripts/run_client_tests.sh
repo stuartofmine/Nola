@@ -145,6 +145,7 @@ _run_xcodebuild() {
         "$BUILD_ACTION" \
         -project "$SCRIPT_DIR/apple/Nola.xcodeproj" \
         -scheme "$SCHEME" \
+        -configuration "${CONFIGURATION:-Test}" \
         $SKIP_FLAGS \
         -destination "$DESTINATION" \
         -destination-timeout "$XCODE_DESTINATION_TIMEOUT" \

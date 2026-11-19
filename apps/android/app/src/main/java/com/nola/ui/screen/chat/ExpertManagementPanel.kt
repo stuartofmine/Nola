@@ -33,12 +33,105 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
 
+internal interface ExpertManagementDataSource {
+    suspend fun expertEditorScope(): ChatViewModel.ExpertEditorScope
+    suspend fun directory(conversationId: String?, storeEpoch: String?): AgentDirectory
+    suspend fun roleTemplates(conversationId: String?, storeEpoch: String?): List<ExpertRoleTemplate>
+    suspend fun readableExpertTemplates(): com.nola.data.local.ReadableExpertTemplateCatalog
+    suspend fun expertDefaultReasoningEfforts(): List<String>
+    suspend fun reasoningEfforts(model: ModelInfo): List<String>
+    suspend fun expertDefaultsForModel(model: ModelInfo): JsonObject
+    suspend fun createAgent(
+        conversationId: String?,
+        storeEpoch: String?,
+        name: String,
+        defaults: JsonObject,
+        snapshot: AgentDirectory,
+        description: String,
+        agentId: String,
+    ): AgentDirectory
+    suspend fun updateAgent(
+        conversationId: String?,
+        storeEpoch: String?,
+        original: PersistentAgent,
+        name: String,
+        description: String,
+        snapshot: AgentDirectory,
+    ): AgentDirectory
+    fun refreshConversationExperts(restoreSelection: Boolean)
+}
+
 /** Directory management only: no room creation or independent chat admission. */
 @Composable
 internal fun ExpertManagementPanel(viewModel: ChatViewModel, onBack: () -> Unit) {
-    val scope = rememberCoroutineScope()
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    var repository by remember(state.conversationId, state.executionHostBinding) { mutableStateOf<com.nola.data.repository.AgentRoomRepository?>(null) }
+    val dataSource = remember(viewModel) {
+        object : ExpertManagementDataSource {
+            override suspend fun expertEditorScope(): ChatViewModel.ExpertEditorScope =
+                viewModel.expertEditorScope()
+
+            override suspend fun directory(conversationId: String?, storeEpoch: String?): AgentDirectory =
+                withContext(Dispatchers.IO) {
+                    viewModel.expertRoomRepository(conversationId, storeEpoch).directory()
+                }
+
+            override suspend fun roleTemplates(conversationId: String?, storeEpoch: String?): List<ExpertRoleTemplate> =
+                withContext(Dispatchers.IO) {
+                    viewModel.expertRoomRepository(conversationId, storeEpoch).roleTemplates().templates
+                }
+
+            override suspend fun readableExpertTemplates(): com.nola.data.local.ReadableExpertTemplateCatalog =
+                viewModel.readableExpertTemplates()
+
+            override suspend fun expertDefaultReasoningEfforts(): List<String> =
+                viewModel.expertDefaultReasoningEfforts()
+
+            override suspend fun reasoningEfforts(model: ModelInfo): List<String> =
+                withContext(Dispatchers.IO) { viewModel.reasoningEfforts(model) }
+
+            override suspend fun expertDefaultsForModel(model: ModelInfo): JsonObject =
+                viewModel.expertDefaultsForModel(model)
+
+            override suspend fun createAgent(
+                conversationId: String?,
+                storeEpoch: String?,
+                name: String,
+                defaults: JsonObject,
+                snapshot: AgentDirectory,
+                description: String,
+                agentId: String,
+            ): AgentDirectory = withContext(Dispatchers.IO) {
+                viewModel.expertRoomRepository(conversationId, storeEpoch)
+                    .createAgent(name, defaults, snapshot, description, agentId)
+            }
+
+            override suspend fun updateAgent(
+                conversationId: String?,
+                storeEpoch: String?,
+                original: PersistentAgent,
+                name: String,
+                description: String,
+                snapshot: AgentDirectory,
+            ): AgentDirectory = withContext(Dispatchers.IO) {
+                viewModel.expertRoomRepository(conversationId, storeEpoch)
+                    .updateAgent(original, name, description, snapshot)
+            }
+
+            override fun refreshConversationExperts(restoreSelection: Boolean) {
+                viewModel.refreshConversationExperts(restoreSelection = restoreSelection)
+            }
+        }
+    }
+    ExpertManagementPanel(state = state, dataSource = dataSource, onBack = onBack)
+}
+
+@Composable
+internal fun ExpertManagementPanel(
+    state: ChatUiState,
+    dataSource: ExpertManagementDataSource,
+    onBack: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
     var editorScope by remember(state.conversationId, state.executionHostBinding) { mutableStateOf<ChatViewModel.ExpertEditorScope?>(null) }
     val sourceKey = "${state.conversationId}:${state.executionHostBinding}:${editorScope?.sourceIdentity}"
     var directory by remember(state.conversationId, state.executionHostBinding) { mutableStateOf<AgentDirectory?>(null) }
@@ -84,8 +177,8 @@ internal fun ExpertManagementPanel(viewModel: ChatViewModel, onBack: () -> Unit)
         declaredEfforts = emptyList()
         val source = editorScope
         val readable = if (source?.remote == true) (if (inheritModel) source.defaultProfileId else effectiveModel?.profileId)?.let { source.efforts[it] }.orEmpty()
-            else if (inheritModel) viewModel.expertDefaultReasoningEfforts()
-            else effectiveModel?.let { model -> withContext(Dispatchers.IO) { viewModel.reasoningEfforts(model) } }.orEmpty()
+            else if (inheritModel) dataSource.expertDefaultReasoningEfforts()
+            else effectiveModel?.let { model -> dataSource.reasoningEfforts(model) }.orEmpty()
         declaredEfforts = readable.filter { it in listOf("none", "minimal", "low", "medium", "high", "xhigh", "max") }.distinct()
     }
     fun editAgent(agent: PersistentAgent) {
@@ -112,15 +205,14 @@ internal fun ExpertManagementPanel(viewModel: ChatViewModel, onBack: () -> Unit)
     }
     suspend fun loadCatalog() {
         catalogReady = false
-        val sourceModels = viewModel.expertEditorScope()
-        val sourceRepository = viewModel.expertRoomRepository(state.conversationId, sourceModels.storeEpoch)
-        directory = withContext(Dispatchers.IO) { sourceRepository.directory() }
-        repository = sourceRepository; editorScope = sourceModels
-        roles = try { withContext(Dispatchers.IO) { checkNotNull(repository).roleTemplates().templates } }
+        val sourceModels = dataSource.expertEditorScope()
+        directory = dataSource.directory(state.conversationId, sourceModels.storeEpoch)
+        editorScope = sourceModels
+        roles = try { dataSource.roleTemplates(state.conversationId, sourceModels.storeEpoch) }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { throw IllegalStateException(catalogUnavailableMessage) }
         catalogReady = true
-        try { templateCatalog = viewModel.readableExpertTemplates(); templateCatalogFailed = false }
+        try { templateCatalog = dataSource.readableExpertTemplates(); templateCatalogFailed = false }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { templateCatalogFailed = true }
     }
@@ -268,16 +360,16 @@ internal fun ExpertManagementPanel(viewModel: ChatViewModel, onBack: () -> Unit)
                         val changeModel = if (original == null) !inheritModel else modelSelectionTouched && desiredModel != originalModelSelection
                         val changeTemplate = templateSelectionTouched && templateID != originalTemplateSelection
                         if (changeTemplate && templateID != null) {
-                            val currentRoles = withContext(Dispatchers.IO) { checkNotNull(repository).roleTemplates().templates }
+                            val currentRoles = dataSource.roleTemplates(state.conversationId, editorScope?.storeEpoch)
                             if (currentRoles.none { it.id == templateID }) {
-                                val currentCatalog = viewModel.readableExpertTemplates()
+                                val currentCatalog = dataSource.readableExpertTemplates()
                                 check(currentCatalog.templates.any { it.id == templateID }) { "The selected template is no longer readable" }
                                 templateCatalog = currentCatalog; templateCatalogFailed = false
                             }
                             roles = currentRoles
                         }
                         val modelDefaults = if (changeModel && !inheritModel) {
-                            if (original == null && editorScope?.remote != true) viewModel.expertDefaultsForModel(checkNotNull(selectedModel))
+                            if (original == null && editorScope?.remote != true) dataSource.expertDefaultsForModel(checkNotNull(selectedModel))
                             else buildJsonObject { put("modelSelectionID", checkNotNull(desiredModel)) }
                         } else null
                         val defaults = mergeExpertEditorDefaults(original?.defaults ?: buildJsonObject {},
@@ -285,22 +377,23 @@ internal fun ExpertManagementPanel(viewModel: ChatViewModel, onBack: () -> Unit)
                         val agentID = original?.id ?: newAgentID ?: java.util.UUID.randomUUID().toString().also { newAgentID = it }
                         val attempted = PersistentAgent(agentID, name.trim(), original?.revision ?: 0L,
                             original?.availability ?: "active", defaults, description.trim())
-                        directory = withContext(Dispatchers.IO) {
-                            try {
-                                val next = if (original == null) checkNotNull(repository).createAgent(attempted.name, defaults, snapshot, attempted.description, agentID)
-                                    else checkNotNull(repository).updateAgent(original.copy(defaults = defaults), attempted.name, attempted.description, snapshot)
-                                check(next.agents.any { confirmsExpertDefinition(it, attempted) }) { "Expert save was not confirmed" }
-                                next
-                            } catch (cancelled: CancellationException) { throw cancelled }
-                            catch (failure: Exception) {
-                                val recovered = try { checkNotNull(repository).directory() }
-                                catch (cancelled: CancellationException) { throw cancelled }
-                                catch (_: Exception) { null }
-                                if (recovered?.agents?.any { confirmsExpertDefinition(it, attempted) } != true) throw failure
-                                recovered
-                            }
+                        directory = try {
+                            val next = if (original == null) dataSource.createAgent(
+                                state.conversationId, editorScope?.storeEpoch, attempted.name, defaults, snapshot, attempted.description, agentID,
+                            ) else dataSource.updateAgent(
+                                state.conversationId, editorScope?.storeEpoch, original.copy(defaults = defaults), attempted.name, attempted.description, snapshot,
+                            )
+                            check(next.agents.any { confirmsExpertDefinition(it, attempted) }) { "Expert save was not confirmed" }
+                            next
+                        } catch (cancelled: CancellationException) { throw cancelled }
+                        catch (failure: Exception) {
+                            val recovered = try { dataSource.directory(state.conversationId, editorScope?.storeEpoch) }
+                            catch (cancelled: CancellationException) { throw cancelled }
+                            catch (_: Exception) { null }
+                            if (recovered?.agents?.any { confirmsExpertDefinition(it, attempted) } != true) throw failure
+                            recovered
                         }
-                        viewModel.refreshConversationExperts(restoreSelection = false); editing = false; editingID = null
+                        dataSource.refreshConversationExperts(restoreSelection = false); editing = false; editingID = null
                     } }) { Text(stringResource(R.string.common_save)) }
             }
         } else {
@@ -341,11 +434,15 @@ internal fun ExpertManagementPanel(viewModel: ChatViewModel, onBack: () -> Unit)
                                                 check(original.revision == agent.revision && original.availability == agent.availability) {
                                                     conflictMessage
                                                 }
-                                                directory = withContext(Dispatchers.IO) {
-                                                    checkNotNull(repository).updateAgent(original.copy(availability = if (archived) "active" else "archived"),
-                                                        original.name, original.description, snapshot)
-                                                }
-                                                viewModel.refreshConversationExperts(restoreSelection = false)
+                                                directory = dataSource.updateAgent(
+                                                    state.conversationId,
+                                                    editorScope?.storeEpoch,
+                                                    original.copy(availability = if (archived) "active" else "archived"),
+                                                    original.name,
+                                                    original.description,
+                                                    snapshot,
+                                                )
+                                                dataSource.refreshConversationExperts(restoreSelection = false)
                                             }
                                         })
                                 }

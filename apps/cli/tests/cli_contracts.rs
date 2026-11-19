@@ -17,6 +17,8 @@ pub fn env_lock() -> MutexGuard<'static, ()> {
 mod dependency_boundary;
 #[path = "suites/executable_entry_identity.rs"]
 mod executable_entry_identity;
+#[path = "suites/cli_ux_and_io_contracts.rs"]
+mod cli_ux_and_io_contracts;
 #[cfg(unix)]
 #[path = "suites/service_schema_preservation.rs"]
 mod service_schema_preservation;

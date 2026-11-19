@@ -203,7 +203,7 @@ struct ModelDownloadView: View {
             }
         }
         .padding()
-        .background(Color(.systemGray6))
+        .background(DesignTokens.secondaryBackgroundColor)
         .cornerRadius(10)
     }
     

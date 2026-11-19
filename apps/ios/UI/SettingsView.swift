@@ -469,6 +469,12 @@ struct SettingsView: View {
 
     @discardableResult
     private func clearAllData() async -> Bool {
+        await Self.clearLocalData(container: container)
+    }
+
+    @MainActor
+    @discardableResult
+    static func clearLocalData(container: ServiceContainer) async -> Bool {
         var completelyCleared = true
         container.dataManager.clearAllData()
         if let store = container.conversationStore {

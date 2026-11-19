@@ -29,6 +29,7 @@ enum MacVisualSnapshotHarness {
         case notifications
         case medication
         case modelTest = "model-test"
+        case modelParameters = "model-parameters"
     }
 
     static func captureIfRequested() async {
@@ -48,6 +49,7 @@ enum MacVisualSnapshotHarness {
             "NOLA_CAPTURE_CHAT_STATE",
             "NOLA_CAPTURE_EXTENSIONS_TAB",
             "NOLA_CAPTURE_DATA_SECTION",
+            "NOLA_CAPTURE_MODEL_NAME",
             "NOLA_CAPTURE_FRAME",
             "NOLA_MAC_INITIAL_SECTION",
             "NOLA_CAPTURE_EXIT",
@@ -106,7 +108,10 @@ enum MacVisualSnapshotHarness {
         window.appearance = appearance
         window.isReleasedWhenClosed = false
         window.titlebarAppearsTransparent = usesHiddenTitleBar
-        window.backgroundColor = NSColor(named: "NolaCanvas") ?? .windowBackgroundColor
+        window.backgroundColor = NSColor(named: "NolaCanvas") ?? MacDesignTokens.Palette.fallbackNSColor(
+            light: MacDesignTokens.Palette.Light.canvas,
+            dark: MacDesignTokens.Palette.Dark.canvas
+        )
         window.contentView = hostingView
         window.center()
         NSApplication.shared.activate(ignoringOtherApps: true)
@@ -133,9 +138,9 @@ enum MacVisualSnapshotHarness {
             try? await Task.sleep(for: .milliseconds(900))
         }
         hostingView.layoutSubtreeIfNeeded()
-        let captureTarget: NSView = (environment["NOLA_CAPTURE_FRAME"] == "window")
-            ? (window.contentView?.superview ?? hostingView)
-            : hostingView
+        let captureTarget: NSView = (environment["NOLA_CAPTURE_FRAME"] == "content")
+            ? hostingView
+            : (window.contentView?.superview ?? hostingView)
         captureTarget.layoutSubtreeIfNeeded()
         let representation = captureTarget.bitmapImageRepForCachingDisplay(in: captureTarget.bounds)
             ?? NSBitmapImageRep(
@@ -259,6 +264,13 @@ enum MacVisualSnapshotHarness {
             return AnyView(MacMedicationSearchView())
         case .modelTest:
             return AnyView(MacModelTestView())
+        case .modelParameters:
+            let modelName = currentEnvironmentValue(for: "NOLA_CAPTURE_MODEL_NAME") ?? "preview-model"
+            return AnyView(MacModelParametersView(route: MacModelParametersRoute(
+                modelName: modelName,
+                isLocal: false,
+                displayName: modelName
+            )))
         }
     }
 
@@ -308,6 +320,7 @@ enum MacVisualSnapshotHarness {
         case .notifications: return String(localized: "Notifications")
         case .medication: return String(localized: "Medication Lookup")
         case .modelTest: return String(localized: "Model Test")
+        case .modelParameters: return String(localized: "mac.window.model_parameters")
         }
     }
 

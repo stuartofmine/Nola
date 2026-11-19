@@ -177,7 +177,7 @@ struct MacConversationCanvas: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(12)
-                        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+                        .background(MacDesignColor.subtleFill, in: RoundedRectangle(cornerRadius: 12))
                         .accessibilityIdentifier("chat.local.submissionFailure")
                     }
                     if let recovery = model.localRunRecovery,

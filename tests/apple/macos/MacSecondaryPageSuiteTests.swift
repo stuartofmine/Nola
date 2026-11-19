@@ -580,11 +580,24 @@ final class MacSecondaryPageLocalizationTests: XCTestCase {
 
 @MainActor
 final class MacSecondaryPageVisualEndToEndTests: XCTestCase {
+    func testOnboardingAndStartupGateStatesRenderInBothAppearances() async throws {
+        try await assertOnboardingSteps()
+        try await assertStartupGateStates()
+    }
+
     func testWorkspaceCentersRenderInsideRealWindowsAtRegularAndCompactWidths() async throws {
-        try await assertRenderedPage(MacDataCenterView(), name: "mac-data-center-regular", size: CGSize(width: 1_040, height: 760))
-        try await assertRenderedPage(MacDataCenterView(), name: "mac-data-center-compact", size: CGSize(width: 520, height: 720))
-        try await assertRenderedPage(MacDataCenterView(initialSection: "sources"), name: "mac-data-center-sources-regular", size: CGSize(width: 1_040, height: 760))
-        try await assertRenderedPage(MacDataCenterView(initialSection: "sources"), name: "mac-data-center-sources-compact", size: CGSize(width: 520, height: 720))
+        for section in ["memory", "sources", "usage"] {
+            try await assertRenderedPage(
+                MacDataCenterView(initialSection: section),
+                name: "mac-data-center-\(section)-regular",
+                size: CGSize(width: 1_040, height: 760)
+            )
+            try await assertRenderedPage(
+                MacDataCenterView(initialSection: section),
+                name: "mac-data-center-\(section)-compact",
+                size: CGSize(width: 520, height: 720)
+            )
+        }
 
         try await assertRenderedPage(MacCapabilityCenterView(), name: "capabilities-regular", size: CGSize(width: 1_040, height: 760))
         try await assertRenderedPage(MacCapabilityCenterView(), name: "capabilities-compact", size: CGSize(width: 680, height: 720))
@@ -597,8 +610,22 @@ final class MacSecondaryPageVisualEndToEndTests: XCTestCase {
 
         try await assertRenderedPage(MacAutomationCenterView(), name: "mac-automation-center-regular", size: CGSize(width: 1_040, height: 760))
         try await assertRenderedPage(MacAutomationCenterView(), name: "mac-automation-center-compact", size: CGSize(width: 520, height: 720))
-        try await assertRenderedPage(MacAutomationLiveRunStatus(detail: "Reading the selected data source and preparing the next tool call"), name: "mac-automation-live-status-regular", size: CGSize(width: 620, height: 160))
-        try await assertRenderedPage(MacAutomationLiveRunStatus(detail: "Reading the selected data source and preparing the next tool call"), name: "mac-automation-live-status-compact", size: CGSize(width: 320, height: 180))
+        try await assertRenderedPage(
+            MacAutomationLiveRunStatus(detail: "Reading the selected data source and preparing the next tool call")
+                .padding(16)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .background(MacDesignColor.canvas),
+            name: "mac-automation-live-status-regular",
+            size: CGSize(width: 620, height: 200)
+        )
+        try await assertRenderedPage(
+            MacAutomationLiveRunStatus(detail: "Reading the selected data source and preparing the next tool call")
+                .padding(16)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .background(MacDesignColor.canvas),
+            name: "mac-automation-live-status-compact",
+            size: CGSize(width: 340, height: 220)
+        )
 
         try await assertRenderedPage(MacActivityCenterView(), name: "activity-regular", size: CGSize(width: 1_040, height: 760))
         try await assertRenderedPage(MacActivityCenterView(), name: "activity-compact", size: CGSize(width: 520, height: 720))
@@ -623,6 +650,26 @@ final class MacSecondaryPageVisualEndToEndTests: XCTestCase {
         localNavigation.showLocalModels()
         try await assertRenderedPage(MacModelCenterView(remoteHost: PersistenceTestRemoteHost(), navigation: localNavigation), name: "local-model-manager-regular", size: CGSize(width: 1_040, height: 760))
         try await assertRenderedPage(MacModelCenterView(remoteHost: PersistenceTestRemoteHost(), navigation: localNavigation), name: "local-model-manager-compact", size: CGSize(width: 680, height: 720))
+
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("mac-model-connections-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let port = try MacApplicationPort(databaseURL: root.appendingPathComponent("store.db"))
+        let connectionService = MacModelConnectionService(application: port)
+        let created = try connectionService.create(
+            name: "Disabled Provider",
+            endpoint: "https://disabled.example.test/v1",
+            wireProtocol: "responses",
+            secret: "sk-disabled-fixture"
+        )
+        _ = try connectionService.disconnect(created)
+        for (label, size) in [("regular", CGSize(width: 1_040, height: 760)), ("compact", CGSize(width: 680, height: 720))] {
+            try await assertRenderedPage(
+                MacModelConnectionsView(service: connectionService),
+                name: "model-connections-disabled-\(label)",
+                size: size
+            )
+        }
 
         let endpoints = [
             MacRemoteEndpointConfiguration(
@@ -664,19 +711,52 @@ final class MacSecondaryPageVisualEndToEndTests: XCTestCase {
                 ]
             ),
         ]
-        try await assertRenderedPage(MacRemoteModelManagerView(endpoints: endpoints), name: "remote-model-manager-regular", size: CGSize(width: 1_040, height: 760))
-        try await assertRenderedPage(MacRemoteModelManagerView(endpoints: endpoints), name: "remote-model-manager-compact", size: CGSize(width: 680, height: 720))
+        try await assertRenderedPage(
+            MacRemoteModelManagerView(endpoints: endpoints).background(MacDesignColor.canvas),
+            name: "remote-model-manager-regular",
+            size: CGSize(width: 1_040, height: 760)
+        )
+        try await assertRenderedPage(
+            MacRemoteModelManagerView(endpoints: endpoints).background(MacDesignColor.canvas),
+            name: "remote-model-manager-compact",
+            size: CGSize(width: 680, height: 720)
+        )
+
+        let parameterRoute = MacModelParametersRoute(modelName: "fixture-remote-model", isLocal: false, displayName: "Fixture Remote Model")
+        try await assertRenderedPage(
+            MacModelParametersView(route: parameterRoute).background(MacDesignColor.canvas),
+            name: "model-parameters-regular",
+            size: CGSize(width: 760, height: 720)
+        )
+        try await assertRenderedPage(
+            MacModelParametersView(route: parameterRoute).background(MacDesignColor.canvas),
+            name: "model-parameters-compact",
+            size: CGSize(width: 620, height: 640)
+        )
     }
 
     func testSettingsSectionsAndUtilityPagesRenderInBothAppearances() async throws {
         for section in ["general", "providers", "agent", "connections", "notifications", "data", "diagnostics"] {
-            for width: CGFloat in [520, 1040] {
+            for width: CGFloat in [520, 1_040] {
                 try await assertRenderedPage(
                     MacSettingsView(snapshotHostState: .notConfigured, initialCategory: section),
-                    name: "settings-\(section)-\(Int(width))", size: CGSize(width: width, height: 760))
+                    name: "settings-\(section)-\(Int(width))",
+                    size: CGSize(width: width, height: 760)
+                )
             }
         }
-        for width: CGFloat in [520, 1040] {
+        let emptyRepo = FileManager.default.temporaryDirectory.appendingPathComponent("mac-review-empty-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: emptyRepo, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: emptyRepo) }
+        for width: CGFloat in [680, 1_040] {
+            try await assertRenderedPage(
+                MacWorkspaceReviewView(route: MacWorkspaceReviewRoute(path: emptyRepo.path)),
+                name: "workspace-review-\(Int(width))",
+                size: CGSize(width: width, height: 760)
+            )
+            try await assertRenderedPage(MacMedicationSearchView(), name: "medication-\(Int(width))", size: CGSize(width: width, height: 760))
+        }
+        for width: CGFloat in [520, 1_040] {
             try await assertRenderedPage(MacMemoryCenterPage(), name: "memory-\(Int(width))", size: CGSize(width: width, height: 760))
             try await assertRenderedPage(MacHealthSummaryView(), name: "health-\(Int(width))", size: CGSize(width: width, height: 760))
             try await assertRenderedPage(MacNotificationCenterView(), name: "notifications-\(Int(width))", size: CGSize(width: width, height: 760))
@@ -684,49 +764,148 @@ final class MacSecondaryPageVisualEndToEndTests: XCTestCase {
         }
     }
 
+    private func assertOnboardingSteps() async throws {
+        let accessibility = try MacHostedAccessibilitySession()
+        defer { accessibility.restore() }
+        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            let label = appearance == .darkAqua ? "dark" : "light"
+            for (widthLabel, size) in [("regular", CGSize(width: 980, height: 740)), ("compact", CGSize(width: 680, height: 720))] {
+                var currentStep = 0
+                try await MacVisualPixelAssertions.assertView(
+                    MacOnboardingView(onComplete: {})
+                        .environment(\.accessibilityEnabled, true),
+                    name: "onboarding-step0-\(widthLabel)-\(label)",
+                    size: size,
+                    appearance: appearance,
+                    beforeCapture: { _, hostingView in
+                        // Step 0 verified directly; subsequent assertions exercise steps 1..3 below.
+                        _ = hostingView
+                    },
+                    assertWindow: { window, _ in
+                        XCTAssertTrue(window.styleMask.contains(.fullSizeContentView))
+                        XCTAssertEqual(window.titleVisibility, .hidden)
+                    }
+                )
+                // Walk steps 0 -> 1 -> 2 -> 3 inside one live window to verify every guide page.
+                let isDark = appearance == .darkAqua
+                let nsAppearance = try XCTUnwrap(NSAppearance(named: appearance))
+                let previousAppAppearance = NSApplication.shared.appearance
+                NSApplication.shared.appearance = nsAppearance
+                defer { NSApplication.shared.appearance = previousAppAppearance }
+                let host = NSHostingView(
+                    rootView: MacOnboardingView(onComplete: {})
+                        .frame(width: size.width, height: size.height)
+                        .environment(\.colorScheme, isDark ? .dark : .light)
+                        .environment(\.accessibilityEnabled, true)
+                )
+                host.frame = NSRect(origin: .zero, size: size)
+                host.appearance = nsAppearance
+                let window = NSWindow(
+                    contentRect: NSRect(origin: .zero, size: size),
+                    styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                    backing: .buffered,
+                    defer: false
+                )
+                window.appearance = nsAppearance
+                window.animationBehavior = .none
+                window.isReleasedWhenClosed = false
+                window.contentView = host
+                window.orderFrontRegardless()
+                defer { window.orderOut(nil); window.contentView = nil; window.close() }
+                try await MacVisualPixelAssertions.settleLayout(window: window, hostingView: host)
+                for step in 1...3 {
+                    currentStep = step
+                    let nextButton = try XCTUnwrap(findAccessibleElement(identifier: "onboarding.next", in: host))
+                    XCTAssertTrue(nextButton.accessibilityPerformPress?() ?? false, "Failed to advance onboarding to step \(step)")
+                    try await MacVisualPixelAssertions.settleLayout(window: window, hostingView: host)
+                    let target = window.contentView?.superview ?? host
+                    let cgImage = try MacVisualPixelAssertions.captureCGImage(of: target)
+                    let metrics = try MacVisualPixelAssertions.analyzePixels(
+                        cgImage: cgImage,
+                        contentRect: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height),
+                        isDark: isDark
+                    )
+                    XCTAssertGreaterThanOrEqual(metrics.warmSurfaceFraction, 0.35, "onboarding-step\(currentStep)-\(widthLabel)-\(label)")
+                    XCTAssertLessThan(metrics.coolGrayFraction, 0.01, "onboarding-step\(currentStep)-\(widthLabel)-\(label)")
+                    XCTAssertGreaterThanOrEqual(max(metrics.headerContrastDelta, metrics.bodyContrastDelta), 40.0)
+                    if isDark {
+                        XCTAssertLessThan(metrics.pureBlackFraction, 0.005)
+                        XCTAssertEqual(metrics.fullWidthBlackScanlines, 0)
+                    }
+                }
+            }
+        }
+    }
+
+    private func assertStartupGateStates() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("mac-startup-gate-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let incompatibleDB = root.appendingPathComponent("legacy.db")
+        let sqlite = Process()
+        sqlite.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        sqlite.arguments = [
+            incompatibleDB.path,
+            "CREATE TABLE legacy(value TEXT); PRAGMA application_id=1313819713; PRAGMA user_version=11;",
+        ]
+        try sqlite.run()
+        sqlite.waitUntilExit()
+        XCTAssertEqual(sqlite.terminationStatus, 0)
+
+        let blockerFile = root.appendingPathComponent("not-a-directory")
+        try Data("invalid".utf8).write(to: blockerFile)
+        let failingDB = blockerFile.appendingPathComponent("store.db")
+
+        let incompatiblePort = MacApplicationPort(deferredDatabaseURL: incompatibleDB)
+        let failingPort = MacApplicationPort(deferredDatabaseURL: failingDB)
+
+        for (label, port) in [("incompatible", incompatiblePort), ("launch-failed", failingPort)] {
+            for size in [CGSize(width: 920, height: 640), CGSize(width: 620, height: 520)] {
+                try await assertRenderedPage(
+                    MacApplicationStartupGate(applicationPort: port) {
+                        Text("Ready")
+                    },
+                    name: "startup-gate-\(label)-\(Int(size.width))",
+                    size: size
+                )
+            }
+        }
+    }
+
+    private func findAccessibleElement(identifier: String, in root: AnyObject) -> AnyObject? {
+        var queue: [AnyObject] = [root]
+        var visited = Set<ObjectIdentifier>()
+        var index = 0
+        while index < queue.count, visited.count < 4000 {
+            let object = queue[index]
+            index += 1
+            guard visited.insert(ObjectIdentifier(object)).inserted else { continue }
+            if (object.accessibilityIdentifier?() ?? nil) == identifier {
+                return object
+            }
+            let children = object.accessibilityChildren?() ?? []
+            queue.append(contentsOf: (children + NSAccessibility.unignoredChildren(from: children)).map { $0 as AnyObject })
+            if let view = object as? NSView {
+                queue.append(contentsOf: view.subviews)
+            }
+        }
+        return nil
+    }
+
     private func assertRenderedPage<Page: View>(
         _ page: Page,
         name: String,
         size: CGSize
     ) async throws {
-        for dark in [false, true] {
-            let appearanceName = name + (dark ? "-dark" : "-light")
-            let host = NSHostingView(rootView: page.frame(width: size.width, height: size.height)
-                .environment(\.colorScheme, dark ? .dark : .light))
-            host.frame = NSRect(origin: .zero, size: size)
-            host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-            let window = NSWindow(
-                contentRect: NSRect(origin: .zero, size: size),
-                styleMask: [.borderless],
-                backing: .buffered,
-                defer: false
+        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            let appearanceName = name + (appearance == .darkAqua ? "-dark" : "-light")
+            try await MacVisualPixelAssertions.assertView(
+                page,
+                name: appearanceName,
+                size: size,
+                appearance: appearance
             )
-            window.animationBehavior = .none
-            window.isReleasedWhenClosed = false
-            window.contentView = host
-            window.appearance = host.appearance
-            window.orderFrontRegardless()
-            defer { window.close() }
-
-            try? await Task.sleep(for: .milliseconds(350))
-            host.layoutSubtreeIfNeeded()
-
-            let representation = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-            host.cacheDisplay(in: host.bounds, to: representation)
-            let png = try XCTUnwrap(representation.representation(using: .png, properties: [:]))
-            XCTAssertGreaterThan(png.count, 20_000, "\(appearanceName) rendered as an unexpectedly small or blank image")
-            XCTAssertEqual(host.frame.size, size)
-
-            let attachmentURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent("nola-secondary-page-\(UUID().uuidString).png")
-            try png.write(to: attachmentURL, options: .atomic)
-            let attachment = XCTAttachment(contentsOfFile: attachmentURL)
-            attachment.name = appearanceName
-            attachment.lifetime = .keepAlways
-            XCTContext.runActivity(named: appearanceName) { $0.add(attachment) }
-            let output = URL(fileURLWithPath: "/tmp/nola-native-page-matrix", isDirectory: true)
-            try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-            try png.write(to: output.appendingPathComponent(appearanceName + ".png"), options: .atomic)
         }
     }
 }
@@ -818,7 +997,7 @@ final class MacSecondaryPageNavigationTests: XCTestCase {
                     .environment(\.accessibilityEnabled, true)
                     .frame(width: width, height: 760))
                 let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 760),
-                    styleMask: [.borderless], backing: .buffered, defer: false)
+                    styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
                 window.isReleasedWhenClosed = false
                 window.contentView = host
                 window.orderFrontRegardless()
@@ -849,7 +1028,7 @@ final class MacSecondaryPageNavigationTests: XCTestCase {
         let host = NSHostingView(rootView: content.frame(width: width, height: 640)
             .environment(\.accessibilityEnabled, true))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 640),
-            styleMask: [.borderless], backing: .buffered, defer: false)
+            styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = host
         window.orderFrontRegardless()

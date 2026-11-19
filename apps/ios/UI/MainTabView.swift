@@ -29,6 +29,7 @@ struct MainTabView: View {
     @State private var chatDetailPresented = false
     @EnvironmentObject var container: ServiceContainer
     @SceneStorage("main.selectedTab") private var selectedTabRawValue = NolaTab.chat.rawValue
+    @State private var overrideSelectedTab: NolaTab?
     @State private var managementDestination: IOSWorkspaceDestination?
     @State private var modelConfigurationFromChat = false
     @State private var modelConfigurationOwner: UUID?
@@ -36,6 +37,10 @@ struct MainTabView: View {
     @State private var informationRequests: [IOSInformationNavigationRequest] = []
     @State private var requestedConversationID: UUID?
     @State private var pendingNotifDeepLink: String? = nil
+
+    init(initialTab: NolaTab? = nil) {
+        _overrideSelectedTab = State(initialValue: initialTab)
+    }
 
     var body: some View {
         Group {
@@ -173,11 +178,16 @@ struct MainTabView: View {
 
     private var selectedTabBinding: Binding<NolaTab> {
         Binding(
-            get: { NolaTab(rawValue: selectedTabRawValue) ?? .chat },
+            get: { overrideSelectedTab ?? NolaTab(rawValue: selectedTabRawValue) ?? .chat },
             set: { nextTab in
-                guard nextTab.rawValue != selectedTabRawValue else { return }
+                let current = overrideSelectedTab ?? NolaTab(rawValue: selectedTabRawValue) ?? .chat
+                guard nextTab != current else { return }
                 NolaHaptics.selection()
-                selectedTabRawValue = nextTab.rawValue
+                if overrideSelectedTab != nil {
+                    overrideSelectedTab = nextTab
+                } else {
+                    selectedTabRawValue = nextTab.rawValue
+                }
             }
         )
     }
@@ -188,11 +198,15 @@ struct MainTabView: View {
     }
 
     private func select(_ tab: NolaTab) {
-        selectedTabRawValue = tab.rawValue
+        if overrideSelectedTab != nil {
+            overrideSelectedTab = tab
+        } else {
+            selectedTabRawValue = tab.rawValue
+        }
     }
 }
 
-private enum NolaTab: String, Hashable {
+enum NolaTab: String, Hashable, CaseIterable {
     case activity
     case chat
     case information

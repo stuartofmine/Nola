@@ -55,6 +55,8 @@ struct ScheduledActionRunsView: View {
                         .buttonStyle(.borderless)
                     }
                 }
+                .listRowBackground(DesignTokens.cardBackgroundColor)
+                .listRowSeparatorTint(DesignTokens.borderColor)
             }
 
             if isLoading && runs.isEmpty {
@@ -67,6 +69,8 @@ struct ScheduledActionRunsView: View {
                     }
                     .frame(maxWidth: .infinity, minHeight: 80, alignment: .center)
                 }
+                .listRowBackground(DesignTokens.cardBackgroundColor)
+                .listRowSeparatorTint(DesignTokens.borderColor)
             } else if runs.isEmpty && loadError == nil {
                 Section {
                     NolaInlineEmptyState(
@@ -107,6 +111,8 @@ struct ScheduledActionRunsView: View {
                         }
                     }
                 }
+                .listRowBackground(DesignTokens.cardBackgroundColor)
+                .listRowSeparatorTint(DesignTokens.borderColor)
             }
         }
         .listStyle(.insetGrouped)

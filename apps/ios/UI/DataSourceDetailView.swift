@@ -670,7 +670,7 @@ struct StatusCard: View {
         .padding()
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.secondarySystemBackground))
+                .fill(DesignTokens.cardBackgroundColor)
         )
     }
     

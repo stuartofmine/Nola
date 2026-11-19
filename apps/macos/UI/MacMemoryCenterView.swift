@@ -371,9 +371,10 @@ private struct MacMemoryEditor: View {
                     .font(.system(size: 11.5, weight: .semibold))
                 TextEditor(text: $content)
                     .font(.system(size: 13))
+                    .scrollContentBackground(.hidden)
                     .frame(minHeight: 150)
                     .padding(8)
-                    .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 9))
+                    .background(MacDesignColor.panel, in: RoundedRectangle(cornerRadius: 9))
                     .overlay {
                         RoundedRectangle(cornerRadius: 9, style: .continuous)
                             .strokeBorder(Color.primary.opacity(0.09))

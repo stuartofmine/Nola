@@ -696,7 +696,7 @@ internal fun ChatScreen(
 
     if (inspector != null || showContextSheetOpen) {
         ModalBottomSheet(onDismissRequest = { inspector = null; showContextSheetOpen = false }, sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-        Box(Modifier.fillMaxWidth().fillMaxHeight(0.92f)) {
+        Box(Modifier.fillMaxWidth().fillMaxHeight(0.92f).navigationBarsPadding()) {
         if (inspector == ConversationInspector.Progress) {
             ConversationProgressPanel(
                 state = state,
@@ -832,7 +832,7 @@ internal fun ChatScreen(
     if (showIMSearch) {
         ModalBottomSheet(onDismissRequest = { showIMSearch = false },
             sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-            Column(Modifier.fillMaxWidth().fillMaxHeight(.92f).imePadding().padding(16.dp)) {
+            Column(Modifier.fillMaxWidth().fillMaxHeight(.92f).imePadding().navigationBarsPadding().padding(16.dp)) {
                 androidx.compose.material3.OutlinedTextField(value = imSearch, onValueChange = { imSearch = it },
                     label = { Text(stringResource(R.string.chat_search_loaded_title)) }, modifier = Modifier.fillMaxWidth())
                 Text(stringResource(R.string.chat_search_loaded_scope), style = MaterialTheme.typography.bodySmall,
@@ -3324,6 +3324,7 @@ private fun ChatMessageActionSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .navigationBarsPadding()
                 .padding(horizontal = 18.dp)
                 .padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -3436,6 +3437,7 @@ private fun ChatLearningFeedbackSheet(
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
                 .imePadding()
+                .navigationBarsPadding()
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp)

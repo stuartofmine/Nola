@@ -1230,7 +1230,7 @@ private struct MacChromeExtensionManagerView: View {
                 .padding(22)
             }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(MacPageBackground())
         .onReceive(
             NotificationCenter.default.publisher(for: .macChromeBridgeStatusDidChange)
                 .receive(on: RunLoop.main)
@@ -1663,7 +1663,7 @@ private struct MacExtensionDetail: View {
                         .scrollContentBackground(.hidden)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 8)
-                        .background(Color(nsColor: .textBackgroundColor).opacity(0.42))
+                        .background(MacDesignColor.panel)
                 } else {
                     ScrollView([.horizontal, .vertical]) {
                         Text(draft.isEmpty ? macExtensionsText("mac.extensions.detail.no_content", "No content available.") : draft)
@@ -1672,7 +1672,7 @@ private struct MacExtensionDetail: View {
                             .frame(maxWidth: .infinity, alignment: .topLeading)
                             .padding(16)
                     }
-                    .background(Color(nsColor: .textBackgroundColor).opacity(0.28))
+                    .background(MacDesignColor.panel)
                 }
 
                 HStack {

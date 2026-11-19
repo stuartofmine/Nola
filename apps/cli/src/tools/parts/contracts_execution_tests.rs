@@ -97,7 +97,8 @@ mod configured_skill_index_admission_tests {
         );
         fs::write(root.join("SKILL.md"), format!("{instructions}x")).unwrap();
         let error = configured_skill_context_index(&[root.to_path_buf()]).unwrap_err();
-        assert!(error.contains("100000-byte instruction limit"), "{error}");
+        let expected_limit = format!("{MAX_SKILL_BYTES}-byte instruction limit");
+        assert!(error.contains(&expected_limit), "{error}");
     }
 
     #[test]

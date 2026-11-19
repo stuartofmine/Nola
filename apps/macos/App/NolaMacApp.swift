@@ -1679,7 +1679,7 @@ struct MacSettingsView: View {
                             .padding(.horizontal, 12)
                             .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
                             .background(
-                                Color(nsColor: .textBackgroundColor),
+                                MacDesignColor.subtleFill,
                                 in: RoundedRectangle(cornerRadius: MacDesignTokens.Radius.field)
                             )
                         Text(macSettingsText(

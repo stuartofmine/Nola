@@ -3,7 +3,9 @@
 // - Purpose: Web Host facade grouped into routes, native bridge, and streaming state.
 
 include!("web_parts/routes.rs");
+include!("web_parts/routes_scheduled_actions.rs");
 include!("web_parts/native_bridge.rs");
+include!("web_parts/native_bridge_device_challenges.rs");
 include!("web_parts/host_tool_plan.rs");
 include!("web_parts/auxiliary_invocation.rs");
 include!("web_parts/assistant_journal.rs");

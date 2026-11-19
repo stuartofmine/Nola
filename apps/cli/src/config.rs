@@ -321,8 +321,21 @@ impl Config {
     fn from_args_with_runtime<I>(args: I, setup: &dyn ConfigurationSetup, runtime: Option<RuntimeConfig>) -> Result<Self, String>
     where I: IntoIterator<Item = String>,
     {
+        let raw_args: Vec<String> = args.into_iter().collect();
+        let pre_double_dash_end = raw_args
+            .iter()
+            .position(|arg| arg == "--")
+            .unwrap_or(raw_args.len());
+        if raw_args[..pre_double_dash_end]
+            .iter()
+            .any(|arg| arg == "-h" || arg == "--help")
+        {
+            return Self::for_help_args(&raw_args[..pre_double_dash_end], runtime);
+        }
+
         let mut permission_profile = permission_profile_from_environment(env::var("NOLA_PERMISSION_PROFILE"))?;
-        let mut args = args.into_iter().peekable();
+        let mut permission_profile_explicit = false;
+        let mut args = raw_args.into_iter().peekable();
         let mut command = None;
         let mut message_parts = Vec::new();
         let mut swe_mode = env::var("NOLA_CLI_AGENT_MODE")
@@ -421,9 +434,12 @@ impl Config {
         let mut language_explicit = false;
 
         while let Some(arg) = args.next() {
-            if command.is_none() && (arg == "-h" || arg == "--help") {
-                show_help = true;
-                continue;
+            if arg == "--" {
+                if command.is_none() {
+                    command = Some(CommandMode::Run);
+                }
+                message_parts.extend(args);
+                break;
             }
             // Global options may precede an explicit subcommand. Do not commit
             // to Run merely because the first token is an option; otherwise
@@ -450,7 +466,10 @@ impl Config {
                             Some("connections") => CommandMode::ModelConnections,
                             Some("manage") => CommandMode::ModelManage,
                             Some("apply-config") => CommandMode::ModelApplyConfig {
-                                path: args.next_if(|arg| !arg.starts_with('-')),
+                                path: args
+                                    .next_if(|arg| !arg.starts_with('-'))
+                                    .map(normalize_cli_file_path)
+                                    .transpose()?,
                             },
                             Some("chatgpt") => {
                                 let operation = args.next().ok_or("model chatgpt requires sign-in, reauthorize, status, models, refresh or sign-out")?;
@@ -463,24 +482,35 @@ impl Config {
                                     let account_id = args.next().ok_or("model chatgpt operation requires account ID")?;
                                     let parsed = uuid::Uuid::parse_str(&account_id).map_err(|_| "account ID must be a UUID")?;
                                     if parsed.to_string() != account_id { return Err("account ID must use canonical UUID form".into()); }
-                                    let revision = if operation == "status" { None } else {
-                                        let value = args.next().ok_or("model chatgpt operation requires Core account revision")?.parse::<i64>().map_err(|_| "invalid account revision")?;
-                                        if value < 1 { return Err("account revision must be positive".into()); } Some(value)
+                                    let revision = if operation == "status" {
+                                        None
+                                    } else if operation == "sign-out" {
+                                        match args.next_if(|arg| !arg.starts_with('-')) {
+                                            Some(value) => Some(parse_positive_revision(&value, "account revision")?),
+                                            None => resolve_latest_chatgpt_account_revision(&account_id)?,
+                                        }
+                                    } else {
+                                        let raw = args.next().ok_or("model chatgpt operation requires Core account revision")?;
+                                        Some(parse_positive_revision(&raw, "account revision")?)
                                     };
                                     CommandMode::ModelChatgpt { operation, account_id:Some(account_id), revision, label:None }
                                 }
                             },
                             Some(operation @ ("discover" | "configure")) => {
                                 let connection_id = args.next().ok_or("model operation requires connection ID")?;
-                                let revision = args.next().ok_or("model operation requires connection revision")?.parse::<i64>().map_err(|_| "invalid connection revision")?;
-                                if revision < 1 { return Err("connection revision must be positive".into()); }
                                 if operation == "discover" {
+                                    let revision = match args.next_if(|arg| !arg.starts_with('-')) {
+                                        Some(raw) => parse_positive_revision(&raw, "connection revision")?,
+                                        None => resolve_latest_connection_revision(&connection_id)?,
+                                    };
                                     CommandMode::ModelDiscover { connection_id, revision }
                                 } else {
+                                    let raw_rev = args.next().ok_or("model operation requires connection revision")?;
+                                    let revision = parse_positive_revision(&raw_rev, "connection revision")?;
                                     let selected = args.next().ok_or("model configure requires selected catalog key or none")?;
                                     let selected_model_id = if selected == "none" { None } else { Some(selected) };
-                                    let enabled_model_ids: Vec<String> = serde_json::from_str(&args.next().ok_or("model configure requires enabled catalog keys as a JSON array")?)
-                                        .map_err(|_| "enabled catalog keys must be a JSON string array")?;
+                                    let raw_keys = args.next().ok_or("model configure requires enabled catalog keys as a JSON array or comma-separated list")?;
+                                    let enabled_model_ids = parse_configure_enabled_keys(&raw_keys)?;
                                     if enabled_model_ids.iter().any(|key| key.trim().is_empty()) || enabled_model_ids.iter().collect::<std::collections::HashSet<_>>().len() != enabled_model_ids.len() {
                                         return Err("enabled catalog keys must be nonempty and unique".into());
                                     }
@@ -491,18 +521,36 @@ impl Config {
                                 }
                             },
                             Some("probe") => {
-                                let connection_id = args.next().ok_or("model probe requires connection ID")?;
-                                let revision = args.next().ok_or("model probe requires connection revision")?.parse::<i64>().map_err(|_| "invalid connection revision")?;
-                                if revision < 1 { return Err("connection revision must be positive".into()); }
-                                let model_id = args.next().ok_or("model probe requires model ID")?;
-                                let protocol = args.next().ok_or("model probe requires protocol")?;
+                                let mut positional = Vec::new();
+                                while positional.len() < 4 {
+                                    let Some(token) = args.next_if(|arg| !arg.starts_with('-')) else {
+                                        break;
+                                    };
+                                    positional.push(token);
+                                }
+                                let (connection_id, revision, model_id, protocol) = match positional.as_slice() {
+                                    [conn, rev_raw, model_id, protocol] => (
+                                        conn.clone(),
+                                        parse_positive_revision(rev_raw, "connection revision")?,
+                                        model_id.clone(),
+                                        protocol.clone(),
+                                    ),
+                                    [conn, model_id, protocol] => (
+                                        conn.clone(),
+                                        resolve_latest_connection_revision(conn)?,
+                                        model_id.clone(),
+                                        protocol.clone(),
+                                    ),
+                                    _ => {
+                                        return Err("Usage: nola model probe <connection-id> [<revision>] <model-id> <responses|chat_completions|anthropic>".into());
+                                    }
+                                };
                                 if !matches!(protocol.as_str(), "responses" | "chat_completions" | "anthropic") { return Err("unsupported probe protocol".into()); }
                                 CommandMode::ModelProbe { connection_id, revision, model_id, protocol }
                             },
                             Some("override") => {
                                 let connection_id = args.next().ok_or("model override requires connection ID")?;
-                                let revision = args.next().ok_or("model override requires connection revision")?.parse::<i64>().map_err(|_| "invalid connection revision")?;
-                                if revision < 1 { return Err("connection revision must be positive".into()); }
+                                let revision = parse_positive_revision(&args.next().ok_or("model override requires connection revision")?, "connection revision")?;
                                 let model_id = args.next().ok_or("model override requires model ID")?;
                                 let protocol = args.next().ok_or("model override requires protocol")?;
                                 if !matches!(protocol.as_str(), "responses" | "chat_completions" | "anthropic" | "siwc_responses") { return Err("unsupported override protocol".into()); }
@@ -516,17 +564,21 @@ impl Config {
                                 CommandMode::ModelOverride { connection_id, revision, model_id, protocol, capabilities }
                             },
                             Some("import") => {
-                                let source = args.next().ok_or("model import requires open_code/codex/kimi_code and an absolute path")?;
+                                let source = args.next().ok_or("model import requires open_code/codex/kimi_code and a configuration path")?;
                                 if !matches!(source.as_str(), "open_code" | "codex" | "kimi_code") { return Err("unsupported import source".into()); }
-                                let path = args.next().ok_or("model import requires an absolute configuration path")?;
+                                let raw_path = args.next().ok_or("model import requires a configuration path")?;
+                                let path = normalize_cli_file_path(raw_path)?;
                                 let mut credential_path = None;
                                 let mut include_credentials = false;
                                 let mut allow_environment = false;
-                                while let Some(option) = args.peek().map(String::as_str) {
-                                    match option {
-                                        "--include-credentials" => { args.next(); include_credentials = true; },
-                                        "--credential-path" => { args.next(); credential_path = Some(args.next().ok_or("credential path required")?); },
-                                        "--allow-environment" => { args.next(); allow_environment = true; },
+                                while args.peek().is_some() {
+                                    if let Some(raw_cred) = peek_option_value(&mut args, "--credential-path", "credential path required")? {
+                                        credential_path = Some(normalize_cli_file_path(raw_cred)?);
+                                        continue;
+                                    }
+                                    match args.peek().map(String::as_str) {
+                                        Some("--include-credentials") => { args.next(); include_credentials = true; },
+                                        Some("--allow-environment") => { args.next(); allow_environment = true; },
                                         _ => break,
                                     }
                                 }
@@ -544,20 +596,23 @@ impl Config {
                         let value = if matches!(action.as_str(), "create" | "show" | "join" | "send" | "recover") {
                             Some(args.next().ok_or("room action requires a title or room ID")?)
                         } else { None };
+                        let mut agent_id = if action == "join" {
+                            Some(args.next().ok_or("room join requires an agent ID")?)
+                        } else if action == "send" {
+                            peek_option_value(&mut args, "--to", "--to requires a participant ID")?
+                        } else {
+                            None
+                        };
                         let text = if action == "send" { Some(args.next().ok_or("room send requires message text")?) } else { None };
-                        let agent_id = if action == "join" { Some(args.next().ok_or("room join requires an agent ID")?) }
-                            else if action == "send" && args.peek().is_some_and(|arg| arg == "--to") {
-                                args.next(); Some(args.next().ok_or("--to requires a participant ID")?)
-                            } else { None };
+                        if action == "send" && agent_id.is_none() {
+                            agent_id = peek_option_value(&mut args, "--to", "--to requires a participant ID")?;
+                        }
                         command = Some(CommandMode::Room { action, value, agent_id, text });
                     }
                     "plugin" => {
                         let action = args.next().ok_or("plugin requires inspect/install/list/enable/disable/remove/credential-set/credential-clear")?;
                         let mode = if action == "list" {
-                            let after = if args.peek().is_some_and(|arg| arg == "--after") {
-                                args.next();
-                                Some(args.next().ok_or("plugin list --after requires a plugin id")?)
-                            } else { None };
+                            let after = peek_option_value(&mut args, "--after", "plugin list --after requires a plugin id")?;
                             PluginCommandMode::List { after }
                         } else {
                             let value = args.next().ok_or("plugin action requires a directory or plugin id")?;
@@ -634,11 +689,6 @@ impl Config {
                 continue;
             }
 
-            if arg == "--" {
-                message_parts.extend(args);
-                break;
-            }
-
             if arg == "-h" || arg == "--help" {
                 show_help = true;
             } else if arg == "--json" {
@@ -648,9 +698,16 @@ impl Config {
             } else if arg == "--debug" {
                 debug_mode = true;
                 debug_mode_explicit = true;
+            } else if let Some(value) = option_value(&arg, "--permission-profile", &mut args)? {
+                let profile = crate::permissions::PermissionProfile::from_canonical_name(&value)
+                    .ok_or_else(|| "--permission-profile must be cautious or allow_all".to_string())?;
+                permission_profile = Some(profile);
+                permission_profile_explicit = true;
             } else if arg == "--yes" || arg == "-y" {
                 auto_approve = true;
-                permission_profile = Some(crate::permissions::PermissionProfile::AllowAll);
+                if !permission_profile_explicit {
+                    permission_profile = Some(crate::permissions::PermissionProfile::AllowAll);
+                }
             } else if arg == "--no-tools" {
                 tools_enabled = false;
             } else if let Some(value) = option_value(&arg, "--max-iterations", &mut args)? {
@@ -692,7 +749,7 @@ impl Config {
             } else if let Some(value) = option_value(&arg, "--api-key", &mut args)? {
                 api_key_explicit = true;
                 api_key = value;
-            } else if let Some(value) = option_value(&arg, "--model", &mut args)? {
+            } else if let Some(value) = short_or_long_option_value(&arg, "--model", "-m", &mut args)? {
                 model_explicit = true;
                 model = value;
             } else if let Some(value) = option_value(&arg, "--allow-dir", &mut args)? {
@@ -767,16 +824,26 @@ impl Config {
         let command = command.unwrap_or(CommandMode::Run);
         // Reject selection ambiguity before loading defaults or invoking setup,
         // which may prompt and persist an unrelated API configuration.
-        let cli_profile_selection=match (profile_id,profile_revision) {
-            (None,None)=>None,
-            (Some(id),Some(revision))=>{
-                if !matches!(command,CommandMode::Run) || endpoint_explicit || api_key_explicit || model_explicit
+        let cli_profile_selection = match (profile_id, profile_revision) {
+            (None, None) => None,
+            (Some(id), Some(revision)) => {
+                if !matches!(command, CommandMode::Run) || endpoint_explicit || api_key_explicit || model_explicit
                     || continue_last || resume_session || session_id.is_some() || !save_session || host_request_stdin {
                     return Err("--profile requires a new saved conversation and cannot combine with endpoint/model/API key, session/resume/continue, no-save, or Host stdin".into());
                 }
-                Some((id,revision))
-            },
-            _=>return Err("--profile and --profile-revision must be specified together".into()),
+                Some((id, revision))
+            }
+            (Some(id), None) => {
+                if !matches!(command, CommandMode::Run) || endpoint_explicit || api_key_explicit || model_explicit
+                    || continue_last || resume_session || session_id.is_some() || !save_session || host_request_stdin {
+                    return Err("--profile requires a new saved conversation and cannot combine with endpoint/model/API key, session/resume/continue, no-save, or Host stdin".into());
+                }
+                let revision = resolve_latest_profile_revision(&id)?;
+                Some((id, revision))
+            }
+            (None, Some(_)) => {
+                return Err("--profile and --profile-revision must be specified together".into());
+            }
         };
         if !matches!(command, CommandMode::Run) && !message_parts.is_empty() {
             return Err(tr(Message::UnexpectedSessionArgs).to_string());
@@ -1088,7 +1155,11 @@ fn normalize_web_root(
     let candidates = if let Some(path) = web_root_arg {
         vec![path]
     } else {
-        vec![project_root.join("web"), project_root.join("../web")]
+        vec![
+            project_root.join("apps/web"),
+            project_root.join("web"),
+            project_root.join("../web"),
+        ]
     };
     for candidate in candidates {
         let expanded = expand_home(&candidate);
@@ -1164,9 +1235,13 @@ fn is_global_option_token(arg: &str) -> bool {
     ) {
         return true;
     }
+    if arg == "-m" || arg.starts_with("-m=") {
+        return true;
+    }
     [
         "--force-tool-set",
         "--max-iterations",
+        "--permission-profile",
         "--endpoint",
         "--api-key",
         "--model",
@@ -1204,6 +1279,224 @@ fn first_env(names: &[&str]) -> String {
         .iter()
         .find_map(|name| env::var(name).ok().filter(|value| !value.trim().is_empty()))
         .unwrap_or_default()
+}
+
+fn short_or_long_option_value<I>(
+    arg: &str,
+    long_name: &str,
+    short_name: &str,
+    args: &mut std::iter::Peekable<I>,
+) -> Result<Option<String>, String>
+where
+    I: Iterator<Item = String>,
+{
+    if let Some(value) = option_value(arg, long_name, args)? {
+        return Ok(Some(value));
+    }
+    option_value(arg, short_name, args)
+}
+
+fn peek_option_value<I>(
+    args: &mut std::iter::Peekable<I>,
+    name: &str,
+    missing_error: &str,
+) -> Result<Option<String>, String>
+where
+    I: Iterator<Item = String>,
+{
+    let Some(token) = args.peek() else {
+        return Ok(None);
+    };
+    if token == name {
+        args.next();
+        return args
+            .next()
+            .map(Some)
+            .ok_or_else(|| missing_error.to_string());
+    }
+    let prefix = format!("{name}=");
+    if token.starts_with(&prefix) {
+        let token = args.next().unwrap();
+        let value = token.strip_prefix(&prefix).unwrap_or_default().to_string();
+        if value.is_empty() {
+            return Err(missing_error.to_string());
+        }
+        return Ok(Some(value));
+    }
+    Ok(None)
+}
+
+fn parse_positive_revision(raw: &str, label: &str) -> Result<i64, String> {
+    let revision = raw
+        .parse::<i64>()
+        .map_err(|_| format!("invalid {label}"))?;
+    if revision < 1 {
+        return Err(format!("{label} must be positive"));
+    }
+    Ok(revision)
+}
+
+fn parse_configure_enabled_keys(raw: &str) -> Result<Vec<String>, String> {
+    let trimmed = raw.trim();
+    if trimmed.starts_with('[') || trimmed.starts_with('{') {
+        return serde_json::from_str::<Vec<String>>(trimmed)
+            .map_err(|_| "enabled catalog keys must be a JSON string array".to_string());
+    }
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(trimmed
+        .split(',')
+        .map(|item| item.trim().to_string())
+        .collect())
+}
+
+fn normalize_cli_file_path(raw: String) -> Result<String, String> {
+    let expanded = expand_home(&PathBuf::from(raw));
+    let resolved = if expanded.is_absolute() {
+        expanded
+    } else {
+        env::current_dir()
+            .map_err(|err| format!("{} {err}", tr(Message::CurrentDirFailedPrefix)))?
+            .join(expanded)
+    };
+    Ok(resolved.to_string_lossy().into_owned())
+}
+
+fn resolve_latest_profile_revision(profile_id: &str) -> Result<i64, String> {
+    let store = crate::store::NolaStore::open_default()?;
+    store
+        .model_profiles()?
+        .into_iter()
+        .find(|profile| profile.id == profile_id && profile.deleted_at_ms.is_none())
+        .map(|profile| profile.revision)
+        .ok_or_else(|| {
+            format!(
+                "Selected Core profile '{profile_id}' is unavailable; pass --profile-revision explicitly"
+            )
+        })
+}
+
+fn resolve_latest_connection_revision(connection_id: &str) -> Result<i64, String> {
+    let store = crate::store::NolaStore::open_default()?;
+    let mut app = store.application()?;
+    let snapshot: Option<nola_domain::model_connection::ModelConnectionSnapshot> =
+        app.execute(nola_application::ApplicationCommand::Model {
+            command: nola_application::ModelCommand::GetConnection {
+                id: connection_id.to_string(),
+            },
+        })?;
+    snapshot
+        .map(|item| item.revision)
+        .ok_or_else(|| format!("model connection '{connection_id}' was not found; pass an explicit revision"))
+}
+
+fn resolve_latest_chatgpt_account_revision(account_id: &str) -> Result<Option<i64>, String> {
+    let store = crate::store::NolaStore::open_default()?;
+    let mut app = store.application()?;
+    let snapshot: Option<nola_domain::model_connection::ModelAccountSnapshot> =
+        app.execute(nola_application::ApplicationCommand::Model {
+            command: nola_application::ModelCommand::GetAccount {
+                id: account_id.to_string(),
+            },
+        })?;
+    Ok(snapshot.map(|item| item.revision))
+}
+
+impl Config {
+    fn for_help_args(pre_double_dash: &[String], runtime: Option<RuntimeConfig>) -> Result<Self, String> {
+        let mut json_output = false;
+        let mut iter = pre_double_dash.iter().peekable();
+        while let Some(arg) = iter.next() {
+            if arg == "--json" {
+                json_output = true;
+            } else if arg == "--lang" {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| format!("--lang {}", tr(Message::RequiresValueSuffix)))?;
+                let language = parse_language_tag(value).ok_or_else(|| {
+                    format!("--lang {}", tr(Message::InteractiveInvalidLanguageValue))
+                })?;
+                set_language(language);
+            } else if let Some(value) = arg.strip_prefix("--lang=") {
+                let language = parse_language_tag(value).ok_or_else(|| {
+                    format!("--lang {}", tr(Message::InteractiveInvalidLanguageValue))
+                })?;
+                set_language(language);
+            }
+        }
+        let project_root = env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .canonicalize()
+            .unwrap_or_else(|_| PathBuf::from("."));
+        let web_root = normalize_web_root(None, &project_root)?;
+        Ok(Self {
+            cli_profile_selection: None,
+            command: CommandMode::Run,
+            show_help: true,
+            resume_session: false,
+            message: String::new(),
+            host_request_stdin: false,
+            desktop_resume: None,
+            desktop_cancel: None,
+            host_task_execution: None,
+            automation_execution_lease: None,
+            automation_execution_spec: None,
+            automation_artifacts: Vec::new(),
+            host_input_origin: AgentInputOrigin::InteractiveUser,
+            host_turn_context: None,
+            host_context_components: Vec::new(),
+            main_expert_selection: None,
+            host_attachments: Vec::new(),
+            resume_snapshot: None,
+            host_submission_id: None,
+            host_user_message_id: None,
+            host_assistant_message_id: None,
+            expected_configuration_revision: None,
+            expected_parent_message_id: None,
+            execution_backend: "nola".to_string(),
+            external_execution_session_id: None,
+            external_execution_model: None,
+            external_execution_model_provider: None,
+            mcp_capability_catalog: None,
+            mcp_server_registry: Vec::new(),
+            endpoint: String::new(),
+            api_key: String::new(),
+            swe_mode: false,
+            model: String::new(),
+            project_root: project_root.clone(),
+            allowed_dirs: vec![project_root],
+            skill_dirs: None,
+            bash_prefixes: Vec::new(),
+            max_iterations: 0,
+            json_output,
+            debug_mode: false,
+            auto_approve: false,
+            permission_profile: None,
+            tools_enabled: true,
+            force_tool_set: "auto".to_string(),
+            tool_allowlist: None,
+            tool_allowlist_is_authorization_only: false,
+            remote_tool_plan: None,
+            timezone: env::var("TZ").unwrap_or_else(|_| "local".to_string()),
+            network_policy: "allow".to_string(),
+            session_id: None,
+            permission_scope_id: None,
+            continue_last: false,
+            save_session: true,
+            output_path: None,
+            context_files: Vec::new(),
+            expected_artifact_refs: Vec::new(),
+            force: false,
+            dry_run: false,
+            runtime: runtime.unwrap_or_default(),
+            web_host: "127.0.0.1".to_string(),
+            web_port: 5001,
+            tailcat_ingress: false,
+            tailcat_helper: None,
+            web_root,
+        })
+    }
 }
 
 fn option_value<I>(
@@ -1277,20 +1570,23 @@ pub fn print_help() {
         }
     }
     println!("\n  nola room list|directory|create <title>|show <id>|join <room> <agent>|send <room> <text> [--to <participant>]|recover <room>");
-    println!("  nola update check | download <absolute-directory> [--source <absolute-public-source-json>]");
-    println!("  nola --version");
+    println!("  nola skills [list|enable <id>|disable <id>] [--json]");
+    println!("  nola mcp [list|add <name> <command-or-url> [args...]|remove <id-or-name>|enable <id-or-name>|disable <id-or-name>] [--json]");
+    println!("  nola memory [list|add <text> [--scope global|project]|search <query>|create|revise <id>|delete <id>] [--json]");
+    println!("  nola update check | download <directory> [--source <absolute-public-source-json>]");
+    println!("  nola version | --version | -V");
     println!("  nola model connections");
-    println!("  nola model apply-config [absolute-config-path] (default: ~/.nola/config.json or config.jsonc; save connections/models and select default)");
+    println!("  nola model apply-config [config-path] (default: ~/.nola/config.json or config.jsonc; supports relative and ~/ paths)");
     println!("  nola model manage (local Host account/source management address; no login is started)");
-    println!("  nola model chatgpt sign-in <label> | status <account-id> | reauthorize|models|refresh|sign-out <account-id> <core-revision>");
-    println!("  nola run --profile <Core-profile-id> --profile-revision <revision> [message]  (new saved conversation only)");
+    println!("  nola model chatgpt sign-in <label> | status <account-id> | reauthorize|models|refresh <account-id> <core-revision> | sign-out <account-id> [core-revision]");
+    println!("  nola run --profile <Core-profile-id> [--profile-revision <revision>] [message]  (new saved conversation only)");
     println!("    models syncs the owned ChatGPT catalog; use model configure explicitly to enable/select. Unreported capabilities stay unknown; model override is a user assertion, not verification.");
     println!("    Independent local Nola authorization, not Codex login. No inference or billing fallback is started.");
-    println!("  nola model discover <connection-id> <revision> (GET catalog only; no inference request)");
-    println!("  nola model configure <connection-id> <revision> <selected-catalog-key|none> <enabled-keys-json> (replaces enabled set; selecting a key replaces the selected remote profile)");
-    println!("  nola model probe <connection-id> <revision> <model-id> <responses|chat_completions|anthropic> (interactive confirmation; at most one billable request)");
+    println!("  nola model discover <connection-id> [revision] (GET catalog only; no inference request)");
+    println!("  nola model configure <connection-id> <revision> <selected-catalog-key|none> <enabled-keys-json-or-csv> (replaces enabled set; selecting a key replaces the selected remote profile)");
+    println!("  nola model probe <connection-id> [revision] <model-id> <responses|chat_completions|anthropic> (interactive confirmation; at most one billable request)");
     println!("  nola model override <connection-id> <revision> <model-id> <protocol> <clear|capabilities-json> (explicit user assertion; no network probe)");
-    println!("  nola model import <open_code|codex|kimi_code> <absolute-path> [--include-credentials] [--credential-path <path>] [--allow-environment]");
+    println!("  nola model import <open_code|codex|kimi_code> <path> [--include-credentials] [--credential-path <path>] [--allow-environment]");
 }
 
 #[cfg(test)]
@@ -1299,12 +1595,36 @@ mod tests {
     fn web_root_defaults_remain_user_project_paths_after_source_reorganization() {
         let directory = tempfile::tempdir().unwrap();
         let project = directory.path().join("project");
-        std::fs::create_dir_all(project.join("apps/web")).unwrap();
-        assert_eq!(super::normalize_web_root(None, &project).unwrap(), project.join("web"));
+        std::fs::create_dir_all(&project).unwrap();
+        assert_eq!(
+            super::normalize_web_root(None, &project).unwrap(),
+            project.join("web")
+        );
+
+        let sibling_web = directory.path().join("web");
+        std::fs::create_dir_all(&sibling_web).unwrap();
+        assert_eq!(
+            super::normalize_web_root(None, &project).unwrap(),
+            sibling_web.canonicalize().unwrap()
+        );
+
         std::fs::create_dir_all(project.join("web")).unwrap();
-        assert_eq!(super::normalize_web_root(None, &project).unwrap(), project.join("web").canonicalize().unwrap());
-        let explicit = project.join("apps/web");
-        assert_eq!(super::normalize_web_root(Some(explicit.clone()), &project).unwrap(), explicit.canonicalize().unwrap());
+        assert_eq!(
+            super::normalize_web_root(None, &project).unwrap(),
+            project.join("web").canonicalize().unwrap()
+        );
+
+        std::fs::create_dir_all(project.join("apps/web")).unwrap();
+        assert_eq!(
+            super::normalize_web_root(None, &project).unwrap(),
+            project.join("apps/web").canonicalize().unwrap()
+        );
+
+        let explicit = project.join("web");
+        assert_eq!(
+            super::normalize_web_root(Some(explicit.clone()), &project).unwrap(),
+            explicit.canonicalize().unwrap()
+        );
     }
 
     #[test]
@@ -2408,5 +2728,308 @@ mod tests {
         )
         .unwrap_err();
         assert!(expired.contains("expired"));
+    }
+
+    #[test]
+    fn yes_and_permission_profile_precedence_and_short_model_alias() {
+        let parse = |args: &[&str]| Config::from_args(args.iter().map(|s| s.to_string()));
+
+        // -y sets auto_approve and AllowAll by default
+        let y_only = parse(&["--endpoint", "http://127.0.0.1:11434/v1", "-y", "hi"]).unwrap();
+        assert!(y_only.auto_approve);
+        assert_eq!(
+            y_only.permission_profile,
+            Some(crate::permissions::PermissionProfile::AllowAll)
+        );
+
+        // Explicit --permission-profile wins regardless of order relative to -y/--yes
+        let explicit_before = parse(&[
+            "--endpoint",
+            "http://127.0.0.1:11434/v1",
+            "--permission-profile",
+            "cautious",
+            "-y",
+            "hi",
+        ])
+        .unwrap();
+        assert!(explicit_before.auto_approve);
+        assert_eq!(
+            explicit_before.permission_profile,
+            Some(crate::permissions::PermissionProfile::Cautious)
+        );
+
+        let explicit_after = parse(&[
+            "--endpoint",
+            "http://127.0.0.1:11434/v1",
+            "--yes",
+            "--permission-profile=cautious",
+            "hi",
+        ])
+        .unwrap();
+        assert!(explicit_after.auto_approve);
+        assert_eq!(
+            explicit_after.permission_profile,
+            Some(crate::permissions::PermissionProfile::Cautious)
+        );
+
+        // -m works before and after message
+        let m_before =
+            parse(&["--endpoint", "http://127.0.0.1:11434/v1", "-m", "gpt-4o", "hi"]).unwrap();
+        assert_eq!(m_before.model, "gpt-4o");
+        assert_eq!(m_before.message, "hi");
+
+        let m_after =
+            parse(&["--endpoint", "http://127.0.0.1:11434/v1", "hi", "-m", "gpt-4o"]).unwrap();
+        assert_eq!(m_after.model, "gpt-4o");
+        assert_eq!(m_after.message, "hi");
+    }
+
+    #[test]
+    fn subcommand_help_short_circuits_before_subcommand_dispatch_and_respects_double_dash() {
+        let parse = |args: &[&str]| Config::from_args(args.iter().map(|s| s.to_string()));
+        for args in [
+            vec!["room", "create", "--help"],
+            vec!["session", "delete", "--help"],
+            vec!["model", "--help"],
+            vec!["model", "discover", "-h"],
+            vec!["plugin", "--help"],
+            vec!["web", "--help"],
+            vec!["--lang", "zh", "room", "create", "--help"],
+        ] {
+            let parsed = parse(&args).unwrap();
+            assert!(parsed.show_help, "{args:?} must trigger show_help");
+            assert!(matches!(parsed.command, CommandMode::Run));
+        }
+
+        // After --, "--help" is message text, not help flag!
+        let after_sep =
+            parse(&["--endpoint", "http://127.0.0.1:11434/v1", "--", "--help"]).unwrap();
+        assert!(!after_sep.show_help);
+        assert!(matches!(after_sep.command, CommandMode::Run));
+        assert_eq!(after_sep.message, "--help");
+
+        // Double dash before flag-like message does not error with unknown command "--"
+        let run_sep = parse(&[
+            "--endpoint",
+            "http://127.0.0.1:11434/v1",
+            "--",
+            "--list-execution-backends",
+            "init",
+        ])
+        .unwrap();
+        assert!(!run_sep.show_help);
+        assert!(matches!(run_sep.command, CommandMode::Run));
+        assert_eq!(run_sep.message, "--list-execution-backends init");
+    }
+
+    #[test]
+    fn subcommand_equals_flags_relative_paths_and_optional_revisions_work() {
+        let _guard = crate::store::test_env_lock();
+        struct RestoreDb(Option<std::ffi::OsString>);
+        impl Drop for RestoreDb {
+            fn drop(&mut self) {
+                match &self.0 {
+                    Some(v) => std::env::set_var("NOLA_DB_PATH", v),
+                    None => std::env::remove_var("NOLA_DB_PATH"),
+                }
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("config-test.sqlite");
+        let _restore = RestoreDb(std::env::var_os("NOLA_DB_PATH"));
+        std::env::set_var("NOLA_DB_PATH", &db_path);
+
+        let parse = |args: &[&str]| Config::from_args(args.iter().map(|s| s.to_string()));
+
+        // --flag=val on room, plugin, and model import
+        let room_send = parse(&["room", "send", "room-1", "hi", "--to=agent-1"]).unwrap();
+        assert!(matches!(
+            room_send.command,
+            CommandMode::Room {
+                agent_id: Some(ref id),
+                text: Some(ref text),
+                ..
+            } if id == "agent-1" && text == "hi"
+        ));
+
+        let plugin_list = parse(&["plugin", "list", "--after=plug-1"]).unwrap();
+        assert!(matches!(
+            plugin_list.command,
+            CommandMode::Plugin(PluginCommandMode::List { after: Some(ref a) }) if a == "plug-1"
+        ));
+
+        let imported = parse(&[
+            "model",
+            "import",
+            "codex",
+            "relative/config.toml",
+            "--include-credentials",
+            "--credential-path=relative/auth.json",
+        ])
+        .unwrap();
+        match imported.command {
+            CommandMode::ModelImport {
+                path,
+                credential_path,
+                ..
+            } => {
+                assert!(std::path::Path::new(&path).is_absolute());
+                assert!(path.ends_with("relative/config.toml"));
+                let cred = credential_path.unwrap();
+                assert!(std::path::Path::new(&cred).is_absolute());
+                assert!(cred.ends_with("relative/auth.json"));
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+
+        let applied = parse(&["model", "apply-config", "relative/models.json"]).unwrap();
+        match applied.command {
+            CommandMode::ModelApplyConfig { path } => {
+                let path = path.unwrap();
+                assert!(std::path::Path::new(&path).is_absolute());
+                assert!(path.ends_with("relative/models.json"));
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+
+        // Comma-separated keys in model configure
+        let csv_cfg = parse(&[
+            "model",
+            "configure",
+            "conn-1",
+            "2",
+            "chat_completions:gpt-4o",
+            "chat_completions:gpt-4o,responses:gpt-4.1",
+        ])
+        .unwrap();
+        match csv_cfg.command {
+            CommandMode::ModelConfigure {
+                enabled_model_ids,
+                selected_model_id,
+                ..
+            } => {
+                assert_eq!(selected_model_id.as_deref(), Some("chat_completions:gpt-4o"));
+                assert_eq!(
+                    enabled_model_ids,
+                    vec!["chat_completions:gpt-4o", "responses:gpt-4.1"]
+                );
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+
+        // Seed store with profile, connection, and chatgpt account to verify optional <revision>
+        let store = crate::store::NolaStore::open(&db_path).unwrap();
+        store
+            .upsert_model_profile(nola_application::ModelProfile {
+                id: "seeded-profile".into(),
+                display_name: "Seeded".into(),
+                model_name: "gpt-4o".into(),
+                provider: "openai-compatible".into(),
+                runtime: "remote".into(),
+                source_json: serde_json::json!({
+                    "baseURL": "https://fixture.invalid/v1",
+                    "endpointID": "ep-seeded",
+                    "wireProtocol": "chat_completions",
+                    "capabilities": ["chat"],
+                    "executionCapabilities": {
+                        "toolCalls": true,
+                        "imageInput": false,
+                        "reasoning": false,
+                        "samplingParameters": true
+                    }
+                })
+                .to_string(),
+                parameters_json: serde_json::json!({
+                    "temperature": 0.5,
+                    "topP": 1.0,
+                    "maxOutputTokens": 4096,
+                    "maxContextLength": 32000
+                })
+                .to_string(),
+                selected: true,
+                enabled: true,
+                revision: 4,
+                created_at_ms: 1,
+                updated_at_ms: 1,
+                deleted_at_ms: None,
+            })
+            .unwrap();
+
+        let expected_profile_rev = store
+            .model_profiles()
+            .unwrap()
+            .into_iter()
+            .find(|p| p.id == "seeded-profile")
+            .unwrap()
+            .revision;
+        let profile_no_rev = parse(&["run", "--profile", "seeded-profile", "hello"]).unwrap();
+        assert_eq!(
+            profile_no_rev.cli_profile_selection,
+            Some(("seeded-profile".into(), expected_profile_rev))
+        );
+
+        let mut app = store.application().unwrap();
+        let conn_input: nola_domain::model_connection::ModelConnection =
+            serde_json::from_value(serde_json::json!({
+                "id": "conn-seeded",
+                "display_name": "Seeded Conn",
+                "base_url": "https://fixture.invalid/v1",
+                "protocols": ["chat_completions"],
+                "source": "manual",
+                "enabled": true
+            }))
+            .unwrap();
+        let conn_snap: nola_domain::model_connection::ModelConnectionSnapshot = app
+            .execute(nola_application::ApplicationCommand::Model {
+                command: nola_application::ModelCommand::SaveConnection {
+                    input: conn_input,
+                    expected_revision: None,
+                    updated_at_ms: 1,
+                },
+            })
+            .unwrap();
+        let discover_no_rev = parse(&["model", "discover", "conn-seeded"]).unwrap();
+        assert!(matches!(
+            discover_no_rev.command,
+            CommandMode::ModelDiscover { revision, .. } if revision == conn_snap.revision
+        ));
+        let probe_no_rev = parse(&[
+            "model",
+            "probe",
+            "conn-seeded",
+            "gpt-4o",
+            "chat_completions",
+        ])
+        .unwrap();
+        assert!(matches!(
+            probe_no_rev.command,
+            CommandMode::ModelProbe { revision, ref protocol, .. }
+                if revision == conn_snap.revision && protocol == "chat_completions"
+        ));
+
+        let acct_id = "22222222-2222-4222-8222-222222222222";
+        let acct_input: nola_domain::model_connection::ModelAccount =
+            serde_json::from_value(serde_json::json!({
+                "id": acct_id,
+                "display_name": "Seeded Account",
+                "source": "nola_chatgpt",
+                "credential_ref": format!("siwc:{acct_id}"),
+                "state": "ready"
+            }))
+            .unwrap();
+        let acct_snap: nola_domain::model_connection::ModelAccountSnapshot = app
+            .execute(nola_application::ApplicationCommand::Model {
+                command: nola_application::ModelCommand::SaveAccount {
+                    input: acct_input,
+                    expected_revision: None,
+                    updated_at_ms: 1,
+                },
+            })
+            .unwrap();
+        let sign_out_no_rev = parse(&["model", "chatgpt", "sign-out", acct_id]).unwrap();
+        assert!(matches!(
+            sign_out_no_rev.command,
+            CommandMode::ModelChatgpt { revision: Some(r), .. } if r == acct_snap.revision
+        ));
     }
 }

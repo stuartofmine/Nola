@@ -24,7 +24,7 @@ fn context_budget_blocked_message(language: Language) -> &'static str {
         Language::Es => "La entrada y las descripciones de herramientas superan el contexto. No se envió ninguna solicitud al modelo. Reduzca la entrada o las herramientas activas, o configure un contexto mayor y vuelva a intentarlo.",
         Language::Fr => "L’entrée et les descriptions des outils dépassent la capacité du contexte. Aucune requête n’a été envoyée au modèle. Réduisez l’entrée ou les outils actifs, ou configurez un contexte plus grand, puis réessayez.",
         Language::Ru => "Ввод и описания инструментов превышают размер контекста. Запрос к модели не отправлен. Сократите ввод или число активных инструментов либо настройте больший контекст и повторите попытку.",
-        Language::En => "Input and tool descriptions exceed the model context capacity. No model request was sent. Reduce the input or enabled tools, or configure a larger context window and retry.",
+        Language::En | _ => "Input and tool descriptions exceed the model context capacity. No model request was sent. Reduce the input or enabled tools, or configure a larger context window and retry.",
     }
 }
 
@@ -959,7 +959,7 @@ fn render_emitter_activity_frame(
     let detail = truncate_display_value(&detail, detail_width);
     if terminal_color_enabled() {
         print!(
-            "\r\x1b[2K  \x1b[38;5;75m{frame}{CODE_COLOR_RESET} {CODE_COLOR_COMMENT}{detail}{CODE_COLOR_RESET}"
+            "\r\x1b[2K  \x1b[34m{frame}{CODE_COLOR_RESET} {CODE_COLOR_COMMENT}{detail}{CODE_COLOR_RESET}"
         );
     } else {
         print!("\r\x1b[2K  {frame} {detail}");
@@ -968,6 +968,9 @@ fn render_emitter_activity_frame(
 }
 
 fn render_execution_composer_row(cancellation: Option<&ExecutionCancellation>) {
+    if !io::stdout().is_terminal() {
+        return;
+    }
     let Some(cancellation) = cancellation.filter(|value| value.accepts_terminal_input()) else {
         return;
     };
@@ -1361,7 +1364,7 @@ impl Emitter {
             self.output_ended_with_newline = true;
             return;
         }
-        if rendered {
+        if rendered && io::stdout().is_terminal() {
             print!("{}", clear_current_output_line());
         }
         self.output_ended_with_newline = true;
@@ -2190,7 +2193,7 @@ impl Emitter {
                 }
                 if let Some(completion) = completion {
                     if terminal_color_enabled() {
-                        emit_durable_terminal_line(&format!("  \x1b[38;5;114m{completion}{CODE_COLOR_RESET}"));
+                        emit_durable_terminal_line(&format!("  \x1b[32m{completion}{CODE_COLOR_RESET}"));
                     } else {
                         emit_durable_terminal_line(&format!("  {completion}"));
                     }
@@ -2354,12 +2357,19 @@ impl Emitter {
         }
         self.clear_transient_status_line();
         self.ensure_output_line_for_status();
+        let to_stderr = !io::stdout().is_terminal();
         for line in
             Self::tool_history_lines(&items, agent_terminal_columns(), agent_terminal_rows())
         {
-            println!("{line}");
+            if to_stderr {
+                eprintln!("{line}");
+            } else {
+                println!("{line}");
+            }
         }
-        self.output_ended_with_newline = true;
+        if !to_stderr {
+            self.output_ended_with_newline = true;
+        }
         self.draw_sticky_footer();
     }
 
@@ -2430,7 +2440,7 @@ impl Emitter {
             let line = format!("{}{result}", truncate_display_value(&format!("    • {action}"), action_width));
             lines.push(if terminal_color_enabled() {
                 if item.is_error {
-                    format!("\x1b[38;5;203m{line}{CODE_COLOR_RESET}")
+                    format!("\x1b[31m{line}{CODE_COLOR_RESET}")
                 } else {
                     format!(
                         "{}{line}{}",
@@ -2676,6 +2686,10 @@ impl Emitter {
             return;
         }
         self.clear_transient_status_line();
+        if !io::stdout().is_terminal() {
+            eprintln!("{}", human_status_line(kind, title, detail));
+            return;
+        }
         self.ensure_output_line_for_status();
         println!("{}", human_status_line(kind, title, detail));
         self.output_ended_with_newline = true;
@@ -2690,6 +2704,11 @@ impl Emitter {
             crate::terminal_ui::set_activity("transient-status", "•", detail);
             self.transient_status_visible = true;
             self.output_ended_with_newline = true;
+            return;
+        }
+        if !io::stdout().is_terminal() {
+            eprintln!("{}", human_status_line("status", "", Some(detail)));
+            self.transient_status_visible = false;
             return;
         }
         self.clear_transient_status_line();
@@ -2711,17 +2730,19 @@ impl Emitter {
             self.output_ended_with_newline = true;
             return;
         }
-        print!("{}", clear_current_output_line());
+        if io::stdout().is_terminal() {
+            print!("{}", clear_current_output_line());
+            let _ = io::stdout().flush();
+        }
         self.transient_status_visible = false;
         self.output_ended_with_newline = true;
-        let _ = io::stdout().flush();
     }
 
     fn ensure_output_line_for_status(&mut self) {
         // The compositor owns both transcript coordinates and the composer
         // cursor. A bare newline here scrolls its virtual tail without updating
         // either anchor, leaving an old preview as ghost transcript history.
-        if crate::terminal_ui::owns_terminal() {
+        if crate::terminal_ui::owns_terminal() || !io::stdout().is_terminal() {
             return;
         }
         if self.printed_text && !self.output_ended_with_newline && !self.clean_before_first_text {
@@ -2927,14 +2948,14 @@ impl Emitter {
             };
             if terminal_color_enabled() {
                 let content_color = if line.trim_start().starts_with('●') {
-                    "\x1b[38;5;114m"
+                    "\x1b[32m"
                 } else if index == 0 {
-                    "\x1b[38;5;250m"
+                    "\x1b[39m"
                 } else {
-                    "\x1b[38;5;245m"
+                    "\x1b[2;39m"
                 };
                 print!(
-                    "\x1b[{row};1H\x1b[2K  \x1b[38;5;241m{branch} {content_color}{line}{CODE_COLOR_RESET}"
+                    "\x1b[{row};1H\x1b[2K  \x1b[2;39m{branch} {content_color}{line}{CODE_COLOR_RESET}"
                 );
             } else {
                 print!("\x1b[{row};1H\x1b[2K  {branch} {line}");
@@ -3209,7 +3230,7 @@ impl Emitter {
             return;
         }
         if self.clean_before_first_text {
-            if !crate::terminal_ui::owns_terminal() {
+            if !crate::terminal_ui::owns_terminal() && io::stdout().is_terminal() {
                 print!("{}", clear_current_output_line());
             }
             self.clean_before_first_text = false;
@@ -3481,7 +3502,7 @@ impl Drop for Emitter {
 fn sticky_footer_terminal_enabled() -> bool {
     io::stdout().is_terminal()
         && std::env::var("TERM")
-            .map(|value| value != "dumb")
+            .map(|value| !value.eq_ignore_ascii_case("dumb"))
             .unwrap_or(true)
 }
 

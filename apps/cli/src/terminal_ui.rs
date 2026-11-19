@@ -400,6 +400,9 @@ impl UiState {
                 self.idle_frame = None;
                 self.assistant_preview.clear();
                 self.assistant_body_started = false;
+                self.history_reading = false;
+                self.history_scroll = 0;
+                self.reader_anchor = None;
             }
             UiEvent::TurnCancelling(turn_id) => {
                 if matches!(self.turn, TurnPhase::Running { turn_id: active } if active == turn_id)
@@ -677,17 +680,55 @@ pub(crate) fn sync_composer(cancellation: &crate::interaction::ExecutionCancella
 /// to block the editor before it had accepted the first command. The inline
 /// renderer owns the viewport, so establish row one as the durable transcript
 /// origin instead of asking the terminal where the previous shell prompt was.
+static LAST_EXIT_ASSISTANT_SUMMARY: Mutex<Option<String>> = Mutex::new(None);
+
+fn extract_last_assistant_summary(state: &UiState) -> Option<String> {
+    let raw = state
+        .deferred_history
+        .iter()
+        .rev()
+        .chain(state.history_tail.iter().rev())
+        .find_map(|cell| match cell {
+            TranscriptCell::Markdown(source) if !source.trim().is_empty() => Some(source.as_str()),
+            _ => None,
+        })
+        .or_else(|| (!state.markdown_source.trim().is_empty()).then_some(state.markdown_source.as_str()))?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let max_chars = 600usize;
+    let lines: Vec<&str> = trimmed.lines().filter(|l| !l.trim().is_empty()).take(8).collect();
+    let joined = lines.join("\n");
+    if joined.chars().count() <= max_chars && trimmed.lines().filter(|l| !l.trim().is_empty()).count() <= 8 {
+        Some(joined)
+    } else {
+        let truncated: String = joined.chars().take(max_chars).collect();
+        Some(format!("{}…", truncated.trim_end()))
+    }
+}
+
+pub(crate) fn take_exit_assistant_summary() -> Option<String> {
+    LAST_EXIT_ASSISTANT_SUMMARY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
+}
+
 pub(crate) fn begin_interactive_session() {
     let mut state = shared_state()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     *state = UiState::default();
+    *LAST_EXIT_ASSISTANT_SUMMARY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = None;
     state.session_active = io::stdout().is_terminal();
     state.history_cursor_row = Some(1);
     if io::stdout().is_terminal() {
         let stdout = io::stdout();
         let mut stdout = io::BufWriter::new(stdout.lock());
-        let _ = write!(stdout, "\x1b[?1049h\x1b[r\x1b[2J\x1b[H\x1b[?25h");
+        let _ = write!(stdout, "\x1b[?1049h\x1b[?1007l\x1b[r\x1b[2J\x1b[H\x1b[?25h");
         let _ = stdout.flush();
     }
 }
@@ -712,6 +753,9 @@ pub(crate) fn invalidate_presented_screen() {
 /// A turn finishing must not release ownership; only the session ending does.
 pub(crate) fn end_interactive_session() {
     let mut state = shared_state().lock().unwrap_or_else(|e| e.into_inner());
+    *LAST_EXIT_ASSISTANT_SUMMARY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = extract_last_assistant_summary(&state);
     if state.owns_terminal(io::stdout().is_terminal()) {
         if let Ok((columns, rows)) = crossterm::terminal::size() {
             if columns > 0 && rows > 0 {
@@ -721,7 +765,7 @@ pub(crate) fn end_interactive_session() {
                 clear_transcript_tail(&mut state, &mut output);
                 clear_rows(&mut output, rows, state.rendered_rows);
                 let row = state.history_cursor_row.unwrap_or(rows).clamp(1, rows);
-                let _ = write!(output, "\x1b[?6l\x1b[r\x1b[0m\x1b[?7h\x1b[{row};1H\x1b[?25h\x1b[?1049l");
+                let _ = write!(output, "\x1b[?6l\x1b[r\x1b[0m\x1b[?7h\x1b[?1007l\x1b[{row};1H\x1b[?25h\x1b[?1049l");
                 let _ = stdout.write_all(&output);
                 let _ = stdout.flush();
             }
@@ -1301,9 +1345,13 @@ fn navigate_history(state: &mut UiState, key: &crossterm::event::KeyEvent, page:
     use crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
     if key.kind == KeyEventKind::Release || !state.session_active || state.prompt_depth > 0 { return false; }
     let control = key.modifiers == KeyModifiers::CONTROL;
+    let alt_or_ctrl = key.modifiers == KeyModifiers::ALT || key.modifiers == KeyModifiers::CONTROL;
+    let step = page.min(3).max(1);
     match key.code {
         KeyCode::PageUp if key.modifiers.is_empty() => state.history_scroll = state.history_scroll.saturating_add(page),
         KeyCode::PageDown if key.modifiers.is_empty() => state.history_scroll = state.history_scroll.saturating_sub(page),
+        KeyCode::Up if alt_or_ctrl => state.history_scroll = state.history_scroll.saturating_add(step),
+        KeyCode::Down if alt_or_ctrl => state.history_scroll = state.history_scroll.saturating_sub(step),
         KeyCode::Home if control => state.history_scroll = state.presented_document_rows,
         KeyCode::End if control => state.history_scroll = 0,
         _ => return false,
@@ -1326,12 +1374,12 @@ fn stopping_hint() -> &'static str {
     use crate::i18n::Language;
     match crate::i18n::current_language() {
         Language::ZhHans => "正在停止 · 输入草稿会保留",
-        Language::En => "Stopping · your draft is preserved",
         Language::De => "Wird beendet · Entwurf bleibt erhalten",
         Language::Es => "Deteniendo · se conserva el borrador",
         Language::Fr => "Arrêt en cours · brouillon conservé",
         Language::Ja => "停止中 · 下書きは保持されます",
         Language::Ru => "Остановка · черновик сохранён",
+        Language::En | _ => "Stopping · your draft is preserved",
     }
 }
 
@@ -1339,12 +1387,12 @@ fn local_command_hint() -> &'static str {
     use crate::i18n::Language;
     match crate::i18n::current_language() {
         Language::ZhHans => "Enter 执行本地指令 · 不进入消息队列",
-        Language::En => "Enter: local command · never queued as a message",
         Language::De => "Enter: lokaler Befehl · keine Nachrichtenwarteschlange",
         Language::Es => "Enter: comando local · no se encola como mensaje",
         Language::Fr => "Entrée : commande locale · aucun message en attente",
         Language::Ja => "Enter: ローカルコマンド · メッセージとして予約しません",
         Language::Ru => "Enter: локальная команда · не сообщение в очереди",
+        Language::En | _ => "Enter: local command · never queued as a message",
     }
 }
 
@@ -1352,12 +1400,12 @@ fn history_reading_hint() -> &'static str {
     use crate::i18n::Language;
     match crate::i18n::current_language() {
         Language::ZhHans => "Ctrl+End 返回最新 · 浏览历史 · PgUp/PgDn",
-        Language::En => "Ctrl+End: latest · Reading history · PgUp/PgDn",
         Language::De => "Strg+Ende: neueste · Verlauf · Bild↑/Bild↓",
         Language::Es => "Ctrl+Fin: reciente · Historial · RePág/AvPág",
         Language::Fr => "Ctrl+Fin : récent · Historique · PgUp/PgDn",
         Language::Ja => "Ctrl+End: 最新へ · 履歴表示 · PgUp/PgDn",
         Language::Ru => "Ctrl+End: к последнему · История · PgUp/PgDn",
+        Language::En | _ => "Ctrl+End: latest · Reading history · PgUp/PgDn",
     }
 }
 
@@ -2196,11 +2244,11 @@ mod tests {
     #[test]
     fn shared_palette_preserves_terminal_foreground_and_background() {
         let mut terminal = vt100::Parser::new(4, 40, 0);
-        terminal.process(format!("{}{}body{}", crate::INTERACTIVE_COMPOSER_BG,
-            crate::INTERACTIVE_VALUE, crate::INTERACTIVE_RESET).as_bytes());
+        terminal.process(format!("{}body{}", crate::INTERACTIVE_COMPOSER_BG,
+            crate::INTERACTIVE_RESET).as_bytes());
         let cell = terminal.screen().cell(0, 0).unwrap();
-        assert_eq!(cell.fgcolor(), vt100::Color::Default);
-        assert_eq!(cell.bgcolor(), vt100::Color::Idx(236));
+        assert_eq!(cell.fgcolor(), vt100::Color::Rgb(242, 240, 235));
+        assert_eq!(cell.bgcolor(), vt100::Color::Rgb(35, 35, 32));
         terminal.process(format!("\r\n{}{}selected{}", crate::INTERACTIVE_SELECTION_BG,
             crate::INTERACTIVE_VALUE, crate::INTERACTIVE_RESET).as_bytes());
         let selected = terminal.screen().cell(1, 0).unwrap();
@@ -3056,7 +3104,7 @@ mod tests {
             for draft in ["审", "审计", "审计下", "审计下当前目录"] {
                 state.idle_frame = Some(IdleFrameState {
                     lines: vec![
-                        format!("\x1b[48;5;236m  {draft}\x1b[0m"),
+                        format!("{}  {draft}\x1b[0m", crate::INTERACTIVE_COMPOSER_BG),
                         "Context 10%".into(),
                     ],
                     cursor_row: 0,
@@ -3911,7 +3959,7 @@ mod tests {
     #[test]
     fn styled_word_wrap_preserves_every_word_boundary() {
         let plain = "Both metadata runs succeeded and the workspace members are valid. Note the metadata output includes workspace members, but the two requested packages remain distinct.";
-        let styled = format!("\x1b[38;5;252m{plain}\x1b[0m");
+        let styled = format!("\x1b[39m{plain}\x1b[0m");
         let wrapped = visual_lines(&styled, 54)
             .into_iter()
             .map(|line| strip_ansi(&line))
@@ -3926,8 +3974,8 @@ mod tests {
     #[test]
     fn mixed_cjk_markdown_does_not_wrap_at_an_old_ascii_space() {
         let styled = concat!(
-            "    \x1b[38;5;252m根目录 Cargo.toml 的 workspace members 有 ",
-            "\x1b[1m12\x1b[0m\x1b[38;5;252m 个（core、core/nola-application、",
+            "    \x1b[39m根目录 Cargo.toml 的 workspace members 有 ",
+            "\x1b[1m12\x1b[0m\x1b[39m 个（core、core/nola-application、",
             "core/nola-domain、core/nola-host-protocol、core/nola-mobile-bindings、",
             "core/nola-model-runtime-host）。\x1b[0m"
         );
@@ -3954,10 +4002,10 @@ mod tests {
 
     #[test]
     fn visual_lines_preserve_ansi_styles_across_wraps() {
-        let lines = visual_lines("\x1b[38;5;252m    styled response content\x1b[0m", 14);
+        let lines = visual_lines("\x1b[34m    styled response content\x1b[0m", 14);
         assert!(lines.len() >= 2);
         assert!(lines.iter().all(|line| line.ends_with("\x1b[0m")));
-        assert!(lines[1].contains("\x1b[38;5;252m"));
+        assert!(lines[1].contains("\x1b[34m"));
     }
 
     #[test]
@@ -3982,5 +4030,57 @@ mod tests {
             .last()
             .is_some_and(|line| line.contains("  next")));
         assert_eq!(frame.cursor.map(|cursor| cursor.0), Some(24));
+    }
+
+    #[test]
+    fn turn_started_resets_history_scroll_and_supports_alt_and_ctrl_arrow_scrolling() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut state = UiState::default();
+        state.session_active = true;
+        state.presented_document_rows = 40;
+        assert!(navigate_history(
+            &mut state,
+            &KeyEvent::new(KeyCode::Up, KeyModifiers::ALT),
+            10
+        ));
+        assert!(state.history_reading);
+        assert_eq!(state.history_scroll, 3);
+        assert!(navigate_history(
+            &mut state,
+            &KeyEvent::new(KeyCode::Up, KeyModifiers::CONTROL),
+            10
+        ));
+        assert_eq!(state.history_scroll, 6);
+        assert!(navigate_history(
+            &mut state,
+            &KeyEvent::new(KeyCode::Down, KeyModifiers::ALT),
+            10
+        ));
+        assert_eq!(state.history_scroll, 3);
+
+        state.reduce(UiEvent::TurnStarted(2));
+        assert!(!state.history_reading);
+        assert_eq!(state.history_scroll, 0);
+        assert!(state.reader_anchor.is_none());
+    }
+
+    #[test]
+    fn extract_last_assistant_summary_captures_latest_markdown_turn() {
+        let mut state = UiState::default();
+        state.reduce(UiEvent::TurnStarted(1));
+        let delta1 = state.reduce(UiEvent::MarkdownDelta("First answer".to_string()));
+        state.deferred_history.extend(delta1);
+        let committed1 = state.reduce(UiEvent::TurnCompleted(1));
+        state.deferred_history.extend(committed1);
+        state.reduce(UiEvent::TurnStarted(2));
+        let delta2 = state.reduce(UiEvent::MarkdownDelta(
+            "Latest answer line 1\nLatest answer line 2".to_string(),
+        ));
+        state.deferred_history.extend(delta2);
+        let committed2 = state.reduce(UiEvent::TurnCompleted(2));
+        state.deferred_history.extend(committed2);
+        let summary = extract_last_assistant_summary(&state).expect("summary");
+        assert!(summary.contains("Latest answer line 1"));
+        assert!(!summary.contains("First answer"));
     }
 }
