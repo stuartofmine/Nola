@@ -39,15 +39,20 @@ function Click-Control($item) {
 function Open-Desktop {
     $script:app = Start-Process $env:NOLA_INSTALLED_DESKTOP -PassThru
     $end = [DateTime]::UtcNow.AddSeconds(60)
+    Write-Host ("Starting installed desktop, PID " + $script:app.Id)
+    $match = New-Object System.Windows.Automation.PropertyCondition($uia::NameProperty, 'New conversation')
     do {
         $script:app.Refresh()
         if ($script:app.HasExited) { throw 'Installed desktop exited' }
-        if ($script:app.MainWindowHandle -ne 0) { break }
-        Start-Sleep -Milliseconds 250
+        if ($script:app.MainWindowHandle -ne 0 -and $script:app.MainWindowTitle -like '*Nola*') {
+            $script:window = $uia::FromHandle($script:app.MainWindowHandle)
+            $null = (New-Object -ComObject WScript.Shell).AppActivate($script:app.Id)
+            if ($script:window.FindFirst($scope, $match)) { return }
+            [Windows.Forms.SendKeys]::SendWait('{TAB}')
+        }
+        Start-Sleep -Milliseconds 400
     } while ([DateTime]::UtcNow -lt $end)
-    $script:window = $uia::FromHandle($script:app.MainWindowHandle)
-    $null = (New-Object -ComObject WScript.Shell).AppActivate($script:app.Id)
-    $null = Find-Control name 'New conversation' 45
+    throw "Chat window unavailable after launch. Title: $($script:app.MainWindowTitle)"
 }
 function Close-Desktop {
     if ($script:app -and !$script:app.HasExited) {
@@ -86,6 +91,7 @@ try {
     Open-Desktop
     $portFile = Join-Path $env:NOLA_E2E_USER_DATA 'host-port'
     $before = 'http://127.0.0.1:' + (Get-Content $portFile -Raw).Trim()
+    Write-Host 'Creating conversation and entering a draft'
     Click-Control (Find-Control name 'New conversation')
     $editor = Find-Control id 'chat-composer'
     $editor.SetFocus()
@@ -112,11 +118,13 @@ try {
     [Windows.Forms.SendKeys]::SendWait('{ENTER}')
     $null = Find-Control name 'restart-note.txt'
     if ((Draft-Value (Find-Control id 'chat-composer')) -ne $draft) { throw 'Draft changed while selecting the attachment' }
+    Write-Host 'Confirmed draft and attachment before exit'
     Start-Sleep -Milliseconds 1200
     Close-Desktop
     Open-Desktop
     $after = 'http://127.0.0.1:' + (Get-Content $portFile -Raw).Trim()
     if ($before -ne $after) { throw 'Desktop origin changed after restart' }
+    Write-Host 'Reopened installed desktop with the original Host port'
     $restored = @((Invoke-RestMethod "$after/api/chat/conversations").conversations)
     if ($restored.Count -ne 1 -or $restored[0].conversationId -ne $saved[0].conversationId) { throw 'Conversation changed after restart' }
     $title = $restored[0].title
