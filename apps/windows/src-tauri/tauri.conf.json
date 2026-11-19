@@ -1,0 +1,24 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Nola",
+  "version": "../package.json",
+  "identifier": "com.nola.assistant.windows",
+  "build": { "frontendDist": "startup" },
+  "app": { "windows": [], "security": { "capabilities": [] } },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico"],
+    "resources": {
+      "../resources/bin/": "bin/",
+      "../resources/licenses/": "licenses/",
+      "../resources/native-runtime.json": "native-runtime.json",
+      "../../web/app/static/ui/": "web/app/static/ui/",
+      "../../web/app/static/vendor/": "web/app/static/vendor/",
+      "../../web/app/static/js/": "web/app/static/js/",
+      "../../web/app/static/favicon.png": "web/app/static/favicon.png",
+      "../../web/app/static/nola-icon.png": "web/app/static/nola-icon.png"
+    },
+    "windows": { "nsis": { "installMode": "currentUser" } }
+  }
+}

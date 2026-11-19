@@ -26,3 +26,8 @@ nola_core = { path = ".." }
 nola_service_client = { path = "../nola-service-client" }
 rusqlite = { version = "0.31", features = ["bundled"] }
 tempfile = "3.12"
+
+[target.'cfg(windows)'.dependencies]
+uds_windows = "1.2.1"
+nola_credential_host = { path = "../nola-credential-host" }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_System_Threading"] }

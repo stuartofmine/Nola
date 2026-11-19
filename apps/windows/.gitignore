@@ -8,3 +8,7 @@ resources/bin/*.pdb
 resources/licenses/llama.cpp.txt
 test-results/
 resources/native-runtime.json
+
+src-tauri/gen/
+src-tauri/target/
+!src-tauri/Cargo.lock

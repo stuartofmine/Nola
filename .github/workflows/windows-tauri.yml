@@ -1,0 +1,55 @@
+name: Windows Tauri installer
+on:
+  push:
+    branches: [release/windows-tauri]
+permissions:
+  contents: read
+jobs:
+  install:
+    runs-on: windows-2025
+    timeout-minutes: 100
+    env:
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            apps/windows/src-tauri/target
+            apps/windows/.cache
+          key: tauri-windows-build-v2-${{ github.sha }}
+          restore-keys: tauri-windows-build-v2-
+      - run: npm ci
+        working-directory: apps/windows
+      - run: npm run dist:x64
+        working-directory: apps/windows
+      - name: Store installer for diagnostics and verification
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-tauri-installer
+          path: apps/windows/release/x64-cpu/*.exe
+          if-no-files-found: error
+      - name: Install, open WebView2 and verify persistence after restart
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $setup = @(Get-ChildItem apps/windows/release/x64-cpu -Filter '*.exe')
+          if ($setup.Count -ne 1) { throw 'Expected one Tauri installer' }
+          $dir = Join-Path $env:RUNNER_TEMP 'NolaInstalled'
+          $process = Start-Process $setup[0].FullName -ArgumentList "/S /D=$dir" -Wait -PassThru
+          if ($process.ExitCode) { throw "Installer exited $($process.ExitCode)" }
+          $env:NOLA_INSTALLED_DESKTOP = Join-Path $dir 'nola-desktop.exe'
+          npm --prefix apps/windows run test:e2e
+          if ($LASTEXITCODE) {
+            $file = Join-Path $env:LOCALAPPDATA 'com.nola.assistant.windows/host-startup.log'
+            if (Test-Path $file) { Get-Content $file -Tail 15 }
+            throw 'Installed Tauri smoke test failed'
+          }
