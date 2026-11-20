@@ -313,28 +313,48 @@ struct NolaApp: App {
                         .environmentObject(container)
                 }
             } else {
-                VStack(alignment: .leading, spacing: 20) {
-                    Label(String(localized: "Unable to open Nola data"), systemImage: "externaldrive.badge.exclamationmark")
-                        .font(.title2.bold())
-                    Text(String(localized: "Your existing data has been preserved. No database was reset or converted."))
-                    ScrollView {
-                        Text(startupFailure ?? String(localized: "Unknown startup error"))
-                            .font(.callout.monospaced())
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    Button("Retry") {
-                        do {
-                            container = try Self.makeServiceContainer()
-                            startupFailure = nil
-                        } catch {
-                            startupFailure = error.localizedDescription
-                            NSLog("Nola application startup failed: %@", error.localizedDescription)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        Label(String(localized: "Unable to open Nola data"), systemImage: "externaldrive.badge.exclamationmark")
+                            .font(.title2.bold())
+                            .accessibilityAddTraits(.isHeader)
+                        Text("Your existing data has been preserved. No database was reset or converted.")
+                            .foregroundStyle(DesignTokens.secondaryContentColor)
+                        Button {
+                            do {
+                                container = try Self.makeServiceContainer()
+                                startupFailure = nil
+                            } catch {
+                                startupFailure = error.localizedDescription
+                                NSLog("Nola application startup failed: %@", error.localizedDescription)
+                            }
+                        } label: {
+                            Text("Retry")
+                                .font(.body.weight(.semibold))
+                                .padding(.horizontal, 18)
+                                .frame(minHeight: 44)
                         }
+                        .buttonStyle(.borderedProminent)
+                        .tint(DesignTokens.actionColor)
+                        .foregroundStyle(DesignTokens.onActionColor)
+                        .accessibilityIdentifier("startup.retry")
+                        DisclosureGroup {
+                            Text(startupFailure ?? String(localized: "Unknown startup error"))
+                                .font(.footnote.monospaced())
+                                .foregroundStyle(DesignTokens.secondaryContentColor)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .accessibilityIdentifier("startup.diagnostic")
+                        } label: {
+                            Text("history.detail.diagnostics")
+                        }
+                        .disclosureGroupStyle(NolaRowDisclosureStyle(isPlain: true))
                     }
-                    .buttonStyle(.borderedProminent)
+                    .padding(24)
+                    .frame(maxWidth: 560, alignment: .leading)
+                    .frame(maxWidth: .infinity)
                 }
-                .padding(24)
+                .background(DesignTokens.backgroundColor)
             }
             }
             .preferredColorScheme((AppleAppearancePreference(rawValue: appearance) ?? .system).colorScheme)

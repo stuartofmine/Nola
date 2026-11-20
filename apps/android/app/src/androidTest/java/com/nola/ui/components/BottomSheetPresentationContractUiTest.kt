@@ -445,7 +445,6 @@ class BottomSheetPresentationContractUiTest {
 
         override suspend fun expertDefaultReasoningEfforts(): List<String> = emptyList()
         override suspend fun reasoningEfforts(model: ModelInfo): List<String> = emptyList()
-        override suspend fun expertDefaultsForModel(model: ModelInfo): JsonObject = buildJsonObject {}
         override suspend fun createAgent(
             conversationId: String?,
             storeEpoch: String?,

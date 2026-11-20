@@ -7,7 +7,7 @@
     --material-shadow: none;
 }
 :root[data-theme=dark] {
-    --material-fill: var(--surface, #1b1b19);
+    --material-fill: var(--surface, #222420);
     --material-highlight: transparent;
     --material-shadow: none;
 }
@@ -38,6 +38,13 @@ dialog input, dialog select, dialog textarea, .model-setup-form input, .model-se
 @media (forced-colors: active) {
     .inline-card, .error-card, .approval, .im-group, .model-setup-prompt, .composer, #sheet, #dialog,
     input, textarea, select, .primary, .im-primary, .im-quiet { background: Canvas; box-shadow: none; }
+}
+
+.composer:focus-within {border-color:var(--focus);}
+@media (prefers-reduced-motion:no-preference) {
+    html:not(.reduced) :is(.composer,.im-composer,.rail .nav-item,.history-item,.strip-entry) {
+        transition:background-color 160ms ease-out, border-color 160ms ease-out, color 160ms ease-out;
+    }
 }
 
 /* Ordinary content stays flat; only floating dialogs need elevation. */

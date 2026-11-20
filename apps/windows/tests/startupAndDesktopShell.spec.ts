@@ -130,8 +130,8 @@ test("startupPageHtml enforces Warm Paper/Ink tokens, WCAG contrast, layout boun
             expect(await page.locator("h1").textContent()).toBe(item.mode === "failed" ? strings.failedTitle : strings.startingTitle);
 
             if (item.forcedColors !== "active") {
-                const expectedBodyBg = item.scheme === "dark" ? "rgb(19, 19, 18)" : "rgb(247, 246, 243)";
-                const expectedCardBg = item.scheme === "dark" ? "rgb(27, 27, 25)" : "rgb(255, 255, 255)";
+                const expectedBodyBg = item.scheme === "dark" ? "rgb(27, 28, 26)" : "rgb(250, 248, 244)";
+                const expectedCardBg = item.scheme === "dark" ? "rgb(34, 36, 32)" : "rgb(255, 255, 255)";
                 const styles = await page.evaluate(() => ({
                     bodyBg: getComputedStyle(document.body).backgroundColor,
                     cardBg: getComputedStyle(document.querySelector(".card")!).backgroundColor,
@@ -218,6 +218,30 @@ test("startup recovery buttons enforce Tauri command and busy/retry guards", asy
     }
 });
 
+test("startup recovers from a missed status read and shows native action errors", async ({ page }) => {
+    await page.setContent("<main>Nola</main>");
+    await page.addScriptTag({content: preloadHarness});
+    await page.addScriptTag({content: `{
+        const original = window.__TAURI_INTERNALS__.invoke;
+        let unavailable = true;
+        window.__TAURI_INTERNALS__.invoke = (command, args) => {
+            if (command === "startup_status" && unavailable) {
+                unavailable = false;
+                return Promise.reject(new Error("Bridge connecting"));
+            }
+            if (command === "open_diagnostics") return Promise.reject(new Error("Folder unavailable"));
+            return original(command, args);
+        };
+    }`});
+    await page.addScriptTag({content: startup});
+    const logs = page.getByRole("button", {name: stringsFor("en").openLogs});
+    await logs.click();
+    await expect(page.getByRole("status")).toHaveText("Folder unavailable");
+    await expect(logs).toBeEnabled();
+    await expect(page.locator(".detail")).toHaveText("Exit code 1");
+    await expect(page).toHaveTitle(stringsFor("en").failedTitle);
+});
+
 test("Windows desktop shell integration against isolated real nola web renders Svelte 5 chat, Settings login card, and /models runtime badge", async ({ browser }) => {
     const cliPath = resolveNolaBinary();
     const port = await allocatePort();
@@ -254,45 +278,94 @@ test("Windows desktop shell integration against isolated real nola web renders S
         const pageErrors: string[] = [];
         page.on("pageerror", (err) => pageErrors.push(err.message));
 
-        // 1. Svelte 5 Chat workspace & conversation creation
-        await page.goto(`${origin}/chat`, { waitUntil: "networkidle" });
-        await expect(page.locator("html")).toHaveAttribute("data-nola-desktop", "windows");
-        await expect(page.locator(".chat-page")).toBeVisible();
-        await expect(page.locator(".chat-navigation")).toBeVisible();
-        await expect(page.locator(".chat-main")).toBeVisible();
-        expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe("rgb(19, 19, 18)");
-        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        // Record the real viewport after each postcondition. The report retains
+        // the last visible state even when a click or its postcondition fails.
+        async function action(name: string, perform: () => Promise<void>, verify: () => Promise<void>) {
+            await test.step(name, async () => {
+                async function capture(phase: string) {
+                    const filename = name + '-' + phase + '.png';
+                    const image = test.info().outputPath(filename);
+                    await page.screenshot({path: image, animations: "disabled"});
+                    await test.info().attach(filename, {path: image, contentType: "image/png"});
+                }
+                await capture('before');
+                try {
+                    await perform();
+                    await verify();
+                    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+                } catch (error) {
+                    await capture('failure');
+                    throw error;
+                }
+                await capture('after');
+            });
+        }
 
-        await page.locator("button.new-conversation:visible").first().click();
-        await page.locator("#chat-composer").waitFor();
-        await page.locator("#chat-composer").fill("Windows desktop shell roundtrip");
-        expect(await page.locator("#chat-composer").inputValue()).toBe("Windows desktop shell roundtrip");
-
-        // 2. Settings #desktopLoginItemCard failed read + reload + lost-reply reconciliation
-        await page.goto(`${origin}/settings?section=general`, { waitUntil: "networkidle" });
+        await page.goto(origin + '/chat');
+        await expect(page.locator('html')).toHaveAttribute('data-nola-desktop', 'windows');
+        await expect(page.locator('.chat-main')).toBeVisible();
+        expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe('rgb(27, 28, 26)');
+        const composer = page.locator('#chat-composer');
+        const settings = page.locator('.settings-overview');
         const card = page.locator('[id$="desktopLoginItemCard"]');
-        await card.waitFor();
-        await card.locator('[role="alert"]').waitFor();
-        await card.getByRole("button").click();
         const toggle = card.locator('button[aria-pressed]');
-        await toggle.waitFor();
-        await expect(toggle).toHaveAttribute("aria-pressed", "false");
-        await toggle.click();
-        await expect(toggle).toHaveAttribute("aria-pressed", "true");
-        expect(await card.locator('[role="alert"]').count()).toBe(0);
+        await action('01-create-conversation', () => page.getByRole('button', {name:'New conversation', exact:true}).click(),
+            async () => {
+                await expect(composer).toBeEnabled();
+                await expect(page.getByRole('tab', {name:'New conversation', exact:true})).toHaveAttribute('aria-selected','true');
+            });
+        await action('02-enter-draft', () => composer.fill('Windows desktop shell roundtrip'),
+            () => expect(composer).toHaveValue('Windows desktop shell roundtrip'));
+        await action('03-open-settings', () => page.getByRole('button', {name:'Settings', exact:true}).click(),
+            () => expect(settings).toBeVisible());
+        const categories = [
+            ['general', 'General'], ['agent', 'Agent'], ['connections', 'Connections'],
+            ['data', 'Data'], ['diagnostics', 'Diagnostics'], ['providers', 'API Providers'],
+        ];
+        async function categoryReady(id: string) {
+            const panel = page.locator('[id$="settings-panel-' + id + '"]');
+            await expect(panel).toBeVisible();
+            await expect(panel.getByRole('heading').first()).toBeVisible();
+            if (id === 'diagnostics') await expect(panel.locator('dl')).toBeVisible();
+            if (id === 'agent') await expect(panel.locator('.agent-access fieldset')).toBeVisible();
+        }
+        for (const [id, label] of categories) {
+            const tab = page.getByRole('tab', {name:label, exact:true});
+            await action('desktop-' + id, () => id === 'general'
+                ? settings.getByRole('link', {name:label, exact:true}).click() : tab.click(), async () => {
+                await expect(tab).toHaveAttribute('aria-selected','true');
+                await categoryReady(id);
+            });
+            if (id === 'general') {
+                await expect(card.getByRole('alert')).toBeVisible();
+                await action('retry-login-setting', () => card.getByRole('button').click(),
+                    () => expect(toggle).toHaveAttribute('aria-pressed','false'));
+                await action('enable-login-setting', () => toggle.click(), async () => {
+                    await expect(toggle).toHaveAttribute('aria-pressed','true');
+                    await expect(card.getByRole('alert')).toHaveCount(0);
+                });
+            }
+        }
+        await action('open-models', () => page.getByRole('link', {name:'Manage API models'}).click(),
+            () => expect(page.locator('[role="tab"][id$="tab-api"]')).toHaveAttribute('aria-selected','true'));
+        await action('show-local-models', () => page.locator('[role="tab"][id$="tab-local"]').click(), async () => {
+            await expect(page.locator('[id$="panel-local"]')).toBeVisible();
+            await expect(page.locator('[data-local-runtime-host] .desktop-native-runtime')).toHaveText('VULKAN · X64');
+        });
 
-        // 3. /models API & Local tabs + [data-local-runtime-host] / .desktop-native-runtime badge
-        await page.goto(`${origin}/models`, { waitUntil: "networkidle" });
-        await expect(page.locator('[role="tab"][id$="tab-api"]')).toBeVisible();
-        await expect(page.locator('[role="tab"][id$="tab-local"]')).toBeVisible();
-        await page.locator('[role="tab"][id$="tab-local"]').click();
-        await expect(page.locator('[id$="panel-local"]')).toBeVisible();
-        const runtimeHost = page.locator("[data-local-runtime-host]");
-        await runtimeHost.waitFor();
-        const badge = runtimeHost.locator(".desktop-native-runtime");
-        await expect(badge).toBeVisible();
-        await expect(badge).toHaveText("VULKAN · X64");
-        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        await page.setViewportSize({width:390,height:844});
+        // Re-enter the settings workspace, then use only the visible narrow-screen
+        // category and back controls to traverse all six sections.
+        await page.goto(origin + '/settings');
+        for (const [id,label] of categories) {
+            const link = settings.getByRole('link',{name:label, exact:true});
+            await action('narrow-open-' + id, () => link.click(), async () => {
+                await categoryReady(id);
+                await expect(settings).toBeHidden();
+            });
+            await action('narrow-back-' + id, () => page.locator('.settings-back button:visible').click(),
+                () => expect(link).toBeVisible());
+        }
 
         expect(pageErrors).toEqual([]);
         await context.close();

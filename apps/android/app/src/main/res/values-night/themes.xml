@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.Nola" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">#131312</item>
+        <item name="android:windowBackground">#1b1c1a</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>

@@ -29,15 +29,15 @@ enum MacVisualPixelAssertions {
     }
 
     private static let lightBackgrounds = [
-        RGB(r: 0xF7, g: 0xF6, b: 0xF3),
+        RGB(r: 0xFA, g: 0xF8, b: 0xF4),
         RGB(r: 0xFF, g: 0xFF, b: 0xFF),
-        RGB(r: 0xF1, g: 0xF0, b: 0xEC),
+        RGB(r: 0xF1, g: 0xEF, b: 0xE8),
     ]
 
     private static let darkBackgrounds = [
-        RGB(r: 0x13, g: 0x13, b: 0x12),
-        RGB(r: 0x1B, g: 0x1B, b: 0x19),
-        RGB(r: 0x23, g: 0x23, b: 0x20),
+        RGB(r: 0x1B, g: 0x1C, b: 0x1A),
+        RGB(r: 0x22, g: 0x24, b: 0x20),
+        RGB(r: 0x29, g: 0x2C, b: 0x27),
     ]
 
     @discardableResult
@@ -338,8 +338,11 @@ enum MacVisualPixelAssertions {
                     rowBlack += 1
                 }
 
-                let isLightCoolGray = !isDark && r > 215 && (b - r) >= 4
-                let isDarkCoolGray = isDark && (20...55).contains(r) && (b - r) >= 4
+                // Sage selection fills have more blue than red, but green is
+                // their dominant channel. Check for a blue cast specifically.
+                let blueCast = b >= g && b - r >= 4
+                let isLightCoolGray = !isDark && r > 215 && blueCast
+                let isDarkCoolGray = isDark && (20...55).contains(r) && blueCast
                 if isLightCoolGray || isDarkCoolGray {
                     coolGrayCount += 1
                 }

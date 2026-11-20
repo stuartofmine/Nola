@@ -19,6 +19,7 @@ struct IOSAgentRoomsView: View {
     @State private var reasoningEfforts: [String] = []
     @State private var showingTemplateLibrary = false
     @State private var configuration = AppleExpertConfigurationDraft()
+    @State private var removedModelOverrides: Set<String> = []
     private enum PendingEditorAction { case edit(IOSPersistentAgent?), archive, close }
     @State private var pendingEditorAction: PendingEditorAction?
     @State private var showDiscardConfirmation = false
@@ -26,7 +27,8 @@ struct IOSAgentRoomsView: View {
     private var service: IOSAgentRoomService { IOSAgentRoomService(runtime: container.applicationRuntime) }
     private var editorIsDirty: Bool {
         guard let original = try? AppleExpertConfigurationDraft(defaults: editing?.defaults ?? .object([:])) else { return true }
-        return agentName != (editing?.name ?? "") || agentDescription != (editing?.description ?? "") || configuration != original
+        return agentName != (editing?.name ?? "") || agentDescription != (editing?.description ?? "") ||
+            configuration != original || !removedModelOverrides.isEmpty
     }
 
     var body: some View {
@@ -34,7 +36,7 @@ struct IOSAgentRoomsView: View {
             List {
                 Group {
                     if let error { Text(error).foregroundStyle(.red) }
-                    expertDirectorySection
+                    if !agents.isEmpty { expertDirectorySection }
                     expertEditorSection
                 }
                 .listRowBackground(DesignTokens.surfaceColor)
@@ -64,11 +66,6 @@ struct IOSAgentRoomsView: View {
                 }
             }
             .onAppear(perform: reloadEditorData)
-            .onChange(of: configuration.templateID) { _, _ in
-                guard let role = selectedRole else { return }
-                if agentName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { agentName = role.localizedName(locale: locale) }
-                if agentDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { agentDescription = role.localizedDescription(locale: locale) }
-            }
             .onChange(of: configuration.modelID) { _, _ in
                 refreshReasoningEfforts()
             }
@@ -100,8 +97,10 @@ struct IOSAgentRoomsView: View {
                     }.frame(minHeight: 44).contentShape(Rectangle())
                 }.accessibilityIdentifier("experts.edit." + agent.id)
             }
-            Button("room.create_agent") { requestEditorAction(.edit(nil)) }
-                .accessibilityIdentifier("experts.create")
+            if editing != nil {
+                Button("room.create_agent") { requestEditorAction(.edit(nil)) }
+                    .accessibilityIdentifier("experts.create")
+            }
         }
     }
 
@@ -109,6 +108,11 @@ struct IOSAgentRoomsView: View {
         Section(String(localized: editing == nil ? "room.create_agent" : "experts.edit.title")) {
             identityFields
             modelPicker
+            if let editing, configuration.hasSelectedModelOverride(in: editing.defaults),
+               !removedModelOverrides.contains(configuration.modelID) {
+                Button("experts.useModelDefaults") { removedModelOverrides.insert(configuration.modelID) }
+                    .accessibilityIdentifier("experts.model.restoreDefaults")
+            }
             reasoningControl
             templateControl
             selectedRoleDetails
@@ -167,13 +171,22 @@ struct IOSAgentRoomsView: View {
     @ViewBuilder
     private var templateControl: some View {
         if let service = container.promptTemplates {
-            IOSExpertTemplatePicker(service: service, roles: roles, selection: $configuration.templateID)
+            IOSExpertTemplatePicker(service: service, roles: roles, selection: templateSelection)
         } else {
-            Picker("experts.template", selection: $configuration.templateID) {
+            Picker("experts.template", selection: templateSelection) {
                 Text("experts.conversationTemplate").tag("")
                 ForEach(roles) { role in Text(role.localizedName(locale: locale)).tag(role.id) }
             }.accessibilityIdentifier("experts.template")
         }
+    }
+
+    private var templateSelection: Binding<String> {
+        Binding(get: { configuration.templateID }, set: { id in
+            configuration.templateID = id
+            guard let role = selectedRole else { return }
+            if agentName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { agentName = role.localizedName(locale: locale) }
+            if agentDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { agentDescription = role.localizedDescription(locale: locale) }
+        })
     }
 
     @ViewBuilder
@@ -274,6 +287,7 @@ struct IOSAgentRoomsView: View {
             ?? AppleExpertConfigurationDraft()
         editing = agent
         configuration = next
+        removedModelOverrides = []
         agentName = agent?.name ?? ""
         agentDescription = agent?.description ?? ""
         refreshReasoningEfforts()
@@ -309,7 +323,7 @@ struct IOSAgentRoomsView: View {
             }
             _ = try service.requireReadableTemplate(id: id)
         }
-        let nextDefaults = try configuration.applying(to: original)
+        let nextDefaults = try configuration.applying(to: original, removingModelOverrides: removedModelOverrides)
         if let editing {
             agents = try service.updateAgent(editing, name: agentName.trimmingCharacters(in: .whitespacesAndNewlines),
                 description: agentDescription.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -317,28 +331,9 @@ struct IOSAgentRoomsView: View {
             try installEditor(agents.first { $0.id == editing.id })
             return
         }
-        if configuration.modelID.isEmpty {
-            agents = try service.createAgent(name: agentName.trimmingCharacters(in: .whitespacesAndNewlines),
-                description: agentDescription.trimmingCharacters(in: .whitespacesAndNewlines),
-                defaults: nextDefaults, directory: service.directory()).agents
-            try installEditor(nil)
-            return
-        }
-        guard let model = models.first(where: { IOSConversationGenerationOverride.modelKey(for: $0) == configuration.modelID }) else {
-            throw IOSApplicationRuntimeError.rejected(String(localized: "room.select_model"))
-        }
-        let key = IOSConversationGenerationOverride.modelKey(for: model)
-        let parameters = ModelParametersStore.shared.loadParameters(for: model.id, isLocal: model.isLocal)
-        let json = try ConversationParameterSnapshot.updating(nil, modelKey: key, parameters: parameters)
-        let fields = try JSONDecoder().decode(AgentCoreJSONValue.self, from: Data(json.utf8))
-        guard case .object(let object) = fields else { throw IOSApplicationRuntimeError.rejected("Invalid model parameters") }
-        var defaults = object.filter { $0.key == "modelOverrides" }
-        defaults["modelSelectionID"] = .string(key)
-        if !configuration.templateID.isEmpty { defaults["selectedPromptTemplateID"] = .string(configuration.templateID) }
-        if configuration.reasoningEffort != "automatic" { defaults["expertReasoningEffort"] = .string(configuration.reasoningEffort) }
         agents = try service.createAgent(name: agentName.trimmingCharacters(in: .whitespacesAndNewlines),
             description: agentDescription.trimmingCharacters(in: .whitespacesAndNewlines),
-            defaults: .object(defaults), directory: service.directory()).agents
+            defaults: nextDefaults, directory: service.directory()).agents
         try installEditor(nil)
     }
 }

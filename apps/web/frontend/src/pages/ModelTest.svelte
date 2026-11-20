@@ -31,6 +31,21 @@
     import type { RemoteProfile } from '../lib/modelProfiles';
     import Markdown from '../components/Markdown.svelte';
 
+    const componentId = $props.id();
+
+    function navigateTabs(event: KeyboardEvent) {
+        const button = event.currentTarget as HTMLButtonElement;
+        const tabs = Array.from(button.parentElement!.querySelectorAll<HTMLButtonElement>('button[role="tab"]:enabled'));
+        const index = tabs.indexOf(button);
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
+            : event.key === 'ArrowRight' ? (index + 1) % tabs.length
+            : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length : -1;
+        if (next < 0) return;
+        event.preventDefault();
+        tabs[next].focus();
+        tabs[next].click();
+    }
+
     let target = $state<'local' | 'cloud'>('local');
     let compactPane = $state<'setup' | 'output'>('setup');
     let prompt = $state(t(get(locale), 'modelTest.defaultPrompt'));
@@ -473,19 +488,19 @@
     {#if error}<p class="notice error" role="alert">{error}</p>{/if}
     {#if warning}<p class="notice" role="status">{warning}{#if conversation}<a href={`/chat?conversation=${encodeURIComponent(conversation.conversationId)}`}>{t($locale, 'modelTest.openConversation')}</a>{/if}</p>{/if}
     <div class="tabs compact-panes" role="tablist" aria-label={t($locale, 'modelTest.pane')}>
-        <button role="tab" aria-controls="model-test-setup" aria-selected={compactPane === 'setup'} tabindex={compactPane === 'setup' ? 0 : -1} onclick={() => compactPane = 'setup'}>{t($locale, 'modelTest.setup')}</button>
-        <button role="tab" aria-controls="model-test-output" aria-selected={compactPane === 'output'} tabindex={compactPane === 'output' ? 0 : -1} onclick={() => compactPane = 'output'}>{t($locale, 'modelTest.output')}</button>
+        <button role="tab" id="{componentId}-setup-tab" aria-controls="{componentId}-setup" onkeydown={navigateTabs} aria-selected={compactPane === 'setup'} tabindex={compactPane === 'setup' ? 0 : -1} onclick={() => compactPane = 'setup'}>{t($locale, 'modelTest.setup')}</button>
+        <button role="tab" id="{componentId}-output-tab" aria-controls="{componentId}-output" onkeydown={navigateTabs} aria-selected={compactPane === 'output'} tabindex={compactPane === 'output' ? 0 : -1} onclick={() => compactPane = 'output'}>{t($locale, 'modelTest.output')}</button>
     </div>
     <div class="model-test-grid" data-active-pane={compactPane}>
-        <section id="model-test-setup" class="card setup">
-            <h2>{t($locale, 'modelTest.setup')}</h2>
+        <section id="{componentId}-setup" aria-labelledby="{componentId}-setup-title" class="card setup">
+            <h2 id="{componentId}-setup-title">{t($locale, 'modelTest.setup')}</h2>
             <div class="tabs" role="tablist" aria-label={t($locale, 'models.type')}>
-                <button role="tab" aria-selected={target === 'local'} onclick={() => target = 'local'} disabled={busy}>{t($locale, 'models.local')}</button>
-                <button role="tab" aria-selected={target === 'cloud'} onclick={() => target = 'cloud'} disabled={busy}>{t($locale, 'models.api')}</button>
+                <button role="tab" id="{componentId}-local-tab" aria-controls="{componentId}-model" tabindex={target === 'local' ? 0 : -1} onkeydown={navigateTabs} aria-selected={target === 'local'} onclick={() => target = 'local'} disabled={busy}>{t($locale, 'models.local')}</button>
+                <button role="tab" id="{componentId}-cloud-tab" aria-controls="{componentId}-model" tabindex={target === 'cloud' ? 0 : -1} onkeydown={navigateTabs} aria-selected={target === 'cloud'} onclick={() => target = 'cloud'} disabled={busy}>{t($locale, 'models.api')}</button>
             </div>
-            <p class="model-name">{activeName || t($locale, 'modelTest.notConfigured')}</p>
-            <label for="model-test-prompt">{t($locale, 'modelTest.prompt')}</label>
-            <textarea id="model-test-prompt" bind:value={prompt} disabled={busy} rows="9"></textarea>
+            <div class="model-name" id="{componentId}-model" role="tabpanel" tabindex="0" aria-labelledby="{componentId}-{target}-tab">{activeName || t($locale, 'modelTest.notConfigured')}</div>
+            <label for="{componentId}-prompt">{t($locale, 'modelTest.prompt')}</label>
+            <textarea id="{componentId}-prompt" bind:value={prompt} disabled={busy} rows="9"></textarea>
             <p class="muted">{t($locale, 'modelTest.safeHint')}</p>
             <div class="metrics">
                 <h3>{t($locale, 'modelTest.metrics')}</h3>
@@ -497,8 +512,8 @@
                 {#if contextUsage?.usage.estimated}<p class="muted">{t($locale, 'chatOverview.estimated')}</p>{/if}
             </div>
         </section>
-        <section id="model-test-output" class="card output">
-            <header><h2>{t($locale, 'modelTest.output')}</h2><div class="actions">{#if turn?.phase === 'recovering'}<button onclick={resume} disabled={!turn.runId || observedRecovery !== 'resume_required' || !resumeAuthority || consumedResumeAuthorities.has(resumeAuthority)}>{t($locale, 'modelTest.resume')}</button>{/if}{#if conversation && (turn?.phase === 'recovering' || turn?.phase === 'cancel_requested')}<a href={`/chat?conversation=${encodeURIComponent(conversation.conversationId)}`}>{t($locale, 'modelTest.openConversation')}</a>{/if}<button onclick={clear} disabled={busy || !output && !error}>{t($locale, 'modelTest.clear')}</button></div></header>
+        <section id="{componentId}-output" aria-labelledby="{componentId}-output-title" class="card output">
+            <header><h2 id="{componentId}-output-title">{t($locale, 'modelTest.output')}</h2><div class="actions">{#if turn?.phase === 'recovering'}<button onclick={resume} disabled={!turn.runId || observedRecovery !== 'resume_required' || !resumeAuthority || consumedResumeAuthorities.has(resumeAuthority)}>{t($locale, 'modelTest.resume')}</button>{/if}{#if conversation && (turn?.phase === 'recovering' || turn?.phase === 'cancel_requested')}<a href={`/chat?conversation=${encodeURIComponent(conversation.conversationId)}`}>{t($locale, 'modelTest.openConversation')}</a>{/if}<button onclick={clear} disabled={busy || !output && !error}>{t($locale, 'modelTest.clear')}</button></div></header>
             {#if busy}<p role="status" class="muted">{t($locale, 'modelTest.running')}</p>{/if}
             {#if output}<div class="rendered-output"><Markdown source={output} /></div>{:else}<p class="empty muted">{t($locale, 'modelTest.empty')}</p>{/if}
         </section>
@@ -511,11 +526,11 @@
     .page-header h1 { margin-bottom: 4px; }
     .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
     .model-test-grid { display: grid; grid-template-columns: minmax(280px, 360px) minmax(0, 1fr); gap: 16px; padding: 20px; }
-    .compact-panes { display: none; }
     .card { min-width: 0; padding: 20px; }
     .setup { display: flex; flex-direction: column; gap: 12px; }
     .setup h2, .output h2 { margin: 0; }
     .tabs { display: flex; gap: 4px; }
+    .compact-panes { display: none; }
     .model-name { font-weight: 600; margin: 0; }
     textarea { width: 100%; min-height: 160px; resize: vertical; }
     .metrics { margin-top: 12px; padding: 14px; border-radius: 12px; background: color-mix(in srgb, currentColor 4%, transparent); }

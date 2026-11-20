@@ -28,7 +28,7 @@ struct MacHealthSummaryView: View {
                 LocalizedStringKey(macHealthText("mac.health.title", "iPhone Health")),
                 symbol: "heart",
                 navigationAction: navigationAction,
-                navigationSymbol: "chevron.left",
+                navigationKind: .back,
                 navigationLabel: LocalizedStringKey(macHealthText("mac.health.data_center", "Data Center"))
             ) {
                 if let snapshot = store.snapshot {

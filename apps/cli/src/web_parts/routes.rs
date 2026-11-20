@@ -2284,9 +2284,15 @@ fn create_conversation_response(request: &mut Request) -> Response<Box<dyn Read 
         Err(response) => return response,
     };
     let now = now_string();
-    let mut conversation = WebConversation::new(new_id("conv"),
-        normalize_title(input.title.as_deref()), now.clone(), now);
-    if input.title.as_deref().is_some_and(|title|!title.trim().is_empty()) {conversation.title_source=ConversationTitleSource::User;}
+    let user_title = input.title.as_deref().filter(|title| !title.trim().is_empty());
+    let title = match user_title {
+        Some(title) => normalize_title(Some(title)),
+        None => crate::i18n::new_conversation_title(request_language(request)).to_owned(),
+    };
+    let mut conversation = WebConversation::new(new_id("conv"), title, now.clone(), now);
+    if user_title.is_some() {
+        conversation.title_source = ConversationTitleSource::User;
+    }
     if let Err(err) = apply_model_selection(
         &mut conversation,
         input.selected_model_source.as_deref(),

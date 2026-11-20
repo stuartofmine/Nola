@@ -2940,7 +2940,7 @@ fn chat_agent_stream_response_body_with_room_retry(
         context_components.retain(|component| component.kind != ContextComponentKind::PromptTemplate);
         context_components.extend(definitions);
     }
-    let (initial_items, input_items) = split_web_core_items(&context_messages);
+    let (initial_items, input_items) = split_web_core_items(&context_messages, &dispatch.identity.user_message_id);
     if input_items.is_empty() {
         return json_response(
             StatusCode(422),
@@ -2962,6 +2962,7 @@ fn chat_agent_stream_response_body_with_room_retry(
         .unwrap_or_default();
     // Keep presentation intent until an exact canonical source receipt proves
     // admission. Preflight success, transport success, and model success do not.
+    let in_place_resend = body.get("in_place_resend_operation_id").is_some();
     let first_message_title_text = (should_persist_trace && edited_prepared.is_none()).then(|| {
         body.get("current_user_display_text").and_then(Value::as_str)
             .unwrap_or(external_prompt.as_str()).to_owned()
@@ -3242,7 +3243,7 @@ fn chat_agent_stream_response_body_with_room_retry(
                     // The receipt fence above observes a committed canonical
                     // admission, so a long-running response gets its title now.
                     // The post-pump check below also covers early provider errors.
-                    let _=adopt_first_message_conversation_title_after_admission(&admitted_title_identity,&admitted_title_digest,text);
+                    let _=adopt_first_message_conversation_title_after_admission(&admitted_title_identity,&admitted_title_digest,text,in_place_resend);
                 }
             }
             if let Some(owner) = &observation_owner {
@@ -3474,7 +3475,7 @@ fn chat_agent_stream_response_body_with_room_retry(
             }
         });
         if let Some(visible_text)=first_message_title_text.as_deref() {
-            if let Err(error)=adopt_first_message_conversation_title_after_admission(&dispatch.identity,&dispatch.digest,visible_text) {
+            if let Err(error)=adopt_first_message_conversation_title_after_admission(&dispatch.identity,&dispatch.digest,visible_text,in_place_resend) {
                 // The Run may already be admitted and fail at the provider.
                 // Title metadata must neither turn that admission into failure
                 // nor be written from an unconfirmed source request.

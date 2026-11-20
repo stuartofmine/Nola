@@ -342,3 +342,11 @@ def test_ui_action_observer_records_revision_without_form_values():
     del envelope["surface_revision"]
     request["input"][0]["content"][0]["text"] = json.dumps(envelope)
     assert PROBE.inspect_ui_action_revisions(request)["modelUiActionSurfaceRevisions"] == [None]
+
+
+def test_failed_responses_events_record_only_known_codes():
+    evidence = PROBE.inspect_response(b'data: {"type":"response.failed","response":{"error":{"code":"server_error","message":"private text"}}}\n'
+                                      b'data: {"type":"error","code":"private-identifier"}\n')
+    assert evidence["finishReasons"] == ["failed"]
+    assert evidence["responseFailureCodes"] == ["server_error", "unknown"]
+    assert "private" not in json.dumps(evidence)

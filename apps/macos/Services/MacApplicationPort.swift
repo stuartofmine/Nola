@@ -589,6 +589,12 @@ nonisolated struct MacCanonicalConversationMessage: Codable, Equatable, Sendable
     }
 }
 
+nonisolated enum MacConversationTitleSource: String, Codable {
+    case automatic
+    case firstMessage = "first_message"
+    case user
+}
+
 nonisolated struct MacCanonicalConversation: Codable, Equatable, Sendable {
     let id: String
     let title: String
@@ -3560,13 +3566,18 @@ nonisolated final class MacApplicationPort:
         }
     }
 
-    func renameConversation(_ conversationID: String, title: String, updatedAtMs: Int64) throws -> Bool {
-        try execute(RenameConversationCommand(
+    func renameConversation(_ conversationID: String, title: String, source: MacConversationTitleSource = .user,
+                            expectedRevision: UInt64? = nil, updatedAtMs: Int64) throws -> Bool {
+        let command = RenameConversationCommand(
             type: "rename_conversation",
             conversationID: conversationID,
             title: title,
+            titleSource: source,
             updatedAtMs: updatedAtMs
-        ))
+        )
+        let data = try Self.makeEncoder().encode(command)
+        let response = try serviceClient.execute(commandData: data, expectedRevision: expectedRevision)
+        return try Self.makeDecoder().decode(Bool.self, from: response)
     }
 
     func deleteConversation(_ conversationID: String) throws -> Bool {
@@ -4819,6 +4830,7 @@ nonisolated final class MacApplicationPort:
         let type: String
         let conversationID: String
         let title: String
+        let titleSource: MacConversationTitleSource
         let updatedAtMs: Int64
     }
 

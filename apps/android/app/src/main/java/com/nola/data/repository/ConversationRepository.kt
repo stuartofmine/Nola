@@ -113,6 +113,7 @@ class ConversationRepositoryImpl @Inject constructor(
         val initial = Json.parseToJsonElement(if (modelInfo != null && parameters != null && !isHost)
             writeConversationParameters(encoded, modelInfo, parameters) else encoded).jsonObject.toMutableMap()
         initial.remove("knowledgePoints"); initial.remove("wiki")
+        initial["titleSource"] = JsonPrimitive(if (title.isNullOrBlank()) "automatic" else "user")
         initial["knowledge"] = JsonObject(mapOf("keyPointsMarkdown" to JsonPrimitive(settings.knowledgePoints),
             "wikiMarkdown" to JsonPrimitive(settings.wiki), "updatedAt" to kotlinx.serialization.json.JsonNull))
         applicationRuntime.createConversation(id, title.orEmpty(), now, now, JsonObject(initial).toString())

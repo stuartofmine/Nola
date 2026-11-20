@@ -1303,7 +1303,14 @@ impl AgentRuntime {
                         self.session.record_item(item);
                         let item = AgentItem::ToolResult { id: ItemId::from_string(self.session.allocate_id("tool_result")),
                             call_id: call.call_id.clone(), name: call.name.clone(),
-                            output: match &result { Ok((value,_)) => value.clone(), Err(error) => json!({"error":error}) },
+                            output: match &result {
+                                Ok((value,_)) => value.clone(),
+                                Err(error) if control == super::task_scope::TOOL => json!({
+                                    "error": error,
+                                    "next_action": "The previous scope is still in effect. Correct task_scope_update before replying. To keep that scope, submit requirements=[] with a retain disposition for each current rN. To extend it, retain the existing requirements and add distinct new claims. A plain final reply does not settle this rejected control."
+                                }),
+                                Err(error) => json!({"error":error}),
+                            },
                             is_error: result.is_err(), full_output_ref: None, artifacts: Vec::new() };
                         events.push(RuntimeEvent::ItemCompleted { turn_id: turn_id.clone(), item: item.clone() });
                         self.session.record_item(item);

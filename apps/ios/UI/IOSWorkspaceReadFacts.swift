@@ -27,6 +27,7 @@ nonisolated enum IOSWorkspaceReadFacts {
     static func conversationDirectory(runtime: IOSApplicationRuntime,
                                       summaries: [IOSCanonicalConversationSummary]) throws -> [IOSConversationDirectoryEntry] {
         var result: [IOSConversationDirectoryEntry] = []
+        var seen = Set<UUID>()
         for summary in summaries {
             try Task.checkCancellation()
             guard let id = UUID(uuidString: summary.id) else { continue }
@@ -37,6 +38,9 @@ nonisolated enum IOSWorkspaceReadFacts {
             if let owner = settings["agentRoomOwner"] {
                 _ = try ConversationAgentRoomOwner.read(owner)
                 continue
+            }
+            guard seen.insert(id).inserted else {
+                throw IOSApplicationRuntimeError.rejected(String(localized: "chat.history.ambiguousIDs"))
             }
             result.append(.init(id: id, title: summary.title,
                 lastActiveAt: Date(timeIntervalSince1970: Double(summary.updatedAtMs) / 1000),

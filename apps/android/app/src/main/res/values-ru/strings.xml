@@ -1115,12 +1115,11 @@
     <string name="model_connections_host_hint">Список ниже относится к этому устройству. Импорт, аккаунты и настройка шлюза на подключённом Host управляются отдельно.</string>
     <string name="model_connections_host_manage">Импорт, настройка и проверка на подключённом Host</string>
     <string name="model_connections_loading">Загрузка подключений…</string>
-    <string name="model_connections_pair_first">Подключите Host ниже, чтобы открыть страницу управления с авторизацией. Это не изменит подключения на данном устройстве.</string>
     <string name="model_connections_refresh">Обновить</string>
     <string name="model_connections_source_boundary">Вход в аккаунт источника нужно выполнять в браузере на компьютере с Host. Вход в OpenCode, Codex или Kimi Code не включает генерацию Nola с этим аккаунтом. Обновление каталога не запускает генерацию; проверка требует отдельного подтверждения и может повлечь расходы.</string>
     <string name="model_connections_title">Подключения и аккаунты</string>
     <string name="models_loading">Загрузка моделей</string>
-    <string name="room_agent_description">Обязанности агента (видны координатору)</string>
+    <string name="room_agent_description">Задачи, видимые главному агенту</string>
     <string name="room_agent_model">Модель: %1$s</string>
     <string name="room_automatic">Выбор координатора · @ агент</string>
     <string name="room_diagnostics">Показать сведения диагностики</string>

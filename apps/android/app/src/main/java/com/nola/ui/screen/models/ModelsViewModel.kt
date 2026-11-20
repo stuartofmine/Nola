@@ -12,6 +12,7 @@ import com.nola.data.repository.ApiModelConfig
 import com.nola.data.remote.api.normalizeCertificateSha256
 import com.nola.data.remote.api.isAllowedWebHostTransport
 import com.nola.data.remote.dto.MessagingStatusDto
+import com.nola.domain.model.ModelWireProtocol
 import com.nola.domain.model.ModelInfo
 import com.nola.domain.model.ModelInput
 import com.nola.domain.model.ModelParameters
@@ -61,7 +62,7 @@ data class ModelsUiState(
     val savingEndpoint: Boolean = false,
     val endpointSaveError: String? = null,
     val apiModel: String = "",
-    val apiWireProtocol: com.nola.domain.model.ModelWireProtocol = com.nola.domain.model.ModelWireProtocol.ChatCompletions,
+    val apiWireProtocol: ModelWireProtocol = ModelWireProtocol.ChatCompletions,
     val webHostUrl: String = "",
     val webHostToken: String = "",
     val webHostCertificateSha256: String = "",
@@ -128,6 +129,8 @@ class ModelsViewModel @Inject constructor(
 ) : ViewModel() {
     private val connections = com.nola.data.repository.ModelConnectionRepository(applicationRuntime)
 
+    // Keep credentials in memory while the user visits another tab.
+    internal val connectionDraft = EndpointConfigDraft("", "", "", ModelWireProtocol.ChatCompletions)
     private val _uiState = MutableStateFlow(ModelsUiState())
     val uiState: StateFlow<ModelsUiState> = _uiState.asStateFlow()
     private var installedLocalRecords: List<DeviceModelRecord> = emptyList()
@@ -208,7 +211,7 @@ class ModelsViewModel @Inject constructor(
                         apiEndpoint = apiConfig?.endpoint.orEmpty(),
                         apiKey = apiConfig?.apiKey.orEmpty(),
                         apiModel = apiConfig?.model.orEmpty(),
-                        apiWireProtocol = apiConfig?.wireProtocol ?: com.nola.domain.model.ModelWireProtocol.ChatCompletions,
+                        apiWireProtocol = apiConfig?.wireProtocol ?: ModelWireProtocol.ChatCompletions,
                         webHostModel = if (hasWebHostConfig) {
                             ModelInfo(id = "web-host", name = "Nola Web Host", source = ModelInfo.ModelSource.WebHost)
                         } else {
@@ -426,7 +429,7 @@ class ModelsViewModel @Inject constructor(
         }
     }
 
-    fun saveApiEndpoint(endpoint: String, apiKey: String, model: String, wireProtocol: com.nola.domain.model.ModelWireProtocol, onSaved: () -> Unit = {}) {
+    fun saveApiEndpoint(endpoint: String, apiKey: String, model: String, wireProtocol: ModelWireProtocol, onSaved: () -> Unit = {}) {
         if (_uiState.value.savingEndpoint) return
         _uiState.update { it.copy(savingEndpoint = true, endpointSaveError = null) }
         viewModelScope.launch {

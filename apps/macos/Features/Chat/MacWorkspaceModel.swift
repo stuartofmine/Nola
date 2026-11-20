@@ -1050,6 +1050,7 @@ final class MacWorkspaceModel {
 
     init(
         initialConversationID: String? = nil,
+        createMissingConversation: Bool = true,
         canonicalRepository: MacCanonicalConversationRepository,
         localAgentRuntime: any MacLocalAgentRuntime,
         remoteHost: any MacRemoteAgentRunning,
@@ -1234,7 +1235,7 @@ final class MacWorkspaceModel {
         if let initialConversationID,
            let archived = archives.first(where: { $0.conversation.id == initialConversationID }) {
             initial = archived.conversation
-        } else if let initialConversationID {
+        } else if let initialConversationID, createMissingConversation {
             initial = MacConversation(
                 id: initialConversationID,
                 title: String(localized: "New Conversation"),
@@ -1243,7 +1244,7 @@ final class MacWorkspaceModel {
                 isPinned: false,
                 isPersisted: true
             )
-        } else if let archived = archives.first {
+        } else if initialConversationID == nil, let archived = archives.first {
             initial = archived.conversation
         } else {
             initial = MacConversation(title: String(localized: "New Conversation"), preview: "", updatedAt: .now, isPinned: false)
@@ -3418,7 +3419,7 @@ final class MacWorkspaceModel {
             if loadedDraftIDs.contains(selectedConversationID) || editedBrowserSnapshotIDs.contains(selectedConversationID) {
                 conversations[index].browserSnapshot = browser
             }
-            if !isDefaultConversationTitle(currentTitle) {
+            if isDefaultConversationTitle(archive.conversation.title), !isDefaultConversationTitle(currentTitle) {
                 conversations[index].title = currentTitle
             }
         }
@@ -3678,7 +3679,9 @@ final class MacWorkspaceModel {
         let port = modelApplication
         if try port.activeRunIdentity(conversationID: input.conversation_id)?.runID == input.operation_id
             || port.canonicalRunTerminal(conversationID: input.conversation_id, runID: input.operation_id) != nil {
+            let prepared = try port.prepareInPlaceResend(input)
             reloadPersistentData()
+            adoptEditedTitle(conversationID: input.conversation_id, messageID: prepared.user_message_id, text: input.edited_text)
             return
         }
         guard !isRunning, localRunRecovery == nil, remoteRunRecovery == nil else {
@@ -3696,7 +3699,7 @@ final class MacWorkspaceModel {
         // Normal admission creates the replacement message using its stable ID.
         // Passing text explicitly preserves the unsent composer and attachments.
         send(preassignedSubmissionID: prepared.run_id,
-            canonicalUserMessageID: prepared.user_message_id, preassignedText: input.edited_text,
+            canonicalUserMessageID: prepared.user_message_id, preassignedText: input.edited_text, isInPlaceResend: true,
             selectedExperts: prepared.experts.map { .init(agentID: $0.agent_id, agentRevision: $0.agent_revision, participantID: $0.participant_id, contextConversationID: $0.context_conversation_id) })
         guard let ticket = runCoordinator.submissionTicket,
               ticket.identity.submissionID == prepared.run_id else { throw MacEditedResendError.admissionUnconfirmed }
@@ -3705,6 +3708,16 @@ final class MacWorkspaceModel {
             try await Task.sleep(for: .milliseconds(50))
         }
         guard ticket.phase == .accepted else { throw MacEditedResendError.admissionUnconfirmed }
+        adoptEditedTitle(conversationID: input.conversation_id, messageID: prepared.user_message_id, text: input.edited_text)
+    }
+
+    private func adoptEditedTitle(conversationID: String, messageID: String, text: String) {
+        let title = MacConversationTitlePolicy.normalizedTitle(text)
+        if (try? canonicalRepository?.adoptMessageTitle(conversationID: conversationID, title: title,
+                                                        editedMessageID: messageID)) == true,
+           let index = conversations.firstIndex(where: { $0.id == conversationID }) {
+            conversations[index].title = title
+        }
     }
 
     func prepareEditedRoomExecution(_ prepared: ApplePreparedEditedResend<MacCanonicalJSONValue>) async throws -> MacAgentRoomService.ExecutionIntent.Envelope {
@@ -3983,7 +3996,7 @@ final class MacWorkspaceModel {
         }
     }
 
-    private func send(preassignedSubmissionID: String?, queuedUserCommandID: String? = nil, canonicalUserMessageID: String? = nil, preassignedText: String? = nil, selectedExperts: [AppleMainExpertSelectionEntry] = [], expertSelectionSourceEpoch: String? = nil) {
+    private func send(preassignedSubmissionID: String?, queuedUserCommandID: String? = nil, canonicalUserMessageID: String? = nil, preassignedText: String? = nil, isInPlaceResend: Bool = false, selectedExperts: [AppleMainExpertSelectionEntry] = [], expertSelectionSourceEpoch: String? = nil) {
         guard !selectedModelConfigurationPending else { return }
         parkUnselectedLocalRecovery()
         parkUnselectedRemoteRecovery()
@@ -4258,17 +4271,13 @@ final class MacWorkspaceModel {
             let userMessages = renderedMessages(conversationID: selectedConversationID)
                 .filter { $0.role == .user }
                 .map(\.text)
-            if let title = MacConversationTitlePolicy.automaticTitle(
+            if !isInPlaceResend, let title = MacConversationTitlePolicy.automaticTitle(
                 currentTitle: conversations[index].title,
                 conversationID: selectedConversationID,
                 userMessages: userMessages,
                 latestSource: titleSource
-            ) {
+            ), (try? canonicalRepository?.adoptMessageTitle(conversationID: selectedConversationID, title: title)) == true {
                 conversations[index].title = title
-                try? canonicalRepository?.rename(
-                    conversationID: selectedConversationID,
-                    title: title
-                )
             }
         }
         conversations.sort {
@@ -4782,13 +4791,7 @@ final class MacWorkspaceModel {
         }
 
         do {
-            let directory = try FileManager.default.url(
-                for: .applicationSupportDirectory,
-                in: .userDomainMask,
-                appropriateFor: nil,
-                create: true
-            )
-                .appendingPathComponent("Nola", isDirectory: true)
+            let directory = MacAppEnvironment.shared.supportRoot
                 .appendingPathComponent("Attachments", isDirectory: true)
                 .appendingPathComponent("Clipboard", isDirectory: true)
             try FileManager.default.createDirectory(
@@ -4812,14 +4815,18 @@ final class MacWorkspaceModel {
         }
     }
 
-    func chooseWorkspace() {
-        guard let selectedConversationID else { return }
-        Task {
-            if let selected = await bookmarkStore.chooseWorkspace(conversationID: selectedConversationID),
-               self.selectedConversationID == selectedConversationID {
-                workspaceURL = selected
-            }
-        }
+    @discardableResult
+    func chooseWorkspace() async -> URL? {
+        guard let selectedConversationID,
+              let selected = await bookmarkStore.chooseWorkspace(conversationID: selectedConversationID),
+              self.selectedConversationID == selectedConversationID else { return nil }
+        workspaceURL = selected
+        return selected
+    }
+
+    func workspaceForReview() async -> URL? {
+        if let workspaceURL { return workspaceURL }
+        return await chooseWorkspace()
     }
 
     func useSessionSandbox() {
@@ -5813,12 +5820,8 @@ final class MacWorkspaceModel {
                 if loadedDraftIDs.contains(conversationID) || editedBrowserSnapshotIDs.contains(conversationID) {
                     conversations[index].browserSnapshot = browser
                 }
-                if !isDefaultConversationTitle(currentTitle) {
+                if isDefaultConversationTitle(archive.conversation.title), !isDefaultConversationTitle(currentTitle) {
                     conversations[index].title = currentTitle
-                    try? canonicalRepository.rename(
-                        conversationID: conversationID,
-                        title: currentTitle
-                    )
                 }
             }
         } catch {

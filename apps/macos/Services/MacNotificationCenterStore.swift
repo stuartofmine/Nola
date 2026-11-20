@@ -34,6 +34,12 @@ actor MacNotificationHistoryRepository {
 
     private let fileManager = FileManager.default
     private let maximumItems = 500
+    private let fileURL: URL
+
+    init(supportRoot: URL = MacAppEnvironment.shared.supportRoot) {
+        fileURL = supportRoot.appendingPathComponent("Notifications", isDirectory: true)
+            .appendingPathComponent("history.json")
+    }
 
     func items() -> [MacNotificationInboxItem] {
         guard let data = try? Data(contentsOf: fileURL),
@@ -111,13 +117,6 @@ actor MacNotificationHistoryRepository {
         }
     }
 
-    private var fileURL: URL {
-        (fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? fileManager.temporaryDirectory)
-            .appendingPathComponent("Nola", isDirectory: true)
-            .appendingPathComponent("Notifications", isDirectory: true)
-            .appendingPathComponent("history.json")
-    }
 }
 
 @MainActor

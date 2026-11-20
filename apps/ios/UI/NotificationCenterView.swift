@@ -185,12 +185,14 @@ struct NotificationCenterView: View {
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
-                .background(DesignTokens.backgroundColor)
                 .refreshable {
                     await loadHistory(showLoading: false)
                 }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(DesignTokens.backgroundColor)
+        .toolbarBackground(DesignTokens.backgroundColor, for: .navigationBar)
         .navigationTitle(L10n.notificationsTitle)
         .toolbar {
             if ownsNavigationStack {

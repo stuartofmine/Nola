@@ -1,5 +1,6 @@
 package com.nola.ui.screen.home
 
+import com.nola.ui.components.NolaRootPageTitle
 import android.text.format.DateUtils
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.AnimatedContent
@@ -173,19 +174,21 @@ fun DataWorkspaceScreen(onCreateInChat: () -> Unit = {}, initialPage: Int = 0, o
 @Composable
 internal fun InformationOverview(onOpen: (Int) -> Unit) {
     val sections = listOf(4 to R.string.workspace_knowledge, 1 to R.string.workspace_memory,
-        0 to R.string.workspace_sources)
+        0 to R.string.data_sources_screen_title)
     LazyColumn(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
         .statusBarsPadding().testTag("information.overview"),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = nolaPageGutter(), vertical = 16.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(start = nolaPageGutter(), end = nolaPageGutter(), bottom = 16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
-            Text(stringResource(R.string.tab_information), style = MaterialTheme.typography.headlineMedium.copy(fontSize = 17.sp, lineHeight = 24.sp),
-                modifier = Modifier.padding(bottom = 16.dp))
+            NolaRootPageTitle(stringResource(R.string.tab_information))
         }
         items(sections, key = { it.first }) { (page, label) ->
             Row(Modifier.fillMaxWidth().heightIn(min = 64.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(MaterialTheme.colorScheme.surface)
                 .clickable(role = Role.Button) { onOpen(page) }
-                .testTag("information.category.$page").background(MaterialTheme.colorScheme.surface, RoundedCornerShape(14.dp)).padding(horizontal = 14.dp, vertical = 12.dp),
+                .testTag("information.category.$page")
+                .padding(horizontal = 14.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Box(Modifier.size(36.dp).background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(8.dp)),
@@ -215,7 +218,7 @@ internal fun WorkspaceSwitcher(
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberLazyListState()
-    val sections = listOf(4 to R.string.workspace_knowledge, 0 to R.string.workspace_sources,
+    val sections = listOf(4 to R.string.workspace_knowledge, 0 to R.string.data_sources_screen_title,
         1 to R.string.workspace_memory, 2 to R.string.workspace_plans, 3 to R.string.workspace_records)
     LaunchedEffect(selected) { scrollState.animateScrollToItem(sections.indexOfFirst { it.first == selected }.coerceAtLeast(0)) }
     Surface(

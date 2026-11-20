@@ -60,7 +60,7 @@ struct MacLocalModelManagerView: View {
                     LocalizedStringKey(String(localized: "Local Models", table: "ModelCenter")),
                     symbol: "cpu.fill",
                     navigationAction: navigationAction,
-                    navigationSymbol: "chevron.left",
+                    navigationKind: .back,
                     navigationLabel: LocalizedStringKey(String(localized: "Model Center", table: "ModelCenter"))
                 ) {
                     Text(String(localized: "Choose, configure, and start local models independently.", table: "ModelCenter"))

@@ -58,7 +58,7 @@ async function fixture(route){
    });
    report.views.push({label,width,scheme,...result});
    if(result.overflow||result.unnamed.length||result.clipped.length)report.issues.push({label,width,scheme,...result});
-   await page.screenshot({path:`${out}/${label}-${width}-${scheme}.png`});
+   await page.screenshot({path:`${out}/${label}-${width}-${scheme}.png`,timeout:60000});
   }
   for(const route of routes){
    await page.goto(`${base}/${route}`,{waitUntil:'networkidle'});

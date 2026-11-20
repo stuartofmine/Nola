@@ -79,7 +79,6 @@ struct MacNotificationCenterView: View {
         .background(MacPageBackground())
         .task {
             await store.refresh()
-            if selection == nil { selection = matchingItems.first?.id }
         }
         .onReceive(NotificationCenter.default.publisher(for: .nolaMacNotificationsDidChange)) { _ in
             Task { await store.refresh() }
@@ -87,13 +86,21 @@ struct MacNotificationCenterView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { await store.refresh() }
         }
-        .onChange(of: selection) { _, _ in
-            guard let selectedItem, !selectedItem.isRead else { return }
-            Task { await store.markRead(selectedItem) }
+        .onChange(of: filter) { _, _ in
+            selection = nil
+            compactDetailIsPresented = false
         }
-        .onChange(of: matchingItems.map(\.id)) { _, ids in
-            if let selection, ids.contains(selection) { return }
-            selection = ids.first
+        .onChange(of: query) { _, _ in
+            if let selection, !matchingItems.contains(where: { $0.id == selection }) {
+                self.selection = nil
+                compactDetailIsPresented = false
+            }
+        }
+        .onChange(of: store.items.map(\.id)) { _, ids in
+            if let selection, !ids.contains(selection) {
+                self.selection = nil
+                compactDetailIsPresented = false
+            }
         }
         .confirmationDialog(
             macNotificationText("mac.notifications.clear.confirm.title", "Clear Notification History?"),
@@ -431,7 +438,7 @@ struct MacNotificationCenterView: View {
     private func detailActionButtons(_ item: MacNotificationInboxItem) -> some View {
         if let conversationID = item.conversationID {
             Button {
-                openWindow(value: conversationID)
+                openConversation(conversationID, from: item)
             } label: {
                 Label(
                     macNotificationText("mac.notifications.open_conversation", "Open Conversation"),
@@ -507,13 +514,13 @@ struct MacNotificationCenterView: View {
         .padding(.vertical, 6)
         .onTapGesture(count: 2) {
             if let conversationID = item.conversationID {
-                openWindow(value: conversationID)
+                openConversation(conversationID, from: item)
             }
         }
         .contextMenu {
             if let conversationID = item.conversationID {
                 Button {
-                    openWindow(value: conversationID)
+                    openConversation(conversationID, from: item)
                 } label: {
                     Label(
                         macNotificationText("mac.notifications.open_conversation", "Open Conversation"),
@@ -531,10 +538,21 @@ struct MacNotificationCenterView: View {
         }
     }
 
+    private func markOpened(_ item: MacNotificationInboxItem) {
+        guard !item.isRead, item.deliveryState != .scheduled else { return }
+        Task { await store.markRead(item) }
+    }
+
+    private func openConversation(_ id: String, from item: MacNotificationInboxItem) {
+        markOpened(item)
+        openWindow(value: id)
+    }
+
     private func selectableRow(_ item: MacNotificationInboxItem) -> some View {
         Button {
             selection = item.id
             compactDetailIsPresented = true
+            markOpened(item)
         } label: {
             row(item)
                 .contentShape(Rectangle())
@@ -542,6 +560,7 @@ struct MacNotificationCenterView: View {
             .buttonStyle(.plain)
             .macSelectableListRow(isSelected: selection == item.id)
             .accessibilityAddTraits(selection == item.id ? .isSelected : [])
+            .accessibilityIdentifier("mac.notification.item.\(item.id)")
     }
 
     private var selectedItem: MacNotificationInboxItem? {

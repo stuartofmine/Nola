@@ -189,7 +189,7 @@ struct MacMemoryCenterView: View {
             HStack(spacing: 7) {
                 Label(scopeTitle(record.scope), systemImage: scopeSymbol(record.scope))
                     .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundStyle(.blue)
+                    .foregroundStyle(MacDesignColor.brand)
                 Text(kindTitle(record.kind))
                     .font(.system(size: 10.5, weight: .medium))
                     .foregroundStyle(.secondary)
@@ -360,9 +360,11 @@ private struct MacMemoryEditor: View {
                          ? macMemoryText("mac.memory.new", "New Memory")
                          : macMemoryText("mac.memory.revise", "Revise"))
                         .font(.system(size: 19, weight: .semibold))
-                    Text(macMemoryText("mac.memory.revision.detail", "Revisions preserve the previous version and its provenance."))
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(.secondary)
+                    if record != nil {
+                        Text(macMemoryText("mac.memory.revision.detail", "Revisions preserve the previous version and its provenance."))
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
 

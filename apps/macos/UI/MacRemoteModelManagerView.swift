@@ -415,7 +415,7 @@ struct MacRemoteModelManagerView: View {
                     LocalizedStringKey(String(localized: "API Models", table: "ModelCenter")),
                     symbol: "network",
                     navigationAction: navigationAction,
-                    navigationSymbol: "chevron.left",
+                    navigationKind: .back,
                     navigationLabel: LocalizedStringKey(String(localized: "Model Center", table: "ModelCenter"))
                 ) {
                     Text(String(localized: "Select a model to edit. Connection settings apply to its models.", table: "ModelCenter"))

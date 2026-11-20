@@ -718,6 +718,8 @@ struct AddURLDataSourceSheet: View {
     var existingSource: URLDataSource? // nil = add, non-nil = edit
     var onSaved: ((URLDataSource) -> Void)? = nil
     
+    private enum EditorField { case name, url }
+    @FocusState private var focusedField: EditorField?
     @State private var name = ""
     @State private var url = ""
     @State private var selectedFormat: URLDataFormat? = nil // User-selected format
@@ -761,8 +763,10 @@ struct AddURLDataSourceSheet: View {
                 }
                 Section(header: Text(NSLocalizedString("url_sources.form.section_source", value: "Source", comment: "Source section title"))) {
                     TextField(L10n.commonName, text: $name)
+                        .focused($focusedField, equals: .name)
                         .accessibilityIdentifier("data.center.editor.name")
                     TextField(L10n.urlSourcesURLField, text: $url)
+                        .focused($focusedField, equals: .url)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
@@ -1031,7 +1035,7 @@ struct AddURLDataSourceSheet: View {
                 NSLocalizedString("url_sources.discard.title", value: "Discard changes?", comment: "Discard data source changes title"),
                 isPresented: $showsDiscardConfirmation
             ) {
-                Button(L10n.cancel, role: .cancel) {}
+                Button(String(localized: "model.setup.keep_editing"), role: .cancel) {}
                 Button(NSLocalizedString("url_sources.discard.confirm", value: "Discard", comment: "Discard data source changes"), role: .destructive) {
                     dismiss()
                 }
@@ -1075,6 +1079,7 @@ struct AddURLDataSourceSheet: View {
     }
 
     private func requestDismiss() {
+        focusedField = nil
         validationTask?.cancel()
         isValidating = false
         if isDirty {

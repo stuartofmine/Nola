@@ -1163,7 +1163,10 @@ private struct PersonalCapabilityCard: View {
 }
 
 struct PersonalCapabilityEditorView: View {
+    private enum Field { case name, detail, primary }
+
     @Environment(\.dismiss) private var dismiss
+    @FocusState private var focusedField: Field?
     let item: PersonalCapabilityEditorItem
     let errorMessage: String?
     let onSave: (String, String, String) -> Void
@@ -1223,8 +1226,10 @@ struct PersonalCapabilityEditorView: View {
                 }
                 Section {
                     TextField(piText("personal.capabilities.name", "Name"), text: $name)
+                        .focused($focusedField, equals: .name)
                         .accessibilityIdentifier("intelligence.capabilities.editor.name")
                     TextField(piText("personal.capabilities.description", "Description"), text: $detail, axis: .vertical)
+                        .focused($focusedField, equals: .detail)
                         .accessibilityIdentifier("intelligence.capabilities.editor.description")
                         .lineLimit(2...5)
                 }
@@ -1233,6 +1238,7 @@ struct PersonalCapabilityEditorView: View {
                     : piText("personal.capabilities.endpoint", "Endpoint")) {
                     if isSkill {
                         TextEditor(text: $primary)
+                            .focused($focusedField, equals: .primary)
                             .accessibilityIdentifier("intelligence.capabilities.editor.instructions")
                             .font(.body.monospaced())
                             .frame(minHeight: 260)
@@ -1244,6 +1250,7 @@ struct PersonalCapabilityEditorView: View {
                             .frame(maxWidth: .infinity, alignment: .trailing)
                     } else {
                         TextField("https://example.com/mcp", text: $primary)
+                            .focused($focusedField, equals: .primary)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .keyboardType(.URL)
@@ -1265,13 +1272,14 @@ struct PersonalCapabilityEditorView: View {
                 : "MCP")
             .navigationBarTitleDisplayMode(.inline)
             .interactiveDismissDisabled(isDirty)
-            .confirmationDialog(NSLocalizedString("common.discard_changes", value: "Discard Changes?", comment: "Discard changes confirmation"), isPresented: $showDiscardConfirmation) {
+            .alert(NSLocalizedString("common.discard_changes", value: "Discard Changes?", comment: "Discard changes confirmation"), isPresented: $showDiscardConfirmation) {
                 Button(NSLocalizedString("common.discard", value: "Discard", comment: "Discard changes"), role: .destructive) { dismiss() }
-                Button(L10n.cancel, role: .cancel) { }
+                Button(String(localized: "model.setup.keep_editing"), role: .cancel) { }
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(piText("personal.capabilities.cancel", "Cancel")) {
+                        focusedField = nil
                         if isDirty { showDiscardConfirmation = true } else { dismiss() }
                     }
                     .accessibilityIdentifier("intelligence.capabilities.editor.cancel")

@@ -31,7 +31,24 @@ async function until(f,timeout=240000){const start=Date.now();for(;;){const valu
   async function send(text){await page.locator('#chat-composer').fill(text);await page.getByRole('button',{name:'发送',exact:true}).click();}
   const id=await create();report.owner=id;
   await send('请实际执行隔离项目中的 python3 long_job.py，等待结束后读取 result.json，核验 total=465、steps=30，并用 LONG_WEB_DONE 开头报告。不要改脚本、不要启动第二次，不要联网或派生助手。');
+  const admitted = await until(()=>runs(id).at(-1));
+  await page.goto('about:blank');
+  await until(()=>query(db,"SELECT 1 FROM run_events WHERE run_id=? AND event_kind='host_progress' AND json_extract(payload_json,'$.title')='permission_transport_interrupted' LIMIT 1",[admitted.id]).length,90000);
+  assert.ok(!fs.existsSync(out+'/store/project/starts.txt'), 'The job must still be awaiting approval');
+  await page.goto(base+'/chat?conversation='+encodeURIComponent(id));
+  const inspect = page.getByRole('button',{name:'检查记录',exact:true});
+  const resume = page.getByRole('button',{name:'恢复当前运行',exact:true});
+  await inspect.or(resume).first().waitFor();
+  if (!await resume.isVisible()) await inspect.click();
+  await resume.waitFor();
+  await page.screenshot({path:out+'/web-before-resume.png'});
+  await resume.click();
   await until(()=>fs.existsSync(out+'/store/project/progress.txt'));
+  const resumed = runs(id);
+  assert.equal(resumed.length,1);
+  assert.equal(resumed[0].id,admitted.id);
+  assert.equal(report.scenarios.onceOnlyPermission,true);
+  report.scenarios.hotPermissionResume=true;
   assert.equal(runs(id).at(-1).status,'running');
   await page.screenshot({path:out+'/web-long-running-dark.png'});
   await page.setViewportSize({width:390,height:844});

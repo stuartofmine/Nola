@@ -19,13 +19,12 @@ final class IOSRealExpertAcceptanceTests: XCTestCase {
             "NOLA_REAL_IOS_UI_CLOUD_KEY": secret]) { _, new in new }
         app.launch()
         defer { app.terminate() }
-        XCTAssertTrue(app.tabBars.buttons["Chat"].waitForExistence(timeout: 15)); app.tabBars.buttons["Chat"].tap()
+        app.tapRootTab("chat", timeout: 15)
         XCTAssertTrue(app.buttons["chat.conversations.new"].waitForExistence(timeout: 10)); app.buttons["chat.conversations.new"].tap()
         app.buttons["chat.topbar.modelPicker"].tap()
         let modelChoice = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", model)).firstMatch
         XCTAssertTrue(modelChoice.waitForExistence(timeout: 10)); modelChoice.tap()
         app.buttons["chat.topbar.more"].tap(); app.buttons["chat.experts.open"].tap(); app.buttons["experts.manage"].tap()
-        app.buttons["experts.create"].tap()
         let name = "Native Public Reasoning Observer"
         let field = app.textFields["experts.name"]
         XCTAssertTrue(field.waitForExistence(timeout: 5)); field.tap(); field.typeText(name)
@@ -120,8 +119,7 @@ final class IOSRealExpertAcceptanceTests: XCTestCase {
         let captureFixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf:
             URL(fileURLWithPath: root).appendingPathComponent("native-capture-fixture.json"))) as? [String: String])
         let templateName = try XCTUnwrap(captureFixture["templateName"])
-        let chatTab = app.tabBars.buttons["Chat"]
-        XCTAssertTrue(chatTab.waitForExistence(timeout: 15)); chatTab.tap()
+        app.tapRootTab("chat", timeout: 15)
         let newConversation = app.buttons["chat.conversations.new"]
         XCTAssertTrue(newConversation.waitForExistence(timeout: 10)); newConversation.tap()
         app.buttons["chat.topbar.modelPicker"].tap()
@@ -132,7 +130,6 @@ final class IOSRealExpertAcceptanceTests: XCTestCase {
         app.buttons["chat.experts.open"].tap()
         app.buttons["experts.manage"].tap()
         let expertNames = ["Native Alpha · 完整专家姓名与长期任务研究助理", "Native Beta · Independent Research Specialist"]
-        app.buttons["experts.create"].tap()
         let firstExpertName = app.textFields["experts.name"]
         XCTAssertTrue(firstExpertName.waitForExistence(timeout: 5)); firstExpertName.tap(); firstExpertName.typeText(expertNames[0])
         let templates = app.buttons["experts.templates.manage"]
@@ -156,7 +153,6 @@ final class IOSRealExpertAcceptanceTests: XCTestCase {
         capture("native-template-library-return-kept-expert-draft", app)
         var expertIDs: [String] = []
         for (index, name) in expertNames.enumerated() {
-            if index > 0 { app.buttons["experts.create"].tap() }
             let field = app.textFields["experts.name"]
             XCTAssertTrue(field.waitForExistence(timeout: 5))
             if index > 0 { field.tap(); field.typeText(name) }
@@ -236,7 +232,7 @@ final class IOSRealExpertAcceptanceTests: XCTestCase {
         app.terminate()
         app.launchEnvironment["NOLA_REAL_IOS_UI_PREPARE_CREDENTIAL"] = "0"
         app.launch()
-        XCTAssertTrue(chatTab.waitForExistence(timeout: 15)); chatTab.tap()
+        app.tapRootTab("chat", timeout: 15)
         let rows = conversationRows(app)
         XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 10))
         let originalRowID = rows.firstMatch.identifier
@@ -302,7 +298,6 @@ final class IOSRealExpertAcceptanceTests: XCTestCase {
     private func verifyDraftIsolation(_ app: XCUIApplication, root: String, namespace: String, originalRowID: String) throws {
         let input = app.textViews["chat.composer.input"]
         let newConversation = app.buttons["chat.conversations.new"]
-        let chatTab = app.tabBars.buttons["Chat"]
         let draftA = "UNSENT_A_" + namespace, draftB = "UNSENT_B_" + namespace
         input.tap(); input.typeText(draftA)
         backToList(app)
@@ -321,7 +316,7 @@ final class IOSRealExpertAcceptanceTests: XCTestCase {
         XCTAssertEqual(input.value as? String, draftB)
         capture("native-other-owner-draft", app)
         app.terminate(); app.launch()
-        XCTAssertTrue(chatTab.waitForExistence(timeout: 15)); chatTab.tap()
+        app.tapRootTab("chat", timeout: 15)
         app.buttons[originalRowID].tap()
         XCTAssertEqual(input.value as? String, draftA)
         XCTAssertTrue(app.scrollViews["chat.expert.timeline"].waitForExistence(timeout: 5))
@@ -332,7 +327,7 @@ final class IOSRealExpertAcceptanceTests: XCTestCase {
         app.buttons.matching(NSPredicate(format: "identifier MATCHES %@", "^chat\\.conversation\\.[0-9a-f-]{36}$"))
     }
     private func backToList(_ app: XCUIApplication) {
-        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.buttons["chat.navigation.back"].tap()
         XCTAssertTrue(app.buttons["chat.conversations.new"].waitForExistence(timeout: 5))
     }
     private func capture(_ name: String, _ app: XCUIApplication) {

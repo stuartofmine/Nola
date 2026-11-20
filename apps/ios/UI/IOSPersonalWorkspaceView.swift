@@ -145,6 +145,7 @@ struct IOSPersonalWorkspaceView: View {
                 .listRowSeparator(.hidden)
             }
             .listStyle(.plain)
+            .modifier(IOSWorkspaceTopEdge())
             .scrollContentBackground(.hidden)
             .background(DesignTokens.backgroundColor)
             .background(IOSWorkspaceWidthObserver(width: $pageWidth))
@@ -167,7 +168,7 @@ struct IOSPersonalWorkspaceView: View {
 
     @ViewBuilder private func conversationRow(_ conversation: IOSWorkspaceConversationSummary) -> some View {
         Button {
-            NotificationCenter.default.post(name: .nolaOpenChatTab, object: conversation.id)
+            NotificationCenter.default.post(name: .nolaOpenChatTab, object: conversation.canonicalID)
         } label: {
             VStack(alignment: .leading, spacing: 5) {
                 Text(IOSConversationTitlePresentationPolicy.displayTitle(conversation.title,
@@ -195,7 +196,7 @@ struct IOSPersonalWorkspaceView: View {
                 var seen = Set<UUID>()
                 let conversations = (facts.conversations + facts.recent_conversations).compactMap { fact -> IOSWorkspaceConversationSummary? in
                     guard let id = UUID(uuidString: fact.conversation_id), seen.insert(id).inserted else { return nil }
-                    return IOSWorkspaceConversationSummary(id: id, title: fact.title,
+                    return IOSWorkspaceConversationSummary(id: id, canonicalID: fact.conversation_id, title: fact.title,
                         lastActiveAt: Date(timeIntervalSince1970: Double(fact.updated_at_ms) / 1000))
                 }
                 let waiting = Set(facts.conversations.filter(\.needs_response).compactMap { UUID(uuidString: $0.conversation_id) })
@@ -238,6 +239,7 @@ struct IOSPersonalWorkspaceView: View {
 
 nonisolated private struct IOSWorkspaceConversationSummary: Identifiable, Sendable {
     let id: UUID
+    let canonicalID: String
     let title: String
     let lastActiveAt: Date
 }
@@ -360,10 +362,9 @@ struct IOSInformationView: View {
     var body: some View {
         NavigationStack(path: $path) {
             List {
-                IOSWorkspacePageHeading(title: String(localized: "navigation.library"),
-                    subtitle: String(localized: "information.subtitle"))
+                IOSWorkspacePageHeading(title: String(localized: "navigation.library"), titleRowHeight: 64)
                     .accessibilityIdentifier("information.heading")
-                    .listRowInsets(EdgeInsets(top: 8, leading: pageInset, bottom: 16, trailing: pageInset))
+                    .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 0, trailing: 0))
                     .listRowSeparator(.hidden).listRowBackground(Color.clear)
                 Section {
                 ForEach([IOSWorkspaceDestination.knowledge, .memory, .sources]) { item in
@@ -400,7 +401,7 @@ struct IOSInformationView: View {
                 if !directory.isEmpty {
                     Section {
                         ForEach(Array(recentKnowledge.prefix(3))) { item in
-                            Button { NotificationCenter.default.post(name: .nolaOpenChatTab, object: item.id) } label: {
+                            Button { NotificationCenter.default.post(name: .nolaOpenChatTab, object: item.canonicalID) } label: {
                                 VStack(alignment: .leading, spacing: 6) {
                                     Text(IOSConversationTitlePresentationPolicy.displayTitle(item.title,
                                         conversationID: item.id.uuidString, fallback: L10n.chatConversationDefaultTitle))
@@ -421,6 +422,10 @@ struct IOSInformationView: View {
                 }
             }
             .listStyle(.insetGrouped)
+            .modifier(IOSWorkspaceTopEdge())
+            .contentMargins(.top, 0, for: .scrollContent)
+            .contentMargins(.horizontal, pageInset, for: .scrollContent)
+            .listSectionSpacing(12)
             .scrollContentBackground(.hidden)
             .background(DesignTokens.backgroundColor)
             .background(IOSWorkspaceWidthObserver(width: $pageWidth))
@@ -495,7 +500,7 @@ private struct IOSKnowledgePointsView: View {
                     ChatMarkdownView(content: conversation.knowledgePoints).textSelection(.enabled)
                     Button {
                         dismiss()
-                        NotificationCenter.default.post(name: .nolaOpenChatTab, object: conversation.id)
+                        NotificationCenter.default.post(name: .nolaOpenChatTab, object: conversation.canonicalID)
                     } label: {
                         Label(L10n.chatTitle, systemImage: "bubble.left").frame(minHeight: 44)
                     }.buttonStyle(.borderless)
@@ -537,15 +542,26 @@ struct IOSWorkspaceWidthObserver: View {
     }
 }
 
+struct IOSWorkspaceTopEdge: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.scrollEdgeEffectHidden(true, for: .top)
+        } else {
+            content
+        }
+    }
+}
+
 struct IOSWorkspacePageHeading: View {
     let title: String
     var subtitle: String? = nil
-    @ScaledMetric(relativeTo: .title) private var titleSize: CGFloat = 28
+    var titleRowHeight: CGFloat? = nil
     @ScaledMetric(relativeTo: .title) private var titleLineSpacing: CGFloat = 3
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.system(size: titleSize, weight: .semibold))
-                .lineSpacing(titleLineSpacing).foregroundStyle(.primary)
+            Text(title).font(.system(.largeTitle, design: .serif, weight: .semibold))
+                .lineSpacing(titleLineSpacing).foregroundStyle(DesignTokens.contentColor)
+                .frame(minHeight: titleRowHeight, alignment: .leading)
                 .accessibilityAddTraits(.isHeader)
             if let subtitle {
                 Text(subtitle).font(.subheadline).foregroundStyle(.secondary)
@@ -558,6 +574,8 @@ struct IOSWorkspacePageHeading: View {
 
 struct IOSConversationActivityView: View {
     var isRootTab = false
+    @State private var pageWidth: CGFloat = 390
+    private var pageInset: CGFloat { pageWidth < 359 ? 16 : 20 }
     @EnvironmentObject private var container: ServiceContainer
     @State private var nextPlan: AppleTodayQueuedInstance?
     @State private var plansLoadedAt: Date?
@@ -566,9 +584,9 @@ struct IOSConversationActivityView: View {
         let runtime = container.applicationRuntime
         VStack(spacing: 0) {
         if isRootTab {
-            IOSWorkspacePageHeading(title: String(localized: "information.activity"))
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
+            IOSWorkspacePageHeading(title: String(localized: "information.activity"), titleRowHeight: 64)
+                .padding(.horizontal, pageInset)
+                .padding(.top, 4)
                 .padding(.bottom, 4)
         }
         NavigationLink { ScheduledActionsView(embedded: true) } label: {
@@ -589,7 +607,7 @@ struct IOSConversationActivityView: View {
                 .background(DesignTokens.surfaceColor, in: RoundedRectangle(cornerRadius: 14))
                 .overlay(RoundedRectangle(cornerRadius: 14).stroke(DesignTokens.borderColor, lineWidth: 0.75))
                 .contentShape(Rectangle())
-        }.buttonStyle(.plain).padding(.horizontal, 16).padding(.top, 8)
+        }.buttonStyle(.plain).padding(.horizontal, pageInset).padding(.top, 8)
             .accessibilityIdentifier("activity.plans")
         if let plansError { Text(plansError).font(.footnote).foregroundStyle(.secondary).padding(.horizontal) }
         AppleActivityView(load: { query in
@@ -597,11 +615,12 @@ struct IOSConversationActivityView: View {
         }, detail: { entry in
             try await Task.detached { try IOSWorkspaceReadFacts.activityDetail(runtime: runtime, entry: entry) }.value
         }, openSource: { source in
-            if let id = UUID(uuidString: source) {
-                NotificationCenter.default.post(name: .nolaOpenChatTab, object: id)
+            if UUID(uuidString: source) != nil {
+                NotificationCenter.default.post(name: .nolaOpenChatTab, object: source)
             }
         }, canOpenSource: { UUID(uuidString: $0) != nil })
         }
+        .background(IOSWorkspaceWidthObserver(width: $pageWidth))
         .background(DesignTokens.backgroundColor)
         .navigationTitle(isRootTab ? "" : String(localized: "information.activity"))
         .toolbar(isRootTab ? .hidden : .visible, for: .navigationBar)

@@ -1238,15 +1238,8 @@ fn related_files(args: &Map<String, Value>, ctx: &ToolContext) -> ToolOutcome {
     )
 }
 
-fn read_file_text(
-    target: &Path,
-    args: &Map<String, Value>,
-    show_line_numbers: bool,
-    default_max_bytes: i64,
-    budget: FileReadPresentationBudget,
-) -> Result<ObservedFileText, ToolOutcome> {
+fn file_read_selection(args: &Map<String, Value>, default_max_bytes: i64) -> Result<FileReadSelection, ToolOutcome> {
     let explicit_range = args.contains_key("start_line") || args.contains_key("line_count");
-    let explicit_max_bytes = args.contains_key("max_bytes");
     let cap = validate_integer_arg(
         args,
         "max_bytes",
@@ -1260,11 +1253,26 @@ fn read_file_text(
     } else {
         None
     };
-    let snapshot = read_file_snapshot(target, FileReadSelection {
+    Ok(FileReadSelection {
         first_line: start_line,
         line_count: if explicit_range { Some(requested_line_count.unwrap_or(MAX_LINE_COUNT as usize)) } else { None },
         max_bytes: cap as usize,
-    })?;
+    })
+}
+
+fn read_file_text(
+    target: &Path,
+    args: &Map<String, Value>,
+    show_line_numbers: bool,
+    default_max_bytes: i64,
+    budget: FileReadPresentationBudget,
+) -> Result<ObservedFileText, ToolOutcome> {
+    let selection = file_read_selection(args, default_max_bytes)?;
+    let start_line = selection.first_line;
+    let explicit_range = selection.line_count.is_some();
+    let explicit_max_bytes = args.contains_key("max_bytes");
+    let cap = selection.max_bytes as u64;
+    let snapshot = read_file_snapshot(target, selection)?;
     if snapshot.text.is_none() {
         if explicit_range {
             return Err(error(
@@ -1273,7 +1281,7 @@ fn read_file_text(
             ));
         }
         let (text, _) = extract_binary_document_text(target, cap as usize, show_line_numbers)?;
-        return Ok(ObservedFileText { text, raw_content: None, observation: None, next_start_line: None, presentation_exhausted: false });
+        return Ok(ObservedFileText { text, raw_content: None, observation: None, next_start_line: None, presentation_exhausted: false, oversized_line_offset: None });
     }
     let auto_large_preview = !explicit_range && !explicit_max_bytes
         && snapshot.file_bytes > LARGE_FILE_PREVIEW_THRESHOLD_BYTES;

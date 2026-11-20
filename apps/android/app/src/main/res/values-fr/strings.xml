@@ -1116,7 +1116,6 @@
     <string name="model_connections_title">Connexions et comptes</string>
     <string name="model_connections_host_hint">La liste ci-dessous appartient à cet appareil. L’importation, les comptes et la configuration de la passerelle sur un Host jumelé se gèrent séparément.</string>
     <string name="model_connections_host_manage">Importer, configurer et vérifier sur le Host jumelé</string>
-    <string name="model_connections_pair_first">Connectez un Host ci-dessous pour ouvrir sa page de gestion autorisée. Cela ne modifie pas les connexions de cet appareil.</string>
     <string name="model_connections_source_boundary">La connexion au compte source doit être gérée dans un navigateur sur l’ordinateur Host. Se connecter à OpenCode, Codex ou Kimi Code n’active pas l’inférence Nola avec ce compte. Actualiser le catalogue ne lance pas d’inférence ; la vérification nécessite une confirmation distincte et peut entraîner des frais.</string>
     <string name="model_connections_account_details">Détails du compte et de la vérification</string>
     <string name="model_connections_refresh">Actualiser</string>
@@ -1126,7 +1125,7 @@
     <string name="room_recipient">@%1$s</string>
     <string name="room_automatic">Le coordinateur choisit · @ Agent</string>
     <string name="room_submission_accepted">Acceptée, en attente d’envoi</string>
-    <string name="room_agent_description">Responsabilités de l’agent (visibles par le coordinateur)</string>
+    <string name="room_agent_description">Rôle visible par l’agent principal</string>
     <string name="room_submission_executing">Traitement en cours</string>
     <string name="room_submission_completed">Terminé</string>
     <string name="room_submission_incomplete">Incomplet</string>

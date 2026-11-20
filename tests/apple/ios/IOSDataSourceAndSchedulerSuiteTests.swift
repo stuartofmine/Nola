@@ -432,6 +432,11 @@ final class URLDataSourceBoundaryTests: XCTestCase {
         XCTAssertTrue(urlAutomation.isScheduledAutomation)
     }
 
+    func testSystemDataSourcePolicyRejectsWriteWithoutRuntime() {
+        let store = SystemDataSourceAccessPolicyStore(applicationRuntime: nil)
+        XCTAssertThrowsError(try store.setPolicy(.blocked, for: .calendars))
+    }
+
     func testSystemDataSourcePolicyPersistsAndRespectsConversationOverrides() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("nola-source-policy-\(UUID().uuidString)", isDirectory: true)
@@ -445,15 +450,15 @@ final class URLDataSourceBoundaryTests: XCTestCase {
         XCTAssertEqual(store.policy(for: .health), .conversationOptIn)
         XCTAssertFalse(store.isEnabledForConversation(type: .health, explicitOverride: nil))
 
-        store.setPolicy(.defaultEnabled, for: .health)
+        try store.setPolicy(.defaultEnabled, for: .health)
         XCTAssertEqual(store.policy(for: .health), .defaultEnabled)
         XCTAssertTrue(store.isEnabledForConversation(type: .health, explicitOverride: nil))
         XCTAssertFalse(store.isEnabledForConversation(type: .health, explicitOverride: false))
 
-        store.setPolicy(.conversationOptIn, for: .health)
+        try store.setPolicy(.conversationOptIn, for: .health)
         XCTAssertTrue(store.isEnabledForConversation(type: .health, explicitOverride: true))
 
-        store.setPolicy(.blocked, for: .health)
+        try store.setPolicy(.blocked, for: .health)
         XCTAssertFalse(store.isEnabledForConversation(type: .health, explicitOverride: true))
         XCTAssertEqual(store.conversationOverrideKey(for: .health), "system:health")
     }

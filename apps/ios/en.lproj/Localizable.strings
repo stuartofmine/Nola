@@ -5,8 +5,8 @@
 "room.left" = "Left · history retained";
 "room.remove" = "Remove";
 "room.add" = "Add an agent";
-"room.create_agent" = "Create agent";
-"room.agent_name" = "Agent name";
+"room.create_agent" = "Create expert";
+"room.agent_name" = "Expert name";
 "room.use_current_model" = "Use current model";
 "room.open" = "Open chat";
 "room.all" = "All agent chats";
@@ -2869,6 +2869,7 @@
 "history.detail.open_record" = "Read historical record";
 
 "chat.history.search" = "Search conversations";
+"chat.history.search.clear" = "Clear search";
 
 "chat.history.no_messages" = "No messages yet";
 
@@ -3339,6 +3340,7 @@
 "chat.context.import.failed_count" = "%d files could not be imported. Use nonempty UTF-8 text files with at most 40,000 characters (192 KB).";
 
 /* Expert roles and revision-aware mentions */
+"experts.useModelDefaults" = "Use model defaults";
 "experts.reasoning.inherit" = "Inherit model setting";
 "experts.reasoning.unknown" = "This model does not declare reasoning levels. Its default setting is inherited.";
 "experts.role.details" = "Prompt, tools and Skills";
@@ -3421,3 +3423,6 @@
 "chat.message.pendingEdit" = "Review pending message edit";
 "chat.message.editSavedForReview" = "You can close this editor. Reopen the pending edit in this conversation to check whether it was sent.";
 "chat.context.documents.blank" = "Enter text for %@ or delete the empty document.";
+
+"chat.history.otherClientReadOnly" = "Read-only. To continue this conversation, open it in the client where it was created.";
+"chat.history.ambiguousIDs" = "Two conversations have identifiers that differ only in letter case. Open them in their original client.";

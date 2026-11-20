@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Real Android UI -> paired Host -> selected model -> long physical task.
 
-Requires an explicitly selected emulator and disposable secondary Android user.
+Requires an explicitly selected emulator and a disposable secondary Android user or marked test AVD.
 The side-channel oracle only reads the owned Host's actual files and Store.
 """
 import argparse
@@ -18,6 +18,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import uuid
 from urllib.request import urlopen
 
 from canonical_run_audit import audit_runs
@@ -33,11 +34,13 @@ def main():
     parser.add_argument('--serial',required=True)
     parser.add_argument('--user',type=int,required=True)
     parser.add_argument('--avd',required=True)
+    parser.add_argument('--owned-avd-run',type=uuid.UUID,help='Run UUID already staged in the disposable primary-user AVD')
     parser.add_argument('--config',type=Path,default=Path.home()/'.nola/config.json')
     parser.add_argument('--steps',type=int,default=120)
     parser.add_argument('--skip-build',action='store_true')
     args=parser.parse_args()
-    if not args.serial.startswith('emulator-') or args.user<=0:parser.error('Disposable emulator secondary user required')
+    if not args.serial.startswith('emulator-') or args.user < 0 or (args.user == 0 and not args.owned_avd_run):
+        parser.error('Provide a disposable secondary user or a marked disposable AVD run')
     if not 90<=args.steps<=180:parser.error('Use 90–180 physical one-second steps')
     sdk=Path(os.environ.get('ANDROID_SDK_ROOT',str(Path.home()/'Library/Android/sdk')))
     adb=str(sdk/'platform-tools/adb')
@@ -53,15 +56,25 @@ def main():
         return result.stdout
 
     def instrument(method,timeout=360):
-        result=device('shell','am','instrument','--user',args.user,'-w','-r','-e','isolatedUserId',args.user,
+        owned = ['-e','isolatedAvdName',args.avd,'-e','isolatedAvdRunId',marker['run_uuid']] if args.user == 0 else []
+        result=device('shell','am','instrument','--user',args.user,'-w','-r','-e','isolatedUserId',args.user,*owned,
             '-e','realRemoteLong','1','-e','class','com.nola.ui.screen.chat.RealAndroidRemoteLongTaskTest#'+method,
             'com.nola.test/androidx.test.runner.AndroidJUnitRunner',timeout=timeout)
         (root/(method+'.log')).write_bytes(result)
-        assert b'OK (1 test)' in result and b'INSTRUMENTATION_STATUS_CODE: -3' not in result, method+' failed or skipped'
+        if b'OK (1 test)' not in result or b'INSTRUMENTATION_STATUS_CODE: -3' in result:
+            image = device('exec-out', 'screencap', '-p')
+            if image.startswith(b'\x89PNG\r\n\x1a\n'):
+                (root/('failure-'+method+'.png')).write_bytes(image)
+            (root/(method+'-crash.log')).write_bytes(device('logcat','-b','crash','-d','-t','200'))
+            raise AssertionError(method+' failed or skipped')
 
     try:
         assert device('emu','avd','name').decode().splitlines()[0].strip()==args.avd,'Unexpected AVD'
         assert device('shell','am','get-current-user').strip()==str(args.user).encode(),'Activate the declared test user first'
+        if args.user == 0:
+            marker = json.loads(device('exec-out','run-as','com.nola','cat','files/nola-owned-test-avd.json'))
+            assert marker.get('disposable') is True and marker.get('avd_name') == args.avd, 'Run marker does not identify the disposable AVD'
+            assert marker.get('user_id') == 0 and uuid.UUID(marker['run_uuid']) == args.owned_avd_run, 'Disposable AVD run or Android user mismatch'
         if not args.skip_build:
             env=dict(os.environ)
             env['JAVA_HOME']=env.get('NOLA_ANDROID_JAVA_HOME',env.get('JAVA_HOME','/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home'))
@@ -149,8 +162,9 @@ def main():
             receipt.update(passed=True,final=final,provider=provider_totals(root/'provider.ndjson'))
     except Exception as error:receipt['error']=str(error)
     finally:
-        for name in ['remote-long-running.png','remote-long-permission-review.png','remote-long-restored-result.png','remote-long-restored-tree.txt','remote-long-original.json','remote-long-detached.json','remote-long-result.json']:
+        for name in ['remote-long-failed-in-app.png','remote-long-failed-tree.txt','remote-long-new-chat.png','remote-long-running.png','remote-long-permission-review.png','remote-long-restored-result.png','remote-long-restored-tree.txt','remote-long-original.json','remote-long-detached.json','remote-long-result.json']:
             try:
+                device('shell','run-as','com.nola','--user',args.user,'test','-f','files/'+name)
                 artifact=device('exec-out','run-as','com.nola','--user',args.user,'cat','files/'+name)
                 if name.endswith('.png') and not artifact.startswith(b'\x89PNG\r\n\x1a\n'):continue
                 if name.endswith('.json'):json.loads(artifact)

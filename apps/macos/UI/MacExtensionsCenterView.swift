@@ -292,14 +292,21 @@ struct MacExtensionsCenterView: View {
         .background(MacPageBackground())
     }
 
+    @ViewBuilder
+    private var localCatalogActions: some View {
+        if sourceFilter != .connectedHost {
+            scopeMenu
+            if visibleKinds.contains(.mcp) {
+                addMCPButton
+            }
+        }
+    }
+
     private var catalogToolbar: some View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 12) {
                 sourcePicker
-                scopeMenu
-                if visibleKinds.contains(.mcp) {
-                    addMCPButton
-                }
+                localCatalogActions
                 if !showsPageHeader {
                     toolbarRefreshButton
                 }
@@ -311,10 +318,7 @@ struct MacExtensionsCenterView: View {
                 HStack(spacing: 10) {
                     sourcePicker
                     Spacer(minLength: 6)
-                    scopeMenu
-                    if visibleKinds.contains(.mcp) {
-                        addMCPButton
-                    }
+                    localCatalogActions
                     if !showsPageHeader {
                         toolbarRefreshButton
                     }
@@ -838,9 +842,9 @@ private struct MacExtensionGalleryCard: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        VStack(spacing: 0) {
+        ZStack(alignment: .bottomTrailing) {
             Button(action: action) {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 10) {
                     HStack(alignment: .top, spacing: 12) {
                         Image(systemName: cardSymbol)
                             .font(.system(size: 16, weight: .semibold))
@@ -866,7 +870,7 @@ private struct MacExtensionGalleryCard: View {
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .lineLimit(3)
-                        .frame(maxWidth: .infinity, minHeight: 46, alignment: .topLeading)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
 
                     if let summary = item.mcpSummary {
                         Text(macMCPSummaryText(summary))
@@ -875,65 +879,50 @@ private struct MacExtensionGalleryCard: View {
                             .lineLimit(2)
                     }
 
+                    HStack {
+                        Label(item.source.title, systemImage: sourceSymbol)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 8)
+                        if onEnabledChange == nil {
+                            MacStatusBadge(
+                                title: item.isEnabled
+                                    ? macExtensionsText("mac.extensions.status.enabled", "Enabled")
+                                    : macExtensionsText("mac.extensions.status.disabled", "Disabled"),
+                                tint: item.isEnabled ? Color.green : Color.secondary,
+                                symbol: item.isEnabled ? "checkmark" : "power"
+                            )
+                        } else {
+                            Color.clear.frame(width: 48, height: 1)
+                        }
+                    }
+                    .frame(minHeight: 28)
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 16)
-                .padding(.bottom, 13)
-                .frame(maxWidth: .infinity, minHeight: 140, alignment: .topLeading)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityIdentifier("mac.extensions.card.\(item.id)")
-
-            HStack(spacing: 8) {
-                Button(action: action) {
-                    Label(item.source.title, systemImage: sourceSymbol)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+            .accessibilityLabel("\(item.title), \(item.source.title)")
+            .accessibilityHint(macExtensionsText("mac.extensions.action.open_details", "Open details"))
+            .accessibilityIdentifier("mac.extensions.details.\(item.id)")
+            if let onEnabledChange {
+                Toggle(
+                    macExtensionsText("mac.extensions.metric.enabled", "Enabled"),
+                    isOn: Binding(
+                        get: { item.isEnabled },
+                        set: onEnabledChange
+                    )
+                )
+                .toggleStyle(.macSwitchControl)
                 .accessibilityLabel(item.title)
-                .accessibilityHint(macExtensionsText("mac.extensions.action.open_details", "Open details"))
-                .accessibilityIdentifier("mac.extensions.details.\(item.id)")
-                if let onEnabledChange {
-                    Toggle(
-                        macExtensionsText("mac.extensions.metric.enabled", "Enabled"),
-                        isOn: Binding(
-                            get: { item.isEnabled },
-                            set: onEnabledChange
-                        )
-                    )
-                    .toggleStyle(.macSwitchControl)
-                    .help(
-                        item.isEnabled
-                            ? macExtensionsText("mac.extensions.status.disabled", "Disabled")
-                            : macExtensionsText("mac.extensions.status.enabled", "Enabled")
-                    )
-                    .accessibilityLabel(macExtensionsText("mac.extensions.metric.enabled", "Enabled"))
-                    .accessibilityValue(
-                        item.isEnabled
-                            ? macExtensionsText("mac.extensions.status.enabled", "Enabled")
-                            : macExtensionsText("mac.extensions.status.disabled", "Disabled")
-                    )
-                    .accessibilityIdentifier("mac.extensions.toggle.\(item.id)")
-                } else {
-                    MacStatusBadge(
-                        title: item.isEnabled
-                            ? macExtensionsText("mac.extensions.status.enabled", "Enabled")
-                            : macExtensionsText("mac.extensions.status.disabled", "Disabled"),
-                        tint: item.isEnabled ? Color.green : Color.secondary,
-                        symbol: item.isEnabled ? "checkmark" : "power"
-                    )
-                }
-
+                .accessibilityIdentifier("mac.extensions.toggle.\(item.id)")
+                .padding(.trailing, 14)
+                .padding(.bottom, 12)
             }
-            .padding(.horizontal, 14)
-            .frame(height: 42)
         }
-        .frame(maxWidth: .infinity, minHeight: 184, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(
             isHovering ? MacDesignColor.brand.opacity(0.065) : Color.primary.opacity(0.03),
             in: RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -951,9 +940,7 @@ private struct MacExtensionGalleryCard: View {
                 isHovering = hovering
             }
         }
-        .accessibilityLabel("\(item.title), \(item.source.title)")
-        .accessibilityHint(macExtensionsText("mac.extensions.action.open_details", "Open details"))
-                .accessibilityIdentifier("mac.extensions.details.\(item.id)")
+
     }
 
     private var skillCategory: MacSkillFunctionalCategory? {
@@ -1486,7 +1473,9 @@ private struct MacExtensionDetail: View {
                 Spacer()
                 if item.source == .builtIn || (item.source != .connectedHost && (item.kind == .skill || item.kind == .mcp)) {
                     HStack(spacing: 8) {
-                        Text(macExtensionsText("mac.extensions.status.enabled", "Enabled"))
+                        Text(item.isEnabled
+                            ? macExtensionsText("mac.extensions.status.enabled", "Enabled")
+                            : macExtensionsText("mac.extensions.status.disabled", "Disabled"))
                             .font(.system(size: 11.5, weight: .medium))
                             .foregroundStyle(.secondary)
                         Toggle(
@@ -1497,7 +1486,7 @@ private struct MacExtensionDetail: View {
                             )
                         )
                         .toggleStyle(.macSwitchControl)
-                        .accessibilityLabel(macExtensionsText("mac.extensions.status.enabled", "Enabled"))
+                        .accessibilityLabel(item.title)
                     }
                 }
                 if item.source == .builtIn || item.id.hasPrefix("managed-mcp:") {

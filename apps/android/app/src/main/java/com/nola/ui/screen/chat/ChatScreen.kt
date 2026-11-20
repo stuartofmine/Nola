@@ -210,7 +210,6 @@ import com.nola.ui.components.PermissionDialog
 import com.nola.ui.components.hostToolDisplayName
 import com.nola.ui.components.SmoothStreamingMarkdownRenderer
 import com.nola.ui.components.ThinkingBlock
-import com.nola.ui.components.NolaDisclosureChevron
 import com.nola.ui.components.nolaDisclosureEnter
 import com.nola.ui.components.nolaDisclosureExit
 import com.nola.ui.components.rememberReduceMotionEnabled
@@ -927,74 +926,45 @@ internal fun ChatScreen(
                 .padding(horizontal = NolaSpacing.sm, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier.widthIn(min = 96.dp),
-                horizontalArrangement = Arrangement.Start,
-                verticalAlignment = Alignment.CenterVertically
+            NolaIconButton(
+                label = stringResource(R.string.common_back),
+                onClick = { dismissNavigationKeyboard(); viewModel.loadConversations(); showConversations = true },
+                modifier = Modifier.testTag("chat.conversation.back")
             ) {
-                NolaIconButton(
-                    label = stringResource(R.string.common_back),
-                    onClick = { dismissNavigationKeyboard(); viewModel.loadConversations(); showConversations = true },
-                    modifier = Modifier.testTag("chat.conversation.back")
-                ) {
-                    Icon(painterResource(R.drawable.nola_back), contentDescription = stringResource(R.string.common_back))
-                }
+                Icon(painterResource(R.drawable.nola_back), contentDescription = stringResource(R.string.common_back))
             }
-            Box(
+            Column(
                 modifier = Modifier
                     .weight(1f)
-                    .padding(horizontal = 6.dp),
-                contentAlignment = Alignment.Center
+                    .heightIn(min = 48.dp)
+                    .testTag("chat.topbar.title")
+                    .clickable { showActions = true }
+                    .padding(horizontal = NolaSpacing.sm),
+                verticalArrangement = Arrangement.Center
             ) {
-                Row(
-                    modifier = Modifier
-                        .widthIn(max = 260.dp)
-                        .heightIn(min = 44.dp)
-                        .nolaSurface(
-                            radius = NolaRadius.lg,
-                            raised = false,
-                            fill = MaterialTheme.colorScheme.surfaceContainer,
-                            border = MaterialTheme.colorScheme.outlineVariant
-                        )
-                        .testTag("chat.topbar.title")
-                        .clickable { showActions = true }
-                        .padding(horizontal = 12.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.weight(1f, fill = false)
-                    ) {
-                        Text(
-                            conversationTitle,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            textAlign = TextAlign.Center
-                        )
-                        Text(
-                            when {
-                                !presentationReady && state.processingState == ProcessingState.BuildingContext -> stringResource(R.string.chat_loading_conversation)
-                                state.permissionRequest != null -> stringResource(R.string.conversations_waiting)
-                                state.processingState == ProcessingState.AwaitingRecovery -> stringResource(R.string.chat_awaiting_recovery)
-                                state.processingState.blocksInput -> stringResource(R.string.conversations_running)
-                                else -> state.currentModel?.name ?: stringResource(R.string.app_name)
-                            },
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                    NolaDisclosureChevron(expanded = showActions, reduceMotion = rememberReduceMotionEnabled())
-                }
+                Text(
+                    conversationTitle,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    when {
+                        !presentationReady && state.processingState == ProcessingState.BuildingContext -> stringResource(R.string.chat_loading_conversation)
+                        state.permissionRequest != null -> stringResource(R.string.conversations_waiting)
+                        state.processingState == ProcessingState.AwaitingRecovery -> stringResource(R.string.chat_awaiting_recovery)
+                        state.processingState.blocksInput -> stringResource(R.string.conversations_running)
+                        else -> state.currentModel?.name ?: stringResource(R.string.app_name)
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
 
             Row(
-                modifier = Modifier.widthIn(min = 96.dp),
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -2724,6 +2694,7 @@ fun MessageBubble(
     onResendEditedMessage: ((ConversationMessage) -> Unit)? = null,
     uiPartContent: (@Composable (com.nola.data.local.UiReferencePresentation) -> Unit)? = null,
     readOnlyHistory: Boolean = false,
+    historyAuthor: String? = null,
 ) {
     var activityChoices by remember(message.conversationId, message.id) { mutableStateOf(CanonicalActivityDisclosureChoices()) }
     val isUser = message.role == ChatRole.user
@@ -2786,13 +2757,13 @@ fun MessageBubble(
         modifier = modifier
             .weight(1f)
             .testTag(CHAT_MESSAGE_TEST_TAG_PREFIX + message.id)
-            .combinedClickable(
-                onClick = {},
-                onLongClick = messageLongPress
-            ),
+            .then(if (readOnlyHistory) Modifier else Modifier.combinedClickable(onClick = {}, onLongClick = messageLongPress)),
         horizontalAlignment = alignment
     ) {
-        if (!isUser && assistantContainerColor == null) {
+        if (readOnlyHistory && historyAuthor != null) {
+            Text(historyAuthor, Modifier.testTag("chat.history.author.${message.id}").padding(bottom = 4.dp),
+                style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else if (!isUser && assistantContainerColor == null) {
             Row(Modifier.padding(bottom = 10.dp), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 val markSize = with(LocalDensity.current) { 12.sp.toDp() } + 6.dp
@@ -2993,7 +2964,9 @@ fun MessageBubble(
             verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             MessageCopyAction(copyText, compact = isUser)
-            if (isUser) MessageEditAction(message, generating = isConversationGenerating, onResend = onResendEditedMessage)
+            if (isUser && !readOnlyHistory && onResendEditedMessage != null) {
+                MessageEditAction(message, generating = isConversationGenerating, onResend = onResendEditedMessage)
+            }
         }
     }
     }

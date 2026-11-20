@@ -65,11 +65,12 @@ import XCTest
 }
 
 extension IOSExpertChildHistoryTests {
-    private func peerView(name: String? = "Frozen source expert", kind: String = "request") -> AppleExpertPeerView {
+    private func peerView(name: String? = "Frozen source expert", kind: String = "request", mainSource: String? = nil) -> AppleExpertPeerView {
         let source = AppleExpertParticipantReference(participant_id: "source-member", agent_id: "source-agent", agent_revision: 3, context_conversation_id: "source-context")
         let target = AppleExpertParticipantReference(participant_id: "target-member", agent_id: "target-agent", agent_revision: 5, context_conversation_id: "target-context")
         return .init(version: 1, exchangeID: "exchange-run", roomID: "room", parentConversationID: "parent",
-            source: .legacyExpert(source), target: target, sourceRunID: "source-run", sourceCallID: "source-call",
+            source: mainSource.map { .mainAgent(contextConversationID: $0) } ?? .legacyExpert(source),
+            target: target, sourceRunID: "source-run", sourceCallID: "source-call",
             sourceDisplayName: name, targetDisplayName: "Frozen target expert", kind: kind, text: "Identical ordinary text",
             inReplyTo: nil, rootExchangeID: "exchange-run", hop: 0, createdAtMs: 1,
             clarifications: [.init(messageID: "clarification-message", source: target, target: source,
@@ -93,9 +94,16 @@ extension IOSExpertChildHistoryTests {
         XCTAssertThrowsError(try IOSExpertPeerInputAuthor.map([exchange], ownerID: "target-context", parentID: "other-parent", roomID: "room"))
         XCTAssertThrowsError(try IOSExpertPeerInputAuthor.map([exchange], ownerID: "target-context", parentID: "parent", roomID: "other-room"))
         XCTAssertThrowsError(try IOSExpertPeerInputAuthor.map([peerView(kind: "unknown")], ownerID: "target-context", parentID: "parent", roomID: "room"))
-        let page = AppleExpertPeerExchanges(version: 1, conversationID: "target-context", exchanges: [exchange], hasMore: false, nextOffset: nil)
-        XCTAssertNoThrow(try page.validate(contextID: "target-context", offset: 0))
-        XCTAssertThrowsError(try page.validate(contextID: "foreign-context", offset: 0))
+        let page = AppleExpertPeerExchanges(version: 1, conversationID: "parent", exchanges: [exchange], hasMore: false, nextOffset: nil)
+        XCTAssertNoThrow(try page.validate(parentID: "parent", offset: 0))
+        XCTAssertThrowsError(try page.validate(parentID: "target-context", offset: 0))
+        let foreign = AppleExpertPeerExchanges(version: 1, conversationID: "target-context", exchanges: [exchange], hasMore: false, nextOffset: nil)
+        XCTAssertThrowsError(try foreign.validate(parentID: "target-context", offset: 0))
+        func mainPage(_ owner: String) -> AppleExpertPeerExchanges {
+            .init(version: 1, conversationID: "parent", exchanges: [peerView(mainSource: owner)], hasMore: false, nextOffset: nil)
+        }
+        XCTAssertNoThrow(try mainPage("parent").validate(parentID: "parent", offset: 0))
+        XCTAssertThrowsError(try mainPage("different-owner").validate(parentID: "parent", offset: 0))
         XCTAssertEqual(try JSONDecoder().decode(AppleExpertPeerExchanges.self, from: JSONEncoder().encode(page)), page)
     }
 }
@@ -511,6 +519,14 @@ private nonisolated final class ExpertRecoveryReadFacts: @unchecked Sendable {
         }
         else {
             let history = try service.childHistory(conversationID: parent.id.uuidString, childID: target.contextConversationID)
+            let workspace = IOSRoomSubmissionWorkspace(service: service)
+            await workspace.restoreConversation(parent.id.uuidString)
+            XCTAssertNil(workspace.errors[joined.roomID])
+            XCTAssertEqual(workspace.peerExchanges[joined.roomID]?.map(\.exchangeID), [taskID])
+            let standalone = try service.create(title: "Independent room")
+            await workspace.select(standalone, resumeExecutions: false)
+            XCTAssertNil(workspace.errors[standalone.room.id])
+            XCTAssertEqual(workspace.peerExchanges[standalone.room.id], [])
             let authors = try IOSExpertPeerInputAuthor.map(history.expertExchanges, ownerID: target.contextConversationID,
                 parentID: parent.id.uuidString, roomID: joined.roomID)
             XCTAssertEqual(authors[taskID + ":user"]?.participant, .mainAgent(contextConversationID: parent.id.uuidString))

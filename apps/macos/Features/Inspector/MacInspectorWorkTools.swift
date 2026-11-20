@@ -177,7 +177,7 @@ struct MacInspectorReviewView: View {
                     Label(String(localized: "The selected workspace is not a Git repository."), systemImage: "folder")
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    Button(String(localized: "Choose Folder…")) { model.chooseWorkspace() }
+                    Button(String(localized: "Choose Folder…")) { Task { await model.chooseWorkspace() } }
                         .buttonStyle(MacActionButtonStyle())
                 }
                 if let error { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }

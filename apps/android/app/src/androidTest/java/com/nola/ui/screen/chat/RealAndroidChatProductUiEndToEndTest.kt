@@ -3,10 +3,10 @@ package com.nola.ui.screen.chat
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.isEnabled
-import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
@@ -29,7 +29,8 @@ import android.os.SystemClock
 import com.nola.MainActivity
 import com.nola.R
 import com.nola.data.local.AndroidApplicationRuntime
-import com.nola.data.local.expertMessageSource
+import com.nola.data.repository.AgentRoomRepository
+import com.nola.domain.projection.ConversationProjectionV1
 import com.nola.data.local.datastore.PreferenceDataStore
 import com.nola.data.local.security.SecureTokenStore
 import com.nola.ui.screen.models.MODEL_ROW_TEST_TAG_PREFIX
@@ -63,9 +64,10 @@ class RealAndroidChatProductUiEndToEndTest {
         }
     }
 
-    private fun confirmRealProviderCapabilities() {
+    private fun confirmRealProviderCapabilities(modelId: String) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        composeRule.onNodeWithContentDescription(context.getString(R.string.models_execution_capabilities))
+        composeRule.onNode(androidx.compose.ui.test.hasContentDescription(context.getString(R.string.models_execution_capabilities)) and
+            androidx.compose.ui.test.hasAnyAncestor(hasTestTag(MODEL_ROW_TEST_TAG_PREFIX + modelId)))
             .performProductScrollTo().performProductClick()
         val save = composeRule.onNodeWithText(context.getString(R.string.common_save))
         // The exact owned model may already have this declaration after an earlier turn.
@@ -145,7 +147,7 @@ class RealAndroidChatProductUiEndToEndTest {
                 throw failure
             }
             val modelRowTag = MODEL_ROW_TEST_TAG_PREFIX + config.getString("model")
-            confirmRealProviderCapabilities()
+            confirmRealProviderCapabilities(config.getString("model"))
             val use = composeRule.onAllNodes(androidx.compose.ui.test.hasText(context.getString(R.string.models_use)) and
                 androidx.compose.ui.test.hasAnyAncestor(androidx.compose.ui.test.hasTestTag(modelRowTag)), useUnmergedTree = true)
             if (use.fetchSemanticsNodes().isNotEmpty()) {
@@ -183,8 +185,8 @@ class RealAndroidChatProductUiEndToEndTest {
             composeRule.mainClock.autoAdvance = false
             composeRule.waitUntil(15_000) {
                 composeRule.mainClock.advanceTimeBy(32)
-                composeRule.onNodeWithTag("chat-transcript-list").fetchSemanticsNode().config
-                    .getOrNull(ChatTranscriptMessageIds)?.size == 2
+                composeRule.onAllNodesWithTag("chat-transcript-list").fetchSemanticsNodes().singleOrNull()?.config
+                    ?.getOrNull(ChatTranscriptMessageIds)?.size == 2
             }
             val submittedIds = checkNotNull(composeRule.onNodeWithTag("chat-transcript-list")
                 .fetchSemanticsNode().config.getOrNull(ChatTranscriptMessageIds))
@@ -437,7 +439,7 @@ class RealAndroidChatProductUiEndToEndTest {
     }
 
     @Test
-    fun realExpertReplyStreamsBeforeCompletionAndRestoresFromCanonicalStore() {
+    fun realSelectedExpertReviewsAndRestoresChildHistory() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         requireIsolatedProductTestUser(context)
         val config = JSONObject(File(context.filesDir, "nola-real-llm-e2e.json").readText())
@@ -449,9 +451,7 @@ class RealAndroidChatProductUiEndToEndTest {
             }
         }
         val expertName = "Review expert " + System.nanoTime().toString().takeLast(5)
-        val startMarker = "EXPERT-STREAM-9173"
-        val finishMarker = "EXPERT-FINISH-3719"
-        val prompt = "Reply with $startMarker on the first line, then twenty numbered short lines about a fictional garden, then $finishMarker on the final line. No tools or additional commentary."
+        val prompt = "请让选中的 $expertName 独立复核 19 盒每盒 23 件的总件数，等收到这位专家的答复后，把它算出的阿拉伯数字和单位告诉我。"
         val timeline = JSONArray()
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             awaitIsolatedWindow(scenario)
@@ -462,20 +462,37 @@ class RealAndroidChatProductUiEndToEndTest {
             composeRule.onNodeWithContentDescription(context.getString(R.string.tab_settings)).performProductClick()
             composeRule.onNodeWithText(context.getString(R.string.models_title)).performProductClick()
             composeRule.waitUntil(15_000) { composeRule.mainClock.advanceTimeBy(32); composeRule.onAllNodesWithTag(MODEL_ROW_TEST_TAG_PREFIX + config.getString("model"), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
-            if (composeRule.onAllNodesWithText(context.getString(R.string.models_use)).fetchSemanticsNodes().isNotEmpty()) {
-                composeRule.onNodeWithText(context.getString(R.string.models_use)).performProductScrollTo().performProductClick()
+            confirmRealProviderCapabilities(config.getString("model"))
+            val useModel = androidx.compose.ui.test.hasText(context.getString(R.string.models_use)) and
+                androidx.compose.ui.test.hasAnyAncestor(hasTestTag(MODEL_ROW_TEST_TAG_PREFIX + config.getString("model")))
+            if (composeRule.onAllNodes(useModel, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()) {
+                composeRule.onNode(useModel, useUnmergedTree = true).performProductScrollTo().performProductClick()
             }
             composeRule.onNodeWithContentDescription(context.getString(R.string.tab_chat)).performProductClick()
             composeRule.onNodeWithTag("chat.conversations.new").performProductClick()
             composeRule.onNodeWithTag("chat.topbar.more").performProductClick()
             composeRule.onNodeWithTag("chat.experts.open").performProductClick()
+            composeRule.waitUntil(10_000) {
+                composeRule.mainClock.advanceTimeBy(64)
+                composeRule.onAllNodesWithTag("chat.experts.manage").fetchSemanticsNodes().isNotEmpty()
+            }
             composeRule.onNodeWithTag("chat.experts.manage").performProductClick()
             composeRule.waitUntil(15_000) { composeRule.mainClock.advanceTimeBy(32); composeRule.onAllNodesWithTag("expert.create").fetchSemanticsNodes().any { !it.config.contains(androidx.compose.ui.semantics.SemanticsProperties.Disabled) } }
             composeRule.onNodeWithTag("expert.create").assertIsEnabled().performProductClick()
             composeRule.onNodeWithTag("expert.editor.name").performProductInput(expertName)
-            composeRule.onNodeWithTag("expert.editor.description").performProductInput("Produces the requested garden list.")
-            composeRule.onNodeWithTag("expert.editor.save").performProductClick()
-            composeRule.waitUntil(15_000) { composeRule.mainClock.advanceTimeBy(32); composeRule.onAllNodesWithTag("expert.editor.save").fetchSemanticsNodes().isEmpty() }
+            composeRule.onNodeWithTag("expert.editor.description").performProductInput("Checks arithmetic independently and reports the calculation using digits.")
+            composeRule.onNodeWithTag("expert.editor.model").performProductScrollTo().performProductClick()
+            composeRule.onNode(androidx.compose.ui.test.hasText(config.getString("model")) and
+                androidx.compose.ui.test.hasAnyAncestor(androidx.compose.ui.test.isPopup())).performProductClick()
+            val saveExpert = composeRule.onNodeWithTag("expert.editor.save")
+            saveExpert.performProductScrollTo().assertIsDisplayed().assertIsEnabled().performProductClick()
+            try {
+                composeRule.waitUntil(15_000) { composeRule.mainClock.advanceTimeBy(32); composeRule.onAllNodesWithTag("expert.create").fetchSemanticsNodes().isNotEmpty() }
+            } catch (failure: Throwable) {
+                File(context.filesDir, "expert-editor-save-failure.txt").writeText(composeRule.onAllNodes(isRoot(), useUnmergedTree = true)
+                    .fetchSemanticsNodes().indices.joinToString("\n") { composeRule.onAllNodes(isRoot(), useUnmergedTree = true)[it].printToString(maxDepth = 80) })
+                throw failure
+            }
             composeRule.onNodeWithText(context.getString(R.string.common_back)).performProductClick()
             composeRule.mainClock.autoAdvance = true
             try { composeRule.onNodeWithTag("chat.experts.list").performScrollToNode(androidx.compose.ui.test.hasText(expertName)) }
@@ -485,75 +502,119 @@ class RealAndroidChatProductUiEndToEndTest {
             composeRule.onNodeWithTag("chat.composer.input").performProductInput(prompt)
             composeRule.onNodeWithContentDescription(context.getString(R.string.chat_send)).assertIsEnabled().performProductClick()
             composeRule.mainClock.autoAdvance = false
-            var sawLiveText = false
-            var lastText = ""
-            var replyTag = ""
-            val deadline = SystemClock.elapsedRealtime() + 240_000
-            while (SystemClock.elapsedRealtime() < deadline) {
+            composeRule.waitUntil(15_000) {
                 composeRule.mainClock.advanceTimeBy(64)
-                approveVisibleRenderUiIfRequested(scenario)
-                val rows = composeRule.onAllNodes(androidx.compose.ui.test.SemanticsMatcher.keyIsDefined(ExpertReplyStreamingKey), useUnmergedTree = true).fetchSemanticsNodes()
-                val row = rows.singleOrNull()
-                if (row != null) {
-                    replyTag = row.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.TestTag).orEmpty()
-                    val running = row.config.getOrNull(ExpertReplyStreamingKey) == true
-                    val thinking = row.config.getOrNull(ExpertReplyThinkingLengthKey) ?: 0
-                    val sources = composeRule.onAllNodes(androidx.compose.ui.test.hasAnyAncestor(androidx.compose.ui.test.hasTestTag(replyTag)) and androidx.compose.ui.test.hasTestTag(CHAT_STREAMING_MARKDOWN_TEST_TAG), useUnmergedTree = true)
-                        .fetchSemanticsNodes().mapNotNull { it.config.getOrNull(ChatStreamingMarkdownSourceKey) }
-                    val text = sources.maxByOrNull(String::length).orEmpty()
-                    if (running && text.isNotBlank()) sawLiveText = true
-                    if (text != lastText || timeline.length() == 0 ||
-                        timeline.getJSONObject(timeline.length() - 1).getBoolean("running") != running ||
-                        timeline.getJSONObject(timeline.length() - 1).getInt("thinkingCharacters") != thinking) timeline.put(JSONObject().apply {
-                        put("running", running); put("characters", text.length); put("thinkingCharacters", thinking)
-                        put("text", text); put("elapsedMs", SystemClock.elapsedRealtime())
-                    })
-                    lastText = text
-                    if (!running && text.contains(startMarker) && "\n20." in text) break
+                composeRule.onAllNodesWithTag("chat-transcript-list").fetchSemanticsNodes().singleOrNull()
+                    ?.config?.getOrNull(ChatTranscriptMessageIds)?.size == 2
+            }
+            val submitted = checkNotNull(composeRule.onNodeWithTag("chat-transcript-list").fetchSemanticsNode()
+                .config.getOrNull(ChatTranscriptMessageIds))
+            fun ConversationProjectionV1.Message.body() = parts.filterIsInstance<ConversationProjectionV1.Part.Text>()
+                .joinToString("\n") { it.markdown }
+            val (parentId, childId) = AndroidApplicationRuntime(context).use { runtime ->
+                val rooms = AgentRoomRepository(runtime)
+                val expert = checkNotNull(rooms.directory().agents.singleOrNull { it.name == expertName }) {
+                    "The saved expert is missing from the local directory"
                 }
-                Thread.sleep(25)
-            }
-            composeRule.mainClock.advanceTimeBy(128)
-            composeRule.waitForIdle()
-            File(context.filesDir, "real-android-expert-timeline.json").writeText(timeline.toString(2))
-            File(context.filesDir, "real-android-expert-accessibility.txt").writeText(composeRule.onRoot(useUnmergedTree = true).printToString(maxDepth = 100))
-            File(context.filesDir, "real-android-expert.png").outputStream().use { output ->
-                InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output)
-            }
-            assertTrue("No real expert answer was visible before completion: $timeline", sawLiveText)
-            assertTrue("Real expert task did not complete", lastText.contains(startMarker) && "\n20." in lastText)
-            AndroidApplicationRuntime(context).use { runtime ->
-                val matches = runtime.listConversations().flatMap { conversation ->
-                    runtime.loadConversationProjectionV1(conversation.id).messages.mapNotNull { message ->
-                        if (message.role != com.nola.domain.projection.ConversationProjectionV1.Role.User) null
-                        else runtime.expertMessageSource(conversation.id, message.messageId)
+                var admittedParent: String? = null
+                val admissionDeadline = SystemClock.elapsedRealtime() + 20_000
+                while (admittedParent == null && SystemClock.elapsedRealtime() < admissionDeadline) {
+                    composeRule.mainClock.advanceTimeBy(64)
+                    admittedParent = runtime.listConversations().firstOrNull { conversation ->
+                        runtime.loadConversationProjectionV1(conversation.id).messages.any { it.messageId == submitted.first() }
+                    }?.id
+                    if (admittedParent == null) Thread.sleep(150)
+                }
+                val parent = checkNotNull(admittedParent) { "The main user message was never admitted" }
+                val room = checkNotNull(rooms.forConversation(parent)) { "Missing main expert selection for the admitted turn" }
+                val child = checkNotNull(room.room.room.participants.singleOrNull { it.agentId == expert.id && it.agentRevision == expert.revision }) {
+                    "The admitted room did not match the selected expert and revision"
+                }
+                var completed = false
+                val deadline = SystemClock.elapsedRealtime() + 120_000
+                while (!completed && SystemClock.elapsedRealtime() < deadline) {
+                    composeRule.mainClock.advanceTimeBy(64)
+                    val answer = runtime.loadConversationProjectionV1(parent).messages.singleOrNull { it.messageId == submitted.last() }
+                    val childMessages = runtime.loadConversationProjectionV1(child.contextConversationId).messages
+                    val childAnswer = childMessages.lastOrNull { it.role == ConversationProjectionV1.Role.Assistant }
+                    val progress = JSONObject().put("mainState", answer?.state?.name)
+                        .put("childState", childAnswer?.state?.name).put("childMessages", childMessages.size)
+                    if (timeline.length() == 0 || progress.toString() != timeline.getJSONObject(timeline.length() - 1).toString()) {
+                        timeline.put(progress)
+                        File(context.filesDir, "real-android-expert-timeline.json").writeText(timeline.toString(2))
                     }
-                }.filter { manifest -> manifest.entries.any {
-                    "expert.reply.${it.childSubmissionId}" == replyTag
-                } }
-                val manifest = matches.single()
-                check(manifest.input.text == prompt)
-                val entry = manifest.entries.single()
-                check(replyTag == "expert.reply.${entry.childSubmissionId}")
-                val receipt = checkNotNull(com.nola.data.repository.AgentRoomRepository(runtime).submission(manifest.input.roomId, entry.childSubmissionId))
-                check(receipt.contextConversationId == entry.participant.contextConversationId && receipt.executionId == entry.childSubmissionId)
-                check(receipt.state in setOf("completed", "completed_with_warnings"))
-                val source = runtime.loadConversationProjectionV1(entry.participant.contextConversationId)
-                val canonicalAssistant = source.messages.single { it.messageId == entry.childAssistantMessageId }
-                check(canonicalAssistant.state == com.nola.domain.projection.ConversationProjectionV1.MessageState.Completed)
-                val canonicalText = canonicalAssistant.parts
-                    .filterIsInstance<com.nola.domain.projection.ConversationProjectionV1.Part.Text>()
-                    .joinToString("\n") { it.markdown }
-                check(lastText == canonicalText) {
-                    "Expert presentation omitted canonical terminal content: visible=${lastText.length}, canonical=${canonicalText.length}"
+                    check(answer?.state !in setOf(ConversationProjectionV1.MessageState.Failed, ConversationProjectionV1.MessageState.Cancelled)) {
+                        "Main review stopped before receiving the expert's result: $timeline"
+                    }
+                    if (answer?.state == ConversationProjectionV1.MessageState.Completed) {
+                        check("437" in answer.body()) { "Main did not relay the expert's result: ${answer.body()}" }
+                        check(childAnswer?.state == ConversationProjectionV1.MessageState.Completed && "437" in childAnswer.body()) {
+                            "Selected expert did not independently complete the calculation: $timeline"
+                        }
+                        completed = true
+                    } else Thread.sleep(200)
                 }
+                check(completed) { "Expert review did not complete: $timeline" }
+                val exchanges = rooms.peerExchanges(parent).getValue("exchanges").jsonArray
+                check(exchanges.any {
+                    val record = it.jsonObject
+                    val source = record.getValue("source").jsonObject
+                    source["kind"] == JsonPrimitive("main_agent") && source["context_conversation_id"] == JsonPrimitive(parent) &&
+                        record.getValue("target").jsonObject["agent_id"] == JsonPrimitive(expert.id)
+                }) { "Missing Main-to-selected-expert exchange" }
+                parent to child.contextConversationId
             }
             scenario.recreate()
-            composeRule.mainClock.advanceTimeBy(1_000)
-            composeRule.waitUntil(20_000) { composeRule.mainClock.advanceTimeBy(32); composeRule.onAllNodesWithTag(replyTag).fetchSemanticsNodes().isNotEmpty() }
-            composeRule.onAllNodes(androidx.compose.ui.test.hasText(expertName) and
-                androidx.compose.ui.test.hasAnyAncestor(androidx.compose.ui.test.hasTestTag(replyTag)),
-                useUnmergedTree = true).assertCountEquals(1)
+            composeRule.waitUntil(20_000) {
+                composeRule.mainClock.advanceTimeBy(64)
+                composeRule.onAllNodesWithTag("chat.topbar.more").fetchSemanticsNodes().isNotEmpty()
+            }
+            composeRule.onNodeWithTag("chat.topbar.more").performProductClick()
+            composeRule.onNodeWithText(context.getString(R.string.inspector_progress)).performProductClick()
+            composeRule.onNodeWithTag("chat.expertHistory.$parentId").performProductScrollTo().performProductClick()
+            composeRule.waitUntil(10_000) {
+                composeRule.mainClock.advanceTimeBy(64)
+                composeRule.onAllNodesWithTag("chat.expertChild.$childId").fetchSemanticsNodes().isNotEmpty()
+            }
+            composeRule.onNodeWithTag("chat.expertChild.$childId").performProductScrollTo().performProductClick()
+            composeRule.mainClock.autoAdvance = true
+            composeRule.waitUntil(10_000) {
+                composeRule.onAllNodesWithTag("chat.expertHistory.transcript").fetchSemanticsNodes().isNotEmpty()
+            }
+            val result = androidx.compose.ui.test.hasText("437", substring = true) and
+                androidx.compose.ui.test.hasAnyAncestor(hasTestTag("chat.expertHistory.transcript"))
+            try {
+                composeRule.waitUntil(15_000) {
+                    composeRule.onAllNodes(result, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+                }
+                composeRule.onAllNodes(result, useUnmergedTree = true)[0].assertIsDisplayed()
+                val transcript = androidx.compose.ui.test.hasAnyAncestor(hasTestTag("chat.expertHistory.transcript"))
+                val author = androidx.compose.ui.test.SemanticsMatcher("historical message author") {
+                    it.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.TestTag)?.startsWith("chat.history.author.") == true
+                }
+                composeRule.onNode(transcript and author and androidx.compose.ui.test.hasText(expertName), useUnmergedTree = true).assertIsDisplayed()
+                composeRule.onNode(transcript and author and androidx.compose.ui.test.hasText("Nola"), useUnmergedTree = true).assertIsDisplayed()
+                val editLabel = context.getString(R.string.chat_edit_resend)
+                check(composeRule.onAllNodes(transcript and androidx.compose.ui.test.hasText(editLabel), useUnmergedTree = true).fetchSemanticsNodes().isEmpty())
+                val copyLabel = context.getString(R.string.chat_message_action_copy)
+                val copy = androidx.compose.ui.test.hasText(copyLabel) or androidx.compose.ui.test.hasContentDescription(copyLabel)
+                check(composeRule.onAllNodes(transcript and copy, useUnmergedTree = true).fetchSemanticsNodes().size == 2)
+                val longPress = androidx.compose.ui.test.SemanticsMatcher.keyIsDefined(androidx.compose.ui.semantics.SemanticsActions.OnLongClick)
+                check(composeRule.onAllNodes(transcript and longPress and androidx.compose.ui.test.SemanticsMatcher("history bubble") {
+                    it.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.TestTag)?.startsWith(CHAT_MESSAGE_TEST_TAG_PREFIX) == true
+                }, useUnmergedTree = true).fetchSemanticsNodes().isEmpty())
+            } finally {
+                File(context.filesDir, "real-android-expert-accessibility.txt").writeText(
+                    composeRule.onAllNodes(isRoot(), useUnmergedTree = true).fetchSemanticsNodes().indices.joinToString("\n") {
+                        composeRule.onAllNodes(isRoot(), useUnmergedTree = true)[it].printToString(maxDepth = 60)
+                    }
+                )
+                File(context.filesDir, "real-android-expert.png").outputStream().use { output ->
+                    InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+                        .compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output)
+                }
+            }
+
         }
     }
 
@@ -588,7 +649,7 @@ class RealAndroidChatProductUiEndToEndTest {
                 }
                 throw failure
             }
-            confirmRealProviderCapabilities()
+            confirmRealProviderCapabilities(config.getString("model"))
             val useModel = composeRule.onAllNodesWithText(context.getString(R.string.models_use))
             if (useModel.fetchSemanticsNodes().isNotEmpty()) {
                 composeRule.onNodeWithText(context.getString(R.string.models_use)).performProductScrollTo().performProductClick()

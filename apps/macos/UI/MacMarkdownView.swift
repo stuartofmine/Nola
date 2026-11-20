@@ -10,7 +10,7 @@ import SwiftMath
 enum MacMarkdownTypography {
     static let bodySize: CGFloat = 16
     static let lineSpacing: CGFloat = 6
-    static let blockSpacing: CGFloat = 12
+    static let blockSpacing: CGFloat = 14
     static let listItemSpacing: CGFloat = 8
     static let inlineCodeSize: CGFloat = 14.5
     static let secondaryBodySize: CGFloat = 15

@@ -7,7 +7,7 @@ export function diagramDocument(source: string, libraryUrl: string, dark: boolea
     const url = script.href.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;');
     return `<!doctype html><html><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src ${script.origin} 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'">
-<style>html,body{margin:0;background:${dark ? '#131312' : '#f7f6f3'};color:${dark ? '#f2f0eb' : '#181817'};font:16px system-ui}#diagram{padding:12px;width:max-content;min-width:calc(100% - 24px)}svg{max-width:none!important;height:auto}a{pointer-events:none}</style>
+<style>html,body{margin:0;background:${dark ? '#1b1c1a' : '#faf8f4'};color:${dark ? '#f1f1e9' : '#242923'};font:16px system-ui}#diagram{padding:12px;width:max-content;min-width:calc(100% - 24px)}svg{max-width:none!important;height:auto}a{pointer-events:none}</style>
 <script src="${url}"></script></head><body><div id="diagram"></div><script>
 const source=${literal};
 const post=(status)=>parent.postMessage({type:'nola-diagram',status,height:Math.ceil(document.documentElement.scrollHeight)},'*');

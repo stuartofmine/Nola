@@ -2,8 +2,8 @@
 <resources>
     <string name="room_sent_to">Vous → %1$s</string>
     <string name="room_stop">Arrêter</string>
-    <string name="room_agent_name">Nom de l’agent</string>
-    <string name="room_create_agent">Créer un agent</string>
+    <string name="room_agent_name">Nom de l’expert</string>
+    <string name="room_create_agent">Créer un expert</string>
     <string name="room_controls">Modèle et autorisations</string>
     <string name="room_send">Envoyer</string>
     <string name="room_title">Discussions avec les agents</string>

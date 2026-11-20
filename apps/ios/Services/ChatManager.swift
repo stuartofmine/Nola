@@ -46,7 +46,7 @@ import UIKit
     private var runs: [UUID: (identity: UUID, task: Task<Void, Never>)] = [:]
     init(workspace: ChatManager) { self.workspace = workspace }
 
-    func prepare(title: String, initialParameters: ModelParameters?,
+    func prepare(initialParameters: ModelParameters?,
                  drafts: inout ConversationComposerDraftStore) throws -> Prepared {
         try workspace.reconcileCommittedDraftSubmissions()
         try drafts.validateForSubmission()
@@ -56,7 +56,7 @@ import UIKit
         default:
             throw IOSApplicationRuntimeError.rejected("Conversation selection changed. Your original draft is retained; reopen its conversation before sending.")
         }
-        guard let conversationID = workspace.ensureCurrentConversation(title: title,
+        guard let conversationID = workspace.ensureCurrentConversation(
             language: nil, initialParameters: initialParameters, selectOnCreate: false) else {
             throw ChatManagerError.failedToCreateConversation("The conversation could not be opened. Your draft is retained.")
         }
@@ -3126,7 +3126,9 @@ public final class ChatManager: ObservableObject {
     public func appendMessageToConversation(conversationId: UUID, message: ConversationMessage) throws {
         guard let store = container.conversationStore else { return }
         var shouldSyncTitle = false
-        if message.role == .user,
+        if message.role == .user, let local = store as? LocalConversationStore {
+            _ = try local.refreshFirstMessageTitle(conversationId: conversationId)
+        } else if message.role == .user,
            let conversation = try? store.getConversation(conversationId: conversationId),
            isDefaultConversationTitle(conversation.title) {
             let existingUserMessages = (try? store.getMessages(conversationId: conversationId, limit: 0)) ?? []
@@ -3443,8 +3445,7 @@ public final class ChatManager: ObservableObject {
                 return nil
             }
         }
-        let resolvedTitle = title ?? L10n.chatConversationDefaultTitle
-        let convId = startConversation(title: resolvedTitle, language: language, initialParameters: initialParameters, selectOnCreate: selectOnCreate)
+        let convId = startConversation(title: title, language: language, initialParameters: initialParameters, selectOnCreate: selectOnCreate)
         if selectOnCreate { currentConversationId = convId }
         return convId
     }
@@ -3853,7 +3854,7 @@ public final class ChatManager: ObservableObject {
         var journalConsumer: IOSAssistantJournalConsumer?
         if let store = container.conversationStore {
             if currentConversationId == nil {
-                if let convId = startConversation(title: firstQueryTitle(from: displayMessage ?? message) ?? L10n.chatConversationDefaultTitle, language: nil) {
+                if let convId = startConversation() {
                     currentConversationId = convId
                     generationConversationId = convId
                 } else {
@@ -4415,6 +4416,9 @@ public final class ChatManager: ObservableObject {
                             sourceAdmitted = accepted.phase == "admitted"
                             if sourceAdmitted {
                                 submissionCommitted?()
+                                if let owner = generationConversationId {
+                                    await autoNameConversationIfNeeded(conversationId: owner)
+                                }
                                 permissionOwnerProjectionRunID = nil
                                 if let owner = generationConversationId { refreshPermissionOwnerProjection(conversationID: owner) }
                             }
@@ -4884,7 +4888,12 @@ public final class ChatManager: ObservableObject {
                 expectedParentMessageID: expectedConfigurationRevision != nil
                     ? expectedParentMessageID : automationAdmissionSource?.messages.last?.id,
                 queuedUserAdmission: queuedUserAdmission
-            ), submissionCommitted: submissionCommitted
+            ), submissionCommitted: { [weak self, submissionCommitted] in
+                submissionCommitted?()
+                if let conversationId {
+                    Task { @MainActor in await self?.autoNameConversationIfNeeded(conversationId: conversationId) }
+                }
+            }
         )
         let preparedInvocation = try preparedModel.prepareHostInvocation()
         let recoveryPreparation: (@Sendable (IOSExactRunInvocation) async throws -> Void)?
@@ -5827,6 +5836,12 @@ public final class ChatManager: ObservableObject {
     private func autoNameConversationIfNeeded(conversationId: UUID? = nil) async {
         guard let store = container.conversationStore, let convId = conversationId ?? currentConversationId else { return }
         do {
+            if let local = store as? LocalConversationStore {
+                if let title = try local.refreshFirstMessageTitle(conversationId: convId) {
+                    NotificationCenter.default.post(name: .nolaConversationRenamed, object: convId, userInfo: ["title": title])
+                }
+                return
+            }
             if let conv = try store.getConversation(conversationId: convId) {
                 if !isDefaultConversationTitle(conv.title) { return }
 
@@ -6184,6 +6199,7 @@ extension ChatManager {
         let result = try runtime.executeAgentCommand(.object(["type": .string("prepare_in_place_resend"), "input": encoded]))
         let prepared = try JSONDecoder().decode(ApplePreparedInPlaceResend.self, from: JSONEncoder().encode(result))
         guard prepared.input == input else { throw IOSApplicationRuntimeError.invalidResponse }
+        NotificationCenter.default.post(name: .nolaConversationRewound, object: owner)
         let admission = AsyncThrowingStream<UUID, Error>.makeStream()
         execution.beginSubmissionAttempt()
         execution.prepareAgentTrace(conversationId: owner, canonicalAssistantMessageID: prepared.run_id + ":assistant")

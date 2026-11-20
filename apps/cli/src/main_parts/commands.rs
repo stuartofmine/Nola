@@ -1464,7 +1464,7 @@ fn interactive_help_rows() -> Vec<(String, String)> {
             }
             .to_string(),
         ),
-        ("/room".to_string(), "Room messages · @recipient + Tab, or automatic routing".to_string()),
+        ("/room".to_string(), ui_text(UiText::HelpRoom).to_string()),
         ("/work".to_string(), ui_text(UiText::HelpWork).to_string()),
         ("/recover".to_string(), crate::unknown_effect_recovery::usage().to_string()),
         ("/tasks".to_string(), ui_text(UiText::HelpTasks).to_string()),

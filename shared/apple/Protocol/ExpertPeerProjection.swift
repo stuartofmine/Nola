@@ -107,16 +107,16 @@ nonisolated struct AppleExpertPeerExchanges: Codable, Equatable, Sendable {
         case version, exchanges
         case conversationID = "conversation_id", hasMore = "has_more", nextOffset = "next_offset"
     }
-    func validate(contextID: String, offset: Int) throws {
+    func validate(parentID: String, offset: Int) throws {
         func valid(_ reference: AppleExpertParticipantReference) -> Bool {
             !reference.participant_id.isEmpty && !reference.agent_id.isEmpty
                 && !reference.context_conversation_id.isEmpty && reference.agent_revision >= 0
         }
-        guard version == 1, conversationID == contextID, offset >= 0,
+        guard version == 1, !parentID.isEmpty, conversationID == parentID, offset >= 0,
               Set(exchanges.map(\.exchangeID)).count == exchanges.count,
               exchanges.allSatisfy({ $0.version == 1 && $0.kind == "request" && !$0.exchangeID.isEmpty
-                  && ($0.source.context_conversation_id == contextID || $0.target.context_conversation_id == contextID)
-                  && !$0.roomID.isEmpty && !$0.parentConversationID.isEmpty && !$0.rootExchangeID.isEmpty
+                  && $0.parentConversationID == parentID && !$0.roomID.isEmpty && !$0.rootExchangeID.isEmpty
+                  && (!$0.source.isMainAgent || $0.source.context_conversation_id == parentID)
                   && $0.source.isValid && valid($0.target) && $0.hop >= 0 && $0.createdAtMs >= 0
                   && $0.clarifications.allSatisfy { !$0.messageID.isEmpty && valid($0.source) && valid($0.target) && $0.createdAtMs >= 0 } }),
               hasMore ? (nextOffset == offset + exchanges.count && !exchanges.isEmpty) : nextOffset == nil else {

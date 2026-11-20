@@ -36,8 +36,8 @@ function contrastRatio(rgbA, rgbB) {
     try {
         const detail = '<script>window.untrustedMarkup=true</script> ' + 'Long fixture path 中文 '.repeat(30);
         for (const colorScheme of ['light', 'dark']) {
-            const expectedBodyBg = colorScheme === 'dark' ? 'rgb(19, 19, 18)' : 'rgb(247, 246, 243)';
-            const expectedCardBg = colorScheme === 'dark' ? 'rgb(27, 27, 25)' : 'rgb(255, 255, 255)';
+            const expectedBodyBg = colorScheme === 'dark' ? 'rgb(27, 28, 26)' : 'rgb(250, 248, 244)';
+            const expectedCardBg = colorScheme === 'dark' ? 'rgb(34, 36, 32)' : 'rgb(255, 255, 255)';
             for (const width of [320, 1440]) {
                 const context = await browser.newContext({colorScheme, viewport: {width, height: 900}, reducedMotion: 'no-preference'});
                 await context.route('**/*', route => route.abort());
@@ -93,7 +93,7 @@ function contrastRatio(rgbA, rgbB) {
                 }
             }
         }
-        console.log(`PASS: Windows startup/failure HTML verified across ${ALL_LOCALES.length} locales, Light (#f7f6f3) / Dark (#131312), 320px/1440px, XSS escaping, keyboard focus, WCAG AA contrast, and reduced motion`);
+        console.log(`PASS: Windows startup/failure HTML verified across ${ALL_LOCALES.length} locales, Light (#faf8f4) / Dark (#1b1c1a), 320px/1440px, XSS escaping, keyboard focus, WCAG AA contrast, and reduced motion`);
     } finally {
         await browser.close();
     }

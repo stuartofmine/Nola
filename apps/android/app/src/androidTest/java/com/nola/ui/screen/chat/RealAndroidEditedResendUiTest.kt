@@ -161,6 +161,15 @@ class RealAndroidEditedResendUiTest {
                         .fetchSemanticsNodes().mapNotNull { it.config.getOrNull(ChatStreamingMarkdownSourceKey) }
                     expectedAnswers.all { answer -> visible.any { it == answer } }
                 }
+                if (!expert) {
+                    compose.waitUntil(15_000) {
+                        compose.mainClock.advanceTimeBy(64)
+                        runtime.loadConversation(source.first)?.title == editedText.take(80)
+                    }
+                    val saved = checkNotNull(runtime.loadConversation(source.first))
+                    check(JSONObject(saved.settingsJson ?: "{}").optString("titleSource") == "first_message")
+                    report.put("updatedTitle", saved.title)
+                }
                 report.put("targetConversation", target).put("answeredChildren", expectedAnswers.size).put("passed", true)
                 scenario.recreate()
                 compose.waitUntil(20_000) {
@@ -201,14 +210,14 @@ class RealAndroidEditedResendUiTest {
             compose.onNodeWithText(context.getString(R.string.models_title)).clickProduct()
             val rowTag = com.nola.ui.screen.models.MODEL_ROW_TEST_TAG_PREFIX + modelName
             compose.waitUntil(15_000) { compose.mainClock.advanceTimeBy(32); compose.onAllNodesWithTag(rowTag).fetchSemanticsNodes().isNotEmpty() }
-            val use = compose.onAllNodes(hasText(context.getString(R.string.models_use)) and hasAnyAncestor(hasTestTag(rowTag)))
+            val use = compose.onAllNodes(hasText(context.getString(R.string.models_use)) and hasAnyAncestor(hasTestTag(rowTag)), useUnmergedTree = true)
             if (use.fetchSemanticsNodes().isNotEmpty()) {
                 compose.mainClock.autoAdvance = true
                 use[0].performScrollTo().assertIsDisplayed().performClick()
                 compose.mainClock.autoAdvance = false
                 compose.mainClock.advanceTimeBy(400)
             }
-            compose.waitUntil(15_000) { compose.mainClock.advanceTimeBy(32); compose.onAllNodes(hasText(context.getString(R.string.models_selected)) and hasAnyAncestor(hasTestTag(rowTag))).fetchSemanticsNodes().isNotEmpty() }
+            compose.waitUntil(15_000) { compose.mainClock.advanceTimeBy(32); compose.onAllNodes(hasText(context.getString(R.string.models_selected)) and hasAnyAncestor(hasTestTag(rowTag)), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithContentDescription(context.getString(R.string.tab_chat)).clickProduct()
             if (compose.onAllNodesWithTag("chat.conversation.back").fetchSemanticsNodes().isNotEmpty())
                 compose.onNodeWithTag("chat.conversation.back").clickProduct()

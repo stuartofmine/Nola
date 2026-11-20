@@ -15,6 +15,8 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalConfiguration
 import com.nola.data.repository.ExpertRoleTemplate
 import com.nola.data.repository.expertRoleText
@@ -29,6 +31,8 @@ import com.nola.data.repository.PersistentAgent
 import com.nola.domain.model.ModelInfo
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
@@ -40,7 +44,6 @@ internal interface ExpertManagementDataSource {
     suspend fun readableExpertTemplates(): com.nola.data.local.ReadableExpertTemplateCatalog
     suspend fun expertDefaultReasoningEfforts(): List<String>
     suspend fun reasoningEfforts(model: ModelInfo): List<String>
-    suspend fun expertDefaultsForModel(model: ModelInfo): JsonObject
     suspend fun createAgent(
         conversationId: String?,
         storeEpoch: String?,
@@ -63,34 +66,39 @@ internal interface ExpertManagementDataSource {
 
 /** Directory management only: no room creation or independent chat admission. */
 @Composable
-internal fun ExpertManagementPanel(viewModel: ChatViewModel, onBack: () -> Unit) {
-    val state by viewModel.uiState.collectAsStateWithLifecycle()
-    val dataSource = remember(viewModel) {
+internal fun ExpertManagementPanel(viewModel: ChatViewModel, localDirectory: Boolean = false, onBack: () -> Unit) {
+    val state = if (localDirectory) {
+        val modelCatalog = remember(viewModel) { viewModel.uiState.map { it.availableModels }.distinctUntilChanged() }
+        val models by modelCatalog.collectAsStateWithLifecycle(initialValue = emptyList())
+        remember(models) { ChatUiState(availableModels = models) }
+    } else viewModel.uiState.collectAsStateWithLifecycle().value
+    val dataSource = remember(viewModel, localDirectory) {
         object : ExpertManagementDataSource {
+            private suspend fun repository(conversationId: String?, storeEpoch: String?) =
+                if (localDirectory) viewModel.agentRooms else viewModel.expertRoomRepository(conversationId, storeEpoch)
+
             override suspend fun expertEditorScope(): ChatViewModel.ExpertEditorScope =
-                viewModel.expertEditorScope()
+                if (localDirectory) ChatViewModel.ExpertEditorScope(false, emptyList(), null, emptyMap())
+                else viewModel.expertEditorScope()
 
             override suspend fun directory(conversationId: String?, storeEpoch: String?): AgentDirectory =
                 withContext(Dispatchers.IO) {
-                    viewModel.expertRoomRepository(conversationId, storeEpoch).directory()
+                    repository(conversationId, storeEpoch).directory()
                 }
 
             override suspend fun roleTemplates(conversationId: String?, storeEpoch: String?): List<ExpertRoleTemplate> =
                 withContext(Dispatchers.IO) {
-                    viewModel.expertRoomRepository(conversationId, storeEpoch).roleTemplates().templates
+                    repository(conversationId, storeEpoch).roleTemplates().templates
                 }
 
             override suspend fun readableExpertTemplates(): com.nola.data.local.ReadableExpertTemplateCatalog =
-                viewModel.readableExpertTemplates()
+                viewModel.readableExpertTemplates(localDirectory)
 
             override suspend fun expertDefaultReasoningEfforts(): List<String> =
                 viewModel.expertDefaultReasoningEfforts()
 
             override suspend fun reasoningEfforts(model: ModelInfo): List<String> =
                 withContext(Dispatchers.IO) { viewModel.reasoningEfforts(model) }
-
-            override suspend fun expertDefaultsForModel(model: ModelInfo): JsonObject =
-                viewModel.expertDefaultsForModel(model)
 
             override suspend fun createAgent(
                 conversationId: String?,
@@ -101,7 +109,7 @@ internal fun ExpertManagementPanel(viewModel: ChatViewModel, onBack: () -> Unit)
                 description: String,
                 agentId: String,
             ): AgentDirectory = withContext(Dispatchers.IO) {
-                viewModel.expertRoomRepository(conversationId, storeEpoch)
+                repository(conversationId, storeEpoch)
                     .createAgent(name, defaults, snapshot, description, agentId)
             }
 
@@ -113,12 +121,12 @@ internal fun ExpertManagementPanel(viewModel: ChatViewModel, onBack: () -> Unit)
                 description: String,
                 snapshot: AgentDirectory,
             ): AgentDirectory = withContext(Dispatchers.IO) {
-                viewModel.expertRoomRepository(conversationId, storeEpoch)
+                repository(conversationId, storeEpoch)
                     .updateAgent(original, name, description, snapshot)
             }
 
             override fun refreshConversationExperts(restoreSelection: Boolean) {
-                viewModel.refreshConversationExperts(restoreSelection = restoreSelection)
+                if (!localDirectory) viewModel.refreshConversationExperts(restoreSelection = restoreSelection)
             }
         }
     }
@@ -132,6 +140,9 @@ internal fun ExpertManagementPanel(
     onBack: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    fun finishTextEntry() { focusManager.clearFocus(); keyboard?.hide() }
     var editorScope by remember(state.conversationId, state.executionHostBinding) { mutableStateOf<ChatViewModel.ExpertEditorScope?>(null) }
     val sourceKey = "${state.conversationId}:${state.executionHostBinding}:${editorScope?.sourceIdentity}"
     var directory by remember(state.conversationId, state.executionHostBinding) { mutableStateOf<AgentDirectory?>(null) }
@@ -147,6 +158,7 @@ internal fun ExpertManagementPanel(
     var modelID by rememberSaveable { mutableStateOf<String?>(null) }
     var modelMenu by remember { mutableStateOf(false) }
     var modelSelectionTouched by rememberSaveable { mutableStateOf(false) }
+    var resetModelParameters by rememberSaveable { mutableStateOf<String?>(null) }
     var originalModelSelection by rememberSaveable { mutableStateOf<String?>(null) }
     var templateCatalog by remember { mutableStateOf<com.nola.data.local.ReadableExpertTemplateCatalog?>(null) }
     var templateCatalogFailed by remember { mutableStateOf(false) }
@@ -183,6 +195,7 @@ internal fun ExpertManagementPanel(
     }
     fun editAgent(agent: PersistentAgent) {
         editorOwnerKey = sourceKey
+        resetModelParameters = null
         editingID = agent.id; name = agent.name; description = agent.description
         originalModelSelection = agent.defaults["modelSelectionID"]?.takeUnless { it == JsonNull }?.jsonPrimitive?.content
         inheritModel = originalModelSelection == null
@@ -255,7 +268,7 @@ internal fun ExpertManagementPanel(
                 NolaDropdownBar(
                     value = stringResource(R.string.room_agent_model, modelValue),
                     expanded = modelMenu,
-                    onClick = { modelMenu = true },
+                    onClick = { finishTextEntry(); modelMenu = true },
                     enabled = !busy,
                     modifier = Modifier.testTag("expert.editor.model")
                 )
@@ -265,6 +278,15 @@ internal fun ExpertManagementPanel(
                         inheritModel = false; modelID = "${model.source}:${model.selectionId}"; modelSelectionTouched = true; modelMenu = false
                     }) }
                 }
+            }
+            val parameterKey = effectiveModel?.let { com.nola.data.repository.conversationModelIdentity(it) }
+            val savedOverrides = directory?.agents?.singleOrNull { it.id == editingID }?.defaults?.get("modelOverrides") as? JsonObject
+            if (parameterKey != null && (savedOverrides?.get(parameterKey) as? JsonObject)?.isNotEmpty() == true) {
+                TextButton(
+                    onClick = { resetModelParameters = parameterKey },
+                    enabled = !busy && resetModelParameters != parameterKey,
+                    modifier = Modifier.testTag("expert.editor.reset-model-parameters"),
+                ) { Text(stringResource(R.string.chat_use_model_default)) }
             }
             Box(Modifier.fillMaxWidth()) {
                 val selectedName = templateID?.let { id -> roles.firstOrNull { it.id == id }?.let { expertRoleText(it.name, language) }
@@ -277,7 +299,7 @@ internal fun ExpertManagementPanel(
                 NolaDropdownBar(
                     value = stringResource(R.string.expert_template_label, templateValue),
                     expanded = templateMenu,
-                    onClick = { templateMenu = true },
+                    onClick = { finishTextEntry(); templateMenu = true },
                     enabled = !busy,
                     modifier = Modifier.testTag("expert.editor.template")
                 )
@@ -304,7 +326,7 @@ internal fun ExpertManagementPanel(
                 NolaDropdownBar(
                     value = reasoningEffortLabel(effort),
                     expanded = effortMenu,
-                    onClick = { effortMenu = true },
+                    onClick = { finishTextEntry(); effortMenu = true },
                     enabled = !busy,
                     label = stringResource(R.string.models_reasoning_effort),
                     modifier = Modifier.testTag("expert.editor.effort")
@@ -324,7 +346,7 @@ internal fun ExpertManagementPanel(
                 NolaDisclosureBar(
                     title = stringResource(R.string.expert_role_preview),
                     expanded = preview,
-                    onToggle = { preview = !preview },
+                    onToggle = { finishTextEntry(); preview = !preview },
                     modifier = Modifier.testTag("expert.template.preview")
                 )
                 if (preview) {
@@ -368,12 +390,10 @@ internal fun ExpertManagementPanel(
                             }
                             roles = currentRoles
                         }
-                        val modelDefaults = if (changeModel && !inheritModel) {
-                            if (original == null && editorScope?.remote != true) dataSource.expertDefaultsForModel(checkNotNull(selectedModel))
-                            else buildJsonObject { put("modelSelectionID", checkNotNull(desiredModel)) }
-                        } else null
+                        val modelDefaults = desiredModel?.let { buildJsonObject { put("modelSelectionID", it) } }
                         val defaults = mergeExpertEditorDefaults(original?.defaults ?: buildJsonObject {},
-                            changeModel, modelDefaults, changeTemplate, templateID, initializeModelParameters = original == null, reasoningEffort = effort)
+                            changeModel, modelDefaults, changeTemplate, templateID, reasoningEffort = effort,
+                            resetModelParameters = resetModelParameters?.takeIf { it == desiredModel })
                         val agentID = original?.id ?: newAgentID ?: java.util.UUID.randomUUID().toString().also { newAgentID = it }
                         val attempted = PersistentAgent(agentID, name.trim(), original?.revision ?: 0L,
                             original?.availability ?: "active", defaults, description.trim())
@@ -397,7 +417,7 @@ internal fun ExpertManagementPanel(
                     } }) { Text(stringResource(R.string.common_save)) }
             }
         } else {
-            TextButton(onClick = { editingID = null; newAgentID = java.util.UUID.randomUUID().toString(); name = ""; description = ""; effort = "automatic"; inheritModel = true; modelID = null; originalModelSelection = null; modelSelectionTouched = false; modelMenu = false; templateID = null; originalTemplateSelection = null; templateSelectionTouched = false; templateMenu = false; editorOwnerKey = sourceKey; editing = true },
+            TextButton(onClick = { editingID = null; newAgentID = java.util.UUID.randomUUID().toString(); name = ""; description = ""; effort = "automatic"; inheritModel = true; modelID = null; originalModelSelection = null; resetModelParameters = null; modelSelectionTouched = false; modelMenu = false; templateID = null; originalTemplateSelection = null; templateSelectionTouched = false; templateMenu = false; editorOwnerKey = sourceKey; editing = true },
                 enabled = !busy && catalogReady && directory != null, modifier = Modifier.testTag("expert.create").heightIn(min = 48.dp)) {
                 Text(stringResource(R.string.room_create_agent))
             }

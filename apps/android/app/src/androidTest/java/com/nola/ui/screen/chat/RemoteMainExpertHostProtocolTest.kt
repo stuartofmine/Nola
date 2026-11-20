@@ -117,6 +117,13 @@ class RemoteMainExpertHostProtocolTest {
             assertTrue(history.toString().contains("target-own-high"))
             val exchanges = history.getValue("expert_exchanges").jsonArray
             assertEquals(1, exchanges.size)
+            val publicHistory = buildJsonObject {
+                put("type", "peer_exchanges"); put("conversation_id", parent); put("limit", 40); put("offset", 0)
+            }
+            val publicExchanges = provider.readExpertHistoryCommand(publicHistory, config, epoch).getValue("exchanges").jsonArray
+            assertTrue(publicExchanges.any { it.jsonObject["exchange_id"] == exchanges.single().jsonObject["exchange_id"] })
+            val changedEpoch = runCatching { provider.readExpertHistoryCommand(publicHistory, config, "wrong-$epoch") }
+            assertTrue("A changed expert source epoch must be rejected", changedEpoch.isFailure)
             assertEquals(JsonPrimitive("main_agent"), exchanges.single().jsonObject.getValue("source").jsonObject["kind"])
             assertEquals(JsonPrimitive(parent), exchanges.single().jsonObject.getValue("source").jsonObject["context_conversation_id"])
             File(context.filesDir, "remote-main-expert-result.json").writeText(buildJsonObject { put("passed", true); put("parent", parent); put("run", run); put("child", child.getValue("conversation_id")); put("host", host); put("parentUsers", 1); put("mainJournalSealed", terminal) }.toString())

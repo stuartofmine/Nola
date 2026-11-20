@@ -20,7 +20,7 @@ window.mobileIM = (() => {
         const filtered = conversations.filter(c=>(state.filter!=='waiting'||c.pending) && (c.title+' '+c.preview+' '+(drafts[c.id]||'')+' '+c.messages.map(m=>m.text).join(' ')).toLowerCase().includes(query.toLowerCase()));
         return `<section class="im-screen im-list ${new URLSearchParams(location.search).get('list')==='marker'?'im-list-marked':''}">${header('对话','',state.os==='ios'?icon('edit','新建对话','new'):'')}
         <label class="im-search">${svg('search')}<input id="im-search" type="search" placeholder="搜索对话与内容" aria-label="搜索对话与内容" value="${esc(query)}"></label>
-        <div class="im-filters" aria-label="会话筛选">${[['all','全部'],['waiting','待回应']].map(([id,title])=>`<button type="button" aria-pressed="${state.filter===id}" data-action="im:filter:${id}">${title}${id==='waiting'?`<span>${conversations.filter(c=>c.pending).length}</span>`:''}</button>`).join('')}</div>
+        <div class="im-filters" aria-label="会话筛选">${[['all','全部'],['waiting','待回应']].map(([id,title])=>`<button type="button" aria-pressed="${state.filter===id}" data-action="im:filter:${id}">${state.filter===id?'<i class="im-filter-selection" aria-hidden="true"></i>':''}${title}${id==='waiting'?`<span>${conversations.filter(c=>c.pending).length}</span>`:''}</button>`).join('')}</div>
         <div class="im-list-rows" id="im-list-rows">${filtered.map(c=>`<button type="button" class="im-chat-row" data-action="im:chat:${c.id}" aria-label="${esc(c.title)}，${esc(drafts[c.id]?'草稿':subtitle(c))}">
         ${new URLSearchParams(location.search).get('list')==='marker'?`<span class="im-list-marker" aria-hidden="true">${svg(c.pending?'clock':c.messages.some(m=>m.error)?'retry':'chat')}</span>`:''}<span class="im-chat-copy"><span class="im-chat-line"><strong>${esc(c.title)}</strong><time>${esc(c.time)}</time></span><span class="im-preview">${drafts[c.id]?`<b class="im-draft-label">草稿</b><span class="im-preview-separator"> · </span>${esc(drafts[c.id])}`:c.pending?`<b class="im-wait-label">待确认</b><span class="im-preview-separator"> · </span>${esc(c.preview)}`:c.messages.some(m=>m.error)?`<b class="im-failed-label">部分未完成</b><span class="im-preview-separator"> · </span>${esc(c.preview)}`:esc(c.preview)}</span></span></button>`).join('')||'<div class="im-empty"><h2>没有找到对话</h2><p>换一个词试试，或创建一段新对话。</p></div>'}</div>
         ${state.os==='android'?icon('edit','新建对话','new','im-fab'):''}</section>`;
@@ -98,7 +98,21 @@ window.mobileIM = (() => {
         if(action==='chat')go('chat',v);
         if(action==='new'){const id='im-'+Date.now();conversations.unshift({id,title:'新对话',preview:'',time:'刚刚',group:'今天',experts:[],messages:[]});go('chat',id);}
         if(action==='focus-search')document.querySelector('#im-search')?.focus();
-        if(action==='filter'){state.filter=v;render();}
+        if (action === 'filter' && state.filter !== v) {
+            const indicator = '.im-stage .im-filter-selection';
+            const before = document.querySelector(indicator)?.getBoundingClientRect();
+            state.filter = v;
+            render();
+            const selected = document.querySelector(indicator);
+            selected?.parentElement.focus({preventScroll: true});
+            if (before && selected && !motionReduced()) {
+                const after = selected.getBoundingClientRect();
+                selected.animate([
+                    {transform: `translateX(${before.left - after.left}px) scaleX(${before.width / after.width})`},
+                    {transform: 'none'}
+                ], {duration: 210, easing: ease});
+            }
+        }
         if(action==='notification-toggle'){window.enhancedModule.preferences.notifications=!window.enhancedModule.preferences.notifications;render();document.querySelector('[data-action="im:notification-toggle"]')?.focus({preventScroll:true});}
         if(action==='theme')sheet('外观',button('跟随系统','theme-mode:system','im-sheet-action')+button('浅色','theme-mode:light','im-sheet-action')+button('深色','theme-mode:dark','im-sheet-action'));
         if(action==='theme-mode'){state.themeMode=v;theme=v==='system'?(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'):v;applyTheme();closeDialog();render();document.querySelector('[data-action="im:theme"]')?.focus({preventScroll:true});}
@@ -186,7 +200,7 @@ window.mobileIM = (() => {
                         if(remaining>160)animation.playbackRate=remaining/160;
                     }
                     document.querySelector('#im-chat-status').textContent='本地回放结束 · 内容已保留';
-                    const send=document.querySelector('.im-send');send.innerHTML=svg('arrow');send.setAttribute('aria-label','发送消息');send.onclick=()=>handle('im:send');
+                    const send=document.querySelector('.im-send');send.innerHTML=svg('arrow');send.setAttribute('aria-label','发送消息');send.dataset.action='im:send';send.disabled=!document.querySelector('.im-stage #compose').value.trim();send.onclick=()=>handle('im:send');
                     const live=document.querySelector('.im-live');live.querySelector('.im-message-time').textContent=motionReduced()?'接收完成 · 即时显示':'接收完成 · 浮现收尾 ≤160 ms';
                     live.querySelector('.im-message-content').insertAdjacentHTML('beforeend',(window.expertProcessHTML?.(savedMsg,c.id)||'')+actions(c.messages.length-1));live.classList.remove('im-live');
                     live.querySelectorAll('[data-action]').forEach(el=>el.onclick=()=>window.handle(el.dataset.action));
@@ -215,9 +229,19 @@ window.mobileIM = (() => {
             stage.animate(rootSwitch?[{opacity:.7},{opacity:1}]:[{transform:`translateX(${back?'-22%':'100%'})`},{transform:'translateX(0)'}],{duration:rootSwitch?160:300,easing:ease}).finished.finally(()=>stage.style.zIndex='');
         }
         state.lastPage=page;state.navigation=null;state.gestureReturn=false;state.outgoing=null;
-        const input=document.querySelector('#compose');if(input){
+        const input=stage.querySelector('#compose');if(input){
+            const sendButton = stage.querySelector('.im-send');
+            const updateSendState = () => {
+                sendButton.disabled = state.source?.id !== activeId && !input.value.trim();
+            };
             const resize=()=>{const sc=document.querySelector('.im-transcript'),bottom=sc.scrollHeight-sc.scrollTop-sc.clientHeight<40;input.style.height='auto';input.style.height=Math.min(input.scrollHeight,128)+'px';if(bottom)sc.scrollTop=sc.scrollHeight;};
-            resize();input.onkeydown=null;input.oninput=()=>{drafts[activeId]=input.value;resize();};
+            resize(); updateSendState();
+            input.onkeydown = null;
+            input.oninput = () => {
+                drafts[activeId] = input.value;
+                updateSendState();
+                resize();
+            };
             document.querySelector('#im-composer').onsubmit=e=>{e.preventDefault();send();};
         }
         const search=document.querySelector('#im-search');if(search)search.oninput=()=>{query=search.value;const pos=search.selectionStart;render();const next=document.querySelector('#im-search');next.focus();next.setSelectionRange?.(pos,pos);};

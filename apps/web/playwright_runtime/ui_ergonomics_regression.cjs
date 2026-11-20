@@ -49,20 +49,20 @@ const base=process.env.NOLA_LONG_WEB_URL, out=process.env.NOLA_LONG_WEB_OUT;
             // Use a short actual viewport so a concise real answer still has
             // reading history. Do not fabricate extra messages to force overflow.
             await page.setViewportSize({width,height:360});
-            const transcript=page.locator('.transcript');await transcript.focus();
+            const transcript=page.getByRole('log', {name:'对话',exact:true});await transcript.focus();
             assert.equal(await transcript.evaluate(e=>e===document.activeElement),true);
             await page.keyboard.press('Home');
             await page.waitForTimeout(250);
-            await page.waitForFunction(()=>document.querySelector('.transcript').scrollTop<2);
+            await page.waitForFunction(()=>document.querySelector('[role="log"][aria-label="对话"]').scrollTop<2);
             const scrollable=await transcript.evaluate(e=>e.scrollHeight>e.clientHeight+24);
             assert.ok(scrollable,'the real conversation must have a scrollable reading history');
             await page.setViewportSize({width,height:480});
             await page.waitForTimeout(250);
             assert.ok(await transcript.evaluate(e=>e.scrollTop<2),'resize must preserve reading intent');
             await page.locator('.latest').click();
-            await page.waitForFunction(()=>{const e=document.querySelector('.transcript');return e.scrollHeight-e.scrollTop-e.clientHeight<3;});
+            await page.waitForFunction(()=>{const e=document.querySelector('[role="log"][aria-label="对话"]');return e.scrollHeight-e.scrollTop-e.clientHeight<3;});
             await page.setViewportSize({width,height});
-            await page.waitForFunction(()=>{const e=document.querySelector('.transcript');return e.scrollHeight-e.scrollTop-e.clientHeight<3;});
+            await page.waitForFunction(()=>{const e=document.querySelector('[role="log"][aria-label="对话"]');return e.scrollHeight-e.scrollTop-e.clientHeight<3;});
             await page.emulateMedia({reducedMotion:'reduce'});
             await page.waitForTimeout(150);
             assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);

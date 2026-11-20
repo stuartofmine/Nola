@@ -100,7 +100,7 @@ class ScheduledActionsViewModel internal constructor(
         }
     }
 
-    fun toggle(id: String, enabled: Boolean) {
+    fun toggle(id: String, enabled: Boolean, onToggled: () -> Unit = {}) {
         mutate(id) {
             repo.setEnabled(id, enabled)
             val action = repo.getById(id)
@@ -109,6 +109,7 @@ class ScheduledActionsViewModel internal constructor(
             } else {
                 cancel(id)
             }
+            onToggled()
         }
     }
 

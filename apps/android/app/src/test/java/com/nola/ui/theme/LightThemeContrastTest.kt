@@ -38,7 +38,6 @@ class LightThemeContrastTest {
         val dark = tokens.getValue("dark")
 
         assertEquals(light.getValue("canvas"), NolaColors.bgLight)
-        assertEquals(Color(0xFFF7F6F3), NolaColors.bgLight)
         assertEquals(light.getValue("canvas"), LightColors.background)
         assertEquals(light.getValue("surface"), LightColors.surface)
         assertEquals(light.getValue("surfaceSubtle"), LightColors.surfaceContainer)
@@ -55,7 +54,6 @@ class LightThemeContrastTest {
         assertEquals(light.getValue("border"), LightColors.outlineVariant)
 
         assertEquals(dark.getValue("canvas"), NolaColors.bgDark)
-        assertEquals(Color(0xFF131312), NolaColors.bgDark)
         assertEquals(dark.getValue("canvas"), DarkColors.background)
         assertEquals(dark.getValue("surface"), DarkColors.surface)
         assertEquals(dark.getValue("surfaceSubtle"), DarkColors.surfaceContainer)

@@ -238,6 +238,7 @@
         {#if !query.trim() && (index === 0 || conversationGroup(conversation) !== conversationGroup(visible[index - 1]))}<h3 class="group-title">{conversationGroup(conversation)}</h3>{/if}
         <div class="conversation-row">
             <button class="conversation" aria-current={highlightSelection && activeId === conversation.conversationId ? 'true' : undefined} disabled={navigationDisabled || writing} onclick={() => selectConversation(conversation)}>
+                <span class="sr-only">{t($locale, 'chatConversations.open')} </span>
                 <span class="conversation-heading"><span>{conversation.title || t($locale, 'chatConversations.untitled')}</span>{#if layout === 'page'}<small title={new Date(conversation.updatedAt).toLocaleString($locale)}>{conversationTime(conversation.updatedAt)}</small>{/if}</span>
                 {#if layout === 'page'}<ConversationRowDetails conversationId={conversation.conversationId} version={JSON.stringify([generation, loadVersion, conversation.updatedAt, conversation.revision])} />{/if}
             </button>

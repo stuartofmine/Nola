@@ -500,7 +500,7 @@ final class IOSUIInteractionPolicyTests: XCTestCase {
             ("mutedFillColor", DesignTokens.mutedFillColor, "surfaceSubtle"),
             ("contentColor", DesignTokens.contentColor, "ink"),
             ("secondaryContentColor", DesignTokens.secondaryContentColor, "inkSecondary"),
-            ("primaryColor", DesignTokens.primaryColor, "accent"),
+            ("primaryColor", DesignTokens.primaryColor, "ink"),
             ("actionColor", DesignTokens.actionColor, "accent"),
             ("accentSubtleColor", DesignTokens.accentSubtleColor, "accentSubtle"),
             ("borderColor", DesignTokens.borderColor, "border"),

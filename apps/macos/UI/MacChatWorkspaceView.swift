@@ -416,6 +416,7 @@ struct MacChatWorkspaceView: View {
                 model: injectedModel
                     ?? MacWorkspaceModel(
                         initialConversationID: initialConversationID,
+                        createMissingConversation: false,
                         canonicalRepository: canonicalRepository,
                         localAgentRuntime: localAgentRuntime,
                         remoteHost: remoteHost
@@ -653,7 +654,7 @@ struct MacChatWorkspaceView: View {
             MacCommandActions(
                 newConversation: navigationActions.newConversation,
                 focusComposer: { navigationActions.navigate(to: .chat, then: { composerFocused = true }) },
-                openWorkspace: model.chooseWorkspace,
+                openWorkspace: { Task { await model.chooseWorkspace() } },
                 reviewWorkspace: reviewWorkspace,
                 showCommandPalette: { showsCommandPalette = true },
                 toggleSidebar: toggleSidebar,
@@ -1062,7 +1063,7 @@ struct MacChatWorkspaceView: View {
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(.secondary)
                         Text(selectedSection.title)
-                            .font(.system(size: 14.5, weight: .semibold))
+                            .font(.system(size: 16, weight: .semibold))
                             .lineLimit(1)
                     }
                 }
@@ -1215,7 +1216,7 @@ struct MacChatWorkspaceView: View {
             Button(action: beginInlineTitle) {
                 HStack(spacing: 6) {
                     Text(model.selectedConversationDisplayTitle)
-                        .font(.system(size: 14.5, weight: .semibold))
+                        .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -1239,7 +1240,7 @@ struct MacChatWorkspaceView: View {
             .help(model.selectedConversationDisplayTitle)
         } else {
             Text(model.selectedConversationDisplayTitle)
-                .font(.system(size: 14.5, weight: .semibold))
+                .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -1281,7 +1282,7 @@ struct MacChatWorkspaceView: View {
                 }
                 .disabled(model.isSelectedConversationVisiblyRunning)
                 Button {
-                    model.chooseWorkspace()
+                    Task { await model.chooseWorkspace() }
                 } label: {
                     Label(
                         String(localized: "Choose Folder…"),
@@ -1428,33 +1429,31 @@ struct MacChatWorkspaceView: View {
     private var composerModelControls: some View {
         if MacExecutionBackendPolicy.requiresNolaModel(model.executionBackend.id) {
             if modelSetupRequired {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(alignment: .top, spacing: 10) {
-                        Image("nola-models").renderingMode(.template).resizable().scaledToFit()
-                            .frame(width: 20, height: 20).foregroundStyle(.secondary)
-                            .accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(String(localized: "Choose a model to start chatting", table: "Chat"))
-                                .font(.system(size: model.selectedMessages.isEmpty ? 20 : 14, weight: .semibold))
-                            Text(String(localized: "Connect an API account or use a model on this Mac. Your draft stays here.", table: "Chat"))
-                                .font(.system(size: 12)).foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+                VStack(alignment: .leading, spacing: model.selectedMessages.isEmpty ? 18 : 10) {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text(String(localized: "Choose a model to start chatting", table: "Chat"))
+                            .font(.system(size: model.selectedMessages.isEmpty ? 28 : 15, weight: .semibold))
+                            .foregroundStyle(Color("NolaTextPrimary"))
+                            .accessibilityAddTraits(.isHeader)
+                        Text(String(localized: "Connect an API account or use a model on this Mac. Your draft stays here.", table: "Chat"))
+                            .font(.system(size: model.selectedMessages.isEmpty ? 15 : 13))
+                            .foregroundStyle(Color("NolaTextSecondary"))
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     HStack(spacing: 10) {
                         Button(action: manageChatModels) {
-                            Text(String(localized: "Configure Model", table: "Chat"))
+                            Label(String(localized: "Configure Model", table: "Chat"), systemImage: "square.3.layers.3d")
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(MacDesignColor.primaryAction)
+                        .foregroundStyle(MacDesignColor.onPrimaryAction)
                         .controlSize(.large)
                         .accessibilityIdentifier("chat.configureModel")
                         if !model.availableModelOptions.isEmpty { modelSelector }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(14)
-                .background(MacDesignColor.selected, in: RoundedRectangle(cornerRadius: 12))
+                .padding(.vertical, model.selectedMessages.isEmpty ? 18 : 8)
                 .accessibilityIdentifier("chat.modelSetupPrompt")
             }
         }
@@ -1888,9 +1887,10 @@ struct MacChatWorkspaceView: View {
     }
 
     private func reviewWorkspace() {
-        if model.workspaceURL == nil { model.chooseWorkspace() }
-        guard let workspaceURL = model.workspaceURL else { return }
-        openWindow(value: MacWorkspaceReviewRoute(path: workspaceURL.path))
+        Task {
+            guard let workspaceURL = await model.workspaceForReview() else { return }
+            openWindow(value: MacWorkspaceReviewRoute(path: workspaceURL.path))
+        }
     }
 }
 

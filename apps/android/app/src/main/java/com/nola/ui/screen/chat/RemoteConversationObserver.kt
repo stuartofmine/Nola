@@ -14,6 +14,8 @@ internal class RemoteConversationObserver {
     private var key: RemoteRunKey? = null
     private var resumeAuthority: Pair<RemoteRunKey, String?>? = null
 
+    val isObserving: Boolean get() = job?.isActive == true
+
     fun reset() {
         stop(); context = null; key = null; resumeAuthority = null
     }

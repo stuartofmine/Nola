@@ -4374,6 +4374,14 @@ impl AgentHostDriver for CliAgentHostDriver {
                         || resolution.demands != plan.extract(&input).map_err(|error|error.to_string())? {
                         return Err("permission resource resolution contract mismatch".to_string());
                     }
+                    if capability_id == "conversation_recall" {
+                        if let Some(run_id) = self.bound_dispatch_run_id.as_deref() {
+                            validate_recall_target(&input, run_id,
+                                self.tool_context.permission_scope.owner_session_id().as_deref(),
+                                |id| crate::application_port::CliApplicationPort::persistent_default()?
+                                    .conversation_summary(id).map(|summary| summary.is_some()))?;
+                        }
+                    }
                     crate::tools::resolve_permission_resources(&self.tool_context, &resolution, &input)
                 })();
                 match result {
@@ -4840,5 +4848,36 @@ impl AgentHostDriver for CliAgentHostDriver {
             }
         }
         Ok(())
+    }
+}
+
+// Only a reference to this exact Run is ambiguous. Other conversations follow
+// the usual resource/consent path without a speculative history lookup.
+fn validate_recall_target(input: &Value, run_id: &str, owner: Option<&str>,
+    conversation_exists: impl FnOnce(&str) -> Result<bool, String>) -> Result<(), String> {
+    let targets_run = input["conversation_id"].as_str() == Some(run_id)
+        || input["conversation_ids"].as_array().is_some_and(|ids|
+            ids.iter().any(|id| id.as_str() == Some(run_id)));
+    if targets_run && owner != Some(run_id) && !conversation_exists(run_id)? {
+        return Err("The supplied conversation ID identifies the current Run. To search this conversation, pass query alone. To read an original Part here, pass message_id and part_id without conversation_id.".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[test]
+fn canonical_recall_corrects_active_run_identity_before_permission_review() {
+    for input in [
+        json!({"scope":"conversations","query":"决策","conversation_ids":["other","run"]}),
+        json!({"conversation_id":"run","message_id":"m","part_id":"p"}),
+    ] {
+        assert!(validate_recall_target(&input, "run", Some("owner"), |_| Ok(false))
+            .unwrap_err().contains("pass query alone"));
+        assert!(validate_recall_target(&input, "run", Some("owner"), |_| Ok(true)).is_ok());
+        assert!(validate_recall_target(&input, "run", Some("run"), |_| panic!()).is_ok());
+    }
+    for input in [json!({"query":"Entscheidung"}), json!({"query":"search","scope":"local_user_history"}),
+        json!({"query":"決定","scope":"conversations","conversation_ids":["other"]})] {
+        assert!(validate_recall_target(&input, "run", Some("owner"), |_| panic!()).is_ok());
     }
 }

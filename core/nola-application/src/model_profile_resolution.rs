@@ -535,6 +535,35 @@ mod tests {
     }
 
     #[test]
+    fn nullable_session_reasoning_tier_inherits_without_changing_explicit_selections() {
+        let profile = profile("responses");
+        let source: Value = serde_json::from_str(&profile.source_json).unwrap();
+        let overrides = |settings: Value| {
+            session_override_request(&settings, &source["reasoning"], "responses").unwrap()
+        };
+        let absent = overrides(json!({}));
+        let inherited = overrides(json!({"reasoningTier": null, "reasoningPreference": null}));
+        assert_eq!(inherited, absent);
+        assert!(inherited.get("reasoning_tier").is_none());
+        assert!(inherited.get("reasoning_selection").is_none());
+        assert!(resolve_remote_profile(&profile, &inherited, Default::default()).unwrap()
+            .runtime.reasoning_selection.is_none());
+
+        let automatic = overrides(json!({"reasoningTier": null, "reasoningPreference": "automatic"}));
+        assert!(automatic.get("reasoning_tier").is_none());
+        assert_eq!(automatic.get("reasoning_selection"), Some(&Value::Null));
+        assert!(resolve_remote_profile(&profile, &automatic, Default::default()).unwrap()
+            .runtime.reasoning_selection.is_none());
+
+        let explicit = overrides(json!({"reasoningTier": "detailed"}));
+        assert_eq!(explicit["reasoning_tier"], "detailed");
+        assert!(resolve_remote_profile(&profile, &explicit, Default::default()).is_ok());
+
+        let invalid = overrides(json!({"reasoningTier": "unrecognized"}));
+        assert!(resolve_remote_profile(&profile, &invalid, Default::default()).is_err());
+    }
+
+    #[test]
     fn profile_tiers_use_core_effort_resolution_and_freeze_selection() {
         let mut selected = profile("responses");
         let mut source: Value = serde_json::from_str(&selected.source_json).unwrap();
@@ -651,7 +680,9 @@ pub fn session_override_request(
     if options.as_object().is_some_and(|value| !value.is_empty()) {
         request["generation_options"] = options;
     }
-    if let Some(tier) = value.get("reasoningTier") { request["reasoning_tier"] = tier.clone(); }
+    if let Some(tier) = value.get("reasoningTier").filter(|tier| !tier.is_null()) {
+        request["reasoning_tier"] = tier.clone();
+    }
     if let Some(preference) = value.get("reasoningPreference").filter(|value| !value.is_null()) {
         if preference == "automatic" {
             request["reasoning_selection"] = Value::Null;

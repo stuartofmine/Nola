@@ -5,8 +5,8 @@
 "room.left" = "Ausgetreten · Verlauf bleibt";
 "room.remove" = "Entfernen";
 "room.add" = "Agent hinzufügen";
-"room.create_agent" = "Agent erstellen";
-"room.agent_name" = "Agent-Name";
+"room.create_agent" = "Experten erstellen";
+"room.agent_name" = "Name des Experten";
 "room.use_current_model" = "Aktuelles Modell verwenden";
 "room.open" = "Chat öffnen";
 "room.all" = "Alle Agent-Chats";
@@ -2729,6 +2729,7 @@
 "chat.history.retry" = "Erneut versuchen";
 "chat.history.running" = "Wird ausgeführt";
 "chat.history.search" = "Unterhaltungen suchen";
+"chat.history.search.clear" = "Suche löschen";
 "chat.history.stop_before_delete" = "Beende die Aufgabe, bevor du sie löschst";
 "chat.response.cancelled" = "Antwort angehalten";
 "chat.response.failed" = "Antwort fehlgeschlagen. Öffne den Ablauf für Details.";
@@ -3177,6 +3178,7 @@
 "chat.context.import.failed_count" = "%d Dateien konnten nicht importiert werden. Verwende nicht leere UTF-8-Textdateien mit höchstens 40.000 Zeichen (192 KB).";
 
 /* Expert roles and revision-aware mentions */
+"experts.useModelDefaults" = "Modellvorgaben verwenden";
 "experts.reasoning.inherit" = "Modelleinstellung übernehmen";
 "experts.reasoning.unknown" = "Dieses Modell gibt keine Denkstufen an. Seine Standardeinstellung wird übernommen.";
 "experts.role.details" = "Prompt, Werkzeuge und Skills";
@@ -3259,3 +3261,6 @@
 "chat.message.pendingEdit" = "Ausstehende Bearbeitung prüfen";
 "chat.message.editSavedForReview" = "Du kannst den Editor schließen und die ausstehende Bearbeitung in diesem Chat erneut öffnen, um den Versand zu prüfen.";
 "chat.context.documents.blank" = "Gib Text für %@ ein oder lösche das leere Dokument.";
+
+"chat.history.otherClientReadOnly" = "Schreibgeschützt. Setze die Unterhaltung in dem Client fort, in dem du sie begonnen hast.";
+"chat.history.ambiguousIDs" = "Zwei Unterhaltungs-IDs unterscheiden sich nur in der Großschreibung. Öffne sie im ursprünglichen Client.";

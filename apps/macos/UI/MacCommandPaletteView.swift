@@ -219,7 +219,7 @@ struct MacCommandPaletteView: View {
                 shortcut: "⇧⌘O"
             ) {
                 dismiss()
-                model.chooseWorkspace()
+                Task { await model.chooseWorkspace() }
             },
             PaletteCommand(
                 id: "execution-local",

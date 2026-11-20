@@ -1116,7 +1116,6 @@
     <string name="model_connections_title">Verbindungen und Konten</string>
     <string name="model_connections_host_hint">Die Liste unten gehört zu diesem Gerät. Import, Konten und Gateway-Konfiguration auf einem gekoppelten Host werden separat verwaltet.</string>
     <string name="model_connections_host_manage">Auf gekoppeltem Host importieren, konfigurieren und überprüfen</string>
-    <string name="model_connections_pair_first">Verbinde unten einen Host, um seine autorisierte Verwaltungsseite zu öffnen. Die Verbindungen dieses Geräts bleiben unverändert.</string>
     <string name="model_connections_source_boundary">Die Anmeldung bei Quellkonten muss in einem Browser auf dem Host-Computer verwaltet werden. Die Anmeldung bei OpenCode, Codex oder Kimi Code aktiviert keine Nola-Inferenz mit diesem Konto. Das Aktualisieren des Katalogs führt keine Inferenz aus; eine Überprüfung erfordert eine separate Bestätigung und kann Kosten verursachen.</string>
     <string name="model_connections_account_details">Konto- und Überprüfungsdetails</string>
     <string name="model_connections_refresh">Aktualisieren</string>
@@ -1126,7 +1125,7 @@
     <string name="room_recipient">@%1$s</string>
     <string name="room_automatic">Koordinator wählt · @ Agent</string>
     <string name="room_submission_accepted">Angenommen, wartet auf Weiterleitung</string>
-    <string name="room_agent_description">Aufgaben und Zuständigkeiten des Agenten (für den Koordinator sichtbar)</string>
+    <string name="room_agent_description">Aufgaben, die der Hauptagent sehen kann</string>
     <string name="room_submission_executing">Wird verarbeitet</string>
     <string name="room_submission_completed">Abgeschlossen</string>
     <string name="room_submission_incomplete">Unvollständig</string>

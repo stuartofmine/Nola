@@ -17,7 +17,8 @@ struct MacActivityCenterView: View {
     var body: some View {
         let client = activityClient
         VStack(spacing: 0) {
-            MacPageHeader("Activity", symbol: "waveform.path.ecg", navigationAction: navigationAction) {
+            MacPageHeader("Activity", symbol: "waveform.path.ecg", navigationAction: navigationAction,
+                navigationKind: .back, navigationLabel: "Automations") {
                 EmptyView()
             } actions: {
                 Button("activity.localSummaries") { showsLocalSummaries = true }
@@ -105,7 +106,7 @@ private struct MacLocalActivitySummariesView: View {
                 "activity.localSummaries",
                 symbol: "waveform.path.ecg",
                 navigationAction: navigationAction,
-                navigationSymbol: "chevron.left",
+                navigationKind: .back,
                 navigationLabel: "Automations"
             ) {
                 Text("Agent and automation results with local run details")

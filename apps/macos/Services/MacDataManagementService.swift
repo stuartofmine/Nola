@@ -651,29 +651,23 @@ final class MacDataManagementService {
     }
 
     private func calculateDataSize() async -> Int64 {
-        let roots = [
-            fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first,
-            fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first,
-        ].compactMap { $0 }
-        let logURL = LogFileStore.shared.logFileURL()
+        let environment = MacAppEnvironment.shared
+        let paths = Set([environment.supportRoot.standardizedFileURL, environment.cacheRoot.standardizedFileURL])
+        let roots = paths.filter { candidate in
+            !paths.contains { $0 != candidate && candidate.pathComponents.starts(with: $0.pathComponents) }
+        }
         return await Task.detached {
             var total: Int64 = 0
             for root in roots {
-                let candidates = [root.appendingPathComponent("Nola", isDirectory: true)]
-                for candidate in candidates {
-                    guard let enumerator = FileManager.default.enumerator(
-                        at: candidate,
-                        includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey],
-                        options: [.skipsHiddenFiles]
-                    ) else { continue }
-                    while let url = enumerator.nextObject() as? URL {
-                        let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
-                        if values?.isRegularFile == true { total += Int64(values?.fileSize ?? 0) }
-                    }
+                guard let enumerator = FileManager.default.enumerator(
+                    at: root,
+                    includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey],
+                    options: [.skipsHiddenFiles]
+                ) else { continue }
+                while let url = enumerator.nextObject() as? URL {
+                    let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+                    if values?.isRegularFile == true { total += Int64(values?.fileSize ?? 0) }
                 }
-            }
-            if let values = try? logURL.resourceValues(forKeys: [.fileSizeKey]) {
-                total += Int64(values.fileSize ?? 0)
             }
             return total
         }.value

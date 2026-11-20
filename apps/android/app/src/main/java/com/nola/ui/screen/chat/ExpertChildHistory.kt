@@ -128,11 +128,14 @@ internal fun ExpertChildHistoryDialog(target: ExpertHistoryTarget,
                         if (window?.hasMore == true && error == null) TextButton(enabled = !loading, onClick = { scope.launch { read() } }) { Text(stringResource(R.string.expert_child_more)) }
                         if (!loading && error == null && window != null && messages.isEmpty()) Text(stringResource(R.string.expert_child_empty))
                     }
-                    items(messages, key = { it.id }) { message -> Column {
-                        if (senders.containsKey(message.id)) Text(senders[message.id]?.name.orEmpty().ifBlank { stringResource(R.string.chat_experts) },
-                            Modifier.padding(horizontal = 12.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        MessageBubble(message = message, readOnlyHistory = true)
-                    } }
+                    items(messages, key = { it.id }) { message ->
+                        val historicalAuthor = senders[message.id]?.name?.takeIf { it.isNotBlank() }
+                        val author = when (message.role) {
+                            com.nola.domain.model.ChatRole.assistant -> historicalAuthor ?: target.child.title.ifBlank { stringResource(R.string.chat_experts) }
+                            else -> historicalAuthor
+                        }
+                        MessageBubble(message = message, readOnlyHistory = true, historyAuthor = author)
+                    }
                 }
             }
         }

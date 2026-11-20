@@ -47,6 +47,7 @@ class ScheduledPermissionOccurrenceTest {
         val dependencies = EntryPointAccessors.fromApplication(context, AndroidExpertNativeTestDependencies::class.java)
         val runtime = dependencies.runtime()
         val repo = dependencies.scheduledActions()
+        val previousDefault = dependencies.preferences().defaultModelSelection(dependencies.modelRepository().listConfiguredModels())
         val prefix = UUID.randomUUID().toString()
         dependencies.modelService().usePlaceholder()
         ScheduledPermissionServer(daily).use { server ->
@@ -99,9 +100,13 @@ class ScheduledPermissionOccurrenceTest {
                     waitFor(info); compose.onNode(info).performClick()
                     val plans = hasContentDescription(context.getString(R.string.scheduled_title))
                     waitFor(plans); compose.onNode(plans).performClick()
-                    val attention = context.getString(R.string.scheduled_filter_attention) + " (1)"
-                    waitFor(hasText(attention)); compose.onNodeWithText(attention).performScrollTo().performClick()
-                    compose.onNodeWithTag("scheduled.result.${action.id}").performScrollTo().performClick()
+                    val attention = hasText(context.getString(R.string.scheduled_filter_attention) + " (", substring = true) and hasClickAction()
+                    val list = compose.onNode(hasScrollToIndexAction())
+                    list.performScrollToNode(attention)
+                    compose.onNode(attention).performScrollTo().performClick()
+                    val result = hasTestTag("scheduled.result.${action.id}")
+                    list.performScrollToNode(result)
+                    compose.onNode(result).performScrollTo().performClick()
                     compose.onNodeWithText(context.getString(R.string.scheduled_result_completed_at)).assertDoesNotExist()
                     compose.onNodeWithTag("scheduled.result.openConversation").performClick()
                     val decision = if (daily) SemanticsMatcher("allow this permission once") {
@@ -141,6 +146,9 @@ class ScheduledPermissionOccurrenceTest {
             } finally {
                 scheduler.cancel(action.id)
                 repo.delete(action.id); repo.delete("$prefix-other")
+                if (previousDefault == null) dependencies.preferences().clearDefaultModelSelection()
+                else dependencies.preferences().saveDefaultModelSelection(previousDefault)
+                runtime.deleteModelProfile(prefix, System.currentTimeMillis())
             }
         }
     }

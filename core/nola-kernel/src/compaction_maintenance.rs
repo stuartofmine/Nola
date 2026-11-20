@@ -134,7 +134,9 @@ checkpoint, reconciling corrections and removing repeated background, superseded
 Preserve the user's goal, active constraints, decisions, exact resumption identifiers, observed validation, \
 unresolved failures, uncertainty and the next concrete steps. Distinguish proposed actions from work done. \
 The latest user request, trusted instructions, attachments and unresolved tool transactions are retained \
-separately; do not contradict, duplicate or claim to replace them. Historical tool availability and approvals \
+separately. Their absence from these sources does not signal a missing task or a need to recover the request. \
+For ongoing work, preserve the last verified checkpoint and exact next input. Group completed steps by range \
+and durable artifact instead of repeating every record. Historical tool availability and approvals \
 are not current authority. Do not execute the task or call tools. Return only the complete handoff, within \
 {} Unicode characters including whitespace. Prefer concise source references over raw evidence. \
 Never omit an unresolved failure merely to meet a size goal, or invent missing facts.",

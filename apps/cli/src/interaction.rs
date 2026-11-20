@@ -1492,12 +1492,12 @@ fn render_permission_prompt_with_selection(
     plain_rows.push((choose.to_string(), Some("\x1b[2;39m")));
     if prompt.supports_instruction {
         plain_rows.push((
-            "I. Add instruction; invocation stays paused until explicitly approved".to_string(),
+            ui_text(UiText::PermissionInstructionOption).to_string(),
             None,
         ));
         if selected.is_none() {
             plain_rows.push((
-                "Type i <instruction> to save guidance without granting permission".to_string(),
+                ui_text(UiText::PermissionInstructionCommand).to_string(),
                 Some("\x1b[2;39m"),
             ));
         }

@@ -278,38 +278,6 @@ struct HomeView: View {
 
     private var content: some View {
         NolaPage {
-            NolaPageHeader(
-                title: NSLocalizedString("data.title", value: "数据", comment: "Data tab page title"),
-                subtitle: NSLocalizedString("data.subtitle.local_first", value: "本机数据源、定时动作与最近执行状态。", comment: "Data page subtitle")
-            ) {
-                Button {
-                    showNotificationManager = true
-                } label: {
-                    Image(systemName: unreadNotificationCount > 0 ? "bell.fill" : "bell")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(DesignTokens.primaryColor)
-                        .frame(width: 36, height: 36)
-                        .background(
-                            RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous)
-                                .fill(DesignTokens.primaryColor.opacity(DesignTokens.overlayMediumOpacity))
-                        )
-                        .overlay(alignment: .topTrailing) {
-                            if unreadNotificationCount > 0 {
-                                Text(unreadNotificationCount > 99 ? "99+" : String(unreadNotificationCount))
-                                    .font(.caption2.weight(.bold))
-                                    .foregroundStyle(.white)
-                                    .padding(.horizontal, 4)
-                                    .frame(minWidth: 16, minHeight: 16)
-                                    .background(Color.red, in: Capsule())
-                                    .overlay(Capsule().stroke(Color.white, lineWidth: 1.5))
-                                    .offset(x: 7, y: -6)
-                            }
-                        }
-                }
-                .accessibilityLabel(L10n.notificationsTitle)
-                .accessibilityValue(String(unreadNotificationCount))
-            }
-
             HomeRefreshStrip(
                 isLoading: isReloading,
                 lastReloadedAt: lastReloadedAt,
@@ -374,7 +342,32 @@ struct HomeView: View {
                 )
             }
         }
-        .toolbar(ownsNavigationStack ? .hidden : .visible, for: .navigationBar)
+        .navigationTitle(L10n.dataSourcesTitle)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { showNotificationManager = true } label: {
+                    Image(systemName: unreadNotificationCount > 0 ? "bell.fill" : "bell")
+                        .overlay(alignment: .topTrailing) {
+                            if unreadNotificationCount > 0 {
+                                Text(unreadNotificationCount > 99 ? "99+" : String(unreadNotificationCount))
+                                    .font(.caption2.bold()).monospacedDigit()
+                                    .foregroundStyle(DesignTokens.onActionColor)
+                                    .padding(.horizontal, 4)
+                                    .background(DesignTokens.actionColor, in: Capsule())
+                                    .fixedSize().offset(x: 8, y: -6)
+                                    .accessibilityHidden(true)
+                            }
+                        }
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(L10n.notificationsTitle)
+                .accessibilityValue(String(unreadNotificationCount))
+                .accessibilityIdentifier("data.notifications")
+            }
+        }
 
         .onAppear {
             refreshUnreadNotificationCount()

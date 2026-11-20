@@ -35,7 +35,7 @@ internal object ApplicationCommandEffect {
         "conversation_plan" to setOf("get"),
         "runtime_task" to setOf("get"),
         "auxiliary_invocation" to setOf("inspect", "inspect_source"),
-        "agent_room" to setOf("child_history", "child_conversations", "for_conversation", "role_templates", "directory", "read", "list", "submission", "submissions", "execution_intent"),
+        "agent_room" to setOf("peer_exchanges", "child_history", "child_conversations", "for_conversation", "role_templates", "directory", "read", "list", "submission", "submissions", "execution_intent"),
         "model" to setOf("get_profile", "list_profiles", "get_runtime", "list_connections", "get_connection", "list_accounts", "get_account", "list_gateway_attempts"),
         "skill" to setOf("list", "list_editors", "get_editor", "load_catalog"),
         "mcp" to setOf("list"),

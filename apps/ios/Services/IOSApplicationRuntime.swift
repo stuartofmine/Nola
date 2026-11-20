@@ -1960,13 +1960,27 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
         }
     }
 
-    func renameConversation(id: String, title: String, updatedAtMs: Int64) throws {
-        let _: Bool = try execute(RenameConversationCommand(
-            type: "rename_conversation",
-            conversationID: id,
-            title: title,
-            updatedAtMs: updatedAtMs
-        ))
+    func loadConversationTitlePage(id: String, offset: Int) throws -> IOSConversationProjectionV1 {
+        struct Page: Encodable {
+            let type = "load_conversation_projection_page_v1"
+            let conversation_id: String
+            let offset: Int
+            let limit = 1
+        }
+        return try execute(Page(conversation_id: id, offset: offset))
+    }
+
+    func conversationTitleSource(id: String) throws -> String? {
+        let settings: String? = try executeOptional(ConversationIDCommand(type: "load_conversation_settings", conversationID: id))
+        return try IOSConversationSettingsObject.decode(settings)["titleSource"] as? String
+    }
+
+    func renameConversation(id: String, title: String, updatedAtMs: Int64,
+                            firstMessageAtRevision: UInt64? = nil) throws {
+        let command = RenameConversationCommand(type: "rename_conversation", conversationID: id,
+            title: title, titleSource: firstMessageAtRevision == nil ? "user" : "first_message", updatedAtMs: updatedAtMs)
+        let receipt = try submitReceipt(command, expectedRevision: firstMessageAtRevision, requestID: UUID().uuidString.lowercased())
+        guard (receipt["result"] as? Bool) == true else { throw IOSApplicationRuntimeError.invalidResponse }
     }
 
     func prepareContextMaintenance(source: IOSContextCompactionSource, input: AgentCoreContextPrepareInput) throws -> IOSContextMaintenancePlan {
@@ -2518,9 +2532,11 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
         let type: String
         let conversationID: String
         let title: String
+        let titleSource: String
         let updatedAtMs: Int64
         enum CodingKeys: String, CodingKey {
             case type, title
+            case titleSource = "title_source"
             case conversationID = "conversation_id"
             case updatedAtMs = "updated_at_ms"
         }

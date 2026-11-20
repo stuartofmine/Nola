@@ -213,7 +213,7 @@ struct MacWebSourcesView: View {
             LocalizedStringKey(macWebSourcesText("mac.web_sources.title", "Web Sources")),
             symbol: "network",
             navigationAction: navigationAction,
-            navigationSymbol: "chevron.left",
+            navigationKind: .back,
             navigationLabel: LocalizedStringKey(macWebSourcesText("mac.web_sources.data_center", "Data Center"))
         ) {
             Text(macWebSourcesText("mac.web_sources.subtitle", "Sources available to retrieval context"))

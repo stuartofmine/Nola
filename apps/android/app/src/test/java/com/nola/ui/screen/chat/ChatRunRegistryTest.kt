@@ -77,6 +77,22 @@ class ChatRunRegistryTest {
         registry.clear()
     }
 
+    @Test fun restoringBusyPresentationRequiresAnOwnerStillDoingWork() = runTest {
+        val registry = ChatRunRegistry(backgroundScope, traces()) { _, _ -> }
+        val owner = registry.session("conversation:a", ChatUiState(conversationId = "a"))
+        for (state in listOf(ProcessingState.BuildingContext, ProcessingState.Streaming, ProcessingState.ParsingThinking)) {
+            owner.state.value = owner.state.value.copy(processingState = state)
+            assertFalse(owner.retainsLoadedPresentation())
+        }
+        owner.observer.start(backgroundScope, "a", "host", "client", "a", null, { true },
+            query = { awaitCancellation() }, catchUp = { false }, onObservation = { _, _ -> },
+            onAbsent = {}, onUnavailable = { throw it }, resume = {})
+        assertTrue(owner.retainsLoadedPresentation())
+        owner.observer.stop()
+        assertFalse(owner.retainsLoadedPresentation())
+        registry.clear()
+    }
+
     @Test fun sealedCancellationKeepsComposerBlockedUntilPhysicalJobFinishes() = runTest {
         val registry = ChatRunRegistry(backgroundScope, traces()) { _, _ -> }
         val owner = registry.session("conversation:a", ChatUiState(conversationId = "a"))

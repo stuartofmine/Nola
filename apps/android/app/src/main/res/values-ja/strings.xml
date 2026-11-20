@@ -1117,12 +1117,11 @@
     <string name="model_connections_host_hint">以下の一覧はこの端末のものです。ペアリング済み Host のインポート、アカウント、ゲートウェイ設定は別途管理します。</string>
     <string name="model_connections_host_manage">ペアリング済み Host でインポート、設定、検証</string>
     <string name="model_connections_loading">接続を読み込み中…</string>
-    <string name="model_connections_pair_first">下で Host に接続すると、認証済みの管理ページを開けます。この端末の接続設定は変更されません。</string>
     <string name="model_connections_refresh">更新</string>
     <string name="model_connections_source_boundary">ソースアカウントへのログインは Host コンピューターのブラウザーで管理してください。OpenCode、Codex、Kimi Code にサインインしても、そのアカウントで Nola の推論は有効になりません。カタログの更新では推論を実行しません。検証には別途確認が必要で、料金が発生する場合があります。</string>
     <string name="model_connections_title">接続とアカウント</string>
     <string name="models_loading">モデルを読み込み中</string>
-    <string name="room_agent_description">エージェントの役割（コーディネーターに公開）</string>
+    <string name="room_agent_description">担当する役割（メインエージェントに表示）</string>
     <string name="room_agent_model">モデル：%1$s</string>
     <string name="room_automatic">コーディネーターが選択 · @ エージェント</string>
     <string name="room_diagnostics">診断の詳細を表示</string>

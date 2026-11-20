@@ -4,6 +4,7 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
 Add-Type @'
 using System.Runtime.InteropServices;
 public class DesktopInput {
@@ -28,6 +29,25 @@ function Find-Control([string]$property, [string]$value, [int]$seconds = 15) {
     } while ([DateTime]::UtcNow -lt $end)
     $controls = $script:window.FindAll($scope, $any) | Where-Object { $_.Current.Name } | ForEach-Object { $_.Current.Name }
     throw "Control '$value' missing. Visible labels: $($controls -join ', ')"
+}
+# Keep only the foreground test window in the evidence, including the native
+# picker when it owns the interaction. UIA supplies physical screen coordinates.
+function Save-StepImage([string]$name, $element = $script:window) {
+    if ([DesktopInput]::GetForegroundWindow().ToInt64() -ne $element.Current.NativeWindowHandle) {
+        throw "Test window is not in front at $name"
+    }
+    $bounds = $element.Current.BoundingRectangle
+    $rect = [Drawing.Rectangle]::FromLTRB([int]$bounds.Left, [int]$bounds.Top,
+        [int]$bounds.Right, [int]$bounds.Bottom)
+    $rect = [Drawing.Rectangle]::Intersect($rect, [Windows.Forms.SystemInformation]::VirtualScreen)
+    if ($rect.Width -le 0 -or $rect.Height -le 0) { throw "Cannot capture $name" }
+    $bitmap = New-Object Drawing.Bitmap($rect.Width, $rect.Height)
+    try {
+        $graphics = [Drawing.Graphics]::FromImage($bitmap)
+        try { $graphics.CopyFromScreen($rect.Location, [Drawing.Point]::Empty, $rect.Size) }
+        finally { $graphics.Dispose() }
+        $bitmap.Save((Join-Path $script:images "$name.png"), [Drawing.Imaging.ImageFormat]::Png)
+    } finally { $bitmap.Dispose() }
 }
 function Click-Control($item) {
     $bounds = $item.Current.BoundingRectangle
@@ -84,6 +104,10 @@ $env:NOLA_HOME = Join-Path ([IO.Path]::GetTempPath()) ('nola-desktop-acceptance-
 $env:NOLA_E2E_USER_DATA = Join-Path $env:NOLA_HOME 'desktop'
 $env:NOLA_DB_PATH = Join-Path $env:NOLA_HOME 'nola.db'
 $null = New-Item -Type Directory -Path $env:NOLA_HOME
+$imageRoot = if ($env:NOLA_UI_SCREENSHOTS) { $env:NOLA_UI_SCREENSHOTS } else { $env:NOLA_HOME }
+$script:images = Join-Path $imageRoot ('restart-images-' + [Guid]::NewGuid())
+$null = New-Item -Type Directory -Force -Path $script:images
+Write-Host "Windows interaction screenshots: $script:images"
 $note = Join-Path $env:NOLA_HOME 'restart-note.txt'
 [IO.File]::WriteAllText($note, 'Unsent note')
 $draft = 'Unsent desktop restart regression'
@@ -92,13 +116,16 @@ try {
     $portFile = Join-Path $env:NOLA_E2E_USER_DATA 'host-port'
     $before = 'http://127.0.0.1:' + (Get-Content $portFile -Raw).Trim()
     Write-Host 'Creating conversation and entering a draft'
+    Save-StepImage '01-before-create'
     Click-Control (Find-Control name 'New conversation')
     $editor = Find-Control id 'chat-composer'
+    Save-StepImage '02-conversation-open'
     $editor.SetFocus()
     Paste-Text $draft
     if ((Draft-Value $editor) -ne $draft) { throw 'Native composer did not receive the draft' }
     $saved = @((Invoke-RestMethod "$before/api/chat/conversations").conversations)
     if ($saved.Count -ne 1 -or !$saved[0].conversationId) { throw 'Conversation creation did not commit' }
+    Save-StepImage '03-draft-entered'
     $picker = Find-Control name 'Add text files: No file chosen'
     $picker.SetFocus()
     [Windows.Forms.SendKeys]::SendWait('{ENTER}')
@@ -112,12 +139,14 @@ try {
         $focused = $uia::FocusedElement.Current
         throw "File picker unavailable. Foreground: $($foreground.Current.ClassName) / $($foreground.Current.Name). Focus: $($focused.ControlType.ProgrammaticName) / $($focused.Name)"
     }
+    Save-StepImage '04-file-picker' $dialog
     [Windows.Forms.SendKeys]::SendWait('%n')
     [Windows.Forms.SendKeys]::SendWait('^a')
     Paste-Text $note
     [Windows.Forms.SendKeys]::SendWait('{ENTER}')
     $null = Find-Control name 'restart-note.txt'
     if ((Draft-Value (Find-Control id 'chat-composer')) -ne $draft) { throw 'Draft changed while selecting the attachment' }
+    Save-StepImage '05-draft-and-attachment'
     Write-Host 'Confirmed draft and attachment before exit'
     Start-Sleep -Milliseconds 1200
     Close-Desktop
@@ -130,14 +159,22 @@ try {
     $title = $restored[0].title
     if (!$title) { $title = 'Untitled conversation' }
     $row = Find-Control name $title
+    Save-StepImage '06-before-reopen-conversation'
     Click-Control $row
     $attached = (Find-Control name 'restart-note.txt').Current.Name
     $editor = Find-Control id 'chat-composer'
     $actual = Draft-Value $editor
     if ($actual -ne $draft) { throw "Restored draft differs, expected '$draft', received '$actual'" }
+    Save-StepImage '07-restored-draft-and-attachment'
     if ($env:NOLA_DESKTOP_RESTART_EVIDENCE) {
         $proof = @{platform='win32';beforeOrigin=$before;afterOrigin=$after;draft=$actual;attachment=$attached}
         [IO.File]::WriteAllText($env:NOLA_DESKTOP_RESTART_EVIDENCE, ($proof | ConvertTo-Json))
     }
     Write-Host 'Installed WebView2 passed conversation creation, draft entry, file attachment and restart.'
+} catch {
+    $failure = $_
+    if ($script:app -and !$script:app.HasExited -and $script:window) {
+        try { Save-StepImage 'failure' } catch { Write-Warning 'Could not capture the failed window' }
+    }
+    throw $failure
 } finally { Close-Desktop }

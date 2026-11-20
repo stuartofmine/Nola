@@ -918,6 +918,21 @@ final class MacCanonicalConversationRepository {
         )
     }
 
+    func adoptMessageTitle(conversationID: String, title: String, editedMessageID: String? = nil) throws -> Bool {
+        struct Settings: Decodable { let titleSource: MacConversationTitleSource? }
+        guard !title.isEmpty, let metadata = try store.loadConversationMetadata(conversationID) else { return false }
+        let settings = try JSONDecoder().decode(Settings.self, from: Data((metadata.settingsJSON ?? "{}").utf8))
+        guard settings.titleSource != .user else { return false }
+        if let editedMessageID {
+            guard settings.titleSource == .firstMessage || settings.titleSource == .automatic else { return false }
+            let page = try store.loadConversationProjectionPageV1(conversationID, offset: 0, limit: 1)
+            guard page.messages.first?.messageID == editedMessageID, page.messages.first?.role == .user else { return false }
+            if page.title == title { return true }
+        }
+        return try store.renameConversation(conversationID, title: title, source: .firstMessage,
+            expectedRevision: UInt64(metadata.revision), updatedAtMs: Self.milliseconds(.now))
+    }
+
     /// A nil knowledge argument means this operation does not own a knowledge
     /// edit. Use an explicit `.empty` document to clear knowledge.
     func saveMetadata(
@@ -1267,6 +1282,16 @@ final class MacCanonicalConversationRepository {
 
     func conversationSourceOwner(conversationID: String) throws -> AppleConversationSourceOwner {
         try store.conversationSourceOwner(conversationID: conversationID)
+    }
+
+    func cachedRemotePeers(_ contextIDs: Set<String>, parentID: String) async -> Set<String> {
+        guard !contextIDs.isEmpty else { return [] }
+        let store = store
+        return await Task.detached {
+            guard let parent = try? store.conversationSourceOwner(conversationID: parentID),
+                  case .remote = parent else { return [] }
+            return contextIDs.filter { (try? store.conversationSourceOwner(conversationID: $0)) == parent }
+        }.value
     }
 
     func sessionProjection(conversationID: String) throws -> MacCanonicalSessionProjection? {

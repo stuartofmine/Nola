@@ -147,7 +147,7 @@ private struct ChatPasteAwareEditor: UIViewRepresentable {
         view.delegate = context.coordinator
         view.backgroundColor = .clear
         ChatComposerAccessibility.configure(view)
-        view.tintColor = UIColor(DesignTokens.primaryColor)
+        view.tintColor = UIColor(DesignTokens.actionColor)
         view.textContainerInset = UIEdgeInsets(top: 10, left: 0, bottom: 10, right: 0)
         view.textContainer.lineFragmentPadding = 0
         view.isScrollEnabled = true
@@ -160,7 +160,7 @@ private struct ChatPasteAwareEditor: UIViewRepresentable {
         view.mentionsVisible = mentionsVisible
         view.mentionCommand = mentionCommand
         ChatComposerAccessibility.configure(view)
-        view.tintColor = UIColor(DesignTokens.primaryColor)
+        view.tintColor = UIColor(DesignTokens.actionColor)
         if view.text != text { view.text = text }
         view.isEditable = isEditable
         view.onPasteFiles = onPasteFiles
@@ -615,7 +615,7 @@ struct ChatComposer<ModelControl: View>: View {
                     VStack(spacing: 0) {
                         messageEditor
                             .padding(.horizontal, 12)
-                            .padding(.top, 6)
+                            .padding(.top, 4)
                         HStack(spacing: 0) {
                             attachmentButton
                             modelControl
@@ -623,9 +623,9 @@ struct ChatComposer<ModelControl: View>: View {
                             sendButton
                         }
                     }
-                    .padding(4)
+                    .padding(6)
                     .background(NolaSurfaceBackground(fill: DesignTokens.surfaceColor,
-                                                      border: focus.wrappedValue ? DesignTokens.primaryColor : DesignTokens.borderColor,
+                                                      border: focus.wrappedValue ? DesignTokens.actionColor : DesignTokens.borderColor,
                                                       cornerRadius: 25, raised: false))
                 } else {
                     HStack(alignment: .bottom, spacing: 3) {
@@ -633,16 +633,16 @@ struct ChatComposer<ModelControl: View>: View {
                         messageEditor
                             .padding(.horizontal, 14)
                             .background(NolaSurfaceBackground(fill: DesignTokens.surfaceColor,
-                                                              border: focus.wrappedValue ? DesignTokens.primaryColor : DesignTokens.borderColor,
+                                                              border: focus.wrappedValue ? DesignTokens.actionColor : DesignTokens.borderColor,
                                                               cornerRadius: 22, raised: false))
                         sendButton
                     }
                 }
             }
-            .animation(reduceMotion ? nil : .snappy(duration: 0.22), value: focus.wrappedValue)
+            .animation(reduceMotion ? nil : DesignTokens.disclosureAnimation, value: focus.wrappedValue)
         }
         .padding(.horizontal, 12)
-        .tint(DesignTokens.primaryColor)
+        .tint(DesignTokens.actionColor)
         .background(IOSWorkspaceWidthObserver(width: $pageWidth))
         .padding(.top, 4)
         .padding(.bottom, 8)

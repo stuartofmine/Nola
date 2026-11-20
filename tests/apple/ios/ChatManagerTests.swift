@@ -111,7 +111,7 @@ final class ChatManagerTests: XCTestCase {
         var drafts = ConversationComposerDraftStore()
         drafts.select(owner)
         drafts.current.text = text
-        let prepared = try manager.submissionUseCase.prepare(title: text, initialParameters: nil, drafts: &drafts)
+        let prepared = try manager.submissionUseCase.prepare(initialParameters: nil, drafts: &drafts)
         let input = SendConversationTurnUseCase.Input(prompt: text, displayText: text, metadata: nil,
             attachments: [], responseStyle: .casual, retrievalEnabled: false, preferredHostID: "",
             hybridToolsEnabled: false, hybridCapabilities: [])
@@ -209,7 +209,7 @@ final class ChatManagerTests: XCTestCase {
         var drafts = ConversationComposerDraftStore()
         drafts.select(b.id)
         drafts.current.text = "belongs to B"
-        XCTAssertThrowsError(try manager.submissionUseCase.prepare(title: "A", initialParameters: nil, drafts: &drafts))
+        XCTAssertThrowsError(try manager.submissionUseCase.prepare(initialParameters: nil, drafts: &drafts))
         XCTAssertEqual(drafts.selected, .conversation(b.id))
         XCTAssertEqual(drafts.current.text, "belongs to B")
         XCTAssertEqual(manager.currentConversationId, a.id)

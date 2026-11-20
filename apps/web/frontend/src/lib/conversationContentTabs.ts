@@ -5,7 +5,7 @@ export type PageContentTab = {key: string; kind: 'page'; path: string; titleKey:
 export type ContentTab = PdfContentTab | PageContentTab;
 export type ConversationContentTabs = { selected: string; items: readonly ContentTab[] };
 const pageTitles: Record<string, string> = {
-    '/today': 'chatInspector.today', '/conversations': 'chatInspector.list.conversations',
+    '/today': 'chatInspector.today', '/conversations': 'chatConversations.listTitle',
     '/workspace-review': 'chatInspector.review',
     '/models': 'shell.nav.models', '/model-test': 'shell.nav.models', '/capabilities': 'shell.nav.capabilities',
     '/activity': 'chatInspector.list.activity', '/results': 'activity.results', '/dashboard': 'activity.overview', '/data-sources': 'shell.information',

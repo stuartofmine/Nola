@@ -28,6 +28,7 @@
     import { workspaceWidths, setWorkspaceWidth, visiblePanelWidths, layoutDefaults } from '../lib/workspaceLayout';
     let viewportWidth = $state(1280);
     import { timelineMessageText } from '../lib/chatTimeline';
+    import { isExecutionPart } from '../lib/chatMessagePresentation';
     import type { CommittedRunContextUsage } from '../lib/runContextUsage';
     import { ConversationCacheReader } from '../lib/conversationCacheReader';
     import type { ConversationCacheUsage } from '../lib/conversationCacheUsage';
@@ -204,7 +205,8 @@
         {label: 'context', icon: 'file', tabs: ['resources', 'execution', 'participants', 'settings']},
     ];
     const inspectorActivitySections = ['progress', 'goal'] as const;
-    const inspectorLabel = $derived(t($locale, 'chatInspector.panel'));
+    const activeInspectorGroup = $derived(inspectorGroups.find(group => inspectorTab !== null && group.tabs.includes(inspectorTab)));
+    const inspectorLabel = $derived(t($locale, `chatInspector.${activeInspectorGroup?.label ?? 'panel'}`));
     let expandedInspectorSections = $state<string[]>(['overview']);
     let inspectorRoot = $state<HTMLElement>();
     const widths = $derived(visiblePanelWidths(viewportWidth, $workspaceWidths, !!active && !managementContentSelected && inspectorTab !== null));
@@ -320,6 +322,9 @@
     let userScrollTimer: ReturnType<typeof setTimeout> | null = null;
     let composing = false;
     const busy = $derived(!observedCanSubmit || !!turn && !canReleaseChatTurn(turn));
+    const runStatusKey = $derived(turn?.phase === 'awaiting_permission' ? 'chatPage.awaiting'
+        : turn?.phase === 'cancel_requested' ? 'chatPage.cancelPending'
+        : turn?.phase === 'recovering' ? 'chatPage.uncertain' : 'chatPage.working');
     const messages = $derived(timeline?.messages ?? []);
     let uiSurfaces = $state<UiSnapshot[]>([]);
     let uiSurfaceFailure = $state('');
@@ -1240,7 +1245,8 @@
         }
         if(current()){
             await conversationManager?.refresh();
-            await submissionController?.loadHistory('replace');
+            // Ordinary resends already rewound history before starting the observed run.
+            if (p.experts.length && current()) await submissionController?.loadHistory('replace');
         }
         return completion;
     }
@@ -1304,11 +1310,16 @@
             <details class="attachment-help"><summary>{t($locale, 'chatTextAttachment.helpTitle')}</summary><p>{t($locale, 'chatTextAttachment.help')}</p><p>{t($locale, 'chatTextAttachment.dropPaste')}</p></details>
             <button type="button" onclick={openSearch}>{t($locale, 'chatPage.find')}</button>
             <button type="button" onclick={() => loadHistory('replace')} disabled={historyLoading || (busy && turn?.phase !== 'recovering' && turn?.phase !== 'cancel_requested')}>{t($locale, 'chatPage.refresh')}</button>
-                <div class="compact-inspector-tools">{@render inspectorControls()}</div>
-                <button type="button" onclick={() => toggleInspector('resources')}>{t($locale, 'chatInspector.context')}</button>
+            {#if viewportWidth <= 700}
+                {#each inspectorGroups as group}
+                    {#if group.label !== 'context' || selectedContentTab}
+                        <button type="button" onclick={() => toggleInspector(group.tabs[0])}>{t($locale, `chatInspector.${group.label}`)}</button>
+                    {/if}
+                {/each}
+            {/if}
                 <button type="button" onclick={() => toggleInspector('execution')}>{t($locale, 'chatInspector.execution')}</button>
                 {#if canInteract}<button type="button" onclick={() => toggleInspector('settings')}>{t($locale, 'chatInspector.settings')}</button>{/if}
-                <button type="button" aria-expanded={inspectorTab === 'participants'} onclick={() => void openExperts()}>{t($locale, 'rooms.experts')}{selectedExperts.length ? ` · ${selectedExperts.length}` : ''}</button>
+                {#if viewportWidth > 700 || selectedContentTab}<button type="button" aria-expanded={inspectorTab === 'participants'} onclick={() => void openExperts()}>{t($locale, 'rooms.experts')}{selectedExperts.length ? ` · ${selectedExperts.length}` : ''}</button>{/if}
         </ToolbarPopover>{/if}
     </header>
     <div class="chat-columns" class:without-navigation={viewportWidth > 700 && !navigationExpanded} class:without-conversation={!active || managementContentSelected || inspectorTab === null} style:--sidebar-width={`${widths.sidebar}px`} style:--inspector-width={`${widths.inspector}px`}>
@@ -1353,7 +1364,7 @@
             <!-- svelte-ignore a11y_no_noninteractive_tabindex (The named scrollable log needs a keyboard reading target.) -->
             <div class="transcript" bind:this={transcript} onwheel={userScrollStarted} ontouchstart={transcriptPointerStarted} ontouchmove={userScrollStarted} onpointerdown={transcriptPointerStarted} onscroll={observedScroll} tabindex="0" aria-label={t($locale, 'chatPage.title')} role="log" aria-live="polite" aria-relevant="additions text">
                 {#if timeline?.window?.hasMore}<button class="older" onclick={() => loadHistory('prepend')} disabled={historyLoading || busy}>{t($locale, 'chatPage.history')}</button>{/if}
-                {#if initializing || historyLoading && !messages.length}<p class="placeholder">{t($locale, 'chatPage.loading')}</p>{:else if !active && !initializationFailed}<div class="empty-conversation"><h2>{t($locale, 'chatPage.choose')}</h2><button class="empty-navigation" onclick={() => navigationPanel.openPanel()}>{t($locale, 'shell.workspace')}</button></div>{:else if active && !messages.length && !busy && !error}<div class="empty-conversation"><h2>{t($locale, 'chatPage.welcome')}</h2><p>{t($locale, 'chatPage.welcomeHint')}</p><button onclick={() => composer?.focus()}>{t($locale, 'chatPage.placeholder')}</button></div>{/if}
+                {#if !messages.length && (initializing || historyLoading)}<p class="placeholder">{t($locale, 'chatPage.loading')}</p>{:else if !active && !initializationFailed}<div class="empty-conversation"><h2>{t($locale, 'chatPage.choose')}</h2><button class="empty-navigation" onclick={() => navigationPanel.openPanel()}>{t($locale, 'shell.workspace')}</button></div>{:else if active && !messages.length && !busy && !error}<div class="empty-conversation"><h2>{t($locale, 'chatPage.welcome')}</h2><p>{t($locale, 'chatPage.welcomeHint')}</p><button onclick={() => composer?.focus()}>{t($locale, 'chatPage.placeholder')}</button></div>{/if}
                 {#each messages as message (JSON.stringify([hostId, active?.conversationId, message.id]))}
                     {@const attachmentDisplay = message.role === 'user' ? displayTextAttachmentMessage(timelineMessageText(message)) : null}
                     {#if (pendingText || pendingAttachmentNames.length) && busy && !messages.some(item => item.id === turn?.identity.userMessageId) && message.id === turn?.identity.assistantMessageId}<article class="user pending"><div class="message-content">{#if pendingText}<Markdown source={pendingText} />{/if}{#if pendingAttachmentNames.length}<ul class="attached-files">{#each pendingAttachmentNames as name}<li>{name}</li>{/each}</ul>{/if}<small>{t($locale, 'chatPage.pendingUser')}</small></div></article>{/if}
@@ -1362,7 +1373,13 @@
                         onintroend={() => { if (enteringMessageIds.has(message.id)) { const next = new Set(enteringMessageIds); next.delete(message.id); enteringMessageIds = next; } }}>
                         {#if message.role === 'assistant'}<div class="response-identity"><span class="response-avatar" aria-hidden="true">n</span><strong>Nola</strong></div>{/if}
                         <div class="message-column"><div class="message-content">
-                            {#if message.role === 'assistant' && turn && busy && message.id === turn.identity.assistantMessageId}<p class="run-status" role="status">{t($locale, turn.phase === 'awaiting_permission' ? 'chatPage.awaiting' : turn.phase === 'cancel_requested' ? 'chatPage.cancelPending' : turn.phase === 'recovering' ? 'chatPage.uncertain' : 'chatPage.working')}</p>{:else if message.role === 'assistant' && message.state === 'cancelled'}<p class="run-status" role="status">{t($locale, 'activity.status.cancelled')}</p>{/if}
+                            {#if message.role === 'assistant' && turn && busy && message.id === turn.identity.assistantMessageId}
+                                {#if runStatusKey !== 'chatPage.working' || !message.parts.some(isExecutionPart) && !timelineMessageText(message)}
+                                    <p class="run-status" role="status">{t($locale, runStatusKey)}</p>
+                                {/if}
+                            {:else if message.role === 'assistant' && message.state === 'cancelled'}
+                                <p class="run-status" role="status">{t($locale, 'activity.status.cancelled')}</p>
+                            {/if}
                             {#if attachmentDisplay}{#if attachmentDisplay.displayText}<Markdown source={attachmentDisplay.displayText} />{/if}<ul class="attached-files">{#each attachmentDisplay.files as file}<li>{file.name}{file.clipped ? ` · ${t($locale, 'chatTextAttachment.clipped')}` : ''}</li>{/each}</ul>
                             {/if}
                             <ChatMessageContent {message} ownerKey={JSON.stringify([hostId,active?.conversationId,generation])} readingActive={contentTabs.selected===conversationTabKey} skipText={!!attachmentDisplay} taskClientId={clientId} onTaskRecovered={() => { void loadHistory('replace'); observeSelected(); }} taskOwner={canInteract && active && turn?.runId ? {conversationId: active.conversationId, runId: turn.runId, hostId} : undefined}>
@@ -1413,7 +1430,7 @@
                     <article class="reply-notice" data-reply-submission={reply.submissionId}><div class="message-content"><ChatReplyError kind={reply.kind} oncontinue={continueConversation} continuing={conversationWriting} /></div></article>
                 {/each}
                 {#if (pendingText || pendingAttachmentNames.length) && busy && !messages.some(message => message.id === turn?.identity.userMessageId || message.id === turn?.identity.assistantMessageId)}<article class="user pending"><div class="message-content">{#if pendingText}<Markdown source={pendingText} />{/if}{#if pendingAttachmentNames.length}<ul class="attached-files">{#each pendingAttachmentNames as name}<li>{name}</li>{/each}</ul>{/if}<small>{t($locale, 'chatPage.pendingUser')}</small></div></article>{/if}
-                {#if turn && busy && !messages.some(message => message.id === turn?.identity.assistantMessageId)}<p class="run-status" role="status">{t($locale, turn.phase === 'awaiting_permission' ? 'chatPage.awaiting' : turn.phase === 'cancel_requested' ? 'chatPage.cancelPending' : turn.phase === 'recovering' ? 'chatPage.uncertain' : 'chatPage.working')}</p>{/if}
+                {#if turn && busy && !messages.some(message => message.id === turn?.identity.assistantMessageId)}<p class="run-status" role="status">{t($locale, runStatusKey)}</p>{/if}
                 {#if active && canInteract}{#key `${generation}:${active.conversationId}`}
                     <ChatUserQuestions conversationId={active.conversationId} {busy} onresolved={observeSelected} />
                 {/key}{/if}
@@ -1520,16 +1537,16 @@
         </section>
         {#if active}<ChatResponsivePanel bind:this={inspectorPanel} breakpoint={1250} toolbar={inspectorTitle} expanded={!managementContentSelected && inspectorTab !== null} onclose={() => inspectorTab = null} label={inspectorLabel} closeLabel={t($locale, 'chatInspector.close')}>
         <div class="panel-column">
-        <aside bind:this={inspectorRoot} class="chat-side" id="chat-details" aria-label={inspectorLabel}>
+        <div bind:this={inspectorRoot} class="chat-side" id="chat-details">
             <div class="inspector-heading">{@render inspectorTitle()}<button title={t($locale, 'chatInspector.close')} onclick={() => inspectorPanel?.closePanel()} aria-label={t($locale, 'chatInspector.close')}>×</button></div>
-            <details class="inspector-section" data-inspector-section="overview" open={expandedInspectorSections.includes('overview')} ontoggle={event => setInspectorExpanded('overview', event.currentTarget.open)}>
+            <details class="inspector-section" data-inspector-section="overview" hidden={!activeInspectorGroup?.tabs.includes('overview')} open={expandedInspectorSections.includes('overview')} ontoggle={event => setInspectorExpanded('overview', event.currentTarget.open)}>
                 <summary>{t($locale, 'chatInspector.overview')}</summary><div class="inspector-content">
                 <ChatDecisionOverview working={busy || expertAdmissionPending || expertSubmissions.some(item => item.state === 'executing')} needsResponse={turn?.phase === 'awaiting_permission'}
                     onconversation={() => { updateContentTabs(selectContentTab(contentTabs, conversationTabKey)); jumpToLatest(); }} />
             </div>
             </details>
             {#each inspectorActivitySections as section}
-            <details class="inspector-section" data-inspector-section={section} open={expandedInspectorSections.includes(section)} ontoggle={event => setInspectorExpanded(section, event.currentTarget.open)}>
+            <details class="inspector-section" data-inspector-section={section} hidden={!activeInspectorGroup?.tabs.includes(section)} open={expandedInspectorSections.includes(section)} ontoggle={event => setInspectorExpanded(section, event.currentTarget.open)}>
                 <summary>{t($locale, `chatInspector.${section}`)}</summary><div class="inspector-content">
                 {#if mountedInspectorSections.includes(section)}
                     <ChatActivityGoal readOnly={!canInteract} section={section} {hostId} conversationId={active.conversationId} draftStore={workspaceHost?.objectives} {generation} {busy} oncontrol={observeSelected} refreshKey={turn?.committedRevision ?? 0} />
@@ -1537,17 +1554,17 @@
 </div>
             </details>
             {/each}
-            <details class="inspector-section" data-inspector-section="review" open={expandedInspectorSections.includes('review')} ontoggle={event => setInspectorExpanded('review', event.currentTarget.open)}>
+            <details class="inspector-section" data-inspector-section="review" hidden={!activeInspectorGroup?.tabs.includes('review')} open={expandedInspectorSections.includes('review')} ontoggle={event => setInspectorExpanded('review', event.currentTarget.open)}>
                 <summary>{t($locale, 'chatInspector.review')}</summary><div class="inspector-content">
                 {#if inspectorVisited.review}<WorkspaceReview conversationId={active.conversationId} {hostId} onopen={() => openManagementTab(`/workspace-review?conversation=${encodeURIComponent(active?.conversationId ?? '')}`)} />{/if}
             </div>
             </details>
-            <details class="inspector-section" data-inspector-section="artifacts" open={expandedInspectorSections.includes('artifacts')} ontoggle={event => setInspectorExpanded('artifacts', event.currentTarget.open)}>
+            <details class="inspector-section" data-inspector-section="artifacts" hidden={!activeInspectorGroup?.tabs.includes('artifacts')} open={expandedInspectorSections.includes('artifacts')} ontoggle={event => setInspectorExpanded('artifacts', event.currentTarget.open)}>
                 <summary>{t($locale, 'chatInspector.artifacts')}</summary><div class="inspector-content"><ChatArtifacts {messages} /></div>
             </details>
 
 
-            <details class="inspector-section" data-inspector-section="resources" open={expandedInspectorSections.includes('resources')} ontoggle={event => setInspectorExpanded('resources', event.currentTarget.open)}>
+            <details class="inspector-section" data-inspector-section="resources" hidden={!activeInspectorGroup?.tabs.includes('resources')} open={expandedInspectorSections.includes('resources')} ontoggle={event => setInspectorExpanded('resources', event.currentTarget.open)}>
                 <summary>{t($locale, 'chatInspector.context')}</summary><div class="inspector-content">
                 <ChatOverview compact conversation={active} {selectedModelName} {busy} usage={contextUsage} cache={conversationCacheUsage} cacheFailed={conversationCacheFailed} />
                 {#if inspectorVisited.resources}
@@ -1557,7 +1574,7 @@
                 {/if}
             </div>
             </details>
-            <details class="inspector-section" data-inspector-section="execution" open={expandedInspectorSections.includes('execution')} ontoggle={event => setInspectorExpanded('execution', event.currentTarget.open)}>
+            <details class="inspector-section" data-inspector-section="execution" hidden={!activeInspectorGroup?.tabs.includes('execution')} open={expandedInspectorSections.includes('execution')} ontoggle={event => setInspectorExpanded('execution', event.currentTarget.open)}>
                 <summary>{t($locale, 'chatInspector.execution')}</summary><div class="inspector-content">
                 {#if mountedInspectorSections.includes('execution')}
                     <ChatActivityGoal readOnly={!canInteract} section="execution" {hostId} conversationId={active.conversationId} draftStore={workspaceHost?.objectives} {generation} {busy} oncontrol={observeSelected} refreshKey={turn?.committedRevision ?? 0} />
@@ -1565,10 +1582,10 @@
                 {/if}
                 </div>
             </details>
-            <details class="inspector-section" data-inspector-section="participants" open={expandedInspectorSections.includes('participants')} ontoggle={event => setInspectorExpanded('participants', event.currentTarget.open)}>
+            <details class="inspector-section" data-inspector-section="participants" hidden={!activeInspectorGroup?.tabs.includes('participants')} open={expandedInspectorSections.includes('participants')} ontoggle={event => setInspectorExpanded('participants', event.currentTarget.open)}>
                 <summary>{t($locale, 'chatInspector.participants')}</summary><div class="inspector-content">{@render expertPicker()}</div>
             </details>
-            <details class="inspector-section" data-inspector-section="settings" open={expandedInspectorSections.includes('settings')} ontoggle={event => setInspectorExpanded('settings', event.currentTarget.open)}>
+            <details class="inspector-section" data-inspector-section="settings" hidden={!activeInspectorGroup?.tabs.includes('settings')} open={expandedInspectorSections.includes('settings')} ontoggle={event => setInspectorExpanded('settings', event.currentTarget.open)}>
                 <summary>{t($locale, 'chatInspector.settings')}</summary><div class="inspector-content">
             {#if active && canInteract}<section class="composer-options">
 
@@ -1580,7 +1597,7 @@
             </div>
             </details>
 
-        </aside>
+        </div>
         {#if viewportWidth > 1250}<PanelResizeHandle controls="chat-details" label={t($locale, 'shell.resizeInspector')} value={widths.inspector} min={320} max={widths.inspectorMax} defaultValue={layoutDefaults.inspector} reverse onchange={value => setWorkspaceWidth('inspector', value)} />{/if}
         </div>
         </ChatResponsivePanel>{/if}
@@ -1609,7 +1626,7 @@
     .mobile-chat-heading { flex:1; min-width:0; display:grid; gap:2px; }
     .mobile-chat-heading strong { font-size:16px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .mobile-chat-heading small { font-size:12px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .compact-list-categories, .compact-inspector-tools { display: none; }
+    .compact-list-categories { display: none; }
     .sidebar-section { min-width: 0; flex:1; overflow:auto; }
     .sidebar-section[hidden] { display: none; }
     .chat-header h1 { flex: 1; margin: 0; font-size: 15px; font-weight: 550; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1708,8 +1725,7 @@
         .chat-columns, .chat-columns.without-conversation { grid-template-columns: minmax(0, 1fr); gap: 0; }
         .chat-header { height:76px; gap:2px; padding:8px 12px; flex-wrap:nowrap; background:var(--canvas); }
         .global-navigation { display: none; }
-        .compact-list-categories, .compact-inspector-tools { display: block; }
-        .compact-inspector-tools .inspector-controls { border-inline-start: 0; padding-inline-start: 0; }
+        .compact-list-categories { display: block; }
         .chat-header :global(.model-menu) { display: none; }
         .chat-header > .inspector-controls { display: none; }
         .empty-navigation { display: inline-flex; }

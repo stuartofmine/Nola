@@ -639,6 +639,32 @@ private final class SubmissionBookmarkIO: MacWorkspaceBookmarkIO {
 
 @MainActor
 final class MacWorkspaceSubmissionSelectionTests: XCTestCase {
+    func testReviewUsesFolderChosenOnFirstInvocationAndKeepsItForTheNextReview() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: root.lastPathComponent))
+        defer { defaults.removePersistentDomain(forName: root.lastPathComponent) }
+        let io = SubmissionBookmarkIO()
+        let store = MacSecurityScopedBookmarkStore(defaults: defaults, io: io)
+        defer { store.close() }
+        let port = try MacApplicationPort(databaseURL: root.appendingPathComponent("test.sqlite"))
+        let model = MacWorkspaceModel(canonicalRepository: MacCanonicalConversationRepository(store: port),
+            localAgentRuntime: PersistenceTestLocalRuntime(), remoteHost: PersistenceTestRemoteHost(),
+            modelApplication: port, bookmarkStore: store)
+        model.newConversation()
+        defer { model.presentationDidDetach() }
+
+        let cancelled = await model.workspaceForReview()
+        XCTAssertNil(cancelled)
+        let folder = root.appendingPathComponent("review")
+        io.selected = folder
+        let chosen = await model.workspaceForReview()
+        XCTAssertEqual(chosen, folder)
+        io.selected = nil
+        let reused = await model.workspaceForReview()
+        XCTAssertEqual(reused, folder)
+    }
+
     func testLaterPrimaryAndGrantsDoNotChangeCapturedSubmissionAuthority() async throws {
         let suite = "Nola.SubmissionSelection.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -1856,7 +1882,7 @@ final class MacRowHitRegionTests: XCTestCase {
         XCTAssertTrue(state.expanded)
     }
 
-    func testExtensionFooterOpensDetailsFromAFullWidthControl() async throws {
+    func testExtensionCardHasIndependentDetailsAndEnableActions() async throws {
         let accessibility = try MacHostedAccessibilitySession()
         defer { accessibility.restore() }
         let item = MacExtensionItem(id: "hit-region-fixture", kind: .skill, source: .global,
@@ -1876,12 +1902,46 @@ final class MacRowHitRegionTests: XCTestCase {
         let deadline = ContinuousClock.now + .seconds(4)
         while !objects(host).contains(where: { ($0.accessibilityIdentifier?() ?? nil) == identifier }),
               ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
-        let control = try XCTUnwrap(objects(host).first { ($0.accessibilityIdentifier?() ?? nil) == identifier })
+        let controls = objects(host)
+        let details = controls.filter { ($0.accessibilityIdentifier?() ?? nil) == identifier }
+        XCTAssertEqual(details.count, 1)
+        let control = try XCTUnwrap(details.first)
+        let toggle = try XCTUnwrap(controls.first { ($0.accessibilityIdentifier?() ?? nil) == "mac.extensions.toggle." + item.id })
+        XCTAssertNotEqual(toggle.accessibilityLabel?(), control.accessibilityLabel?())
         let frame = try XCTUnwrap(control.accessibilityFrame?())
         XCTAssertGreaterThan(frame.width, 240, "The source and trailing whitespace must open details, replacing the tiny arrow target")
         XCTAssertGreaterThanOrEqual(frame.height, 36)
         XCTAssertTrue(control.accessibilityPerformPress?() ?? false)
         XCTAssertEqual(navigation.selectedID, item.id)
+    }
+
+    func testRemoteExtensionScopeDoesNotOfferLocalMCPConfiguration() async throws {
+        let accessibility = try MacHostedAccessibilitySession()
+        defer { accessibility.restore() }
+        let navigation = MacExtensionsNavigationState()
+        let catalog = MacExtensionsCatalogLoader(local: { _ in [] }, host: { [] }, removedSkills: { false })
+        let host = NSHostingView(rootView: MacExtensionsCenterView(remoteHost: PersistenceTestRemoteHost(),
+            kinds: [.mcp], navigation: navigation, catalog: catalog)
+            .environment(\.accessibilityEnabled, true).frame(width: 860, height: 620))
+        let window = NSWindow(contentViewController: NSViewController())
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.setContentSize(NSSize(width: 860, height: 620))
+        window.orderFrontRegardless()
+        defer { window.close() }
+        for source in [MacExtensionsCenterView.SourceFilter.thisMac, .connectedHost, .all] {
+            navigation.sourceFilter = source
+            let expected = source != .connectedHost
+            let deadline = ContinuousClock.now + .seconds(3)
+            func hasLocalCreate() -> Bool {
+                host.layoutSubtreeIfNeeded()
+                return objects(host).contains { ($0.accessibilityIdentifier?() ?? nil) == "mac.extensions.action.add_mcp" }
+            }
+            while hasLocalCreate() != expected && ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(30))
+            }
+            XCTAssertEqual(hasLocalCreate(), expected)
+        }
     }
 
     private func objects(_ root: AnyObject) -> [AnyObject] {

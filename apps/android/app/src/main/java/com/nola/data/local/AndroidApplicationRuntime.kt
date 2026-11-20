@@ -20,6 +20,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -304,10 +305,10 @@ class AndroidApplicationRuntime(
         recoveredReceipts.toList().also { recoveredReceipts.clear() }
     }
 
-    fun submitMutation(command: JsonObject, requestId: String? = null): JsonElement = durableTransaction {
+    fun submitMutation(command: JsonObject, requestId: String? = null, expectedRevision: Long? = null): JsonElement = durableTransaction {
         check(handle != 0L) { "Nola Application runtime is closed" }
         val pendingIds = submissionJournal.pending().map { it["request_id"] }.toSet()
-        val request = prepareSubmission(command, requestId, null)
+        val request = prepareSubmission(command, requestId, expectedRevision)
         terminalResult(acceptSubmission(request,
             if (request["request_id"] in pendingIds) recoverEnvelope(request) else transmitEnvelope(request)))
     }
@@ -1324,6 +1325,30 @@ class AndroidApplicationRuntime(
             put("title", title)
             put("updated_at_ms", updatedAtMs)
         })
+    }
+
+    /** Only a first-message title can follow an edited first turn. Unknown existing titles belong to the user. */
+    internal fun updateFirstMessageTitle(id: String, firstMessageId: String, title: String): Boolean {
+        val conversation = loadConversation(id) ?: return false
+        val source = conversation.settingsJson?.let { json.parseToJsonElement(it).jsonObject["titleSource"] }?.jsonPrimitive?.content
+        val followsFirstMessage = when (source) {
+            "first_message", "automatic" -> true
+            null -> conversation.title.isBlank()
+            else -> false
+        }
+        if (!followsFirstMessage || title.isBlank() || title == conversation.title) return false
+        if (conversation.messages.firstOrNull { it.role == "user" }?.id != firstMessageId) return false
+        return try {
+            submitMutation(buildJsonObject {
+                put("type", "rename_conversation")
+                put("conversation_id", id)
+                put("title", title)
+                put("title_source", "first_message")
+                put("updated_at_ms", System.currentTimeMillis())
+            }, expectedRevision = conversation.revision).jsonPrimitive.boolean
+        } catch (_: RevisionConflict) {
+            false
+        }
     }
 
     fun prepareContextCompaction(id: String): JsonObject = execute(buildJsonObject {

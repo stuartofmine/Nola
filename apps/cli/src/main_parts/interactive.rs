@@ -4419,7 +4419,7 @@ fn handle_interactive_slash_command(
             if action.eq_ignore_ascii_case("list") {
                 terminal_notice!("{}", interactive_layer_rule(Some("skills")));
                 if baseline.is_empty() {
-                    terminal_notice!("  (none)");
+                    terminal_notice!("  {}", ui_text(UiText::NoAvailableSkills));
                 } else {
                     for skill in &baseline {
                         let id = skill["id"].as_str().unwrap_or("");
@@ -4463,7 +4463,7 @@ fn handle_interactive_slash_command(
             if action.eq_ignore_ascii_case("list") {
                 terminal_notice!("{}", interactive_layer_rule(Some("mcp")));
                 if baseline.is_empty() {
-                    terminal_notice!("  (none)");
+                    terminal_notice!("  {}", ui_text(UiText::NoConfiguredMcp));
                 } else {
                     for server in &baseline {
                         let id = server["server_id"].as_str().unwrap_or("");
@@ -4507,9 +4507,9 @@ fn handle_interactive_slash_command(
             let binding = crate::memory_admin::workspace_memory_binding(&config.host_invocation_request()?)?;
             if action.eq_ignore_ascii_case("list") {
                 let records = crate::memory_admin::visible_memories(&mut app, &binding, None, 30)?;
-                terminal_notice!("{}", interactive_layer_rule(Some("memory")));
+                terminal_notice!("{}", interactive_layer_rule(Some(ui_text(UiText::MemoryHeading))));
                 if records.is_empty() {
-                    terminal_notice!("  (none)");
+                    terminal_notice!("  {}", ui_text(UiText::NoSavedMemory));
                 } else {
                     for item in records {
                         let id = item["id"].as_str().unwrap_or("");
@@ -4521,23 +4521,23 @@ fn handle_interactive_slash_command(
             } else if action.eq_ignore_ascii_case("search") {
                 let query = parts.collect::<Vec<_>>().join(" ");
                 if query.trim().is_empty() {
-                    terminal_notice!("  Usage: /memory search <query>");
+                    terminal_notice!("  {}  /memory search <query>", ui_text(UiText::DataSourcesUsage));
                     return Ok(SlashCommandResult::Handled);
                 }
                 let records = crate::memory_admin::visible_memories(&mut app, &binding, Some(query.trim()), 20)?;
-                terminal_notice!("{}", interactive_layer_rule(Some("memory search")));
+                terminal_notice!("{}", interactive_layer_rule(Some(ui_text(UiText::MemorySearchHeading))));
+                if records.is_empty() {
+                    terminal_notice!("  {}", ui_text(UiText::NoMatchingMemory));
+                }
                 for item in &records {
                     let id = item["id"].as_str().unwrap_or("");
                     let content = item["content"].as_str().unwrap_or("");
                     terminal_notice!("  {id} · {}", preview(content, 72));
                 }
-                if records.is_empty() {
-                    terminal_notice!("  (no matches)");
-                }
             } else if action.eq_ignore_ascii_case("add") {
                 let text = parts.collect::<Vec<_>>().join(" ");
                 if text.trim().is_empty() {
-                    terminal_notice!("  Usage: /memory add <text>");
+                    terminal_notice!("  {}  /memory add <text>", ui_text(UiText::DataSourcesUsage));
                     return Ok(SlashCommandResult::Handled);
                 }
                 let draft: crate::memory_admin::MemoryDraft = serde_json::from_value(json!({
@@ -4548,9 +4548,9 @@ fn handle_interactive_slash_command(
                 .map_err(|e| e.to_string())?;
                 let saved = crate::memory_admin::add_workspace_memory(&mut app, &binding, &draft)?;
                 let id = saved["id"].as_str().unwrap_or("");
-                terminal_notice!("  Saved memory {id}");
+                terminal_notice!("  {} {id}", ui_text(UiText::MemorySaved));
             } else {
-                terminal_notice!("  Usage: /memory [list|search <query>|add <text>]");
+                terminal_notice!("  {}  /memory [list|search <query>|add <text>]", ui_text(UiText::DataSourcesUsage));
             }
             Ok(SlashCommandResult::Handled)
         }

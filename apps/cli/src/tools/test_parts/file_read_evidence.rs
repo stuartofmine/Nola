@@ -198,8 +198,15 @@ fn file_evidence_generic_clamp_and_mutation_do_not_claim_unseen_content() {
     }, &ctx, ExecutionAuthority::CoreApproved(nola_domain::PermissionProfile::Cautious));
     assert!(!outcome.error, "{}", outcome.text);
     assert!(outcome.full_output_ref.is_none(), "file projection must not recurse through a saved-output preview");
-    assert!(outcome.text.contains("line_not_returned: 1"));
-    assert!(outcome.text.contains("next_start_line: 1"));
+    let data = outcome.data.as_ref().unwrap();
+    let first = data["content"].as_str().unwrap();
+    let offset = data["next_start_byte"].as_u64().unwrap();
+    assert!(!first.is_empty());
+    assert_eq!(first.len() as u64, offset);
+    let next = read_file(&object_args(json!({"path": path, "start_byte": offset})), &ctx);
+    let tail = next.data.as_ref().unwrap();
+    assert_eq!(tail["eof"], true);
+    assert_eq!(format!("{first}{}", tail["content"].as_str().unwrap()), "x".repeat(5000));
     assert!(existing_file_access_snapshot(&path, &Map::new()).is_err());
     fs::write(&path, "visible\n").unwrap();
     let unseen = read_file_text(&path, &Map::new(), true, 16_000, FileReadPresentationBudget::direct()).unwrap();
@@ -379,4 +386,57 @@ fn file_evidence_derived_views_and_automatic_diagnostics_do_not_grant_raw_full_r
     assert!(!direct.error, "{}", direct.text);
     assert!(guard_existing_file_write(&path, &Map::new(), false, Some((2,2))).is_ok());
     assert!(guard_existing_file_write(&path, &Map::new(), true, None).is_err());
+}
+
+#[test]
+fn file_evidence_long_unicode_line_resumes_exactly_and_validation_reads_whole_file() {
+    let fixture = tempfile::tempdir().unwrap();
+    let path = fixture.path().join("rows.json");
+    let ctx = file_evidence_context(fixture.path());
+    let _scope = ctx.permission_scope.enter();
+    let expected = json!({"rows": "浮🌊".repeat(3300)}).to_string();
+    fs::write(&path, format!("\n{expected}")).unwrap();
+    let mut args = object_args(json!({"path":path,"start_line":2,"line_count":1}));
+    let mut actual = String::new();
+    loop {
+        let outcome = read_file(&args, &ctx);
+        assert!(!outcome.error, "{}", outcome.text);
+        let data = outcome.data.unwrap();
+        let text = data["content"].as_str().unwrap();
+        assert!(!text.is_empty());
+        assert_eq!(data["start_byte"], (1 + actual.len()) as u64);
+        actual.push_str(text);
+        if data["eof"] == true { break; }
+        args = object_args(json!({"path":path,"start_byte":data["next_start_byte"]}));
+    }
+    assert_eq!(actual, expected);
+    assert!(existing_file_access_snapshot(&path, &Map::new()).is_err());
+    for (value, passed) in [(&expected[..], true), ("null", false)] {
+        let outcome = read_file(&object_args(json!({"path":path,"operation_kind":"validate","expected_json":value})), &ctx);
+        assert_eq!(outcome.execution.unwrap().checks[0].passed, passed);
+    }
+    let limited = read_file(&object_args(json!({"path":path,"max_bytes":1024,"operation_kind":"validate","expected_json":expected})), &ctx);
+    assert!(limited.error && limited.execution.is_none());
+    assert!(existing_file_access_snapshot(&path, &Map::new()).is_err());
+}
+
+#[test]
+fn declared_json_write_checks_the_entire_value_before_any_mutation() {
+    let fixture = tempfile::tempdir().unwrap();
+    let path = fixture.path().join("output/records.json");
+    let ctx = file_evidence_context(fixture.path());
+    let valid = "{\n \"records\": [1, 2]\n}\n";
+    let invalid = format!("{valid}unexpected");
+    let call = |text: &str| object_args(json!({"path":path,"content":text,"content_format":"json"}));
+    let rejected = write_file(&call(&invalid), &ctx);
+    assert!(rejected.error);
+    assert_eq!(rejected.data.unwrap()["tool_execution_skipped"], true);
+    assert!(!path.parent().unwrap().exists());
+    assert!(!write_file(&call(valid), &ctx).error);
+    assert_eq!(fs::read_to_string(&path).unwrap(), valid);
+    assert!(write_file(&call(&invalid), &ctx).error);
+    assert_eq!(fs::read_to_string(&path).unwrap(), valid);
+    let literal = fixture.path().join("invalid-sample.json");
+    assert!(!write_file(&object_args(json!({"path":literal,"content":invalid})), &ctx).error);
+    assert_eq!(fs::read_to_string(literal).unwrap(), invalid);
 }

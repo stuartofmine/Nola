@@ -47,7 +47,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.IconButton
@@ -70,7 +69,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalContext
@@ -955,7 +953,9 @@ fun PermissionDialog(
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = { showingDetails = true }) { Text(stringResource(R.string.canonical_details)) }
+                TextButton(onClick = { showingDetails = true }, modifier = Modifier.testTag("permission.details.$permissionIdentity")) {
+                    Text(stringResource(R.string.canonical_details))
+                }
                 if (onProvideInstruction != null) {
                     TextButton(onClick = { editingInstruction = !editingInstruction }, enabled = !historyFull) {
                         Text(stringResource(R.string.permission_add_instruction))
@@ -1019,26 +1019,11 @@ fun NolaSwitch(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
 ) {
-    val darkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
     Switch(
         checked = checked,
         onCheckedChange = onCheckedChange,
         modifier = modifier,
         enabled = enabled,
-        colors = SwitchDefaults.colors(
-            checkedThumbColor = Color.White,
-            checkedTrackColor = if (darkTheme) Color(0xFF2E8B57) else Color(0xFF237047),
-            checkedBorderColor = Color.Transparent,
-            uncheckedThumbColor = if (darkTheme) Color(0xFFF2F0EB) else Color.White,
-            uncheckedTrackColor = if (darkTheme) Color(0xFF3A3935) else Color(0xFFDDDAD3),
-            uncheckedBorderColor = if (darkTheme) Color(0xFF52504B) else Color(0xFFC4C0B7),
-            disabledCheckedThumbColor = Color.White.copy(alpha = 0.72f),
-            disabledCheckedTrackColor = (if (darkTheme) Color(0xFF2E8B57) else Color(0xFF237047)).copy(alpha = 0.45f),
-            disabledCheckedBorderColor = Color.Transparent,
-            disabledUncheckedThumbColor = (if (darkTheme) Color(0xFFF2F0EB) else Color.White).copy(alpha = 0.72f),
-            disabledUncheckedTrackColor = (if (darkTheme) Color(0xFF3A3935) else Color(0xFFDDDAD3)).copy(alpha = 0.45f),
-            disabledUncheckedBorderColor = (if (darkTheme) Color(0xFF52504B) else Color(0xFFC4C0B7)).copy(alpha = 0.45f),
-        ),
     )
 }
 

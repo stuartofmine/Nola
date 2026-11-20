@@ -57,8 +57,10 @@ fn agent_context_messages_from_request(body: &Value, settings: &AgentSettings) -
                 if let Some(pending_user) = pending_user {
                     let already_stored = stored.last().is_some_and(|message| {
                         message.get("role").and_then(Value::as_str) == Some("user")
-                            && message.get("content").and_then(Value::as_str)
-                                == pending_user.get("content").and_then(Value::as_str)
+                            && match body["user_message_id"].as_str() {
+                                Some(id) => message["id"].as_str() == Some(id),
+                                None => message["content"] == pending_user["content"],
+                            }
                     });
                     if !already_stored {
                         stored.push(pending_user.clone());
@@ -527,7 +529,7 @@ fn prepare_web_chat_context(
     })
 }
 
-fn split_web_core_items(messages: &[Value]) -> (Vec<AgentItem>, Vec<AgentItem>) {
+fn split_web_core_items(messages: &[Value], submitted_message_id: &str) -> (Vec<AgentItem>, Vec<AgentItem>) {
     let items = messages
         .iter()
         .enumerate()
@@ -546,7 +548,12 @@ fn split_web_core_items(messages: &[Value]) -> (Vec<AgentItem>, Vec<AgentItem>) 
         return (items, Vec::new());
     };
     let mut initial = items;
-    let current = initial.split_off(current_user_index);
+    let mut current = initial.split_off(current_user_index);
+    // The submitted message and its applied Core item must name the same user
+    // source when the Store validates a later task_scope_update.
+    if let AgentItem::Message { id, .. } = &mut current[0] {
+        *id = nola_core::agent::ItemId::from_string(submitted_message_id.to_owned());
+    }
     (initial, current)
 }
 
@@ -2262,8 +2269,9 @@ fn adopt_first_message_conversation_title_after_admission(
     identity:&nola_domain::remote_submission::RemoteSubmissionIdentity,
     request_digest:&str,
     visible_user_text:&str,
+    in_place_resend: bool,
 )->Result<bool,String>{
-    adopt_first_message_conversation_title_at(&NolaStore::open_default()?,identity,request_digest,visible_user_text)
+    adopt_first_message_conversation_title_at(&NolaStore::open_default()?,identity,request_digest,visible_user_text,in_place_resend)
 }
 
 fn adopt_first_message_conversation_title_at(
@@ -2271,6 +2279,7 @@ fn adopt_first_message_conversation_title_at(
     identity:&nola_domain::remote_submission::RemoteSubmissionIdentity,
     request_digest:&str,
     visible_user_text:&str,
+    in_place_resend: bool,
 )->Result<bool,String>{
     let mut app=crate::application_port::CliApplicationPort::persistent(store.path())?;
     let receipt:nola_domain::remote_submission::SourceSubmissionReceipt=app.execute(
@@ -2280,25 +2289,29 @@ fn adopt_first_message_conversation_title_at(
     if receipt.phase!=nola_domain::remote_submission::RemoteSubmissionPhase::Admitted {return Ok(false);}
     let conversation_id=&identity.conversation_id;
     let Some(title)=first_message_title(visible_user_text) else {return Ok(false);};
-    if !store.web_automatic_title_is_current(conversation_id)? {
+    if !in_place_resend && !store.web_automatic_title_is_current(conversation_id)? {
         return Ok(false);
     }
     let Some(value) = store.get_web_conversation(conversation_id)? else {
         return Ok(false);
     };
-    let mut conversation = serde_json::from_value::<WebConversation>(value)
+    let conversation = serde_json::from_value::<WebConversation>(value)
         .map_err(|error| format!("parse web conversation failed: {error}"))?;
-    if conversation.title_source != ConversationTitleSource::Automatic {
-        return Ok(false);
+    match conversation.title_source {
+        ConversationTitleSource::Automatic => {}
+        ConversationTitleSource::FirstMessage if in_place_resend && conversation.title != title => {
+            let first: nola_domain::ConversationProjection = app.execute(
+                nola_application::ApplicationCommand::LoadConversationProjectionPageV1 {
+                    conversation_id: conversation_id.clone(), offset: 0, limit: 1,
+                },
+            )?;
+            if !first.messages.first().is_some_and(|message| message.message_id.0 == identity.user_message_id) {
+                return Ok(false);
+            }
+        }
+        _ => return Ok(false),
     }
-    conversation.title = title;
-    conversation.title_source = ConversationTitleSource::FirstMessage;
-    conversation.updated_at = now_string();
-    if store.rename_web_conversation(conversation_id,&conversation.title,ConversationTitleSource::FirstMessage,conversation.revision)? {
-        Ok(true)
-    } else {
-        Err(format!("web conversation {conversation_id} does not exist"))
-    }
+    store.rename_web_conversation(conversation_id, &title, ConversationTitleSource::FirstMessage, conversation.revision)
 }
 
 fn sanitize_meta(value: Value) -> Value {
@@ -4404,12 +4417,12 @@ mod admitted_first_message_title_tests {
     #[test]
     fn prepared_or_wrong_epoch_source_cannot_adopt_a_title(){
         let root=tempfile::tempdir().unwrap();let(store,mut app,id,digest)=setup(&root.path().join("rejected.db"));
-        assert!(!adopt_first_message_conversation_title_at(&store,&id,&digest,"Stale draft must not rename").unwrap());
+        assert!(!adopt_first_message_conversation_title_at(&store,&id,&digest,"Stale draft must not rename",false).unwrap());
         let component=nola_core::context_engine::ContextComponent{kind:nola_core::context_engine::ContextComponentKind::MainExpertSelection,
             id:nola_domain::expert_task_target::MAIN_EXPERT_SELECTION_COMPONENT_ID.into(),source:None,
             content:json!({"version":1,"expected_source_store_epoch":"retired-store","selected_experts":[{"agent_id":"reviewer","agent_revision":1}]})};
         assert!(begin(&mut app,&id,vec![component]).unwrap_err().contains("main_expert_selection_source_changed"));
-        assert!(!adopt_first_message_conversation_title_at(&store,&id,&digest,"Stale draft must not rename").unwrap());
+        assert!(!adopt_first_message_conversation_title_at(&store,&id,&digest,"Stale draft must not rename",false).unwrap());
         let view=store.get_web_conversation("main").unwrap().unwrap();assert_eq!(view["title"],"New conversation");assert_eq!(view["titleSource"],"automatic");
         assert!(app.load_conversation("main").unwrap().unwrap().messages.is_empty());
     }
@@ -4424,11 +4437,27 @@ mod admitted_first_message_title_tests {
                 response:HostResponseEnvelope{request_id:request.request_id.clone(),attempt_id:request.attempt_id.clone(),effect_id:request.effect_id.clone(),delegated_invocation_id:request.delegated_invocation_id.clone(),host_id:request.host_id.clone(),lease_id:request.lease_id.clone(),
                     session_id:request.session_id.clone(),turn_id:request.turn_id.clone(),catalog_revision:request.catalog_revision,availability_epoch:request.availability_epoch,delivery:request.delivery.clone(),sequence,payload}}).unwrap();
         }
-        assert!(adopt_first_message_conversation_title_at(&store,&id,&digest,"Actual user input").unwrap());
+        assert!(adopt_first_message_conversation_title_at(&store,&id,&digest,"Actual user input",false).unwrap());
         let view=store.get_web_conversation("main").unwrap().unwrap();assert_eq!(view["title"],"Actual user input");assert_eq!(view["titleSource"],"first_message");
-        let mut wrong=id.clone();wrong.client_id="different-client".into();assert!(adopt_first_message_conversation_title_at(&store,&wrong,&digest,"Foreign title").is_err());
+        let mut wrong=id.clone();wrong.client_id="different-client".into();assert!(adopt_first_message_conversation_title_at(&store,&wrong,&digest,"Foreign title",false).is_err());
+        assert!(adopt_first_message_conversation_title_at(&store,&id,&digest,"Updated opening message",true).unwrap());
+        let view=store.get_web_conversation("main").unwrap().unwrap();assert_eq!(view["title"],"Updated opening message");
         store.rename_web_conversation("main","My chosen title",crate::store::ConversationTitleSource::User,view["revision"].as_i64().unwrap()).unwrap();
-        assert!(!adopt_first_message_conversation_title_at(&store,&id,&digest,"Do not overwrite my title").unwrap());
+        assert!(!adopt_first_message_conversation_title_at(&store,&id,&digest,"Do not overwrite my title",true).unwrap());
         assert_eq!(store.get_web_conversation("main").unwrap().unwrap()["title"],"My chosen title");
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn web_scope_sources_bind_only_current_input_to_the_admitted_message() {
+    let history = json!({"role":"user","id":"earlier","content":"同一条消息"});
+    for current in [
+        json!({"role":"user","content":"同一条消息"}),
+        json!({"role":"user","id":"untrusted","core_message_id":"untrusted","content":"同一条消息"}),
+    ] {
+        let (previous, input) = split_web_core_items(&[history.clone(), current], "admitted-user");
+        assert!(matches!(previous.as_slice(), [AgentItem::Message { id, .. }] if id.as_str() == "earlier"));
+        assert!(matches!(input.as_slice(), [AgentItem::Message { id, role: AgentRole::User, .. }] if id.as_str() == "admitted-user"));
     }
 }

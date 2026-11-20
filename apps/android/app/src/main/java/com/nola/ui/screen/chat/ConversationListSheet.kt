@@ -1,5 +1,6 @@
 package com.nola.ui.screen.chat
 
+import com.nola.ui.components.NolaRootPageTitle
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
@@ -83,7 +84,6 @@ import com.nola.ui.components.NolaIconBadge
 import com.nola.ui.components.NolaMotion
 import com.nola.ui.components.NolaRadius
 import com.nola.ui.components.NolaSpacing
-import com.nola.ui.components.NolaTopAppBar
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
@@ -185,10 +185,9 @@ fun ConversationListScreen(
     }
 
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.surface,
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            NolaTopAppBar(title = stringResource(R.string.conversations_title),
-                titleStyle = MaterialTheme.typography.headlineSmall.copy(fontSize = 28.sp, lineHeight = 36.sp)) {}
+            NolaRootPageTitle(stringResource(R.string.conversations_title), Modifier.padding(horizontal = nolaPageGutter()))
         },
         floatingActionButton = {
             FloatingActionButton(onClick = onNewConversation, containerColor = MaterialTheme.colorScheme.primary,

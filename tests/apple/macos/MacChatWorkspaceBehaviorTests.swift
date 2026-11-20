@@ -786,6 +786,37 @@ final class MacChatWorkspaceBehaviorTests: XCTestCase {
         XCTAssertEqual(MacExecutionBackendPolicy.externalContextPreparationTokens, 32_768)
     }
 
+    func testRestoringDetachedWindowCannotRecreateDeletedOrUnknownConversation() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let port = try MacApplicationPort(databaseURL: root.appendingPathComponent("nola.sqlite"))
+        let repository = MacCanonicalConversationRepository(store: port)
+        func openWindow(_ id: String) -> MacWorkspaceModel {
+            MacWorkspaceModel(
+                initialConversationID: id, createMissingConversation: false, canonicalRepository: repository,
+                localAgentRuntime: PersistenceTestLocalRuntime(), remoteHost: PersistenceTestRemoteHost(),
+                modelApplication: port
+            )
+        }
+        let retained = MacConversation(title: "Retained", preview: "", updatedAt: .now, isPinned: false)
+        let deleted = MacConversation(title: "Deleted", preview: "", updatedAt: .now, isPinned: false)
+        _ = try repository.ensureConversation(deleted)
+        try repository.delete(conversationID: deleted.id)
+        for stale in [deleted.id, UUID().uuidString] {
+            let model = openWindow(stale)
+            model.presentationDidAttach()
+            await model.loadSelectedConversationIfNeeded()
+            model.presentationDidDetach()
+            XCTAssertNotEqual(model.selectedConversationID, stale)
+            XCTAssertEqual(model.selectedConversation?.isPersisted, false)
+            XCTAssertEqual(try repository.conversationIDs(), [])
+        }
+        _ = try repository.ensureConversation(retained)
+        XCTAssertEqual(openWindow(retained.id).selectedConversationID, retained.id)
+        XCTAssertNotEqual(openWindow(deleted.id).selectedConversationID, retained.id)
+        XCTAssertEqual(try repository.conversationIDs(), [retained.id])
+    }
+
     func testExecutionBackendSelectionPersistsPerConversation() async throws {
         let conversationID = "executor-roundtrip-\(UUID().uuidString)"
         let baseDirectory = FileManager.default.temporaryDirectory
@@ -859,6 +890,12 @@ final class MacChatWorkspaceBehaviorTests: XCTestCase {
             environment.databaseURL.standardizedFileURL,
             support.appendingPathComponent("State/nola-v4.db").standardizedFileURL
         )
+    }
+
+    func testStandaloneTestBundleKeepsIsolatedRuntimeWithoutTestRunnerVariables() {
+        XCTAssertTrue(MacProcessRuntimePolicy.isTestHostBundle("com.gaojc.Nola.mac.tests-host"))
+        XCTAssertFalse(MacProcessRuntimePolicy.isTestHostBundle("com.gaojc.Nola.mac"))
+        XCTAssertFalse(MacProcessRuntimePolicy.isTestHostBundle(nil))
     }
 
     func testDefaultTestEnvironmentHasAStableRunIdentityBeyondTheReusedProcessID() throws {
@@ -3828,6 +3865,22 @@ final class MacChatWorkspaceBehaviorTests: XCTestCase {
 
         XCTAssertEqual(window.messages.map(\.id), [large.id, active.id])
         XCTAssertTrue(window.hasEarlierVisibleMessages)
+    }
+
+    func testOnlyFirstAdmittedMessageCanReplaceAnAutomaticTitleAndUserRenameWins() throws {
+        let fixture = try MacAssistantJournalTestFixture(conversationID: "title-edit", runID: "title-run",
+            assistantMessageID: "title-run:assistant", userText: "Original question")
+        let port = try MacApplicationPort(databaseURL: fixture.databaseURL)
+        let repository = MacCanonicalConversationRepository(store: port)
+        let owner = fixture.conversationID
+        let firstID = try XCTUnwrap(port.loadConversationProjectionPageV1(owner, offset: 0, limit: 1).messages.first?.messageID)
+        XCTAssertTrue(try repository.adoptMessageTitle(conversationID: owner, title: "Original question"))
+        XCTAssertFalse(try repository.adoptMessageTitle(conversationID: owner, title: "Later question", editedMessageID: "later"))
+        XCTAssertTrue(try repository.adoptMessageTitle(conversationID: owner, title: "Edited question", editedMessageID: firstID))
+        XCTAssertEqual(try port.loadConversation(owner)?.title, "Edited question")
+        try repository.rename(conversationID: owner, title: "My title")
+        XCTAssertFalse(try repository.adoptMessageTitle(conversationID: owner, title: "Next edit", editedMessageID: firstID))
+        XCTAssertEqual(try port.loadConversation(owner)?.title, "My title")
     }
 
     func testInlineTitleRenameUpdatesHeaderAndSidebarWithoutSecondaryMetadataWrite() {

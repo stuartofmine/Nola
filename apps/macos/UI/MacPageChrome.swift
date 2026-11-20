@@ -105,18 +105,18 @@ enum MacDesignTokens {
     /// Native macOS chrome continues binding semantic Asset Catalog entries through `MacDesignColor`.
     enum Palette {
         enum Light {
-            static let canvas: UInt32 = 0xF7F6F3
+            static let canvas: UInt32 = 0xFAF8F4
             static let surface: UInt32 = 0xFFFFFF
-            static let surfaceSubtle: UInt32 = 0xF1F0EC
+            static let surfaceSubtle: UInt32 = 0xF1EFE8
             static let surfaceElevated: UInt32 = 0xFFFFFF
-            static let ink: UInt32 = 0x181817
-            static let inkSecondary: UInt32 = 0x5C5B57
-            static let inkMuted: UInt32 = 0x66655F
-            static let border: UInt32 = 0xE5E3DD
-            static let outline: UInt32 = 0x7A7872
-            static let accent: UInt32 = 0x181817
+            static let ink: UInt32 = 0x242923
+            static let inkSecondary: UInt32 = 0x5E665E
+            static let inkMuted: UInt32 = 0x626B62
+            static let border: UInt32 = 0xDEDCD3
+            static let outline: UInt32 = 0x777E74
+            static let accent: UInt32 = 0x345D50
             static let onAccent: UInt32 = 0xFFFFFF
-            static let accentSubtle: UInt32 = 0xEAE8E2
+            static let accentSubtle: UInt32 = 0xE3EBE3
             static let success: UInt32 = 0x237047
             static let warning: UInt32 = 0x865400
             static let danger: UInt32 = 0xAD3D34
@@ -124,18 +124,18 @@ enum MacDesignTokens {
         }
 
         enum Dark {
-            static let canvas: UInt32 = 0x131312
-            static let surface: UInt32 = 0x1B1B19
-            static let surfaceSubtle: UInt32 = 0x232320
-            static let surfaceElevated: UInt32 = 0x232320
-            static let ink: UInt32 = 0xF2F0EB
-            static let inkSecondary: UInt32 = 0xA3A09A
-            static let inkMuted: UInt32 = 0x96938D
-            static let border: UInt32 = 0x2E2D2A
-            static let outline: UInt32 = 0x827F79
-            static let accent: UInt32 = 0xF2F0EB
-            static let onAccent: UInt32 = 0x131312
-            static let accentSubtle: UInt32 = 0x292825
+            static let canvas: UInt32 = 0x1B1C1A
+            static let surface: UInt32 = 0x222420
+            static let surfaceSubtle: UInt32 = 0x292C27
+            static let surfaceElevated: UInt32 = 0x30332E
+            static let ink: UInt32 = 0xF1F1E9
+            static let inkSecondary: UInt32 = 0xB5BAAF
+            static let inkMuted: UInt32 = 0xA1AA9D
+            static let border: UInt32 = 0x383D35
+            static let outline: UInt32 = 0x899084
+            static let accent: UInt32 = 0xA8C9B7
+            static let onAccent: UInt32 = 0x192B22
+            static let accentSubtle: UInt32 = 0x303F36
             static let success: UInt32 = 0x82C99B
             static let warning: UInt32 = 0xE9BD66
             static let danger: UInt32 = 0xEFAAA2
@@ -197,7 +197,6 @@ enum MacDesignTokens {
         static let inspectorWidth: CGFloat = 360
         static let contentWidth: CGFloat = 900
         static let pageGutter: CGFloat = 24
-        static let chatContentWidth: CGFloat = 880
         // Give desktop conversations more room without turning prose into
         // full-window lines. The composer and transcript grow together;
         // compact windows still use their available width.
@@ -278,8 +277,8 @@ enum MacChatBubbleLayout {
 
 enum MacDesignColor {
     static let onAccent = Color("NolaOnAccent")
-    static let primaryAction = Color("NolaTextPrimary")
-    static let onPrimaryAction = Color("NolaCanvas")
+    static let primaryAction = Color("AccentColor")
+    static let onPrimaryAction = Color("NolaOnAccent")
     static let surfaceRaised = Color("NolaSurfaceRaised")
     static let controlOutline = Color("NolaControlOutline")
     static let brand = Color("AccentColor")
@@ -333,11 +332,17 @@ extension EnvironmentValues {
     }
 }
 
+enum MacPageNavigationKind {
+    case sidebar, back
+
+    var symbol: String { self == .back ? "chevron.left" : "sidebar.left" }
+}
+
 struct MacPageHeader<Subtitle: View, Actions: View>: View {
     let title: LocalizedStringKey
     let symbol: String
     let navigationAction: (() -> Void)?
-    let navigationSymbol: String
+    let navigationKind: MacPageNavigationKind
     let navigationLabel: LocalizedStringKey
     @Environment(\.macUsesGlobalWorkspaceChrome) private var usesGlobalWorkspaceChrome
     @ViewBuilder let subtitle: () -> Subtitle
@@ -347,7 +352,7 @@ struct MacPageHeader<Subtitle: View, Actions: View>: View {
         _ title: LocalizedStringKey,
         symbol: String,
         navigationAction: (() -> Void)? = nil,
-        navigationSymbol: String = "sidebar.left",
+        navigationKind: MacPageNavigationKind = .sidebar,
         navigationLabel: LocalizedStringKey = "Toggle Sidebar",
         @ViewBuilder subtitle: @escaping () -> Subtitle,
         @ViewBuilder actions: @escaping () -> Actions
@@ -355,7 +360,7 @@ struct MacPageHeader<Subtitle: View, Actions: View>: View {
         self.title = title
         self.symbol = symbol
         self.navigationAction = navigationAction
-        self.navigationSymbol = navigationSymbol
+        self.navigationKind = navigationKind
         self.navigationLabel = navigationLabel
         self.subtitle = subtitle
         self.actions = actions
@@ -365,6 +370,7 @@ struct MacPageHeader<Subtitle: View, Actions: View>: View {
         Group {
             if usesGlobalWorkspaceChrome {
                 HStack(alignment: .top, spacing: 16) {
+                    if navigationKind == .back { navigationButton }
                     VStack(alignment: .leading, spacing: 6) {
                         Text(title).font(.system(size: 20, weight: .semibold))
                         subtitle().font(.callout).foregroundStyle(.secondary)
@@ -432,7 +438,7 @@ struct MacPageHeader<Subtitle: View, Actions: View>: View {
     private var navigationButton: some View {
         if let navigationAction {
             Button(action: navigationAction) {
-                Image(systemName: navigationSymbol)
+                Image(systemName: navigationKind.symbol)
                     .font(.system(size: 12, weight: .semibold))
                     .frame(
                         width: MacDesignTokens.Control.iconButton,
@@ -442,6 +448,7 @@ struct MacPageHeader<Subtitle: View, Actions: View>: View {
             .macToolbarIcon()
             .help(navigationLabel)
             .accessibilityLabel(navigationLabel)
+            .accessibilityIdentifier(navigationKind == .back ? "page.navigation.back" : "page.navigation.sidebar")
         }
     }
 

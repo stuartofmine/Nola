@@ -4,6 +4,7 @@ package com.nola.ui.screen.activity
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -11,8 +12,13 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -27,6 +33,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nola.R
 import com.nola.ui.components.MarkdownRenderer
+import com.nola.ui.components.NolaRootPageTitle
 import java.text.DateFormat
 import java.util.Date
 
@@ -42,43 +49,64 @@ internal fun ActivityScreen(onOpenConversation: (String) -> Unit, onOpenPlans: (
     var searchDraft by rememberSaveable { mutableStateOf("") }
     fun refresh() = viewModel.refresh(source, needsResponse, search)
     fun submitSearch() { search = searchDraft; keyboard?.hide() }
+    LaunchedEffect(searchDraft) {
+        if (searchDraft != search) {
+            kotlinx.coroutines.delay(300)
+            search = searchDraft
+        }
+    }
     LifecycleResumeEffect(source, needsResponse, search) {
         viewModel.resume(source, needsResponse, search)
         onPauseOrDispose { }
     }
     Box(Modifier.fillMaxSize().imePadding()) {
         LazyColumn(Modifier.align(Alignment.TopCenter).widthIn(max = 720.dp).fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = gutter, vertical = 24.dp),
+            contentPadding = PaddingValues(start = gutter, end = gutter, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text(stringResource(R.string.activity_title), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                NolaRootPageTitle(stringResource(R.string.activity_title)) {
+                    IconButton(onClick = ::refresh, enabled = !state.loading) {
+                        Icon(Icons.Filled.Refresh, stringResource(R.string.common_refresh))
+                    }
                     if (onOpenPlans != null) IconButton(onClick = onOpenPlans) {
                         Icon(androidx.compose.ui.res.painterResource(R.drawable.nola_calendar), stringResource(R.string.scheduled_title))
                     }
                 }
             }
-            item { Text(stringResource(R.string.activity_local_scope), style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant) }
             item {
-                OutlinedTextField(value = searchDraft, onValueChange = { searchDraft = it },
+                OutlinedTextField(
+                    value = searchDraft, onValueChange = { searchDraft = it },
                     modifier = Modifier.fillMaxWidth(), singleLine = true,
-                    label = { Text(stringResource(R.string.activity_search_title), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    placeholder = { Text(stringResource(R.string.activity_search_title), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    leadingIcon = { Icon(painterResource(R.drawable.nola_search), null, Modifier.size(20.dp)) },
+                    trailingIcon = if (searchDraft.isNotEmpty()) { {
+                        IconButton(onClick = { searchDraft = ""; search = "" }) {
+                            Icon(Icons.Filled.Close, stringResource(R.string.notifications_clear_search))
+                        }
+                    } } else null,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+                        focusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+                        unfocusedBorderColor = Color.Transparent,
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    ),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     keyboardActions = KeyboardActions(onSearch = { submitSearch() }),
-                    trailingIcon = { TextButton(onClick = ::submitSearch) { Text(stringResource(R.string.activity_search)) } })
+                )
             }
             item {
-                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     listOf(null to R.string.activity_all, "agent" to R.string.activity_agent, "automation" to R.string.activity_plan).forEach { (value, label) ->
-                        FilterChip(selected = source == value, onClick = { source = value }, label = { Text(stringResource(label)) })
+                        FilterChip(selected = source == value, onClick = { source = value }, colors = colors, border = null,
+                            shape = MaterialTheme.shapes.extraLarge, label = { Text(stringResource(label)) })
                     }
-                }
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween) {
-                    FilterChip(selected = needsResponse, onClick = { needsResponse = !needsResponse },
-                        label = { Text(stringResource(R.string.activity_needs_response)) })
-                    TextButton(onClick = ::refresh, enabled = !state.loading) { Text(stringResource(R.string.common_refresh)) }
+                    FilterChip(selected = needsResponse, onClick = { needsResponse = !needsResponse }, colors = colors, border = null,
+                        shape = MaterialTheme.shapes.extraLarge, label = { Text(stringResource(R.string.activity_needs_response)) })
                 }
             }
             if (state.failed) item {

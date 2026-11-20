@@ -120,7 +120,7 @@ struct MacTranscriptView: View {
                 // measured container: lazy height estimates feeding native follow
                 // can oscillate, and moving the previous tail to another parent
                 // destroys its disclosure/editor identity on every new message.
-                VStack(spacing: 18) {
+                VStack(spacing: 24) {
                     if isViewingHistory {
                         Button(action: onReturnToLatestHistory) {
                             Label(String(localized: "Go to Latest Message"), systemImage: "arrow.down.circle")

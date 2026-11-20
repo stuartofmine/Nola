@@ -248,8 +248,101 @@ final class MacMainExpertDispatchContractTests: XCTestCase {
         XCTAssertFalse(try repository.loadSidebar().contains { $0.conversation.id == current.id || $0.conversation.id == previous.id })
     }
 
+    func testPeerExchangesUseParentAndRoomForRemoteRestoreRefreshAndStandaloneRoom() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let port = try MacApplicationPort(databaseURL: root.appendingPathComponent("nola.sqlite"))
+        let repository = MacCanonicalConversationRepository(store: port)
+        let local = MacAgentRoomService(execute: { request in
+            if case .object(let envelope) = request, case .object(let command) = envelope["command"] {
+                XCTAssertNotEqual(command["type"], .string("peer_exchanges"), "Selecting a standalone room has no main owner")
+            }
+            return try port.executeAgentRoomEnvelope(request)
+        })
+        let standalone = try local.create(title: "Standalone")
+        let workspace = MacAgentRoomWorkspace(service: local)
+        let execution = MacRoomExecutionService(repository: repository,
+            localRuntime: PersistenceTestLocalRuntime(), remoteHost: PersistenceTestRemoteHost())
+        workspace.executionService = execution
+        workspace.mainIsRemote = { true }
+
+        var associatedParent = "parent"
+        var pageParent = "parent"
+        var exchangeParent = "parent"
+        var exchangeRoom = "room"
+        var requests = [String]()
+        workspace.mainCommand = { owner, request in
+            guard case .object(let fields) = request, case .string(let kind) = fields["type"] else {
+                throw MacApplicationPortError.invalidResponse
+            }
+            XCTAssertEqual(owner, "parent")
+            XCTAssertEqual(fields["conversation_id"], .string("parent"))
+            requests.append(kind)
+            switch kind {
+            case "for_conversation":
+                let participants = ["source", "target"].map {
+                    MacRoomParticipant(id: $0 + "-member", agentID: $0 + "-agent", agentRevision: 1,
+                        displayName: $0, description: "", contextConversationID: $0, active: true)
+                }
+                let association = MacConversationRoomAssociation(conversationID: associatedParent, roomID: "room", revision: 1,
+                    room: .init(revision: 1, room: .init(id: "room", title: "Owner", participants: participants)))
+                return try JSONDecoder().decode(MacCanonicalJSONValue.self, from: JSONEncoder().encode(association))
+            case "peer_exchanges":
+                let text = Self.peerJSON.replacingOccurrences(of: #""parent_conversation_id":"parent""#,
+                    with: #""parent_conversation_id":"\#(exchangeParent)""#)
+                    .replacingOccurrences(of: #""room_id":"room""#, with: #""room_id":"\#(exchangeRoom)""#)
+                return .object(["version": .signedInteger(1), "conversation_id": .string(pageParent),
+                    "exchanges": .array([try JSONDecoder().decode(MacCanonicalJSONValue.self, from: Data(text.utf8))]),
+                    "has_more": .bool(false), "next_offset": .null])
+            default: throw MacApplicationPortError.invalidResponse
+            }
+        }
+        let initialIDs = try repository.conversationIDs()
+        await workspace.restoreConversation("parent")
+        XCTAssertEqual(workspace.peerExchanges.map(\.exchangeID), ["exchange"])
+        XCTAssertTrue(execution.owners.isEmpty, "A read from a remote Host must not create a local child conversation")
+        XCTAssertEqual(try repository.conversationIDs(), initialIDs)
+        execution.observe(contextID: "target")
+        await workspace.refreshPeerExchanges(for: "parent")
+        XCTAssertTrue(workspace.transcriptOwners.isEmpty, "A local child with the same ID cannot supply a remote transcript")
+
+        let initialRequests = requests
+        await workspace.select(standalone, resumeExecutions: false)
+        XCTAssertEqual(workspace.selectedRoom?.room.id, standalone.room.id)
+        XCTAssertNil(workspace.errors[standalone.room.id])
+        XCTAssertEqual(requests, initialRequests)
+
+        pageParent = "foreign"
+        await workspace.restoreConversation("parent")
+        XCTAssertTrue(workspace.peerExchanges.isEmpty)
+        pageParent = "parent"
+        exchangeParent = "foreign"
+        await workspace.refreshPeerExchanges(for: "parent")
+        XCTAssertTrue(workspace.peerExchanges.isEmpty)
+        exchangeParent = "parent"
+        exchangeRoom = "foreign-room"
+        await workspace.refreshPeerExchanges(for: "parent")
+        XCTAssertTrue(workspace.peerExchanges.isEmpty)
+        exchangeRoom = "room"
+        await workspace.refreshPeerExchanges(for: "parent")
+        XCTAssertEqual(workspace.peerExchanges.map(\.exchangeID), ["exchange"])
+        associatedParent = "foreign"
+        let count = requests.count
+        await workspace.restoreConversation("parent")
+        XCTAssertNil(workspace.conversationAssociation)
+        XCTAssertTrue(workspace.peerExchanges.isEmpty)
+        XCTAssertEqual(Array(requests.dropFirst(count)), ["for_conversation"])
+    }
+
     func testScopedPeerAuthorsUseFrozenNamesAndRejectForeignOrUnmappedMessages() throws {
         let exchange = try JSONDecoder().decode(AppleExpertPeerView.self, from: Data(Self.peerJSON.utf8))
+        let result = AppleExpertPeerExchanges(version: 1, conversationID: "parent", exchanges: [exchange],
+            hasMore: false, nextOffset: nil)
+        let wire = try JSONDecoder().decode(MacCanonicalJSONValue.self, from: JSONEncoder().encode(result))
+        let service = MacAgentRoomService(execute: { _ in wire })
+        XCTAssertEqual(try service.peerExchanges(conversationID: "parent").exchanges, [exchange])
+        XCTAssertThrowsError(try service.peerExchanges(conversationID: "source"))
+        XCTAssertThrowsError(try service.peerExchanges(conversationID: "target"))
         let authors = try MacExpertChildHistoryReader.authors([exchange], parentID: "parent", childID: "target", userMessageIDs: ["exchange:user"])
         XCTAssertEqual(authors["exchange:user"], "Frozen reviewer")
         XCTAssertThrowsError(try MacExpertChildHistoryReader.authors([exchange], parentID: "other", childID: "target", userMessageIDs: ["exchange:user"]))
@@ -516,9 +609,19 @@ final class MacExpertRoleConfigurationTests: XCTestCase {
         let role = try XCTUnwrap(catalog.templates.first)
         try await wait { self.element(host, "mac-expert-builtin-" + role.id) != nil }
         XCTAssertEqual(catalog.templates.count, 7)
-        for builtin in catalog.templates {
-            _ = element(host, "mac-expert-builtin-" + builtin.id)?.accessibilityPerformPress?()
-            try await wait { self.element(host, "mac-expert-builtin-preview") != nil }
+        attach(host, name: "expert-library-before-selection")
+        for builtin in catalog.templates.dropFirst() + catalog.templates.prefix(1) {
+            let button = try XCTUnwrap(element(host, "mac-expert-builtin-" + builtin.id))
+            XCTAssertTrue(button.accessibilityPerformPress?() == true, "Could not press \(builtin.id)")
+            let description = builtin.localizedDescription()
+            try await wait {
+                guard let preview = self.element(host, "mac-expert-builtin-preview") else { return false }
+                return self.elements(preview).contains { node in
+                    let value: Any? = node.accessibilityValue?() ?? nil
+                    return (value as? String) == description || node.accessibilityLabel?() == description
+                }
+            }
+            attach(host, name: "expert-preview-" + builtin.localizedName(locale: Locale(identifier: "en")))
         }
         XCTAssertEqual(try fixture.service.directory().agents.count, before.agents.count,
             "Browsing built-in roles must not create persistent agents")

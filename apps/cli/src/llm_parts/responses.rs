@@ -495,6 +495,30 @@ fn validate_siwc_body(body: &Value, expected_model: &str) -> Result<(), String> 
     Ok(())
 }
 
+/// Only known protocol codes cross the boundary. Provider messages may contain
+/// request text or credentials and cannot authorize retries.
+fn responses_failure_event(event: &Value, output_started: bool) -> ProviderAttemptError {
+    let wire_code = event.pointer("/response/error/code")
+        .or_else(|| event.pointer("/error/code")).or_else(|| event.get("code"))
+        .and_then(Value::as_str);
+    let (code, message, transient) = match wire_code {
+        Some("server_error" | "server_is_overloaded" | "service_unavailable") =>
+            ("provider_unavailable", "The provider is temporarily unavailable. Try again shortly.", true),
+        Some("rate_limit_exceeded" | "slow_down") =>
+            ("rate_limited", "The provider rate limit was reached. Wait before retrying.", true),
+        Some("insufficient_quota" | "subscription_sharing_usage_limit_exceeded") =>
+            ("quota_exhausted", "The provider usage limit was reached. Check the selected account's limits.", false),
+        Some("context_length_exceeded") =>
+            ("context_length_exceeded", "The model context window was exceeded.", false),
+        Some("invalid_prompt" | "invalid_request_error") =>
+            ("invalid_model_request", "The provider rejected the request. Review the input and model settings.", false),
+        Some("content_filter" | "bio_policy" | "misalignment_policy_violation" | "image_content_policy_violation") =>
+            ("content_filtered", "The provider stopped this response because of its content policy.", false),
+        _ => ("responses_provider_failed", "The provider reported a failed response.", false),
+    };
+    ProviderAttemptError::StreamFailure { code, message, retryable: transient && !output_started }
+}
+
 #[cfg(test)]
 fn read_responses_stream<F>(
     cfg: &LlmConfig,
@@ -711,7 +735,7 @@ where F: FnMut(LlmEvent) -> Result<(), String> {
                 break;
             }
             "response.failed" | "error" => {
-                return Err("Responses provider reported failure".into())
+                return Err(responses_failure_event(&event, !calls.is_empty() || !choice.content.is_empty() || !choice.reasoning.is_empty()))
             }
             _ => {}
         }
@@ -1233,6 +1257,24 @@ mod responses_contract_tests {
         let mut streamed = "Hello".to_string();
         assert!(finish_streamed_text(&mut streamed, "Different", |_| Ok(())).is_err());
         assert_eq!(streamed, "Hello");
+    }
+
+    #[test]
+    fn typed_failed_response_retries_transient_errors_only_before_output() {
+        let cfg = config("http://localhost/v1".into());
+        for (wire, code, retry) in [("server_error","provider_unavailable",true), ("rate_limit_exceeded","rate_limited",true),
+            ("insufficient_quota","quota_exhausted",false), ("invalid_prompt","invalid_model_request",false),
+            ("private-unknown-code","responses_provider_failed",false)] {
+            let event = json!({"type":"response.failed","response":{"error":{"code":wire,"message":"private diagnostic"}}});
+            let failure = fixture_stream(format!("data: {event}\n\n")).unwrap_err().into_failure(&cfg);
+            assert_eq!(failure.code, code);
+            assert_eq!(failure.same_target_retryable, retry);
+            assert!(!failure.diagnostic.contains("private"));
+            assert!(!failure.message.contains("private"));
+        }
+        let failure = fixture_stream("data: {\"type\":\"response.output_text.delta\",\"delta\":\"visible\"}\n\ndata: {\"type\":\"error\",\"code\":\"server_error\"}\n\n".into()).unwrap_err().into_failure(&cfg);
+        assert_eq!(failure.code, "provider_unavailable");
+        assert!(!failure.same_target_retryable && !failure.fallback_eligible);
     }
 
     fn fixture_stream(body: String) -> Result<StreamedChoice, ProviderAttemptError> {

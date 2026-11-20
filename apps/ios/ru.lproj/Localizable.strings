@@ -5,8 +5,8 @@
 "room.left" = "Вышел · история сохранена";
 "room.remove" = "Удалить";
 "room.add" = "Добавить агента";
-"room.create_agent" = "Создать агента";
-"room.agent_name" = "Имя агента";
+"room.create_agent" = "Создать эксперта";
+"room.agent_name" = "Имя эксперта";
 "room.use_current_model" = "Использовать текущую модель";
 "room.open" = "Открыть чат";
 "room.all" = "Все чаты агентов";
@@ -2708,6 +2708,7 @@
 "chat.history.retry" = "Повторить";
 "chat.history.running" = "Выполняется";
 "chat.history.search" = "Поиск бесед";
+"chat.history.search.clear" = "Очистить поиск";
 "chat.history.stop_before_delete" = "Остановите задачу перед удалением";
 "chat.response.cancelled" = "Ответ остановлен";
 "chat.response.failed" = "Не удалось получить ответ. Откройте процесс, чтобы узнать подробности.";
@@ -3177,6 +3178,7 @@
 "chat.context.import.failed_count" = "Не удалось импортировать файлов: %d. Используйте непустые текстовые файлы UTF-8: не более 40 000 символов (192 КБ).";
 
 /* Expert roles and revision-aware mentions */
+"experts.useModelDefaults" = "Использовать настройки модели по умолчанию";
 "experts.reasoning.inherit" = "Наследовать настройку модели";
 "experts.reasoning.unknown" = "Эта модель не объявляет уровни рассуждения. Используется её настройка по умолчанию.";
 "experts.role.details" = "Промпт, инструменты и Skills";
@@ -3259,3 +3261,6 @@
 "chat.message.pendingEdit" = "Проверить ожидающую правку";
 "chat.message.editSavedForReview" = "Редактор можно закрыть. Чтобы проверить отправку, откройте ожидающую правку в этом разговоре.";
 "chat.context.documents.blank" = "Введите текст для %@ или удалите пустой документ.";
+
+"chat.history.otherClientReadOnly" = "Только для чтения. Чтобы продолжить беседу, откройте её в клиенте, в котором она была создана.";
+"chat.history.ambiguousIDs" = "Идентификаторы двух бесед различаются только регистром. Откройте их в исходном клиенте.";

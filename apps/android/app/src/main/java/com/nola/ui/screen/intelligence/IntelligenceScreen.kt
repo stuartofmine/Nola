@@ -1058,12 +1058,12 @@ internal fun SkillEditorDialog(editor: SkillEditor, isSaving: Boolean, errorMess
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall,
                 )
-                OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.chat_skill_name)) }, singleLine = true, enabled = editor.isEditable && !isSaving)
+                OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth().testTag("skill.editor.name"), label = { Text(stringResource(R.string.chat_skill_name)) }, singleLine = true, enabled = editor.isEditable && !isSaving)
                 OutlinedTextField(description, { description = it }, modifier = Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.chat_skill_description)) }, maxLines = 3, enabled = editor.isEditable && !isSaving)
                 OutlinedTextField(
                     value = content,
                     onValueChange = { content = it },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().testTag("skill.editor.content"),
                     label = { Text(stringResource(R.string.chat_skill_content)) },
                     supportingText = { Text(stringResource(R.string.intelligence_skill_characters, content.length)) },
                     minLines = 10,
@@ -1126,11 +1126,11 @@ internal fun McpEditorDialog(
         },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.scheduled_name)) }, singleLine = true, enabled = editor.isEditable && !isSaving)
+                OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth().testTag("mcp.editor.name"), label = { Text(stringResource(R.string.scheduled_name)) }, singleLine = true, enabled = editor.isEditable && !isSaving)
                 OutlinedTextField(
                     value = url,
                     onValueChange = { url = it },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().testTag("mcp.editor.endpoint"),
                     label = { Text(stringResource(R.string.chat_endpoint_url)) },
                     placeholder = { Text(stringResource(R.string.chat_mcp_endpoint_placeholder)) },
                     supportingText = {

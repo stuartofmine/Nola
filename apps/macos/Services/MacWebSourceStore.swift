@@ -132,10 +132,10 @@ final class MacWebSourceStore {
         registry = .shared
         urlSession = .shared
         storeURLOverride = nil
-        synchronizesLaunchAgents = true
+        synchronizesLaunchAgents = MacProcessRuntimePolicy.allowsStartupIntegrations
         load()
         let backgroundRefresh = CommandLine.arguments.contains("--nola-background-refresh-web-source")
-        if !backgroundRefresh {
+        if synchronizesLaunchAgents && !backgroundRefresh {
             synchronizeLaunchAgents()
         }
     }
@@ -176,8 +176,7 @@ final class MacWebSourceStore {
             errorMessage = macWebSourceText("mac.web_sources.delete.denied", "You do not have permission to delete this source.")
             return
         }
-        unload(source)
-        try? fileManager.removeItem(at: plistURL(for: source))
+        if synchronizesLaunchAgents { synchronize(source) }
         sources.removeAll { $0.id == source.id }
         registry.removeSource(sourceID(for: source))
         persist()
@@ -203,10 +202,7 @@ final class MacWebSourceStore {
             errorMessage = macWebSourceText("mac.web_sources.replace.denied", "You do not have permission to replace these sources.")
             return
         }
-        for source in sources {
-            unload(source)
-            try? fileManager.removeItem(at: plistURL(for: source))
-        }
+        if synchronizesLaunchAgents { synchronizeLaunchAgents() }
         sources = restored.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         for source in sources { registry.ensureOwnedResource(sourceID(for: source)) }
         persist()
@@ -534,7 +530,12 @@ final class MacWebSourceStore {
         guard let data = try? Data(contentsOf: storeURL) else { return }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        sources = (try? decoder.decode([MacWebSource].self, from: data)) ?? []
+        do {
+            sources = try decoder.decode([MacWebSource].self, from: data)
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
         registry.replaceWebSources(sources)
         if registry.persistenceError == nil { try? fileManager.removeItem(at: storeURL) }
     }
@@ -600,10 +601,8 @@ final class MacWebSourceStore {
 
     private var storeURL: URL {
         if let storeURLOverride { return storeURLOverride }
-        let support = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? fileManager.temporaryDirectory
-        return support
-            .appendingPathComponent("Nola/DataSources", isDirectory: true)
+        return MacAppEnvironment.shared.supportRoot
+            .appendingPathComponent("DataSources", isDirectory: true)
             .appendingPathComponent("web-sources.json")
     }
 }

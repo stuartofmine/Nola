@@ -897,6 +897,16 @@ struct ChatView: View {
         taskResultDestination = destination
     }
 
+    private func receiveConversationRewound(_ notification: Notification) {
+        guard let owner = notification.object as? UUID else { return }
+        submittedTurns[owner] = nil
+        responseAssistantIDs[owner] = nil
+        guard container.chatManager.currentConversationId == owner else { return }
+        activeAssistantMessageID = nil
+        activeResponseConversationID = nil
+        loadMessages(for: owner)
+    }
+
     private func receiveConversationRenamed(_ notification: Notification) {
         guard let renamedID = notification.object as? UUID,
               renamedID == container.chatManager.currentConversationId,
@@ -1072,6 +1082,7 @@ struct ChatView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .nolaOpenChatTab)) { _ in }
             .onReceive(NotificationCenter.default.publisher(for: .nolaConversationRenamed), perform: receiveConversationRenamed)
+            .onReceive(NotificationCenter.default.publisher(for: .nolaConversationRewound), perform: receiveConversationRewound)
             .sheet(item: $workToolsPresentation, onDismiss: openQueuedWorkDestination) { presentation in
                 IOSConversationWorkTools(conversationTitle: currentConversationTitle,
                     modelLabel: currentModelConnectionLabel, hasOwner: presentation.owner != nil,
@@ -2242,15 +2253,9 @@ struct ChatView: View {
         let promptMessage = composedPromptMessage(text: typedMessage, attachmentPrompt: attachmentPrompt)
         let userAttachmentMeta = attachmentMeta(for: attachmentsToSend)
 
-        let shouldDeriveTitleFromThisInput = currentConversationTitle == L10n.chatConversationDefaultTitle
-            && !messages.contains { $0.role == .user }
-        let initialTitle = shouldDeriveTitleFromThisInput
-            ? smartConversationTitle(from: typedMessage.isEmpty ? userMessage : typedMessage)
-            : nil
         let prepared: SendConversationTurnUseCase.Prepared
         do {
             prepared = try container.chatManager.submissionUseCase.prepare(
-                title: initialTitle?.isEmpty == false ? initialTitle! : L10n.chatConversationDefaultTitle,
                 initialParameters: container.chatManager.currentConversationId == nil ? composerDrafts.current.configuration?.parameters : nil,
                 drafts: &composerDrafts)
         } catch { attachmentImportMessage = error.localizedDescription; return }
@@ -2273,10 +2278,6 @@ struct ChatView: View {
             includeInContext: true,
             metadata: userAttachmentMeta ?? [:]
         ))
-
-        if let initialTitle, shouldDeriveTitleFromThisInput {
-            currentConversationTitle = initialTitle
-        }
 
         messages.append(ChatMessage(id: assistantMessageId, role: .assistant, content: "", includeInContext: true))
         submittedTurns[conversationId] = messages.filter { $0.id == userMessageId || $0.id == assistantMessageId }
@@ -2521,14 +2522,6 @@ struct ChatView: View {
             : trimmed
         guard !attachmentPrompt.isEmpty else { return base }
         return "\(base)\n\(attachmentPrompt)"
-    }
-
-    private func smartConversationTitle(from input: String) -> String {
-        let normalized = input
-            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalized.isEmpty else { return L10n.chatConversationDefaultTitle }
-        return normalized
     }
 
     private func attachmentMeta(for attachments: [ChatAttachmentDraft]) -> [String: String]? {

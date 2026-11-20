@@ -1,5 +1,7 @@
 package com.nola.ui.screen.models
 
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
@@ -100,6 +102,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -143,16 +146,12 @@ internal const val MODEL_HOST_CONNECTION_TEST_TAG = "models.connection.host"
 @Composable
 fun ModelsScreen(
     viewModel: ModelsViewModel = hiltViewModel(),
-    initialShowEndpointSheet: Boolean = false,
-    endpointSheetRequestKey: String = "",
     onBack: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val reduceMotion = rememberReduceMotionEnabled()
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    var sourceTab by remember { mutableStateOf(0) }
-    val setupDraft = remember { EndpointConfigDraft("", "", "", ModelWireProtocol.ChatCompletions) }
-    var showEndpointSheet by remember { mutableStateOf(false) }
+    var sourceTab by rememberSaveable { mutableStateOf(0) }
     var showWebHostSheet by remember { mutableStateOf(false) }
     var capabilityTarget by remember { mutableStateOf<ModelInfo?>(null) }
     var capabilityError by remember { mutableStateOf<String?>(null) }
@@ -170,27 +169,6 @@ fun ModelsScreen(
                 }
             },
             dismissButton = { TextButton(onClick = { modelToDelete = null }) { Text(stringResource(R.string.common_cancel)) } },
-        )
-    }
-
-    LaunchedEffect(initialShowEndpointSheet, endpointSheetRequestKey) {
-        if (initialShowEndpointSheet) {
-            sourceTab = 0
-        }
-    }
-
-    if (showEndpointSheet) {
-        EndpointConfigSheet(
-            currentEndpoint = state.apiEndpoint,
-            currentApiKey = state.apiKey,
-            currentModel = state.apiModel,
-            currentWireProtocol = state.apiWireProtocol,
-            saving = state.savingEndpoint,
-            error = state.endpointSaveError,
-            onSave = { ep, key, model, protocol ->
-                viewModel.saveApiEndpoint(ep, key, model, protocol) { showEndpointSheet = false }
-            },
-            onDismiss = { showEndpointSheet = false }
         )
     }
 
@@ -298,12 +276,21 @@ fun ModelsScreen(
         }
 
 
-        Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(10.dp)).padding(3.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(Modifier.fillMaxWidth().selectableGroup()
+            .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(10.dp)).padding(3.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp)) {
             listOf(R.string.models_service_tab, R.string.models_local_models, R.string.models_web_host).forEachIndexed { index, title ->
-                TextButton(onClick = { sourceTab = index }, modifier = Modifier.weight(1f).heightIn(min = 44.dp)
-                    .background(if (sourceTab == index) MaterialTheme.colorScheme.surface else Color.Transparent, RoundedCornerShape(8.dp)),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp)) {
-                    Text(stringResource(title), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val selected = sourceTab == index
+                Box(
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).clip(RoundedCornerShape(8.dp))
+                        .background(if (selected) MaterialTheme.colorScheme.surface else Color.Transparent)
+                        .selectable(selected = selected, role = Role.Tab, onClick = { sourceTab = index })
+                        .padding(horizontal = 6.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(stringResource(title), style = MaterialTheme.typography.labelLarge,
+                        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center)
                 }
             }
         }
@@ -311,7 +298,7 @@ fun ModelsScreen(
         EndpointConfigFields(
             initialEndpoint = "", initialApiKey = "", initialModel = "",
             initialWireProtocol = ModelWireProtocol.ChatCompletions,
-            saving = state.savingEndpoint, error = state.endpointSaveError, draft = setupDraft,
+            saving = state.savingEndpoint, error = state.endpointSaveError, draft = viewModel.connectionDraft,
             onSave = { endpoint, key, model, protocol -> viewModel.saveApiEndpoint(endpoint, key, model, protocol) }
         )
 
@@ -361,7 +348,10 @@ fun ModelsScreen(
                 }
             }
 
-            ModelConnectionsSection(state, viewModel::loadConnectionInventory) {
+            ModelConnectionsSection(state, viewModel::loadConnectionInventory, connectHost = {
+                sourceTab = 2
+                showWebHostSheet = true
+            }) {
                 viewModel.openHostMessagingManagement("/models?tab=api") { target ->
                     context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(target)))
                 }
@@ -1136,7 +1126,7 @@ fun EndpointConfigSheet(
     }
 }
 
-private class EndpointConfigDraft(endpoint: String, key: String, model: String, protocol: ModelWireProtocol) {
+internal class EndpointConfigDraft(endpoint: String, key: String, model: String, protocol: ModelWireProtocol) {
     var endpoint by mutableStateOf(endpoint)
     var key by mutableStateOf(key)
     var model by mutableStateOf(model)

@@ -1119,7 +1119,6 @@
     <string name="model_connections_title">连接与账户</string>
     <string name="model_connections_host_hint">下列信息属于本机。已配对 Host 上的导入、账户和网关配置需分别管理。</string>
     <string name="model_connections_host_manage">在已配对 Host 导入、配置和验证</string>
-    <string name="model_connections_pair_first">请先在下方连接 Host，再打开其已授权管理页。这不会更改本机连接。</string>
     <string name="model_connections_source_boundary">来源账户登录须在 Host 电脑的浏览器中管理。登录 OpenCode、Codex 或 Kimi Code 不代表 Nola 已能使用该账户推理。刷新目录不执行推理；验证需单独确认，可能产生费用。</string>
     <string name="model_connections_account_details">账户与验证说明</string>
     <string name="model_connections_refresh">刷新</string>
@@ -1129,7 +1128,7 @@
     <string name="room_recipient">@%1$s</string>
     <string name="room_automatic">由主控分派 · @ Agent</string>
     <string name="room_submission_accepted">已接受，等待分派</string>
-    <string name="room_agent_description">Agent 职责（对主控公开）</string>
+    <string name="room_agent_description">专家职责（主 Agent 可见）</string>
     <string name="room_submission_executing">正在处理</string>
     <string name="room_submission_completed">已完成</string>
     <string name="room_submission_incomplete">未完成</string>

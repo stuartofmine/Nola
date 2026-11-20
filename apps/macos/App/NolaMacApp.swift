@@ -389,6 +389,7 @@ struct NolaMacApp: App {
         }
         .defaultSize(width: 1180, height: 780)
         .windowStyle(.hiddenTitleBar)
+        .restorationBehavior(MacProcessRuntimePolicy.isRunningTests ? .disabled : .automatic)
 
         Window("mac.welcome.title", id: "welcome") {
             MacApplicationStartupGate { MacWelcomeHelpWindow() }

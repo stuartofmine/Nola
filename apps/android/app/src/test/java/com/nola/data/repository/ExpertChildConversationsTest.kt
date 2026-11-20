@@ -28,8 +28,8 @@ class ExpertChildConversationsTest {
     }
 
     @Test fun explicitPeerIdentityAndFrozenDisplayNameOwnSenderLabel() {
-        val peer = """{"exchange_id":"exchange","parent_conversation_id":"parent","target":{"context_conversation_id":"child","participant_id":"member","agent_id":"agent"},"source":{"agent_id":"source"},"source_display_name":"审查专家"}"""
-        assertEquals(mapOf("exchange:user" to ExpertHistorySender("审查专家", "source")), expertChildExchangeSenders(Json.parseToJsonElement("[$peer]"), "parent", child))
+        val peer = """{"exchange_id":"exchange","parent_conversation_id":"parent","target":{"context_conversation_id":"child","participant_id":"member","agent_id":"agent"},"source":{"agent_id":"source"},"source_display_name":"审查专家","target_display_name":"历史专家名"}"""
+        assertEquals(mapOf("exchange:user" to ExpertHistorySender("审查专家", "source"), "exchange:assistant" to ExpertHistorySender("历史专家名", child.agentId)), expertChildExchangeSenders(Json.parseToJsonElement("[$peer]"), "parent", child))
         assertTrue(expertChildExchangeSenders(null, "parent", child).isEmpty())
         assertTrue(runCatching { expertChildExchangeSenders(Json.parseToJsonElement("[$peer,$peer]"), "parent", child) }.isFailure)
         assertTrue(runCatching { expertChildExchangeSenders(Json.parseToJsonElement("[$peer]"), "other", child) }.isFailure)
@@ -37,7 +37,7 @@ class ExpertChildConversationsTest {
 
     @Test fun mainSourceMustBeTheActualParentAndUnknownKindsDoNotBecomeLegacyExperts() {
         val peer = """{"exchange_id":"main-exchange","parent_conversation_id":"parent","target":{"context_conversation_id":"child","participant_id":"member","agent_id":"agent"},"source":{"kind":"main_agent","context_conversation_id":"parent"}}"""
-        assertEquals(mapOf("main-exchange:user" to ExpertHistorySender("Nola", "parent")), expertChildExchangeSenders(Json.parseToJsonElement("[$peer]"), "parent", child))
+        assertEquals(mapOf("main-exchange:user" to ExpertHistorySender("Nola", "parent"), "main-exchange:assistant" to ExpertHistorySender(child.title, child.agentId)), expertChildExchangeSenders(Json.parseToJsonElement("[$peer]"), "parent", child))
         assertTrue(runCatching { expertChildExchangeSenders(Json.parseToJsonElement("[${peer.replace("context_conversation_id\":\"parent", "context_conversation_id\":\"foreign")}]"), "parent", child) }.isFailure)
         assertTrue(runCatching { expertChildExchangeSenders(Json.parseToJsonElement("[${peer.replace("main_agent", "unknown")}]"), "parent", child) }.isFailure)
     }

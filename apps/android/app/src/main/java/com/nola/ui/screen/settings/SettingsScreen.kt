@@ -1,5 +1,6 @@
 package com.nola.ui.screen.settings
 
+import com.nola.ui.components.NolaRootPageTitle
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
@@ -101,6 +102,7 @@ fun SettingsScreen(
     onOpenDataSources: () -> Unit = {},
     onOpenModels: () -> Unit = {},
     onOpenIntelligence: () -> Unit = {},
+    onOpenExperts: () -> Unit = {},
     onOpenConversation: ((String) -> Unit)? = null,
     onOpenChat: () -> Unit = {}
 ) {
@@ -125,7 +127,8 @@ fun SettingsScreen(
             onScheduledActions = { activeScreen = "scheduled" },
             onOpenDataSources = onOpenDataSources,
             onOpenModels = onOpenModels,
-            onOpenIntelligence = onOpenIntelligence
+            onOpenIntelligence = onOpenIntelligence,
+            onOpenExperts = onOpenExperts
         ) }
     }
 }
@@ -138,6 +141,7 @@ fun SettingsMain(
     onOpenDataSources: () -> Unit = {},
     onOpenModels: () -> Unit = {},
     onOpenIntelligence: () -> Unit = {},
+    onOpenExperts: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
     detailState: androidx.compose.runtime.MutableState<String?> = rememberSaveable { mutableStateOf<String?>(null) }
 ) {
@@ -155,6 +159,7 @@ fun SettingsMain(
         onOpenDataSources = onOpenDataSources,
         onOpenModels = onOpenModels,
         onOpenIntelligence = onOpenIntelligence,
+        onOpenExperts = onOpenExperts,
         detailState = detailState,
     )
 }
@@ -173,6 +178,7 @@ internal fun SettingsContent(
     onOpenDataSources: () -> Unit = {},
     onOpenModels: () -> Unit = {},
     onOpenIntelligence: () -> Unit = {},
+    onOpenExperts: () -> Unit = {},
     detailState: androidx.compose.runtime.MutableState<String?> = rememberSaveable { mutableStateOf<String?>(null) }
 ) {
     val context = LocalContext.current
@@ -285,15 +291,16 @@ internal fun SettingsContent(
         )
     }
 
-    NolaPage(scrollKey = detailSection ?: "root") {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            if (detailSection != null) NolaIconButton(label = stringResource(R.string.common_back), onClick = { detailSection = null }) {
+    NolaPage(scrollKey = detailSection ?: "root", topPadding = if (detailSection == null) 0.dp else NolaSpacing.xl) {
+        if (detailSection == null) {
+            NolaRootPageTitle(stringResource(R.string.settings_title))
+        } else Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            NolaIconButton(label = stringResource(R.string.common_back), onClick = { detailSection = null }) {
                 Icon(painterResource(R.drawable.nola_back), stringResource(R.string.common_back))
             }
             Text(stringResource(if (detailSection == "general") R.string.settings_general else if (detailSection == "appearance") R.string.appearance_title else if (detailSection == "privacy") R.string.settings_privacy else if (detailSection == "notifications") R.string.notifications_title else R.string.settings_title),
-                Modifier.weight(1f), style = if (detailSection == null) MaterialTheme.typography.headlineSmall.copy(fontSize = 28.sp, lineHeight = 36.sp) else MaterialTheme.typography.titleMedium,
-                textAlign = if (detailSection == null) TextAlign.Start else TextAlign.Center)
-            if (detailSection != null) Spacer(Modifier.size(48.dp))
+                Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
+            Spacer(Modifier.size(48.dp))
         }
         if (detailSection == null) {
             MobileSettingsGroup(R.string.settings_group_preferences) {
@@ -301,6 +308,8 @@ internal fun SettingsContent(
             }
             MobileSettingsGroup(R.string.settings_group_connections) {
                 IMSettingsRow(R.drawable.nola_models, R.string.models_title, onOpenModels)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp, modifier = Modifier.padding(start = 34.dp))
+                IMSettingsRow(R.drawable.nola_person, R.string.chat_experts, onOpenExperts)
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp, modifier = Modifier.padding(start = 34.dp))
                 IMSettingsRow(R.drawable.nola_execution, R.string.settings_capabilities, onOpenIntelligence)
             }
@@ -558,7 +567,7 @@ internal fun SettingsNotificationsCard(
     }
 }
 
-private fun openNotificationSettings(context: Context) {
+internal fun openNotificationSettings(context: Context) {
     val notificationIntent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
         putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
     }

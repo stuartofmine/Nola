@@ -23,10 +23,7 @@ import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.serialization.kotlinx.json.json
 import java.io.File
-import java.net.InetAddress
-import java.net.ServerSocket
 import java.util.UUID
-import kotlin.concurrent.thread
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -391,29 +388,6 @@ class AndroidProductDataSourceRealEndToEndTest {
                 sourceClient.close()
                 modelClient.close()
             }
-        }
-    }
-
-    private class SourceFixtureServer(private val body: String) : AutoCloseable {
-        private val server = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
-        private val worker = thread(name = "nola-android-source-fixture", isDaemon = true) {
-            server.accept().use { socket ->
-                val reader = socket.getInputStream().bufferedReader()
-                while (reader.readLine()?.isNotEmpty() == true) Unit
-                val payload = body.toByteArray(Charsets.UTF_8)
-                socket.getOutputStream().apply {
-                    write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${payload.size}\r\nConnection: close\r\n\r\n".toByteArray())
-                    write(payload)
-                    flush()
-                }
-            }
-        }
-
-        val url: String = "http://127.0.0.1:${server.localPort}/context.json"
-
-        override fun close() {
-            runCatching { server.close() }
-            worker.join(2_000)
         }
     }
 

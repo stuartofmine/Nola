@@ -161,6 +161,7 @@ private struct MacComposerTextEditor: NSViewRepresentable {
         textView.isRichText = false
         textView.importsGraphics = false
         textView.drawsBackground = false
+        textView.insertionPointColor = NSColor(named: "AccentColor") ?? .textColor
         textView.allowsUndo = true
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
@@ -289,6 +290,8 @@ struct MacComposerView: View {
     @State private var dropTargeted = false
     @State private var voiceInput = MacVoiceInputService()
     @State private var isSendHovering = false
+    @State private var isInputHovered = false
+    @Environment(\.colorSchemeContrast) private var contrast
     @State private var dictationDraft = MacDictationDraft()
     @State private var dictationActive = false
     @State private var dictationConversationID: String?
@@ -326,15 +329,16 @@ struct MacComposerView: View {
             attachmentTray
             inputRow
         }
-        .background(NolaSurfaceBackground(fill: MacDesignColor.panel,
-                                          border: MacDesignColor.borderSubtle,
-                                          cornerRadius: MacDesignTokens.Radius.message))
+        .background(MacDesignColor.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: MacDesignTokens.Radius.message, style: .continuous)
-                .strokeBorder(composerStrokeColor, lineWidth: dropTargeted || composerFocused.wrappedValue ? 2 : 1)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(composerStrokeColor, lineWidth: dropTargeted || composerFocused.wrappedValue ? 1.5 : 1)
+                .allowsHitTesting(false)
         }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: dropTargeted)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: composerFocused.wrappedValue)
+        .onHover { isInputHovered = $0 }
+        .animation(reduceMotion ? nil : MacDesignTokens.Motion.responsive, value: dropTargeted)
+        .animation(reduceMotion ? nil : MacDesignTokens.Motion.responsive, value: composerFocused.wrappedValue)
+        .animation(reduceMotion ? nil : MacDesignTokens.Motion.responsive, value: isInputHovered)
         .fileImporter(
             isPresented: $fileImporterPresented,
             allowedContentTypes: [.item],
@@ -617,8 +621,8 @@ struct MacComposerView: View {
                     : String(localized: "Send")
             )
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
     }
 
     private var quickBar: some View {
@@ -712,7 +716,7 @@ struct MacComposerView: View {
     private var composerStrokeColor: Color {
         if dropTargeted { return MacDesignColor.brand }
         if composerFocused.wrappedValue { return MacDesignColor.brand }
-        return MacDesignColor.controlOutline
+        return contrast == .increased || isInputHovered ? MacDesignColor.controlOutline : MacDesignColor.borderSubtle
     }
 
     private func attachmentAccessibilityStatus(_ attachment: MacAttachment) -> String {

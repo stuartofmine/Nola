@@ -1116,7 +1116,6 @@
     <string name="model_connections_title">Conexiones y cuentas</string>
     <string name="model_connections_host_hint">La lista siguiente pertenece a este dispositivo. La importación, las cuentas y la configuración de la puerta de enlace en un Host vinculado se gestionan por separado.</string>
     <string name="model_connections_host_manage">Importar, configurar y verificar en el Host vinculado</string>
-    <string name="model_connections_pair_first">Conecta un Host abajo para abrir su página de administración autorizada. Esto no cambia las conexiones de este dispositivo.</string>
     <string name="model_connections_source_boundary">El inicio de sesión de la cuenta de origen debe gestionarse en un navegador del ordenador Host. Iniciar sesión en OpenCode, Codex o Kimi Code no habilita la inferencia de Nola con esa cuenta. Actualizar el catálogo no ejecuta inferencias; la verificación requiere confirmación por separado y puede generar cargos.</string>
     <string name="model_connections_account_details">Detalles de la cuenta y la verificación</string>
     <string name="model_connections_refresh">Actualizar</string>
@@ -1126,7 +1125,7 @@
     <string name="room_recipient">@%1$s</string>
     <string name="room_automatic">El coordinador elige · @ Agent</string>
     <string name="room_submission_accepted">Aceptado; esperando el envío</string>
-    <string name="room_agent_description">Responsabilidades del agente (visibles para el coordinador)</string>
+    <string name="room_agent_description">Funciones visibles para el agente principal</string>
     <string name="room_submission_executing">Procesando</string>
     <string name="room_submission_completed">Completado</string>
     <string name="room_submission_incomplete">Incompleto</string>

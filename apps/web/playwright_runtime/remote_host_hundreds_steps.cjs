@@ -20,6 +20,11 @@ async function permission() {
     const tool = (await panel.locator('.tool').innerText()).trim();
     const review = await panel.locator('pre').innerText();
     if (permissionMode === 'chain') {
+        if (tool === 'conversation_recall') {
+            await page.screenshot({path:path.join(out,'chain-recall-permission.png')});
+            await panel.getByRole('button', {name:'拒绝', exact:true}).click();
+            return;
+        }
         assert.equal(tool, 'write_file');
         const match = /^write_file: (".*")$/m.exec(review);
         assert.ok(match, 'a complete concrete write target must be visible');
@@ -72,25 +77,66 @@ async function until(check, timeout=setup.timeoutMs) {
         }
         async function send(text) { await page.locator('#chat-composer').fill(text); await page.getByRole('button',{name:'发送',exact:true}).click(); }
         const id=await create(); receipt.chainConversation=id;
-        await send(setup.prompt);
-        await until(()=>reads(id)>=Math.min(5,Math.max(1,setup.nodes-2)));
+        await page.locator('#chat-composer').fill(setup.prompt);
+        await page.screenshot({path:path.join(out,'chain-before-send.png')});
+        await page.getByRole('button',{name:'发送',exact:true}).click();
+        await until(()=>{
+            const count = reads(id);
+            if (count >= Math.min(5,Math.max(1,setup.nodes-2))) return true;
+            const sealed = runs(id).find(run => run.status === 'sealed');
+            assert.ok(!sealed, 'Run ended before detach at ' + count + ' reads: ' + sealed?.outcome);
+            return false;
+        });
         const original=runs(id); assert.equal(original.length,1); const runId=original[0].id;
         receipt.chainRun=runId;
+        const liveProcess = page.locator('article:not(.user)').filter({has:page.locator('.execution-process')}).last();
+        await liveProcess.waitFor();
+        assert.equal(await liveProcess.getByText('正在运行…',{exact:true}).count(), 0,
+            'The execution disclosure already shows live activity');
         await page.screenshot({path:path.join(out,'chain-active.png')});
         const before=reads(id);
         await page.goto('about:blank');
         const detachedEnd=Date.now()+45000;
         while(reads(id)<=before && runs(id)[0].status!=='sealed' && Date.now()<detachedEnd) await new Promise(r=>setTimeout(r,1000));
-        assert.ok(reads(id)>before,'Host must progress while the browser is detached');
-        receipt.scenarios.progressWhileDetached=true;
+        const detachedRun = runs(id)[0];
+        const readsWhileDetached = reads(id);
         await page.goto(base+'/chat?conversation='+encodeURIComponent(id));
+        await page.locator('article:not(.user)').last().waitFor();
+        if (detachedRun.status === 'sealed' && !['answered','action_completed'].includes(detachedRun.outcome)) {
+            const failure = query(database, `SELECT json_extract(payload_json,'$.failure.code') AS code FROM run_events
+                WHERE run_id=? AND event_kind='model_attempt_changed' AND json_extract(payload_json,'$.failure.code') IS NOT NULL
+                ORDER BY sequence DESC LIMIT 1`, [runId])[0];
+            throw Error(`Run ended during browser detachment: ${detachedRun.outcome} (${failure?.code || 'see terminal receipt'})`);
+        }
+        assert.ok(readsWhileDetached>before,'Host must progress while the browser is detached');
+        receipt.scenarios.progressWhileDetached=true;
         await until(()=>reads(id)>=Math.min(setup.nodes,30) || runs(id)[0].status==='sealed');
         await page.close(); page=await context.newPage(); attach(page);
         await page.goto(base+'/chat?conversation='+encodeURIComponent(id));
         let last=-1, lastPrint=Date.now();
-        const terminal=await until(()=>{
+        let nextCapture = 50;
+        let lastRecovery = null;
+        const terminal=await until(async ()=>{
             const count=reads(id), rows=runs(id);
             assert.equal(rows.length,1,'reopening must not submit a second Run'); assert.equal(rows[0].id,runId);
+            if (rows[0].status !== 'sealed') {
+                const inspect = page.getByRole('button', {name:'检查记录', exact:true});
+                const resume = page.getByRole('button', {name:'恢复当前运行', exact:true});
+                if (await inspect.isVisible() && !await resume.isVisible()) await inspect.click();
+                if (await resume.isVisible() && await resume.isEnabled()) {
+                    if (lastRecovery?.count === count) {
+                        assert.ok(Date.now() - lastRecovery.time < 30000, 'No progress after resuming the original Run');
+                    } else {
+                        await page.screenshot({path:path.join(out,'chain-before-resume-' + count + '.png')});
+                        await resume.click();
+                        lastRecovery = {count, time:Date.now()};
+                    }
+                }
+            }
+            if (count >= nextCapture) {
+                await page.screenshot({path:path.join(out,'chain-reads-' + count + '.png')});
+                nextCapture = (Math.floor(count / 50) + 1) * 50;
+            }
             if(count!==last && Date.now()-lastPrint>10000) { console.log(JSON.stringify({stage:'chain-progress',completedReads:count})); last=count;lastPrint=Date.now(); }
             return rows[0].status==='sealed'?rows[0]:null;
         });

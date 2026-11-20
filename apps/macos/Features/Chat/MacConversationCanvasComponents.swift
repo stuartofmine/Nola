@@ -390,23 +390,16 @@ struct MacEmptyConversationView: View {
                 VStack(spacing: compact ? 12 : 20) {
                     Spacer(minLength: compact ? 12 : 44)
 
-                    if !compact {
-                        ZStack {
-                            Circle()
-                                .fill(Color.accentColor.opacity(0.09))
-                                .frame(width: 44, height: 44)
-                            Image(systemName: "sparkles")
-                                .font(.system(size: 17, weight: .medium))
-                                .foregroundStyle(Color.accentColor)
-                        }
-                    }
                     VStack(spacing: 8) {
                         Text("What should we work on?")
                             .accessibilityIdentifier("chat.empty-state.title")
-                            .font(.system(size: 22, weight: .semibold, design: .rounded))
+                            .font(.system(size: compact ? 23 : 29, weight: .semibold))
+                            .foregroundStyle(Color("NolaTextPrimary"))
+                            .multilineTextAlignment(.center)
                         Text("Ask a question, open a workspace, or bring in a document.")
-                            .font(.system(size: 13))
-                            .foregroundStyle(.secondary)
+                            .font(.system(size: 14))
+                            .foregroundStyle(Color("NolaTextSecondary"))
+                            .multilineTextAlignment(.center)
                     }
 
                     ViewThatFits(in: .horizontal) {
@@ -447,20 +440,12 @@ struct MacEmptyConversationView: View {
                 Text(suggestion.title)
                     .font(.system(size: 12.5, weight: .semibold))
                     .lineLimit(1)
-                Spacer(minLength: 6)
-                Image(systemName: "chevron.forward")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 12)
             .frame(maxWidth: .infinity, minHeight: 42)
-            .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
-            }
+            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MacActionButtonStyle(contentInsets: .init()))
         .help(suggestion.prompt)
     }
 }

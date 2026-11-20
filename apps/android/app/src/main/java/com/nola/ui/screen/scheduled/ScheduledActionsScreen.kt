@@ -108,15 +108,25 @@ fun ScheduledActionsScreen(
     viewModel: ScheduledActionsViewModel = hiltViewModel()
 ) {
     val context = LocalContext.current
+    var notificationPermissionDenied by rememberSaveable { mutableStateOf(false) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { }
+    ) { granted -> notificationPermissionDenied = !granted }
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+        if (androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()) {
+            notificationPermissionDenied = false
+        }
+        onPauseOrDispose { }
+    }
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     fun ensureNotificationPermissionIfNeeded(enabled: Boolean) {
-        if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+        if (!enabled || !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED) ||
+            androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()) return
+        if (!notificationPermissionDenied && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        }
+        } else notificationPermissionDenied = true
     }
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var pendingDelete by remember { mutableStateOf<ScheduledActionEntity?>(null) }
@@ -189,10 +199,11 @@ fun ScheduledActionsScreen(
         ScheduledActionEditorSheet(
             existing = editingAction,
             onSave = {
-                ensureNotificationPermissionIfNeeded(it.enabled)
+                val enabled = it.enabled
                 viewModel.save(it) {
                     creatingAction = false
                     editingAction = null
+                    ensureNotificationPermissionIfNeeded(enabled)
                 }
             },
             onDismiss = {
@@ -245,6 +256,19 @@ fun ScheduledActionsScreen(
                     .padding(horizontal = NolaSpacing.lg),
                 verticalArrangement = Arrangement.spacedBy(NolaSpacing.sm)
             ) {
+            if (notificationPermissionDenied) item {
+                NolaCard {
+                    Column(Modifier.padding(horizontal = 14.dp, vertical = 8.dp)) {
+                        Text(stringResource(R.string.settings_notification_permissions), style = MaterialTheme.typography.titleSmall)
+                        Text(stringResource(R.string.settings_notification_permissions_blocked),
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        TextButton(onClick = { com.nola.ui.screen.settings.openNotificationSettings(context) },
+                            modifier = Modifier.testTag("scheduled.notification-settings")) {
+                            Text(stringResource(R.string.permission_settings_open))
+                        }
+                    }
+                }
+            }
             if (state.actions.isNotEmpty()) item {
                 Spacer(Modifier.height(NolaSpacing.sm))
                 val enabledCount = state.actions.count { it.enabled }
@@ -425,8 +449,7 @@ fun ScheduledActionsScreen(
                         latestResult = latestResult,
                         isBusy = action.id in state.busyActionIds,
                         onToggle = { enabled ->
-                            ensureNotificationPermissionIfNeeded(enabled)
-                            viewModel.toggle(action.id, enabled)
+                            viewModel.toggle(action.id, enabled) { ensureNotificationPermissionIfNeeded(enabled) }
                         },
                         onRequestEdit = { viewModel.beginEditing(); creatingAction = false; editingAction = action },
                         onRequestDelete = { pendingDelete = action },
@@ -1248,7 +1271,7 @@ fun ScheduledActionEditorSheet(
         onDismissRequest = requestDismiss,
         sheetState = com.nola.ui.components.rememberGuardedEditorSheetState(isSaving, isDirty) { showDiscardConfirmation = true },
     ) {
-        LazyColumn(modifier = Modifier.imePadding().navigationBarsPadding().padding(24.dp)) {
+        LazyColumn(modifier = Modifier.imePadding().navigationBarsPadding().padding(24.dp).testTag("scheduled.editor")) {
             item {
                 Text(
                     if (existing != null) stringResource(R.string.scheduled_action_editor_edit) else stringResource(R.string.scheduled_action_editor_new),

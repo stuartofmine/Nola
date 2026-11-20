@@ -258,7 +258,7 @@ nonisolated final class MacAgentRoomService: Sendable {
         let result: AppleExpertPeerExchanges = try command(["type": .string("peer_exchanges"),
             "conversation_id": .string(conversationID), "limit": .signedInteger(Int64(limit)),
             "offset": .signedInteger(Int64(offset))])
-        try result.validate(contextID: conversationID, offset: offset)
+        try result.validate(parentID: conversationID, offset: offset)
         return result
     }
 
@@ -347,7 +347,7 @@ nonisolated final class MacAgentRoomService: Sendable {
     func forConversation(_ conversationID: String) throws -> MacConversationRoomAssociation? {
         let association: MacConversationRoomAssociation? = try command([
             "type": .string("for_conversation"), "conversation_id": .string(conversationID)])
-        if let association { try validate(association, conversationID: conversationID) }
+        if let association { try Self.validate(association, conversationID: conversationID) }
         return association
     }
 
@@ -355,12 +355,12 @@ nonisolated final class MacAgentRoomService: Sendable {
         let association: MacConversationRoomAssociation = try command([
             "type": .string("ensure_for_conversation"), "conversation_id": .string(conversationID),
             "at_ms": timestamp])
-        try validate(association, conversationID: conversationID)
+        try Self.validate(association, conversationID: conversationID)
         return association
     }
 
-    private func validate(_ association: MacConversationRoomAssociation, conversationID: String) throws {
-        guard association.conversationID == conversationID,
+    static func validate(_ association: MacConversationRoomAssociation, conversationID: String) throws {
+        guard !conversationID.isEmpty, association.conversationID == conversationID, !association.roomID.isEmpty,
               association.roomID == association.room.room.id else {
             throw MacApplicationPortError.rejected("Expert conversation association ownership mismatch")
         }

@@ -129,7 +129,7 @@ def main():
                     for d in values if d.get('isAvailable'))
                 env.update(INCLUDE_UI_TESTS='1', PARALLEL_TEST_WORKERS='1', SIMULATOR_SIGNING='adhoc',
                     DESTINATION='platform=iOS Simulator,id='+device, DERIVED_DATA=str(ROOT / '.artifacts/build-ios-long-tasks'),
-                    RESULT_BUNDLE=str(root/'ios.xcresult'), XCODE_OPTS='-configuration Test -jobs 2 -collect-test-diagnostics never SWIFT_EMIT_LOC_STRINGS=NO')
+                    RESULT_BUNDLE=str(root/'ios.xcresult'), XCODE_OPTS='-jobs 2 -collect-test-diagnostics never SWIFT_EMIT_LOC_STRINGS=NO')
                 for key, value in {'NOLA_UI_REPRO_ENDPOINT':endpoint, 'NOLA_UI_REPRO_MODEL':model,
                     'NOLA_UI_REPRO_PROTOCOL':'responses'}.items():
                     env['TEST_RUNNER_'+key] = value

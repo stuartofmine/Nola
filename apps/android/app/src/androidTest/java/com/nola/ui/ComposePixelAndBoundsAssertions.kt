@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.nola.ui
 
+import com.nola.ui.theme.DarkColors
+import com.nola.ui.theme.LightColors
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -21,17 +23,17 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 
 internal object WarmPaletteExpectations {
-    val LightBackground = Color(0xFFF7F6F3)
-    val LightSurface = Color(0xFFFFFFFF)
-    val LightSurfaceContainer = Color(0xFFF1F0EC)
-    val LightText = Color(0xFF181817)
-    val LightSecondaryText = Color(0xFF5C5B57)
+    val LightBackground = LightColors.background
+    val LightSurface = LightColors.surface
+    val LightSurfaceContainer = LightColors.surfaceContainer
+    val LightText = LightColors.onSurface
+    val LightSecondaryText = LightColors.onSurfaceVariant
 
-    val DarkBackground = Color(0xFF131312)
-    val DarkSurface = Color(0xFF1B1B19)
-    val DarkSurfaceContainer = Color(0xFF232320)
-    val DarkText = Color(0xFFF2F0EB)
-    val DarkSecondaryText = Color(0xFFA3A09A)
+    val DarkBackground = DarkColors.background
+    val DarkSurface = DarkColors.surface
+    val DarkSurfaceContainer = DarkColors.surfaceContainer
+    val DarkText = DarkColors.onSurface
+    val DarkSecondaryText = DarkColors.onSurfaceVariant
 
     val LightSurfaces = listOf(LightBackground, LightSurface, LightSurfaceContainer)
     val DarkSurfaces = listOf(DarkBackground, DarkSurface, DarkSurfaceContainer)

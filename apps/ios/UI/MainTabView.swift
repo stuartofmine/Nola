@@ -26,6 +26,7 @@ struct MainTabView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.locale) private var locale
     @Environment(\.layoutDirection) private var layoutDirection
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var chatDetailPresented = false
     @EnvironmentObject var container: ServiceContainer
     @SceneStorage("main.selectedTab") private var selectedTabRawValue = NolaTab.chat.rawValue
@@ -35,6 +36,7 @@ struct MainTabView: View {
     @State private var modelConfigurationOwner: UUID?
     @State private var informationPath: [IOSWorkspaceDestination] = []
     @State private var informationRequests: [IOSInformationNavigationRequest] = []
+    @State private var historySelection: IOSReadOnlyConversationHistory.Selection?
     @State private var requestedConversationID: UUID?
     @State private var pendingNotifDeepLink: String? = nil
 
@@ -85,7 +87,16 @@ struct MainTabView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .nolaOpenChatTab)) { note in
-            requestedConversationID = note.object as? UUID
+            if let exactID = note.object as? String {
+                guard let id = UUID(uuidString: exactID) else { return }
+                guard id.uuidString == exactID else {
+                    historySelection = .init(id: exactID)
+                    return
+                }
+                requestedConversationID = id
+            } else {
+                requestedConversationID = note.object as? UUID
+            }
             select(.chat)
         }
         .onReceive(NotificationCenter.default.publisher(for: .nolaOpenModelTab)) { _ in
@@ -103,6 +114,10 @@ struct MainTabView: View {
             if let destination = IOSWorkspaceDestination(page: note.object as? Int ?? -1) {
                 enqueueInformation(destination)
             }
+        }
+        .sheet(item: $historySelection) { selection in
+            IOSReadOnlyConversationHistory(selection: selection, runtime: container.applicationRuntime)
+                .environmentObject(container)
         }
         .sheet(item: $managementDestination, onDismiss: { pendingNotifDeepLink = nil; modelConfigurationFromChat = false; modelConfigurationOwner = nil }) { destination in
             IOSWorkspaceManagementSheet(destination: destination,
@@ -156,8 +171,12 @@ struct MainTabView: View {
             ForEach([NolaTab.chat, .activity, .information, .settings], id: \.self) { tab in
                 let isSelected = selectedTabBinding.wrappedValue == tab
                 Button { selectedTabBinding.wrappedValue = tab } label: {
-                    VStack(spacing: 4) {
-                        Image(tab.icon).renderingMode(.template).resizable().scaledToFit().frame(width: 22, height: 22)
+                    VStack(spacing: 2) {
+                        Image(tab.icon).renderingMode(.template).resizable().scaledToFit()
+                            .frame(width: 21, height: 21)
+                            .frame(width: 44, height: 28)
+                            .background(isSelected ? DesignTokens.accentSubtleColor : Color.clear, in: Capsule())
+                            .animation(reduceMotion ? nil : DesignTokens.disclosureAnimation, value: isSelected)
                         Text(tab.title).font(.caption2.weight(isSelected ? .semibold : .regular))
                     }
                     .foregroundStyle(isSelected ? DesignTokens.actionColor : DesignTokens.secondaryContentColor)

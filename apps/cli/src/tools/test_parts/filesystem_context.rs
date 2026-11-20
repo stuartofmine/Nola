@@ -734,14 +734,16 @@ fn write_file_supports_dry_run_diff() {
         "path".to_string(),
         Value::String(target.display().to_string()),
     );
+    let observed = read_file(&args, &ctx);
+    assert_eq!(observed.data.as_ref().unwrap()["expected_sha256"], digest);
     args.insert("content".to_string(), Value::String("new\n".to_string()));
-    args.insert("expected_sha256".to_string(), Value::String(digest));
     args.insert("dry_run".to_string(), Value::Bool(true));
 
     let preview = write_file(&args, &ctx);
 
     assert!(!preview.error, "{}", preview.text);
     assert!(preview.text.contains("dry_run: true"));
+    assert!(preview.text.contains(&format!("expected_sha256: {digest}")));
     assert!(preview.text.contains("## Diff"));
     assert!(preview.text.contains("-old"));
     assert!(preview.text.contains("+new"));

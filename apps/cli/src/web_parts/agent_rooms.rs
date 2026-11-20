@@ -70,7 +70,7 @@ fn public_room_command(body: Value) -> Result<nola_application::agent_room::Agen
     let command: nola_application::agent_room::AgentRoomCommand = serde_json::from_value(body).map_err(|_| "invalid room command")?;
     use nola_application::agent_room::AgentRoomCommand;
     if !matches!(&command, AgentRoomCommand::ForConversation { .. } | AgentRoomCommand::EnsureForConversation { .. }
-        | AgentRoomCommand::AttachConversation { .. } | AgentRoomCommand::ChildConversations { .. } | AgentRoomCommand::ChildHistory { .. } | AgentRoomCommand::Directory | AgentRoomCommand::RoleTemplates | AgentRoomCommand::List { .. } | AgentRoomCommand::Read { .. }
+        | AgentRoomCommand::AttachConversation { .. } | AgentRoomCommand::ChildConversations { .. } | AgentRoomCommand::ChildHistory { .. } | AgentRoomCommand::PeerExchanges { .. } | AgentRoomCommand::Directory | AgentRoomCommand::RoleTemplates | AgentRoomCommand::List { .. } | AgentRoomCommand::Read { .. }
         | AgentRoomCommand::ConfigureAgent { .. } | AgentRoomCommand::Create { .. } | AgentRoomCommand::Join { .. } | AgentRoomCommand::Rejoin { .. }
         | AgentRoomCommand::Deactivate { .. } | AgentRoomCommand::Submit { .. } | AgentRoomCommand::Submission { .. } | AgentRoomCommand::Submissions { .. } | AgentRoomCommand::CancelPending { .. }) {
         return Err("room command is owned by the Host".into());
@@ -351,6 +351,7 @@ mod room_http_contract_tests {
             json!({"type":"execution_intent","room_id":"r","submission_id":"s"}),
             json!({"type":"observe_execution","room_id":"r","submission_id":"s","run_id":"run","at_ms":1}),
         ] { assert!(public_room_command(command).is_err()); }
+        assert!(public_room_command(json!({"type":"peer_exchanges","conversation_id":"parent","limit":50,"offset":0})).is_ok());
         assert!(public_room_command(json!({"type":"submission","room_id":"r","submission_id":"s"})).is_ok());
         assert!(public_room_command(json!({"type":"submissions","room_id":"r","limit":100,"offset":0})).is_ok());
         assert!(public_room_command(json!({"type":"cancel_pending","room_id":"r","submission_id":"s","expected_revision":1,"at_ms":1})).is_ok());

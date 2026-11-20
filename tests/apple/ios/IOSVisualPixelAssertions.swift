@@ -34,15 +34,15 @@ enum IOSVisualPixelAssertions {
     }
 
     private static let lightSurfaceTargets: [RGBPixel] = [
-        RGBPixel(r: 247, g: 246, b: 243), // #F7F6F3 Warm Paper canvas
+        RGBPixel(r: 250, g: 248, b: 244), // #FAF8F4 Warm Paper canvas
         RGBPixel(r: 255, g: 255, b: 255), // #FFFFFF surface
-        RGBPixel(r: 241, g: 240, b: 236)  // #F1F0EC raised surface
+        RGBPixel(r: 241, g: 239, b: 232)  // #F1EFE8 raised surface
     ]
 
     private static let darkSurfaceTargets: [RGBPixel] = [
-        RGBPixel(r: 19, g: 19, b: 18), // #131312 Warm Ink canvas
-        RGBPixel(r: 27, g: 27, b: 25), // #1B1B19 surface
-        RGBPixel(r: 35, g: 35, b: 32)  // #232320 raised surface
+        RGBPixel(r: 27, g: 28, b: 26), // #1B1C1A Warm Ink canvas
+        RGBPixel(r: 34, g: 36, b: 32), // #222420 surface
+        RGBPixel(r: 41, g: 44, b: 39)  // #292C27 raised surface
     ]
 
     static func findRepositoryRoot(from filePath: StaticString = #filePath) throws -> URL {

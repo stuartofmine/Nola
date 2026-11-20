@@ -5,8 +5,8 @@
 "room.left" = "退出済み・履歴は保持";
 "room.remove" = "削除";
 "room.add" = "エージェントを追加";
-"room.create_agent" = "エージェントを作成";
-"room.agent_name" = "エージェント名";
+"room.create_agent" = "エキスパートを作成";
+"room.agent_name" = "エキスパート名";
 "room.use_current_model" = "現在のモデルを使用";
 "room.open" = "チャットを開く";
 "room.all" = "すべてのチャット";
@@ -2706,6 +2706,7 @@
 "chat.history.retry" = "再試行";
 "chat.history.running" = "実行中";
 "chat.history.search" = "会話を検索";
+"chat.history.search.clear" = "検索をクリア";
 "chat.history.stop_before_delete" = "削除する前にタスクを停止してください";
 "chat.response.cancelled" = "応答を停止しました";
 "chat.response.failed" = "応答に失敗しました。詳細は処理を開いてください。";
@@ -3162,6 +3163,7 @@
 "chat.context.import.failed_count" = "%d 個のファイルを読み込めませんでした。空ではない UTF-8 テキストファイル（上限 40,000 文字、192 KB）を使用してください。";
 
 /* Expert roles and revision-aware mentions */
+"experts.useModelDefaults" = "モデルのデフォルト設定を使用";
 "experts.reasoning.inherit" = "モデル設定を継承";
 "experts.reasoning.unknown" = "このモデルは推論レベルを宣言していないため、既定の設定を継承します。";
 "experts.role.details" = "プロンプト、ツールと Skill";
@@ -3244,3 +3246,6 @@
 "chat.message.pendingEdit" = "保留中の編集を確認";
 "chat.message.editSavedForReview" = "この画面は閉じられます。この会話で保留中の編集を開き、送信状況を確認できます。";
 "chat.context.documents.blank" = "%@ に本文を入力するか、空の書類を削除してください。";
+
+"chat.history.otherClientReadOnly" = "読み取り専用です。会話を続けるには、作成したクライアントで開いてください。";
+"chat.history.ambiguousIDs" = "大文字と小文字だけが異なる会話 ID が存在します。作成したクライアントで開いてください。";

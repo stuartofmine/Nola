@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -91,6 +92,7 @@ enum class NolaTab(val route: String, val labelRes: Int) {
     Settings("settings", R.string.tab_settings)
 }
 
+private const val SETTINGS_EXPERTS_ROUTE = "settings/experts"
 private const val MODELS_ROUTE = "models"
 private const val WORKSPACE_ROUTE = "workspace"
 
@@ -123,8 +125,10 @@ fun NolaScaffold(
         }
     }
     val selectedTab = when {
-        currentRoute?.startsWith(MODELS_ROUTE) == true || currentRoute == NolaTab.Intelligence.route -> NolaTab.Settings
-        currentRoute?.startsWith(WORKSPACE_ROUTE) == true -> NolaTab.Information
+        currentRoute?.startsWith(MODELS_ROUTE) == true || currentRoute == NolaTab.Intelligence.route || currentRoute == SETTINGS_EXPERTS_ROUTE -> NolaTab.Settings
+        currentRoute == WORKSPACE_ROUTE -> NolaTab.entries.firstOrNull {
+            it.route == navController.previousBackStackEntry?.destination?.route
+        } ?: NolaTab.Information
         else -> NolaTab.entries.firstOrNull { it.route == currentRoute } ?: NolaTab.Chat
     }
 
@@ -151,7 +155,7 @@ fun NolaScaffold(
             modifier = Modifier.fillMaxSize(),
             containerColor = MaterialTheme.colorScheme.background,
             bottomBar = {
-                if (!usesSideNavigation && !(selectedTab == NolaTab.Chat && chatDetailVisible)) {
+                if (!usesSideNavigation && !(currentRoute == NolaTab.Chat.route && chatDetailVisible)) {
                     NolaBottomNavigation(
                         selectedTab = selectedTab,
                         onSelect = navigateToTab
@@ -513,12 +517,19 @@ private fun NolaNavigationHost(
                 val hasPrevious = navController.previousBackStackEntry != null
                 ModelsScreen(onBack = if (hasPrevious) ({ navController.popBackStack() }) else null)
             }
-            composable("$MODELS_ROUTE/add") { ModelsScreen(initialShowEndpointSheet = true) }
-            composable("$MODELS_ROUTE/add/{requestKey}") { entry ->
-                ModelsScreen(
-                    initialShowEndpointSheet = true,
-                    endpointSheetRequestKey = entry.arguments?.getString("requestKey").orEmpty()
-                )
+            composable("$MODELS_ROUTE/add") { ModelsScreen(onBack = { navController.popBackStack() }) }
+            composable("$MODELS_ROUTE/add/{requestKey}") { ModelsScreen(onBack = { navController.popBackStack() }) }
+            composable(SETTINGS_EXPERTS_ROUTE) { entry ->
+                val chatEntry = androidx.compose.runtime.remember(entry) { navController.getBackStackEntry(NolaTab.Chat.route) }
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                    Box(Modifier.widthIn(max = 720.dp).fillMaxWidth()) {
+                        com.nola.ui.screen.chat.ExpertManagementPanel(
+                            viewModel = androidx.hilt.navigation.compose.hiltViewModel(chatEntry),
+                            localDirectory = true,
+                            onBack = { navController.popBackStack() },
+                        )
+                    }
+                }
             }
             composable(NolaTab.Settings.route) {
                 SettingsScreen(
@@ -532,6 +543,7 @@ private fun NolaNavigationHost(
                     onOpenModels = {
                         navController.navigate(NolaTab.Models.route) { launchSingleTop = true }
                     },
+                    onOpenExperts = { navController.navigate(SETTINGS_EXPERTS_ROUTE) { launchSingleTop = true } },
                     onOpenIntelligence = {
                         navController.navigate(NolaTab.Intelligence.route) { launchSingleTop = true }
                     },

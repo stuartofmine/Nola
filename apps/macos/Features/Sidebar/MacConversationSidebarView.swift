@@ -29,26 +29,26 @@ struct MacConversationSidebar: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            VStack(spacing: 3) {
+            VStack(spacing: 2) {
                 ForEach(MacWorkspaceSection.allCases) { section in
                     let isSelected = selectedSection == section
                     Button {
                         selectedSection = section
                     } label: {
                         Label(section.title, systemImage: section.symbol)
-                            .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
+                            .font(.system(size: 13.5, weight: isSelected ? .semibold : .regular))
+                            .foregroundStyle(isSelected ? MacDesignColor.brand : Color("NolaTextPrimary"))
                             .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
-                            .padding(.horizontal, 8)
+                            .padding(.horizontal, 11)
                             .contentShape(Rectangle())
                     }
-                    .buttonStyle(MacSidebarNavigationButtonStyle(isSelected: isSelected))
+                    .buttonStyle(MacSidebarNavigationButtonStyle(isSelected: isSelected && (section != .chat || model.selectedConversationID == nil)))
                     .accessibilityAddTraits(isSelected ? .isSelected : [])
                     .accessibilityIdentifier("workspace.nav." + section.rawValue)
                 }
             }
-            .padding(.horizontal, 9)
-            .padding(.top, 10)
-            .padding(.bottom, 8)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 12)
 
             Divider()
                 .opacity(0.55)
@@ -77,12 +77,12 @@ struct MacConversationSidebar: View {
                 .padding(.horizontal, 10)
                 .frame(height: 36)
                 .background(
-                    Color.primary.opacity(isSearchHovering ? 0.072 : 0.055),
+                    isSearchHovering ? MacDesignColor.hover : MacDesignColor.panel,
                     in: RoundedRectangle(cornerRadius: MacDesignTokens.Radius.field, style: .continuous)
                 )
                 .overlay {
                     RoundedRectangle(cornerRadius: MacDesignTokens.Radius.field, style: .continuous)
-                        .stroke(Color.primary.opacity(isSearchHovering ? 0.085 : 0), lineWidth: 0.5)
+                        .strokeBorder(MacDesignColor.borderSubtle, lineWidth: 1)
                 }
                 .contentShape(RoundedRectangle(cornerRadius: MacDesignTokens.Radius.field, style: .continuous))
                 .onHover { isSearchHovering = $0 }
@@ -92,7 +92,7 @@ struct MacConversationSidebar: View {
             }
             .padding(.horizontal, 10)
             .padding(.top, 10)
-            .padding(.bottom, 10)
+            .padding(.bottom, 12)
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 3) {

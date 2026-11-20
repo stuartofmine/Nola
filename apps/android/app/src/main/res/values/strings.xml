@@ -1130,7 +1130,6 @@
     <string name="model_connections_title">Connections and accounts</string>
     <string name="model_connections_host_hint">The list below belongs to this device. Import, account and gateway configuration on a paired Host is managed separately.</string>
     <string name="model_connections_host_manage">Import, configure and verify on paired Host</string>
-    <string name="model_connections_pair_first">Connect a Host below to open its authorized management page. This does not change this device’s connections.</string>
     <string name="model_connections_source_boundary">Source account login must be managed in a browser on the Host computer. Signing in to OpenCode, Codex or Kimi Code does not enable Nola inference with that account. Catalog refresh does not run inference; verification requires separate confirmation and may incur charges.</string>
     <string name="model_connections_account_details">Account and verification details</string>
     <string name="model_connections_refresh">Refresh</string>
@@ -1140,7 +1139,7 @@
     <string name="room_recipient">@%1$s</string>
     <string name="room_automatic">Coordinator chooses · @ Agent</string>
     <string name="room_submission_accepted">Accepted, awaiting dispatch</string>
-    <string name="room_agent_description">Agent responsibilities (public to coordinator)</string>
+    <string name="room_agent_description">Responsibilities shared with the coordinating agent</string>
     <string name="room_submission_executing">Processing</string>
     <string name="room_submission_completed">Completed</string>
     <string name="room_submission_incomplete">Incomplete</string>

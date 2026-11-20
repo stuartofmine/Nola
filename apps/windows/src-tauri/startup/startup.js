@@ -1,7 +1,15 @@
 const invoke = (name, args) => window.__TAURI_INTERNALS__.invoke(name, args);
 let phase = "initial";
 async function update() {
-    const state = await invoke("startup_status", { phase });
+    let state;
+    try {
+        state = await invoke("startup_status", { phase });
+    } catch {
+        // The webview can start before the command bridge is ready.
+        setTimeout(update, 1000);
+        return;
+    }
+    if (!state) return;
     if (state.page) {
         // Both templates come from compiled localization resources. Runtime errors are plain text.
         const doc = new DOMParser().parseFromString(state.page, "text/html");
@@ -9,17 +17,30 @@ async function update() {
         document.head.append(doc.querySelector("style"));
         document.querySelector("main").replaceWith(doc.querySelector("main"));
         document.documentElement.lang = state.language;
+        document.title = doc.title;
         const detail = document.querySelector(".detail");
         if (detail) detail.textContent = state.failure;
-        const retry = document.getElementById("nola-retry-host");
-        retry?.addEventListener("click", async () => {
-            if (retry.disabled) return;
-            retry.disabled = true;
-            retry.setAttribute("aria-busy", "true");
-            try { await invoke("retry_startup"); }
-            finally { retry.disabled = false; retry.removeAttribute("aria-busy"); }
-        });
-        document.getElementById("nola-open-logs")?.addEventListener("click", () => invoke("open_diagnostics"));
+        function bindAction(id, command) {
+            const button = document.getElementById(id);
+            if (!button) return;
+            const feedback = document.getElementById("nola-action-status");
+            button.addEventListener("click", async () => {
+                if (button.disabled) return;
+                button.disabled = true;
+                button.setAttribute("aria-busy", "true");
+                feedback.textContent = "";
+                try {
+                    await invoke(command);
+                } catch (error) {
+                    feedback.textContent = error instanceof Error ? error.message : String(error);
+                } finally {
+                    button.disabled = false;
+                    button.removeAttribute("aria-busy");
+                }
+            });
+        }
+        bindAction("nola-retry-host", "retry_startup");
+        bindAction("nola-open-logs", "open_diagnostics");
     }
     phase = state.phase;
     if (phase === "starting") setTimeout(update, 400);

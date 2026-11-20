@@ -70,7 +70,7 @@ struct SettingsView: View {
     }
 
     private var content: some View {
-        settingsPage(title: L10n.settings, showsHeading: false) {
+        settingsPage(title: L10n.settings, showsHeading: false, topInset: ownsNavigationStack ? 4 : DesignTokens.spacing_lg) {
             if ownsNavigationStack {
                 IOSWorkspacePageHeading(title: L10n.settings).frame(minHeight: 64)
             }
@@ -162,14 +162,14 @@ struct SettingsView: View {
         .padding(.vertical, 10)
     }
 
-    private func settingsPage<Content: View>(title: String, showsHeading: Bool = true, @ViewBuilder content: () -> Content) -> some View {
+    private func settingsPage<Content: View>(title: String, showsHeading: Bool = true, topInset: CGFloat = DesignTokens.spacing_lg, @ViewBuilder content: () -> Content) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 if showsHeading { IOSWorkspacePageHeading(title: title) }
                 content()
             }
             .padding(.horizontal, pageWidth < 359 ? 16 : 20)
-            .padding(.top, DesignTokens.spacing_lg)
+            .padding(.top, topInset)
             .padding(.bottom, DesignTokens.pageBottomInset)
             .frame(maxWidth: DesignTokens.pageMaxWidth)
             .frame(maxWidth: .infinity)
@@ -303,6 +303,7 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(isExporting || isClearingData)
+                .accessibilityIdentifier("settings.privacy.clear")
             }
         }
         .navigationTitle(LocalizedStringKey("settings.navigation.privacy"))

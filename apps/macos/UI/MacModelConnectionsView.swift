@@ -246,11 +246,13 @@ struct MacModelConnectionsView: View {
                 .foregroundStyle(MacDesignColor.brand)
                 .frame(width: 30, height: 30)
                 .background(MacDesignColor.brand.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 5) {
                 Text(connection.display_name).font(.body.weight(.semibold)).lineLimit(1)
                 Text(connection.base_url)
                     .font(.callout).foregroundStyle(.secondary)
                     .lineLimit(1).truncationMode(.middle)
+                    .help(connection.base_url)
             }
             Spacer(minLength: 8)
             VStack(alignment: .trailing, spacing: 5) {
@@ -261,12 +263,9 @@ struct MacModelConnectionsView: View {
                 Text(String(localized: "Models", table: "ModelCenter") + " · " + String(snapshot.document.catalog?.models.count ?? 0))
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Image("nola-chevron").renderingMode(.template).resizable().scaledToFit()
-                .frame(width: 12, height: 12).foregroundStyle(.tertiary)
         }
         .padding(.vertical, 10)
         .contentShape(Rectangle())
-        .help(connection.base_url)
     }
 
     @ViewBuilder private var editorFooter: some View {

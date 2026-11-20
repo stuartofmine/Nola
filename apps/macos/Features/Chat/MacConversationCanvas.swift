@@ -428,7 +428,7 @@ struct MacConversationCanvas: View {
                     }
                 }
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: MacDesignTokens.Layout.chatContentWidth)
+                .frame(maxWidth: MacDesignTokens.Layout.chatTranscriptMaxWidth)
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal, MacDesignTokens.Layout.chatTranscriptHorizontalPadding)
                 .padding(.top, MacDesignTokens.Spacing.md)

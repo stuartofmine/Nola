@@ -166,6 +166,7 @@ def inspect_response(body: bytes) -> dict:
     tool_argument_bytes = 0
     finish_reasons: list[str] = []
     response_models: list[str] = []
+    failure_codes: list[str] = []
     response_usage = None
     for raw_line in body.splitlines():
         line = raw_line.strip()
@@ -188,6 +189,18 @@ def inspect_response(body: bytes) -> dict:
             if reported_usage is not None:
                 response_usage = reported_usage
             kind = value.get("type")
+            if kind in ("response.failed", "error"):
+                if "failed" not in finish_reasons:
+                    finish_reasons.append("failed")
+                error = (nested_response or {}).get("error") if isinstance(nested_response, dict) else value.get("error")
+                code = error.get("code") if isinstance(error, dict) else value.get("code")
+                public_codes = ("server_error", "rate_limit_exceeded", "slow_down", "invalid_prompt", "invalid_request_error",
+                                "insufficient_quota", "subscription_sharing_usage_limit_exceeded", "context_length_exceeded",
+                                "server_is_overloaded", "service_unavailable", "content_filter", "bio_policy",
+                                "misalignment_policy_violation", "image_content_policy_violation")
+                safe_code = code if code in public_codes else "unknown"
+                if safe_code not in failure_codes:
+                    failure_codes.append(safe_code)
             delta = value.get("delta")
             if kind == "response.output_text.delta" and isinstance(delta, str):
                 text_bytes += len(delta.encode("utf-8"))
@@ -276,6 +289,7 @@ def inspect_response(body: bytes) -> dict:
         "responseToolNames": tool_names,
         "responseToolArgumentBytes": tool_argument_bytes,
         "finishReasons": finish_reasons,
+        "responseFailureCodes": failure_codes,
         "responseUsage": response_usage,
         "responseModels": response_models,
     }

@@ -19,7 +19,7 @@ import UIKit
 // MARK: - Nola Design System
 
 struct DesignTokens {
-    // Mobile semantic roles: neutral chrome keeps the conversation in focus.
+    // Shared semantic colors for reading, navigation and interactive controls.
     private static func mobileColor(_ light: UInt32, _ dark: UInt32) -> Color {
         Color(uiColor: UIColor { traits in
             let rgb = traits.userInterfaceStyle == .dark ? dark : light
@@ -28,31 +28,31 @@ struct DesignTokens {
                            blue: CGFloat(rgb & 255) / 255, alpha: 1)
         })
     }
-    static let primaryColor = mobileColor(0x181817, 0xF2F0EB)
-    static let actionColor = primaryColor
+    static let primaryColor = mobileColor(0x242923, 0xF1F1E9)
+    static let actionColor = mobileColor(0x345D50, 0xA8C9B7)
     static let contentColor = primaryColor
-    static let secondaryContentColor = mobileColor(0x5C5B57, 0xA3A09A)
-    static let onActionColor = mobileColor(0xFFFFFF, 0x131312)
+    static let secondaryContentColor = mobileColor(0x5E665E, 0xB5BAAF)
+    static let onActionColor = mobileColor(0xFFFFFF, 0x192B22)
     static let onAccentColor = onActionColor
-    static let accentSubtleColor = mobileColor(0xEAE8E2, 0x292825)
-    static let chatBackgroundColor = mobileColor(0xF7F6F3, 0x131312)
+    static let accentSubtleColor = mobileColor(0xE3EBE3, 0x303F36)
+    static let chatBackgroundColor = mobileColor(0xFAF8F4, 0x1B1C1A)
     static let successColor = Color("NolaSuccess")
     static let warningColor = Color("NolaWarning")
     static let dangerColor = Color("NolaDanger")
     static let infoColor = mobileColor(0x1F5F8B, 0x8AB8E6)
 
     // Both Apple clients align fallback surfaces with canonical Warm Ink & Warm Paper tokens.
-    static let backgroundColor = mobileColor(0xF7F6F3, 0x131312)
-    static let surfaceColor = mobileColor(0xFFFFFF, 0x1B1B19)
+    static let backgroundColor = mobileColor(0xFAF8F4, 0x1B1C1A)
+    static let surfaceColor = mobileColor(0xFFFFFF, 0x222420)
     static let cardBackgroundColor = surfaceColor
-    static let elevatedColor = mobileColor(0xF1F0EC, 0x232320)
+    static let elevatedColor = mobileColor(0xF1EFE8, 0x292C27)
     static let secondaryBackgroundColor = elevatedColor
-    static let rowFillColor = mobileColor(0xF1F0EC, 0x232320)
+    static let rowFillColor = mobileColor(0xF1EFE8, 0x292C27)
     static let mutedFillColor = secondaryBackgroundColor
-    static let switchTintColor = mobileColor(0x237047, 0x2E8B57)
-    static let borderColor = mobileColor(0xE5E3DD, 0x2E2D2A)
+    static let switchTintColor = actionColor
+    static let borderColor = mobileColor(0xDEDCD3, 0x383D35)
     static let strongBorderColor = Color("NolaControlOutline")
-    static let separatorColor = mobileColor(0xE5E3DD, 0x2E2D2A)
+    static let separatorColor = mobileColor(0xDEDCD3, 0x383D35)
 
     static let overlayStrongOpacity = 0.18
     static let overlayMediumOpacity = 0.12
@@ -312,8 +312,8 @@ struct NolaPageHeader: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.title2.weight(.semibold))
-                    .foregroundColor(.primary)
+                    .font(.system(.title, design: .serif, weight: .semibold))
+                    .foregroundColor(DesignTokens.contentColor)
                     .fixedSize(horizontal: false, vertical: true)
                 if let subtitle, !subtitle.isEmpty {
                     Text(subtitle)

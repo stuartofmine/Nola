@@ -114,6 +114,10 @@ import Observation
         return try await Task.detached { try MacApplicationPort(databaseURL: database).readUISurfaceRevision(identity: reference.identity, revision: reference.revision) }.value
     }
 
+    func cachedRemotePeers(_ contextIDs: Set<String>, parentID: String) async -> Set<String> {
+        await repository.cachedRemotePeers(contextIDs, parentID: parentID)
+    }
+
     @discardableResult func observe(contextID: String) -> MacWorkspaceModel {
         if let existing = owners[contextID] { return existing }
         let owner = repository.makeRoomExecutionOwner(contextID: contextID,

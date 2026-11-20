@@ -954,6 +954,84 @@ final class MacSecondaryPageNavigationTests: XCTestCase {
         }
     }
 
+    func testNotificationHistoryReadsAndWritesOnlyItsApplicationSupportRoot() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let firstRoot = directory.appendingPathComponent("first")
+        let first = MacNotificationHistoryRepository(supportRoot: firstRoot)
+        let second = MacNotificationHistoryRepository(supportRoot: directory.appendingPathComponent("second"))
+        let item = MacNotificationInboxItem(identifier: "source", title: "Saved here", body: "",
+            date: Date(), deliveryState: .history, conversationID: nil, isRead: false)
+        try await first.recordCommitted(item)
+        let initial = await second.items()
+        XCTAssertTrue(initial.isEmpty)
+        await second.clear()
+        let restored = await MacNotificationHistoryRepository(supportRoot: firstRoot).items()
+        XCTAssertEqual(restored.map(\.id), [item.id])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: firstRoot.appendingPathComponent("Notifications/history.json").path))
+    }
+
+    func testOpeningNotificationCenterDoesNotReadUntilAUserSelectsAnItem() async throws {
+        let session = try MacHostedAccessibilitySession()
+        defer { session.restore() }
+        let history = MacNotificationHistoryRepository.shared
+        let first = MacNotificationInboxItem(identifier: UUID().uuidString, title: "Audit A", body: "First",
+            date: Date(), deliveryState: .history, conversationID: nil, isRead: false)
+        let second = MacNotificationInboxItem(identifier: UUID().uuidString, title: "Audit B", body: "Second",
+            date: Date().addingTimeInterval(-1), deliveryState: .history, conversationID: nil, isRead: false)
+        try await history.recordCommitted(first)
+        try await history.recordCommitted(second)
+
+        let host = NSHostingView(rootView: MacNotificationCenterView()
+            .frame(width: 1040, height: 680).environment(\.accessibilityEnabled, true))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1040, height: 680),
+            styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFrontRegardless()
+        defer { window.close() }
+        let identifier = "mac.notification.item." + first.id
+        let deadline = Date().addingTimeInterval(4)
+        while !accessibilityObjects(host).contains(where: { $0.accessibilityIdentifier?() == identifier }),
+              Date() < deadline { try await Task.sleep(for: .milliseconds(30)) }
+        let displayed = await history.items()
+        XCTAssertEqual(displayed.first { $0.id == first.id }?.isRead, false)
+        try await pressIdentifier(identifier, in: host)
+        let marked = await history.items()
+        XCTAssertEqual(marked.first { $0.id == first.id }?.isRead, true)
+        XCTAssertEqual(marked.first { $0.id == second.id }?.isRead, false)
+        await history.remove(identifier: first.id)
+        await history.remove(identifier: second.id)
+    }
+
+    func testEmbeddedSecondaryPagesKeepTheirBackActionInsideWorkspaceChrome() async throws {
+        let accessibility = try MacHostedAccessibilitySession()
+        defer { accessibility.restore() }
+        let data = MacDataCenterNavigationState()
+        let automation = MacAutomationCenterNavigationState()
+        for route in [MacDataCenterNavigationState.Route.webSources, .health] {
+            data.route = route
+            try await pressEmbeddedBack(in: MacDataCenterView(navigation: data))
+            XCTAssertEqual(data.route, .overview)
+        }
+        automation.showRunHistory()
+        try await pressEmbeddedBack(in: MacAutomationCenterView(navigation: automation))
+        XCTAssertFalse(automation.showsRunHistory)
+    }
+
+    private func pressEmbeddedBack<Content: View>(in content: Content) async throws {
+        let view = content.environment(\.macUsesGlobalWorkspaceChrome, true)
+            .environment(\.accessibilityEnabled, true).frame(width: 900, height: 720)
+        let host = NSHostingView(rootView: view)
+        let window = NSWindow(contentViewController: NSViewController())
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.setContentSize(NSSize(width: 900, height: 720))
+        window.orderFrontRegardless()
+        defer { window.close() }
+        try await pressIdentifier("page.navigation.back", in: host)
+    }
+
     func testEverySettingsCategoryCanOpenAndReturnInBothThemes() async throws {
         let session = try MacHostedAccessibilitySession()
         defer { session.restore() }

@@ -14,6 +14,20 @@ pub enum Language {
     Ru,
 }
 
+pub(crate) fn new_conversation_title(language: Language) -> &'static str {
+    match language {
+        Language::ZhHans => "新对话",
+        Language::ZhHant => "新對話",
+        Language::En => "New conversation",
+        Language::De => "Neue Unterhaltung",
+        Language::Es => "Nueva conversación",
+        Language::Fr => "Nouvelle conversation",
+        Language::Ja => "新しい会話",
+        Language::Ko => "새 대화",
+        Language::Ru => "Новый диалог",
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 pub enum Message {
@@ -556,6 +570,17 @@ pub enum UiText {
     Work,
     WorkUsage,
     WorkResolveHint,
+    HelpRoom,
+    NoRooms,
+    PermissionInstructionOption,
+    PermissionInstructionCommand,
+    NoConfiguredMcp,
+    NoAvailableSkills,
+    MemoryHeading,
+    MemorySearchHeading,
+    MemorySaved,
+    NoSavedMemory,
+    NoMatchingMemory,
     HelpWork,
     NoWork,
     WorkActive,
@@ -719,6 +744,52 @@ fn ui_text_for(language: Language, key: UiText) -> &'static str {
         UiText::Work => ["工作", "工作", "Work", "Arbeit", "Trabajo", "Travail", "作業", "작업", "Работа"],
         UiText::WorkUsage => ["用法：/work [<工作ID> | status|stop|pause|resume|rerun <工作ID>]", "用法：/work [<工作 ID> | status|stop|pause|resume|rerun <工作 ID>]", "Usage: /work [<work-id> | status|stop|pause|resume|rerun <work-id>]", "Verwendung: /work [<Arbeits-ID> | status|stop|pause|resume|rerun <Arbeits-ID>]", "Uso: /work [<id-trabajo> | status|stop|pause|resume|rerun <id-trabajo>]", "Utilisation : /work [<id-travail> | status|stop|pause|resume|rerun <id-travail>]", "使い方: /work [<作業ID> | status|stop|pause|resume|rerun <作業ID>]", "사용법: /work [<작업-ID> | status|stop|pause|resume|rerun <작업-ID>]", "Использование: /work [<ID-работы> | status|stop|pause|resume|rerun <ID-работы>]"],
         UiText::WorkResolveHint => ["外部结果仍未知。保留原记录；只能通过精确执行恢复控制核验回执、授权风险重试或保持受阻。", "外部結果仍未知。請保留原始紀錄；僅能透過精確執行復原控制核驗回執、授權風險重試或維持受阻。", "The external outcome is unknown. Preserve the record; use exact execution recovery to verify a receipt, authorize a risky retry, or remain blocked.", "Das externe Ergebnis ist unbekannt. Den Datensatz behalten; eine Wiederherstellung erfordert den genauen Ausführungsnachweis oder eine ausdrückliche Risikoentscheidung.", "El resultado externo es desconocido. Conserva el registro; la recuperación exige el recibo exacto o una decisión explícita sobre el riesgo.", "Le résultat externe est inconnu. Conservez la trace ; la reprise exige un reçu exact ou une décision explicite sur le risque.", "外部結果は不明です。記録を保持し、正確な実行の復旧操作で受領証または明示的なリスク判断を確認してください。", "외부 결과를 알 수 없습니다. 기록을 유지하고 정확한 실행 복구 제어로 영수증을 확인하거나 위험한 재시도를 승인하거나 차단 상태를 유지하세요.", "Внешний результат неизвестен. Сохраните запись; восстановление требует точной квитанции или явного решения о риске."],
+        UiText::HelpRoom => [
+            "发送房间消息。输入 @ 后按 Tab 选择成员，省略 @ 由协调者分派。",
+            "傳送房間訊息。輸入 @ 後按 Tab 選擇成員，省略 @ 由協調者分派。",
+            "Send a room message. Type @ and press Tab to choose a member, or omit @ for automatic routing.",
+            "Nachricht an den Raum senden. Mit @ und Tab ein Mitglied wählen, ohne @ automatisch zuweisen.",
+            "Envía un mensaje a la sala. Escribe @ y pulsa Tab para elegir un miembro, u omite @ para la asignación automática.",
+            "Envoyer un message au salon. Saisir @ puis Tab pour choisir un membre, ou omettre @ pour une attribution automatique.",
+            "ルームに送信します。@ と Tab でメンバーを選び、省略すると自動で割り当てます。",
+            "방에 메시지를 보냅니다. @ 입력 후 Tab으로 멤버를 선택하거나 @를 생략해 자동으로 배정합니다.",
+            "Отправить сообщение в комнату. Введите @ и нажмите Tab для выбора участника или опустите @ для автоназначения.",
+        ],
+        UiText::NoRooms => [
+            "还没有房间。请在终端创建一个房间", "還沒有房間。請在終端機建立房間",
+            "No rooms yet. Create one in your terminal", "Noch keine Räume. Im Terminal einen Raum erstellen",
+            "Todavía no hay salas. Crea una en el terminal", "Aucun salon. Créez-en un dans le terminal",
+            "ルームがありません。ターミナルで作成してください", "방이 없습니다. 터미널에서 방을 만드세요",
+            "Комнат пока нет. Создайте комнату в терминале",
+        ],
+        UiText::PermissionInstructionOption => [
+            "I. 补充说明，操作将继续等待授权", "I. 補充說明，操作將繼續等待授權",
+            "I. Add instructions and keep the action paused", "I. Hinweis ergänzen und Freigabe abwarten",
+            "I. Añadir instrucciones y dejar la acción en pausa", "I. Ajouter une consigne et attendre l’autorisation",
+            "I. 指示を追加して許可を待つ", "I. 지침을 추가하고 승인 대기", "I. Добавить указание и ждать разрешения",
+        ],
+        UiText::PermissionInstructionCommand => [
+            "输入 i 和说明文字后按 Enter 保存", "輸入 i 和說明文字後按 Enter 儲存",
+            "Type i followed by your instructions and press Enter", "i und den Hinweis eingeben, dann Enter drücken",
+            "Escribe i y las instrucciones, y pulsa Enter", "Saisissez i puis votre consigne et appuyez sur Entrée",
+            "i に続けて指示を入力し、Enter で保存", "i 다음에 지침을 입력하고 Enter로 저장", "Введите i, текст указания и нажмите Enter",
+        ],
+        UiText::NoConfiguredMcp => [
+            "尚未配置 MCP 服务。运行 nola web，在「技能与 MCP」中添加。", "尚未設定 MCP 服務。執行 nola web，在「技能與 MCP」中新增。",
+            "No MCP servers configured. Run nola web and add one under Skills & MCP.",
+            "Keine MCP-Server eingerichtet. Mit nola web unter Skills & MCP einen Server hinzufügen.",
+            "No hay servidores MCP configurados. Ejecuta nola web y añade uno en Skills y MCP.",
+            "Aucun serveur MCP configuré. Lancez nola web et ajoutez-en un dans Skills et MCP.",
+            "MCP サーバーは未設定です。nola web のスキルと MCP から追加できます。",
+            "설정된 MCP 서버가 없습니다. nola web을 실행하고 스킬 및 MCP에서 추가하세요.",
+            "Серверов MCP пока нет. Запустите nola web и добавьте сервер в разделе навыков и MCP.",
+        ],
+        UiText::NoAvailableSkills => ["尚无可用技能。", "尚無可用技能。", "No skills available.", "Keine Skills verfügbar.", "No hay habilidades disponibles.", "Aucune compétence disponible.", "利用できるスキルはありません。", "사용 가능한 스킬이 없습니다.", "Нет доступных навыков."],
+        UiText::MemoryHeading => ["长期记忆", "長期記憶", "Memory", "Erinnerungen", "Memoria", "Mémoire", "メモリ", "메모리", "Память"],
+        UiText::MemorySearchHeading => ["搜索记忆", "搜尋記憶", "Memory search", "Erinnerungen suchen", "Buscar recuerdos", "Rechercher dans la mémoire", "メモリ検索", "메모리 검색", "Поиск в памяти"],
+        UiText::MemorySaved => ["已保存记忆", "已儲存記憶", "Saved memory", "Erinnerung gespeichert", "Recuerdo guardado", "Souvenir enregistré", "メモリを保存しました", "메모리를 저장했습니다", "Запись сохранена"],
+        UiText::NoSavedMemory => ["尚无可见的记忆。", "尚無可見的記憶。", "No visible memories yet.", "Noch keine sichtbaren Erinnerungen.", "Aún no hay recuerdos visibles.", "Aucun souvenir visible.", "表示できるメモリはありません。", "표시할 메모리가 없습니다.", "Пока нет видимых записей памяти."],
+        UiText::NoMatchingMemory => ["没有找到匹配的记忆。", "沒有找到符合的記憶。", "No matching memories.", "Keine passenden Erinnerungen.", "No se encontraron recuerdos.", "Aucun souvenir correspondant.", "一致するメモリはありません。", "일치하는 메모리가 없습니다.", "Совпадений в памяти не найдено."],
         UiText::HelpWork => ["统一查看和控制目标、任务、后台进程与外部执行器", "統一檢視與控制目標、任務、背景處理程序與外部執行器", "Inspect and control goals, tasks, background processes, and external executors", "Ziele, Aufgaben, Hintergrundprozesse und externe Ausführer gemeinsam verwalten", "Inspeccionar y controlar objetivos, tareas, procesos en segundo plano y ejecutores externos", "Afficher et contrôler les objectifs, tâches, processus en arrière-plan et exécuteurs externes", "目標、タスク、バックグラウンド処理、外部実行環境をまとめて管理", "목표, 작업, 백그라운드 프로세스 및 외부 실행기 검사 및 제어", "Просмотр и управление целями, задачами, фоновыми процессами и внешними исполнителями"],
         UiText::NoWork => ["当前会话没有工作记录。", "目前工作階段沒有工作紀錄。", "No work in this conversation.", "Keine Arbeit in dieser Unterhaltung.", "No hay trabajo en esta conversación.", "Aucun travail dans cette conversation.", "この会話に作業はありません。", "이 대화에 작업 기록이 없습니다.", "В этом диалоге нет работы."],
         UiText::WorkActive => ["项进行中", "項進行中", "active", "aktiv", "activos", "actifs", "件進行中", "개 활성", "активно"],

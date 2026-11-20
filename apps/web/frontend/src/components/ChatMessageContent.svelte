@@ -3,7 +3,7 @@
     import {MESSAGE_PART_READING,MessageReadingScope,readingPartKey,type MessagePartReading,type MessageTextSnapshot} from '../lib/messagePartReading';
     import ChatTextReaderDialog from './ChatTextReaderDialog.svelte';
     import { locale, t } from '../lib/i18n';
-    import { messagePresentation, messageFlowPresentation, executionProcessChoice } from '../lib/chatMessagePresentation';
+    import { messagePresentation, messageFlowPresentation, executionProcessChoice, modelFailureHelpKey } from '../lib/chatMessagePresentation';
     import ChatExecutionProcess from './ChatExecutionProcess.svelte';
     import { timelinePartText, timelineReasoningParts } from '../lib/chatTimeline';
     import type { TimelineMessage, TimelinePart } from '../lib/chatTimeline';
@@ -129,7 +129,8 @@
 
 <div class="message-parts" bind:this={container}>
 {#if message.role === 'assistant' && message.state === 'failed' && !message.parts.some(part => part.value.kind === 'error')}
-    <ChatReplyError />
+    {@const help = modelFailureHelpKey(message.parts)}
+    <ChatReplyError detail={help ? t($locale, help) : ''} />
 {/if}
 {#each groups as group (group.id)}
     {#if group.kind === 'process'}

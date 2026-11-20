@@ -175,6 +175,12 @@ impl ProviderAttemptError {
     pub(super) fn into_failure(self, cfg: &LlmConfig) -> ProviderFailure {
         match self {
             Self::Admission(message) => ProviderFailure::consumer(cfg, message),
+            Self::StreamFailure { code, message, retryable } => ProviderFailure {
+                code: code.into(), message: message.into(), diagnostic: code.into(),
+                retryable, same_target_retryable: retryable, fallback_eligible: retryable,
+                exhausts_target: code == "quota_exhausted", status: None, retry_after_ms: None,
+                provider: cfg.provider.clone(), model: Some(cfg.model.clone()),
+            },
             Self::WorkerDisconnected => ProviderFailure {
                 code: "transport_worker_disconnected".into(),
                 message: "The local HTTP request worker ended without a response.".into(),

@@ -9,6 +9,14 @@
 import SwiftUI
 import UIKit
 
+private struct ConversationFilterBounds: PreferenceKey {
+    static var defaultValue: [Bool: Anchor<CGRect>] { [:] }
+
+    static func reduce(value: inout [Bool: Anchor<CGRect>], nextValue: () -> [Bool: Anchor<CGRect>]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, latest in latest })
+    }
+}
+
 nonisolated enum IOSConversationTitlePresentationPolicy {
     static func displayTitle(
         _ title: String?,
@@ -77,7 +85,9 @@ nonisolated struct IOSConversationListPreview: Sendable {
                      previous: Self?, visit: Int) async -> Self {
         var result = Self(lastActiveAt: entry.lastActiveAt, revision: entry.revision, checkedOnVisit: visit)
         do {
-            result.draft = try FileConversationDraftRepository.scoped(to: runtime.databaseURL).textPreview(.conversation(entry.id))
+            if entry.canonicalID == entry.id.uuidString {
+                result.draft = try FileConversationDraftRepository.scoped(to: runtime.databaseURL).textPreview(.conversation(entry.id))
+            }
         } catch {
             result.draft = previous?.draft
             result.error = error.localizedDescription
@@ -130,6 +140,7 @@ struct ChatConversationsList: View {
     @State private var pageWidth: CGFloat = 390
     @State private var previews: [UUID: IOSConversationListPreview] = [:]
     @State private var directorySnapshot: [IOSCanonicalConversationSummary]?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var search: String
 
     init(search: Binding<String>, onSelect: @escaping (UUID) -> Void,
@@ -204,7 +215,7 @@ struct ChatConversationsList: View {
 
         }
         .listStyle(.plain)
-        .modifier(ConversationListTopEdge())
+        .modifier(IOSWorkspaceTopEdge())
         .scrollContentBackground(.hidden)
         .background(DesignTokens.backgroundColor)
         .background(IOSWorkspaceWidthObserver(width: $pageWidth))
@@ -257,15 +268,16 @@ struct ChatConversationsList: View {
                             Button {
                                 dismissSearchKeyboard()
                                 guard conversation.canonicalID == conversation.id.uuidString else {
-                                    loadError = String(localized: "expert.history.unsupportedParent"); return
+                                    NotificationCenter.default.post(name: .nolaOpenChatTab, object: conversation.canonicalID)
+                                    return
                                 }
                                 onSelect(conversation.id)
                             } label: {
                                 HStack(alignment: .top, spacing: 0) {
-                                    VStack(alignment: .leading, spacing: 5) {
+                                    VStack(alignment: .leading, spacing: 6) {
                                         HStack(alignment: .firstTextBaseline) {
-                                            Text(title(conversation)).font(.callout.weight(.medium))
-                                                .foregroundStyle(.primary).lineLimit(1)
+                                            Text(title(conversation)).font(.body.weight(.medium))
+                                                .foregroundStyle(DesignTokens.contentColor).lineLimit(1)
                                                 .layoutPriority(1)
                                             Spacer(minLength: 8)
                                             Text(conversation.lastActiveAt, format: Calendar.current.isDateInToday(conversation.lastActiveAt) ? .dateTime.hour().minute() : .dateTime.month().day())
@@ -296,16 +308,18 @@ struct ChatConversationsList: View {
                                 if query.isEmpty { await loadPreview(conversation) }
                             }
                             .contextMenu {
-                                Button(String(localized: "chat.conversations.rename", defaultValue: "Rename"),
-                                       systemImage: "pencil") {
-                                    let current = title(conversation)
-                                    renameDraft = current
-                                    renameTarget = (conversation.id, current)
+                                if conversation.canonicalID == conversation.id.uuidString {
+                                    Button(String(localized: "chat.conversations.rename", defaultValue: "Rename"),
+                                           systemImage: "pencil") {
+                                        let current = title(conversation)
+                                        renameDraft = current
+                                        renameTarget = (conversation.id, current)
+                                    }
+                                    let isRunning = container.chatManager.executionForConversation(conversation.id)?.processingState.blocksInput == true
+                                    Button(isRunning ? String(localized: "chat.history.stop_before_delete") : L10n.chatClearAction,
+                                           systemImage: "trash", role: .destructive) { pendingDelete = conversation }
+                                        .disabled(isRunning)
                                 }
-                                let isRunning = container.chatManager.executionForConversation(conversation.id)?.processingState.blocksInput == true
-                                Button(isRunning ? String(localized: "chat.history.stop_before_delete") : L10n.chatClearAction,
-                                       systemImage: "trash", role: .destructive) { pendingDelete = conversation }
-                                    .disabled(isRunning)
                             }
                             if previews[conversation.id]?.hasRoom == true { Button {
                                 dismissSearchKeyboard()
@@ -332,7 +346,7 @@ struct ChatConversationsList: View {
     }
 
     private var listHeader: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
                 IOSWorkspacePageHeading(title: L10n.chatTitle)
                 HStack {
@@ -343,7 +357,11 @@ struct ChatConversationsList: View {
                         } else { loadError = String(localized: "chat.history.create_failed") }
                     } label: {
                         Image("nola-edit").renderingMode(.template).resizable().scaledToFit()
-                            .frame(width: 23, height: 23).frame(width: 44, height: 44)
+                            .frame(width: 20, height: 20)
+                            .foregroundStyle(DesignTokens.actionColor)
+                            .frame(width: 38, height: 38)
+                            .background(DesignTokens.accentSubtleColor, in: Circle())
+                            .frame(width: 44, height: 44).contentShape(Rectangle())
                     }.accessibilityLabel(Text(String(localized: "chat.history.empty.action")))
                         .accessibilityIdentifier("chat.conversations.new")
                 }
@@ -355,16 +373,43 @@ struct ChatConversationsList: View {
                 TextField("", text: $search, prompt: Text(String(localized: "chat.history.search")).foregroundColor(.secondary))
                     .font(.subheadline).focused($searchFocused)
                     .submitLabel(.search).autocorrectionDisabled()
+                    .onSubmit { dismissSearchKeyboard() }
                     .accessibilityIdentifier("chat.conversations.search")
+                if !search.isEmpty {
+                    Button {
+                        search = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                            .frame(width: 44, height: 44).contentShape(Rectangle())
+                    }
+                    .accessibilityLabel(Text("chat.history.search.clear"))
+                    .accessibilityIdentifier("chat.conversations.search.clear")
+                }
             }
-            .padding(.horizontal, 13).frame(minHeight: 46)
+            .padding(.leading, 13).padding(.trailing, search.isEmpty ? 13 : 0)
+            .frame(minHeight: 46)
             .background(DesignTokens.elevatedColor, in: RoundedRectangle(cornerRadius: 12))
             .contentShape(Rectangle())
             .onTapGesture { searchFocused = true }
-            HStack(spacing: 18) {
-                filterButton("activity.all", selected: !needsResponseOnly) { needsResponseOnly = false }
-                filterButton("workspace.today.needsResponse", selected: needsResponseOnly) { needsResponseOnly = true }
-                Spacer()
+            HStack(spacing: 2) {
+                filterButton("activity.all", waitingOnly: false)
+                filterButton("workspace.today.needsResponse", waitingOnly: true)
+                Spacer(minLength: 0)
+            }
+            .backgroundPreferenceValue(ConversationFilterBounds.self) { anchors in
+                GeometryReader { proxy in
+                    if let anchor = anchors[needsResponseOnly] {
+                        let target = proxy[anchor]
+                        Capsule()
+                            .fill(DesignTokens.accentSubtleColor)
+                            .frame(width: target.width, height: target.height)
+                            .position(x: target.midX, y: target.midY)
+                            .animation(reduceMotion ? nil : DesignTokens.disclosureAnimation, value: needsResponseOnly)
+                    }
+                }
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
             }
         }
         .buttonStyle(.plain)
@@ -377,14 +422,17 @@ struct ChatConversationsList: View {
         guard let execution = container.chatManager.executionForConversation(id) else { return false }
         return execution.pendingHostPermissionRequest != nil || execution.localAgentPermissionRequest != nil
     }
-    private func filterButton(_ key: String, selected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+    private func filterButton(_ key: String, waitingOnly: Bool) -> some View {
+        let selected = needsResponseOnly == waitingOnly
+        return Button { needsResponseOnly = waitingOnly } label: {
             Text(LocalizedStringKey(key)).font(.subheadline.weight(selected ? .semibold : .regular))
                 .foregroundStyle(selected ? DesignTokens.actionColor : .secondary)
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 14).padding(.vertical, 6)
+                .anchorPreference(key: ConversationFilterBounds.self, value: .bounds) { [waitingOnly: $0] }
                 .frame(minHeight: 44)
-                .background(selected ? DesignTokens.rowFillColor : Color.clear, in: Capsule())
+                .contentShape(Rectangle())
         }
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     private func dismissSearchKeyboard() {
@@ -435,16 +483,6 @@ struct ChatConversationsList: View {
             loadError = nil
         } catch {
             if !Task.isCancelled && directoryRequest == request { loadError = error.localizedDescription }
-        }
-    }
-}
-
-private struct ConversationListTopEdge: ViewModifier {
-    func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
-            content.scrollEdgeEffectHidden(true, for: .top)
-        } else {
-            content
         }
     }
 }

@@ -12,7 +12,6 @@ import argparse
 import errno
 import fcntl
 import json
-import hashlib
 import shutil
 import os
 from pathlib import Path
@@ -67,6 +66,23 @@ def drain(master, transcript):
         transcript.flush()
 
 
+def terminal_process(binary, project, env, args):
+    launcher = ("import fcntl,os,sys,termios; "
+        "fcntl.ioctl(0,termios.TIOCSCTTY,0); os.chdir(sys.argv[2]); "
+        "os.execve(sys.argv[1], [sys.argv[1]]+sys.argv[3:], dict(os.environ))")
+    master, slave = pty.openpty()
+    try:
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
+        process = subprocess.Popen([sys.executable, "-I", "-c", launcher, str(binary), str(project), *args],
+            env=env, stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
+        return process, master
+    except BaseException:
+        os.close(master)
+        raise
+    finally:
+        os.close(slave)
+
+
 def stop_owned(process):
     if process.poll() is None:
         os.killpg(process.pid, signal.SIGTERM)
@@ -89,11 +105,16 @@ def main():
     root = Path(tempfile.mkdtemp(prefix="nola-real-permission-crash-"))
     root.chmod(0o700)
     (root / "bin").mkdir()
-    shutil.copy2(binary, root / "bin/nola")
-    binary = root / "bin/nola"
-    receipt = {"passed": False, "model": model, "crash_injected": False, "provider_responses_injected": False, "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest()}
+    pinned_binary = root / "bin/nola"
+    try:
+        os.link(binary, pinned_binary)
+    except OSError:
+        shutil.copy2(binary, pinned_binary)
+    binary = pinned_binary
+    receipt = {"passed": False, "model": model, "crash_injected": False, "provider_responses_injected": False}
     first = resumed = None
     master = None
+    initial_input = None
     print(json.dumps({"evidence": str(root), "phase": "starting"}), flush=True)
     try:
         with observed_provider(upstream, model, secret, root / "provider.ndjson") as endpoint:
@@ -111,16 +132,26 @@ def main():
                 + allowed + "读回确认第一次完成后，第二次独立调用覆盖为以下第二行（保留换行）：\n" + denied
                 + "两次必须分开执行。每次需要的权限只适用于该次调用；第二次若被拒绝，立即停止并报告实际拒绝和当前文件状态。"
                 "不得用其他工具、替代文件或更改权限绕过拒绝。只用文件读取/写入工具，不用 shell、代码、代理或网络。")
-            argv = [str(binary), prompt, "--session", session, "--project", str(project),
-                "--allow-dir", str(project), "--json", "--lang", "zh", "--no-skills",
+            argv = ["--session", session, "--project", str(project),
+                "--allow-dir", str(project), "--lang", "zh", "--no-skills",
                 "--network-policy", "deny", "--max-iterations", "16"]
             started = time.monotonic()
             with (root / "before-crash.log").open("wb") as out:
-                first = subprocess.Popen(argv, cwd=project, env=env, stdin=subprocess.PIPE,
-                    stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
+                first, initial_input = terminal_process(binary, project, env, argv)
+                while time.monotonic() - started < args.timeout:
+                    drain(initial_input, out)
+                    if "输入消息".encode() in (root / "before-crash.log").read_bytes():
+                        break
+                    assert first.poll() is None, "CLI exited before opening the composer"
+                    time.sleep(0.1)
+                else:
+                    raise AssertionError("interactive composer did not open")
+                os.write(initial_input, b"\x1b[200~" + prompt.encode() + b"\x1b[201~")
+                os.write(initial_input, b"\r")
                 pending = []
                 while time.monotonic() - started < args.timeout:
-                    if provider_totals(root / "provider.ndjson")["successful_requests"] == 0:
+                    drain(initial_input, out)
+                    if "仅允许本次".encode() not in (root / "before-crash.log").read_bytes():
                         assert first.poll() is None, "CLI ended before the first real provider response"
                         time.sleep(0.1)
                         continue
@@ -138,11 +169,16 @@ def main():
                 write_json(root / "before-crash-projection.json", projection)
                 receipt["original_run"] = original_run
                 receipt["original_pending"] = pending[0]
-                # Exact owned unreaped Child/group, while no decision or file
-                # mutation has occurred. This is a process fault, not fake SSE.
-                os.killpg(first.pid, signal.SIGKILL)
-                first.wait(timeout=10)
-                first.stdin.close()
+                # Crash only the CLI that owns the prompt, leaving its service to
+                # observe the client disconnect through the normal lifecycle.
+                assert first.poll() is None, "CLI exited before crash injection"
+                drain(initial_input, out)
+                first.kill()
+                # Release the terminal before reaping a foreground process that
+                # may still be blocked flushing its permission panel.
+                os.close(initial_input)
+                initial_input = None
+                assert first.wait(timeout=30) == -signal.SIGKILL
                 receipt["crash_injected"] = True
             after_crash = cold_projection(binary, project, env, session)
             assert pending_requests(after_crash), "crash discarded the pending authorization"
@@ -154,33 +190,26 @@ def main():
             # saved session in the ordinary interactive CLI recovers its Run.
             resume_argv = ["--session", session, "--project", str(project), "--allow-dir", str(project),
                 "--lang", "zh", "--no-skills", "--network-policy", "deny"]
-            launcher = ("import fcntl,os,sys,termios; "
-                "fcntl.ioctl(0,termios.TIOCSCTTY,0); os.chdir(sys.argv[2]); "
-                "os.execve(sys.argv[1], [sys.argv[1]]+sys.argv[3:], dict(os.environ))")
-            master, slave = pty.openpty()
-            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
-            try:
-                resumed = subprocess.Popen([sys.executable, "-I", "-c", launcher, str(binary), str(project), *resume_argv],
-                    env=env, stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
-            finally:
-                os.close(slave)
+            resumed, master = terminal_process(binary, project, env, resume_argv)
             responded = []
             seen = set()
             recovery_started = time.monotonic()
+            checked_frame = 0
             with (root / "resumed-terminal.log").open("wb") as transcript:
                 while time.monotonic() - recovery_started < args.timeout:
                     drain(master, transcript)
-                    if "仅允许本次".encode() not in (root / "resumed-terminal.log").read_bytes():
-                        assert resumed.poll() is None, "resumed CLI exited before rendering the permission prompt"
-                        time.sleep(0.1)
-                        continue
-                    projection = cold_projection(binary, project, env, session)
-                    waiting = pending_requests(projection)
                     rows = run_rows(database, session)
                     assert len(rows) == 1 and rows[0]["id"] == original_run, "recovery admitted a replacement Run/input"
                     if rows[0]["status"] == "sealed":
                         break
                     assert resumed.poll() is None, "resumed CLI exited before settling the original Run"
+                    with (root / "resumed-terminal.log").open("rb") as frames:
+                        frames.seek(checked_frame)
+                        if "仅允许本次".encode() not in frames.read():
+                            time.sleep(0.1)
+                            continue
+                    projection = cold_projection(binary, project, env, session)
+                    waiting = pending_requests(projection)
                     # Raw terminal mode is an OS observation that the product's
                     # actual keyboard permission prompt is ready. Send no extra
                     # Enter that might accidentally approve the next prompt.
@@ -195,6 +224,7 @@ def main():
                             assert target.read_text() == (original if index == 0 else allowed), "permission boundary changed the file early"
                             write_json(root / f"permission-{index}.json", projection)
                             key = b"1" if index == 0 else b"n"
+                            checked_frame = transcript.tell()
                             os.write(master, key)
                             responded.append({"request": request, "decision": "allow_once" if index == 0 else "deny"})
                             seen.add(identity)
@@ -230,6 +260,8 @@ def main():
         receipt["provider"] = provider_totals(root / "provider.ndjson")
     finally:
         write_json(root / "receipt.json", receipt)
+        if initial_input is not None:
+            os.close(initial_input)
         if master is not None:
             # Closing the controlling terminal before reaping prevents its
             # final repaint/terminal restoration from blocking on a full PTY.
@@ -245,9 +277,18 @@ def main():
         write_json(root / "receipt.json", receipt)
     forbidden = {secret} | {value for key, value in os.environ.items()
         if value and (key.endswith("_API_KEY") or key == "FREE_MODEL_KEY")}
+    needles = [value.encode() for value in forbidden if value]
+    overlap = max((len(value) for value in needles), default=1) - 1
     for path in root.rglob("*"):
-        if path.is_file() and any(value.encode() in path.read_bytes() for value in forbidden):
-            raise RuntimeError("Credential appeared in isolated evidence; do not publish artifacts")
+        if path == pinned_binary or not path.is_file():
+            continue
+        with path.open("rb") as source:
+            tail = b""
+            while chunk := source.read(1024 * 1024):
+                window = tail + chunk
+                if any(value in window for value in needles):
+                    raise RuntimeError("Credential appeared in isolated evidence; do not publish artifacts")
+                tail = window[-overlap:] if overlap else b""
     print(json.dumps({"passed": receipt["passed"], "error": receipt.get("error"),
         "provider": receipt.get("provider"), "evidence": str(root)}), flush=True)
     return 0 if receipt["passed"] else 1

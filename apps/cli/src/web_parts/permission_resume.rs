@@ -165,12 +165,14 @@ fn host_run_resume_response_body(
         ).map_err(|error| match error {
             crate::core_agent_runtime::ColdCoreAgentRecoveryError::BlockedConfiguration { reason }
             | crate::core_agent_runtime::ColdCoreAgentRecoveryError::RetryableUnavailable { reason } => reason,
-        }).and_then(|request| crate::core_agent_runtime::resume_agent_core_expected_with_cancellation(
-            &request,
-            &mut emitter,
-            cancellation,
-            &input.expected_run_id,
-        ));
+        }).and_then(|mut request| {
+            // The exact Run and its original client were checked above. Rebind
+            // the same current Host principal used at the Web admission boundary.
+            request.runtime.expert_template_authority = Some(expert_host_authority());
+            crate::core_agent_runtime::resume_agent_core_expected_with_cancellation(
+                &request, &mut emitter, cancellation, &input.expected_run_id,
+            )
+        });
         match result {
             Ok(Some(_)) => {}
             Ok(None) => {
@@ -479,8 +481,10 @@ mod host_resume_success_tests {
             )
         }));
         let mut emitter = crate::native_runtime_output::NativeRuntimeOutput::with_event_sink(|_| {});
+        let mut initial_request = config.host_invocation_request().unwrap();
+        initial_request.runtime.expert_template_authority = Some(expert_host_authority());
         let outcome =
-            crate::core_agent_runtime::run_agent_core(&config.host_invocation_request().unwrap(), "write the file", &mut emitter)
+            crate::core_agent_runtime::run_agent_core(&initial_request, "write the file", &mut emitter)
                 .unwrap();
         assert!(!outcome.is_terminal());
         drop(resolver);

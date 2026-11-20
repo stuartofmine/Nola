@@ -23,6 +23,7 @@ struct ScheduledActionsView: View {
     @State private var latestSummaryByActionId: [String: String] = [:]
     @State private var latestRunsError: String? = nil
     @State private var loadRunsTask: Task<Void, Never>? = nil
+    @State private var couldNotCreateConversation = false
     @State private var searchText = ""
     @State private var selectedFilter: ScheduledActionFilter = .all
 
@@ -43,6 +44,9 @@ struct ScheduledActionsView: View {
                     pageContent
                 }
             }
+        }
+        .alert(Text("chat.history.create_failed"), isPresented: $couldNotCreateConversation) {
+            Button(L10n.ok, role: .cancel) {}
         }
         .onAppear {
             refreshNonce += 1
@@ -166,7 +170,11 @@ struct ScheduledActionsView: View {
     }
 
     private func openChatForAutomation() {
-        NotificationCenter.default.post(name: .nolaOpenChatTab, object: nil)
+        guard let id = container.chatManager.startConversation(title: nil, language: nil) else {
+            couldNotCreateConversation = true
+            return
+        }
+        NotificationCenter.default.post(name: .nolaOpenChatTab, object: id)
     }
 
     // MARK: - Derived Data

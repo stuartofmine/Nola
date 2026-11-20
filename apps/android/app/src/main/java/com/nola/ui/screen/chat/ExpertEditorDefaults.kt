@@ -11,23 +11,21 @@ internal fun mergeExpertEditorDefaults(
     selectedModel: JsonObject?,
     changeTemplate: Boolean,
     selectedTemplateId: String?,
-    initializeModelParameters: Boolean = false,
     reasoningEffort: String? = null,
+    resetModelParameters: String? = null,
 ): JsonObject {
-    if (!changeModel && !changeTemplate && reasoningEffort == null) return original
+    if (!changeModel && !changeTemplate && reasoningEffort == null && resetModelParameters == null) return original
     val fields = original.toMutableMap()
     if (changeModel) {
         if (selectedModel == null) fields.remove("modelSelectionID") else {
-            require(selectedModel.keys == if (initializeModelParameters) setOf("modelSelectionID", "modelOverrides") else setOf("modelSelectionID"))
+            require(selectedModel.keys == setOf("modelSelectionID"))
             fields["modelSelectionID"] = selectedModel.getValue("modelSelectionID")
-            if (initializeModelParameters) {
-                val existing = fields["modelOverrides"]
-                require(existing == null || existing == JsonNull || existing is JsonObject)
-                val overrides = (existing as? JsonObject)?.toMutableMap() ?: mutableMapOf()
-                selectedModel.getValue("modelOverrides").jsonObject.forEach { (key, value) -> overrides.putIfAbsent(key, value) }
-                fields["modelOverrides"] = JsonObject(overrides)
-            }
         }
+    }
+    if (resetModelParameters != null) {
+        require(fields["modelSelectionID"] == JsonPrimitive(resetModelParameters))
+        val overrides = (fields["modelOverrides"] as? JsonObject).orEmpty() - resetModelParameters
+        if (overrides.isEmpty()) fields.remove("modelOverrides") else fields["modelOverrides"] = JsonObject(overrides)
     }
     if (changeTemplate) {
         if (selectedTemplateId == null) fields.remove("selectedPromptTemplateID")

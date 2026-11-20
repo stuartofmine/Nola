@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -48,6 +49,8 @@ import androidx.compose.runtime.saveable.mapSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -66,6 +69,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -91,8 +95,8 @@ object NolaColors {
     val warning: Color @Composable get() = MaterialTheme.colorScheme.tertiary
     val danger: Color @Composable get() = MaterialTheme.colorScheme.error
 
-    val bgLight = Color(0xFFF7F6F3)
-    val bgDark = Color(0xFF131312)
+    val bgLight = Color(0xFFFAF8F4)
+    val bgDark = Color(0xFF1B1C1A)
     val surfaceElevated: Color @Composable get() = MaterialTheme.colorScheme.surface
     val rowFill: Color @Composable get() = MaterialTheme.colorScheme.surfaceVariant
     val mutedFill: Color @Composable get() = MaterialTheme.colorScheme.surfaceContainer
@@ -277,9 +281,24 @@ fun NolaTopAppBar(
 fun nolaPageGutter(): Dp = if (LocalConfiguration.current.screenWidthDp < 360) 16.dp else 20.dp
 
 @Composable
+internal fun NolaRootPageTitle(
+    title: String,
+    modifier: Modifier = Modifier,
+    actions: @Composable RowScope.() -> Unit = {},
+) {
+    Row(modifier.fillMaxWidth().heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(title, Modifier.weight(1f).semantics { heading() },
+            style = MaterialTheme.typography.headlineSmall.copy(fontSize = 28.sp, lineHeight = 36.sp),
+            color = MaterialTheme.colorScheme.onBackground)
+        actions()
+    }
+}
+
+@Composable
 fun NolaPage(
     modifier: Modifier = Modifier,
     scrollKey: Any? = null,
+    topPadding: Dp = NolaSpacing.xl,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val background = MaterialTheme.colorScheme.background
@@ -315,7 +334,7 @@ fun NolaPage(
                 .fillMaxWidth()
                 .verticalScroll(scrollState)
                 .padding(horizontal = nolaPageGutter())
-                .padding(top = NolaSpacing.xl, bottom = 48.dp),
+                .padding(top = topPadding, bottom = 48.dp),
             verticalArrangement = Arrangement.spacedBy(NolaSpacing.xl),
             content = content
         )

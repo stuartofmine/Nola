@@ -106,6 +106,7 @@ struct ChatBubble: View {
     var assistantBubbleFill: Color? = nil
     var ownerIsRunning: Bool = false
     var surfaceInteractionsEnabled = true
+    var readOnlyHistoryOwner: String?
     var onEditAndResend: ((AppleMessageEditSubmission) async throws -> Void)? = nil
     @State private var messageEditorSource: IOSMessageEditorSource?
     @State private var showManualCopy = false
@@ -322,11 +323,10 @@ struct ChatBubble: View {
                     Text(message.content)
                         .font(.body)
                         .lineSpacing(IOSChatProseMetrics.lineSpacing)
-                        .foregroundColor(.primary)
+                        .foregroundColor(DesignTokens.contentColor)
                         .multilineTextAlignment(.leading)
                         .textSelection(.enabled)
-                        .frame(maxWidth: 640, alignment: .leading)
-                        .padding(.horizontal, 15)
+                        .padding(.horizontal, 16)
                         .padding(.vertical, 12)
                         .background(
                             RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -337,6 +337,7 @@ struct ChatBubble: View {
                         .contextMenu {
                             copyButton
                         }
+                        .frame(maxWidth: 640, alignment: .trailing)
                 }
 
                 if !userAttachments.isEmpty {
@@ -410,7 +411,11 @@ struct ChatBubble: View {
         }
     }
 
-    private var editMessageButton: some View {
+    @ViewBuilder private var editMessageButton: some View {
+        if readOnlyHistoryOwner == nil { editableMessageButton }
+    }
+
+    private var editableMessageButton: some View {
         Button {
             let revision = conversationID.flatMap { try? container.applicationRuntime.loadConversation(id: $0.uuidString)?.revision }
             messageEditorSource = IOSMessageEditorSource(conversationID: conversationID, message: message, sourceRevision: revision)
@@ -443,7 +448,7 @@ struct ChatBubble: View {
 
     private func readingKey(_ partID: String) -> IOSMessagePartReadingKey {
         .init(source: message.canonicalJournalCursor?.identity.source_store_epoch ?? container.applicationRuntime.databaseURL.path,
-            conversation: conversationID?.uuidString ?? "", message: message.metadata["nola.canonicalMessageID"] ?? message.id.uuidString,
+            conversation: readOnlyHistoryOwner ?? conversationID?.uuidString ?? "", message: message.metadata["nola.canonicalMessageID"] ?? message.id.uuidString,
             part: partID)
     }
 
@@ -563,6 +568,7 @@ struct ChatBubble: View {
         }
         .buttonStyle(.bordered)
         .font(.caption)
+        .disabled(conversationID == nil)
         .accessibilityIdentifier("compaction-sources-" + link.id)
     }
 
@@ -581,7 +587,7 @@ struct ChatBubble: View {
                 projection: projection,
                 parentConversationID: conversationID?.uuidString,
                 showsSummary: taskID.map { ChatExecutionProcessPolicy.taskControlShowsSummary(taskID: $0, parts: message.canonicalParts) } ?? true,
-                controls: message.canonicalParts.compactMap {
+                controls: readOnlyHistoryOwner != nil ? [] : message.canonicalParts.compactMap {
                     if case .taskControl(let control) = $0 { return control }
                     return nil
                 },
@@ -632,12 +638,12 @@ struct ChatBubble: View {
         case .uiSurface:
             IOSCanonicalMessageSurface(conversationID: conversationID,
                 messageID: message.metadata["nola.canonicalMessageID"] ?? message.id.uuidString, part: part,
-                allowsInteraction: surfaceInteractionsEnabled).id(part.partID)
+                allowsInteraction: surfaceInteractionsEnabled, readOnlyHistoryOwner: readOnlyHistoryOwner).id(part.partID)
         case .historical(_, _, let history):
             if history.uiSurfaceReference != nil {
                 IOSCanonicalMessageSurface(conversationID: conversationID,
                     messageID: message.metadata["nola.canonicalMessageID"] ?? message.id.uuidString, part: part,
-                allowsInteraction: surfaceInteractionsEnabled).id(part.partID)
+                allowsInteraction: surfaceInteractionsEnabled, readOnlyHistoryOwner: readOnlyHistoryOwner).id(part.partID)
             } else {
                 VStack(alignment: .leading, spacing: 4) {
                     if let preview = history.timelineText, !preview.isEmpty {

@@ -184,7 +184,7 @@ struct MacUnifiedExpertTranscript: View {
         MacExpertTranscriptProjector.rows(conversationID: model.selectedConversationID ?? "",
             parentMessages: model.selectedMessages, association: workspace.conversationAssociation,
             receipts: workspace.conversationAssociation.flatMap { workspace.submissions[$0.roomID] } ?? [],
-            contexts: workspace.executionService?.owners.mapValues(\.selectedMessages) ?? [:],
+            contexts: workspace.transcriptOwners.mapValues(\.selectedMessages),
             peerExchanges: workspace.peerExchanges)
     }
 

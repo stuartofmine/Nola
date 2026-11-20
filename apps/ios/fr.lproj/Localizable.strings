@@ -5,8 +5,8 @@
 "room.left" = "Parti · historique conservé";
 "room.remove" = "Retirer";
 "room.add" = "Ajouter un agent";
-"room.create_agent" = "Créer un agent";
-"room.agent_name" = "Nom de l’agent";
+"room.create_agent" = "Créer un expert";
+"room.agent_name" = "Nom de l’expert";
 "room.use_current_model" = "Utiliser le modèle actuel";
 "room.open" = "Ouvrir la discussion";
 "room.all" = "Toutes les discussions";
@@ -2790,6 +2790,7 @@
 "history.detail.open_attachment" = "Lire les détails de la pièce jointe";
 "history.detail.open_record" = "Lire l’enregistrement historique";
 "chat.history.search" = "Rechercher dans les conversations";
+"chat.history.search.clear" = "Effacer la recherche";
 "chat.history.no_messages" = "Aucun message pour le moment";
 "chat.history.running" = "En cours";
 "chat.history.awaiting_permission" = "En attente d’approbation";
@@ -3207,6 +3208,7 @@
 "chat.context.import.failed_count" = "%d fichiers n’ont pas pu être importés. Utilisez des fichiers texte UTF-8 non vides de 40 000 caractères maximum (192 Ko).";
 
 /* Expert roles and revision-aware mentions */
+"experts.useModelDefaults" = "Utiliser les réglages par défaut du modèle";
 "experts.reasoning.inherit" = "Hériter du réglage du modèle";
 "experts.reasoning.unknown" = "Ce modèle ne déclare aucun niveau de raisonnement. Son réglage par défaut est conservé.";
 "experts.role.details" = "Prompt, outils et Skills";
@@ -3289,3 +3291,6 @@
 "chat.message.pendingEdit" = "Vérifier la modification en attente";
 "chat.message.editSavedForReview" = "Vous pouvez fermer cet éditeur. Rouvrez la modification en attente dans cette conversation pour vérifier son envoi.";
 "chat.context.documents.blank" = "Saisissez du texte pour %@ ou supprimez le document vide.";
+
+"chat.history.otherClientReadOnly" = "Lecture seule. Pour poursuivre cette conversation, ouvre-la dans le client où elle a été créée.";
+"chat.history.ambiguousIDs" = "Deux identifiants de conversation diffèrent uniquement par la casse. Ouvre ces conversations dans leur client d’origine.";

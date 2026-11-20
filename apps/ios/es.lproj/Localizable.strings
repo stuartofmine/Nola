@@ -5,8 +5,8 @@
 "room.left" = "Salió · historial conservado";
 "room.remove" = "Quitar";
 "room.add" = "Añadir agente";
-"room.create_agent" = "Crear agente";
-"room.agent_name" = "Nombre del agente";
+"room.create_agent" = "Crear experto";
+"room.agent_name" = "Nombre del experto";
 "room.use_current_model" = "Usar modelo actual";
 "room.open" = "Abrir chat";
 "room.all" = "Todos los chats";
@@ -2707,6 +2707,7 @@
 "chat.history.retry" = "Reintentar";
 "chat.history.running" = "En curso";
 "chat.history.search" = "Buscar conversaciones";
+"chat.history.search.clear" = "Borrar búsqueda";
 "chat.history.stop_before_delete" = "Detén la tarea antes de eliminarla";
 "chat.response.cancelled" = "Respuesta detenida";
 "chat.response.failed" = "Error en la respuesta. Abre el proceso para ver los detalles.";
@@ -3176,6 +3177,7 @@
 "chat.context.import.failed_count" = "No se pudieron importar %d archivos. Usa archivos de texto UTF-8 no vacíos con un máximo de 40.000 caracteres (192 KB).";
 
 /* Expert roles and revision-aware mentions */
+"experts.useModelDefaults" = "Usar valores predeterminados del modelo";
 "experts.reasoning.inherit" = "Heredar ajustes del modelo";
 "experts.reasoning.unknown" = "Este modelo no declara niveles de razonamiento. Se hereda su ajuste predeterminado.";
 "experts.role.details" = "Prompt, herramientas y Skills";
@@ -3258,3 +3260,6 @@
 "chat.message.pendingEdit" = "Revisar edición pendiente";
 "chat.message.editSavedForReview" = "Puedes cerrar el editor. Abre la edición pendiente en esta conversación para comprobar si se envió.";
 "chat.context.documents.blank" = "Introduce texto para %@ o elimina el documento vacío.";
+
+"chat.history.otherClientReadOnly" = "Solo lectura. Para continuar esta conversación, ábrela en el cliente donde la creaste.";
+"chat.history.ambiguousIDs" = "Dos conversaciones tienen identificadores que solo se distinguen por las mayúsculas. Ábrelas en el cliente original.";

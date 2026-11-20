@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from test_real_cli_hundreds_steps import EventObserver, check_files, make_chain, provider_window_audit, verified_provider_recoveries
+from test_real_cli_hundreds_steps import EventObserver, check_files, make_chain, provider_totals, provider_window_audit, verified_provider_recoveries
 
 
 class HundredsStepOracleTests(unittest.TestCase):
@@ -20,6 +20,17 @@ class HundredsStepOracleTests(unittest.TestCase):
             (project / "checkpoints" / f"{batch:03d}.json").write_text(
                 json.dumps({"records": selected, "sum": sum(row["value"] for row in selected)}))
         return project, expected
+
+    def test_successful_request_counts_stream_completion_separately_from_http_status(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory) / "provider.ndjson"
+            base = dict(status=200, stream=True, model="test", responseOversizedLineCount=0)
+            evidence.write_text("\n".join(json.dumps({**base, **event}) for event in [
+                dict(finishReasons=["completed"]), dict(finishReasons=["failed"]),
+                dict(finishReasons=[]), dict(finishReasons=["completed"], error="broken stream")]))
+            totals = provider_totals(evidence)
+            self.assertEqual(totals["requests"], 4)
+            self.assertEqual(totals["successful_requests"], 1)
 
     def test_opaque_chain_has_one_actual_missing_link_and_recovery(self):
         with tempfile.TemporaryDirectory() as directory:
